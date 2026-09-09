@@ -187,6 +187,49 @@ def seed_user(db, role_slug: str | None) -> str:
     return uid
 
 
+def grant_permission(db, role_slug: str, permission_slug: str) -> None:
+    """Give `role_slug` a permission slug for the life of one test (rolled back).
+
+    Needed because a route's `require_permission` slug is NOT seeded onto any role by
+    the migrations. `sync_permissions` (app startup) creates the `user_permissions`
+    ROW from `app/rbac/permission_registry.py`, and the grant sweeps that hand it to
+    roles are SELECT-driven off grants that already exist - so on CI's freshly
+    migrated, dataless database nobody holds it and every call is a 403, while the
+    local prod-copy passes because a human granted it there years ago. A test that
+    depends on the prod copy's grant table is testing the database, not the route.
+
+    Creates the permission row if absent (mirroring migration 445's `_create_if_absent`),
+    then grants it. Idempotent: a role that already holds it is left alone.
+    """
+    rid = db.execute(
+        text("SELECT id FROM user_roles WHERE slug = :s"), {"s": role_slug}
+    ).scalar()
+    assert rid, f"role {role_slug} not seeded"
+
+    pid = db.execute(
+        text("SELECT id FROM user_permissions WHERE slug = :s"), {"s": permission_slug}
+    ).scalar()
+    if not pid:
+        pid = str(uuid.uuid4())
+        db.execute(
+            text(
+                "INSERT INTO user_permissions (id, slug, name, description, created_at) "
+                "VALUES (:i, :s, :s, :d, now())"
+            ),
+            {"i": pid, "s": permission_slug, "d": f"Seeded by tests for {permission_slug}."},
+        )
+
+    db.execute(
+        text(
+            "INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at) "
+            "SELECT :i, :r, :p, now() WHERE NOT EXISTS ("
+            "  SELECT 1 FROM user_role_permissions WHERE role_id = :r AND permission_id = :p)"
+        ),
+        {"i": str(uuid.uuid4()), "r": rid, "p": pid},
+    )
+    db.flush()
+
+
 # The fixed Sorento company row (migration 302 / `_seed_default_company`), which is the
 # company every reference row in this suite is stamped with.
 SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"

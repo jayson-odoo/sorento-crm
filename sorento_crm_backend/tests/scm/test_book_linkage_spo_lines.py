@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from tests.scm.conftest import as_user, requires_pg, seed_user
+from tests.scm.conftest import as_user, grant_permission, requires_pg, seed_user
 
 pytestmark = requires_pg
 
@@ -23,6 +23,14 @@ MARKER = "ZZTBOOKSPO"
 def _client(scm_app, role_slug="purchasing"):
     app, db, gcu, gcuak = scm_app
     uid = seed_user(db, role_slug)
+    # The SPO documents route is behind `require_permission("procurement.spo_allocations.view")`,
+    # and NO migration grants that slug to any role - the local prod-copy database only
+    # passes because a human granted it there (to `purchasing_manager` and
+    # `purchasing_executive`, never to plain `purchasing`). On CI's freshly migrated,
+    # dataless database nobody holds it, so every call here returned 403. Granted
+    # explicitly inside the savepoint so the test asserts the ROUTE, not the grant table
+    # of whichever database it happens to run against.
+    grant_permission(db, role_slug, "procurement.spo_allocations.view")
     as_user(app, gcu, gcuak, uid)
     return app, db
 
