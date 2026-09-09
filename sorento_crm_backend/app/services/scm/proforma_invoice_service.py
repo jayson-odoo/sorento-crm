@@ -156,6 +156,34 @@ def supplier_ref_for(
     return base[:100]
 
 
+def _disambiguated_ref(db: Session, *, supplier_id: str, ref: Optional[str]) -> Optional[str]:
+    """A ref for an explicit "file as new" that would otherwise collide with the CURRENT
+    row it was matched against (AC-E6's untick, S1 follow-up): identity is `(company,
+    supplier, supplier_ref)` and only one CURRENT row ever occupies it (migration 500), so
+    an operator who explicitly wants a second, separate document under the same reference
+    gets one that carries it apart - `-2`, `-3`, ... - rather than a 500 with a unique
+    constraint in it. The base ref is untouched, so a later plain re-upload of the
+    ORIGINAL document still matches on it, not on the row filed apart from it.
+    """
+    if not ref:
+        return ref
+    candidate = ref
+    n = 2
+    while (
+        db.query(ProformaInvoice.id)
+        .filter(
+            ProformaInvoice.supplier_id == supplier_id,
+            ProformaInvoice.supplier_ref == candidate,
+            func.coalesce(ProformaInvoice.status, "current") == "current",
+        )
+        .first()
+        is not None
+    ):
+        candidate = f"{ref}-{n}"[:100]
+        n += 1
+    return candidate
+
+
 def _pi_number(db: Session, company_id: Optional[str]) -> str:
     """Our own PI number (S1, AC-A1) - the next `PI-{yy}{month:02d}-NNN` from the numbering
     rule, minted once at insert. Same lazy-seed pattern `_draft_shipment_number` (above)
@@ -918,13 +946,20 @@ def apply(
         elif ref is None or str(doc.index) in filed_as_new:
             # No reference to match on at all - there is nothing an update-in-place lookup
             # could find, so this is always a new row (AC-A2: `pi_number` is still minted
-            # regardless of whether the file states a reference). The SAME path is what an
-            # explicit "file as new" tick takes for a document that DOES have a matching
+            # regardless of whether the file states a reference; a NULL ref never conflicts
+            # with another NULL, so no disambiguation is needed here). The SAME path is what
+            # an explicit "file as new" tick takes for a document that DOES have a matching
             # ref but the operator wants filed separately anyway (the revision offer
-            # unticked).
+            # unticked) - THAT ref would collide with the CURRENT row it was matched
+            # against, so it is disambiguated apart from it instead.
+            filed_ref = (
+                _disambiguated_ref(db, supplier_id=supplier_id, ref=ref)
+                if str(doc.index) in filed_as_new
+                else ref
+            )
             invoice = ProformaInvoice(
                 id=_uuid(), supplier_id=supplier_id,
-                pi_number=_pi_number(db, company_id), supplier_ref=ref,
+                pi_number=_pi_number(db, company_id), supplier_ref=filed_ref,
             )
             db.add(invoice)
             existed = False

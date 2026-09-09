@@ -1609,7 +1609,8 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     #: The supplier's own reference for this document, verbatim - NULL when the file states
     #: none (the pre-loading list's five blocks carry no invoice number at all). Identity is
     #: now `(company, supplier, supplier_ref)`: a NULL ref never matches an existing row, so
-    #: a file stating none needs `file_as_new` or is refused `supplier_ref_missing` (AC-A3).
+    #: a file stating none is always created fresh rather than matched or refused (AC-A3,
+    #: captain ruling 9 Sep).
     supplier_ref = Column(String(100), nullable=True)
     invoice_date = Column(Date, nullable=True)
     # NULL only for a document with no priced line at all: a priced one is refused before
@@ -1674,19 +1675,23 @@ class ProformaInvoice(Base, CompanyScopedMixin):
         CheckConstraint(
             "status IN ('current', 'superseded')", name="ck_scm_proforma_invoice_status"
         ),
-        # Declared on the MODEL as well as in migration 375/499, because a CI database is
+        # Declared on the MODEL as well as in migration 375/499/500, because a CI database is
         # built with `create_all` and never runs a migration body: without it the guard
         # against a doubled invoice exists in production and nowhere else (the
         # supplier_inventory precedent). Identity moved from `pi_number` (now OURS) to
         # `supplier_ref` (S1, AC-A3/A4) - a NULL ref never conflicts with another NULL, a
         # plain unique index's default behaviour, which is exactly "a file with no reference
-        # never matches an existing row".
+        # never matches an existing row". Scoped to `status = 'current'` (migration 500):
+        # a revision keeps its predecessor's `supplier_ref` verbatim, and a superseded row
+        # is not a claim on that identity any more - only one CURRENT row per identity ever
+        # exists, any number of superseded ones may share the ref.
         Index(
             "uq_scm_proforma_invoice_identity",
             text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
             "supplier_id",
             "supplier_ref",
             unique=True,
+            postgresql_where=text("status = 'current'"),
         ),
         # `pi_number` is OURS and minted once - it must never collide within a company
         # regardless of supplier (AC-A1/A4).
