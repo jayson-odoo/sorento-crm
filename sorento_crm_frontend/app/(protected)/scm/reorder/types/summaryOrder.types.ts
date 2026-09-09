@@ -159,6 +159,13 @@ export interface OrderSummaryRow {
   last_receipt?: { date: string; qty: number } | null;
   /** The chosen supplier's MOQ, or null when there is none on file. */
   moq?: number | null;
+  /** Site-pool stock only (S14) - the export's "BRW on hand". Null on a run frozen
+   *  before this field existed, never re-frozen since; `on_hand` above is unaffected
+   *  and stays the grid's own network-wide reading. */
+  pool_on_hand?: number | null;
+  /** The run's own frozen reorder level for this product (S14), or null when no
+   *  recommendation carried one. */
+  reorder_level?: number | null;
 }
 
 /** The whole report for one run, as of one date (AC-C2.9). */

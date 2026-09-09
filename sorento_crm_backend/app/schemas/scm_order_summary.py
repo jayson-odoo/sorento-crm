@@ -119,6 +119,11 @@ class OrderSummaryRowOut(BaseModel):
     last_receipt: Optional["LastReceiptOut"] = None
     moq: Optional[float] = None
 
+    # --- S14 (PLAN-reorder-feedback-9sep.md Round 3, AC-S14.1): the sheet's "BRW"
+    # reading, frozen beside the network-wide facts above. ---
+    pool_on_hand: Optional[float] = None
+    reorder_level: Optional[float] = None
+
 
 class DeliveryByMonthOut(BaseModel):
     month: Optional[str] = None
