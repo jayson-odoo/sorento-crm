@@ -180,13 +180,13 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
 
 ### S9 Order summary = the paper sheet
 
-- AC-S9.1 [BE] `OrderSummaryRowOut` gains `delivery_by_month: [{month: "2026-09", qty}]`
+- AC-S9.1 [BE] SUPERSEDED by AC-S14.3/S14.4/S14.9 (10 Sep): `OrderSummaryRowOut` gains `delivery_by_month: [{month: "2026-09", qty}]`
   (open retail SO lines by `required_date` + project OI rows by `delivery_date`, undated
   under `month: null`), `project_customers: [{label, qty}]` (project OI rows grouped by
   customer/project title), `supplier_name` (chosen else suggested), `po_open_qty` (BRW pool
   open PO qty), `incoming_spo_qty`, `last_receipt: {date, qty}` (latest goods_received
   picking line for the product), `moq`. All frozen with the row at run time.
-- AC-S9.2 [FE] Order summary grid adds columns Delivery (month groups rendered "Sep 30 -
+- AC-S9.2 [FE] SUPERSEDED by AC-S14.3/S14.4/S14.9 (10 Sep): Order summary grid adds columns Delivery (month groups rendered "Sep 30 -
   Oct 30", newest last), Project / customer (names, qty in brackets, truncated with title),
   Supplier, Remarks ("PO 400 + incoming 89 = 489", "Last in 21/07/2026 - 300", "MOQ 1000").
   Browser round 3 (9 Sep): the screen and the export are NOT the same column set. The
@@ -206,7 +206,7 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
   blank when undecided (the pen column).
 - AC-S9.4 [FE] Export button on the Order summary toolbar offers PDF and Excel, downloads
   through the existing file download helper, toast on failure.
-- AC-S9.5 [T] pytest: report row for a fixture product shows two delivery months, one
+- AC-S9.5 [T] SUPERSEDED by AC-S14.3/S14.4/S14.9 (10 Sep): pytest: report row for a fixture product shows two delivery months, one
   project customer, last receipt, MOQ; export endpoints return the right content types.
   vitest: Remarks cell composition.
 - AC-S9.6 [E2E] Open Order summary from a plan, see Delivery and Remarks populated, export
