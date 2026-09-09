@@ -461,7 +461,7 @@ def test_d7_consolidated_export_prints_one_row_per_shipment_line():
         db.commit()
 
         out = build(db, str(shipment.id))
-        rows = out["suppliers"][0]["lines"] if out.get("suppliers") else next(iter(out.values()))
+        rows = [line for factory in out["factories"] for line in factory["lines"]]
         product_rows = [r for r in rows if r["product_id"] == str(product.id)]
         assert len(product_rows) == 2
         assert sorted(r["qty"] for r in product_rows) == [35, 50]
