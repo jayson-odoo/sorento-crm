@@ -67,7 +67,10 @@ from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services.error_handler import AppException
-from app.services.product_companion_service import bundled_with_item_codes
+from app.services.product_companion_service import (
+    bundled_with_item_codes_map,
+    resolve_bundled_item_codes,
+)
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
     project_customer_label,
@@ -769,9 +772,19 @@ class OrderInquiryWorklistService:
         links = ProjectOrderInquiryService(self.db).links_for_rows(
             [row.id for row in rows]
         )
+        bundle_map = self._bundle_map_for_rows(rows)
+        anchor_headline_by_id = self._anchor_headline_by_id(rows, links)
         return {
             "data": [
-                self._serialize(row, product_by_row, link_candidates, flow, links)
+                self._serialize(
+                    row,
+                    product_by_row,
+                    link_candidates,
+                    flow,
+                    links,
+                    bundle_map,
+                    anchor_headline_by_id,
+                )
                 for row in rows
             ],
             "pagination": {"total": total, "page": page, "limit": limit},
@@ -866,15 +879,57 @@ class OrderInquiryWorklistService:
             for so_line_id, taken, remaining in agg
         }
 
-    def _bundled_po_number(self, row) -> Optional[str]:
+    def _bundle_map_for_rows(self, rows) -> Dict[str, List[str]]:
+        """`bundled_with_item_codes_map`, built ONCE for every bundled row on a page
+        (review round 1 item 10) - grouped by `company_id` because the map itself is
+        one company's rules, though in practice one page is always one company
+        (multi-tenant is stubbed, CLAUDE.md)."""
+        codes_by_company: Dict[str, set] = {}
+        for row in rows:
+            if row.bundled_with_row_id:
+                codes_by_company.setdefault(row.company_id, set()).add(row.item_code)
+        if not codes_by_company:
+            return {}
+        merged: Dict[str, List[str]] = {}
+        for company_id, codes in codes_by_company.items():
+            merged.update(
+                bundled_with_item_codes_map(
+                    self.db, company_id=company_id, companion_item_codes=codes
+                )
+            )
+        return merged
+
+    def _anchor_headline_by_id(
+        self, rows, links: Dict[str, List[Dict[str, Any]]]
+    ) -> Dict[str, str]:
+        """The ANCHOR row's own coverage headline ("1 of 1"), computed server-side once
+        per page (review round 1 item 8) - the client used to scan `table.options.data`
+        for a row matching `bundled_with.row_id`, which is only ever right when the
+        anchor happens to be loaded on the SAME page as its companion.
+
+        Keyed by row id, for every row that has at least one link of its own; a row
+        with none is simply absent, matching the client's own "Not found (new order)"
+        fallback for a host nobody has placed anything for yet.
+        """
+        result: Dict[str, str] = {}
+        for row in rows:
+            row_links = links.get(row.id) or []
+            if not row_links:
+                continue
+            linked_qty = sum((_dec(link["qty"]) for link in row_links), _ZERO)
+            result[row.id] = f"{_qty_str(linked_qty)} of {_qty_str(_dec(row.qty))}"
+        return result
+
+    def _bundled_po_number(
+        self, row, bundle_map: Optional[Dict[str, List[str]]] = None
+    ) -> Optional[str]:
         """D8: the export's document column for a bundled row with no document of its
         own - "Included with CKS1050" rather than a blank, naming every item the rule
         requires when there is more than one (never the word "host")."""
         if not row.bundled_with_row_id:
             return None
-        codes = bundled_with_item_codes(
-            self.db,
-            company_id=row.company_id,
+        codes = resolve_bundled_item_codes(
+            bundle_map or {},
             companion_item_code=row.item_code,
             anchor_item_code=row.bundled_with_item_code,
         )
@@ -889,6 +944,8 @@ class OrderInquiryWorklistService:
         link_candidates: Optional[Dict[str, set]] = None,
         flow: Optional[Dict[str, Dict[str, Decimal]]] = None,
         links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        bundle_map: Optional[Dict[str, List[str]]] = None,
+        anchor_headline_by_id: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -909,7 +966,7 @@ class OrderInquiryWorklistService:
             "supplier_id": row.supplier_id,
             # D8: a bundled row with no document of its own names its anchor instead of
             # a blank cell.
-            "po_number": row.po_number or self._bundled_po_number(row),
+            "po_number": row.po_number or self._bundled_po_number(row, bundle_map),
             "po_id": row.po_id,
             "location": row.location,
             "taken_from_po": _qty_str(line_flow.get("taken", _ZERO)),
@@ -926,11 +983,16 @@ class OrderInquiryWorklistService:
                 {
                     "row_id": row.bundled_with_row_id,
                     "item_code": row.bundled_with_item_code,
-                    "item_codes": bundled_with_item_codes(
-                        self.db,
-                        company_id=row.company_id,
+                    "item_codes": resolve_bundled_item_codes(
+                        bundle_map or {},
                         companion_item_code=row.item_code,
                         anchor_item_code=row.bundled_with_item_code,
+                    ),
+                    # Review round 1 item 8: the anchor's OWN coverage, resolved here
+                    # rather than the client scanning `table.options.data` for a row
+                    # that might not even be on the same page.
+                    "anchor_headline": (anchor_headline_by_id or {}).get(
+                        row.bundled_with_row_id
                     ),
                 }
                 if row.bundled_with_row_id
@@ -1546,7 +1608,8 @@ class OrderInquiryWorklistService:
             )
             .all()
         )
-        return [self._serialize(row) for row in rows]
+        bundle_map = self._bundle_map_for_rows(rows)
+        return [self._serialize(row, bundle_map=bundle_map) for row in rows]
 
     def _write_sheet(
         self, workbook, title: str, rows: Sequence[Dict[str, Any]]

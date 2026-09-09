@@ -59,13 +59,24 @@ export function useCreateCompanionRule(companionProductId: string) {
  * Delete asks nothing (D7): the row's Delete parks the removal on the server for its
  * grace window and a toast carries the countdown, exactly as `product_supplier.unlink`
  * does on the same page's Suppliers section - the way back is Cancel, not a dialog.
+ *
+ * `hostProductIds` (review round 1 item 14): every host across the rules CURRENTLY on
+ * screen, so a deleted rule's hosts also refetch their own "Ships with" mirror - it
+ * would otherwise keep naming a rule that no longer exists until the host's own page
+ * happened to be revisited.
  */
-export function useCompanionRuleDelete(companionProductId: string) {
+export function useCompanionRuleDelete(
+  companionProductId: string,
+  hostProductIds: readonly string[] = [],
+) {
   return useDeferredRowAction({
     actionKey: 'product_companion_rule.delete',
     entityType: 'product_companion_rule',
     verb: 'Deleting',
     successMessage: 'Rule deleted',
-    invalidateKeys: [companionKey(companionProductId)],
+    invalidateKeys: [
+      companionKey(companionProductId),
+      ...hostProductIds.map((hostId) => hostKey(hostId)),
+    ],
   });
 }

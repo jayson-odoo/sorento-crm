@@ -26,6 +26,12 @@ class OrderInquiryBundledWithOut(BaseModel):
     row_id: str
     item_code: Optional[str] = None
     item_codes: List[str] = []
+    #: The anchor row's OWN coverage, e.g. "1 of 1" - resolved server-side (review round
+    #: 1 item 8) so the cell never has to scan a page's own loaded rows for a match that
+    #: is only ever right when the anchor happens to be on the SAME page. Null when the
+    #: anchor has no links of its own (nothing placed for it yet); the reader's own
+    #: "Not found (new order)" fallback covers that case.
+    anchor_headline: Optional[str] = None
 
 
 class OrderInquiryLinkOut(BaseModel):
@@ -111,6 +117,14 @@ class OrderInquiryRowOut(BaseModel):
     #: The sum of `links[].qty`. `qty - linked_qty` is what still flows to reorder
     #: planning, and is exactly what `scm.committed_v` now nets (migration 422).
     linked_qty: str = "0"
+    #: PLAN-scm-supplied-with-companions.md S5. `bundled_qty` never exceeds
+    #: `qty - linked_qty`; `bundled_with` is null on an un-bundled row. Both declared
+    #: here because `response_model` drops a field it has not been told about
+    #: (same lesson as `ack_state` below) - `serialize_rows` already computes them for
+    #: this schema's own route (`/projects/{project_id}/order-inquiry-rows`) and they
+    #: were silently vanishing on the wire before this.
+    bundled_qty: str = "0"
+    bundled_with: Optional[OrderInquiryBundledWithOut] = None
     # Whether this row has anywhere to link to at all (the captain, 20 Aug: a "Link PO"
     # offer with nothing behind it reads as a bug, not an empty state). Verb AND product,
     # not product alone: an ORDER BACK row may link to an `spo_allocations` row as well as

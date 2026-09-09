@@ -61,7 +61,8 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
 from app.services.product_companion_service import (
-    bundled_with_item_codes as _bundled_with_item_codes,
+    bundled_with_item_codes_map as _bundled_with_item_codes_map,
+    resolve_bundled_item_codes as _resolve_bundled_item_codes,
 )
 from app.models.scm import OrderLinkClaim
 from app.models.project_so import (
@@ -1962,6 +1963,19 @@ class ProjectOrderInquiryService:
                 .filter(OrderInquiryRow.id.in_(anchor_ids))
                 .all()
             )
+        # Review round 1 item 10: the rule set behind every bundled row, resolved ONCE
+        # for the whole page rather than once per row.
+        bundle_map: Dict[str, List[str]] = {}
+        codes_by_company: Dict[str, set] = {}
+        for row in rows:
+            if row.bundled_with_row_id:
+                codes_by_company.setdefault(row.company_id, set()).add(row.item_code)
+        for company_id, codes in codes_by_company.items():
+            bundle_map.update(
+                _bundled_with_item_codes_map(
+                    self.db, company_id=company_id, companion_item_codes=codes
+                )
+            )
         out: List[Dict[str, Any]] = []
         for row in rows:
             meta = context.get(row.order_inquiry_id, {})
@@ -2001,9 +2015,8 @@ class ProjectOrderInquiryService:
                         {
                             "row_id": row.bundled_with_row_id,
                             "item_code": anchor_item_code_by_id.get(row.bundled_with_row_id),
-                            "item_codes": _bundled_with_item_codes(
-                                self.db,
-                                company_id=row.company_id,
+                            "item_codes": _resolve_bundled_item_codes(
+                                bundle_map,
                                 companion_item_code=row.item_code,
                                 anchor_item_code=anchor_item_code_by_id.get(
                                     row.bundled_with_row_id
@@ -2892,9 +2905,16 @@ class ProjectOrderInquiryService:
         Recomputes `bundled_qty` / `bundled_with_row_id` (and, since coverage now reads
         both, `state`) for every COMPANION row of this inquiry - never a host row's own
         fields, and never a new row. Idempotent (B14): re-running it is a no-op when
-        nothing on the inquiry has changed.
+        nothing on the inquiry has changed. RESETS, never freezes: a row with no
+        applicable rule this pass (the rule was deleted or deactivated since the last
+        derivation, or a pair rule's host went missing) is written back to bundled_qty
+        0 / bundled_with_row_id NULL / state-from-links-alone, not left holding an
+        earlier pass's answer. The one exception is a row this function does not touch
+        at all: ACTIONED or CANCELLED, "a person's word about the row" exactly as
+        `refresh_link_state` reads them - an actioned companion keeps whatever it was
+        actioned with, bundle included.
 
-        Per companion row R:
+        Per companion row R (ORDER / ORDER_BACK, not actioned or cancelled):
           rules  = active rules for R's product, company-scoped
           for each rule (first match wins - the UNIQUE constraint means at most one
                          should ever apply to a given order's supplier anyway):
@@ -2965,33 +2985,47 @@ class ProjectOrderInquiryService:
         rules_by_companion: Dict[str, List[ProductCompanionRule]] = {}
         for rule in active_rules:
             rules_by_companion.setdefault(rule.companion_product_id, []).append(rule)
-        if not rules_by_companion:
-            return
+        # NOT an early return when this comes up empty (a deleted or deactivated rule
+        # leaves it exactly this way): every row the loop below still walks gets reset,
+        # which is the whole point - a companion whose rule is gone must not keep a
+        # frozen bundle (B3).
 
         hosts_by_rule: Dict[str, List[str]] = {}
         rule_ids = [rule.id for rule in active_rules]
-        for host_link in (
-            self.db.query(ProductCompanionRuleHost)
-            .filter(ProductCompanionRuleHost.rule_id.in_(rule_ids))
-            .order_by(ProductCompanionRuleHost.seq.asc())
-            .all()
-        ):
-            hosts_by_rule.setdefault(host_link.rule_id, []).append(host_link.host_product_id)
+        if rule_ids:
+            for host_link in (
+                self.db.query(ProductCompanionRuleHost)
+                .filter(ProductCompanionRuleHost.rule_id.in_(rule_ids))
+                .order_by(ProductCompanionRuleHost.seq.asc())
+                .all()
+            ):
+                hosts_by_rule.setdefault(host_link.rule_id, []).append(
+                    host_link.host_product_id
+                )
 
         linked_by_row = self._linked_qty_by_row([row.id for row in rows])
 
         for row in rows:
+            # `_refresh_link_state` never touches an ACTIONED or CANCELLED row's state -
+            # "a person's word about the row" - and this has to agree: an actioned
+            # companion keeps whatever it was actioned with, bundle included (B4).
+            if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED):
+                continue
+            if row.verb not in (IV_ORDER, IV_ORDER_BACK):
+                continue
+
             product_id = product_by_code.get(row.item_code)
             candidate_rules = rules_by_companion.get(product_id) if product_id else None
-            not_a_row_this_touches = row.verb not in (IV_ORDER, IV_ORDER_BACK) or row.state == (
-                INQUIRY_CANCELLED
-            )
-            if not candidate_rules or not_a_row_this_touches:
-                continue
+            linked = linked_by_row.get(row.id, _ZERO)
 
             bundled = _ZERO
             anchor_row_id: Optional[str] = None
-            for rule in candidate_rules:
+            # First rule that actually APPLIES wins (plan 3.2's anchor is "the first
+            # host row" of the rule that matched, never the larger of several
+            # candidates) - the UNIQUE constraint means more than one active rule for
+            # the same companion only happens across different supplier scopes, and at
+            # most one supplier scope can match a given order.
+            for rule in candidate_rules or []:
                 host_ids = hosts_by_rule.get(rule.id) or []
                 if not host_ids:
                     continue
@@ -3007,16 +3041,17 @@ class ProjectOrderInquiryService:
                     host_total = sum((_dec(h.qty) for h in host_rows), _ZERO)
                     cap = host_total * _dec(rule.ratio)
                     host_cap = cap if host_cap is None else min(host_cap, cap)
-                linked = linked_by_row.get(row.id, _ZERO)
                 remaining = max(_dec(row.qty) - linked, _ZERO)
-                candidate_bundle = min(remaining, host_cap if host_cap is not None else _ZERO)
-                if candidate_bundle > bundled:
-                    bundled = candidate_bundle
-                    anchor_row_id = host_rows_per_host[0][0].id
+                bundled = min(remaining, host_cap if host_cap is not None else _ZERO)
+                anchor_row_id = host_rows_per_host[0][0].id
+                break
 
+            # Written every time, win or lose: a row with no applicable rule (B3 - the
+            # rule was deleted or deactivated since the last derivation, or B7 - a pair
+            # rule with one host missing) resets to ala carte rather than keeping
+            # whatever an earlier pass left on it.
             row.bundled_qty = bundled
             row.bundled_with_row_id = anchor_row_id if bundled > _ZERO else None
-            linked = linked_by_row.get(row.id, _ZERO)
             row.state = self._coverage_state(_dec(row.qty), linked, bundled)
 
         self.db.flush()

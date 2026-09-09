@@ -168,10 +168,14 @@ export function bundledItemsLabel(itemCodes: string[]): string {
  *
  * `null` when the row carries no bundle at all, so a caller falls back to
  * `linkedSummary` exactly as before - today's un-bundled rows are unaffected.
+ *
+ * The anchor's own coverage (`anchor_headline`) is resolved SERVER-SIDE (review round
+ * 1 item 8) and read straight off `bundled_with` - never recomputed here by scanning
+ * a page's own loaded rows for a match, which was only ever right when the anchor
+ * happened to be on the SAME page as this row.
  */
 export function bundledHeadline(
   row: Pick<OrderInquiryWorklistRow, 'qty' | 'linked_qty' | 'bundled_qty' | 'bundled_with'>,
-  anchorSummary: { headline: string } | null,
 ): string | null {
   const bundled = row.bundled_with;
   if (!bundled) return null;
@@ -181,7 +185,7 @@ export function bundledHeadline(
   const qty = Number(row.qty ?? '0');
   const remainder = qty - bundledQty;
   if (remainder <= 0) {
-    const tail = anchorSummary ? anchorSummary.headline : 'Not found (new order)';
+    const tail = bundled.anchor_headline ?? 'Not found (new order)';
     return `Included with ${label} · ${tail}`;
   }
   const ownLinked = formatInquiryQty(row.linked_qty ?? '0');

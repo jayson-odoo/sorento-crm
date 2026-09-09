@@ -16,7 +16,6 @@ import { AddCompanionRuleModal } from './AddCompanionRuleModal';
 
 interface ProductSuppliedWithSectionProps {
   companionProductId: string;
-  companionItemCode: string;
 }
 
 function RuleRow({
@@ -94,12 +93,16 @@ function RuleRow({
  */
 export function ProductSuppliedWithSection({
   companionProductId,
-  companionItemCode,
 }: ProductSuppliedWithSectionProps) {
   const [addOpen, setAddOpen] = useState(false);
   const canEdit = useHasPermission('master_data.products.edit');
   const { data: rules, isLoading, isError } = useCompanionRulesForCompanion(companionProductId);
-  const deletion = useCompanionRuleDelete(companionProductId);
+  // Every host across the rules on screen, so deleting ANY of them also refetches
+  // that host's own "Ships with" mirror (review round 1 item 14).
+  const hostProductIds = [
+    ...new Set((rules ?? []).flatMap((rule) => rule.hosts.map((host) => host.product_id))),
+  ];
+  const deletion = useCompanionRuleDelete(companionProductId, hostProductIds);
 
   return (
     <Card>
@@ -152,7 +155,6 @@ export function ProductSuppliedWithSection({
           open={addOpen}
           onOpenChange={setAddOpen}
           companionProductId={companionProductId}
-          companionItemCode={companionItemCode}
         />
       ) : null}
     </Card>

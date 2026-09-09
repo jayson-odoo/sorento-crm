@@ -10,7 +10,6 @@ import { ProductShipsWithSection } from './ProductShipsWithSection';
 
 interface ProductSuppliersTabProps {
   productId: string;
-  productCode: string;
 }
 
 /** A dash is "not on file", which is a different fact from zero and must not read as it. */
@@ -30,10 +29,7 @@ function Term({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function ProductSuppliersTab({
-  productId,
-  productCode,
-}: ProductSuppliersTabProps) {
+export default function ProductSuppliersTab({ productId }: ProductSuppliersTabProps) {
   const { data: productSuppliers, isLoading } = useQuery({
     queryKey: ['product-suppliers', productId],
     queryFn: () => getProductSuppliersByProductId(productId),
@@ -109,10 +105,7 @@ export default function ProductSuppliersTab({
           ("Supplied with", it is the companion) and the mirror of anyone else's
           ("Ships with", it is a host). A product can be both at once, so both
           sections render unconditionally, each with its own empty state. */}
-      <ProductSuppliedWithSection
-        companionProductId={productId}
-        companionItemCode={productCode}
-      />
+      <ProductSuppliedWithSection companionProductId={productId} />
       <ProductShipsWithSection hostProductId={productId} />
     </div>
   );

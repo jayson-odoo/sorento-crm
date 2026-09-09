@@ -541,7 +541,12 @@ describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)
         linked_qty: '0',
         links: [],
         bundled_qty: '1',
-        bundled_with: { row_id: 'host-row', item_code: 'CKS1050', item_codes: ['CKS1050'] },
+        bundled_with: {
+          row_id: 'host-row',
+          item_code: 'CKS1050',
+          item_codes: ['CKS1050'],
+          anchor_headline: '1 of 1',
+        },
       }),
     ]);
 
@@ -561,7 +566,12 @@ describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)
         linked_qty: '0',
         links: [],
         bundled_qty: '1',
-        bundled_with: { row_id: 'host-row-2', item_code: 'CKS1050', item_codes: ['CKS1050'] },
+        bundled_with: {
+          row_id: 'host-row-2',
+          item_code: 'CKS1050',
+          item_codes: ['CKS1050'],
+          anchor_headline: null,
+        },
       }),
     ]);
 
@@ -587,7 +597,12 @@ describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)
         linked_qty: '0',
         links: [],
         bundled_qty: '1',
-        bundled_with: { row_id: 'host-row-3', item_code: 'CKS1050', item_codes: ['CKS1050'] },
+        bundled_with: {
+          row_id: 'host-row-3',
+          item_code: 'CKS1050',
+          item_codes: ['CKS1050'],
+          anchor_headline: '1 of 1',
+        },
       }),
     ]);
 
@@ -620,7 +635,12 @@ describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)
         links: [],
         bundled_qty: '2',
         // The FIRST host named on the rule is the anchor (plan 3.2) - X here.
-        bundled_with: { row_id: 'host-x', item_code: 'X', item_codes: ['X', 'Y'] },
+        bundled_with: {
+          row_id: 'host-x',
+          item_code: 'X',
+          item_codes: ['X', 'Y'],
+          anchor_headline: '2 of 2',
+        },
       }),
     ]);
 

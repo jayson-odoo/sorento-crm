@@ -263,6 +263,90 @@ def test_a2_create_with_two_hosts_and_a_fractional_ratio(db, world, monkeypatch)
     assert {h["product_id"] for h in body["hosts"]} == {world["host"].id, second_host.id}
 
 
+def test_a2_create_with_a_non_uuid_companion_id_is_422(db, world, monkeypatch):
+    """Review round 1 item 9: a malformed id fails VALIDATION (422), not a lookup
+    (404) - it never reached the database at all."""
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        BASE,
+        json={
+            "companion_product_id": "not-a-uuid",
+            "host_product_ids": [world["host"].id],
+            "supplier_id": None,
+            "ratio": 1,
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_a2_create_with_a_non_uuid_host_id_is_422(db, world, monkeypatch):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        BASE,
+        json={
+            "companion_product_id": world["companion"].id,
+            "host_product_ids": ["also-not-a-uuid"],
+            "supplier_id": None,
+            "ratio": 1,
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_a2_create_with_a_companion_id_that_does_not_exist_is_404(db, world, monkeypatch):
+    """A well-formed UUID naming no product (or, per A7, a product in ANOTHER
+    company) resolves through the company-scoped query and 404s - it never
+    confirms the id belongs to someone else."""
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        BASE,
+        json={
+            "companion_product_id": _uid(),
+            "host_product_ids": [world["host"].id],
+            "supplier_id": None,
+            "ratio": 1,
+        },
+    )
+    assert response.status_code == 404, response.text
+
+
+def test_a2_create_with_a_host_id_that_does_not_exist_is_404(db, world, monkeypatch):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        BASE,
+        json={
+            "companion_product_id": world["companion"].id,
+            "host_product_ids": [_uid()],
+            "supplier_id": None,
+            "ratio": 1,
+        },
+    )
+    assert response.status_code == 404, response.text
+
+
+def test_a2_create_with_a_host_id_from_another_company_is_404(db, world, monkeypatch):
+    other_company = Company(id=_uid(), name="ZZT Other Co B9", code=unique_code("CO")[:20])
+    db.add(other_company)
+    db.flush()
+    foreign_host = _product(db, "FOREIGN", company_id=other_company.id)
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        BASE,
+        json={
+            "companion_product_id": world["companion"].id,
+            "host_product_ids": [foreign_host.id],
+            "supplier_id": None,
+            "ratio": 1,
+        },
+    )
+    assert response.status_code == 404, response.text
+
+
 # --------------------------------------------------------------------------- A3 - delete
 
 
@@ -371,6 +455,38 @@ def test_a7_a_different_company_sees_none_of_these_rules(db, world, monkeypatch)
     assert response.json()["data"] == [], (
         "company D must see none of company C's rules, whatever id it is asked about"
     )
+
+
+def test_a7_a_different_company_sees_none_of_these_rules_by_host_either(db, world, monkeypatch):
+    """Review round 1 item 11: A7 covered the companion query; the HOST query (A5's
+    other half) is the same scope and needs the same proof."""
+    other_company = Company(id=_uid(), name="ZZT Other Co B11a", code=unique_code("CO")[:20])
+    db.add(other_company)
+    db.flush()
+    _rule(db, SORENTO, world["companion"], [world["host"]])
+
+    client = _caller(db, {VIEW}, monkeypatch, company_id=other_company.id)
+
+    response = client.get(BASE, params={"host_product_id": world["host"].id})
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == [], (
+        "company D must see none of company C's rules by host_product_id either"
+    )
+
+
+def test_a7_a_different_company_cannot_delete_this_rule(db, world, monkeypatch):
+    """Review round 1 item 11: company D's DELETE of company C's rule id must 404,
+    the same as any other cross-company record - never a 204 that quietly did
+    nothing, and never a 500 from an unscoped lookup."""
+    other_company = Company(id=_uid(), name="ZZT Other Co B11b", code=unique_code("CO")[:20])
+    db.add(other_company)
+    db.flush()
+    rule = _rule(db, SORENTO, world["companion"], [world["host"]])
+
+    client = _caller(db, {VIEW, EDIT}, monkeypatch, company_id=other_company.id)
+
+    response = client.delete(f"{BASE}/{rule.id}")
+    assert response.status_code == 404, response.text
 
 
 # --------------------------------------------------------------------------- auth denial

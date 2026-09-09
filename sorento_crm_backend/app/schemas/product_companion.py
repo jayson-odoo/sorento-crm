@@ -36,3 +36,15 @@ class ProductCompanionRuleCreate(BaseModel):
     host_product_ids: List[str]
     supplier_id: Optional[str] = None
     ratio: Decimal = Decimal("1")
+
+
+class ProductCompanionRuleListOut(BaseModel):
+    """The GET envelope, declared so `ratio` serializes the SAME way POST's does -
+
+    a `Decimal` field goes over the wire as a STRING (`"1.5000"`, the qty style every
+    other quantity on this codebase uses). Undeclared, FastAPI falls back to
+    `jsonable_encoder` on a plain dict, which turns `Decimal("1.5000")` into the bare
+    JSON number `1.5` - a different type AND a different value (review round 1 item 7).
+    """
+
+    data: List[ProductCompanionRuleOut] = []

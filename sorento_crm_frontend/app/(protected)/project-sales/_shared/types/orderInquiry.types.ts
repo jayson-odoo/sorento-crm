@@ -63,6 +63,11 @@ export interface OrderInquiryBundledWith {
   row_id: string;
   item_code: string;
   item_codes: string[];
+  /** The anchor row's OWN coverage ("1 of 1"), resolved server-side (review round 1
+   * item 8) - never resolved client-side by scanning a page's own loaded rows, which
+   * is only ever right when the anchor happens to be on the SAME page as this row.
+   * Null when the anchor has no links of its own yet ("Not found (new order)"). */
+  anchor_headline: string | null;
 }
 
 /**

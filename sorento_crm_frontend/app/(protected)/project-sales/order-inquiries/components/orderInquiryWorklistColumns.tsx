@@ -449,16 +449,16 @@ export function useOrderInquiryWorklistColumns({
           const bundled = row.original.bundled_with;
           const bundledQty = Number(row.original.bundled_qty ?? '0');
           if (bundled && Number.isFinite(bundledQty) && bundledQty > 0) {
-            // The anchor row lives in this same page of the worklist (it is the rule's
-            // first matching item on the SAME order) - `table.options.data` is the
-            // loaded rows, never a second fetch.
-            const rows = table.options.data as OrderInquiryWorklistRow[];
-            const anchorRow = rows.find((r) => r.id === bundled.row_id) ?? null;
-            const anchorSummary = anchorRow
-              ? linkedSummary(anchorRow.qty, anchorRow.linked_qty, anchorRow.links)
-              : null;
-            const headline = bundledHeadline(row.original, anchorSummary);
+            const headline = bundledHeadline(row.original);
             if (headline) {
+              // The FULL anchor row, for the info icon's own lightbox only (it needs
+              // the anchor's real documents, not just its headline) - the headline text
+              // above never depends on this: it comes straight off `bundled.anchor_headline`,
+              // resolved server-side. `table.options.data` is the loaded rows, never a
+              // second fetch; a page that does not happen to hold the anchor falls back
+              // to the row's own lightbox (`dialogRow` inside `BundledDocumentsButton`).
+              const rows = table.options.data as OrderInquiryWorklistRow[];
+              const anchorRow = rows.find((r) => r.id === bundled.row_id) ?? null;
               const qty = Number(row.original.qty ?? '0');
               const fullyBundled = qty - bundledQty <= 0;
               return (

@@ -597,6 +597,71 @@ def test_b15_a_fractional_ratio_scales_the_host_cap(world):
     assert world.demand_of(companion) == Decimal("1")
 
 
+def test_b16_deleting_the_rule_after_a_bundle_resets_it(world):
+    """Review B3: `derive_bundles`'s early returns used to leave a frozen
+    `bundled_qty` / `bundled_with_row_id` / `state` behind once the rule that produced
+    them was gone - demand kept subtracting a unit purchasing was never told to buy."""
+    rule = _single_host_rule(world)
+    world.row("CKS1050", 1)
+    companion = world.row("CKSW015", 1)
+    world.svc.derive_bundles(world.inquiry)
+    world.db.refresh(companion)
+    assert companion.bundled_qty == Decimal("1"), "sanity: B1 first"
+
+    world.db.delete(rule)
+    world.db.flush()
+    world.svc.derive_bundles(world.inquiry)
+    world.db.refresh(companion)
+
+    assert companion.bundled_qty == Decimal("0")
+    assert companion.bundled_with_row_id is None
+    assert companion.state == "raised"
+    assert world.demand_of(companion) == Decimal("1")
+
+
+def test_b17_deactivating_the_rule_after_a_bundle_also_resets_it(world):
+    """The deactivate-after-the-fact variant of B16 - B12 only covers a rule that was
+    already inactive before the first derivation."""
+    rule = _single_host_rule(world)
+    world.row("CKS1050", 1)
+    companion = world.row("CKSW015", 1)
+    world.svc.derive_bundles(world.inquiry)
+    world.db.refresh(companion)
+    assert companion.bundled_qty == Decimal("1"), "sanity: B1 first"
+
+    rule.is_active = False
+    world.db.flush()
+    world.svc.derive_bundles(world.inquiry)
+    world.db.refresh(companion)
+
+    assert companion.bundled_qty == Decimal("0")
+    assert companion.bundled_with_row_id is None
+    assert companion.state == "raised"
+    assert world.demand_of(companion) == Decimal("1")
+
+
+def test_b18_an_actioned_row_is_never_touched_by_derive_bundles(world):
+    """Review B4: `_refresh_link_state` treats ACTIONED / CANCELLED as "a person's
+    word about the row" and never overwrites them; `derive_bundles` must agree - it
+    used to keep writing `state` (and would keep writing `bundled_qty`) for an actioned
+    row too."""
+    _single_host_rule(world)
+    world.row("CKS1050", 1)
+    companion = world.row("CKSW015", 1)
+    world.svc.derive_bundles(world.inquiry)
+    world.db.refresh(companion)
+    assert companion.state == "placed", "sanity: B1 first"
+
+    companion.state = "actioned"
+    world.db.flush()
+
+    world.svc.derive_bundles(world.inquiry)
+    world.db.refresh(companion)
+
+    assert companion.state == "actioned", "a person's word - derive_bundles must not touch it"
+    assert companion.bundled_qty == Decimal("1"), "left exactly as it was when actioned"
+
+
 # =============================================================================================
 # C - cascade and planner
 # =============================================================================================
@@ -774,6 +839,128 @@ def test_d7_the_row_payload_carries_bundled_qty_and_bundled_with(world):
         assert body["bundled_qty"] == "1"
         assert body["bundled_with"]["row_id"] == host.id
         assert body["bundled_with"]["item_code"] == f"{MARKER}-CKS1050"
+    finally:
+        UserPermissionService.check_user_has_permission = originals[0]
+        UserPermissionService.get_user_permission_slugs = originals[1]
+        app.dependency_overrides.clear()
+
+
+def test_d7b_the_per_project_row_payload_also_carries_bundled_qty_and_bundled_with(world):
+    """Review 5: `OrderInquiryRowOut` (the PER-PROJECT route,
+    `/projects/{project_id}/order-inquiry-rows`) is a different schema from D7's
+    worklist row and silently dropped `bundled_qty`/`bundled_with` even though
+    `serialize_rows` (the one function both routes call) already computed them."""
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+    from app.services.company_scope_resolver import apply_company_scope
+
+    _single_host_rule(world)
+    host = world.row("CKS1050", 1)
+    companion = world.row("CKSW015", 1)
+    world.svc.derive_bundles(world.inquiry)
+
+    project_id = _uid()
+    world.db.execute(
+        text(
+            "INSERT INTO " + P + ".projects (id, company_id, project_code, title, "
+            "normalised_title) VALUES (:i, :c, :code, :code, :code)"
+        ),
+        {"i": project_id, "c": world.company_id, "code": f"{MARKER}-PROJECT"},
+    )
+    world.db.execute(
+        text("UPDATE " + P + ".sales_orders SET project_id = :p WHERE id = :i"),
+        {"p": project_id, "i": world.pso},
+    )
+    world.db.commit()
+
+    actor = {"id": _uid(), "email": "zzt-bundle@zzt.test"}
+    app.dependency_overrides[get_db] = lambda: world.db
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+    app.dependency_overrides[apply_company_scope] = lambda: None
+    from app.services.user_service import UserPermissionService
+
+    originals = (
+        UserPermissionService.check_user_has_permission,
+        UserPermissionService.get_user_permission_slugs,
+    )
+    UserPermissionService.check_user_has_permission = (
+        lambda self, uid, slug: slug == "projects.projects.view"
+    )
+    UserPermissionService.get_user_permission_slugs = (
+        lambda self, uid: ["projects.projects.view"]
+    )
+    try:
+        client = TestClient(app)
+        response = client.get(
+            f"/api/v1/project-sales/projects/{project_id}/order-inquiry-rows",
+            params={"limit": 100},
+        )
+        assert response.status_code == 200, response.text
+        body = next(
+            row for row in response.json()["data"] if row["id"] == companion.id
+        )
+        assert body["bundled_qty"] == "1"
+        assert body["bundled_with"]["row_id"] == host.id
+        assert body["bundled_with"]["item_code"] == f"{MARKER}-CKS1050"
+    finally:
+        UserPermissionService.check_user_has_permission = originals[0]
+        UserPermissionService.get_user_permission_slugs = originals[1]
+        app.dependency_overrides.clear()
+
+
+def test_d7c_the_worklist_payload_carries_the_anchors_own_headline(world):
+    """Review round 1 item 8: `bundled_with.anchor_headline` is resolved server-side,
+    once per page, rather than the client scanning its own loaded rows for a match -
+    asserted through the WORKLIST route (`GET /project-sales/order-inquiries`), same
+    reason as D7: `response_model` drops an undeclared field."""
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+    from app.services.company_scope_resolver import apply_company_scope
+
+    _single_host_rule(world)
+    host = world.row("CKS1050", 1)
+    companion = world.row("CKSW015", 1)
+    line = world.purchase_order("CKS1050", f"{MARKER}-PO-ANCHOR", "S1", 1)
+    world.svc.place_on_po_allocations(
+        host.id, [{"po_line_id": line, "qty": Decimal("1")}], actor_user_id=None
+    )
+    world.svc.derive_bundles(world.inquiry)
+    world.db.commit()
+
+    actor = {"id": _uid(), "email": "zzt-bundle@zzt.test"}
+    app.dependency_overrides[get_db] = lambda: world.db
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+    app.dependency_overrides[apply_company_scope] = lambda: None
+    from app.services.user_service import UserPermissionService
+
+    originals = (
+        UserPermissionService.check_user_has_permission,
+        UserPermissionService.get_user_permission_slugs,
+    )
+    UserPermissionService.check_user_has_permission = (
+        lambda self, uid, slug: slug == "projects.projects.view"
+    )
+    UserPermissionService.get_user_permission_slugs = (
+        lambda self, uid: ["projects.projects.view"]
+    )
+    try:
+        client = TestClient(app)
+        response = client.get("/api/v1/project-sales/order-inquiries", params={"limit": 100})
+        assert response.status_code == 200, response.text
+        body = next(
+            row for row in response.json()["data"] if row["id"] == companion.id
+        )
+        assert body["bundled_with"]["anchor_headline"] == "1 of 1", (
+            "the host has one link for its one unit - the anchor's own coverage"
+        )
     finally:
         UserPermissionService.check_user_has_permission = originals[0]
         UserPermissionService.get_user_permission_slugs = originals[1]

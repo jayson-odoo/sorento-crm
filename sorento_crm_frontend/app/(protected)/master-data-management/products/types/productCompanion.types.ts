@@ -24,8 +24,10 @@ export interface ProductCompanionRuleRow {
   supplier_id: string | null;
   supplier_code: string | null;
   supplier_name: string | null;
-  /** Companion units per ONE host unit. Fractional allowed (NUMERIC on the backend). */
-  ratio: number;
+  /** Companion units per ONE host unit. Fractional allowed (NUMERIC on the backend);
+   * a string on the wire, the same "qty style" every other quantity in this codebase
+   * uses (backend `Decimal` fields serialize to a JSON string, never a bare number). */
+  ratio: string;
   is_active: boolean;
   hosts: ProductCompanionHostRef[];
   created_at: string;
@@ -36,5 +38,8 @@ export interface ProductCompanionRuleWrite {
   companion_product_id: string;
   host_product_ids: string[];
   supplier_id: string | null;
-  ratio: number;
+  /** Sent as the string the user typed, not a parsed `Number` - the backend's
+   * `Decimal` field parses a string exactly, where a JS float can round a value
+   * like "0.1" before it ever leaves the browser. */
+  ratio: string;
 }

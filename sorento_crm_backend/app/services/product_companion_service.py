@@ -12,14 +12,27 @@ The route contract (frontend already mocks it, Phase 1, `productCompanionService
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.product import Product
 from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
 from app.services.error_handler import AppException, handle_conflict, handle_not_found
+from app.services.uuid_path_param import UUID_PATTERN
+
+_UUID_RE = re.compile(UUID_PATTERN)
+
+
+def _require_uuid_shape(value: Any, *, field: str) -> str:
+    """422, not 404 - this is a body field failing validation, not a path id that
+    reads as a guaranteed-missing row (review round 1 item 9)."""
+    s = str(value or "").strip()
+    if not _UUID_RE.match(s):
+        raise AppException(status_code=422, message=f"{field} must be a valid id")
+    return s.lower()
 
 
 def _serialize(rule: ProductCompanionRule) -> Dict[str, Any]:
@@ -97,6 +110,12 @@ class ProductCompanionService:
             raise AppException(
                 status_code=422, message="At least one host product is required"
             )
+        companion_product_id = _require_uuid_shape(
+            companion_product_id, field="companion_product_id"
+        )
+        host_product_ids = [
+            _require_uuid_shape(hid, field="host_product_ids") for hid in host_product_ids
+        ]
         if companion_product_id in host_product_ids:
             raise AppException(
                 status_code=422,
@@ -108,6 +127,19 @@ class ProductCompanionService:
             raise AppException(status_code=422, message="Ratio must be a number") from exc
         if ratio_dec <= 0:
             raise AppException(status_code=422, message="Ratio must be greater than zero")
+
+        # Every id resolved through a COMPANY-SCOPED query (the class docstring's own
+        # rule: no explicit company_id argument, `do_orm_execute` applies it) - a well-
+        # formed UUID naming a product in another company reads exactly like one that
+        # does not exist at all, which is the correct answer (never confirm a
+        # cross-company id is real).
+        wanted_ids = {companion_product_id, *host_product_ids}
+        found_ids = {
+            pid for (pid,) in self.db.query(Product.id).filter(Product.id.in_(wanted_ids)).all()
+        }
+        missing = wanted_ids - found_ids
+        if missing:
+            raise handle_not_found("Product", next(iter(missing)))
 
         self._reject_duplicate(companion_product_id, supplier_id)
 
@@ -144,12 +176,16 @@ class ProductCompanionService:
     def _reject_duplicate(self, companion_product_id: str, supplier_id: Optional[str]) -> None:
         """UAC A4: the same companion + supplier scope (including two "any supplier"
         rules) is a 409 naming the existing rule, never a silent refusal."""
+        supplier_predicate = (
+            ProductCompanionRule.supplier_id == supplier_id
+            if supplier_id
+            else ProductCompanionRule.supplier_id.is_(None)
+        )
         existing = (
             self._query()
             .filter(
                 ProductCompanionRule.companion_product_id == companion_product_id,
-                ProductCompanionRule.supplier_id == supplier_id if supplier_id else
-                ProductCompanionRule.supplier_id.is_(None),
+                supplier_predicate,
             )
             .first()
         )
@@ -170,42 +206,75 @@ class ProductCompanionService:
         )
 
 
-def bundled_with_item_codes(
-    db: Session, *, company_id: str, companion_item_code: str, anchor_item_code: Optional[str]
-) -> List[str]:
-    """Every item code the rule that bundled this row names, in rule order (UAC D10 -
-    "Included with 2 items", the lightbox naming both). Re-derived at read time rather
-    than stored: `bundled_with_row_id` on the row is one anchor id (plan 3.2), never the
-    whole list, so a reader that needs every code asks the rule the anchor's own product
-    is a host of.
+def bundled_with_item_codes_map(
+    db: Session, *, company_id: str, companion_item_codes: Iterable[str]
+) -> Dict[str, List[str]]:
+    """Every bundled companion's rule, resolved in TWO queries for a whole PAGE of rows
+    rather than two PER bundled row (review round 1 item 10 - `_bundled_po_number` and
+    `_serialize`/`serialize_rows` used to ask the database once per row for a fact that
+    is the same for every row naming the same companion).
 
-    Best-effort: an anchor whose rule cannot be found (deleted since, or the anchor's
-    product not resolvable) falls back to naming just the anchor's own code, so a
-    reader never renders an empty "Included with" line.
+    Keyed by companion item code; the value is that companion's active rule's hosts, in
+    rule order (UAC D10 - "Included with 2 items"). A companion with no active rule
+    (deleted or deactivated since the row was derived, B16/B17) is simply absent from
+    the map - `resolve_bundled_item_codes` below falls back to naming just the anchor
+    for that case, exactly as the per-row version used to.
+    """
+    codes = {code for code in companion_item_codes if code}
+    if not codes:
+        return {}
+    id_to_code = dict(
+        db.query(Product.id, Product.product_code).filter(
+            Product.company_id == company_id, Product.product_code.in_(codes)
+        )
+    )
+    if not id_to_code:
+        return {}
+    rules = (
+        db.query(ProductCompanionRule)
+        .options(
+            joinedload(ProductCompanionRule.hosts).joinedload(
+                ProductCompanionRuleHost.host_product
+            )
+        )
+        .filter(
+            ProductCompanionRule.company_id == company_id,
+            ProductCompanionRule.companion_product_id.in_(id_to_code.keys()),
+            ProductCompanionRule.is_active.is_(True),
+        )
+        .all()
+    )
+    result: Dict[str, List[str]] = {}
+    for rule in rules:
+        companion_code = id_to_code.get(rule.companion_product_id)
+        if not companion_code:
+            continue
+        host_codes = [
+            host.host_product.product_code
+            for host in sorted(rule.hosts, key=lambda h: h.seq)
+            if host.host_product is not None
+        ]
+        if host_codes:
+            result[companion_code] = host_codes
+    return result
+
+
+def resolve_bundled_item_codes(
+    bundle_map: Dict[str, List[str]],
+    *,
+    companion_item_code: str,
+    anchor_item_code: Optional[str],
+) -> List[str]:
+    """Pure lookup against a map `bundled_with_item_codes_map` already built for the
+    whole page - no database access here at all (review round 1 item 10).
+
+    Best-effort, same as the map builder's own docstring: an anchor whose rule is not
+    in the map falls back to naming just the anchor's own code, so a reader never
+    renders an empty "Included with" line.
     """
     if not anchor_item_code:
         return []
-    companion_id = (
-        db.query(Product.id)
-        .filter(Product.company_id == company_id, Product.product_code == companion_item_code)
-        .scalar()
-    )
-    if companion_id:
-        rules = (
-            db.query(ProductCompanionRule)
-            .filter(
-                ProductCompanionRule.company_id == company_id,
-                ProductCompanionRule.companion_product_id == companion_id,
-                ProductCompanionRule.is_active.is_(True),
-            )
-            .all()
-        )
-        for rule in rules:
-            codes = [
-                host.host_product.product_code
-                for host in sorted(rule.hosts, key=lambda h: h.seq)
-                if host.host_product is not None
-            ]
-            if codes and codes[0] == anchor_item_code:
-                return codes
+    codes = bundle_map.get(companion_item_code)
+    if codes and codes[0] == anchor_item_code:
+        return codes
     return [anchor_item_code]

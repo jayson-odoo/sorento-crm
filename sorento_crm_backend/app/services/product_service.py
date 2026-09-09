@@ -1131,36 +1131,49 @@ class ProductService:
     def _reject_if_companion_rule_dependency(self, product_id: str) -> None:
         """RESTRICT is real at the DB level (migration 495), but a bare
         `IntegrityError` names no rule - this pre-check answers with the same 409 the
-        FK would raise anyway, naming what is actually blocking it (UAC A6)."""
+        FK would raise anyway, naming what is actually blocking it, by item code, never
+        a rule id or a raw UUID (UAC A6, review round 1 item 6)."""
+        from sqlalchemy.orm import joinedload
+
         from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
 
         as_companion = (
             self.db.query(ProductCompanionRule)
+            .options(
+                joinedload(ProductCompanionRule.hosts).joinedload(
+                    ProductCompanionRuleHost.host_product
+                )
+            )
             .filter(ProductCompanionRule.companion_product_id == product_id)
             .first()
         )
         if as_companion is not None:
-            raise AppException(
-                status_code=409,
-                message=(
-                    f"This product is the companion of a \"supplied with\" rule "
-                    f"({as_companion.id}). Delete the rule first."
-                ),
-                code="CONFLICT",
+            host_codes = " + ".join(
+                host.host_product.product_code
+                for host in as_companion.hosts
+                if host.host_product is not None
+            )
+            raise handle_conflict(
+                f"This product is the companion of a \"supplied with\" rule "
+                f"(included with {host_codes or 'a host'}). Delete the rule first."
             )
         as_host = (
             self.db.query(ProductCompanionRuleHost)
+            .options(joinedload(ProductCompanionRuleHost.rule).joinedload(
+                ProductCompanionRule.companion_product
+            ))
             .filter(ProductCompanionRuleHost.host_product_id == product_id)
             .first()
         )
         if as_host is not None:
-            raise AppException(
-                status_code=409,
-                message=(
-                    "This product is named as a host in a \"supplied with\" rule "
-                    f"({as_host.rule_id}). Delete the rule first."
-                ),
-                code="CONFLICT",
+            companion_code = (
+                as_host.rule.companion_product.product_code
+                if as_host.rule and as_host.rule.companion_product
+                else "a companion"
+            )
+            raise handle_conflict(
+                f"This product is named as a host in a \"supplied with\" rule "
+                f"for {companion_code}. Delete the rule first."
             )
 
     def _reconcile_variant_links(self, code_or_id: str) -> None:

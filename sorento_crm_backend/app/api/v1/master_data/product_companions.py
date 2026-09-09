@@ -17,7 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
-from app.schemas.product_companion import ProductCompanionRuleCreate, ProductCompanionRuleOut
+from app.schemas.product_companion import (
+    ProductCompanionRuleCreate,
+    ProductCompanionRuleListOut,
+    ProductCompanionRuleOut,
+)
 from app.services.error_handler import AppException
 from app.services.product_companion_service import ProductCompanionService
 from app.services.uuid_path_param import validate_uuid_path
@@ -28,7 +32,7 @@ VIEW = "master_data.products.view"
 EDIT = "master_data.products.edit"
 
 
-@router.get("")
+@router.get("", response_model=ProductCompanionRuleListOut)
 def list_product_companion_rules(
     companion_product_id: Optional[str] = Query(None),
     host_product_id: Optional[str] = Query(None),

@@ -5,7 +5,6 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -24,7 +23,6 @@ interface AddCompanionRuleModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   companionProductId: string;
-  companionItemCode: string;
 }
 
 function displayProduct(p: { product_code: string; product_name: string }): string {
@@ -41,7 +39,6 @@ export function AddCompanionRuleModal({
   open,
   onOpenChange,
   companionProductId,
-  companionItemCode,
 }: AddCompanionRuleModalProps) {
   const [hostIds, setHostIds] = useState<string[]>([]);
   const [supplierId, setSupplierId] = useState('');
@@ -72,7 +69,11 @@ export function AddCompanionRuleModal({
 
   const selectedHostOptions = hostIds.map((id) => {
     const ref = hostRefsRef.current.get(id);
-    return { value: id, label: ref ? displayProduct(ref) : id };
+    // Never a raw id (no UUIDs in the UI) - a ref that has not resolved yet reads as
+    // blank rather than as the id underneath it. In practice this never shows: an id
+    // only ever enters `hostIds` by picking a fetched option, which caches its ref
+    // into `hostRefsRef` first.
+    return { value: id, label: ref ? displayProduct(ref) : '' };
   });
 
   const ratioValue = Number(ratio);
@@ -87,7 +88,7 @@ export function AddCompanionRuleModal({
         companion_product_id: companionProductId,
         host_product_ids: hostIds,
         supplier_id: supplierId || null,
-        ratio: ratioValue,
+        ratio,
       });
       onOpenChange(false);
     } catch {
@@ -102,10 +103,6 @@ export function AddCompanionRuleModal({
         <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>Add "supplied with" rule</DialogTitle>
-            <DialogDescription>
-              {companionItemCode} ships inside these products' own line - never its own PO
-              line - whenever all of them are present on the same order.
-            </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4">
             <div className="space-y-1.5">
@@ -138,7 +135,7 @@ export function AddCompanionRuleModal({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="companion-rule-ratio">Ratio (companion units per 1 unit above)</Label>
+              <Label htmlFor="companion-rule-ratio">Ratio</Label>
               <Input
                 id="companion-rule-ratio"
                 type="number"
