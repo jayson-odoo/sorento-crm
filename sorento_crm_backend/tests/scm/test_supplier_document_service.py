@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from app.config import settings
 from app.models.procurement import Supplier
@@ -31,6 +32,11 @@ pytestmark = pytest.mark.usefixtures("no_live_llm")
 MARKER = "ZZSD"
 _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
+#: The lane's own sample set (the real files the plan was measured on), for the two preview
+#: facts below that only a REAL pair and a REAL combined sheet can state.
+_LANE_FIXTURES = (
+    Path(__file__).resolve().parents[3] / "documentation" / "plans" / "scm" / "fixtures"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -340,3 +346,81 @@ def test_preview_commits_so_a_second_preview_of_the_same_file_asks_the_model_onc
         db.commit()
 
         assert fake.calls == 1
+
+
+# --------------------------------------------------------------- ruling 22 / ruling 24
+
+
+def _kailu_pair() -> list[tuple[str, bytes]]:
+    return [
+        (
+            "KAILU形式发票(Sorento)260730.xlsx",
+            (_LANE_FIXTURES / "KAILU形式发票(Sorento)260730.xlsx").read_bytes(),
+        ),
+        (
+            "Sorento装箱单（凯路）260730.xls",
+            (_LANE_FIXTURES / "Sorento装箱单（凯路）260730.xls").read_bytes(),
+        ),
+    ]
+
+
+def test_a_packing_list_attaches_to_the_invoice_uploaded_beside_it():
+    """Ruling 22: Test writes nothing, so the invoice a packing list belongs to may be a
+    FILE in the same batch rather than a row. The Kailu pair, dropped in together, must show
+    what it attaches to - not the refusal `resolve_attach` gives for an empty database."""
+    with blank_session() as db:
+        _seed_aliases(db)
+        # Migration 501's own alias, which the date half of the resolution reads off the
+        # Kailu packing list's bare English `Date：` label. `_seed_aliases` builds this
+        # schema by hand from the alias migrations and stops before it.
+        db.connection().execute(
+            text(
+                "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
+                "VALUES ('packing_list','invoice_date','Date','en') "
+                "ON CONFLICT (doc_type, field, alias) DO NOTHING"
+            )
+        )
+        db.commit()
+        w = _seed_world(db)
+
+        out = svc.preview(db, _kailu_pair(), supplier_id=str(w.supplier.id))
+
+        packing = next(f for f in out["files"] if f["kind"] == "packing_list")
+        attach = packing["packing_attach"]
+        assert len(attach) == 1, "the Kailu packing list is one block"
+        assert attach[0]["refusal"] is None
+        assert attach[0]["attach_to"] is not None
+        assert attach[0]["attach_to"]["how"] == "same_batch"
+        # No id and no number of ours: neither exists until Confirm writes the row. What
+        # names it is the supplier's own reference, off the file beside it.
+        assert attach[0]["attach_to"]["id"] is None
+        assert attach[0]["attach_to"]["pi_number"] is None
+        assert attach[0]["attach_to"]["supplier_ref"] == "KL20260730"
+        assert attach[0]["attach_to"]["file"] == "KAILU形式发票(Sorento)260730.xlsx"
+
+
+def test_a_combined_sheet_says_which_readers_could_not_place_a_header():
+    """Ruling 24: the Jinbaichuan sheet is read as an invoice AND as a packing list, so a
+    header neither could place has to be mapped for both - the dialog cannot know that from
+    the file's `kind`, and mapping it once left half the file ignoring the column."""
+    with blank_session() as db:
+        _seed_aliases(db)
+        w = _seed_world(db)
+
+        out = svc.preview(
+            db,
+            [
+                (
+                    "Jinbaichuan_Invoice.xlsx",
+                    (_LANE_FIXTURES / "Jinbaichuan_Invoice.xlsx").read_bytes(),
+                )
+            ],
+            supplier_id=str(w.supplier.id),
+        )
+
+        preview = out["files"][0]
+        assert preview["kind"] == "combined"
+        by_doc_type = preview["unmapped_header_doc_types"]
+        assert by_doc_type["尺寸（mm）"] == ["proforma_invoice", "packing_list"]
+        # The flat list stays what it was - the union, in the order the readers reported.
+        assert "尺寸（mm）" in preview["unmapped_headers"]
