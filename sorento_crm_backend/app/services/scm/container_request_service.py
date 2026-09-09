@@ -122,12 +122,11 @@ PL_REMAINING_SQL = (
 #: already been turned into an SPO. Always <= `PL_REMAINING_SQL` (an allocated unit is also
 #: a received-or-not-yet unit), which is why filtering rows on `PL_REMAINING_SQL > 0` never
 #: drops a line this figure would otherwise count.
-#: CAVEAT: `l.spo_allocated_quantity` is written by
-#: `InboundShipmentService.refresh_shipment_line_statuses`, which sums SPO allocations for the
-#: SHIPMENT grouped by PRODUCT and stamps that same product total onto every line of that
-#: product on the shipment - not the allocation for that one line. A shipment with more than
-#: one line for the same product would over-subtract here; every shipment measured so far has
-#: had at most one line per product, so this has not yet been observed to matter.
+#: `l.spo_allocated_quantity` is per LINE since S4 (AC-D5): `refresh_shipment_line_statuses`
+#: apportions the product's allocated total across that product's own lines on the shipment
+#: in `(created_at, id)` order rather than stamping the product total onto each of them, so
+#: a container carrying one product on two lines (the supplier's own carton split) subtracts
+#: each line's own share here exactly once.
 PL_UNALLOCATED_SQL = (
     "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.spo_allocated_quantity, 0) "
     "- COALESCE(l.quantity_received, 0), 0)"

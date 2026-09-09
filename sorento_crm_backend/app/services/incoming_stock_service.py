@@ -93,7 +93,9 @@ def _not_draft_shipment_filter():
 
 
 def _unallocated_quantity(
-    quantity_shipped: Any, allocations: list[dict[str, Any]]
+    quantity_shipped: Any,
+    allocations: list[dict[str, Any]],
+    allocated: Optional[int] = None,
 ) -> Optional[int]:
     """How much of this incoming line is not yet claimed by any warehouse (SPO allocation).
 
@@ -116,9 +118,42 @@ def _unallocated_quantity(
         base = int(quantity_shipped or 0)
     except (TypeError, ValueError):
         return None
-    allocated = sum(int(a.get("allocated_quantity") or 0) for a in allocations)
-    gap = base - allocated
+    # `allocations` is per (shipment, PRODUCT), and one product may now sit on two lines of
+    # one container (the supplier's carton split, S4) - so the caller passes THIS line's own
+    # apportioned share (`_allocated_by_line`). Without it both lines were measured against
+    # the product's whole allocation and a genuinely unallocated line read as fully covered
+    # (AC-D6).
+    if allocated is None:
+        allocated = sum(int(a.get("allocated_quantity") or 0) for a in allocations)
+    gap = base - int(allocated or 0)
     return gap if gap > 0 else None
+
+
+def _allocated_by_line(
+    rows: list[Any], warehouse_map: dict[tuple[str, str], list[dict[str, Any]]]
+) -> dict[str, int]:
+    """`{shipment line id: its own share of the product's allocation}` (AC-D5/AC-D6).
+
+    The same walk `refresh_shipment_line_statuses` uses for the stored figures: that
+    product's lines on that container in `(created_at, id)` order, each taking up to its
+    own `quantity_shipped`, the last taking whatever is left. 50 + 35 shipped with 60
+    allocated reads 50 / 10, so the gaps read 0 and 25.
+    """
+    from app.services.procurement_service import _apportion
+
+    by_pair: dict[tuple[str, str], list[Any]] = defaultdict(list)
+    for r in rows:
+        by_pair[(str(r.shipment_id), str(r.product_id))].append(r)
+    out: dict[str, int] = {}
+    for pair, group in by_pair.items():
+        total = sum(
+            int(a.get("allocated_quantity") or 0) for a in warehouse_map.get(pair, [])
+        )
+        ordered = sorted(
+            group, key=lambda r: (r.created_at or datetime.min, str(r.id))
+        )
+        out.update(_apportion(total, ordered))
+    return out
 
 
 def _attachment_payload(attachment: Optional[Attachment]) -> Optional[dict[str, Any]]:
@@ -298,6 +333,10 @@ class IncomingStockService:
         remaining = _remaining_expr().label("remaining_incoming")
         rows = (
             self.db.query(
+                # The LINE's own identity, so the product's allocation can be apportioned
+                # across the two lines a carton split leaves (AC-D6). Never emitted.
+                InboundShipmentLine.id,
+                InboundShipmentLine.created_at,
                 InboundShipmentLine.shipment_id,
                 InboundShipmentLine.product_id,
                 InboundShipmentLine.batch_number,
@@ -357,6 +396,7 @@ class IncomingStockService:
 
         pairs = [(str(r.shipment_id), str(r.product_id)) for r in rows]
         warehouse_map = self._warehouse_allocations_for(pairs)
+        allocated_by_line = _allocated_by_line(rows, warehouse_map)
         attachment_map = self._attachments_for_shipments(
             [str(r.shipment_id) for r in rows]
         )
@@ -389,7 +429,9 @@ class IncomingStockService:
                     "batch_number": r.batch_number,
                     "remaining_incoming_quantity": int(r.remaining_incoming or 0),
                     "unallocated_quantity": _unallocated_quantity(
-                        r.quantity_shipped, ship_allocations
+                        r.quantity_shipped,
+                        ship_allocations,
+                        allocated_by_line.get(str(r.id)),
                     ),
                     "warehouse_allocations": ship_allocations,
                     "attachment": attachment_map.get(str(r.shipment_id)),
@@ -707,6 +749,9 @@ class IncomingStockService:
             line2_filters.append(InboundShipmentLine.product_id.in_(resolved_pids))
         line_rows = (
             self.db.query(
+                # The LINE's own identity, for the same apportioning as above (AC-D6).
+                InboundShipmentLine.id,
+                InboundShipmentLine.created_at,
                 InboundShipmentLine.shipment_id,
                 InboundShipmentLine.product_id,
                 InboundShipmentLine.batch_number,
@@ -723,6 +768,7 @@ class IncomingStockService:
 
         pairs = [(str(r.shipment_id), str(r.product_id)) for r in line_rows]
         warehouse_map = self._warehouse_allocations_for(pairs)
+        allocated_by_line = _allocated_by_line(line_rows, warehouse_map)
         attachment_map = self._attachments_for_shipments(page_ship_ids)
 
         lines_by_ship: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -736,7 +782,9 @@ class IncomingStockService:
                     "batch_number": r.batch_number,
                     "remaining_incoming_quantity": int(r.remaining_incoming or 0),
                     "unallocated_quantity": _unallocated_quantity(
-                        r.quantity_shipped, allocations
+                        r.quantity_shipped,
+                        allocations,
+                        allocated_by_line.get(str(r.id)),
                     ),
                     "warehouse_allocations": allocations,
                 }

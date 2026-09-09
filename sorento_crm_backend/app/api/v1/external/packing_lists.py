@@ -1,7 +1,8 @@
 """External API for packing lists (inbound shipments)."""
 import html
+import json
 import logging
-from typing import cast
+from typing import Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -61,6 +62,50 @@ def stamp_duplicate_integration_log(
         return
     log.error_code = error_code
     log.error_message = error_message
+    db.commit()
+
+
+def log_lines_skipped(
+    db: Session,
+    shipment_id: str,
+    attachment_id: str,
+    reason: str,
+    *,
+    created_by: Optional[str] = None,
+) -> None:
+    """Record that this update left the shipment's lines alone (AC-D4b).
+
+    A SUCCESS row, not an error: the header was updated, and the lines were deliberately
+    not - the shipment's lines are its proforma invoices' carton split, which this
+    forwarder's own upload has no grain for. On file so the question "why did my re-upload
+    not change the lines" has an answer that outlives the response.
+    """
+    db.add(
+        IntegrationLog(
+            integration_channel="external_api",
+            business_table="inbound_shipments",
+            business_id=str(shipment_id),
+            external_reference=str(attachment_id) if attachment_id else None,
+            direction="inbound",
+            endpoint="/api/v1/external/packing-lists/",
+            http_method="POST",
+            status_code=201,
+            status="success",
+            # NOT `error_code`/`error_message`: every drawer in the app reads those two as
+            # "this integration failed", and this one did not - the header landed exactly
+            # as asked.
+            response_payload=json.dumps(
+                {
+                    "lines_skipped_reason": reason,
+                    "message": (
+                        "Header updated; the lines come from this shipment's proforma "
+                        "invoices and were left untouched."
+                    ),
+                }
+            ),
+            created_by=created_by,
+        )
+    )
     db.commit()
 
 
@@ -219,10 +264,31 @@ def create_packing_list(
         logger.warning("External packing list notification failed: %s", e, exc_info=True)
 
     already_existed = bool(getattr(created, "_already_existed", False))
+    lines_skipped_reason = getattr(created, "lines_skipped_reason", None)
+    if lines_skipped_reason:
+        # AC-D4b: the caller is told in the response AND the fact is on file, because the
+        # caller here is n8n and nobody reads its console. Best-effort - a logging failure
+        # must never turn a successful header update into a 500.
+        try:
+            log_lines_skipped(
+                db,
+                str(created.id),
+                payload.packing_list.attachment_id,
+                lines_skipped_reason,
+                created_by=created_by,
+            )
+        except Exception as log_error:  # noqa: BLE001
+            logger.warning(
+                "Failed to log the skipped-lines reason for shipment %s: %s",
+                created.id,
+                log_error,
+                exc_info=True,
+            )
     return PackingListCreateResponse(
         shipment=InboundShipmentResponse.model_validate(created),
         skipped_product_codes=skipped_product_codes,
         unknown_product_codes=skipped_product_codes,
         already_existed=already_existed,
+        lines_skipped_reason=lines_skipped_reason,
         message=("Packing list updated in place." if already_existed else None),
     )
