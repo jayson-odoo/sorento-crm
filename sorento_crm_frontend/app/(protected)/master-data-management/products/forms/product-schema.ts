@@ -6,9 +6,9 @@ export const ProductSchema = z.object({
     .string()
     .min(1, { message: 'Product code is required.' })
     .max(100, { message: 'Product code must not exceed 100 characters.' })
-    .regex(/^[A-Za-z0-9 _\-./()+#]+$/, {
+    .regex(/^[A-Za-z0-9 _\-./()+#*]+$/, {
       message:
-        'Product code may contain letters, numbers, spaces, and the symbols - _ . / ( ) + #.',
+        'Product code may contain letters, numbers, spaces, and the symbols - _ . / ( ) + # *.',
     }),
   product_name: z
     .string()

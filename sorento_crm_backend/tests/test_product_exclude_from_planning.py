@@ -134,6 +134,26 @@ def test_put_sets_exclude_from_planning_and_get_detail_reflects_it(api, world, d
     assert detail.json().get("exclude_from_planning") is True
 
 
+def test_put_round_trips_on_an_autocount_placeholder_code(api, world, db):
+    """AC-S5.7: a product whose CODE is one of the AutoCount placeholders (`**NEW`,
+    `**SPARE PART`, `**REPLACE`, `**REPAIR`) must round-trip `exclude_from_planning`
+    exactly like any other - no backend validator on `product_code` may reject the `*`
+    the buyer needs to flip the switch on the very codes S5 exists for."""
+    pid = world["product"]("**NEW")
+    db.commit()
+
+    res = api.put(
+        f"/api/v1/master-data/products/{pid}", json={"exclude_from_planning": True}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json().get("product_code") == "**NEW"
+    assert res.json().get("exclude_from_planning") is True
+
+    detail = api.get(f"/api/v1/master-data/products/{pid}")
+    assert detail.json().get("product_code") == "**NEW"
+    assert detail.json().get("exclude_from_planning") is True
+
+
 def test_the_products_list_serializer_carries_the_field(db, world):
     """`list_query_registry`'s `products` resource serializes through the SAME
     `ProductResponse` the routes use (`_serialize_products`) - pinned directly against

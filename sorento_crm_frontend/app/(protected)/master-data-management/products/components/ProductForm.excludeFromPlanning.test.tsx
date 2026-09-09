@@ -125,4 +125,26 @@ describe('ProductForm - Exclude from reorder planning switch (AC-S5.4)', () => {
     const [payload] = createMutateAsync.mock.calls[0];
     expect(payload.exclude_from_planning).toBe(true);
   });
+
+  it('AC-S5.7: accepts an AutoCount placeholder code (**NEW) so it can be excluded', async () => {
+    // The buyer's own flow: **NEW/**SPARE PART/**REPLACE/**REPAIR are the codes S5 exists
+    // to let purchasing opt out of - a product-code validator that rejects `*` blocks the
+    // whole slice at the form (found by the browser walk, 9 Sep).
+    render(<ProductForm />);
+    fireEvent.change(screen.getByLabelText(/Product Code/i), { target: { value: '**NEW' } });
+    fireEvent.change(screen.getByLabelText(/Product Name/i), {
+      target: { value: 'Placeholder code product' },
+    });
+    fireEvent.change(screen.getByLabelText('Search category...'), { target: { value: CAT_ID } });
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Specifications/i }));
+    fireEvent.change(await screen.findByLabelText('Select base UOM'), { target: { value: UOM_ID } });
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Basic Information/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: /Save|Create/i }));
+
+    await waitFor(() => expect(createMutateAsync).toHaveBeenCalled());
+    expect(screen.queryByText(/may contain letters, numbers, spaces/i)).not.toBeInTheDocument();
+    const [payload] = createMutateAsync.mock.calls[0];
+    expect(payload.product_code).toBe('**NEW');
+  });
 });
