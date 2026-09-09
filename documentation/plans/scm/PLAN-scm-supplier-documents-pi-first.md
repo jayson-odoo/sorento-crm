@@ -319,3 +319,11 @@ route, serializer keys `supplier_ref` / `seal_ref`.
     CPU until the daemon died. Reproduce in a headless browser; suspect a DataGrid render loop
     (see `project_datagrid_inline_data_render_loop` in LESSONS-LEARNT / memory: inline `data`
     or `columns` identity changing every render). Fix and prove it with the browser before commit.
+
+**Round 1 outcome (10 Sep):** all 21 items landed (7d128cfa4, d97406176, 9c5e5fcad, 26b91d06b,
+659c73c37, 57e9c0952, 8d3b4fd59, ac2958834). Accepted as rulings: the attach order is explicit →
+stated invoice number (container-suffixed) → block container = exactly one current PI's
+`container_ref` → same date → refuse; the chip delete is registered as `import_field_alias.forget`
+(reversible window, same family as `supplier_code_alias.forget`); the dialog's supplier picker uses
+`fetchOptions` + paginated search while `useFulfilmentSuppliers` stays whole-list for the list filter;
+the two packing test files seed migration 501's `Date` alias. Item 11 was already true.
