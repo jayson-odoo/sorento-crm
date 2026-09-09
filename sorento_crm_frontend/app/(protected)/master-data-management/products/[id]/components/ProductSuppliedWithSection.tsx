@@ -11,6 +11,7 @@ import {
   useCompanionRuleDelete,
   useCompanionRulesForCompanion,
 } from '../../hooks/useProductCompanions';
+import { formatRatio } from '../../lib/productCompanion';
 import type { ProductCompanionRuleRow } from '../../types/productCompanion.types';
 import { AddCompanionRuleModal } from './AddCompanionRuleModal';
 
@@ -49,7 +50,7 @@ function RuleRow({
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Ratio</dt>
-            <dd className="tabular-nums">{rule.ratio}</dd>
+            <dd className="tabular-nums">{formatRatio(rule.ratio)}</dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Status</dt>
@@ -136,7 +137,7 @@ export function ProductSuppliedWithSection({
                 key={rule.id}
                 rule={rule}
                 canEdit={canEdit}
-                isDeleting={deletion.targetId === rule.id}
+                isDeleting={deletion.targetId === rule.id && deletion.isPending}
                 onDelete={() =>
                   deletion.run({
                     id: rule.id,

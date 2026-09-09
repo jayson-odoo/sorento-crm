@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCompanionRulesForHost } from '../../hooks/useProductCompanions';
+import { formatRatio } from '../../lib/productCompanion';
 
 interface ProductShipsWithSectionProps {
   hostProductId: string;
@@ -66,7 +67,7 @@ export function ProductShipsWithSection({ hostProductId }: ProductShipsWithSecti
                   ) : null}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Ratio {rule.ratio}
+                  Ratio {formatRatio(rule.ratio)}
                   {rule.supplier_name ? ` · ${rule.supplier_code} - ${rule.supplier_name}` : ' · Any supplier'}
                 </p>
               </div>
