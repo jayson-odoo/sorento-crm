@@ -222,6 +222,25 @@ primitive with its CTA.
   the supplier's stated text, or rebuilt the retired `-R2` / `-2` suffix shapes, are updated by the
   coder to the new semantics only (supplier text → `supplier_ref`; `pi_number` matches
   `PI-\d{4}-\d{3}`; a revision row mints its own number). Every other assertion in those tests stays.
+- **Phase 2, S1/S2 (coder findings, accepted 9 Sep):** identity index scoped to `status = 'current'`
+  (migration 500) so a revision can keep its predecessor's `supplier_ref`; an explicit file-as-new
+  on a document that states a reference gets a `-2`, `-3` suffix on `supplier_ref`
+  (`_disambiguated_ref`); packing-list attach resolution checks the stated container number
+  before the date (Jiexia states its invoice-number label once above the first block only);
+  alias `packing_list.invoice_date <- "Date"` (Kailu's bare English label).
+- **Phase 2, S2 rulings (captain 9 Sep):** `test_a_document_filed_as_new_is_numbered_from_the_file_stem`
+  retired (stem-derived names are gone). A supplier packing row with a code or description and ANY
+  packing figure (cartons, CBM, weights) but no quantity is still a packing row with `qty` NULL
+  (Jinbaichuan's `家豪拼柜41个盆`, CBM 1.72); no text extraction of quantities. The S3 test for a
+  packing list uploaded alone now expects AC-B5's refusal AND zero shipments. The old `pi_number`
+  assertions in `test_proforma_invoice_import.py`, `_adjust.py`, `_edit.py` follow Ruling 3. The nine
+  tests that drove `packing_list_service.apply` directly are ported to `create_shipment` where they
+  assert shipment-line behaviour and retired where they assert the deleted upload path itself.
+  Source files (AC-B14): the filed attachment is linked to the PI through the attachments table's
+  generic entity columns if it has them, else two FK columns on `scm.proforma_invoice`
+  (`source_attachment_id`, `packing_attachment_id`), whichever the model already supports.
+- **Process:** the first Phase 2 coder overflowed its context mid-edit; a fresh coder was spawned
+  from the uncommitted state (one respawn, recorded here for the PR).
 
 ## Markup round 1 (lavish, 9 Sep)
 
