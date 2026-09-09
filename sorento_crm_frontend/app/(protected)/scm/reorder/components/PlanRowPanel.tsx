@@ -101,8 +101,11 @@ export function PlanRowPanel({
   saving?: boolean;
   lockReason?: string | null;
   onEdit: (patch: PlanRowEdit) => void;
-  /** Persist THIS row's current draft now, rather than waiting for the toolbar's Save. */
-  onSave: () => void;
+  /** Persist THIS row's current draft now, rather than waiting for the toolbar's Save.
+   *  `pendingPatch` (AC-S12.5) carries an un-blurred Buy value straight into the save
+   *  that is about to fire - see `pendingBuyPatch` below for why this cannot instead go
+   *  through `onEdit` first and `onSave` second as two separate calls. */
+  onSave: (pendingPatch?: PlanRowEdit) => void;
 }) {
   const [chartOpen, setChartOpen] = useState(false);
 
@@ -209,13 +212,23 @@ export function PlanRowPanel({
     setDecision({ ...current, skip: undefined, po: Math.min(num(raw), poMax) });
 
   const [buyDraft, setBuyDraft] = useState<string | null>(null);
+  /** The Buy patch `commitBuy` would apply, computed but NOT applied - Save reads this
+   *  to flush an un-blurred typed value into the very save it is about to fire (AC-S12.5,
+   *  review fix round 3), rather than waiting on `onEdit`'s own state update, which would
+   *  not be visible to `usePlanEdits.saveRow` until the NEXT render. */
+  const pendingBuyPatch = (): PlanRowEdit | undefined =>
+    buyDraft === null
+      ? undefined
+      : {
+          // The supplier's MoQ and order multiple do not stop applying because the
+          // figure was typed by hand - a buy is rounded wherever it is recorded.
+          decision: { ...current, skip: undefined, buy: roundBuyQty(num(buyDraft), line.order_qty_inputs) },
+        };
   const commitBuy = () => {
-    if (buyDraft === null) return;
-    // The supplier's MoQ and order multiple do not stop applying because the figure was
-    // typed by hand - a buy is rounded wherever it is recorded.
-    const rounded = roundBuyQty(num(buyDraft), line.order_qty_inputs);
+    const patch = pendingBuyPatch();
+    if (!patch) return;
     setBuyDraft(null);
-    setDecision({ ...current, skip: undefined, buy: rounded });
+    onEdit(patch);
   };
 
   const level = levelSuggestion;
@@ -360,7 +373,14 @@ export function PlanRowPanel({
               variant="outline"
               className="h-7"
               disabled={disabled || saving}
-              onClick={onSave}
+              onClick={() => {
+                // AC-S12.5: an un-blurred Buy value is flushed straight into this save
+                // rather than left stranded in local state - `commitBuy`'s own onBlur
+                // still runs too on whichever browser event order gets there first, but
+                // Save must not depend on blur having already happened.
+                setBuyDraft(null);
+                onSave(pendingBuyPatch());
+              }}
             >
               {saving ? 'Saving...' : 'Save'}
             </Button>

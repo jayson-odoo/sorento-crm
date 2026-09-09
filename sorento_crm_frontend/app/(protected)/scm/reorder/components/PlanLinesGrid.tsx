@@ -268,7 +268,7 @@ export function PlanLinesGrid({
   onRowEdit?: (line: PlanLine, patch: PlanRowEdit) => void;
   /** Persist THIS row's own draft now (S12, round 2, 9 Sep - the panel's "Save" button,
    *  was "Use suggestion" which reset the draft instead of persisting it). */
-  onSaveRow?: (line: PlanLine) => void;
+  onSaveRow?: (line: PlanLine, pendingPatch?: PlanRowEdit) => void;
   /** Whether THIS row's own Save is in flight (review fix round 2, 9 Sep) - disables
    *  just that row's button, never the toolbar's or a sibling row's. */
   savingFor?: (line: PlanLine) => boolean;
@@ -631,7 +631,7 @@ export function PlanLinesGrid({
               disabled={decisionsReadOnly}
               lockReason={decisionsReadOnly ? readOnlyReason : null}
               onEdit={(patch) => onRowEdit?.(line, patch)}
-              onSave={() => onSaveRow?.(line)}
+              onSave={(pendingPatch) => onSaveRow?.(line, pendingPatch)}
               saving={savingFor?.(line) ?? false}
             />
           ),

@@ -528,3 +528,18 @@ describe('PlanLinesSection - row Save feedback (AC-S12.1, review fix round 2)', 
     expect(screen.getByRole('button', { name: 'row-saving' })).toBeDisabled();
   });
 });
+
+describe('PlanLinesSection - Confirm dialog copy (finding 4, review fix round 3)', () => {
+  it('states the G5 rule, not the retired R3 sweep sentence', () => {
+    stubPlanLines();
+    stubPlanEdits({ confirmable: { products: 2, cash: 500, unpriced: 0 } });
+    render(<PlanLinesSection runId="run-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Confirm \(2\)/ }));
+
+    expect(
+      screen.getByText(/Only rows you decided are bought; untouched and skipped rows are left out\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/confirmed as the plan suggested/)).not.toBeInTheDocument();
+  });
+});

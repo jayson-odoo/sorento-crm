@@ -158,6 +158,17 @@ export function usePlanEdits(
    * immediately, rather than waiting on the toolbar's Save (N) to sweep up every row on
    * the plan. Was "Use suggestion" (dropped the draft instead of persisting it).
    *
+   * `pendingPatch` (AC-S12.5, review fix round 3) is the panel's own Buy field, which -
+   * unlike MOQ/level/reorder qty, which write through `onEdit` on every keystroke - holds
+   * its typed value in LOCAL state until blur, so it does not fight the buyer over
+   * rounding mid-type. Clicking Save without blurring first left that value stranded:
+   * `edits[line.id]` had nothing in it yet, so this saw an empty draft and returned
+   * `null` with no PUT and no toast. Merging `pendingPatch` in HERE, synchronously,
+   * rather than asking the panel to call `onEdit` then `onSave` as two separate calls,
+   * sidesteps the async setState round-trip entirely - a `setEdits` the panel triggered
+   * one line above would not be visible to `edits` in THIS closure until the next
+   * render, by which point this function has already read the (still stale) draft.
+   *
    * Own `savingRowIds` guard, separate from the toolbar's `isSaving` (review fix round
    * 2): a row's own Save must not disable every OTHER row's button or the toolbar's,
    * and the ref check below is what actually stops a second click from firing a second
@@ -165,11 +176,20 @@ export function usePlanEdits(
    * of the same guard, not the only one.
    */
   const saveRow = useCallback(
-    async (line: PlanLine) => {
+    async (line: PlanLine, pendingPatch?: PlanRowEdit) => {
       if (!runId) return null;
       if (savingRowIdsRef.current.has(line.id)) return null;
-      const rows = rowsForLine(line, edits[line.id]);
+      const mergedEdit: PlanRowEdit | undefined = pendingPatch
+        ? { ...edits[line.id], ...pendingPatch }
+        : edits[line.id];
+      const rows = rowsForLine(line, mergedEdit);
       if (!rows.length) return null;
+      // The flushed value belongs in the shared draft too, not only in this one PUT -
+      // a save that fails (or a slow one the buyer reopens the row during) must not
+      // lose the Buy figure back to whatever the row last had committed.
+      if (pendingPatch) {
+        setEdits((prev) => ({ ...prev, [line.id]: { ...prev[line.id], ...pendingPatch } }));
+      }
       savingRowIdsRef.current.add(line.id);
       setSavingRowIds(new Set(savingRowIdsRef.current));
       try {
