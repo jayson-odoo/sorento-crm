@@ -288,8 +288,11 @@ label. MOQ edits land only as `set_moq_override` on the recommendation (per run)
   with no last purchase still picks A.
 - AC-S13.7 [BE] A blank or 0 MOQ on a row clears the per-run `moq_override` only; the
   product-supplier link's MOQ is master data and is never nulled or created by a clear.
-  remember_moq is one `INSERT ... ON CONFLICT (product_id, supplier_id) DO UPDATE` so a
-  legacy link stamped to another company, or two concurrent saves, cannot 500 the bulk save.
+  remember_moq finds the link without a company filter (the unique key is
+  `(product_id, supplier_id, effective_from)`, so a legacy link stamped to another company
+  must be updated, never duplicated) and inserts only when none exists; a lost race between two
+  concurrent saves surfaces as the unique violation, accepted as out of scope for a buyer's
+  single screen.
 
 ### Cross-cutting
 
