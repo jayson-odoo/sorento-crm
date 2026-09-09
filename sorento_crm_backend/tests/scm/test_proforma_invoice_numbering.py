@@ -32,7 +32,6 @@ from app.config import settings
 from app.models.numbering import DocumentNumberingRule
 from app.models.procurement import Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm import supplier_document_service as svc
 from tests._pg_fixture import blank_session
@@ -300,7 +299,10 @@ def test_a3_reupload_of_the_same_reference_updates_in_place_and_draws_no_second_
         assert rows[0].pi_number == f"{_expected_prefix()}001"
 
 
-def test_a3_a_file_stating_no_reference_is_refused_without_file_as_new():
+def test_a3_a_file_stating_no_reference_is_always_created_fresh():
+    """AC-A3's `supplier_ref_missing` refusal is retired (captain ruling 9 Sep): a
+    document stating no reference has nothing to match against, so it is always
+    created fresh rather than refused or matched onto an earlier row."""
     with blank_session() as db:
         _seed_aliases(db)
         w = World(db)
@@ -308,14 +310,37 @@ def test_a3_a_file_stating_no_reference_is_refused_without_file_as_new():
         for code in _JINBAICHUAN_CODES:
             w.product(code)
 
-        with pytest.raises(AppException) as e:
-            svc.apply(
-                db, [("Jinbaichuan_Invoice.xlsx", _jinbaichuan_bytes(), None)],
-                supplier_id=str(jinbaichuan.id), currency="RMB",
-            )
-        assert e.value.detail["code"] == "supplier_ref_missing" or (
-            e.value.detail.get("detail") == "supplier_ref_missing"
+        first = svc.apply(
+            db, [("Jinbaichuan_Invoice.xlsx", _jinbaichuan_bytes(), None)],
+            supplier_id=str(jinbaichuan.id), currency="RMB",
         )
+        db.commit()
+
+        second = svc.apply(
+            db, [("Jinbaichuan_Invoice.xlsx", _jinbaichuan_bytes(), None)],
+            supplier_id=str(jinbaichuan.id), currency="RMB",
+        )
+        db.commit()
+
+        from app.models.scm import ProformaInvoice
+
+        assert set(first["proforma_invoice_ids"]).isdisjoint(second["proforma_invoice_ids"]), (
+            "a second ref-less apply must create a second PI, never match the first"
+        )
+        rows = db.query(ProformaInvoice).filter(
+            ProformaInvoice.supplier_id == jinbaichuan.id
+        ).all()
+        assert len(rows) == 2
+
+        prefix = _expected_prefix()
+        first_row = db.query(ProformaInvoice).filter(
+            ProformaInvoice.id.in_(first["proforma_invoice_ids"])
+        ).one()
+        second_row = db.query(ProformaInvoice).filter(
+            ProformaInvoice.id.in_(second["proforma_invoice_ids"])
+        ).one()
+        assert first_row.pi_number == f"{prefix}001", "the first row is untouched by the second apply"
+        assert second_row.pi_number == f"{prefix}002"
 
 
 # --------------------------------------------------------------------------------- AC-A4
