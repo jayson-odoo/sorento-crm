@@ -20,6 +20,7 @@ from datetime import date
 import pytest
 
 from app.api.v1.inventory.stock import _with_sellable
+from app.models.company import Company
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Order, OrderLine, SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
@@ -33,31 +34,37 @@ def db():
         yield s
 
 
-def _warehouse(db, code: str | None = None):
+def _warehouse(db, code: str | None = None, company_id: str | None = None):
     """A warehouse, with a UNIQUE code by default.
 
     `uq_warehouses_company_warehouse_code` means a test that wants TWO warehouses cannot
     reuse a fixed code, and the per-warehouse split tests want two.
     """
     wh_id = str(uuid.uuid4())
+    extra = {"company_id": company_id} if company_id else {}
     db.add(
         Warehouse(
             id=wh_id,
             warehouse_code=code or unique_code("W"),
             warehouse_name="BUKIT RAJA",
             is_active=True,
+            **extra,
         )
     )
     db.flush()
     return wh_id
 
 
-def _product(db, code):
+def _product(db, code, company_id: str | None = None):
     prod_id = str(uuid.uuid4())
     cat_id = str(uuid.uuid4())
     uom_id = str(uuid.uuid4())
-    db.add(ProductCategory(id=cat_id, category_code=unique_code("C"), category_name=code))
-    db.add(UnitOfMeasure(id=uom_id, uom_code=unique_code("U"), uom_name="Each"))
+    # The feed-flag tests widen company scope to two companies at once, which makes
+    # an un-stamped owned insert AMBIGUOUS (raises) - so company_id is threaded onto
+    # every owned row the product needs, not just Product itself.
+    extra = {"company_id": company_id} if company_id else {}
+    db.add(ProductCategory(id=cat_id, category_code=unique_code("C"), category_name=code, **extra))
+    db.add(UnitOfMeasure(id=uom_id, uom_code=unique_code("U"), uom_name="Each", **extra))
     db.flush()
     db.add(
         Product(
@@ -67,13 +74,15 @@ def _product(db, code):
             category_id=cat_id,
             base_uom_id=uom_id,
             list_price=0,
+            **extra,
         )
     )
     db.flush()
     return prod_id
 
 
-def _stock(db, prod_id, wh_id, qty):
+def _stock(db, prod_id, wh_id, qty, company_id: str | None = None):
+    extra = {"company_id": company_id} if company_id else {}
     row = Stock(
         id=str(uuid.uuid4()),
         product_id=prod_id,
@@ -81,15 +90,17 @@ def _stock(db, prod_id, wh_id, qty):
         quantity_on_hand=qty,
         quantity_reserved=0,
         quantity_damaged=0,
+        **extra,
     )
     db.add(row)
     db.flush()
     return row
 
 
-def _so_line(db, prod_id, wh_id, *, ordered, delivered, status="open"):
+def _so_line(db, prod_id, wh_id, *, ordered, delivered, status="open", company_id: str | None = None):
+    extra = {"company_id": company_id} if company_id else {}
     so_id = str(uuid.uuid4())
-    db.add(SalesOrder(id=so_id, so_number=unique_code("SO")))
+    db.add(SalesOrder(id=so_id, so_number=unique_code("SO"), **extra))
     db.flush()
     db.add(
         SalesOrderLine(
@@ -100,8 +111,25 @@ def _so_line(db, prod_id, wh_id, *, ordered, delivered, status="open"):
             qty_ordered=ordered,
             qty_delivered=delivered,
             line_status=status,
+            **extra,
         )
     )
+
+
+def _company(db, so_feed_live: bool) -> str:
+    """A second company (PLAN company-so-feed-flag), feed on/off per the flag."""
+    company_id = str(uuid.uuid4())
+    db.add(
+        Company(
+            id=company_id,
+            name=f"ZZT Co {company_id[:8]}",
+            code=unique_code("CO"),
+            is_active=True,
+            so_feed_live=so_feed_live,
+        )
+    )
+    db.flush()
+    return company_id
 
 
 # --------------------------------------------------------------------- service
@@ -362,3 +390,137 @@ def test_with_sellable_attaches_each_compact_locations_own_open_so(db):
     entry = body["stock_summary"][0]
     assert entry["open_so_qty"] == 36 and entry["sellable"] == 15
     assert [loc["open_so_qty"] for loc in entry["locations"]] == [12, 20]
+
+
+# ------------------------------------------ company SO feed gate (PLAN company-so-feed-flag)
+
+
+def test_no_feed_company_rows_carry_neither_open_so_nor_sellable(db):
+    """AC-2: a detailed row whose company has `so_feed_live=false` carries NEITHER
+    `open_so_qty` NOR `sellable`; a feed-on company's row is unchanged."""
+    from app.models.base import set_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    off_id = _company(db, so_feed_live=False)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, off_id}))
+
+    off_prod = _product(db, "NOFEED-OFF", company_id=off_id)
+    on_prod = _product(db, "NOFEED-ON", company_id=DEFAULT_COMPANY_ID)
+    wh_off = _warehouse(db, company_id=off_id)
+    wh_on = _warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    row_off = _stock(db, off_prod, wh_off, 20, company_id=off_id)
+    row_on = _stock(db, on_prod, wh_on, 20, company_id=DEFAULT_COMPANY_ID)
+    _so_line(db, off_prod, wh_off, ordered=10, delivered=3, company_id=off_id)  # open_so 7
+    _so_line(db, on_prod, wh_on, ordered=10, delivered=3, company_id=DEFAULT_COMPANY_ID)  # open_so 7
+    db.commit()
+
+    result = {"data": [row_off, row_on], "pagination": {"total": 2, "page": 1, "limit": 50}}
+    resp = _with_sellable(StockService(db), result)
+    body = __import__("json").loads(resp.body)
+    off_entry, on_entry = body["data"][0], body["data"][1]
+    assert "open_so_qty" not in off_entry and "sellable" not in off_entry
+    assert on_entry["open_so_qty"] == 7 and on_entry["sellable"] == 13
+
+
+def test_no_feed_company_compact_entries_and_locations_are_bare(db):
+    """AC-3: compact `stock_summary` entry + its location lines for a no-feed
+    company carry neither `open_so_qty` nor `sellable`; the feed-on entry is
+    unchanged (D1 shape, `test_with_sellable_attaches_each_compact_locations_own_open_so`)."""
+    from app.models.base import set_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    off_id = _company(db, so_feed_live=False)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, off_id}))
+
+    off_prod = _product(db, "NOFEED-CMP-OFF", company_id=off_id)
+    on_prod = _product(db, "NOFEED-CMP-ON", company_id=DEFAULT_COMPANY_ID)
+    wh_off = _warehouse(db, company_id=off_id)
+    wh_on = _warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    _so_line(db, off_prod, wh_off, ordered=10, delivered=6, company_id=off_id)  # open_so 4
+    _so_line(db, on_prod, wh_on, ordered=10, delivered=6, company_id=DEFAULT_COMPANY_ID)  # open_so 4
+    db.commit()
+
+    codes = {
+        w.id: w.warehouse_code
+        for w in db.query(Warehouse).filter(Warehouse.id.in_([wh_off, wh_on]))
+    }
+    result = {
+        "data": [],
+        "pagination": {"total": 2, "page": 1, "limit": 50},
+        "stock_summary": [
+            {
+                "product_id": off_prod, "product_code": "NOFEED-CMP-OFF", "product_name": "x",
+                "total_on_hand": 12,
+                "locations": [{"warehouse_code": codes[wh_off], "quantity_on_hand": 12}],
+                "flags": {},
+            },
+            {
+                "product_id": on_prod, "product_code": "NOFEED-CMP-ON", "product_name": "x",
+                "total_on_hand": 12,
+                "locations": [{"warehouse_code": codes[wh_on], "quantity_on_hand": 12}],
+                "flags": {},
+            },
+        ],
+    }
+    body = __import__("json").loads(_with_sellable(StockService(db), result).body)
+    off_entry, on_entry = body["stock_summary"][0], body["stock_summary"][1]
+    assert "open_so_qty" not in off_entry and "sellable" not in off_entry
+    assert "open_so_qty" not in off_entry["locations"][0]
+    assert on_entry["open_so_qty"] == 4 and on_entry["sellable"] == 8
+    assert on_entry["locations"][0]["open_so_qty"] == 4
+
+
+def test_no_feed_company_synthesised_summary_is_bare(db):
+    """AC-4: detailed mode's synthesised per-product `stock_summary` (no backend
+    summary on the payload) omits `open_so_qty`/`sellable` for a no-feed product
+    while still emitting the entry (product_id/code/name/total_on_hand); a
+    feed-on product keeps both."""
+    from app.models.base import set_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    off_id = _company(db, so_feed_live=False)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, off_id}))
+
+    off_prod = _product(db, "NOFEED-SYN-OFF", company_id=off_id)
+    on_prod = _product(db, "NOFEED-SYN-ON", company_id=DEFAULT_COMPANY_ID)
+    wh_off = _warehouse(db, company_id=off_id)
+    wh_on = _warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    row_off = _stock(db, off_prod, wh_off, 30, company_id=off_id)
+    row_on = _stock(db, on_prod, wh_on, 30, company_id=DEFAULT_COMPANY_ID)
+    _so_line(db, off_prod, wh_off, ordered=10, delivered=0, company_id=off_id)  # open_so 10
+    _so_line(db, on_prod, wh_on, ordered=10, delivered=0, company_id=DEFAULT_COMPANY_ID)  # open_so 10
+    db.commit()
+
+    result = {"data": [row_off, row_on], "pagination": {"total": 2, "page": 1, "limit": 50}}
+    body = __import__("json").loads(_with_sellable(StockService(db), result).body)
+    summary = {e["product_id"]: e for e in body["stock_summary"]}
+    off_entry, on_entry = summary[off_prod], summary[on_prod]
+    assert off_entry["total_on_hand"] == 30
+    assert "open_so_qty" not in off_entry and "sellable" not in off_entry
+    assert on_entry["total_on_hand"] == 30
+    assert on_entry["open_so_qty"] == 10 and on_entry["sellable"] == 20
+
+
+def test_stock_service_company_helpers(db):
+    """`companies_without_so_feed` / `company_id_by_product`: empty input is a
+    no-op, mixed input resolves each product/company correctly."""
+    from app.models.base import set_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    service = StockService(db)
+    assert service.companies_without_so_feed([]) == set()
+    assert service.company_id_by_product([]) == {}
+
+    off_id = _company(db, so_feed_live=False)
+    on_id = _company(db, so_feed_live=True)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, off_id, on_id}))
+
+    off_prod = _product(db, "HLPR-OFF", company_id=off_id)
+    on_prod = _product(db, "HLPR-ON", company_id=on_id)
+    db.commit()
+
+    assert service.companies_without_so_feed([off_id, on_id]) == {off_id}
+    assert service.company_id_by_product([off_prod, on_prod]) == {
+        off_prod: off_id,
+        on_prod: on_id,
+    }

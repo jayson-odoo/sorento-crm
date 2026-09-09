@@ -83,6 +83,13 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
 
     `stock_availability` rows are skipped entirely: that mode's whole point is
     never disclosing a quantity, and open_so_qty/sellable are quantities.
+
+    The company gate (PLAN company-so-feed-flag): a company whose AutoCount SO
+    feed is not connected (`companies.so_feed_live = false`) has no sales-order
+    data in the CRM at all, so `open_so_qty = 0` would read as "nothing on
+    order" when the truth is "we do not know". A row/entry/location whose
+    company is in that set gets NEITHER `open_so_qty` NOR `sellable` attached -
+    the same shape as a caller that never asked for `include_sellable`.
     """
     body = StockBalanceListResponse.model_validate(result).model_dump(mode="json")
     rows = result.get("data") or []
@@ -104,6 +111,18 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
         list(product_ids)
     )
 
+    # Company feed gate: a detailed row carries its own `company_id` directly; a
+    # compact/synthesised entry does not, so it resolves through the product.
+    company_by_product = service.company_id_by_product(list(product_ids))
+    candidate_company_ids = {
+        str(getattr(r, "company_id", None)) for r in rows if getattr(r, "company_id", None)
+    } | set(company_by_product.values())
+    no_feed_companies = service.companies_without_so_feed(list(candidate_company_ids))
+
+    def _feed_on(pid: str, row_company_id: Optional[str] = None) -> bool:
+        cid = row_company_id or company_by_product.get(pid)
+        return not (cid and str(cid) in no_feed_companies)
+
     def _attach(target: dict, open_qty: int, on_hand) -> None:
         try:
             oh = int(on_hand) if on_hand is not None else 0
@@ -115,6 +134,8 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
     for serialized, row in zip(body.get("data") or [], rows):
         pid = str(getattr(row, "product_id", "") or "")
         if not pid:
+            continue
+        if not _feed_on(pid, getattr(row, "company_id", None)):
             continue
         wid = str(getattr(row, "warehouse_id", "") or "")
         # A detailed row IS a (product, warehouse) pair. With no warehouse on the row at
@@ -136,7 +157,7 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
     wh_id_by_code = service.warehouse_ids_by_code(list(loc_codes)) if loc_codes else {}
     for entry in summary_entries:
         pid = str(entry.get("product_id") or "")
-        if not pid:
+        if not pid or not _feed_on(pid):
             continue
         _attach(entry, open_so_total.get(pid, 0), entry.get("total_on_hand"))
         for loc in entry.get("locations") or []:
@@ -166,7 +187,10 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
                 "product_name": product.get("product_name") or serialized.get("product_name"),
                 "total_on_hand": on_hand_total.get(pid, 0),
             }
-            _attach(entry, open_so_total.get(pid, 0), entry["total_on_hand"])
+            # The entry itself is still emitted (a no-feed product's total_on_hand
+            # is real) - only the open-SO/sellable attachment is withheld.
+            if _feed_on(pid, getattr(row, "company_id", None)):
+                _attach(entry, open_so_total.get(pid, 0), entry["total_on_hand"])
             summary.append(entry)
         body["stock_summary"] = summary
     return JSONResponse(content=body)
