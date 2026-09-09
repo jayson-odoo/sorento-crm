@@ -113,7 +113,7 @@ const IN_GRID_SUBTREE_SITES = new Map<string, string>([
     'NESTED GRID: AttachmentDetailModal opens inside the promotions grid and holds a PanelDataGrid of linkages. Covered by the context default AND its own scrollerMaxHeight={false} (SF-1)',
   ],
   [
-    'app/(protected)/scm/reorder/components/PlanLinesGrid.tsx:1442',
+    'app/(protected)/scm/reorder/components/PlanLinesGrid.tsx:1329',
     'NESTED GRID: PlanRowDialog opens inside the plan grid and holds DrillTable/OnHandTable/StockDocumentsPanel. Every one already passes scrollerMaxHeight={false}; the context default now agrees with them',
   ],
 ]);
