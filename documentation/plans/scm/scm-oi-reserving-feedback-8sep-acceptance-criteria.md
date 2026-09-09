@@ -44,6 +44,13 @@ other row read one. "These can be informational icon also."
 * AC-A12 `RejectedNote` and `ChangedBadge` are gone from the cell path -
   nothing else in the tree renders them, so they move into the dialog
   wholesale rather than leaving a dead export behind.
+* AC-A13 An SPO entry in the backing-documents dialog also names the purchase
+  order it came from, subordinate to the SPO number above it (smaller, muted,
+  no badge of its own). Added by slice C - the surface is slice A's, the fact
+  is slice C's.
+* AC-A14 A PO-kind entry, and an SPO the book named no source for, add nothing:
+  the line is absent rather than an empty label. A dialog holding one sourced
+  SPO, one PO and one sourceless SPO shows exactly one "from PO" line.
 
 ## Slice B, the document lightbox
 
@@ -60,12 +67,25 @@ other row read one. "These can be informational icon also."
 * AC-B6 The SPO lightbox gets the same grid, search and pagination.
 * AC-B7 Usable and non-clipped at 375 and at 1280.
 
-## Slice C, SPO names its PO (gated)
+## Slice C, SPO names its PO
+
+Ungated 8 Sep: slice F shipped as ingest contract 2.2 (PR #762, merged
+2026-09-08), so `spo_allocations.from_po_number` is populated by the live feed.
 
 * AC-C1 An SPO lightbox line that AutoCount says came from a purchase order
-  prints that PO number.
-* AC-C2 The PO number there opens the PO lightbox.
-* AC-C3 A line with no source PO prints nothing rather than a guess.
+  prints that PO number, in a "Source PO" column.
+* AC-C2 That PO number is PLAIN TEXT, not a link. Owner ruling 9 Sep, which
+  reverses this criterion's original "opens the PO lightbox" - where the number
+  leads is a later slice's question, and a link that guessed at a CRM document
+  would be answering a different one. The existing CRM `po` column is untouched
+  and stays a link.
+* AC-C3 A line with no source PO prints a muted dash rather than a guess.
+* AC-C4 `from_po_line_ref` is never printed on either surface. It is the
+  resolver key, not a thing a buyer reads.
+* AC-C5 Both surfaces - the document lightbox's SPO body and slice A's
+  backing-documents dialog (AC-A13/AC-A14) - are fed by ONE backend field,
+  `source_po_number`, carrying `SPOAllocation.from_po_number` verbatim. The
+  field is null on a PO-kind link, never a guess.
 
 ## Slice D, all or nothing cover
 

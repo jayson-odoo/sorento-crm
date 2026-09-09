@@ -356,6 +356,22 @@ const SPO_LINE_COLUMNS: ColumnDef<OrderInquirySpoDetailLine>[] = [
     size: 140,
     meta: { headerTitle: 'Location' },
   },
+  {
+    // Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO number of
+    // this SPO?" - the document lightbox is the other surface a buyer meets an SPO
+    // on, so it gets the same fact the backing-documents dialog does. Plain text,
+    // never a link yet - a later slice decides where it goes.
+    id: 'source_po_number',
+    accessorFn: (line) => line.source_po_number ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="Source PO" column={column} />,
+    cell: ({ row }) => (
+      <span className="block truncate" title={row.original.source_po_number ?? undefined}>
+        {row.original.source_po_number || <span className="text-muted-foreground">-</span>}
+      </span>
+    ),
+    size: 140,
+    meta: { headerTitle: 'Source PO' },
+  },
 ];
 
 /** Both SKU and location, one input (AC-B2/AC-B3) - case-insensitive substring, client-side. */

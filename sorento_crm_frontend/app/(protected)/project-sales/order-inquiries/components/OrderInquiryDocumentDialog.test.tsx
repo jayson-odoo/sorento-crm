@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getOrderInquiryPoDetail = vi.fn();
@@ -330,5 +330,45 @@ describe('SPO lightbox body (AC-D19)', () => {
     fireEvent.change(search, { target: { value: 'BRW-IB' } });
     expect(screen.getByText('SRTWCY7405-PJ')).toBeInTheDocument();
     expect(screen.queryByText('ZZT-1')).not.toBeInTheDocument();
+  });
+
+  it('AC-A13/AC-A14: the SPO grid names each line\'s source PO, and a muted dash when it has none', async () => {
+    // Owner's 9 Sep feedback, surface 2: the document lightbox is the other place a
+    // buyer meets an SPO, so it carries the same fact the backing-documents dialog does.
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0036',
+      supplier_name: 'CHAOSHENG',
+      eta: '2026-09-15',
+      lines: [
+        {
+          sku: 'SRTWCX8605-S-RL-PJ',
+          product_name: 'Wall hung WC 8605',
+          allocated: '52',
+          received: '0',
+          remaining: '52',
+          location: 'BRW-IB',
+          source_po_number: '202606-S0110',
+        },
+        {
+          sku: 'ZZT-0002',
+          product_name: null,
+          allocated: '10',
+          received: '0',
+          remaining: '10',
+          location: 'BRW',
+          source_po_number: null,
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="spo" document="SPO-2026/09-0036" open onOpenChange={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('202606-S0110')).toBeInTheDocument();
+    // The sourceless line reads a muted dash, never an empty cell or a guess.
+    const rows = document.querySelectorAll('tbody tr');
+    expect(rows).toHaveLength(2);
+    expect(within(rows[1] as HTMLElement).getByText('-')).toBeInTheDocument();
   });
 });
