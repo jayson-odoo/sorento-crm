@@ -460,7 +460,11 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   };
 
   const runConvert = async (
-    args: { lineQuantities: Record<string, number>; containerSizeId: string | null } | null,
+    args: {
+      lineQuantities: Record<string, number>;
+      containerSizeId: string | null;
+      packingRowIds?: string[];
+    } | null,
     reason?: string,
   ) => {
     setConvertArgs(args);
@@ -470,6 +474,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         overrideReason: reason,
         lineQuantities: args?.lineQuantities,
         containerSizeId: args?.containerSizeId ?? null,
+        packingRowIds: args?.packingRowIds,
       });
       setOverCapacity(null);
       setOverrideReason('');

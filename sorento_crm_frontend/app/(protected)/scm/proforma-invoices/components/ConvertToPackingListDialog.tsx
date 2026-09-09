@@ -47,6 +47,9 @@ export function ConvertToPackingListDialog({
   onConvert: (args: {
     lineQuantities: Record<string, number>;
     containerSizeId: string | null;
+    /** The ticked packing rows (AC-D2b). Absent on an invoice with no packing rows, which
+     *  is what tells the convert to place every line's remainder as before. */
+    packingRowIds?: string[];
   }) => void;
 }) {
   const single = invoiceIds.length === 1 ? invoiceIds[0] : null;
@@ -145,7 +148,19 @@ export function ConvertToPackingListDialog({
       if (Number.isNaN(parsed)) continue;
       lineQuantities[line.id] = parsed;
     }
-    onConvert({ lineQuantities, containerSizeId });
+    // The ticked rows, in the order the grid shows them (AC-D2b). Sent only when this
+    // invoice HAS packing rows: an omitted list means "every row not already placed",
+    // which is the right default for a PI whose lines carry no rows at all, and the
+    // convert route reads it that way. Unticking a row now genuinely leaves it off the
+    // draft - the checkboxes were state nothing ever sent.
+    const packingRowIds = packingRows
+      .filter((r) => r.match_state === 'matched' && placedRowIds.has(r.id))
+      .map((r) => r.id);
+    onConvert({
+      lineQuantities,
+      containerSizeId,
+      ...(packingRows.length > 0 ? { packingRowIds } : {}),
+    });
   };
 
   const invalid = placeable.some((line) => {

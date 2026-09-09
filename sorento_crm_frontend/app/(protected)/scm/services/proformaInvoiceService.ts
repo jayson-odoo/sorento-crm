@@ -513,6 +513,9 @@ export interface ConvertOptions {
   override?: { reason: string };
   /** The box the convert dialog chose (S5, ruling 1). Null/omitted = the tenant default. */
   containerSizeId?: string | null;
+  /** Which supplier packing rows go in this container (AC-D2b), whole or not at all.
+   *  Omitted places every row not already placed - the normal case. */
+  packingRowIds?: string[];
 }
 
 /**
@@ -536,6 +539,7 @@ export async function convertProformaInvoicesToDraftShipment(
         ? { line_quantities: options.lineQuantities }
         : {}),
       ...(override ? { override_capacity: true, override_reason: override.reason } : {}),
+      ...(options?.packingRowIds ? { packing_row_ids: options.packingRowIds } : {}),
       container_size_id: options?.containerSizeId ?? null,
     }),
   });

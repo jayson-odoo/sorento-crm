@@ -130,6 +130,7 @@ const writes = {
   forgetMatch: vi.fn(),
   save: vi.fn(),
   markAsRevision: vi.fn(),
+  convert: vi.fn(),
 };
 
 vi.mock('../../../hooks/useProformaInvoices', () => ({
@@ -143,7 +144,7 @@ vi.mock('../../../hooks/useProformaInvoices', () => ({
   // show a pager (RecordNavigation's `items.length < 2` guard), so it stays out of the way.
   useProformaInvoices: () => ({ data: undefined, isLoading: false }),
   useConvertProformaInvoicesToDraftShipment: () => ({
-    mutateAsync: vi.fn(),
+    mutateAsync: writes.convert,
     isPending: false,
   }),
   useSaveProformaInvoice: () => ({ mutateAsync: writes.save, isPending: false }),
@@ -404,6 +405,58 @@ describe('ProformaInvoiceDetail - the record header', () => {
     fireEvent.click(screen.getByRole('button', { name: /convert to packing list/i }));
 
     expect(screen.getByLabelText('Container size')).toBeInTheDocument();
+  });
+
+  it('sends the ticked packing rows, and leaves an unticked one off the draft (AC-D2b, ruling 23)', async () => {
+    const row = (id: string, rowNo: number, qty: number) => ({
+      id,
+      proforma_invoice_line_id: 'line-1',
+      row_no: rowNo,
+      item_code: 'ITEM-1',
+      supplier_code: 'ITEM-1',
+      description: 'Widget',
+      product_id: 'prod-item-1',
+      product_set_id: null,
+      qty,
+      cartons: 1,
+      pcs_per_carton: qty,
+      carton_length_cm: null,
+      carton_width_cm: null,
+      carton_height_cm: null,
+      cbm_per_carton: null,
+      cbm_total: null,
+      net_weight: null,
+      gross_weight: null,
+      total_net_weight: null,
+      total_gross_weight: null,
+      material: null,
+      container_no: null,
+      remark: null,
+      match_state: 'matched',
+      unmatched_reason: null,
+    });
+    state.data = detail({
+      packing_lines: [row('row-1', 1, 6), row('row-2', 2, 4)],
+    } as Partial<ProformaInvoiceDetailData>);
+    writes.convert.mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'PL-2609-001',
+      lines_created: 1,
+      lines_skipped: 0,
+      invoices: [],
+      unmatched: [],
+      skipped_invoices: [],
+    });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /convert to packing list/i }));
+    // Both rows start ticked - "everything goes" is the default. Untick the second.
+    const second = await screen.findByLabelText(/Row 2/);
+    fireEvent.click(second);
+    fireEvent.click(screen.getByRole('button', { name: /^Convert$/ }));
+
+    await waitFor(() => expect(writes.convert).toHaveBeenCalled());
+    expect(writes.convert.mock.calls[0][0].packingRowIds).toEqual(['row-1']);
   });
 
   it('lists every secondary action in the gear menu, in one place', () => {

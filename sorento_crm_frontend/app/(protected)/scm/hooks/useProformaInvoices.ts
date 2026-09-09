@@ -176,10 +176,12 @@ export function useConvertProformaInvoicesToDraftShipment() {
       overrideReason?: string;
       lineQuantities?: Record<string, number>;
       containerSizeId?: string | null;
+      packingRowIds?: string[];
     }) =>
       convertProformaInvoicesToDraftShipment(args.invoiceIds, {
         lineQuantities: args.lineQuantities,
         containerSizeId: args.containerSizeId,
+        packingRowIds: args.packingRowIds,
         override: args.overrideReason ? { reason: args.overrideReason } : undefined,
       } as ConvertOptions),
     onSuccess: (result) => {
