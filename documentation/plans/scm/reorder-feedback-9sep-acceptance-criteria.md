@@ -117,7 +117,7 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
 ### S5 Product excluded from planning
 
 - AC-S5.1 [BE] Migration adds `products.exclude_from_planning BOOLEAN NOT NULL DEFAULT false`
-  and backfills true for every product whose code starts with `**` (G3 ruling).
+  with no backfill (G3 ruling: the buyer flips products by hand).
 - AC-S5.2 [BE] `_planning_rows` adds `p.exclude_from_planning = false`; an explicitly named
   product at Start Plan still bypasses (G10, 1 Sep) is NOT extended: an excluded product is
   excluded even when named, and the create request answers 422 naming it.
@@ -128,7 +128,7 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
   optional column and a filter field.
 - AC-S5.5 [T] pytest: excluded product absent from a run that would otherwise carry it;
   named excluded product -> 422. vitest: switch round-trips.
-- AC-S5.6 [E2E] Toggle on `**NEW`, start a plan, `**NEW` absent.
+- AC-S5.6 [E2E] Toggle on `**NEW` from the product page, start a plan, `**NEW` absent.
 
 ### S6 Confirm buys decided rows only
 

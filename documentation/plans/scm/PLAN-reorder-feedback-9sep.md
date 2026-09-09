@@ -1,6 +1,6 @@
 # PLAN: Reorder planning feedback batch (9 Sep 2026)
 
-Status: IN PROGRESS 9 Sep 2026. Rulings G2, G3, G1, G6 pending in the lavish review; S1 S2 S3 S6 S8 cleared by the brief. Issues #770-#778 (S1-S9 in order).
+Status: IN PROGRESS 9 Sep 2026. All rulings settled (captain, lavish review 9 Sep 14:20). Issues #770-#778 (S1-S9 in order).
 UAC: `reorder-feedback-9sep-acceptance-criteria.md` (journey J1-J7 lives there).
 Lane: worktree `.claude/worktrees/reorder-feedback-9sep`, branch `feat/reorder-feedback-9sep`
 off `origin/main` 3c3738ad7.
@@ -67,7 +67,7 @@ named product bypasses the demand gate). R16-R19 of 28 Aug (pool-only on hand). 
 warehouse-segment derivation of DEMAND channel" (R17) stands; G1 below is about
 CONSUMPTION history, where the shipping bin is the only channel signal that exists.
 
-Proposed, need the captain's word:
+Settled by the captain in the lavish review, 9 Sep 2026:
 
 - **G1 Retail deliveries = delivery-order lines shipped from a `dealer`-segment warehouse.**
   A line shipped from a `project` bin (BRW-IB, BRW-BB, ...) is a project delivery. This is
@@ -75,8 +75,9 @@ Proposed, need the captain's word:
   Applies to the level suggestion (ADU) only. Health stays on all deliveries.
 - **G2 Undated demand stays in the window.** A start date drops lines dated before it; a
   line with no date is still counted, the same reading the end date already gives it.
-- **G3 Backfill the exclusion flag** for every product code starting with `**` at migration.
-  Everything else stays in; the buyer flips the rest by hand on the product page.
+- **G3 No backfill.** The migration adds the column at `false` for every product; the buyer
+  flips `**NEW`, `**SPARE PART` and the rest by hand on the product page. (Captain chose this
+  over marking every `**` code.)
 - **G4 Health suggestion persists on Confirm.** The preselected radio is written as the
   product's lifecycle decision for every product the buyer confirms; products left undecided
   get nothing written.
@@ -130,8 +131,7 @@ Proposed, need the captain's word:
   `describeWindow(start, end)` used by header, subtitle and plans list.
 
 ### S5 Exclusion flag
-- Migration: column + backfill `UPDATE products SET exclude_from_planning = true WHERE
-  product_code LIKE '**%'`.
+- Migration: column only, default false, no backfill (G3).
 - `Product` model, `ProductCreate/Update/Out` schemas, `product_service` dict builders,
   list serializer in `list_query_registry` (products resource).
 - `_planning_rows` predicate; `create_run` refuses named excluded products with 422 listing
@@ -198,5 +198,4 @@ changes (S4 window, S5 switch, S9 columns), then BE test-first.
   on project-heavy SKUs. Stated in the PR.
 - `fmtMoney` 2dp touches every SCM screen's snapshots; expect a wide but mechanical vitest
   update.
-- `**` backfill (G3) marks four placeholder codes; if any real product code starts with
-  `**` it is caught by the list column.
+- No backfill (G3): the four `**` placeholder codes keep planning until the buyer flips them.
