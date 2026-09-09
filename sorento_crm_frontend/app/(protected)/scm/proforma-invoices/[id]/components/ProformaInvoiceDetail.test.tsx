@@ -605,6 +605,56 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     expect(screen.getByText('50')).toBeInTheDocument();
   });
 
+  it('marks the Packed cell destructive when the packed quantity disagrees with the invoiced one (AC-B11)', async () => {
+    // `packing_lines` travels on the SAME detail payload `useProformaInvoicePacking` reads
+    // off (`getProformaInvoicePacking`) - no second fetch, so seeding it here is enough.
+    state.data = detail({
+      packing_lines: [
+        {
+          id: 'row-1',
+          proforma_invoice_line_id: 'line-1',
+          row_no: 1,
+          item_code: 'ITEM-1',
+          supplier_code: 'ITEM-1',
+          description: 'Widget',
+          product_id: 'prod-item-1',
+          product_set_id: null,
+          qty: 8,
+          cartons: 1,
+          pcs_per_carton: 8,
+          carton_length_cm: null,
+          carton_width_cm: null,
+          carton_height_cm: null,
+          cbm_per_carton: null,
+          cbm_total: null,
+          net_weight: null,
+          gross_weight: null,
+          total_net_weight: null,
+          total_gross_weight: null,
+          material: null,
+          container_no: null,
+          remark: null,
+          match_state: 'matched',
+          unmatched_reason: null,
+        },
+      ],
+    } as Partial<ProformaInvoiceDetailData>);
+    renderDetail();
+    openTab('Lines');
+
+    // Invoiced 10, packed 8 (from the one row above) - a Badge, not a plain number.
+    const packedCell = await screen.findByText('8');
+    expect(packedCell).toHaveAttribute('title', 'Invoiced 10, packed 8');
+  });
+
+  it('shows "-" in the Packed column when the line has no packing rows at all', () => {
+    state.data = detail(); // no packing_lines
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+  });
+
   it('states plainly when the invoice has no lines, rather than an empty table', () => {
     state.data = detail({ lines: [], line_count: 0 });
     renderDetail();
