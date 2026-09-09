@@ -589,8 +589,15 @@ export function SupplierDocumentsUploadDialog({
                   )}
                   {(f.packing_attach ?? []).map((block) => (
                     <div key={block.block_index} className="pt-1">
+                      {/* `htmlFor` only where there IS a control to point at: a
+                          same-batch answer renders as text, and a label naming an input
+                          that is not on the page is a broken promise to a screen reader. */}
                       <Label
-                        htmlFor={`attach-to-${f.name}-${block.block_index}`}
+                        htmlFor={
+                          block.attach_to?.how === 'same_batch'
+                            ? undefined
+                            : `attach-to-${f.name}-${block.block_index}`
+                        }
                         className="mb-1 block text-2xs text-muted-foreground"
                       >
                         {/* Named by container once there is more than one: each container's

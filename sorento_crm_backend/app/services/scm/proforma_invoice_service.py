@@ -2295,8 +2295,8 @@ def bulk_delete(db: Session, invoice_ids: list[str]) -> dict:
     list; before this the list said "Not converted" and the delete said "already converted"
     about the same invoice (captain, 27 Aug, three all-skipped PIs on the dev copy). Cascading
     the link instead would silently sever a draft shipment's line from the document that
-    justified it, and a shipment already visible on `/scm/incoming` losing its "why" with no
-    trace is worse than a delete the operator has to go and untangle by hand (delete the
+    justified it, and a shipment already visible on the packing lists page losing its "why"
+    with no trace is worse than a delete the operator has to go and untangle by hand (delete the
     shipment first, or accept the PI stays on file). Named per invoice so the caller knows
     exactly which ones were blocked and why, rather than the batch failing outright.
     """

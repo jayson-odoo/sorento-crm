@@ -1,12 +1,11 @@
 /**
- * S2 (AC-B7) - the REAL dismiss/undo call shape, not the Phase 1 mock store.
+ * S2 (AC-B7) - the dismiss/undo call shape: the same path, POSTed to dismiss and DELETEd to
+ * undo. The mock store behind this service is gone; both functions reach `apiFetch`.
  *
- * TEST-FIRST (Phase 2): `USE_PACKING_LINE_MOCKS` is still `true` and
- * `dismissPackingLine`/`undoDismissPackingLine` still branch straight to the mock store
- * (`mockSetMatchState`) - the `else` half documented in the file's own Phase-2 contract
- * comment ("POST .../packing-lines/{row_id}/dismiss") has no body at all yet. So both
- * tests below are red today because `apiFetch` is never called, not because the URL is
- * wrong - the coder flips the flag and fills in the real call in the same slice.
+ * The row's own Dismiss button no longer calls the POST directly - it parks
+ * `proforma_invoice_packing_line.dismiss` as a pending action and the server applies it
+ * when the window lapses (ruling 5). This is the route behind that action, and the one an
+ * "Undo dismiss" on an already-dismissed row calls.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

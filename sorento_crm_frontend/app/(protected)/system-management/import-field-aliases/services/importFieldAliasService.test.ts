@@ -1,11 +1,7 @@
 /**
- * S5 (AC-E1) - the REAL `/api/v1/system/import-field-aliases` call shape, not the Phase 1
- * mock store.
- *
- * TEST-FIRST (Phase 2): `USE_IMPORT_FIELD_ALIAS_MOCKS` is still `true`, so every function
- * below still calls the mock store (`mockListImportFieldAliases` etc.) and never touches
- * `apiFetch` - every test is red today for that reason (0 calls), not a wrong URL. The
- * coder flips the flag in the same slice that mounts the backend route.
+ * S5 (AC-E1) - the call shape of `/api/v1/system/import-field-aliases`: which URL, which
+ * method, and what the body carries. There is no mock store behind this service any more;
+ * every function below reaches `apiFetch` and these tests pin what it is handed.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

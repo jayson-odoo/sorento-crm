@@ -623,6 +623,10 @@ def preview(
 ) -> dict[str, Any]:
     """What each file is, and what it would create - writes nothing.
 
+    `block_attach` is keyed `(file name, block index)` because that pair is what the dialog
+    can name: nothing in the batch has an id yet, and one upload may carry two files whose
+    blocks are both index 0.
+
     `attach_to` is one invoice for the whole upload (the dialog opened from a PI's own
     "Attach packing list", AC-B10); `block_attach` is `{(file name, block index): invoice
     id}`, what the operator picked on ONE packing-list block's own Attaches-to select. The

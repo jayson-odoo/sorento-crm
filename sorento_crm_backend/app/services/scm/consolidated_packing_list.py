@@ -363,7 +363,6 @@ _HEADER_BLOCK_ROW_HEIGHT = {12: 31.5}
 _FMT_2DP = "0.00"
 _FMT_2DP_RED = "0.00;[Red]0.00"
 _FMT_MONEY = "#,##0.00"
-_FMT_MONEY_RED = "#,##0.00;[Red]#,##0.00"
 _FMT_SUBTOTAL_INT = "0_);[Red]\\(0\\)"
 _FMT_SUBTOTAL_2DP = "0.00_);[Red]\\(0.00\\)"
 _FMT_DATE = "[$-14409]dd/mm/yyyy;@"

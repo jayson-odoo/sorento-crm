@@ -109,6 +109,10 @@ export default function ImportFieldAliasesList() {
     data: groups ?? NO_GROUPS,
     getRowId: (row) => row.field,
     getCoreRowModel: getCoreRowModel(),
+    // `tableLayout.columnsResizable` below draws the handles; without these the drag does
+    // nothing, which reads as a broken control rather than a column that cannot move.
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
   });
 
   const addButton = (
