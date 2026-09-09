@@ -38,6 +38,16 @@ INBOUND_SHIPMENT_DRAFT_PREFIX_TEMPLATE = "PL-{yy}{month:02d}-"
 INBOUND_SHIPMENT_DRAFT_NUMBER_DIGITS = 3
 INBOUND_SHIPMENT_DRAFT_RESET_POLICY = "monthly"
 
+#: `NumberingService` doc_type for our OWN proforma invoice number (S1, supplier documents /
+#: PI-first lane, 9 Sep 2026) - `pi_number` stops being the supplier's own text (that moves to
+#: `supplier_ref`) and is minted here instead, same shape as the packing-list draft series
+#: above: `PI-{yy}{month:02d}-{NNN}`, monthly, 3 digits - `PI-2609-001`, then `PI-2609-002`,
+#: back to `-001` in October.
+PROFORMA_INVOICE_DOC_TYPE = "proforma_invoice"
+PROFORMA_INVOICE_PREFIX_TEMPLATE = "PI-{yy}{month:02d}-"
+PROFORMA_INVOICE_NUMBER_DIGITS = 3
+PROFORMA_INVOICE_RESET_POLICY = "monthly"
+
 #: `NumberingService` doc_type for a CRM SPO's own series (`spo_conversion_service`) - kept
 #: distinct from every AutoCount pattern and from the CRM's own canonical PO series so an
 #: AutoCount import can never collide with a number this module minted.
@@ -87,6 +97,21 @@ def seed_inbound_shipment_draft_rule(
             "prefix": INBOUND_SHIPMENT_DRAFT_PREFIX_TEMPLATE,
             "digits": INBOUND_SHIPMENT_DRAFT_NUMBER_DIGITS,
             "reset": INBOUND_SHIPMENT_DRAFT_RESET_POLICY,
+            "company_id": str(company_id) if company_id else None,
+        },
+    )
+
+
+def seed_proforma_invoice_rule(connection, *, company_id: Optional[str] = None) -> None:
+    """Give the proforma-invoice number series to `company_id`, or to every company when it
+    is None. Same shape and same reasoning as `seed_inbound_shipment_draft_rule` above."""
+    connection.execute(
+        _INSERT,
+        {
+            "doc_type": PROFORMA_INVOICE_DOC_TYPE,
+            "prefix": PROFORMA_INVOICE_PREFIX_TEMPLATE,
+            "digits": PROFORMA_INVOICE_NUMBER_DIGITS,
+            "reset": PROFORMA_INVOICE_RESET_POLICY,
             "company_id": str(company_id) if company_id else None,
         },
     )

@@ -1600,7 +1600,17 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     supplier_id = Column(
         UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
     )
+    #: OURS (S1, supplier documents / PI-first lane, 9 Sep 2026) - a monthly running number
+    #: (`PI-{yy}{month:02d}-{NNN}`, `app.services.numbering_defaults.PROFORMA_INVOICE_DOC_
+    #: TYPE`), minted once at insert and never re-derived from the file. Globally unique per
+    #: company (`uq_scm_proforma_invoice_number`) - the supplier's own reference moved to
+    #: `supplier_ref` below, which is what a re-upload now matches on.
     pi_number = Column(String(100), nullable=False)
+    #: The supplier's own reference for this document, verbatim - NULL when the file states
+    #: none (the pre-loading list's five blocks carry no invoice number at all). Identity is
+    #: now `(company, supplier, supplier_ref)`: a NULL ref never matches an existing row, so
+    #: a file stating none needs `file_as_new` or is refused `supplier_ref_missing` (AC-A3).
+    supplier_ref = Column(String(100), nullable=True)
     invoice_date = Column(Date, nullable=True)
     # NULL only for a document with no priced line at all: a priced one is refused before
     # it is written unless the currency resolved (AC-P3.2). Never a house default.
@@ -1664,14 +1674,25 @@ class ProformaInvoice(Base, CompanyScopedMixin):
         CheckConstraint(
             "status IN ('current', 'superseded')", name="ck_scm_proforma_invoice_status"
         ),
-        # Declared on the MODEL as well as in migration 375, because a CI database is built
-        # with `create_all` and never runs a migration body: without it the guard against a
-        # doubled invoice exists in production and nowhere else (the supplier_inventory
-        # precedent).
+        # Declared on the MODEL as well as in migration 375/499, because a CI database is
+        # built with `create_all` and never runs a migration body: without it the guard
+        # against a doubled invoice exists in production and nowhere else (the
+        # supplier_inventory precedent). Identity moved from `pi_number` (now OURS) to
+        # `supplier_ref` (S1, AC-A3/A4) - a NULL ref never conflicts with another NULL, a
+        # plain unique index's default behaviour, which is exactly "a file with no reference
+        # never matches an existing row".
         Index(
             "uq_scm_proforma_invoice_identity",
             text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
             "supplier_id",
+            "supplier_ref",
+            unique=True,
+        ),
+        # `pi_number` is OURS and minted once - it must never collide within a company
+        # regardless of supplier (AC-A1/A4).
+        Index(
+            "uq_scm_proforma_invoice_number",
+            text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
             "pi_number",
             unique=True,
         ),
