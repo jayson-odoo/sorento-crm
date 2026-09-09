@@ -116,6 +116,12 @@ def _seed_kailu_aliases_and_world(db):
     _load("375_scm_proforma_invoice").seed(conn)
     _load("428_scm_pi_cbm_adjust_revision").seed(conn)
     _load("483_supplier_doc_aliases").seed(conn)
+    from sqlalchemy import text as _text
+    conn.execute(_text(
+        "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
+        "VALUES ('packing_list','invoice_date','Date','en') "
+        "ON CONFLICT (doc_type, field, alias) DO NOTHING"
+    ))
     db.commit()
     w = World(db)
     kailu = w.supplier("Kailu")

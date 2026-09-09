@@ -238,7 +238,9 @@ def test_preview_price_matches_no_self_match_within_one_combined_file(monkeypatc
         monkeypatch.setattr(
             svc,
             "_file_preview",
-            lambda db, name, data: {
+            # `**_attach` swallows `supplier_id`/`attach_to`/`block_attach`, which
+            # `preview()` passes since attach resolution became per block (fix round 1).
+            lambda db, name, data, **_attach: {
                 "name": name,
                 "kind": "combined",
                 "blocks": [],
