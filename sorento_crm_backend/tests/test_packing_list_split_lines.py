@@ -96,17 +96,30 @@ def _line(db, shipment, product, supplier, *, qty, created_at=None, cartons=1, p
 
 
 def test_d1_two_lines_of_one_product_from_one_supplier_are_legal():
-    """`uk_inbound_shipment_lines_ship_prod_sup` must become non-unique. Today it is still
-    a UNIQUE index, so this insert raises IntegrityError - the exact defect D1 fixes."""
+    """`uk_inbound_shipment_lines_ship_prod_sup` must become non-unique
+    (`ix_inbound_shipment_lines_ship_prod_sup`, same three columns). Today it is still a
+    UNIQUE index, so this insert raises `IntegrityError` - the assertion below is AC-D1's
+    TARGET state (both rows land, no exception), which is why it is red right now rather
+    than the exception itself being the thing under test."""
     with blank_session() as db:
         _company_id, product, supplier = _world(db)
         shipment = _shipment(db)
 
         _line(db, shipment, product, supplier, qty=50)
         _line(db, shipment, product, supplier, qty=35)
+        db.flush()
 
-        with pytest.raises(IntegrityError):
-            db.flush()
+        rows = (
+            db.query(InboundShipmentLine)
+            .filter(
+                InboundShipmentLine.shipment_id == shipment.id,
+                InboundShipmentLine.product_id == product.id,
+                InboundShipmentLine.supplier_id == supplier.id,
+            )
+            .all()
+        )
+        assert len(rows) == 2
+        assert sorted(int(r.quantity_shipped) for r in rows) == [35, 50]
 
 
 # --------------------------------------------------------------------------------- AC-D2b
