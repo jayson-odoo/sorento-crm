@@ -1,6 +1,6 @@
 # PLAN - supplier documents, proforma invoice first (9 Sep 2026)
 
-**Status:** APPROVED by the captain, 9 Sep 2026 ("go"), one lavish markup round. UAC:
+**Status:** PR #793 OPEN (10 Sep 2026), four Phase 3 fix rounds done, awaiting the captain's merge; approved 9 Sep after one lavish round. UAC:
 `scm-supplier-documents-pi-first-acceptance-criteria.md`. Rulings so far (captain, 9 Sep): PI lines
 mirror the PI document; supplier packing rows stored on the PI; a packing list with no PI is refused;
 Incoming Containers page removed; `PI-YYMM-NNN` 3 digits monthly; old derived names lose their
