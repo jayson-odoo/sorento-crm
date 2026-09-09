@@ -230,8 +230,9 @@ export interface ReorderRecommendation {
    * supported that basis since before S1, this type simply had not caught up to it.
    */
   policy_type: ReorderReason | 'reorder_level' | null;
-  /** Which supplier-selection rule chose the supplier. */
-  supplier_selection: 'primary' | 'best_score' | 'lowest_cost' | null;
+  /** Which supplier-selection rule chose the supplier. `last_purchase` (G7 / AC-S13.6)
+   *  overrides the policy's own strategy whenever a last-purchase supplier is on file. */
+  supplier_selection: 'primary' | 'best_score' | 'lowest_cost' | 'last_purchase' | null;
   /**
    * Why this supplier and not the runner-up, frozen at run time.
    *
