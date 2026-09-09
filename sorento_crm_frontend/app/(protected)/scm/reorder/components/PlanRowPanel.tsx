@@ -76,6 +76,7 @@ export function PlanRowPanel({
   economics,
   healthWindows,
   disabled = false,
+  saving = false,
   lockReason = null,
   onEdit,
   onSave,
@@ -94,6 +95,10 @@ export function PlanRowPanel({
   healthWindows?: { sold_window_months?: number; bought_window_months?: number };
   /** A legacy run: the panel still renders, every input is dead (D8). */
   disabled?: boolean;
+  /** THIS row's own Save is in flight (review fix round 2, 9 Sep) - disables just the
+   *  Save button, never the rest of the panel, and stops a second click from firing a
+   *  second PUT while the first is still on the wire. */
+  saving?: boolean;
   lockReason?: string | null;
   onEdit: (patch: PlanRowEdit) => void;
   /** Persist THIS row's current draft now, rather than waiting for the toolbar's Save. */
@@ -149,12 +154,16 @@ export function PlanRowPanel({
     null;
   const picked = (line.alternatives ?? []).find((a) => a.value === supplierCode) ?? null;
 
-  // S11: the row's TRUE last purchase, whoever it was bought from - the figure "at last
-  // price" actually names, as opposed to the chosen supplier's own quoted cost below.
-  const lastPurchase: LineCostMoney = {
-    unit_cost: line.rec.last_purchase_cost,
-    currency: line.rec.last_purchase_currency,
-  };
+  // S11 (finding 4, review fix round 2, 9 Sep): the row's TRUE last purchase, whoever it
+  // was bought from - the SAME fact the "Last price" line below prints and the figure
+  // "at last price" actually names. ONE source, so the two never disagree: the loaded
+  // price-advice purchase (`price.last`, keyed to the currently chosen supplier) when it
+  // has arrived, else the frozen rec's own `last_purchase` fields (the pool/segment-
+  // attributed fact every row is built from before the price-advice fetch resolves).
+  const lastPurchase: LineCostMoney = price?.last
+    ? { unit_cost: price.last.unit_cost, currency: price.last.currency }
+    : { unit_cost: line.rec.last_purchase_cost, currency: line.rec.last_purchase_currency };
+  const hasLastPurchase = lastPurchase.unit_cost !== null && lastPurchase.unit_cost !== undefined;
   // The chosen supplier's own quote, in ITS OWN currency - the "at supplier price" basis,
   // used only when there is no last price to cost against or a fresh quote was asked for.
   const supplierQuote: LineCostMoney =
@@ -350,10 +359,10 @@ export function PlanRowPanel({
               size="sm"
               variant="outline"
               className="h-7"
-              disabled={disabled}
+              disabled={disabled || saving}
               onClick={onSave}
             >
-              Save
+              {saving ? 'Saving...' : 'Save'}
             </Button>
             <Button
               size="sm"
@@ -374,15 +383,13 @@ export function PlanRowPanel({
           <div className="flex items-baseline justify-between gap-2 text-xs">
             <span className="text-muted-foreground">Last price</span>
             <span className="min-w-0 text-end">
-              {hasPriceOnFile ? (
+              {hasLastPurchase ? (
                 <span className="tabular-nums font-medium">
-                  {/* AC-S2.3: labelled in the PURCHASE's own currency - `price.last.currency`
-                      when there is one on file, the line's own currency only as a fallback
-                      when nothing was ever purchased. */}
-                  {fmtSupplierCost(
-                    price?.last?.unit_cost ?? line.unit_cost ?? 0,
-                    price?.last?.currency ?? line.currency,
-                  )}
+                  {/* AC-S2.3/AC-S11.2 (finding 4): the SAME `lastPurchase` fact the line
+                      cost below costs against - never the chosen supplier's own quote,
+                      which is a different fact and, for an item never purchased, used to
+                      print here mislabelled as a price we had actually paid. */}
+                  {fmtSupplierCost(lastPurchase.unit_cost, lastPurchase.currency)}
                 </span>
               ) : (
                 <span className="text-muted-foreground">No price on file</span>

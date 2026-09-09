@@ -370,9 +370,41 @@ describe('PlanRowPanel - Price and supplier zone (D4)', () => {
       expect(screen.queryByText('RM 110.00')).not.toBeInTheDocument();
     });
 
-    it('falls back to the line\'s own currency only when there is no purchase on file', () => {
-      renderPanel({ price: undefined, line: line({ unit_cost: 15, currency: 'USD' }) });
+    it('falls back to the FROZEN rec\'s own last_purchase fields when price advice has not loaded', () => {
+      // Finding 4 (review fix round 2, 9 Sep): NOT the chosen supplier's own cost
+      // (`line.unit_cost`) - that is a different fact, and printing it here under
+      // "Last price" for an item never purchased is exactly the mislabel this fixes.
+      renderPanel({
+        price: undefined,
+        line: line({ unit_cost: 999, currency: 'MYR',
+                    last_purchase_cost: 15, last_purchase_currency: 'USD' }),
+      });
       expect(screen.getByText('USD 15.00')).toBeInTheDocument();
+      expect(screen.queryByText(/999/)).not.toBeInTheDocument();
+    });
+
+    it('says "No price on file" when neither price advice nor a frozen last purchase exists', () => {
+      renderPanel({
+        price: undefined,
+        line: line({ unit_cost: 999, currency: 'MYR',
+                    last_purchase_cost: null, last_purchase_currency: null }),
+      });
+      expect(screen.getByText('No price on file')).toBeInTheDocument();
+    });
+
+    it('the loaded price advice wins over the frozen rec when the two disagree (finding 4)', () => {
+      // Line cost and "Last price" must read the SAME fact - `price.last` once it has
+      // loaded, even though the frozen rec still carries an older/different figure.
+      renderPanel({
+        price: cnyPrice,
+        line: line({ unit_cost: 10, currency: 'MYR',
+                    last_purchase_cost: 999, last_purchase_currency: 'MYR' }),
+        edit: { decision: { buy: 5 } },
+      });
+      expect(screen.getByText('CNY 110.00')).toBeInTheDocument();
+      expect(screen.queryByText(/999/)).not.toBeInTheDocument();
+      // Line cost: 5 x CNY 110.00 = CNY 550.00, never MYR 999-based.
+      expect(screen.getByText('CNY 550.00')).toBeInTheDocument();
     });
 
     it('never shows the retired "No MYR rate" hint (AC-S11.3)', () => {
