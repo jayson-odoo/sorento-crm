@@ -11,7 +11,6 @@ import { ProductShipsWithSection } from './ProductShipsWithSection';
 interface ProductSuppliersTabProps {
   productId: string;
   productCode: string;
-  productName: string;
 }
 
 /** A dash is "not on file", which is a different fact from zero and must not read as it. */
@@ -34,7 +33,6 @@ function Term({ label, value }: { label: string; value: string }) {
 export default function ProductSuppliersTab({
   productId,
   productCode,
-  productName,
 }: ProductSuppliersTabProps) {
   const { data: productSuppliers, isLoading } = useQuery({
     queryKey: ['product-suppliers', productId],
@@ -114,7 +112,6 @@ export default function ProductSuppliersTab({
       <ProductSuppliedWithSection
         companionProductId={productId}
         companionItemCode={productCode}
-        companionProductName={productName}
       />
       <ProductShipsWithSection hostProductId={productId} />
     </div>

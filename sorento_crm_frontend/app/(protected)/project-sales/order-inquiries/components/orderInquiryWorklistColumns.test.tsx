@@ -523,3 +523,109 @@ describe('the qty cell: one line, an info icon only when there is something to s
     ).not.toBeInTheDocument();
   });
 });
+
+describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)', () => {
+  it('D1: fully bundled, host on a PO reads "Included with <host> · <host coverage>"', () => {
+    renderRows([
+      worklistRow({
+        id: 'host-row',
+        item_code: 'CKS1050',
+        qty: '1',
+        linked_qty: '1',
+        links: [{ id: 'l1', kind: 'po', document: '202609-S0105', qty: '1' }],
+      }),
+      worklistRow({
+        id: 'companion-row',
+        item_code: 'CKSW015',
+        qty: '1',
+        linked_qty: '0',
+        links: [],
+        bundled_qty: '1',
+        bundled_with: { row_id: 'host-row', item_code: 'CKS1050', item_codes: ['CKS1050'] },
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-companion-row');
+    expect(within(row).getByTitle('Included with CKS1050 · 1 of 1')).toBeInTheDocument();
+    // The info icon opens the ANCHOR row's own lightbox - it exists for this row.
+    expect(within(row).getByTestId('backing-documents-trigger-companion-row')).toBeInTheDocument();
+  });
+
+  it('D2: fully bundled, host not found reads "Included with <host> · Not found (new order)"', () => {
+    renderRows([
+      worklistRow({ id: 'host-row-2', item_code: 'CKS1050', qty: '1', linked_qty: '0', links: [] }),
+      worklistRow({
+        id: 'companion-row-2',
+        item_code: 'CKSW015',
+        qty: '1',
+        linked_qty: '0',
+        links: [],
+        bundled_qty: '1',
+        bundled_with: { row_id: 'host-row-2', item_code: 'CKS1050', item_codes: ['CKS1050'] },
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-companion-row-2');
+    expect(
+      within(row).getByTitle('Included with CKS1050 · Not found (new order)'),
+    ).toBeInTheDocument();
+  });
+
+  it('D3: partly bundled reads "<bundled> with <host> · <own linked> of <ala carte remainder>"', () => {
+    renderRows([
+      worklistRow({
+        id: 'host-row-3',
+        item_code: 'CKS1050',
+        qty: '1',
+        linked_qty: '1',
+        links: [{ id: 'l3', kind: 'po', document: '202609-S0110', qty: '1' }],
+      }),
+      worklistRow({
+        id: 'companion-row-3',
+        item_code: 'CKSW015',
+        qty: '3',
+        linked_qty: '0',
+        links: [],
+        bundled_qty: '1',
+        bundled_with: { row_id: 'host-row-3', item_code: 'CKS1050', item_codes: ['CKS1050'] },
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-companion-row-3');
+    // qty 3, bundled 1: the ala carte remainder is 2, and none of it is linked yet.
+    expect(within(row).getByTitle('1 with CKS1050 · 0 of 2')).toBeInTheDocument();
+  });
+
+  it('D10: a pair rule, fully bundled, reads "Included with N items" - never the word "host"', () => {
+    renderRows([
+      worklistRow({
+        id: 'host-x',
+        item_code: 'X',
+        qty: '2',
+        linked_qty: '2',
+        links: [{ id: 'lx', kind: 'po', document: '202609-S0120', qty: '2' }],
+      }),
+      worklistRow({
+        id: 'host-y',
+        item_code: 'Y',
+        qty: '2',
+        linked_qty: '2',
+        links: [{ id: 'ly', kind: 'po', document: '202609-S0120', qty: '2' }],
+      }),
+      worklistRow({
+        id: 'companion-sc',
+        item_code: 'SC',
+        qty: '2',
+        linked_qty: '0',
+        links: [],
+        bundled_qty: '2',
+        // The FIRST host named on the rule is the anchor (plan 3.2) - X here.
+        bundled_with: { row_id: 'host-x', item_code: 'X', item_codes: ['X', 'Y'] },
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-companion-sc');
+    expect(within(row).getByTitle('Included with 2 items · 2 of 2')).toBeInTheDocument();
+    expect(row.textContent?.toLowerCase()).not.toContain('host');
+  });
+});

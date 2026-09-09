@@ -5,18 +5,13 @@
  * Layering: UI -> hooks (useProductCompanions) -> THIS service -> lib/api-client
  * -> backend. No component fetches directly.
  *
- * ── PHASE-1 / PHASE-2 SWAP ──────────────────────────────────────────────────
- * `USE_COMPANION_MOCKS` is the single flag that toggles this feature between the
- * deterministic in-memory store (`lib/productCompanionMock.ts`) and the live
- * backend. Phase 1 = true (no backend yet - PLAN-scm-supplied-with-companions.md
- * S3/S4 build `product_companion_rules` + the routes). Phase 2 flips it to
- * false; every mock branch below already has its real `apiFetch` counterpart
- * wired to the contract, so the swap is one line + deleting the mock import.
+ * Phase 2 (S3/S4) built `product_companion_rules` + these routes - this file no
+ * longer mocks anything (the Phase-1 in-memory store, `lib/productCompanionMock.ts`,
+ * is deleted).
  *
- * ── PHASE-2 BACKEND CONTRACT (mounted under
- *    require_module_enabled_with_api_key, gated `master_data.products.edit` for
- *    writes / `master_data.products.view` for reads - the products permission,
- *    per the plan's S4) ────────────────────────────────────────────────────────
+ * ── BACKEND CONTRACT (mounted under require_module_enabled_with_api_key, gated
+ *    `master_data.products.edit` for writes / `master_data.products.view` for
+ *    reads - the products permission, per the plan's S4) ──────────────────────
  *
  *  GET    /api/v1/master-data/product-companion-rules?companion_product_id={id}
  *  GET    /api/v1/master-data/product-companion-rules?host_product_id={id}
@@ -39,12 +34,12 @@
  *    Hard delete. NOT what the UI calls directly - Delete is a deferred action
  *    (D7: no confirmation dialog, a 10s server-parked grace window instead),
  *    dispatched through /api/v1/pending-actions with action_key
- *    `product_companion_rule.delete` once Phase 2 registers that action in
- *    `app/services/record_actions.py`. This raw route stays for API-key
- *    callers and admin tooling, matching every other hard-deletable record
- *    (`deleteProduct` in productService.ts is the same shape).
+ *    `product_companion_rule.delete` (registered in `app/services/
+ *    record_actions.py`). This raw route stays for API-key callers and admin
+ *    tooling, matching every other hard-deletable record (`deleteProduct` in
+ *    productService.ts is the same shape).
  *
- * Deleting a product that is named as a host or a companion of an ACTIVE rule
+ * Deleting a product that is named as a host or a companion of an active rule
  * is refused (RESTRICT on the FK, UAC A6) - that error surfaces through the
  * existing product-delete flow, not through this file.
  * ============================================================================
@@ -55,38 +50,12 @@ import type {
   ProductCompanionRuleRow,
   ProductCompanionRuleWrite,
 } from '../types/productCompanion.types';
-import {
-  MockCompanionRuleConflict,
-  mockCreateRule,
-  mockDeleteRule,
-  mockListRulesForCompanion,
-  mockListRulesForHost,
-} from '../lib/productCompanionMock';
-
-/** Phase-1 flag - true = deterministic mock store, false = live backend. */
-export const USE_COMPANION_MOCKS = true;
 
 const BASE = '/api/v1/master-data/product-companion-rules';
-
-/**
- * Labels for the picked companion / hosts / supplier. The mock store has no backend to
- * resolve ids against, so the caller (which already has these records from the shared
- * product search and `useSupplierSelectQuery`) hands them along. Dropped once
- * `USE_COMPANION_MOCKS` flips false - the real POST returns the whole row itself.
- */
-export interface CreateCompanionRuleInput {
-  write: ProductCompanionRuleWrite;
-  mockRefs: {
-    companion: { item_code: string; product_name: string };
-    hosts: { product_id: string; item_code: string; product_name: string }[];
-    supplier: { supplier_code: string; supplier_name: string } | null;
-  };
-}
 
 export async function listCompanionRulesForCompanion(
   companionProductId: string,
 ): Promise<ProductCompanionRuleRow[]> {
-  if (USE_COMPANION_MOCKS) return mockListRulesForCompanion(companionProductId);
   const params = new URLSearchParams({ companion_product_id: companionProductId });
   const res = await apiFetch(`${BASE}?${params.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load supplied-with rules'));
@@ -97,7 +66,6 @@ export async function listCompanionRulesForCompanion(
 export async function listCompanionRulesForHost(
   hostProductId: string,
 ): Promise<ProductCompanionRuleRow[]> {
-  if (USE_COMPANION_MOCKS) return mockListRulesForHost(hostProductId);
   const params = new URLSearchParams({ host_product_id: hostProductId });
   const res = await apiFetch(`${BASE}?${params.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load "ships with" rules'));
@@ -106,20 +74,12 @@ export async function listCompanionRulesForHost(
 }
 
 export async function createProductCompanionRule(
-  input: CreateCompanionRuleInput,
+  write: ProductCompanionRuleWrite,
 ): Promise<ProductCompanionRuleRow> {
-  if (USE_COMPANION_MOCKS) {
-    try {
-      return mockCreateRule(input.write, input.mockRefs);
-    } catch (error) {
-      if (error instanceof MockCompanionRuleConflict) throw new Error(error.message);
-      throw error;
-    }
-  }
   const res = await apiFetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input.write),
+    body: JSON.stringify(write),
   });
   if (!res.ok) {
     throw new Error(
@@ -135,15 +95,12 @@ export async function createProductCompanionRule(
 }
 
 /**
- * The raw hard delete. The UI never calls this - see the DELETE contract note above.
- * Kept for parity with `deleteProduct` and for the mock branch the Phase-1 local
- * deferred-delete timer (`useProductCompanions.ts`) calls at commit time.
+ * The raw hard delete. The UI never calls this directly - see the DELETE contract
+ * note above; `useDeferredRowAction` parks the action and the server calls this
+ * service method's own real counterpart (`ProductCompanionService.delete`) at
+ * commit time. Kept for parity with `deleteProduct`.
  */
 export async function deleteProductCompanionRule(id: string): Promise<void> {
-  if (USE_COMPANION_MOCKS) {
-    mockDeleteRule(id);
-    return;
-  }
   const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the rule'));
 }

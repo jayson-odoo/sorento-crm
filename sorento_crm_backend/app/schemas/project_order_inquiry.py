@@ -16,6 +16,18 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
+class OrderInquiryBundledWithOut(BaseModel):
+    """PLAN-scm-supplied-with-companions.md S5. `row_id` addresses the ANCHOR row (the
+    rule's first matching item, plan 3.2); `item_codes` names every item the rule
+    requires, in rule order - length 1 for the common case, 2+ for a pair rule (SC-RL
+    with X + Y). The UI never says "host" (UAC D10): one item names its own code, two
+    or more read "N items", and the lightbox is where `item_codes` is shown in full."""
+
+    row_id: str
+    item_code: Optional[str] = None
+    item_codes: List[str] = []
+
+
 class OrderInquiryLinkOut(BaseModel):
     """One placement on an order inquiry row (`projects.order_inquiry_links`, AC-I5).
 
@@ -260,6 +272,12 @@ class OrderInquiryWorklistRow(BaseModel):
     linked_qty: str = "0"
     #: The document CS cited on an order back, so the screen can say the walk honoured it.
     cited_document: Optional[str] = None
+    #: PLAN-scm-supplied-with-companions.md S5. `bundled_qty` never exceeds
+    #: `qty - linked_qty`; `bundled_with` is null on an un-bundled row. Both declared
+    #: here because `response_model` drops a field it has not been told about
+    #: (`test_order_inquiry_bundles.py::test_d7`).
+    bundled_qty: str = "0"
+    bundled_with: Optional[OrderInquiryBundledWithOut] = None
 
     #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with
     #: it: `awaiting`, `acknowledged`, `changed` or `rejected`. Every one of the columns

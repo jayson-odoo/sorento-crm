@@ -8,8 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
+  useCompanionRuleDelete,
   useCompanionRulesForCompanion,
-  useLocalDeferredRuleDelete,
 } from '../../hooks/useProductCompanions';
 import type { ProductCompanionRuleRow } from '../../types/productCompanion.types';
 import { AddCompanionRuleModal } from './AddCompanionRuleModal';
@@ -17,7 +17,6 @@ import { AddCompanionRuleModal } from './AddCompanionRuleModal';
 interface ProductSuppliedWithSectionProps {
   companionProductId: string;
   companionItemCode: string;
-  companionProductName: string;
 }
 
 function RuleRow({
@@ -96,12 +95,11 @@ function RuleRow({
 export function ProductSuppliedWithSection({
   companionProductId,
   companionItemCode,
-  companionProductName,
 }: ProductSuppliedWithSectionProps) {
   const [addOpen, setAddOpen] = useState(false);
   const canEdit = useHasPermission('master_data.products.edit');
   const { data: rules, isLoading, isError } = useCompanionRulesForCompanion(companionProductId);
-  const deletion = useLocalDeferredRuleDelete(companionProductId);
+  const deletion = useCompanionRuleDelete(companionProductId);
 
   return (
     <Card>
@@ -126,7 +124,7 @@ export function ProductSuppliedWithSection({
           </p>
         ) : !rules || rules.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            This product has no supplied-with rule. It is bought on its own.
+            This product has no supplied-with rule.
           </p>
         ) : (
           <div className="space-y-2">
@@ -136,7 +134,14 @@ export function ProductSuppliedWithSection({
                 rule={rule}
                 canEdit={canEdit}
                 isDeleting={deletion.targetId === rule.id}
-                onDelete={() => deletion.run(rule)}
+                onDelete={() =>
+                  deletion.run({
+                    id: rule.id,
+                    subject: `${rule.companion_item_code} with ${rule.hosts
+                      .map((h) => h.item_code)
+                      .join(' + ')}`,
+                  })
+                }
               />
             ))}
           </div>
@@ -148,7 +153,6 @@ export function ProductSuppliedWithSection({
           onOpenChange={setAddOpen}
           companionProductId={companionProductId}
           companionItemCode={companionItemCode}
-          companionProductName={companionProductName}
         />
       ) : null}
     </Card>

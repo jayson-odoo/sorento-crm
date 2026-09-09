@@ -25,7 +25,6 @@ interface AddCompanionRuleModalProps {
   onOpenChange: (open: boolean) => void;
   companionProductId: string;
   companionItemCode: string;
-  companionProductName: string;
 }
 
 function displayProduct(p: { product_code: string; product_name: string }): string {
@@ -43,7 +42,6 @@ export function AddCompanionRuleModal({
   onOpenChange,
   companionProductId,
   companionItemCode,
-  companionProductName,
 }: AddCompanionRuleModalProps) {
   const [hostIds, setHostIds] = useState<string[]>([]);
   const [supplierId, setSupplierId] = useState('');
@@ -84,30 +82,12 @@ export function AddCompanionRuleModal({
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canSave) return;
-    const hosts = hostIds.map((id) => {
-      const ref = hostRefsRef.current.get(id);
-      return {
-        product_id: id,
-        item_code: ref?.product_code ?? id,
-        product_name: ref?.product_name ?? '',
-      };
-    });
-    const supplier = supplierId ? (suppliers.find((s) => s.id === supplierId) ?? null) : null;
     try {
       await create.mutateAsync({
-        write: {
-          companion_product_id: companionProductId,
-          host_product_ids: hostIds,
-          supplier_id: supplierId || null,
-          ratio: ratioValue,
-        },
-        mockRefs: {
-          companion: { item_code: companionItemCode, product_name: companionProductName },
-          hosts,
-          supplier: supplier
-            ? { supplier_code: supplier.supplier_code, supplier_name: supplier.supplier_name }
-            : null,
-        },
+        companion_product_id: companionProductId,
+        host_product_ids: hostIds,
+        supplier_id: supplierId || null,
+        ratio: ratioValue,
       });
       onOpenChange(false);
     } catch {

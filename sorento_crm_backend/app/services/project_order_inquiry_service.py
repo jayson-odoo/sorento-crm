@@ -52,12 +52,17 @@ from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
+    ProductSupplier,
     PurchaseOrder,
     PurchaseOrderLine,
     SPOAllocation,
     Supplier,
 )
 from app.models.product import Product
+from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
+from app.services.product_companion_service import (
+    bundled_with_item_codes as _bundled_with_item_codes,
+)
 from app.models.scm import OrderLinkClaim
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
@@ -755,6 +760,10 @@ class ProjectOrderInquiryService:
         created += shortfalls
         raised += shortfalls
         self.db.flush()
+        # PLAN-scm-supplied-with-companions.md S5 (call site 1): the revision's rows are
+        # all written now, so any companion this inquiry carries can be derived against
+        # its host(s)' fresh state.
+        self.derive_bundles(inquiry.id)
         if raised and self.task_for(inquiry.id) is None:
             self._hand_to_purchasing(order, inquiry, raised)
         return {
@@ -1943,6 +1952,16 @@ class ProjectOrderInquiryService:
         candidates = self.link_candidate_products(set(product_by_row.values()))
         links_by_row = self.links_for_rows([row.id for row in rows])
         linked_by_row = self._linked_qty_by_row([row.id for row in rows])
+        # PLAN-scm-supplied-with-companions.md S5: the anchor's own item code, for the
+        # rows that carry a bundle - one query for the whole page rather than one per row.
+        anchor_ids = {row.bundled_with_row_id for row in rows if row.bundled_with_row_id}
+        anchor_item_code_by_id: Dict[str, str] = {}
+        if anchor_ids:
+            anchor_item_code_by_id = dict(
+                self.db.query(OrderInquiryRow.id, OrderInquiryRow.item_code)
+                .filter(OrderInquiryRow.id.in_(anchor_ids))
+                .all()
+            )
         out: List[Dict[str, Any]] = []
         for row in rows:
             meta = context.get(row.order_inquiry_id, {})
@@ -1973,6 +1992,27 @@ class ProjectOrderInquiryService:
                     "po_ref": row.po_ref,
                     "po_line_id": row.po_line_id,
                     "cited_document": row.cited_document,
+                    # PLAN-scm-supplied-with-companions.md S5: how much of this row
+                    # rides inside another item's own line, and which row anchors it.
+                    # `response_model` drops what it is not told about - both asserted
+                    # in `test_order_inquiry_bundles.py::test_d7`.
+                    "bundled_qty": _qty_str(_dec(row.bundled_qty)),
+                    "bundled_with": (
+                        {
+                            "row_id": row.bundled_with_row_id,
+                            "item_code": anchor_item_code_by_id.get(row.bundled_with_row_id),
+                            "item_codes": _bundled_with_item_codes(
+                                self.db,
+                                company_id=row.company_id,
+                                companion_item_code=row.item_code,
+                                anchor_item_code=anchor_item_code_by_id.get(
+                                    row.bundled_with_row_id
+                                ),
+                            ),
+                        }
+                        if row.bundled_with_row_id
+                        else None
+                    ),
                     # WHERE the quantity actually sits (AC-I5/AC-I9). `po_ref` above is the
                     # first of these, kept for the older readers that print one number.
                     "links": links_by_row.get(row.id, []),
@@ -2796,7 +2836,15 @@ class ProjectOrderInquiryService:
         Renaming the column value would have rewritten `scm.committed_v`, the worklist's
         own filter and every saved column preference to say the same thing in a different
         word, which buys nothing and breaks a bookmark.
+
+        PLAN-scm-supplied-with-companions.md S5 (call site 2, section 3.2): re-derives
+        every touched inquiry's bundles FIRST, so a host row's own link change (gaining
+        one, being cancelled, its qty dropping) is reflected in its companions' state
+        below in the SAME pass - `derive_bundles` is the one writer of `bundled_qty`,
+        never this loop.
         """
+        for inquiry_id in {row.order_inquiry_id for row in rows if row.order_inquiry_id}:
+            self.derive_bundles(inquiry_id)
         for row in rows:
             if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED):
                 # The STATE is a person's word and is left alone, but the derived display
@@ -2809,13 +2857,7 @@ class ProjectOrderInquiryService:
                 continue
             links = self._links_of(row.id)
             linked = sum((_dec(link.qty) for link in links), _ZERO)
-            need = _dec(row.qty)
-            if linked <= _ZERO:
-                row.state = INQUIRY_RAISED
-            elif linked < need:
-                row.state = INQUIRY_PARTLY_LINKED
-            else:
-                row.state = INQUIRY_PLACED
+            row.state = self._coverage_state(_dec(row.qty), linked, _dec(row.bundled_qty))
             first = links[0] if links else None
             # The FIRST link's document, by when it was made. `po_ref` has carried a PO
             # number since section G and several readers still print it; it is a display of
@@ -2828,6 +2870,211 @@ class ProjectOrderInquiryService:
                 if first is not None and first.spo_allocation_id is not None
                 else None
             )
+
+    @staticmethod
+    def _coverage_state(qty: Decimal, linked: Decimal, bundled: Decimal) -> str:
+        """`linked + bundled_qty >= qty` reads `placed`; between, `partly_linked`; none
+        of it, `raised` (plan 3.4 "State"). The one formula `refresh_link_state` and
+        `derive_bundles` both read, so the two writers of a row's coverage can never
+        come to disagree about what it means."""
+        covered = linked + bundled
+        if covered <= _ZERO:
+            return INQUIRY_RAISED
+        if covered < qty:
+            return INQUIRY_PARTLY_LINKED
+        return INQUIRY_PLACED
+
+    # --------------------------------------------------- supplied-with companions (S5)
+
+    def derive_bundles(self, inquiry_id: str) -> None:
+        """PLAN-scm-supplied-with-companions.md sections 3.2-3.3.
+
+        Recomputes `bundled_qty` / `bundled_with_row_id` (and, since coverage now reads
+        both, `state`) for every COMPANION row of this inquiry - never a host row's own
+        fields, and never a new row. Idempotent (B14): re-running it is a no-op when
+        nothing on the inquiry has changed.
+
+        Per companion row R:
+          rules  = active rules for R's product, company-scoped
+          for each rule (first match wins - the UNIQUE constraint means at most one
+                         should ever apply to a given order's supplier anyway):
+              host rows H_k = this inquiry's rows of each host product, verb in
+                              (ORDER, ORDER_BACK), state not cancelled, ack not rejected
+              every H_k must have at least one row, or the rule does not apply
+              the rule's OWN supplier scope must match (3.3), or it does not apply
+              host_cap = min over k of (sum(H_k.qty) * ratio)
+              bundled  = min(R.qty - linked(R), host_cap), never below 0
+          R.bundled_qty = bundled (0 if no rule applied)
+          R.bundled_with_row_id = the first host row of the first host key (3.2's
+                                   "display anchor"), or None
+        """
+        rows = (
+            self.db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.order_inquiry_id == inquiry_id)
+            # `populate_existing()`: a caller may have just changed a SIBLING row's
+            # state or links by raw SQL or in another transaction (E1's own production
+            # shape - the owner relinks by hand) - this has to see that row as it is
+            # NOW, not whatever this session's identity map already held it as.
+            .populate_existing()
+            .all()
+        )
+        if not rows:
+            return
+        inquiry = self.db.query(OrderInquiry).filter(OrderInquiry.id == inquiry_id).first()
+        if inquiry is None:
+            return
+        company_id = inquiry.company_id
+
+        codes = {row.item_code for row in rows if row.item_code}
+        if not codes:
+            return
+        product_by_code: Dict[str, str] = {
+            code: pid
+            for pid, code in self.db.query(Product.id, Product.product_code)
+            .filter(Product.company_id == company_id, Product.product_code.in_(codes))
+            .all()
+        }
+        if not product_by_code:
+            return
+
+        def _is_host_row(row: OrderInquiryRow) -> bool:
+            return (
+                row.verb in (IV_ORDER, IV_ORDER_BACK)
+                and row.state != INQUIRY_CANCELLED
+                and row.ack_state != ACK_REJECTED
+            )
+
+        host_rows_by_product: Dict[str, List[OrderInquiryRow]] = {}
+        for row in rows:
+            if not _is_host_row(row):
+                continue
+            product_id = product_by_code.get(row.item_code)
+            if product_id:
+                host_rows_by_product.setdefault(product_id, []).append(row)
+
+        product_ids = set(product_by_code.values())
+        active_rules = (
+            self.db.query(ProductCompanionRule)
+            .filter(
+                ProductCompanionRule.company_id == company_id,
+                ProductCompanionRule.companion_product_id.in_(product_ids),
+                ProductCompanionRule.is_active.is_(True),
+            )
+            .all()
+        )
+        rules_by_companion: Dict[str, List[ProductCompanionRule]] = {}
+        for rule in active_rules:
+            rules_by_companion.setdefault(rule.companion_product_id, []).append(rule)
+        if not rules_by_companion:
+            return
+
+        hosts_by_rule: Dict[str, List[str]] = {}
+        rule_ids = [rule.id for rule in active_rules]
+        for host_link in (
+            self.db.query(ProductCompanionRuleHost)
+            .filter(ProductCompanionRuleHost.rule_id.in_(rule_ids))
+            .order_by(ProductCompanionRuleHost.seq.asc())
+            .all()
+        ):
+            hosts_by_rule.setdefault(host_link.rule_id, []).append(host_link.host_product_id)
+
+        linked_by_row = self._linked_qty_by_row([row.id for row in rows])
+
+        for row in rows:
+            product_id = product_by_code.get(row.item_code)
+            candidate_rules = rules_by_companion.get(product_id) if product_id else None
+            not_a_row_this_touches = row.verb not in (IV_ORDER, IV_ORDER_BACK) or row.state == (
+                INQUIRY_CANCELLED
+            )
+            if not candidate_rules or not_a_row_this_touches:
+                continue
+
+            bundled = _ZERO
+            anchor_row_id: Optional[str] = None
+            for rule in candidate_rules:
+                host_ids = hosts_by_rule.get(rule.id) or []
+                if not host_ids:
+                    continue
+                host_rows_per_host = [host_rows_by_product.get(hid) or [] for hid in host_ids]
+                if any(not host_rows for host_rows in host_rows_per_host):
+                    # Not every host on this rule has a row on THIS order (B7) - the
+                    # rule does not apply.
+                    continue
+                if not self._companion_rule_supplier_matches(rule, host_rows_per_host):
+                    continue
+                host_cap: Optional[Decimal] = None
+                for host_rows in host_rows_per_host:
+                    host_total = sum((_dec(h.qty) for h in host_rows), _ZERO)
+                    cap = host_total * _dec(rule.ratio)
+                    host_cap = cap if host_cap is None else min(host_cap, cap)
+                linked = linked_by_row.get(row.id, _ZERO)
+                remaining = max(_dec(row.qty) - linked, _ZERO)
+                candidate_bundle = min(remaining, host_cap if host_cap is not None else _ZERO)
+                if candidate_bundle > bundled:
+                    bundled = candidate_bundle
+                    anchor_row_id = host_rows_per_host[0][0].id
+
+            row.bundled_qty = bundled
+            row.bundled_with_row_id = anchor_row_id if bundled > _ZERO else None
+            linked = linked_by_row.get(row.id, _ZERO)
+            row.state = self._coverage_state(_dec(row.qty), linked, bundled)
+
+        self.db.flush()
+
+    def _companion_rule_supplier_matches(
+        self, rule: ProductCompanionRule, host_rows_per_host: Sequence[Sequence[OrderInquiryRow]]
+    ) -> bool:
+        """PLAN section 3.3. NULL `supplier_id` is the "just in case" scope and always
+        matches. Otherwise EVERY host on the rule must resolve to that supplier - a
+        linked host row reads the supplier of its own link; an unlinked one reads its
+        product's primary supplier."""
+        if not rule.supplier_id:
+            return True
+        for host_rows in host_rows_per_host:
+            if not any(
+                self._host_row_supplier_id(row) == rule.supplier_id for row in host_rows
+            ):
+                return False
+        return True
+
+    def _host_row_supplier_id(self, row: OrderInquiryRow) -> Optional[str]:
+        """3.3: a linked host row's supplier is the one its (first PO) link names; an
+        unlinked one's is its product's own primary supplier."""
+        links = self._links_of(row.id)
+        for link in links:
+            if link.po_line_id:
+                po_line = (
+                    self.db.query(PurchaseOrderLine)
+                    .filter(PurchaseOrderLine.id == link.po_line_id)
+                    .first()
+                )
+                if po_line is not None:
+                    po = (
+                        self.db.query(PurchaseOrder)
+                        .filter(PurchaseOrder.id == po_line.purchase_order_id)
+                        .first()
+                    )
+                    if po is not None and po.supplier_id:
+                        return po.supplier_id
+        if links:
+            # Every link resolved to no supplier (an SPO with no PO behind it) - there
+            # is nothing to match against.
+            return None
+        product_id = (
+            self.db.query(Product.id)
+            .filter(Product.company_id == row.company_id, Product.product_code == row.item_code)
+            .scalar()
+        )
+        if not product_id:
+            return None
+        return (
+            self.db.query(ProductSupplier.supplier_id)
+            .filter(
+                ProductSupplier.product_id == product_id,
+                ProductSupplier.is_primary_supplier.is_(True),
+            )
+            .scalar()
+        )
 
     def _links_of(self, row_id: str) -> List[OrderInquiryLink]:
         """This row's links, oldest first - the order "the first link" means."""
@@ -3918,9 +4165,11 @@ class ProjectOrderInquiryService:
         return out
 
     def _unlinked_need(self, row: OrderInquiryRow) -> Decimal:
-        """What is still to be linked on this row: its quantity, less its links."""
+        """What is still to be linked on this row: its quantity, less its links, less
+        whatever rides inside another item's own line (plan 3.4 "Cascade") - a bundled
+        unit is never something the cascade goes looking for a document for."""
         linked = sum((_dec(link.qty) for link in self._links_of(row.id)), _ZERO)
-        return max(_dec(row.qty) - linked, _ZERO)
+        return max(_dec(row.qty) - linked - _dec(row.bundled_qty), _ZERO)
 
     def _write_link(
         self,

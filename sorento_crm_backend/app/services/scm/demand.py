@@ -315,8 +315,9 @@ WITH legs AS (
            CASE WHEN oir.verb = 'ORDER_BACK'
                 THEN COALESCE(donor.id, sol.warehouse_id)
                 ELSE sol.warehouse_id END AS warehouse_id,
-           GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_qty,
-           GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_confirmed_qty,
+           GREATEST(oir.qty - COALESCE(lk.linked, 0) - oir.bundled_qty, 0) AS project_qty,
+           GREATEST(oir.qty - COALESCE(lk.linked, 0) - oir.bundled_qty, 0)
+               AS project_confirmed_qty,
            0::numeric AS retail_qty,
            0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -335,7 +336,9 @@ WITH legs AS (
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
-      AND oir.qty > COALESCE(lk.linked, 0)
+      -- PLAN-scm-supplied-with-companions.md ruling 6: a bundled unit never reaches
+      -- reorder planning, whatever the item it rides with is covered by.
+      AND oir.qty > COALESCE(lk.linked, 0) + oir.bundled_qty
     UNION ALL
     -- The FORM leg: an instruction the CS Order Inquiry Form raised that no supply decision
     -- points at (`PLAN-scm-cs-planning-uat.md` section 3.I; the fixture sheet's `[NL]`
@@ -375,8 +378,9 @@ WITH legs AS (
     -- counted by nothing else, and a class test alone would drop it.
     SELECT fp.id AS product_id,
            fw.id AS warehouse_id,
-           GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
-           GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_confirmed_qty,
+           GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0) AS project_qty,
+           GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0)
+               AS project_confirmed_qty,
            0::numeric AS retail_qty,
            0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -408,7 +412,8 @@ WITH legs AS (
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
-      AND oir.qty > COALESCE(flk.linked, 0)
+      -- Ruling 6, form leg: the same "never reaches reorder planning" rule.
+      AND oir.qty > COALESCE(flk.linked, 0) + oir.bundled_qty
 )
 SELECT product_id,
        warehouse_id,
@@ -483,8 +488,9 @@ WITH legs AS (
            CASE WHEN oir.verb = 'ORDER_BACK'
                 THEN COALESCE(donor.id, sol.warehouse_id)
                 ELSE sol.warehouse_id END AS warehouse_id,
-           GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_qty,
-           GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_confirmed_qty,
+           GREATEST(oir.qty - COALESCE(lk.linked, 0) - oir.bundled_qty, 0) AS project_qty,
+           GREATEST(oir.qty - COALESCE(lk.linked, 0) - oir.bundled_qty, 0)
+               AS project_confirmed_qty,
            0::numeric AS retail_qty,
            0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -503,7 +509,8 @@ WITH legs AS (
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
-      AND oir.qty > COALESCE(lk.linked, 0)
+      -- Ruling 6: a bundled unit never reaches reorder planning.
+      AND oir.qty > COALESCE(lk.linked, 0) + oir.bundled_qty
       -- Planning horizon, confirmed leg: same rule, off the inquiry row's own delivery
       -- date rather than the core line's required_date.
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
@@ -547,8 +554,9 @@ WITH legs AS (
     -- counted by nothing else, and a class test alone would drop it.
     SELECT fp.id AS product_id,
            fw.id AS warehouse_id,
-           GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
-           GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_confirmed_qty,
+           GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0) AS project_qty,
+           GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0)
+               AS project_confirmed_qty,
            0::numeric AS retail_qty,
            0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -580,7 +588,8 @@ WITH legs AS (
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
-      AND oir.qty > COALESCE(flk.linked, 0)
+      -- Ruling 6, form leg: the same rule again.
+      AND oir.qty > COALESCE(flk.linked, 0) + oir.bundled_qty
       -- Planning horizon, form leg: the same rule again. An ORDER BACK row states no
       -- date at all, so it is always in - unscheduled demand is still demand.
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
@@ -641,7 +650,8 @@ WITH legs AS (
     WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.qty > 0
-      AND oir.qty > COALESCE(lk.linked, 0)
+      -- Ruling 6: a fully bundled row is not owed, so it names no date either.
+      AND oir.qty > COALESCE(lk.linked, 0) + oir.bundled_qty
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
            OR oir.delivery_date <= CAST(:horizon AS date))
     UNION ALL
@@ -672,7 +682,7 @@ WITH legs AS (
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.qty > 0
-      AND oir.qty > COALESCE(flk.linked, 0)
+      AND oir.qty > COALESCE(flk.linked, 0) + oir.bundled_qty
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
            OR oir.delivery_date <= CAST(:horizon AS date))
 )

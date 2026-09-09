@@ -67,6 +67,7 @@ from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.product_companion_service import bundled_with_item_codes
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
     project_customer_label,
@@ -287,7 +288,36 @@ def _linked_qty(*where) -> Any:
 #: column applies it.
 _SPO_LINKED_QTY = _linked_qty(OrderInquiryLink.spo_allocation_id.isnot(None))
 _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
-_UNLINKED_QTY = func.greatest(OrderInquiryRow.qty - _linked_qty(), 0)
+#: `_AnchorOf` is a second alias of THIS row's own table: PLAN-scm-supplied-with-
+#: companions.md ruling 6/7 (owner, plan review) says a bundled quantity is not owed
+#: anywhere, and section 3.4 "Tiles" reads this as: the ANCHOR row's own Buy need
+#: shrinks by exactly what its companions are riding on it for (UAC D5) - CKS1050's own
+#: unlinked need is not double-counted once as "CKS1050 itself" and again as "what
+#: CKSW015 is riding on". `bundled_qty` on the row itself is untouched by this - it is
+#: a presentation-only subtraction for the cards/kind filter, never written back.
+_AnchorOf = aliased(OrderInquiryRow)
+_ANCHORED_BUNDLED_QTY = (
+    select(func.coalesce(func.sum(_AnchorOf.bundled_qty), 0))
+    .where(_AnchorOf.bundled_with_row_id == OrderInquiryRow.id)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_UNLINKED_QTY = func.greatest(
+    OrderInquiryRow.qty
+    - _linked_qty()
+    - OrderInquiryRow.bundled_qty
+    - _ANCHORED_BUNDLED_QTY,
+    0,
+)
+#: The ANCHOR row's own item code, for a bundled row with no document of its own
+#: (export D8: "the bundled row's document column names its host, not a blank").
+_BundleAnchor = aliased(OrderInquiryRow)
+_BUNDLE_ANCHOR_ITEM_CODE = (
+    select(_BundleAnchor.item_code)
+    .where(_BundleAnchor.id == OrderInquiryRow.bundled_with_row_id)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
 
 #: The two states whose quantity is NOT OWED any more, so neither the three cards nor the
 #: `kind` filter counts them: `cancelled` was called off, and `actioned` has already been
@@ -387,6 +417,11 @@ _COLUMNS = (
     OrderInquiryRow.verb.label("verb"),
     OrderInquiryRow.note.label("note"),
     OrderInquiryRow.cited_document.label("cited_document"),
+    # PLAN-scm-supplied-with-companions.md S5.
+    OrderInquiryRow.bundled_qty.label("bundled_qty"),
+    OrderInquiryRow.bundled_with_row_id.label("bundled_with_row_id"),
+    OrderInquiryRow.company_id.label("company_id"),
+    _BUNDLE_ANCHOR_ITEM_CODE.label("bundled_with_item_code"),
     _RAISED_AT.label("raised_at"),
     _RAISED_BY_NAME.label("raised_by_name"),
     _SO_DATE.label("so_date"),
@@ -845,6 +880,22 @@ class OrderInquiryWorklistService:
             for so_line_id, taken, remaining in agg
         }
 
+    def _bundled_po_number(self, row) -> Optional[str]:
+        """D8: the export's document column for a bundled row with no document of its
+        own - "Included with CKS1050" rather than a blank, naming every item the rule
+        requires when there is more than one (never the word "host")."""
+        if not row.bundled_with_row_id:
+            return None
+        codes = bundled_with_item_codes(
+            self.db,
+            company_id=row.company_id,
+            companion_item_code=row.item_code,
+            anchor_item_code=row.bundled_with_item_code,
+        )
+        if not codes:
+            return None
+        return f"Included with {' + '.join(codes)}"
+
     def _serialize(
         self,
         row,
@@ -870,7 +921,9 @@ class OrderInquiryWorklistService:
             ),
             "supplier": row.supplier,
             "supplier_id": row.supplier_id,
-            "po_number": row.po_number,
+            # D8: a bundled row with no document of its own names its anchor instead of
+            # a blank cell.
+            "po_number": row.po_number or self._bundled_po_number(row),
             "po_id": row.po_id,
             "location": row.location,
             "taken_from_po": _qty_str(line_flow.get("taken", _ZERO)),
@@ -880,6 +933,23 @@ class OrderInquiryWorklistService:
             "links": row_links,
             "linked_qty": _qty_str(linked_qty),
             "cited_document": row.cited_document,
+            # PLAN-scm-supplied-with-companions.md S5. `response_model` drops what it is
+            # not told about - both asserted in `test_order_inquiry_bundles.py::test_d7`.
+            "bundled_qty": _qty_str(_dec(row.bundled_qty)),
+            "bundled_with": (
+                {
+                    "row_id": row.bundled_with_row_id,
+                    "item_code": row.bundled_with_item_code,
+                    "item_codes": bundled_with_item_codes(
+                        self.db,
+                        company_id=row.company_id,
+                        companion_item_code=row.item_code,
+                        anchor_item_code=row.bundled_with_item_code,
+                    ),
+                }
+                if row.bundled_with_row_id
+                else None
+            ),
             "has_link_candidate": (
                 ProjectOrderInquiryService.has_link_candidate(
                     row.verb, product_by_row.get(row.id), link_candidates
