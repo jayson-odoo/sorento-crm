@@ -16,6 +16,20 @@ import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.t
 import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
 
 /**
+ * What a bundled row's lightbox adds on top of the plain one (UAC D1-D3, D10): the
+ * item(s) it rides with, named - never the word "host" - since the cell itself never
+ * lists the codes. `fullyBundled` rows show only this note (their own `row` here is
+ * already the ANCHOR, so its links ARE what backs the note); a partly-bundled row shows
+ * this note ABOVE its own links, which back the ala carte remainder.
+ */
+export interface OrderInquiryBundleNote {
+  itemCodes: string[];
+  fullyBundled: boolean;
+  /** The bundled portion's own quantity. Only meaningful (and only passed) when partial. */
+  qty?: string;
+}
+
+/**
  * Everything backing ONE worklist row, behind the info icon the "Outstanding PO/SPO" cell
  * offers (slice A, owner's 8 Sep cut of the mock).
  *
@@ -34,10 +48,12 @@ export function OrderInquiryBackingDocumentsDialog({
   row,
   open,
   onOpenChange,
+  bundleNote,
 }: {
   row: OrderInquiryWorklistRow;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  bundleNote?: OrderInquiryBundleNote;
 }) {
   const links = row.links ?? [];
   // The row's own handshake state (DraftMark's own read), never a state on the link
@@ -51,12 +67,30 @@ export function OrderInquiryBackingDocumentsDialog({
         <DialogHeader>
           <DialogTitle>Backing documents</DialogTitle>
           <DialogDescription>
-            {summary?.headline ?? 'Not found (new order)'}
+            {/* The CELL collapses two-or-more items to a count (UAC D10: never the word
+                "host", no code list in the cell); the lightbox is where the codes
+                themselves live, always joined in full - never the count. */}
+            {bundleNote?.fullyBundled
+              ? `Included with ${bundleNote.itemCodes.join(' + ')}`
+              : (summary?.headline ?? 'Not found (new order)')}
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
+          {bundleNote && !bundleNote.fullyBundled ? (
+            <div className="mb-2 rounded-md border bg-muted/30 p-2.5 text-sm">
+              <div className="text-xs text-muted-foreground">Included with</div>
+              <div className="font-medium">{bundleNote.itemCodes.join(' + ')}</div>
+              <div className="text-xs text-muted-foreground">
+                {formatInquiryQty(bundleNote.qty ?? '0')} units
+              </div>
+            </div>
+          ) : null}
           {links.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nothing backs this row yet.</p>
+            <p className="text-sm text-muted-foreground">
+              {bundleNote?.fullyBundled
+                ? 'Nothing backs this yet.'
+                : 'Nothing backs this row yet.'}
+            </p>
           ) : (
             <ul className="space-y-2">
               {links.map((link) => (

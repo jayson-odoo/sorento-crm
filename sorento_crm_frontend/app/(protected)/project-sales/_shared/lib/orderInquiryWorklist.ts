@@ -145,3 +145,47 @@ export function linkedSummary(
     headline: `${formatInquiryQty(linkedQty ?? '0')} of ${formatInquiryQty(qty ?? '0')}`,
   };
 }
+
+/**
+ * The word (or count) a bundled cell names for what it rides with (UAC D10, plan
+ * ruling 5, 9 Sep owner): "the UI never says host". One item names its own code;
+ * two or more read `N items`, and the lightbox is where the codes themselves live.
+ */
+export function bundledItemsLabel(itemCodes: string[]): string {
+  if (itemCodes.length <= 1) return itemCodes[0] ?? '';
+  return `${itemCodes.length} items`;
+}
+
+/**
+ * "Outstanding PO/SPO"'s headline for a bundled row (UAC D1-D3, D10; plan section 3.4).
+ *
+ * A row entirely covered by the bundle (`remainder <= 0`) reads `Included with <label>`
+ * plus the ANCHOR's own coverage in the muted tail - `1 of 1`, or `Not found (new
+ * order)` when nobody has placed anything for it yet. A row that is part bundled, part
+ * ala carte reads `<bundled> with <label> · <own linked> of <ala carte remainder>` -
+ * the remainder is `qty - bundled_qty`, not `qty`, because the ala carte portion is
+ * everything the bundle does NOT cover.
+ *
+ * `null` when the row carries no bundle at all, so a caller falls back to
+ * `linkedSummary` exactly as before - today's un-bundled rows are unaffected.
+ */
+export function bundledHeadline(
+  row: Pick<OrderInquiryWorklistRow, 'qty' | 'linked_qty' | 'bundled_qty' | 'bundled_with'>,
+  anchorSummary: { headline: string } | null,
+): string | null {
+  const bundled = row.bundled_with;
+  if (!bundled) return null;
+  const bundledQty = Number(row.bundled_qty ?? '0');
+  if (!Number.isFinite(bundledQty) || bundledQty <= 0) return null;
+  const label = bundledItemsLabel(bundled.item_codes.length ? bundled.item_codes : [bundled.item_code]);
+  const qty = Number(row.qty ?? '0');
+  const remainder = qty - bundledQty;
+  if (remainder <= 0) {
+    const tail = anchorSummary ? anchorSummary.headline : 'Not found (new order)';
+    return `Included with ${label} · ${tail}`;
+  }
+  const ownLinked = formatInquiryQty(row.linked_qty ?? '0');
+  return `${formatInquiryQty(String(bundledQty))} with ${label} · ${ownLinked} of ${formatInquiryQty(
+    String(remainder),
+  )}`;
+}

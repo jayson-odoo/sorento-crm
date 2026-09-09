@@ -17,6 +17,7 @@ import {
 } from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
+  bundledHeadline,
   flowExclusionLabel,
   formatInquiryQty,
   linkedSummary,
@@ -85,6 +86,63 @@ function BackingDocumentsButton({ row }: { row: OrderInquiryWorklistRow }) {
       </Button>
       {open ? (
         <OrderInquiryBackingDocumentsDialog row={row} open onOpenChange={setOpen} />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The "Outstanding PO/SPO" cell's info icon for a BUNDLED row (UAC D1-D3, D10;
+ * PLAN-scm-supplied-with-companions.md section 3.4).
+ *
+ * A row that rides ENTIRELY inside the item(s) it is bundled with has no backing
+ * documents of its own - the icon opens the ANCHOR row's own lightbox instead ("the
+ * info icon opens the HOST row's lightbox", never named that in the UI). A row that is
+ * only PART bundled keeps its own lightbox (its own links back the ala carte
+ * remainder), with a leading entry naming what the rest rides with.
+ */
+function BundledDocumentsButton({
+  row,
+  anchorRow,
+  fullyBundled,
+}: {
+  row: OrderInquiryWorklistRow;
+  anchorRow: OrderInquiryWorklistRow | null;
+  fullyBundled: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const bundled = row.bundled_with;
+  if (!bundled) return null;
+  const itemCodes = bundled.item_codes.length ? bundled.item_codes : [bundled.item_code];
+  const dialogRow = fullyBundled ? (anchorRow ?? row) : row;
+  return (
+    <>
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        data-testid={`backing-documents-trigger-${row.id}`}
+        aria-label={`Show documents backing ${row.item_code ?? row.so_number ?? 'this row'}`}
+        className="size-5 shrink-0 text-muted-foreground"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <Info className="size-3.5" aria-hidden />
+      </Button>
+      {open ? (
+        <OrderInquiryBackingDocumentsDialog
+          row={dialogRow}
+          open
+          onOpenChange={setOpen}
+          bundleNote={
+            fullyBundled
+              ? { itemCodes, fullyBundled: true }
+              : { itemCodes, fullyBundled: false, qty: row.bundled_qty ?? '0' }
+          }
+        />
       ) : null}
     </>
   );
@@ -387,7 +445,37 @@ export function useOrderInquiryWorklistColumns({
         ),
         size: 220,
         meta: { headerTitle: 'Outstanding PO/SPO', skeleton: <Skeleton className="h-4 w-28" /> },
-        cell: ({ row }) => {
+        cell: ({ row, table }) => {
+          const bundled = row.original.bundled_with;
+          const bundledQty = Number(row.original.bundled_qty ?? '0');
+          if (bundled && Number.isFinite(bundledQty) && bundledQty > 0) {
+            // The anchor row lives in this same page of the worklist (it is the rule's
+            // first matching item on the SAME order) - `table.options.data` is the
+            // loaded rows, never a second fetch.
+            const rows = table.options.data as OrderInquiryWorklistRow[];
+            const anchorRow = rows.find((r) => r.id === bundled.row_id) ?? null;
+            const anchorSummary = anchorRow
+              ? linkedSummary(anchorRow.qty, anchorRow.linked_qty, anchorRow.links)
+              : null;
+            const headline = bundledHeadline(row.original, anchorSummary);
+            if (headline) {
+              const qty = Number(row.original.qty ?? '0');
+              const fullyBundled = qty - bundledQty <= 0;
+              return (
+                <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
+                  <DraftMark row={row.original} />
+                  <span className="truncate" title={headline}>
+                    {headline}
+                  </span>
+                  <BundledDocumentsButton
+                    row={row.original}
+                    anchorRow={anchorRow}
+                    fullyBundled={fullyBundled}
+                  />
+                </span>
+              );
+            }
+          }
           const summary = linkedSummary(
             row.original.qty,
             row.original.linked_qty,
