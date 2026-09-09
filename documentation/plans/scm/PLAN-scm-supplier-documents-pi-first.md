@@ -302,3 +302,20 @@ Every item below is a ruling; the coder does them all in one round, one commit p
 badge, Attaches-to prefill), AC-E6 vitest (mappings list + add, unmapped chip flow), pytest for the
 four attach orders, cross-company IDOR on `.../packing-lines/{row_id}/dismiss`, bad-uuid per new
 route, serializer keys `supplier_ref` / `seal_ref`.
+
+**From the browser run (tester, 10 Sep), same round**
+17. The upload dialog's supplier picker searches server-side: `useFulfilmentSuppliers` passes the
+    typed `query` (and page) to `/procurement/suppliers/select`, which already supports both; today
+    it fetches an unparameterised top 100 and Kailu can never be found.
+18. Attach resolution is per BLOCK, not per file: preview returns `attach_to` / `refusal` per
+    packing-list block (keyed by block index and container), apply accepts `attach_to` per block,
+    the dialog shows one Attaches-to line per block. Jiexia's two-container packing list attaches
+    WHSU6243088's rows to its PI and WHSU6356079's rows to the other, never both to one.
+19. The refusal names the supplier AND the packing list's own stated date (`Date：` / `日期`, read by
+    the packing-list reader into its header), per AC-B16.
+20. After "Map to…" the dialog re-runs Test for that file automatically (AC-E4); the optimistic
+    hide goes.
+21. Import column mappings page: switching the doc-type filter pegged a Chrome renderer at 100%+
+    CPU until the daemon died. Reproduce in a headless browser; suspect a DataGrid render loop
+    (see `project_datagrid_inline_data_render_loop` in LESSONS-LEARNT / memory: inline `data`
+    or `columns` identity changing every render). Fix and prove it with the browser before commit.
