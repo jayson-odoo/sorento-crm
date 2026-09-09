@@ -143,7 +143,7 @@ def test_report_row_carries_the_sheet_fields(db, chain):
     assert isinstance(row["incoming_spo_qty"], (int, float))
 
 
-def test_undated_delivery_lands_under_a_null_month(db, chain):
+def test_retail_so_line_contributes_nothing_to_delivery(db, chain):
     """S14 (AC-S14.3) retired this test's premise: `delivery_by_month` reads the Order
     Inquiry book, not the SO book, so a retail SO line - dated or undated - contributes
     NOTHING to it. `test_s14_undated_order_inquiry_row_lands_under_the_null_month_last`
@@ -384,11 +384,23 @@ def _row_columns(db, run_id, product_id, *columns):
 
 def test_s14_pool_on_hand_freezes_site_pool_stock_only(db, chain):
     """A product with 100 at the site-pool bin and 40 at a project bin freezes
-    `pool_on_hand` = 100, while `on_hand` (network, unchanged) stays 140."""
+    `pool_on_hand` = 100, while `on_hand` (network, unchanged) stays 140. A dealer
+    warehouse flagged `counts_as_available=False` (a quarantine bin, for instance) is
+    excluded too (captain's ruling, fix round 10 Sep) - it is active, site-pool-segmented,
+    and holds stock, but that stock is not sellable, so it must not count as "BRW on
+    hand" any more than it counts toward `on_hand` itself.
+    """
     f = chain
     _stock(db, f["product"], f["bin"], 100)
     pbin = _project_bin(db)
     _stock(db, f["product"], pbin, 40)
+    unavailable = Warehouse(
+        id=_u(), warehouse_code=f"{MARKER}-UNAVAIL-{_u()[:8]}"[:30],
+        warehouse_name="quarantine bin", is_active=True, counts_as_available=False,
+    )
+    db.add(unavailable)
+    db.flush()
+    _stock(db, f["product"], unavailable, 25)
 
     assert svc.write_rows(db, f["run"].id) == 1
     row = _row_columns(db, f["run"].id, f["product"].id, "pool_on_hand", "on_hand")
@@ -597,6 +609,19 @@ def test_s14_export_xlsx_rows_keep_quantities_as_numbers_and_blanks_as_empty_str
     assert blank[2] == "", "a NULL reorder level must be a blank cell, not 0"
     assert blank[5] == "", "no chosen qty must be a blank cell, not 0"
     assert blank[12] == "", "no last-in date must be a blank cell"
+
+
+def test_s14_null_pool_on_hand_exports_blank_not_zero():
+    """A run frozen before migration 504 carries `pool_on_hand = NULL` (never re-run) -
+    the export must print a blank BRW on hand, not a false zero stock count, in both the
+    PDF's text shape and the workbook's numeric shape (reviewer fix round, 10 Sep)."""
+    null_pool_row = {**_BLANK_ROW, "product_code": "ZZTS14-NULLPOOL", "pool_on_hand": None}
+
+    (row,) = svc._export_rows([null_pool_row])
+    assert row[1] == "", "a NULL pool_on_hand must be a blank PDF cell, not '0'"
+
+    (xlsx_row,) = svc._export_xlsx_rows([null_pool_row])
+    assert xlsx_row[1] == "", "a NULL pool_on_hand must be a blank workbook cell, not 0"
 
 
 # --- AC-S14.5: one "Mon - qty" / "Name - qty" per line ------------------------------

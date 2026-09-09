@@ -40,8 +40,6 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.project_so import INQUIRY_CANCELLED
 from app.models.procurement import (
     InboundShipment,
-    PickingHeader,
-    PickingLine,
     ProductSupplier,
     PurchaseOrder,
     PurchaseOrderLine,
@@ -311,7 +309,10 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         row.last_receipt_qty = receipt["qty"] if receipt else None
         row.pool_on_hand = pool_on_hand.get(pid, 0.0)
         # The run's OWN frozen level - the first recommendation carrying the key, even
-        # when an earlier one carries none (AC-S14.1).
+        # when an earlier one carries none (AC-S14.1). The engine plans against ONE
+        # product-wide level and freezes the SAME value onto every one of the product's
+        # location recommendations, so which one is "first" here is arbitrary by
+        # construction, not a choice between different levels.
         row.reorder_level = next(
             ((r.inputs or {}).get("reorder_level") for r in recs
              if (r.inputs or {}).get("reorder_level") is not None),
@@ -626,6 +627,16 @@ def _project_inquiry_map(db: Session, product_ids: list[str]) -> dict[str, dict]
     `project_customers`) has never been windowed, and windowing one cell and not the other
     is exactly what made them disagree.
 
+    `state <> 'cancelled'` admits every OTHER state - raised, partly_linked, placed AND
+    actioned - not just the two named above; actioned is real Buy that purchasing has
+    already worked, not a state that empties the row.
+
+    The inner joins on `so_line_id` / `core_sales_order_line_id` mean an ORDER row whose
+    project line has not yet been reconciled to a core sales-order line drops out of this
+    map entirely - Project qty UNDERSTATES in that window rather than erroring, the same
+    shape a not-yet-reconciled line already has everywhere else `core_sales_order_line_id`
+    gates a read.
+
     Raw SQL (M2, Phase 3 security review): the join lands on `so`, the CORE sales order,
     which is company-scoped - the ORM's own isolation filter never sees a raw query, so it
     is pinned by hand here, same as every other raw-SQL map in this module.
@@ -684,8 +695,12 @@ def _customers_list(bucket: dict[str, float]) -> list[dict[str, Any]]:
 def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
     """``{product_id: qty}`` of `stock.quantity_on_hand` at SITE POOL warehouses only - the
     sheet's "BRW on hand" (S14, AC-S14.1), the same `pool_predicate` rule the PO and SPO
-    columns already read. `on_hand` (network-wide, project bins included) is untouched and
-    stays what the grid's own On hand column reads.
+    columns already read - PLUS `counts_as_available` (captain's ruling, fix round 10 Sep):
+    the SAME flag `CoverageService.network_positions` filters `on_hand` by. A site-pool
+    warehouse can still be flagged out of availability (a quarantine bin, for instance),
+    and that stock is not sellable - a buyer must not see it as BRW supply on hand.
+    `on_hand` (network-wide, project bins and unavailable locations both included) is
+    untouched and stays what the grid's own On hand column reads.
 
     ORM, not raw SQL: `Stock` is company-scoped and this query carries no manual predicate,
     so it relies on the ORM's own `do_orm_execute` isolation filter, same as
@@ -696,7 +711,11 @@ def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
     rows = (
         db.query(Stock.product_id, func.sum(Stock.quantity_on_hand))
         .join(Warehouse, Warehouse.id == Stock.warehouse_id)
-        .filter(Stock.product_id.in_(product_ids), text(active_site_pool_sql("warehouses")))
+        .filter(
+            Stock.product_id.in_(product_ids),
+            Warehouse.counts_as_available.is_(True),
+            text(active_site_pool_sql("warehouses")),
+        )
         .group_by(Stock.product_id)
         .all()
     )
@@ -1116,15 +1135,17 @@ def _xlsx_safe_text(value: str) -> str:
 def _export_rows(rows: list[dict]) -> list[tuple]:
     """One tuple per product, in `_EXPORT_COLUMNS` order, every cell pre-formatted TEXT -
     the PDF's own shape (S14, AC-S14.4). Order qty is the chosen figure or blank (the pen
-    column) - never the suggestion, which would print a decision nobody made."""
+    column) - never the suggestion, which would print a decision nobody made. BRW on hand
+    is blank, not "0", on a run frozen before migration 504 (`pool_on_hand` NULL)."""
     out: list[tuple] = []
     for row in rows:
         chosen = row.get("chosen_qty")
+        pool_on_hand = row.get("pool_on_hand")
         reorder_level = row.get("reorder_level")
         receipt = row.get("last_receipt")
         out.append((
             row["product_code"],
-            _qty_text(row.get("pool_on_hand")),
+            _qty_text(pool_on_hand) if pool_on_hand is not None else "",
             _qty_text(reorder_level) if reorder_level is not None else "",
             _qty_text(_project_qty(row)),
             _qty_text(row.get("dealer_outstanding")),
@@ -1144,17 +1165,19 @@ def _export_rows(rows: list[dict]) -> list[tuple]:
 def _export_xlsx_rows(rows: list[dict]) -> list[tuple]:
     """One tuple per product, in `_EXPORT_COLUMNS` order, quantities as NUMBERS (H1) - a
     workbook is opened to be recalculated/summed, and a text "1,234" cell defeats that the
-    moment somebody selects the column. Reorder level / Order qty / Last in qty / Last in
-    date are BLANK ("") rather than 0 when the row has none (S14, AC-S14.4) - a 0 there
-    reads as a measured fact nobody measured."""
+    moment somebody selects the column. BRW on hand / Reorder level / Order qty / Last in
+    qty / Last in date are BLANK ("") rather than 0 when the row has none (S14, AC-S14.4) -
+    a 0 there reads as a measured fact nobody measured. BRW on hand is NULL, never 0, on a
+    run frozen before migration 504 - it must print blank, not a false zero stock count."""
     out: list[tuple] = []
     for row in rows:
         chosen = row.get("chosen_qty")
+        pool_on_hand = row.get("pool_on_hand")
         reorder_level = row.get("reorder_level")
         receipt = row.get("last_receipt")
         out.append((
             _xlsx_safe_text(row["product_code"]),
-            float(row.get("pool_on_hand") or 0),
+            float(pool_on_hand) if pool_on_hand is not None else "",
             float(reorder_level) if reorder_level is not None else "",
             float(_project_qty(row)),
             float(row.get("dealer_outstanding") or 0),
@@ -1210,7 +1233,7 @@ def _export_pdf_html(rows: list[tuple], as_of: str) -> str:
         td.list {{ white-space: pre-line; }}
         td.num {{ text-align: right; }}
     </style></head><body>
-        <h1>Order Summary - {_esc(as_of)}</h1>
+        <h1>Order Summary - {_esc(_ddmmyyyy(as_of))}</h1>
         <table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>
     </body></html>"""
 
@@ -1398,7 +1421,7 @@ def _serialise_row(row: OrderSummaryRow, product: Product, supplier, pool,
         ),
         "moq": _f(row.moq),
         # S14: the sheet's "BRW" reading, frozen beside the network-wide facts above.
-        "pool_on_hand": _f(row.pool_on_hand) or 0.0,
+        "pool_on_hand": _f(row.pool_on_hand),
         "reorder_level": _f(row.reorder_level),
     }
 
