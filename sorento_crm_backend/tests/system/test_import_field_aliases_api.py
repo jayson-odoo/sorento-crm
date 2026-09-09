@@ -136,6 +136,37 @@ def test_delete_removes_the_alias(scm_app):
     assert remaining is None
 
 
+def test_delete_with_a_non_uuid_alias_id_is_a_404_not_a_500(scm_app):
+    """Security fix round 1, item 14: a path segment that is not a uuid at all is a 404,
+    not the `DataError` the driver raises comparing it against the `id` column."""
+    client, _db = _client(scm_app, view=True, edit=True)
+    r = client.delete(f"{URL}/not-a-uuid-at-all")
+    assert r.status_code == 404, r.text
+
+
+def test_edit_is_not_swept_from_a_sibling_permission_admin_only_ruling_15(scm_app):
+    """Ruling 15 (Phase 3 round 1): `.edit` is granted to `admin`/`superadmin` ONLY, never
+    swept from `system.numbering_rules.edit` the way `.view` is swept from
+    `system.numbering_rules.view`. A role holding the SIBLING edit permission - but not
+    `system.import_field_aliases.edit` itself and not an admin role - must still be
+    refused: a mapping row changes how every later import of that document type is read,
+    for every company, so it stays an administrator's decision by name, not by sweep."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk, role=None)
+    uid = app.dependency_overrides[gcu]()["id"]
+    _grant(db, uid, VIEW_PERMISSION)
+    # The sibling permission the sweep DOES use for `.view` - held here on `.edit`'s
+    # namesake, never on `system.import_field_aliases.edit` itself.
+    _grant(db, uid, "system.numbering_rules.edit")
+    client = TestClient(app)
+
+    r = client.post(
+        URL,
+        json={"doc_type": "proforma_invoice", "field": f"{MARKER}_z", "alias": f"{MARKER}_w"},
+    )
+    assert r.status_code == 403, r.text
+
+
 def test_fields_list_is_built_from_the_readers_own_declared_fields(scm_app):
     client, _db = _client(scm_app, view=True)
     r = client.get(f"{URL}/fields?doc_type=proforma_invoice")
