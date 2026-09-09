@@ -1,9 +1,12 @@
 # 1.2-Purchasing - Upload a packing list
 
-Use this flow when a supplier sends you a packing-list Excel. The primary path files it
-straight from the Packing Lists page, the same way you'd file it in Files, and the automated
-extraction creates the shipment record; a manual reader is available as an alternative when you
-want to read the file's lines yourself instead.
+Use this flow to file a packing-list Excel as an attachment (the automated extraction reads it and
+creates the shipment record), or to create one by hand. A packing list that came from a supplier's
+own workbook - one you want read line by line, matched to a proforma invoice - is uploaded on
+**Proforma Invoices** instead; see
+[Upload a proforma invoice (and its packing list)](upload-proforma-invoice.md). This page's own
+**Upload** has no supplier-document reader of its own: a packing list here is born by converting
+proforma invoices, or by the **Create Packing List** action below.
 
 ## Steps (primary path)
 
@@ -48,22 +51,18 @@ Every file in the archive is tagged with the type and processed individually.
 To create a packing list by hand (no file to read) instead, use **Create Packing List** in the
 toolbar's **Actions** menu.
 
-## Alternative: read the file yourself (Upload supplier documents)
+## Reading a supplier's own workbook instead
 
-Use this route when you'd rather read the file's lines yourself before a shipment is created -
-for example to confirm which container each line belongs to, or the automated extraction does
-not recognise the file's layout. This also covers a proforma invoice alongside the packing
-list in the same pass.
-
-1. Open **[Procurement → Packing Lists](/procurement-management/packing-lists)**.
-2. Open the toolbar's **Actions** menu and click **Upload supplier documents**.
-3. (Self-serve only) Pick the **Supplier** this packing list is from. If you opened this dialog with a supplier already in context, this step is skipped and the supplier is shown instead.
-4. Drag in or browse to the packing-list Excel (and, optionally, its proforma invoice).
-5. (Recommended) Click **Test** to validate the file before importing. Fix any reported errors first.
-6. Click **Import packing list**. One shipment is created per container block in the file; re-uploading the same file updates those shipments in place rather than duplicating them.
+Want the file's lines read and matched to a proforma invoice, rather than filed as-is? Upload it on
+**Proforma Invoices**, not here - see
+[Upload a proforma invoice (and its packing list)](upload-proforma-invoice.md). Our own packing
+list then comes from converting those invoices (**Convert to a packing list**, on Proforma
+Invoices) rather than from an upload on this page.
 
 ## See also
 
 * [Shared upload flow](../_shared/upload-flow.md)
+* [Upload a proforma invoice (and its packing list)](upload-proforma-invoice.md) - a supplier's
+  own workbook, read line by line and matched to an invoice
 * [Upload SPO](upload-spo.md) - the next step, once a packing list exists
 * [Manage folders and Quick Access](manage-resource-folders.md)
