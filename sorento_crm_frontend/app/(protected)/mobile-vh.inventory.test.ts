@@ -32,9 +32,15 @@
  * (one of the three was a comment naming the other file's 50vh).
  *
  * Purchasing consolidation batch (lane C, 6 Sep 2026) added one more new site,
- * same reason as the 128 - `PackingListUploadDialog.tsx`'s new upload dialog body
- * is `max-h-[65vh]`, same convention its sibling `SpoScheduleMatrixTable.tsx`
+ * same reason as the 128 - the supplier-documents upload dialog's body is
+ * `max-h-[65vh]`, same convention its sibling `SpoScheduleMatrixTable.tsx`
  * already carries. Baseline below is +1 file / +1 line.
+ *
+ * PLAN-scm-supplier-documents-pi-first.md (S3, 10 Sep 2026) MOVED that dialog rather
+ * than adding a site: `packing-lists/components/PackingListUploadDialog.tsx` became
+ * `scm/proforma-invoices/components/SupplierDocumentsUploadDialog.tsx` when Proforma
+ * Invoices became its only home. Same one line, same reason, new path - the baseline
+ * is unchanged by it.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -65,7 +71,7 @@ const FRACTIONAL_VH_FILES = [
   'app/(protected)/master-data-management/flyer-spec-proposals/components/FlyerSpecReviewScreen.tsx',
   'app/(protected)/master-data-management/products/components/LinkAttachmentBrowserDialog.tsx',
   'app/(protected)/master-data-management/products/components/ProductAttachmentsTab.tsx',
-  'app/(protected)/procurement-management/packing-lists/components/PackingListUploadDialog.tsx',
+  'app/(protected)/scm/proforma-invoices/components/SupplierDocumentsUploadDialog.tsx',
   'app/(protected)/procurement-management/packing-lists/components/SpoScheduleMatrixTable.tsx',
   'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestConversationPanel.tsx',
   'app/(protected)/procurement-management/stock-inquiries/components/StockInquiryConversationPanel.tsx',

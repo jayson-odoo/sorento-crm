@@ -830,7 +830,9 @@ function UnmappedHeaderChip({
         value=""
         onChange={(v: string) => v && onMap(v, fieldOwners[v] ?? docTypes)}
         options={fields}
-        placeholder={loadingFields ? 'Loading...' : 'Choose a field'}
+        // Names WHAT is loading rather than the bare word with an ellipsis (M5-02): the
+        // reader is waiting on the field list, and the bare form says nothing about which.
+        placeholder={loadingFields ? 'Loading fields' : 'Choose a field'}
         disabled={loadingFields}
       />
     </div>
