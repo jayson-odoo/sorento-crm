@@ -41,7 +41,6 @@ from app.services.scm import (
     consolidated_packing_list,
     supplier_code_alias_service,
     loading_plan_service,
-    packing_list_service,
     shipment_line_photos,
     spo_conversion_service,
     supplier_document_service,
@@ -809,101 +808,6 @@ class SpoCreateRequest(BaseModel):
     lines: list[SpoLineConfirm] = Field(
         ..., min_length=1, description="Every line on the shipment, ticked or not"
     )
-
-
-@router.post("/packing-lists/preview")
-async def preview_packing_list(
-    file: UploadFile = File(..., description="The pre-load list or packing list"),
-    supplier_id: Optional[str] = Form(None),
-    currency: Optional[str] = Form(
-        None, description="Only needed when neither the file nor the price list says"
-    ),
-    _user: dict = Depends(_WRITE),
-    db: Session = Depends(get_db),
-):
-    """Every container block the file holds, and what each would create. Writes nothing.
-
-    Takes the supplier and the currency the apply will take, so the preview can say which
-    money the prices are in before anything is written rather than after.
-    """
-    return packing_list_service.preview(
-        db,
-        await read_upload(file),
-        source_ref=file.filename,
-        supplier_id=supplier_id,
-        currency=currency,
-    )
-
-
-@router.post("/packing-lists/apply")
-async def apply_packing_list(
-    file: UploadFile = File(..., description="The same file the preview was taken from"),
-    supplier_id: Optional[str] = Form(
-        None, description="Whose packing list this is. Required unless validate_only."
-    ),
-    shipment_date: Optional[str] = Form(None),
-    currency: Optional[str] = Form(
-        None, description="Only needed when neither the file nor the price list says"
-    ),
-    validate_only: bool = Query(
-        False,
-        description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
-    ),
-    current_user: dict = Depends(_WRITE),
-    db: Session = Depends(get_db),
-):
-    """One inbound shipment per container block. Re-uploading the same file updates in place.
-
-    The supplier is required on the writing path and refused before the file is even read.
-    A packing list arrives from one factory, and an upload that will not say which one
-    cannot be told apart from the container's whole contents - so it would replace the
-    other factories' lines, which is the data loss the per-supplier line exists to end.
-    `validate_only` writes nothing and may therefore omit it.
-    """
-    supplier = (supplier_id or "").strip()
-    if not validate_only and not supplier:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "supplier_id is required: a packing list is uploaded as one supplier so it "
-                "can never replace another supplier's lines"
-            ),
-        )
-    data = await read_upload(file)
-    if validate_only:
-        return packing_list_service.validate(
-            db, data, source_ref=file.filename, supplier_id=supplier_id, currency=currency
-        )
-
-    parsed_date = None
-    if shipment_date:
-        try:
-            parsed_date = date.fromisoformat(shipment_date)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="shipment_date must be YYYY-MM-DD",
-            )
-
-    # `file_in_drive=True` here means a real network PUT to storage (`_file_the_upload`
-    # in the service) - must not run directly on the event loop, same reasoning and same
-    # fix as the generic attachment upload route (`attachments.py`, the WORKER TIMEOUT /
-    # cascading-504 incident): one slow upload would otherwise freeze every other request
-    # this worker is holding.
-    out = await run_in_threadpool(
-        packing_list_service.apply,
-        db,
-        data,
-        supplier_id=supplier,
-        shipment_date=parsed_date,
-        currency=currency,
-        source_ref=file.filename,
-        content_type=file.content_type,
-        file_in_drive=True,
-        actor_id=current_user.get("id"),
-    )
-    db.commit()
-    return out
 
 
 @router.post("/supplier-documents/preview")

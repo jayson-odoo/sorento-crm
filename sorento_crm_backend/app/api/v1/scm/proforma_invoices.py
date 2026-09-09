@@ -256,7 +256,7 @@ def convert_proforma_invoices_to_draft_shipment(
     A container is routinely several factories' PIs landing in the same box, so more than
     one invoice - from different suppliers - is not a mistake; every shipment line still
     carries its own supplier. The real packing list, when it arrives, is uploaded through
-    the existing `/scm/packing-lists/apply` path, unchanged by this action.
+    the `/scm/supplier-documents/apply` path, unchanged by this action.
 
     Always a NEW packing list: "add to an existing draft" was dropped everywhere (part 4,
     Q6), so this route no longer takes a target.

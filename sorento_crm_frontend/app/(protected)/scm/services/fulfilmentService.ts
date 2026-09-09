@@ -1108,73 +1108,6 @@ export async function getSupplierNotices(
   return body.data;
 }
 
-export interface PackingListBlock {
-  index: number;
-  shipment_number: string;
-  container_no: string | null;
-  bl_no: string | null;
-  lines: number;
-  qty: number;
-  cartons: number | null;
-  unmatched_items: string[];
-}
-
-export interface PackingListPreview {
-  ok: boolean;
-  blocks: PackingListBlock[];
-  block_count: number;
-  line_count: number;
-  rows_read: number;
-  unmatched_item_codes: string[];
-  unmatched_items: number;
-  unmapped_headers: string[];
-  missing_columns: string[];
-  problems: string[];
-  /** Null when neither the file, the form nor the supplier's price list says. */
-  currency?: string | null;
-  /** Which of those said it: `form` | `document` | `supplier_price_list` | `none`. */
-  currency_source?: string | null;
-  priced_lines?: number;
-}
-
-/** What the supplier and currency form fields are called on both packing-list endpoints. */
-interface PackingListUploadOptions {
-  supplierId?: string | null;
-  currency?: string | null;
-}
-
-function packingListForm(file: File, opts: PackingListUploadOptions): FormData {
-  const body = new FormData();
-  body.append('file', file);
-  if (opts.supplierId) body.append('supplier_id', opts.supplierId);
-  // Only when the operator typed one: an empty string would be read as a currency the
-  // backend cannot resolve and refuse the upload the document itself could have answered.
-  if (opts.currency) body.append('currency', opts.currency);
-  return body;
-}
-
-export async function previewPackingList(
-  file: File,
-  opts: PackingListUploadOptions = {},
-): Promise<PackingListPreview> {
-  const res = await apiFetch('/api/v1/scm/packing-lists/preview', {
-    method: 'POST',
-    body: packingListForm(file, opts),
-  });
-  return readJson<PackingListPreview>(res, 'Failed to read the packing list');
-}
-
-export async function applyPackingList(
-  file: File,
-  opts: PackingListUploadOptions & { shipmentDate?: string | null; validateOnly?: boolean } = {},
-): Promise<Record<string, unknown>> {
-  const body = packingListForm(file, opts);
-  if (opts.shipmentDate) body.append('shipment_date', opts.shipmentDate);
-  const qs = opts.validateOnly ? '?validate_only=true' : '';
-  const res = await apiFetch(`/api/v1/scm/packing-lists/apply${qs}`, { method: 'POST', body });
-  return readJson(res, 'Failed to import the packing list');
-}
-
 /* ─────────────────────────────────────────────────────────────────────────────
  * Supplier documents: one dialog, a proforma invoice AND/OR a packing list (R12-R14,
  * purchasing consolidation batch, lane C)
@@ -1189,9 +1122,8 @@ export async function applyPackingList(
  * Each file is classified by its own title cell (`发票`/`PROFORMA INVOICE` vs `装箱单`/
  * `PACKING LIST`) - proforma invoice, packing list, or combined when a file states both.
  * `apply` writes proforma invoices first, then packing lists (one draft shipment per
- * container block, same as `applyPackingList`), then matches PI prices onto the shipment
- * lines they price by product, for every container this supplier holds - whichever order
- * the files were uploaded in.
+ * container block), then matches PI prices onto the shipment lines they price by product,
+ * for every container this supplier holds - whichever order the files were uploaded in.
  *
  * Translation memory (R15/R16): every block's `lines` (unmatched descriptions, matched
  * remarks) and `notes`, plus the file's `footer_note`, gain `<field>_en` (the English,
