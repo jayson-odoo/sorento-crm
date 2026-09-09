@@ -48,7 +48,7 @@ describe('remarksText (Remarks column)', () => {
       moq: 1000,
     });
     expect(text).toBe('PO 400 + incoming 89 = 489 - Last in 21/07/2026, 300 - MOQ 1000');
-    expect(text).not.toMatch(/[–—]/); // never an en or em dash
+    expect(text).not.toMatch(/[\u2013\u2014]/); // never an en (\u2013) or em (\u2014) dash
   });
 
   it('omits a section that carries nothing to say', () => {
