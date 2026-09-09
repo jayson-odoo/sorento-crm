@@ -249,3 +249,56 @@ all the recommended options. Captain notes: carry the container number over at c
 no read on file drop, Test button like every other upload (AC-B13, `useTwoStepUpload`); asked
 whether the manual → n8n → back upload changes after the index drop: no, and AC-D4b pins that a
 converted draft's lines are never rewritten by that route.
+
+## Phase 3 fix round 1 (captain rulings, 10 Sep)
+
+Reviewer (Opus) found six blockers, all at the seams; security reviewer (Opus) found no blocker.
+Every item below is a ruling; the coder does them all in one round, one commit per group.
+
+**Blockers**
+1. Packing-list PUT sends each existing line's `id` (`packing-list-context.tsx:313`,
+   `PackingListForm.tsx:178`); a converted split list must save.
+2. `serialize` emits `supplier_ref` and `seal_ref`; list search matches `supplier_ref` too.
+3. Packing tab renders the grid whenever rows exist; `packing_file` is optional header metadata.
+   A combined file counts as the packing file (file it once, link it as both source and packing).
+4. Attach resolution is server truth: preview returns `attach_to {id, pi_number, supplier_ref, how}`
+   and `refusal` per packing-list block from `resolve_attach_pi`; apply accepts `attach_to` per file
+   and threads it to the service; the select posts a change (re-preview); `decorateWithMockAttachTo`
+   and `attachPackingListMock` are deleted. Resolution order becomes: explicit `attach_to` → stated
+   invoice number (`supplier_ref`, with container when both state one) → exactly one PI of the
+   supplier with the same date → refuse. The "exactly one current PI regardless of date" shortcut
+   goes.
+5. Deferred actions are the real `useDeferredRowAction` with registered action keys for both the
+   packing-row Dismiss and the mapping chip delete; `useMockDeferredWindow` and `packingLineMock.ts`
+   are deleted.
+6. `packing_row_ids` is wired route → service → dialog; the row branch of convert consults
+   `placed_per_line` so a second convert never re-places a row already on a container.
+
+**Should-fix**
+7. `POST /scm/proforma-invoices/{id}/packing-lines/{row_id}/match` (product or set): writes the
+   manual alias, rebinds the packing row (and `_rebind` learns `ProformaInvoicePackingLine`), links
+   it to the PI line of that product, re-rolls-up. The FE Match on a packing row keys on `item_code`.
+8. Roll-up rule: after ANY packing write (replace, dismiss, undo, match) every line of that PI is
+   re-rolled from its non-dismissed rows; a line with no remaining rows keeps what the PI document
+   stated. Code, comment and AC-B8 say the same thing.
+9. AC-D4b reporting: `lines_skipped_reason` on `PackingListCreateResponse` and an integration_log
+   row; test asserts the response, not the ORM object.
+10. AC-D6: `incoming_stock_service.py:391` and `:738` use the apportioned per-line figure.
+11. `serialize` runs the packing-rows and attachment-link queries only under `with_lines`.
+12. Readers truncate `identifier` to 100 chars.
+13. Convert dialog shows the server's `header_conflicts`; it does not compute its own carry-over.
+14. Security S1-S3: non-UUID path ids → 404 (`_row_or_404`, alias delete); alias create fields carry
+    `max_length` matching the columns; `doc_type` must have canonical fields and `field` must be in
+    them (422 otherwise).
+15. Security S4: `system.import_field_aliases.edit` is granted to `admin` and `superadmin` only;
+    `.view` keeps the numbering-rules sweep. Amend migration 505 in place (lane DB: downgrade 505,
+    upgrade).
+16. Nits: delete dead `_duplicate_line_product_id`; fix the `zip` in `serialize`; four stale
+    comments; the list goes through the hooks layer for delete; 409 copy in words ("Header 箱數 is
+    already mapped to Cartons for packing lists"); `truncate` + `title` on the Packing tab
+    `container_no` cell.
+
+**Tests owed after the round (tester):** AC-B17 vitest (Packing tab empty / populated / Packed
+badge, Attaches-to prefill), AC-E6 vitest (mappings list + add, unmapped chip flow), pytest for the
+four attach orders, cross-company IDOR on `.../packing-lines/{row_id}/dismiss`, bad-uuid per new
+route, serializer keys `supplier_ref` / `seal_ref`.
