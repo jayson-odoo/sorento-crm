@@ -136,6 +136,7 @@ tables of the same name).
   "requested_delivery_date": "2026-09-15",
   "status": "open",                    // canonical: open | partial | fulfilled | closed | cancelled
   "internal_note": "...",              // AutoCount pushes this as raw RTF; stripped to plain text at ingest (app/utils/rtf.py)
+  "ref": "THE MET KL",                 // optional, AutoCount SO.Ref, mapped by the peer - used only to resolve the project label (PLAN-so-project-label.md) when the note names none
   "lines": [
     {
       "source_ref": "SO:1234:1",       // AutoCount DtlKey, per-line key

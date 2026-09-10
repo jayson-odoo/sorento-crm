@@ -366,7 +366,10 @@ def _project_label_from_note(note: Optional[str]) -> Optional[str]:
 
 
 def _project_label(order: SalesOrder) -> Optional[str]:
-    return _project_label_from_note(order.internal_note)
+    # PLAN-so-project-label.md: the column, once a rule has ever written it, before the
+    # note-reading fallback below - so the board keeps reading exactly what it always has
+    # for the vast majority of orders the migration's backfill has not reached yet.
+    return order.project_label or _project_label_from_note(order.internal_note)
 
 
 class _Row:
@@ -827,6 +830,7 @@ class FulfilmentBoardService:
                 SalesOrder.so_number,
                 SalesOrder.order_date,
                 SalesOrder.internal_note,
+                SalesOrder.project_label,
                 SalesOrder.demand_class,
                 Customer.customer_name,
                 Customer.id.label("customer_id"),
@@ -871,7 +875,7 @@ class FulfilmentBoardService:
                 #: bin read never has to ask a second time.
                 "location": codes.get(str(row.warehouse_id)),
                 "agent_code": row.agent_code,
-                "project_label": _project_label_from_note(row.internal_note),
+                "project_label": row.project_label or _project_label_from_note(row.internal_note),
                 "demand_class": row.demand_class,
                 #: AutoCount prints the document's own date and the date it is wanted.
                 "doc_date": row.order_date,
