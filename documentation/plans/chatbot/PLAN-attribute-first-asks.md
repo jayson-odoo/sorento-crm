@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: IMPLEMENTED, fix round 3 (R14 to R20) in progress after the Phase 3 re-check (11 Sep 2026). Lane `feat/chatbot-attribute-first-asks`.
+Status: IMPLEMENTED, fix round 3 (R14 to R26) closing after the Phase 3 re-check; PR next (11 Sep 2026). Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -178,6 +178,14 @@ Console pass 6 (after R14 to R20, backend without reload) added two more, both m
 | R22 | "which bathroom accessory has stock" answered "964 bathroom accessories have stock. Showing 4." with five ids sent | ACC-SRT9012's only stock row sits in warehouse SPARE/P, `is_active = false`; `_leg_stock` counts any on-hand row while the stock list tool filters `Stock.warehouse.has(Warehouse.is_active)` (inventory_service.py:743), so the header counted a product the answer could never show | `_leg_stock` mirrors the tool's visibility: the EXISTS joins `Warehouse` on `Stock.warehouse_id` with `Warehouse.is_active IS TRUE` (same company). The header then counts exactly the products the tool can render |
 
 | R23 | after R21, the same carry-less "more" answered "I don't know 'more' as a product type. Try a product type such as tap, bathroom accessory, wash basin." | the head's reuse gave the turn a bare certificate leg; the remainder word "more" is not a phrase stopword, so it reached `filter_specs` as a set word | `_PHRASE_STOPWORDS` gains the paging words the lane itself recognises (more, next, lagi, please, show); the remainder is then empty and the reused question answers unscoped ("N products have certificates. Showing 5."), the honest reading of "more" once the set it referred to is gone |
+
+Round 3 re-check (reviewer + security-reviewer, 11 Sep 2026): B1, N1, S1 (both halves), S2, S4, S5 and the certificate blocker are closed with kill tests. Adopted from the re-check:
+
+| # | Finding | Rule |
+|---|---------|------|
+| R24 (both reviewers, should-fix) | `_access_level_codes` interpolates the tier token into a LIKE pattern unescaped: `['%']` selects seven of eight codes including `end_user`, a different tier | escape `\`, `%` and `_` in the token and pass `escape="\\"` explicitly; a token with a wildcard character matches only its literal spelling |
+| R25 (security, should-fix) | `needs_tier_ask` fires only for a contact entitled to MORE than one tier; a single-tier contact (every plain End User) states no tier, so the resolve body sends `access_levels: []`, the promotion leg runs unrestricted and the header counts promotions the contact cannot see (count and product names, never content: SEC-B1 filters the rows at the tool) | `resolve_entity_body` sends the tier gate's recomposed names (`tier_gate_out["access_levels_recomposed"]`) whenever the tier gate ran and produced any; the parser tokens remain the fallback when it did not. A stated tier then translates exactly (`['Sorento Dealer'] -> {'dealer'}`), which also removes R18's brand-axis over-count |
+| R26 (reviewer, nits) | the page arm's `fetch_rendered_result` guard has no test (disabling it leaves the file green); R19 also clears the carry on a CASUAL turn ("which tap has cert" -> "thanks" -> "more" stops paging) because the canned lane reaches `compile_current_state` with `gate_ran` False | one test for the page guard (a page turn whose fetch never reached the tool leaves the offset unchanged); the casual clear is ACCEPTED as behaviour and the rule now reads "any later turn that is not a page clears the carry" (AC-1343 amended). A reparent also changes the migration's `down_revision`, so the migration test asserts the chain (single head, parent exists) rather than a spelled parent id |
 
 Also verified live in pass 6: the promotion pick turn armed the set_page carry and the "more" page's tool args carried `access_levels: ["Sorento Dealer", "Mocha Dealer", "Cabana Dealer"]` (SEC-B1 / AC-1333). Promotion sets page by PRODUCT, so a promotion file attached to several products can appear on two pages; accepted, the promotion render is the existing one.
 

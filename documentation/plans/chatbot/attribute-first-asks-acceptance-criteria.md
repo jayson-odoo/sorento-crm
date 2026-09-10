@@ -164,8 +164,8 @@ tool. No new reply format.
   token: `["dealer"]` selects every code that is `dealer` or ends with `_dealer`; a name still
   translates as before; an unknown value still yields the empty set. Evidence: pytest on the
   helper and on `resolve_product_set` with a tier-restricted promotion and `access_levels=["dealer"]`.
-- AC-1343 The set_page carry survives only a page continuation: a same-domain non-page answer and
-  a same-domain zero-qualifying clarify both clear it, so a bare "more" afterwards is NOT routed
+- AC-1343 The set_page carry survives only a page continuation: any later turn that is not a page
+  (a same-domain non-page answer, a same-domain zero-qualifying clarify, a casual turn) clears it, so a bare "more" afterwards is NOT routed
   as a set page (`is_set_page_more_reply` is false and the turn takes the ordinary low-signal
   route, exactly as a "more" with no prior set does today); a rendered set answer re-arms it.
   Evidence: pytest, two three-turn sequences in the same domain, with the low_signal lane
@@ -184,6 +184,17 @@ tool. No new reply format.
   remainder is only such words scopes nothing and never reports them as unrecognized. Evidence:
   pytest on `filter_specs` with free term "more"; console "which tap has cert" -> "which water tap
   has cert" -> "more" answers a set header, not "I don't know 'more'".
+- AC-1348 [security] `_access_level_codes` treats `%`, `_` and `\` in a value literally:
+  `["%"]` and `["%dealer"]` select nothing; `["dealer"]` still selects every `_dealer` code.
+  Evidence: pytest on the helper.
+- AC-1349 [security] When the tier gate ran, the resolve body's `access_levels` are the recomposed
+  names, not the parser tokens: a contact entitled to exactly one tier (no tier ask) gets a
+  promotion count restricted to that tier; a contact with no entitlement and no stated tier keeps
+  the empty list. Evidence: pytest on `resolve_entity_body` with a tier gate output, and on
+  `resolve_product_set` with `["Sorento Dealer"]` counting only the dealer promotion.
+- AC-1350 A page turn whose fetch never reached the tool leaves the carry's offset unchanged, and
+  the migration test asserts the lane migration is the single head whose parent exists in the
+  versions directory, not a spelled parent id. Evidence: pytest.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
