@@ -81,10 +81,17 @@ describe('DescriptionEnCell - dash / read states (AC-E1)', () => {
 });
 
 describe('DescriptionEnCell - Enter saves (AC-E2)', () => {
-  it('PUTs {source_text, target_text}, toasts the rebound count, and leaves edit mode', async () => {
+  it('PUTs {source_text, target_text}, toasts the rebound count, exits edit mode, and repaints once the refetch lands the new prop with NO remount', async () => {
     // `descriptionEn` itself is the PARENT's prop (the invoice/packing query re-fetching
-    // after invalidation, exercised end to end by the Packing/Lines tab tests) - this
-    // isolated render only proves the cell's own request + exit-edit-mode contract.
+    // after invalidation) - this isolated render proves both halves of AC-E2: the cell's
+    // own request + exit-edit-mode contract, AND that a later prop update (the SAME parent
+    // re-rendering it, not a fresh mount) is enough to show the saved English. The bug this
+    // pins (Phase 3 evidence, live agent-browser run): `useProformaInvoicePacking`'s query
+    // derived off a STALE closure over `invoice` and could go "fresh" with the pre-save
+    // text before the detail refetch landed, so the cell was stuck on the dash forever -
+    // fixed in `useProformaInvoicePacking`/`useProformaInvoiceTranslation` (cache read +
+    // awaited invalidation order), never in this component, which already renders whatever
+    // `descriptionEn` prop it is handed.
     apiFetch.mockResolvedValue(
       jsonResponse({
         source_text: '连体马桶',
@@ -93,7 +100,13 @@ describe('DescriptionEnCell - Enter saves (AC-E2)', () => {
         rebound: { lines: 3, packing_rows: 1 },
       }),
     );
-    renderCell({ descriptionEn: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const cell = (descriptionEn: string | null) => (
+      <QueryClientProvider client={qc}>
+        <DescriptionEnCell invoiceId="pi-1" description="连体马桶" descriptionEn={descriptionEn} canAdjust />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(cell(null));
 
     fireEvent.click(screen.getByRole('button', { name: 'Add English for 连体马桶' }));
     const input = screen.getByRole('textbox', { name: 'English for 连体马桶' });
@@ -109,10 +122,16 @@ describe('DescriptionEnCell - Enter saves (AC-E2)', () => {
       }),
     );
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Translation saved, 4 rows updated'));
-    // Back to the (still-null-prop) dash button, not the input - the save committed.
+    // Back to the (still-null-prop) dash button, not the input - the save committed and
+    // this isolated tree's own props have not moved yet.
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Add English for 连体马桶' })).toBeInTheDocument(),
     );
+
+    // The parent's refetch lands: SAME tree (`rerender`, not a fresh `render`), only the
+    // `descriptionEn` prop changes. The cell must show the saved English immediately.
+    rerender(cell('One-piece toilet'));
+    expect(screen.getByRole('button', { name: 'One-piece toilet' })).toBeInTheDocument();
   });
 });
 

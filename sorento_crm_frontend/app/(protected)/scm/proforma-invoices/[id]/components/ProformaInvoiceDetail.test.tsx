@@ -139,6 +139,11 @@ vi.mock('../../../hooks/useProformaInvoices', () => ({
     listQueryKey: () => ['scm-proforma-invoices'],
     fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
   },
+  // The real key-builder, not a stub: `useProformaInvoicePacking`'s queryFn reads the
+  // detail query's cache through this exact key (AC-E2 fix) - a mock that dropped it
+  // left the packing query's `queryFn` throwing on every fetch, silently emptying every
+  // dialog/tab that reads packing rows in this suite.
+  proformaInvoiceDetailQueryKey: (id: string | null) => ['scm', 'proforma-invoices', 'detail', id],
   useProformaInvoice: () => state,
   // The header's pager pulls the neighbour list through this hook - one row is not enough to
   // show a pager (RecordNavigation's `items.length < 2` guard), so it stays out of the way.

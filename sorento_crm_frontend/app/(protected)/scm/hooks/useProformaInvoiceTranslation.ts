@@ -16,13 +16,18 @@ export function useProformaInvoiceTranslationMutation(invoiceId: string) {
   return useMutation({
     mutationFn: (body: { source_text: string; target_text: string }) =>
       upsertProformaInvoiceTranslation(invoiceId, body),
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
       const total = result.rebound.lines + result.rebound.packing_rows;
       toast.success(
         total > 0 ? `Translation saved, ${total} row${total === 1 ? '' : 's'} updated` : 'Translation saved',
       );
-      void qc.invalidateQueries({ queryKey: proformaInvoiceDetailQueryKey(invoiceId) });
-      void qc.invalidateQueries({ queryKey: proformaInvoicePackingQueryKey(invoiceId) });
+      // Awaited, in this order: the packing query's own `queryFn` reads the detail query's
+      // CACHE at call time (`useProformaInvoicePacking`), not a render closure - so it only
+      // sees the new English once the detail refetch below has actually landed in that
+      // cache. Firing both at once let the packing query refetch first, off the still-old
+      // cache, mark itself fresh, and never self-correct (AC-E2 defect, Phase 3 evidence).
+      await qc.invalidateQueries({ queryKey: proformaInvoiceDetailQueryKey(invoiceId) });
+      await qc.invalidateQueries({ queryKey: proformaInvoicePackingQueryKey(invoiceId) });
     },
     onError: (e: Error) => toast.error(e.message),
   });

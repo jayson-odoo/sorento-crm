@@ -158,11 +158,81 @@ component) and did not block the rest of the verification once recovered.
 | AC | Result |
 |----|--------|
 | E1 | PASS |
-| E2 | **FAIL** - inline-edited cell does not show the new English until a hard reload / remount, despite the PUT + refetch both carrying the correct value; toast and Escape-cancel both correct; cross-PI rebind confirmed at the data layer only |
+| E2 | **FIXED, see below** - inline-edited cell does not show the new English until a hard reload / remount, despite the PUT + refetch both carrying the correct value; toast and Escape-cancel both correct; cross-PI rebind confirmed at the data layer only |
 | E3 | PASS |
 | E4 | PASS |
 | E5 | PASS |
 | E6 | PASS |
 
-E2 is the one defect blocking a clean pass. Everything else in section E holds up under a
-real, headless-browser, sidebar-navigated pass with network/console inspection.
+E2 was the one defect blocking a clean pass; fixed and re-verified live below. Everything else
+in section E holds up under a real, headless-browser, sidebar-navigated pass with network/console
+inspection.
+
+## E2 root cause and fix (follow-up round, same day)
+
+Root cause: `useProformaInvoicePacking`'s `queryFn` derived `description_en` synchronously off
+the `invoice` argument's CLOSURE (whatever `ProformaInvoicePackingTab`/`ProformaInvoiceDetail`
+last rendered with), not the query cache. `useProformaInvoiceTranslation`'s save invalidated the
+detail key and the packing key together; the packing key's synchronous derivation could run and
+mark itself fresh BEFORE the detail key's real network refetch landed, using the pre-save
+closure. Once fresh, react-query does not refetch a query again just because time passes or the
+parent re-renders - so the cell was stuck on the dash (or the old English) permanently, until
+some UNRELATED invalidate (e.g. Cancelling out of Lines edit mode) forced another refetch that
+happened to run after the detail data had already updated.
+
+Fix (`app/(protected)/scm/hooks/useProformaInvoicePacking.ts`,
+`app/(protected)/scm/hooks/useProformaInvoiceTranslation.ts`): the packing `queryFn` now reads
+the detail query's CACHE via `qc.getQueryData` at call time instead of the closure, and the
+translation mutation's `onSuccess` awaits the detail invalidation to full settlement before
+invalidating the packing query. Both are necessary: the cache read removes the render-timing
+dependency, and the awaited order guarantees the cache is already correct by the time the
+packing query is asked to re-derive. Neither change touches `DescriptionEnCell` itself (it
+already rendered whatever `descriptionEn` prop it was given) or the Dismiss/Match invalidation
+paths, which were not reported broken.
+
+### Live re-verification, :3081/:8081
+
+1. **Packing tab, PI-2609-001, row 1** (`座斗 S-250出水 对冲`, already carrying prior evidence's
+   "Pedestal S-250 outlet, counter-flush"): clicked the cell, changed the text to "Retry test
+   pedestal", pressed Enter with the backend STOPPED (see the savingRef re-arm check below) -
+   failed, then pressed Enter again once the backend was back. `PUT .../translations` -> 200,
+   and the cell repainted to the button "Retry test pedestal" IMMEDIATELY, no reload, no
+   remount. Screenshot `e2-savingref-retry-success.png`.
+2. **Cross-PI propagation on load**: navigating (sidebar/record-nav, not a reload) to
+   PI-2609-002's Packing tab, its row 1 (same description `座斗 S-250出水 对冲`) already read
+   "Retry test pedestal" too - the rebind reached the sibling invoice.
+3. **Lines tab, PI-2609-002**, a genuinely untranslated row (`座厕 S-250出水 对冲 （四方纸箱）`,
+   dash button "Add English for..."): clicked, typed "Toilet unit, counter-flush (square
+   carton)", Enter. `PUT .../translations` -> 200, and the cell repainted to the new English
+   IMMEDIATELY, same tab, no reload. Screenshot `e2-fix-lines-tab-live-update.png`.
+4. `console`/`errors`: no warnings or uncaught errors from either interaction.
+
+Two rows sharing an identical description on the SAME open tab still could not be exercised
+live (same fixture-set limitation as the original run) - not independently observed, but the fix
+removes the exact mechanism (a permanently-stale packing query) that would have blocked it, and
+every row on a tab is driven by the SAME query, so a fix that repaints one repaints all of them
+on the next render.
+
+### Savingref re-arm re-check (fail then retry succeeds)
+
+Separately re-confirmed the `savingRef`/`onSettled` re-arm fix from `46bfb3520` still holds
+after the E2 fix: PI-2609-001 Packing tab, row 1, backend stopped, typed "Retry test pedestal",
+Enter -> toast "Internal Server Error", cell stayed in edit mode with the typed text retained
+(screenshot `e2-savingref-retry-fail-toast.png`). Backend restarted, same cell (still showing
+the textbox, unchanged), Enter again -> `PUT .../translations` -> 200 this time, cell exited
+edit mode and repainted with the new English (the E2 fix in action, item 1 above). No dead
+cell, no need to reload.
+
+### Vitest added
+
+`DescriptionEnCell.test.tsx`'s "Enter saves" case now also rerenders the SAME tree (not a fresh
+mount) with an updated `descriptionEn` prop after the mutation resolves, and asserts the English
+shows - pinning that the cell itself was never the bug (it already renders whatever prop it is
+handed); the fix lives in the two hooks. 80/80 across the three touched vitest files
+(`DescriptionEnCell.test.tsx`, `ProformaInvoicePackingTab.test.tsx`,
+`ProformaInvoiceDetail.test.tsx`) - fixing the E2 race also surfaced (and required fixing) a gap
+in `ProformaInvoiceDetail.test.tsx`'s own mock of `useProformaInvoices`, which never exported
+`proformaInvoiceDetailQueryKey`: harmless while nothing read it, but the new cache-read in
+`useProformaInvoicePacking` reads it on every fetch, so the Convert-to-packing-list dialog and
+the Packed-cell test both started throwing inside their `queryFn` and rendering zero rows. Added
+the real key-builder to that mock.
