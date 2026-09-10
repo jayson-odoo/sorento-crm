@@ -3179,3 +3179,110 @@ def test_carry_clears_on_a_non_page_business_answer(session_factory, stub_parser
     assert variables_after_3.get("selection_context") == "set_page", variables_after_3
     carry_after_3 = variables_after_3.get("last_result_set") or {}
     assert carry_after_3.get("offset") == 5, carry_after_3
+
+
+# --------------------------------------------------------------------------- #
+# Correctness review (11 Sep 2026, PLAN-attribute-first-asks.md REV-S3,        #
+# AC-1337) - two hand-synced copies across the module boundary                #
+# (`references.py` sits outside `app.services.chatbot`, so it keeps its own    #
+# copies rather than importing across it - see that file's own docstrings).   #
+# --------------------------------------------------------------------------- #
+
+
+def test_page_cap_and_cert_regex_are_pinned():
+    """AC-1337/REV-S3: `answer.SET_PAGE_ID_CAP` and `references._SET_PAGE_ID_CAP`
+    must stay equal, and `references._CERT_WORD_RE` must stay the same pattern
+    as `output_exchange._CERT_RE` - both are hand-synced copies across the
+    module boundary (`references.py`'s own docstrings say so), so a value
+    that drifts silently under-pages a "more" carry or lets a cert-shaped word
+    slip past the described-set stripping.
+
+    Green today - both copies were kept in lockstep by hand at write time.
+    Kept as the regression guard the drift would otherwise need a console
+    turn to surface.
+    """
+    from app.api.v1.system import references
+    from app.services.chatbot.head.output_exchange import _CERT_RE
+    from app.services.chatbot.lanes.business import answer
+
+    assert answer.SET_PAGE_ID_CAP == references._SET_PAGE_ID_CAP
+    assert references._CERT_WORD_RE.pattern == _CERT_RE.pattern
+
+
+# --------------------------------------------------------------------------- #
+# Correctness review - REV-N1/AC-1337: `is_more_reply` must accept only the    #
+# fixed paging phrases, never any short message merely containing the word.   #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("more", True),
+        ("More!", True),
+        ("next", True),
+        ("lagi", True),
+        ("more please", True),
+        ("show more", True),
+        ("next 5", True),
+        ("next five", True),
+        ("more 5", True),
+        ("no more", False),
+        ("next week?", False),
+        ("more taps with stock", False),
+        ("SRTWC286", False),
+    ],
+)
+def test_is_more_reply_accepts_only_paging_phrases(text, expected):
+    """AC-1337/REV-N1: `is_more_reply` must equal one of the fixed paging
+    phrases (more, next, lagi, more please, show more, next 5, next five,
+    "more"/"next"/"lagi" followed by a single number), lower-cased and
+    stripped of punctuation - never any short message that merely CONTAINS
+    one of those words.
+
+    RED for "no more" and "next week?": today's `_MORE_WORD_RE` is a bare
+    substring/word search (`\\b(more|next|lagi)\\b`) over a message capped
+    only at 4 words, so both match and wrongly page a carry that was never
+    asked to continue.
+    """
+    from app.services.chatbot.lanes.business.answer import is_more_reply
+
+    assert is_more_reply(text) is expected, text
+
+
+# --------------------------------------------------------------------------- #
+# Correctness review - REV-N2/AC-1337: irregular pluralisation, and the        #
+# header's singular is the class label itself, never a stripped plural.       #
+# --------------------------------------------------------------------------- #
+
+
+def test_set_noun_for_irregular_plurals():
+    """AC-1337/REV-N2: `set_noun_for` must pluralise via a small irregular map
+    (accessory -> accessories) before falling back to a bare "+s", and
+    `build_set_header`'s own singular is the class label ITSELF, never a
+    plural with the trailing "s" stripped off - the naive strip is what
+    `fetch.py`'s own call site does today ("bathroom accessories"[:-1] ->
+    "bathroom accessorie", never the real singular "bathroom accessory").
+
+    RED (first assertion only): `set_noun_for` today does
+    `f"{labels[0].strip().lower()}s"` unconditionally, so "Bathroom Accessory"
+    becomes "bathroom accessorys", not "bathroom accessories". "Jacuzzi" -> "s"
+    already happens to spell "jacuzzis" correctly with the naive rule, so that
+    assertion is not itself red - kept because AC-1337 names it explicitly, and
+    a future irregular-map refactor must not silently break it.
+
+    The third assertion calls `build_set_header` directly with the class label
+    as `set_noun` (bypassing `fetch.py`'s own singular-stripping call site
+    entirely) - `build_set_header` itself has no pluralisation logic of its
+    own, so this is GREEN today; it pins the CONTRACT `fetch.py`'s call site
+    must honour once its own "-1 char" strip is replaced with the real
+    singular.
+    """
+    from app.services.chatbot.lanes.business.answer import build_set_header, set_noun_for
+
+    assert set_noun_for(["Bathroom Accessory"]) == "bathroom accessories"
+    assert set_noun_for(["Jacuzzi"]) == "jacuzzis"
+    assert (
+        build_set_header(1, 1, "bathroom accessory", {"stock": True})
+        == "1 bathroom accessory has stock."
+    )

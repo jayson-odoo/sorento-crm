@@ -1334,3 +1334,36 @@ def test_resolver_threads_access_levels_into_the_promotion_leg(client, db):
     assert response.status_code == 200
     predicate = response.json()["predicate"]
     assert predicate["qualifying_total"] == 1, predicate
+
+
+def test_predicate_words_strip_word_by_word_when_not_contiguous(client, db):
+    """AC-1332/REV-S4: `predicate_words` must strip WORD BY WORD, not only as
+    one contiguous phrase - "which item has PPS certificate" (the parser
+    normalised "cert" to "certificate", so the literal phrase "PPS cert" is no
+    longer contiguous in the sentence) must still leave nothing unrecognized.
+
+    RED: `_strip_predicate_words`'s regex matches the whole phrase "PPS cert"
+    as one unit with a trailing word-boundary assertion - "PPS cert" is not
+    followed by a word boundary inside "PPS certificate" (the "i" of
+    "certificate" continues the word), so the match fails entirely and both
+    "PPS" and "certificate" survive into the remainder. "certificate" itself
+    gets dropped later by `_CERT_WORD_RE`, but "PPS" does not, and the
+    described-set reader reports the leftover compound "item pps" as an
+    unrecognized term - the reviewer's own measurement.
+    """
+    _pps_certified_world(db)
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which item has PPS certificate",
+            "tokens": [],
+            "match_mode": "and",
+            "understand_phrase": False,
+            "require": {"certificate": {"scheme": "PPS"}},
+            "predicate_words": ["PPS cert"],
+        },
+    )
+    assert response.status_code == 200
+    predicate = response.json()["predicate"]
+    assert predicate["unrecognized_terms"] == [], predicate

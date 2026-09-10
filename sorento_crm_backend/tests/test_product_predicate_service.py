@@ -855,3 +855,164 @@ def test_common_and_nearest_class_labels_are_company_scoped(db):
 
     nearest = _nearest_class_labels(db, "zzqsecretclas")
     assert nearest == [], nearest
+
+
+# --------------------------------------------------------------------------- #
+# Correctness review (11 Sep 2026, PLAN-attribute-first-asks.md REV-B1,       #
+# AC-1310 rewritten) - `do_orm_execute`'s `with_loader_criteria` scopes ORM    #
+# entities, but each leg's `exists().where(...)` references its child table   #
+# as a bare correlated subquery, which the listener does not reach. The OLD   #
+# cross-company tests seeded BOTH the product and the child under the other  #
+# company, so the outer (correctly-scoped) `Product` filter alone produced    #
+# the zero - proving nothing about the leg's own subquery. These pairs put    #
+# the product and the child in DIFFERENT companies so only the leg's own     #
+# scoping (or its absence) can explain the count.                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_stock_leg_respects_company_scope_in_both_directions(db):
+    """AC-1310 (rewritten, REV-B1 kill test).
+
+    (a) product in the caller's company, Stock row's OWN `company_id` stamped
+        to another company -> qualifying_total 0.
+    (b) the reverse: Stock row in the caller's company, product in another
+        company -> 0 (the outer Product filter's own job).
+
+    RED (a): `_leg_stock`'s `exists().where(Stock.product_id == Product.id,
+    Stock.quantity_on_hand > 0)` carries no `Stock.company_id ==
+    Product.company_id` predicate, so a Stock row stamped to ANY company
+    counts once its `product_id` matches - `qualifying_total` is 1, not 0.
+    """
+    other = Company(id=str(uuid.uuid4()), code="ZZT-REVB1-STK", name="ZZT Rev Stock Co")
+    db.add(other)
+    db.flush()
+
+    ours = _product(db, "ZZT-REV-STK-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+    warehouse_a = _warehouse(db)
+    db.add(
+        Stock(
+            id=str(uuid.uuid4()),
+            product_id=ours.id,
+            warehouse_id=warehouse_a.id,
+            quantity_on_hand=5,
+            quantity_reserved=0,
+            quantity_damaged=0,
+            company_id=other.id,
+        )
+    )
+    db.flush()
+    out_a = _totals(db, {"stock": True}, ["kitchen sink"])
+    assert out_a["qualifying_total"] == 0, out_a
+
+    with company_scope(db, frozenset({other.id})):
+        theirs = _product(db, "ZZT-REV-STK-B", "MOCHA S/STEEL KITCHEN SINK (900X500X200MM)")
+    _stock(db, theirs, 5)
+    out_b = _totals(db, {"stock": True}, ["kitchen sink"])
+    assert out_b["qualifying_total"] == 0, out_b
+
+
+def test_attachment_type_leg_respects_company_scope_in_both_directions(db):
+    """AC-1310 (rewritten, REV-B1 kill test): the child that must carry the
+    same-company predicate is `ProductAttachment` (the link row) - `Attachment`
+    itself is `__company_shared__` (nullable, shared) and is not the isolation
+    boundary here.
+
+    (a) product in the caller's company, `ProductAttachment.company_id`
+        stamped to another company -> 0.
+    (b) the reverse -> 0.
+
+    RED (a): `_leg_attachment_type`'s exists() joins `ProductAttachment` /
+    `Attachment` with no `ProductAttachment.company_id == Product.company_id`
+    predicate, so the foreign-stamped link still counts.
+    """
+    other = Company(id=str(uuid.uuid4()), code="ZZT-REVB1-ATT", name="ZZT Rev Attach Co")
+    db.add(other)
+    db.flush()
+    at = _attachment_type(db, "Technical Drawing")
+
+    ours = _product(db, "ZZT-REV-ATT-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+    att = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename="zzt.pdf",
+        stored_filename="zzt.pdf",
+        file_path="https://cdn/zzt.pdf",
+        attachment_type_id=at.id,
+    )
+    db.add(att)
+    db.flush()
+    db.add(
+        ProductAttachment(
+            id=str(uuid.uuid4()), product_id=ours.id, attachment_id=att.id, company_id=other.id
+        )
+    )
+    db.flush()
+    out_a = _totals(db, {"attachment_type": "technical drawing"}, ["kitchen sink"])
+    assert out_a["qualifying_total"] == 0, out_a
+
+    with company_scope(db, frozenset({other.id})):
+        theirs = _product(db, "ZZT-REV-ATT-B", "MOCHA S/STEEL KITCHEN SINK (900X500X200MM)")
+    _attach(db, theirs, at)
+    out_b = _totals(db, {"attachment_type": "technical drawing"}, ["kitchen sink"])
+    assert out_b["qualifying_total"] == 0, out_b
+
+
+def test_incoming_leg_respects_company_scope_in_both_directions(db):
+    """AC-1310 (rewritten, REV-B1 kill test): the child is `InboundShipmentLine`
+    via its `InboundShipment` parent.
+
+    (a) product in the caller's company, shipment (+ line) stamped to another
+        company -> 0.
+    (b) the reverse -> 0.
+
+    RED (a): `_leg_incoming`'s exists() joins `InboundShipmentLine` /
+    `InboundShipment` with no same-company predicate against `Product`, so a
+    foreign-stamped open shipment line still counts - this is the exact "kill
+    test: an unscoped raw-SQL incoming leg stayed green" the reviewer named.
+    """
+    other = Company(id=str(uuid.uuid4()), code="ZZT-REVB1-INC", name="ZZT Rev Incoming Co")
+    db.add(other)
+    db.flush()
+
+    ours = _product(db, "ZZT-REV-INC-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+    with company_scope(db, frozenset({other.id})):
+        shipment_a = _shipment(db, arrived=False)
+        _shipment_line(db, shipment_a, ours, shipped=10, received=0)
+    out_a = _totals(db, {"incoming": True}, ["kitchen sink"])
+    assert out_a["qualifying_total"] == 0, out_a
+
+    with company_scope(db, frozenset({other.id})):
+        theirs = _product(db, "ZZT-REV-INC-B", "MOCHA S/STEEL KITCHEN SINK (900X500X200MM)")
+    shipment_b = _shipment(db, arrived=False)
+    _shipment_line(db, shipment_b, theirs, shipped=10, received=0)
+    out_b = _totals(db, {"incoming": True}, ["kitchen sink"])
+    assert out_b["qualifying_total"] == 0, out_b
+
+
+def test_promotion_leg_respects_company_scope_in_both_directions(db):
+    """AC-1310 (rewritten, REV-B1 kill test): the child is `PromotionProduct`
+    via its `Promotion` parent.
+
+    (a) product in the caller's company, promotion (+ link) stamped to another
+        company -> 0.
+    (b) the reverse -> 0.
+
+    RED (a): `_leg_promotion`'s exists() joins `PromotionProduct` / `Promotion`
+    with no same-company predicate against `Product`, so a foreign-stamped
+    active promotion still counts.
+    """
+    other = Company(id=str(uuid.uuid4()), code="ZZT-REVB1-PROMO", name="ZZT Rev Promo Co")
+    db.add(other)
+    db.flush()
+
+    ours = _product(db, "ZZT-REV-PROMO-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+    with company_scope(db, frozenset({other.id})):
+        _promotion(db, ours)
+    out_a = _totals(db, {"promotion": True}, ["kitchen sink"])
+    assert out_a["qualifying_total"] == 0, out_a
+
+    with company_scope(db, frozenset({other.id})):
+        theirs = _product(db, "ZZT-REV-PROMO-B", "MOCHA S/STEEL KITCHEN SINK (900X500X200MM)")
+    _promotion(db, theirs)
+    out_b = _totals(db, {"promotion": True}, ["kitchen sink"])
+    assert out_b["qualifying_total"] == 0, out_b
+
