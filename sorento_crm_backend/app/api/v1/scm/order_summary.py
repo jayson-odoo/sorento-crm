@@ -31,7 +31,7 @@ from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission_with_api_key
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.download import DownloadResponse
 from app.services.download_service import DownloadService
 from app.services.error_handler import AppException
@@ -57,6 +57,12 @@ router = APIRouter()
 
 _VIEW = require_permission_with_api_key("scm.dashboard.view")
 _RUN = require_permission_with_api_key("scm.reorder.run")
+# Security S4 (review fix round A, A4): a WRITE endpoint - it creates a `user_downloads`
+# row and enqueues a background render - is never reachable by `X-API-Key` alone. Same
+# permission slug as `_VIEW` (exporting states nothing new, it only prints what the
+# report already answers), but the real-signed-in-user dependency: `app/dependencies.py`'s
+# own rule for anything that writes.
+_EXPORT = require_permission("scm.dashboard.view")
 
 
 def _actor(user: Optional[dict]) -> Optional[str]:
@@ -110,7 +116,7 @@ def _ddmmyyyy_compact(iso: Optional[str]) -> str:
 def export_order_summary(
     payload: OrderSummaryExportIn = Body(...),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(_VIEW),
+    current_user: dict = Depends(_EXPORT),
 ):
     """Queue the order sheet through My Downloads (S4, G6 ruling 9 Sep 2026 - "our export
     of the excel and pdf needs to use My Downloads process, similar to other downloading
