@@ -53,6 +53,7 @@ import {
   useProformaInvoice,
   useSaveProformaInvoice,
 } from '../../../hooks/useProformaInvoices';
+import { useMockGlossaryVersion } from '../../../hooks/useProformaInvoiceTranslation';
 import {
   useProformaInvoicePacking,
   useProformaInvoicePackingMutations,
@@ -66,6 +67,8 @@ import {
   type ProformaInvoiceLineWrite,
 } from '../../../services/proformaInvoiceService';
 import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
+import { DescriptionEnCell } from '../../components/DescriptionEnCell';
+import { applyMockDescriptionEn } from '../../services/proformaInvoiceTranslationService';
 import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
 import { ProformaInvoicePackingListsTab } from './ProformaInvoicePackingListsTab';
@@ -275,7 +278,19 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
    *  the supplier and this invoice preselected and locked (`attachTo`). */
   const [packingUploadOpen, setPackingUploadOpen] = useState(false);
 
-  const lines = useMemo<ProformaInvoiceLine[]>(() => data?.lines ?? [], [data]);
+  // `applyMockDescriptionEn` is a Phase 1 stand-in (S1/BE has not landed): the real
+  // detail payload will carry `description_en` on every line itself. `mockGlossaryVersion`
+  // is the dependency that actually matters here - `data` keeps the SAME reference after a
+  // save (React Query's structural sharing sees identical backend JSON), so without it a
+  // save would write the mock and never repaint this tab.
+  const mockGlossaryVersion = useMockGlossaryVersion();
+  const lines = useMemo<ProformaInvoiceLine[]>(
+    () => applyMockDescriptionEn(data?.lines ?? []),
+    // `mockGlossaryVersion` is not read in the body; it exists ONLY to force this memo to
+    // recompute on every glossary write (see the docstring on `subscribeMockGlossary`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, mockGlossaryVersion],
+  );
   const packing = useProformaInvoicePacking(data);
   const packingRows = packing.data?.rows ?? [];
   // Read by the Packed cell INSTEAD of `packingRows` directly, for the same reason
@@ -635,6 +650,23 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         size: 200,
         enableSorting: false,
         meta: { headerTitle: 'Description' },
+      },
+      {
+        id: 'description_en',
+        header: ({ column }) => <DataGridColumnHeader title="Description (EN)" column={column} />,
+        // Same cell in BOTH view and edit mode, same position: it is not part of the line
+        // form, it writes the glossary directly (S2), so editing it never dirties the draft.
+        cell: ({ row }) => (
+          <DescriptionEnCell
+            invoiceId={id}
+            description={row.original.description}
+            descriptionEn={row.original.source?.description_en ?? null}
+            canAdjust={canAdjust}
+          />
+        ),
+        size: 200,
+        enableSorting: false,
+        meta: { headerTitle: 'Description (EN)' },
       },
       {
         id: 'qty',
@@ -1081,7 +1113,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       },
     ],
     // `forgetMatch`, not `matchForgetting` - see the note where it is destructured above.
-    [data?.currency, editing, canAdjust, fetchProducts, forgetMatch, uomSelectOptions],
+    [id, data?.currency, editing, canAdjust, fetchProducts, forgetMatch, uomSelectOptions],
   );
 
   const table = useReactTable({

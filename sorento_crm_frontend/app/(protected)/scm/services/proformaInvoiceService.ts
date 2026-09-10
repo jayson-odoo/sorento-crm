@@ -62,6 +62,10 @@
  * and Confirm is disabled - a third place to type a currency was one more thing to get
  * wrong on a document that already carries the answer. The backend's `currency` form field
  * is still accepted; nothing in this app sends it.
+ *
+ * `description_en` on each line (S2, text glossary lane) is not sent by the backend yet
+ * (S1 has not landed) - `proformaInvoiceTranslationService.ts` fills it client-side from
+ * an in-memory mock glossary until then; that file owns the contract for the write path.
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -246,6 +250,11 @@ export interface ProformaInvoiceLine {
   row_number: number | null;
   item_code: string;
   description: string | null;
+  /** The glossary's English for `description` (S2, text glossary lane) - `null` for a
+   *  word the glossary has never seen, even an already-English one (R7). Optional
+   *  because the real backend does not send it until S1 lands; `applyMockDescriptionEn`
+   *  fills it client-side until then (`proformaInvoiceTranslationService.ts`). */
+  description_en?: string | null;
   qty: number | null;
   uom: string | null;
   unit_price: number | null;

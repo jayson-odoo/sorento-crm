@@ -916,6 +916,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'system.translations.view',
           },
           {
+            title: 'Text Glossary',
+            path: '/system-management/text-glossary',
+            permission: 'system.text_glossary.view',
+          },
+          {
             title: 'Lookup Sets',
             path: '/master-data-management/lookup-sets',
             permission: 'master_data.lookup_sets.view',
@@ -2137,6 +2142,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Translations',
         path: '/system-management/translations',
         permission: 'system.translations.view',
+      },
+      {
+        title: 'Text Glossary',
+        path: '/system-management/text-glossary',
+        permission: 'system.text_glossary.view',
       },
       {
         title: 'Lookup Sets',

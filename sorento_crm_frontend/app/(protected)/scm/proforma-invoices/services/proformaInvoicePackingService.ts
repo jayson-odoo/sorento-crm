@@ -23,11 +23,17 @@
  *
  * `unmapped_headers` on the upload preview (S5, AC-E2) and the dialog's per-block
  * `attach_to` / `refusal` (AC-B5/B13) are documented in `fulfilmentService.ts`, not here.
+ *
+ * `description_en` on each row (S2, text glossary lane) is not sent by the backend yet
+ * (S1 has not landed) - `getProformaInvoicePacking` below fills it client-side via
+ * `proformaInvoiceTranslationService.ts`'s mock glossary, which owns the write-path
+ * contract, until then.
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import { packedQtyForLine } from '../lib/packingRollup';
+import { applyMockDescriptionEn } from './proformaInvoiceTranslationService';
 import type { ProformaInvoiceDetail } from '../../services/proformaInvoiceService';
 import type {
   ProformaInvoicePackingFile,
@@ -48,7 +54,10 @@ export function getProformaInvoicePacking(invoice: ProformaInvoiceDetail): Profo
     packing_lines?: ProformaInvoicePackingLine[];
     packing_file?: ProformaInvoicePackingFile | null;
   };
-  return { rows: withPacking.packing_lines ?? [], file: withPacking.packing_file ?? null };
+  return {
+    rows: applyMockDescriptionEn(withPacking.packing_lines ?? []),
+    file: withPacking.packing_file ?? null,
+  };
 }
 
 export async function dismissPackingLine(
