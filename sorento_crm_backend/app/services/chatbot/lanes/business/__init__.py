@@ -334,6 +334,15 @@ def run_fetch(
         # `check_access` to fill it from `contact_field_reveals`; until then it is
         # always None, so every restricted field stays hidden by construction.
         "access": ctx.get("access"),
+        # E2 (attribute-first asks): the resolver's `predicate` block, carried
+        # through the gate untouched (`resolved`/`gate` are the same mutated dict,
+        # `gate.py`'s own C4 bypass reads it off `resolver.get("predicate")` the
+        # same way) - the ONLY place a HAS turn's `require`/`qualifying_total`
+        # reach the fetch step at all. Absent on an ordinary turn, so
+        # `fetch.entity_ids_transformer`'s own `trig.get("predicate") is not None`
+        # check (limit=5, S1's E1) and `output_structurer`'s header (below) both
+        # stay byte-inert for every non-HAS turn.
+        "predicate": gate.get("predicate"),
     }
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
     if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(

@@ -2547,6 +2547,17 @@ def resolve_reference_post(
         # from "not a scheme question".
         if "schemes_on_file" in outcome:
             result["predicate"]["schemes_on_file"] = outcome["schemes_on_file"]
+        # F2/AC-1320: nearest class-label suggestions on an unrecognized-term
+        # zero - absent whenever the resolver found none to offer, same
+        # present-only-on-the-relevant-miss convention as `schemes_on_file`.
+        if outcome.get("suggestions"):
+            result["predicate"]["suggestions"] = outcome["suggestions"]
+        # E2/AC-1316: the described set's class label(s), for the set-answer
+        # header's noun (`answer.set_noun_for`) - present only when non-empty
+        # (AC-1309's own shape-lock test asserts `predicate` carries EXACTLY its
+        # four documented keys on a turn with no class to name).
+        if outcome.get("class_labels"):
+            result["predicate"]["class_labels"] = outcome["class_labels"]
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
         return _stamp_brand_on_products(db, result)
 

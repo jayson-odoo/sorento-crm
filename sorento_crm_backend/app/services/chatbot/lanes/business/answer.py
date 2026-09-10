@@ -2192,6 +2192,62 @@ def _predicate_phrase(require: dict[str, Any]) -> str:
     return _and_list(parts) if parts else "that"
 
 
+# E2 (attribute-first asks, AC-1316): the SET-ANSWER header's noun per leg - plural,
+# said of the WHOLE qualifying set ("X taps HAVE certificates"), never the miss
+# sentence's singular "a certificate" `_PREDICATE_NOUN` carries above.
+_HEADER_PREDICATE_NOUN: dict[str, str] = {
+    "certificate": "certificates",
+    "stock": "stock",
+    "promotion": "a promotion",
+    "incoming": "incoming stock",
+}
+
+
+def _header_predicate_phrase(require: dict[str, Any]) -> str:
+    """"certificates", "certificates and stock" - the header's own predicate noun,
+    joined the same way `_predicate_phrase` joins the miss sentence's.
+    """
+    parts: list[str] = []
+    for key, value in (require or {}).items():
+        if key == "attachment_type":
+            label = jsc.js_string(value).strip().lower()
+            parts.append(label if label else "an attachment")
+            continue
+        noun = _HEADER_PREDICATE_NOUN.get(key)
+        if noun:
+            parts.append(noun)
+    return _and_list(parts) if parts else "that"
+
+
+def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
+    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate noun>.
+    Showing <n>." - prepended, as its OWN line, ahead of the existing render (the
+    block below it is untouched). "Showing <n>" is dropped when every qualifying
+    product already fits on the page (`qualifying_total <= shown`).
+
+    A pure string function: `qualifying_total` and `shown` are counts the caller
+    already has (the resolver's own `qualifying_total`, and the page the domain
+    tool actually rendered), never re-derived here.
+    """
+    verb = "has" if qualifying_total == 1 else "have"
+    header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
+    if qualifying_total > shown:
+        header += f" Showing {shown}."
+    return header
+
+
+def set_noun_for(class_labels: list[str] | None) -> str:
+    """AC-1316 (work item E2): the header's noun, off the described set's class
+    label(s). Exactly one class names a single noun ("Tap" -> "taps"); zero
+    classes (no class bound the described set at all) or more than one (a blended
+    set with no single noun) both fall back to the generic "products".
+    """
+    labels = [label for label in (class_labels or []) if label and label.strip()]
+    if len(labels) != 1:
+        return "products"
+    return f"{labels[0].strip().lower()}s"
+
+
 def not_found_error_message(
     item: dict[str, Any] | None,
     *,
@@ -2833,6 +2889,26 @@ def not_found_error_message(
                     f"Schemes on file: {schemes_text}. "
                     f"Would you like me to escalate to {team} team?"
                 )
+            elif (
+                isinstance(predicate, dict)
+                and jsc.get(predicate, "qualifying_total") == 0
+                and jsc.array(jsc.get(predicate, "unrecognized_terms"))
+            ):
+                # AC-1320 (work item F2): the described set named NOTHING this
+                # catalogue can read - clarify the term, never answer the
+                # honest-zero copy below, which would falsely say "none of these
+                # qualify" for a set that was never actually described.
+                term = jsc.js_string(jsc.array(jsc.get(predicate, "unrecognized_terms"))[0])
+                suggestions = [
+                    jsc.js_string(s).strip().lower()
+                    for s in jsc.array(jsc.get(predicate, "suggestions"))
+                    if jsc.truthy(s)
+                ]
+                suggestion_text = _human_list(suggestions) if suggestions else "the product types I know"
+                escalate_message = (
+                    f"I don't know '{term}' as a product type. Did you mean {suggestion_text}?"
+                )
+                is_clarification = True
             elif (
                 isinstance(predicate, dict)
                 and jsc.get(predicate, "qualifying_total") == 0

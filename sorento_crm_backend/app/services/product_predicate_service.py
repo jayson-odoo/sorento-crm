@@ -65,6 +65,36 @@ class _UnrecognizedLabel(Exception):
         self.extra = extra or {}
 
 
+def _nearest_class_labels(db: Session, term: str, *, limit: int = 3) -> list[str]:
+    """Nearest class-label suggestions for an unrecognized term (AC-1320): every
+    content word in `term` against the class labels products actually carry
+    (`product_class_signal.stored_class_labels`) - an exact word match first
+    ("tap" out of "water tap" against the label "Tap"), then a fuzzy
+    nearest-neighbour for a near-miss spelling. Order-stable, deduped, capped at
+    `limit` - the reply names a few candidates, never the whole vocabulary.
+    """
+    import difflib
+
+    from app.services.product_class_signal import stored_class_labels
+    from app.services.product_spec_search import _content_words
+
+    labels = stored_class_labels(db)
+    if not labels:
+        return []
+    lowered = {label.lower(): label for label in labels}
+    found: list[str] = []
+    for word in _content_words(term):
+        if word in lowered:
+            if lowered[word] not in found:
+                found.append(lowered[word])
+            continue
+        for match in difflib.get_close_matches(word, lowered.keys(), n=limit, cutoff=0.6):
+            label = lowered[match]
+            if label not in found:
+                found.append(label)
+    return found[:limit]
+
+
 def _lookup_resolve(db: Session, set_key: str, raw: str) -> str | None:
     """The lookup set's own resolved VALUE, or None on any miss.
 
@@ -325,6 +355,11 @@ def resolve_product_set(
             "truncated": False,
             "unrecognized_terms": unrecognized,
             "require": require_echo,
+            "class_labels": verdict["class_labels"],
+            # AC-1320/F2: nearest class-label suggestions for the FIRST unrecognized
+            # term, so the reply can offer a real "did you mean" instead of naming
+            # nothing at all.
+            "suggestions": _nearest_class_labels(db, unrecognized[0]) if unrecognized else [],
         }
 
     parent = aliased(Product)
@@ -425,10 +460,23 @@ def resolve_product_set(
                     }
                 )
 
+    # E2/AC-1316: the described set's own class label(s), for the header's noun
+    # (`answer.set_noun_for`). Unioned with what the qualifying candidates
+    # THEMSELVES carry, not `verdict["class_labels"]` alone - a set scoped
+    # purely through `product_ids` (LOOKUP matched "tap" against a product
+    # CODE, never through `filter_specs`' own membership binding) still has a
+    # real class the header should say, and the candidates already carry it.
+    class_labels = set(verdict["class_labels"])
+    for row in candidates:
+        value = row.get("class")
+        if value:
+            class_labels.add(str(value))
+
     return {
         "candidates": candidates,
         "qualifying_total": int(qualifying_total),
         "truncated": int(qualifying_total) > len(candidates),
         "unrecognized_terms": unrecognized,
         "require": require_echo,
+        "class_labels": sorted(class_labels),
     }

@@ -1710,6 +1710,32 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if ts:
         msg += f"_Data last updated: {ts}_"
 
+    # E2 (attribute-first asks, AC-1316): a HAS turn's set-answer header, PREPENDED
+    # as its own line ahead of everything above - the block itself (intro, items,
+    # summaries, ...) is untouched. Deferred-import: `answer.py` imports FROM this
+    # module (`DATE_PARAMS`, `space_id_or_default`), so a module-level import here
+    # would be circular.
+    predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
+    if predicate is not None:
+        from app.services.chatbot.lanes.business.answer import build_set_header, set_noun_for
+
+        shown = len(e.get("items") or [])
+        qualifying_total = jsc.get(predicate, "qualifying_total") or 0
+        set_noun = set_noun_for(jsc.array(jsc.get(predicate, "class_labels")))
+        # `set_noun_for` is always plural (its own contract, AC-1316) - singular
+        # only for the ONE-qualifying-product header ("1 tap has ...", never
+        # "1 taps has ..."), by dropping the trailing "s" our own pluralisation
+        # always adds.
+        if qualifying_total == 1 and set_noun.endswith("s"):
+            set_noun = set_noun[:-1]
+        header = build_set_header(
+            qualifying_total,
+            shown,
+            set_noun,
+            jsc.get(predicate, "require") or {},
+        )
+        msg = f"{header}\n{msg}"
+
     out: dict[str, Any] = {
         "response": msg.strip(),
         "response_intro": e.get("intro"),
