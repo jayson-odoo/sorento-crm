@@ -146,3 +146,55 @@ Frontend:
    list columns at their new indices.
 9. `record_decision` on a row with `suggested_qty` 0 and `chosen_qty` 5 succeeds.
 10. Existing S14 tests updated for the two new columns, nothing else changed.
+
+## Slice 3: PO and SPO numbers under the BRW PO qty and BRW incoming qty cells (owner, 10 Sep)
+
+Owner: "the rows where we have BRW PO and BRW incoming quantity, better put down the PO and
+SPO number as new lines below for traceability".
+
+### Source (measured in code)
+
+- `_po_open_qty_map`: `purchase_order_lines pol JOIN warehouses` (site pool, line open),
+  summed per product. The document is `purchase_orders.po_number` via
+  `pol.purchase_order_id`.
+- `_incoming_spo_qty_map`: `spo_allocations` (open incoming clauses, site pool), summed per
+  product. The document is `spo_allocations.spo_number` (a shipping order has no header
+  table; the number IS the document, D3).
+
+### Change
+
+Backend:
+- Both maps return the breakdown as well as the total: `{pid: {"qty": total, "docs":
+  [{"number": ..., "qty": ...}, ...]}}` grouped by document number, sorted by number,
+  qty = the open remainder of that document for the product. A line with a NULL number
+  groups under "(no number)".
+- Two new JSONB columns on `scm.order_summary_row` (same migration 508 as `suggestion`):
+  `po_open_docs`, `incoming_spo_docs`, the list above. `_serialise_row` exposes both; FE
+  type gains them.
+- Export cell text for the two columns (PDF and xlsx alike), shaped like `_month_text`:
+  first line the total, then one `"<number> - <qty>"` per document:
+
+      30
+      SPO-2026/08-0012 - 30
+
+  With no documents the cell stays the bare number (xlsx: numeric 0 / total). The H1
+  "quantities as numbers" rule yields on these two columns only, when documents exist:
+  traceability outranks summing a column the buyer never sums. `_PDF_LIST_COLUMNS` gains
+  the two indices (after slice 2: 11 and 12); the two stay in `_PDF_NUM_COLUMNS` for
+  right-alignment only if the renderer tolerates both, otherwise drop them from it.
+
+Frontend: types only, plus the same two-line rendering in the on-screen order summary's
+two cells if that grid shows them (`truncate` + `title` with the full list).
+
+### Tests (tester, `tests/scm/test_order_summary_sheet.py`)
+
+11. A product with two open PO lines at the pool on two POs (PO-A 4 owed, PO-B 1 owed) and
+    one open SPO allocation (SPO-X 30) -> book row `po_open_qty` 5, `po_open_docs`
+    `[{"number": "PO-A", "qty": 4}, {"number": "PO-B", "qty": 1}]`, `incoming_spo_qty` 30,
+    `incoming_spo_docs` `[{"number": "SPO-X", "qty": 30}]`.
+12. xlsx export: the BRW PO qty cell reads "5\nPO-A - 4\nPO-B - 1" and BRW incoming qty
+    reads "30\nSPO-X - 30"; a product with nothing open keeps numeric 0 in both.
+13. PDF: the two cells render one entry per line (same check the Delivery column's test
+    makes).
+14. A project-bin PO line and a received SPO allocation contribute nothing to the docs list
+    (the pool predicate and open clauses still apply).

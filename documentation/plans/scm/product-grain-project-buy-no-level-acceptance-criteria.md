@@ -27,3 +27,12 @@
 - AC-10 A buyer can choose an order quantity on a row whose suggestion is 0 and confirm it.
 - AC-11 The on-screen order summary shows the same Suggestion column and the same rows.
 - AC-12 Export still refuses above 2000 rows with "Narrow the plan first" (unchanged).
+
+## Slice 3: document numbers under the two supply cells (owner, 10 Sep)
+
+- AC-13 The `BRW PO qty` cell shows the total on the first line and one `PO number - qty`
+  line per open PO below it; `BRW incoming qty` does the same with `SPO number - qty`. PDF
+  and Excel alike.
+- AC-14 A product with nothing open prints a bare 0 in those cells, as today.
+- AC-15 Only site-pool, still-open lines and allocations are listed (the same scope as the
+  totals), so the listed quantities sum to the total on the first line.
