@@ -113,6 +113,53 @@ class TestCanonicalSalesOrderNote:
         assert so.internal_note == _SAMPLE_PLAIN
 
 
+class TestCanonicalSalesOrderNoteLengthCap:
+    """Security review, SPL-B1: an unbounded `internal_note` reaches `label_from_note` on
+    every push (a batch of up to 1000, synchronous). Capped to 8000 characters - AFTER the
+    RTF wrapper is stripped, not before it, since a font table alone routinely runs the
+    RAW byte count several times past the PLAIN text it wraps.
+    """
+
+    def test_an_rtf_note_under_8000_chars_of_plain_text_but_over_8000_as_raw_rtf_lands(self):
+        # A font table is metadata, never rendered text - padding it is a realistic way
+        # for AutoCount's own RTF control to produce a raw payload many times longer
+        # than what a person actually typed.
+        padding = "".join(
+            f"{{\\f{i}\\fnil\\fcharset0 PaddingFontName{i};}}" for i in range(1, 400)
+        )
+        padded_rtf = (
+            r"{\rtf1\ansi\ansicpg1252\deff0\deflang1033"
+            r"{\fonttbl{\f0\fnil\fcharset0 Microsoft YaHei;}" + padding + "} "
+            r"{\colortbl ;\red0\green0\blue0;} \viewkind4\uc1\pard\cf1\b\f0\fs20 "
+            r"PROJECT: SHORT\cf0\fs20\par }"
+        )
+        assert len(padded_rtf) > 8000
+
+        so = CanonicalSalesOrder(
+            source_ref=_ref("SO"), so_number=unique_code("SO"), status="open",
+            internal_note=padded_rtf,
+        )
+
+        assert so.internal_note == "PROJECT: SHORT"
+
+    def test_a_plain_note_over_8000_characters_is_truncated_not_rejected(self):
+        so = CanonicalSalesOrder(
+            source_ref=_ref("SO"), so_number=unique_code("SO"), status="open",
+            internal_note="A" * 9000,
+        )
+
+        assert so.internal_note == "A" * 8000
+
+    def test_a_non_string_internal_note_still_gets_pydantics_own_type_error(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            CanonicalSalesOrder(
+                source_ref=_ref("SO"), so_number=unique_code("SO"), status="open",
+                internal_note=12345,
+            )
+
+
 class TestIngestStoresPlainText:
     def test_f_the_ingest_endpoint_stores_plain_text_not_rtf(self, env):
         record = _so_record(env, internal_note=_SAMPLE_RTF)

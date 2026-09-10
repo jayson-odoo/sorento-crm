@@ -225,6 +225,14 @@ class SalesOrder(BaseModel):
     source: str = "manual"
     #: The project the sheet named when no customer of that name existed.
     internal_note: Optional[str] = None
+    #: The human-readable project name (PLAN-so-project-label.md), resolved from whichever
+    #: of the four sources ranked highest. Never a UUID; `None` when nothing has ever named
+    #: one for this order.
+    project_label: Optional[str] = None
+    #: Which rule wrote `project_label` - `inquiry` / `note` / `ref` / `delivery`. Read
+    #: alongside the label as a muted word (`Inquiry sheet` / `Note` / `AutoCount ref` /
+    #: `Delivery address`), never shown alone.
+    project_label_source: Optional[str] = None
     #: Every distinct location its lines ship from. Plural: one order can land in two.
     stock_locations: List[str] = Field(default_factory=list)
     #: The planning class this order was classified into (`project` / `retail`), or `None`
