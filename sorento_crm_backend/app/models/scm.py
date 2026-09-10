@@ -1806,6 +1806,11 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
 
     item_code = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
+    #: The `translation_memory` English for `description` (S2, text glossary lane) - NULL
+    #: for a word the memory has never seen, even an already-English one (R7). Filled by
+    #: `app.services.scm.description_translation.fill` on write and re-bound by `.rebind`
+    #: on every later memory write (migration `510_pi_description_en`).
+    description_en = Column(Text, nullable=True)
     #: NULL on a line that names something and states a packing figure but no quantity
     #: (captain ruling 9 Sep, S2 follow-up) - the Jinbaichuan sheet's own
     #: container-summary row states a total CBM and nothing else.
@@ -1911,6 +1916,11 @@ class ProformaInvoicePackingLine(Base, CompanyScopedMixin):
     #: does.
     supplier_code = Column(String(100), nullable=True)
     description = Column(Text, nullable=True)
+    #: The `translation_memory` English for `description` (S2, text glossary lane) - NULL
+    #: for a word the memory has never seen, even an already-English one (R7). Filled by
+    #: `app.services.scm.description_translation.fill` on write and re-bound by `.rebind`
+    #: on every later memory write (migration `510_pi_description_en`).
+    description_en = Column(Text, nullable=True)
 
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True

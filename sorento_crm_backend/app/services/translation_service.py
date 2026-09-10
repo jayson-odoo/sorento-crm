@@ -324,11 +324,23 @@ def remember(
     user_id: Optional[str] = None,
     source_lang: str = "zh",
     target_lang: str = "en",
-) -> int:
+) -> dict:
     """Upsert MANUAL rows from ``[{source_text, target_text}]`` (an edited preview
-    cell). Manual always overwrites ``ai``; an empty ``target_text`` is skipped rather
-    than stored as a blank translation. Returns the number of rows written."""
+    cell, or the PI page's own inline cell / System Management > Translations - S2, text
+    glossary lane). Manual always overwrites ``ai``; an empty ``target_text`` is skipped
+    rather than stored as a blank translation.
+
+    Returns ``{"written": n, "rebound": {"lines": n, "packing_rows": n}}`` - ``rebound``
+    is every ``proforma_invoice_line`` / ``proforma_invoice_packing_line`` on file just
+    re-bound to the new English (``app.services.scm.description_translation.rebind``,
+    imported lazily so this generic module never imports the scm package at load time,
+    the same shape ``supplier_code_alias_service`` reaches ``rebind_packing_rows`` with).
+    Only ``zh -> en`` re-binds the cache column (R5) - any other language pair still
+    writes the memory row, just never touches ``description_en``."""
+    from app.services.scm import description_translation
+
     written = 0
+    rebound = {"lines": 0, "packing_rows": 0}
     for pair in pairs or []:
         source_text = normalize_source_text(str((pair or {}).get("source_text") or ""))
         target_text = str((pair or {}).get("target_text") or "").strip()
@@ -360,9 +372,13 @@ def remember(
             row.source = SOURCE_MANUAL
             row.created_by = user_id
         written += 1
+        if source_lang == "zh" and target_lang == "en":
+            counts = description_translation.rebind(db, source_text, target_text)
+            rebound["lines"] += counts["lines"]
+            rebound["packing_rows"] += counts["packing_rows"]
     if written:
         db.flush()
-    return written
+    return {"written": written, "rebound": rebound}
 
 
 # --------------------------------------------------------------------------------------
@@ -465,17 +481,31 @@ def update_target_text(
     db: Session, memory_id: str, target_text: str, *, user_id: Optional[str] = None
 ) -> TranslationMemory:
     """Inline-edit from the admin list: always ``manual`` from here on, same rule as
-    ``remember()`` - the admin correcting a bad AI guess outranks it."""
+    ``remember()`` - the admin correcting a bad AI guess outranks it. Re-binds every PI
+    row sharing this word (S2, text glossary lane) BEFORE the commit below, same ``zh ->
+    en`` only rule (R5) as ``remember()``."""
     row = get_or_404(db, memory_id)
     row.target_text = target_text.strip()
     row.source = SOURCE_MANUAL
     row.created_by = user_id
+    if row.source_lang == "zh" and row.target_lang == "en":
+        from app.services.scm import description_translation
+
+        description_translation.rebind(db, row.source_text, row.target_text)
     db.commit()
     db.refresh(row)
     return row
 
 
 def delete_memory(db: Session, memory_id: str) -> None:
+    """Forgets a word - and re-binds every PI row that cached it back to ``None`` (S2,
+    text glossary lane): a value whose reason has just been deleted is a value nobody can
+    account for. Read before ``db.delete`` below, since the ORM object still answers for
+    its own columns until then; the commit that follows is what makes both stick."""
     row = get_or_404(db, memory_id)
+    if row.source_lang == "zh" and row.target_lang == "en":
+        from app.services.scm import description_translation
+
+        description_translation.rebind(db, row.source_text, None)
     db.delete(row)
     db.commit()

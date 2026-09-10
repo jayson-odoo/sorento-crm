@@ -91,6 +91,7 @@ def replace_packing_rows(
     ).delete(synchronize_session=False)
     db.flush()
 
+    new_rows: list[ProformaInvoicePackingLine] = []
     for row_no, ln in enumerate(lines, start=1):
         code_upper = ln.item_code.upper()
         product = known.get(code_upper)
@@ -145,6 +146,13 @@ def replace_packing_rows(
             # read the same to the operator: this row is not on the invoice (AC-B6).
             row.match_state = "unmatched"
         db.add(row)
+        new_rows.append(row)
+
+    # S2, text glossary lane (R3/R4): the English cache for `description` on every row
+    # this replace just wrote, one batched memory lookup for the whole file.
+    from app.services.scm import description_translation
+
+    description_translation.fill(db, new_rows)
     db.flush()
 
     rollup_invoice(db, str(invoice.id))
