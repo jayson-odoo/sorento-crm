@@ -265,11 +265,20 @@ def _leg_certificate(db: Session, value: Any, access_levels: list[str] | None = 
     than answer a silent zero.
 
     Joins through ``Certificate`` because ``certificate_products`` has no
-    company_id - the scoped side is what keeps the leg isolated per company.
+    company_id.
+
+    R17/AC-1341 (third console pass, REV-B1 re-check): an explicit same-company
+    predicate against `Certificate` - `with_loader_criteria` (the
+    `do_orm_execute` listener's own scoping mechanism) does not reach a bare
+    `exists().where(...)` subquery, so without this a certificate stamped to a
+    DIFFERENT company still counted once its product_id matched. The `is_(None)`
+    arm keeps `Certificate`'s own deliberately SHARED rows (`__company_shared__`,
+    a NULL `company_id`) counting - strict equality alone would undercount them.
     """
     conditions = [
         CertificateProduct.product_id == Product.id,
         Certificate.id == CertificateProduct.certificate_id,
+        or_(Certificate.company_id.is_(None), Certificate.company_id == Product.company_id),
         Certificate.status == "active",
     ]
     resolved_value = value
