@@ -86,14 +86,28 @@ The scm-side half. `translation_service` stays generic and knows nothing about P
   for CJK misses is the existing `translate` behaviour (the preview already asked for most
   of them, so apply is mostly memory hits); a non-CJK description never asks and lands None
   (R7).
-- `rebind(db, source_text, target_text) -> {"lines": n, "packing_rows": n}`: UPDATE both
-  row tables where `regexp_replace(btrim(description), '\s+', ' ', 'g') = :source_text`
-  (the memory's own normalised key), setting `description_en = :target_text` (None on a
-  forget). Through the ORM `query(...).update(synchronize_session=False)` so the company
-  filter applies as it does in `supplier_code_alias_service._rebind`. Only `zh -> en` rows
-  re-bind the cache column (R5).
+- `rebind(db, source_text, target_text) -> {"lines": n, "packing_rows": n}`: SELECT the
+  rows of both tables where `regexp_replace(btrim(description), '\s+', ' ', 'g') =
+  :source_text` (the memory's own normalised key) through the ORM, then assign
+  `description_en = target_text` per object (None on a forget). Select-then-assign, NEVER a
+  bulk `query(...).update()`: `_apply_company_scope` only injects the company predicate on
+  SELECT statements, so a bulk UPDATE would rewrite every company's rows (security review,
+  10 Sep). Same shape as `supplier_code_alias_service._rebind`. Only `zh -> en` rows re-bind
+  the cache column (R5). Migration 510 adds an expression index on the normalised
+  description on both tables so this is not a sequential scan per pair.
+
+  Known, documented: `translation_memory` is tenant-wide, rebind is company-scoped. A word
+  corrected in company A re-binds A's rows now; company B's rows keep their cached English
+  until B's next write (a later upload or edit). The deferred `translation_memory.delete`
+  runs with the requester's scope re-asserted. Single-company install today; the trigger
+  for a tenant-wide rebind is a second operating company reading supplier documents.
 
 ### `translation_service` gains the re-bind on every write
+
+`remember` upserts inside a savepoint with `IntegrityError` re-read, the pattern
+`_ai_fill_chunk` already uses against `uq_translation_memory_phrase`, so two concurrent
+writers of the same phrase never 500. The supplier-document apply caps its `translations`
+array at 200 pairs (a preview cannot legitimately produce more edits).
 
 `remember`, `update_target_text` and `delete_memory` call
 `description_translation.rebind` (lazy import, same pattern
@@ -113,14 +127,18 @@ every PI on file off a model guess is not a ruling anyone made.
 1. `proforma_invoice_packing_service.replace_packing_rows`: `fill(db, new_rows)` after the
    loop, before `db.flush()`.
 2. `proforma_invoice_service` PI line create (`:1040` block) and line update (`:2779`):
-   `fill` over the lines just written, one call per apply.
+   `fill` over the lines just written or whose `description` changed, one call per apply.
+   An unchanged line is not re-filled, so a save never waits on a model call it did not
+   cause.
 
 ### Downstream (R4)
 
 Every site that copies a PI row's description OUT reads `ln.description_en or
-ln.description`: `:1729`, `:1790`, `:1906`, `:2054`, `PackingListLine.description` at
-convert, and the export payload `to_xlsx` reads. The revision diff (`:596-662`) keeps
-comparing the SOURCE description.
+ln.description`: `:1729`, `:1790`, `:1906`, `:2054` (`InboundShipmentLine.description`,
+`procurement.py:369`, which is the packing list line), and the export payload `to_xlsx`
+reads. The xlsx description cell is written as a string cell (a leading `=`, `+`, `-`, `@`
+is prefixed with `'`), so neither the supplier's text nor a translation can become a
+formula. The revision diff (`:596-662`) keeps comparing the SOURCE description.
 
 ### Serialisers
 
@@ -131,7 +149,7 @@ Assert it in a test.
 
 | Method | Path | Perm | Body |
 |--------|------|------|------|
-| PUT | `/scm/proforma-invoices/{invoice_id}/translations` | `_UPLOAD` (`scm.proforma_invoice.upload`) | `{source_text, target_text}` -> `translation_service.remember` (one pair, `user_id` = caller) -> `{source_text, target_text, source, rebound: {lines, packing_rows}}`; `invoice_id` must exist (`get_or_404`); 422 on blank text |
+| PUT | `/scm/proforma-invoices/{invoice_id}/translations` | `_UPLOAD` (`scm.proforma_invoice.upload`) | `{source_text (max 500), target_text (max 1000)}` -> `translation_service.remember` (one pair, `user_id` = caller) -> `{source_text, target_text, source, rebound: {lines, packing_rows}}`; `invoice_id` must exist (`get_or_404`) AND `source_text` must normalise-match a `description` on one of that invoice's lines or packing rows, else 422 (the invoice is load-bearing, not decorative: an upload-permission holder may name only words that are actually on a document they hold); 422 on blank or whitespace-only text |
 
 The admin routes already exist (`GET/PUT/DELETE /system/translations`), unchanged in shape;
 they now re-bind through the service.
@@ -140,7 +158,10 @@ they now re-bind through the service.
 
 - `DescriptionEnCell` (Phase 1) stays: dash / English / inline `Input`, Enter saves,
   Escape cancels, blur saves if changed; editable only when `canAdjust` and `description`
-  non-empty. Phase 2 swaps the mock for `PUT /scm/proforma-invoices/{id}/translations`,
+  non-empty. The editable dash carries a rest-state affordance (muted dashed underline +
+  `title`), the in-flight guard re-arms on settle (a failed save leaves the cell live), and
+  on the Lines tab the cell keys on the SAVED description, never the unsaved draft. The EN
+  column sorts like its twin. Phase 2 swaps the mock for `PUT /scm/proforma-invoices/{id}/translations`,
   invalidates `proformaInvoiceDetailQueryKey` + `proformaInvoicePackingQueryKey`, toast
   "Translation saved, N rows updated". The Phase 1 subscribe/version mock plumbing is
   removed with the mock.
