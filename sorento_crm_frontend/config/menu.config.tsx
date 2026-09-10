@@ -901,6 +901,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'system.numbering_rules.view',
           },
           {
+            title: 'Import Column Mappings',
+            path: '/system-management/import-field-aliases',
+            permission: 'system.import_field_aliases.view',
+          },
+          {
             title: 'Status Graphs',
             path: '/system-management/status-graphs',
             permission: 'system.statuses.view',
@@ -2117,6 +2122,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Running Numbers',
         path: '/system-management/numbering-rules',
         permission: 'system.numbering_rules.view',
+      },
+      {
+        title: 'Import Column Mappings',
+        path: '/system-management/import-field-aliases',
+        permission: 'system.import_field_aliases.view',
       },
       {
         title: 'Status Graphs',

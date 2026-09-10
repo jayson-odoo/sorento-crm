@@ -1108,110 +1108,6 @@ export async function getSupplierNotices(
   return body.data;
 }
 
-/**
- * S9 - the packing list, and what each container draws down.
- *
- * `quantity_to_allocate` is what is LEFT on a line, never the shipped figure again: re-opening
- * the screen after a partial allocation must not propose the same units twice.
- */
-export interface AllocationOption {
-  po_line_id: string;
-  po_number: string | null;
-  warehouse_id: string | null;
-  warehouse_code: string | null;
-  outstanding: number;
-  expected_date: string | null;
-  score: number;
-  factors: { key: string; weight: number; value: number | null; present: boolean }[];
-  qty?: number;
-}
-
-export interface AllocationLine {
-  shipment_line_id: string;
-  product_id: string;
-  quantity_shipped: number;
-  quantity_allocated: number;
-  quantity_to_allocate: number;
-  reason: 'only_open_order' | 'highest_priority' | 'no_open_order';
-  suggestion: AllocationOption | null;
-  alternatives: AllocationOption[];
-}
-
-export interface AllocationSuggestion {
-  shipment_id: string;
-  shipment_number: string | null;
-  container_no: string | null;
-  supplier_id: string | null;
-  lines: AllocationLine[];
-}
-
-export interface PackingListBlock {
-  index: number;
-  shipment_number: string;
-  container_no: string | null;
-  bl_no: string | null;
-  lines: number;
-  qty: number;
-  cartons: number | null;
-  unmatched_items: string[];
-}
-
-export interface PackingListPreview {
-  ok: boolean;
-  blocks: PackingListBlock[];
-  block_count: number;
-  line_count: number;
-  rows_read: number;
-  unmatched_item_codes: string[];
-  unmatched_items: number;
-  unmapped_headers: string[];
-  missing_columns: string[];
-  problems: string[];
-  /** Null when neither the file, the form nor the supplier's price list says. */
-  currency?: string | null;
-  /** Which of those said it: `form` | `document` | `supplier_price_list` | `none`. */
-  currency_source?: string | null;
-  priced_lines?: number;
-}
-
-/** What the supplier and currency form fields are called on both packing-list endpoints. */
-interface PackingListUploadOptions {
-  supplierId?: string | null;
-  currency?: string | null;
-}
-
-function packingListForm(file: File, opts: PackingListUploadOptions): FormData {
-  const body = new FormData();
-  body.append('file', file);
-  if (opts.supplierId) body.append('supplier_id', opts.supplierId);
-  // Only when the operator typed one: an empty string would be read as a currency the
-  // backend cannot resolve and refuse the upload the document itself could have answered.
-  if (opts.currency) body.append('currency', opts.currency);
-  return body;
-}
-
-export async function previewPackingList(
-  file: File,
-  opts: PackingListUploadOptions = {},
-): Promise<PackingListPreview> {
-  const res = await apiFetch('/api/v1/scm/packing-lists/preview', {
-    method: 'POST',
-    body: packingListForm(file, opts),
-  });
-  return readJson<PackingListPreview>(res, 'Failed to read the packing list');
-}
-
-export async function applyPackingList(
-  file: File,
-  opts: PackingListUploadOptions & { shipmentDate?: string | null; validateOnly?: boolean } = {},
-): Promise<Record<string, unknown>> {
-  const body = packingListForm(file, opts);
-  if (opts.shipmentDate) body.append('shipment_date', opts.shipmentDate);
-  const qs = opts.validateOnly ? '?validate_only=true' : '';
-  const res = await apiFetch(`/api/v1/scm/packing-lists/apply${qs}`, { method: 'POST', body });
-  return readJson(res, 'Failed to import the packing list');
-}
-
 /* ─────────────────────────────────────────────────────────────────────────────
  * Supplier documents: one dialog, a proforma invoice AND/OR a packing list (R12-R14,
  * purchasing consolidation batch, lane C)
@@ -1226,9 +1122,8 @@ export async function applyPackingList(
  * Each file is classified by its own title cell (`发票`/`PROFORMA INVOICE` vs `装箱单`/
  * `PACKING LIST`) - proforma invoice, packing list, or combined when a file states both.
  * `apply` writes proforma invoices first, then packing lists (one draft shipment per
- * container block, same as `applyPackingList`), then matches PI prices onto the shipment
- * lines they price by product, for every container this supplier holds - whichever order
- * the files were uploaded in.
+ * container block), then matches PI prices onto the shipment lines they price by product,
+ * for every container this supplier holds - whichever order the files were uploaded in.
  *
  * Translation memory (R15/R16): every block's `lines` (unmatched descriptions, matched
  * remarks) and `notes`, plus the file's `footer_note`, gain `<field>_en` (the English,
@@ -1295,6 +1190,46 @@ export interface SupplierDocumentHeader {
   so_ref: string | null;
 }
 
+/**
+ * Which proforma invoice ONE packing-list block attaches to (S2, AC-B5/B13), and how that
+ * was decided - the server's own answer (`resolve_attach`), never worked out here: the
+ * file's stated invoice number against a PI's `supplier_ref`, the container it names, the
+ * one PI of the supplier sharing its date, the pick this dialog posted back
+ * (`how: 'explicit'`), or a proforma invoice sitting in this same Test batch that nothing
+ * has written yet (`how: 'same_batch'`, ruling 22).
+ */
+export interface SupplierDocumentAttachTarget {
+  /** Null on a `same_batch` answer: the invoice is a file in this very upload and has no
+   *  row - and so no id and no number of ours - until Confirm writes it. */
+  id: string | null;
+  pi_number: string | null;
+  supplier_ref: string | null;
+  how: 'explicit' | 'invoice_number' | 'container' | 'date' | 'same_batch';
+  /** The file that states that invoice, on a `same_batch` answer only. */
+  file?: string;
+}
+
+/** A packing-list block with no invoice to attach to (AC-B5, AC-B16) - named with the
+ *  supplier and the date the packing list itself states, so the reason reads without a
+ *  UUID anywhere. */
+export interface SupplierDocumentRefusal {
+  code: string;
+  message: string;
+}
+
+/**
+ * One packing-list BLOCK's attach question and its answer. Per block, not per file:
+ * Jiexia's one packing list carries two containers, and each container's rows belong to
+ * that container's own invoice - so the dialog shows one Attaches-to line per block and
+ * posts a change back for that block alone.
+ */
+export interface SupplierDocumentPackingAttach {
+  block_index: number;
+  container_no: string | null;
+  attach_to: SupplierDocumentAttachTarget | null;
+  refusal: SupplierDocumentRefusal | null;
+}
+
 export interface SupplierDocumentFilePreview {
   name: string;
   kind: SupplierDocumentKind;
@@ -1306,6 +1241,18 @@ export interface SupplierDocumentFilePreview {
    *  than repeated inside every block, even though every shipment this file creates
    *  stores it in its own `notes` column. Null when the file states none. */
   footer_note: SupplierDocumentTextItem | null;
+  /** One entry per packing-list block, on a packing-list file only: a COMBINED sheet
+   *  states its own invoice and attaches to the one it creates, so it asks nothing. */
+  packing_attach?: SupplierDocumentPackingAttach[];
+  /** Header cells this file's table row carried that resolved to no system field (S5,
+   *  AC-E2) - e.g. Jinbaichuan's `尺寸（mm）`. */
+  unmapped_headers?: string[];
+  /** Per header, WHICH readers could not place it (ruling 24). A combined sheet is read
+   *  twice, so a header can be unmapped for `proforma_invoice`, for `packing_list`, or
+   *  for both - and mapping it once would leave the other half of the file ignoring the
+   *  column. Absent on an older payload; the dialog then assumes the packing-list reader,
+   *  which is what it always did. */
+  unmapped_header_doc_types?: Record<string, string[]>;
 }
 
 export interface SupplierDocumentPriceMatch {
@@ -1335,25 +1282,41 @@ export interface SupplierDocumentTranslation {
   target_text: string;
 }
 
-function supplierDocumentsForm(
-  files: File[],
-  opts: {
-    supplierId?: string | null;
-    currency?: string | null;
-    translations?: SupplierDocumentTranslation[];
-  },
-): FormData {
+/** The Attaches-to pick on ONE packing-list block (AC-B13) - `file` is the file's own
+ *  name, the same key the preview response comes back under. */
+export interface SupplierDocumentBlockAttach {
+  file: string;
+  block_index: number;
+  invoice_id: string;
+}
+
+interface SupplierDocumentsFormOptions {
+  supplierId?: string | null;
+  currency?: string | null;
+  translations?: SupplierDocumentTranslation[];
+  /** One invoice for the WHOLE upload - the dialog opened from a PI's own "Attach
+   *  packing list" (AC-B10), where every block belongs to that invoice. */
+  attachTo?: { id: string; pi_number: string } | null;
+  /** Per block, what the operator picked instead of what the server resolved. */
+  attachToBlocks?: SupplierDocumentBlockAttach[];
+}
+
+function supplierDocumentsForm(files: File[], opts: SupplierDocumentsFormOptions): FormData {
   const body = new FormData();
   for (const file of files) body.append('files', file);
   if (opts.supplierId) body.append('supplier_id', opts.supplierId);
   if (opts.currency) body.append('currency', opts.currency);
   if (opts.translations?.length) body.append('translations', JSON.stringify(opts.translations));
+  if (opts.attachTo) body.append('attach_to', opts.attachTo.id);
+  if (opts.attachToBlocks?.length) {
+    body.append('attach_to_blocks', JSON.stringify(opts.attachToBlocks));
+  }
   return body;
 }
 
 export async function previewSupplierDocuments(
   files: File[],
-  opts: { supplierId?: string | null; currency?: string | null } = {},
+  opts: SupplierDocumentsFormOptions = {},
 ): Promise<SupplierDocumentsPreview> {
   const res = await apiFetch('/api/v1/scm/supplier-documents/preview', {
     method: 'POST',
@@ -1364,22 +1327,13 @@ export async function previewSupplierDocuments(
 
 export async function applySupplierDocuments(
   files: File[],
-  opts: {
-    supplierId?: string | null;
-    currency?: string | null;
-    translations?: SupplierDocumentTranslation[];
-  } = {},
+  opts: SupplierDocumentsFormOptions = {},
 ): Promise<SupplierDocumentsApplyResult> {
   const res = await apiFetch('/api/v1/scm/supplier-documents/apply', {
     method: 'POST',
     body: supplierDocumentsForm(files, opts),
   });
   return readJson<SupplierDocumentsApplyResult>(res, 'Failed to import the supplier documents');
-}
-
-export async function getAllocationSuggestion(shipmentId: string): Promise<AllocationSuggestion> {
-  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/allocation-suggestion`);
-  return readJson<AllocationSuggestion>(res, 'Failed to work out what this container draws down');
 }
 
 export interface AllocationDecision {

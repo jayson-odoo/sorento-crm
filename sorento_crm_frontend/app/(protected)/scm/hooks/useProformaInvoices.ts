@@ -82,9 +82,15 @@ export function useProformaInvoices(
   });
 }
 
+/** Exported so a mutation elsewhere (the packing tab's dismiss/undo, S2) can invalidate
+ *  THIS exact detail without importing the whole hook. */
+export function proformaInvoiceDetailQueryKey(id: string | null) {
+  return [...KEY, 'detail', id] as const;
+}
+
 export function useProformaInvoice(id: string | null) {
   return useQuery({
-    queryKey: [...KEY, 'detail', id],
+    queryKey: proformaInvoiceDetailQueryKey(id),
     queryFn: () => getProformaInvoice(id as string),
     enabled: !!id,
   });
@@ -160,8 +166,8 @@ export function useSaveProformaInvoice(invoiceId: string) {
 
 /** Turn one or more selected invoices into ONE NEW draft packing list. Invalidates both the proforma list
  *  (their trail now shows where they went) and the invoice detail (converted_shipments +
- *  per-line shipment_number) for every invoice just converted. The caller navigates to
- *  `/scm/incoming` on success - this hook only owns the write + cache invalidation. */
+ *  per-line shipment_number) for every invoice just converted. The caller navigates to the
+ *  new draft's own record on success - this hook only owns the write + cache invalidation. */
 export function useConvertProformaInvoicesToDraftShipment() {
   const qc = useQueryClient();
   return useMutation({
@@ -170,10 +176,12 @@ export function useConvertProformaInvoicesToDraftShipment() {
       overrideReason?: string;
       lineQuantities?: Record<string, number>;
       containerSizeId?: string | null;
+      packingRowIds?: string[];
     }) =>
       convertProformaInvoicesToDraftShipment(args.invoiceIds, {
         lineQuantities: args.lineQuantities,
         containerSizeId: args.containerSizeId,
+        packingRowIds: args.packingRowIds,
         override: args.overrideReason ? { reason: args.overrideReason } : undefined,
       } as ConvertOptions),
     onSuccess: (result) => {

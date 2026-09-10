@@ -115,13 +115,10 @@ vi.mock('../../hooks/useFulfilment', () => ({
 // renders. `ConvertToPackingListDialog` is stubbed too - its OWN container-size select is
 // exercised where it renders un-stubbed, `ProformaInvoiceDetail.test.tsx` - and this stub
 // exposes ONE "Convert" button that fires `onConvert` with no size chosen (the default).
-vi.mock(
-  '@/app/(protected)/procurement-management/packing-lists/components/PackingListUploadDialog',
-  () => ({
-    PackingListUploadDialog: ({ open }: { open: boolean }) =>
-      open ? <div data-testid="upload-dialog" /> : null,
-  }),
-);
+vi.mock('./SupplierDocumentsUploadDialog', () => ({
+  SupplierDocumentsUploadDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="upload-dialog" /> : null,
+}));
 
 vi.mock('./ConvertToPackingListDialog', () => ({
   ConvertToPackingListDialog: ({
@@ -177,9 +174,14 @@ function invoiceRow(over: Partial<ProformaInvoiceListRow> = {}): ProformaInvoice
     supplier_code: 'KAILU',
     supplier_name: 'Kailu Hardware Factory',
     pi_number: 'PI-2026-001',
+    // Ours and theirs: `pi_number` is the number we minted, `supplier_ref` the one the
+    // factory printed on the document (S1, AC-A2/A5).
+    supplier_ref: 'KL20260801',
     invoice_date: '2026-08-01',
     currency: 'CNY',
     container_no: 'TEMU1234567',
+    seal_no: 'WHA4528193',
+    consignee: 'SORENTO SDN BHD',
     bl_no: 'BL-991',
     total_amount: 1000,
     line_count: 5,

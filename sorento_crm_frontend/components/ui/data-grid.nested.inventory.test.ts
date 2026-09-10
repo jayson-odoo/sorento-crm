@@ -160,6 +160,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:396',
     'Supply tab, same dialog',
   ],
+  [
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:403',
+    "What goes in the container, in a dialog opened as a sibling of the invoice list or the invoice's own detail - no grid context. It KEEPS the default `--grid-max-h` bound rather than turning it off: the dialog body does not scroll, so the table is what scrolls, with its header sticking inside that window while the container size select and Convert stay put",
+  ],
+  [
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:414',
+    'The DataGridTable of the same grid, not a second one',
+  ],
 ]);
 
 /**

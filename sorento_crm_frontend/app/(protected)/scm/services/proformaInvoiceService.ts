@@ -159,9 +159,19 @@ export interface ProformaInvoiceListRow {
   supplier_code: string | null;
   supplier_name: string | null;
   pi_number: string;
+  /** The supplier's own reference for this document (S1, AC-A2/A5) - `null` when the
+   *  file states none, distinct from `pi_number`, which is now OURS, minted at apply
+   *  (`PI-{yy}{month:02d}-{seq}`). Search matches either. */
+  supplier_ref: string | null;
   invoice_date: string | null;
   currency: string | null;
   container_no: string | null;
+  /** The seal the packing document stated for that container - carried onto the draft
+   *  packing list at convert (AC-D2c), beside the container it belongs to. */
+  seal_no: string | null;
+  /** Who the document bills (ruling 28) - carried onto the draft with the container, the
+   *  seal and the SO. */
+  consignee: string | null;
   bl_no: string | null;
   total_amount: number | null;
   line_count: number;
@@ -217,6 +227,10 @@ export interface PackingListPlacement {
   shipment_status?: string | null;
   /** How many of the invoice's lines landed in this one. Absent on a per-line placement. */
   lines?: number;
+  /** The container it went in, and when the draft was made (ruling 26) - facts about the
+   *  SHIPMENT, so they travel with it. Absent on a per-line placement. */
+  container_number?: string | null;
+  created_at?: string | null;
 }
 
 export interface ProformaInvoiceListResponse {
@@ -370,6 +384,10 @@ export interface ConvertToDraftShipmentResult {
   /** Invoices in the selection that had nothing left to place - named, never silently
    *  dropped from the count (AC-F7). */
   skipped_invoices: { id: string; pi_number: string; reason: string }[];
+  /** Header fields the selected invoices disagreed about, so the draft was left blank
+   *  there rather than given one of the two answers (AC-D2c) - e.g.
+   *  `['container_number']`. */
+  header_conflicts?: string[];
 }
 
 export interface BulkDeleteProformaResult {
@@ -502,6 +520,9 @@ export interface ConvertOptions {
   override?: { reason: string };
   /** The box the convert dialog chose (S5, ruling 1). Null/omitted = the tenant default. */
   containerSizeId?: string | null;
+  /** Which supplier packing rows go in this container (AC-D2b), whole or not at all.
+   *  Omitted places every row not already placed - the normal case. */
+  packingRowIds?: string[];
 }
 
 /**
@@ -525,6 +546,7 @@ export async function convertProformaInvoicesToDraftShipment(
         ? { line_quantities: options.lineQuantities }
         : {}),
       ...(override ? { override_capacity: true, override_reason: override.reason } : {}),
+      ...(options?.packingRowIds ? { packing_row_ids: options.packingRowIds } : {}),
       container_size_id: options?.containerSizeId ?? null,
     }),
   });

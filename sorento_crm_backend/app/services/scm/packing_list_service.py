@@ -26,20 +26,14 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date
-from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
-from app.services import translation_service
-from app.services.error_handler import AppException
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.packing_list_reader import (
     PackingBlock,
-    PackingLine,
     PackingReadResult,
     read_workbook,
 )
@@ -161,66 +155,8 @@ def _priced(parsed: PackingReadResult) -> int:
     return sum(1 for b in parsed.blocks for ln in b.lines if ln.unit_price is not None)
 
 
-def _line_cbm(ln: PackingLine) -> Optional[Decimal]:
-    """The volume of one line, in the unit the file states it in.
-
-    The stated total when there is one, otherwise the per-unit figure times the quantity.
-    `None` when the file measured neither: an unmeasured line must not be stored as 0, or a
-    subtotal reads as complete when it is not.
-
-    Through `str` rather than `Decimal(float)`, so 0.21 stays 0.21 instead of arriving as
-    its binary approximation in a Numeric(12,4) column.
-    """
-    if ln.cbm_total is not None:
-        return Decimal(str(ln.cbm_total))
-    if ln.cbm_per_unit is not None and ln.qty:
-        return Decimal(str(round(ln.cbm_per_unit * ln.qty, 6)))
-    return None
-
-
 def _parse(db: Session, data: bytes) -> PackingReadResult:
     return read_workbook(data, db=db)
-
-
-def _block_notes(
-    block: PackingBlock,
-    parsed: PackingReadResult,
-    translations: dict[str, "translation_service.TranslationHit"],
-) -> Optional[str]:
-    """The shipment's `notes` field (R13/R14): the block's own accessory-line notes
-    (`840 水箱空瓷：1个`), the file's `备注：` footer, or both - `None` when the file states
-    neither, never an empty string sitting where "nothing was said" belongs.
-
-    Each part carries its English beside the Chinese when the translation memory has
-    one (R16/AC-G3): `English (中文)` when they differ, the Chinese alone otherwise.
-    """
-    parts = list(getattr(block, "notes", None) or [])
-    if parsed.footer_notes:
-        parts.append(parsed.footer_notes)
-    bilingual = [
-        translation_service.compose_bilingual(translations.get(p), p) or p for p in parts
-    ]
-    return "\n".join(bilingual) if bilingual else None
-
-
-def _translate_for_apply(
-    db: Session, parsed: PackingReadResult
-) -> dict[str, "translation_service.TranslationHit"]:
-    """Every Chinese text this apply is about to store - line remarks and block/footer
-    notes - translated in ONE batched call (R16). Called unconditionally: `apply` may
-    run with no preceding preview (Confirm without ever pressing Test), so this is the
-    only place these texts are guaranteed to reach the memory."""
-    texts: list[str] = []
-    for block in parsed.blocks:
-        texts.extend(getattr(block, "notes", None) or [])
-        for ln in block.lines:
-            if ln.remark:
-                texts.append(ln.remark)
-    if parsed.footer_notes:
-        texts.append(parsed.footer_notes)
-    if not texts:
-        return {}
-    return translation_service.translate(db, texts)
 
 
 def _check_supplier(db: Session, supplier_id: Optional[str]) -> None:
@@ -388,188 +324,3 @@ def validate(
         )
 
     return envelope(ok=not problems, problems=problems, warnings=warnings, summary=summary)
-
-
-def apply(
-    db: Session,
-    data: bytes,
-    *,
-    supplier_id: str,
-    shipment_date: Optional[date] = None,
-    currency: Optional[str] = None,
-    source_ref: Optional[str] = None,
-    attachment_id: Optional[str] = None,
-    content_type: Optional[str] = None,
-    file_in_drive: bool = False,
-    actor_id: Optional[str] = None,
-) -> dict:
-    """Create or update one inbound shipment per block. Idempotent by construction.
-
-    Idempotent because the shipment NAME is derived from the file rather than generated: the
-    same file uploaded twice resolves to the same shipments and updates them in place, which is
-    AC-G3 and is also what stops a nervous second click doubling a container.
-
-    `supplier_id` is REQUIRED. A packing list comes from one factory, and a container is
-    routinely filled by two or three of them; an upload that does not say whose it is speaks
-    for the whole container and would delete the other factories' lines.
-
-    `file_in_drive` (R3, purchasing consolidation batch 6 Sep 2026): when true and no
-    `attachment_id` was already given, the uploaded bytes are filed as an attachment ONCE
-    the shipment set this call produces or updates is known, and only bound onto the
-    shipments that do not already carry one - a re-upload of the same file resolves to
-    the same shipments (see above) and must not mint a second Drive copy of a file
-    already filed on the first apply. Defaults to false - callers other than the Upload
-    packing list route (batch reprocessing, other tests of this function) do not
-    suddenly start writing to Drive and to storage just by calling `apply`.
-    """
-    _check_supplier(db, supplier_id)
-    parsed = _parse(db, data)
-    if not parsed.ok:
-        raise AppException(
-            422,
-            "This file could not be read as a packing list.",
-            detail=", ".join(parsed.missing_columns) or "no container block was found",
-        )
-
-    # The pre-loading list prices what it ships, and that price used to be parsed and then
-    # dropped. It is kept now - on the shipment line, with the currency it belongs to - and a
-    # priced file with no resolvable currency is refused rather than stored bare (AC-P5.1/2).
-    resolved_currency, _source = resolve_currency(
-        db, supplier_id=supplier_id, requested=currency, stated=parsed.currency_hint
-    )
-    if _priced(parsed) and not resolved_currency:
-        raise AppException(422, _NO_CURRENCY, detail="currency")
-
-    known = _products_by_code(
-        db, {ln.item_code for b in parsed.blocks for ln in b.lines}
-    )
-    # R16/AC-G3: every remark and note this apply is about to store, translated once
-    # up front (memory-first, AI-fill on a miss) rather than per line.
-    translations = _translate_for_apply(db, parsed)
-
-    from app.services.procurement_service import InboundShipmentService
-
-    service = InboundShipmentService(db)
-    created = updated = 0
-    skipped_lines = 0
-    results: list[dict] = []
-    # Filled once, after the loop, only when `file_in_drive` and at least one shipment
-    # this call touched is still missing one - never before, so a re-upload of an
-    # already-filed container costs nothing (see the docstring above).
-    unfiled_shipments: list[Any] = []
-
-    for block in parsed.blocks:
-        lines: list[InboundShipmentLineCreate] = []
-        for ln in block.lines:
-            product = known.get(ln.item_code.upper())
-            if product is None:
-                # Named in the summary, never invented: `product_id` is NOT NULL and a made-up
-                # product is worse than a line somebody has to go and fix.
-                skipped_lines += 1
-                continue
-            lines.append(
-                InboundShipmentLineCreate(
-                    product_id=str(product["id"]),
-                    # Whose line this is, stated on the LINE and not only on the header:
-                    # one container carries several factories, and a line that does not
-                    # say which one is a line the next factory's upload would replace.
-                    supplier_id=supplier_id,
-                    quantity_shipped=int(ln.qty),
-                    uom_id=str(product["base_uom_id"]) if product.get("base_uom_id") else None,
-                    cartons_count=int(ln.cartons) if ln.cartons else 1,
-                    # Both None on an unpriced list, and neither defaulted: a cost of zero
-                    # would read as free, and a currency nobody stated would make the
-                    # incoming figure look comparable to the ordered one when it is not.
-                    unit_cost=ln.unit_price,
-                    currency=resolved_currency if ln.unit_price is not None else None,
-                    # The reader has always parsed volume and the supplier's remark and
-                    # thrown both away. The total when the file states it, otherwise the
-                    # per-unit figure times the quantity; never zero for an unmeasured
-                    # item, because zero reads as "takes no space".
-                    cbm=_line_cbm(ln),
-                    remarks=translation_service.compose_bilingual(
-                        translations.get(ln.remark), ln.remark
-                    )
-                    if ln.remark
-                    else None,
-                )
-            )
-
-        if not lines:
-            results.append(
-                {
-                    "index": block.index,
-                    "shipment_number": shipment_number_for(block, source_ref=source_ref),
-                    "created": False,
-                    "reason": "no line in this block matched a product we hold",
-                }
-            )
-            continue
-
-        payload = InboundShipmentCreate(
-            shipment_number=shipment_number_for(block, source_ref=source_ref),
-            supplier_id=supplier_id,
-            # Required by the schema. The packing list states a container, not a date, so the
-            # caller's date is used and today is the honest fallback for "when we were told".
-            shipment_date=shipment_date or date.today(),
-            shipping_container_number=block.container_no,
-            # `提单号` fills the SO field, never `bill_of_lading_number` (Q1 ruling, purchasing
-            # consolidation batch 6 Sep 2026): `bl_no` is the forwarder's own booking
-            # reference on both real documents this reader was built against, and
-            # `bill_of_lading_number` is left for the manual form to state instead (AC-F4).
-            forwarder_order_ref=block.bl_no,
-            # R13/R14 additions - None on a file that states none of them, same as every
-            # other header field here.
-            seal_number=getattr(block, "seal_no", None),
-            consignee=getattr(block, "consignee", None),
-            shipper=parsed.shipper,
-            notes=_block_notes(block, parsed, translations),
-            # A caller-supplied `attachment_id` still binds every block to it, same as
-            # before; the `file_in_drive` filing (below) only fills in for shipments
-            # that come out of this loop still unbound.
-            attachment_id=attachment_id,
-            total_items_shipped=int(block.total_qty),
-            total_cartons=int(block.total_cartons) if block.total_cartons else None,
-            shipment_lines=lines,
-        )
-        # `inbound_shipments.created_by` is a UUID column holding a USER ID, unlike the SCM
-        # tables where `created_by` holds the person's name. Passing the name here is a
-        # `invalid input syntax for type uuid` at insert time, so the two never mix.
-        shipment = service.create_shipment(payload, created_by=actor_id)
-        existed = bool(getattr(shipment, "_already_existed", False))
-        created += 0 if existed else 1
-        updated += 1 if existed else 0
-        if file_in_drive and attachment_id is None and not shipment.attachment_id:
-            unfiled_shipments.append(shipment)
-        results.append(
-            {
-                "index": block.index,
-                "shipment_id": str(shipment.id),
-                "shipment_number": shipment.shipment_number,
-                "container_no": shipment.shipping_container_number,
-                "lines": len(lines),
-                "created": not existed,
-            }
-        )
-
-    if file_in_drive and attachment_id is None and unfiled_shipments:
-        filed_attachment_id = file_supplier_document(
-            db, data=data, filename=source_ref, content_type=content_type, actor_id=actor_id
-        )
-        if filed_attachment_id:
-            for shipment in unfiled_shipments:
-                shipment.attachment_id = filed_attachment_id
-            db.commit()
-
-    summary = _summarise(db, parsed, source_ref=source_ref)
-    summary.update(
-        {
-            "shipments_created": created,
-            "shipments_updated": updated,
-            "lines_skipped": skipped_lines,
-            "currency": resolved_currency,
-            "currency_source": _source,
-            "results": results,
-        }
-    )
-    return summary

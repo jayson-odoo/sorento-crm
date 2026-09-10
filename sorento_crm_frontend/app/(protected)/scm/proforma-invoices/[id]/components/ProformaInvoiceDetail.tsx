@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { toast } from '@/lib/toast';
@@ -13,6 +12,7 @@ import {
   ListOrdered,
   LoaderCircle,
   PackageCheck,
+  PackageSearch,
   Plus,
   Settings,
   SquarePen,
@@ -53,6 +53,11 @@ import {
   useProformaInvoice,
   useSaveProformaInvoice,
 } from '../../../hooks/useProformaInvoices';
+import {
+  useProformaInvoicePacking,
+  useProformaInvoicePackingMutations,
+} from '../../../hooks/useProformaInvoicePacking';
+import { packedQtyForLine } from '../../services/proformaInvoicePackingService';
 import { EM_DASH, fmtDate, fmtQty, fmtSupplierCost, fmtTrimmedDecimal } from '../../../lib/format';
 import {
   downloadProformaInvoiceExport,
@@ -63,6 +68,9 @@ import {
 import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
 import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
+import { ProformaInvoicePackingListsTab } from './ProformaInvoicePackingListsTab';
+import { ProformaInvoicePackingTab } from './ProformaInvoicePackingTab';
+import { SupplierDocumentsUploadDialog } from '../../components/SupplierDocumentsUploadDialog';
 import DetailActions from '@/components/common/DetailActions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
@@ -81,8 +89,10 @@ const LINES_LISTING_KEY = 'scm.dashboard.view::proforma-invoice-lines';
 /** How many products a page of the picker asks for. */
 const PRODUCT_PAGE_SIZE = 50;
 
-/** The record's four tabs (S1): General (default), Lines, Revisions, Packing lists. */
-const PI_TABS = ['general', 'lines', 'revisions', 'packing-lists'] as const;
+/** The record's five tabs (S1, S2): General (default), Lines, Packing (the supplier's own
+ *  packing rows, AC-B9), Revisions, Packing lists (which SHIPMENT this invoice's lines
+ *  went to, once converted - a different question from Packing). */
+const PI_TABS = ['general', 'lines', 'packing', 'revisions', 'packing-lists'] as const;
 
 function Field({
   label,
@@ -261,8 +271,22 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const [saving, setSaving] = useState(false);
   /** The line whose supplier code is being answered by hand (R16). */
   const [codeToMatch, setCodeToMatch] = useState<ProformaInvoiceLine | null>(null);
+  /** Attach / Replace packing list (S2, AC-B10) - the shared upload dialog, opened with
+   *  the supplier and this invoice preselected and locked (`attachTo`). */
+  const [packingUploadOpen, setPackingUploadOpen] = useState(false);
 
   const lines = useMemo<ProformaInvoiceLine[]>(() => data?.lines ?? [], [data]);
+  const packing = useProformaInvoicePacking(data);
+  const packingRows = packing.data?.rows ?? [];
+  // Read by the Packed cell INSTEAD of `packingRows` directly, for the same reason
+  // `footerTotalsRef`/`linePhotosRef` exist on the packing-list Lines grid next door: the
+  // packing query resolving is a fresh reference unrelated to any edit, and listing
+  // `packingRows` as a `columns` dependency rebuilt the whole memo - with brand-new cell
+  // renderers - the moment it settled, which remounted every `<Input>`/async Product
+  // select on the grid and could close a dropdown mid-fetch before an option was clicked.
+  const packingRowsRef = useRef(packingRows);
+  packingRowsRef.current = packingRows;
+  const packingMutations = useProformaInvoicePackingMutations(id);
   const superseded = data?.status === 'superseded';
   // An invoice with ANY of its goods on a shipment is frozen: trimming the document
   // afterwards would leave the two disagreeing with nothing on screen saying which one the
@@ -436,7 +460,11 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   };
 
   const runConvert = async (
-    args: { lineQuantities: Record<string, number>; containerSizeId: string | null } | null,
+    args: {
+      lineQuantities: Record<string, number>;
+      containerSizeId: string | null;
+      packingRowIds?: string[];
+    } | null,
     reason?: string,
   ) => {
     setConvertArgs(args);
@@ -446,6 +474,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         overrideReason: reason,
         lineQuantities: args?.lineQuantities,
         containerSizeId: args?.containerSizeId ?? null,
+        packingRowIds: args?.packingRowIds,
       });
       setOverCapacity(null);
       setOverrideReason('');
@@ -456,6 +485,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           : '';
       // An invoice with nothing left to place is NAMED rather than quietly left out of the
       // count, so the operator can see which of their selection did not move (AC-F7).
+      // The selected invoices named different containers, so the draft's header was left
+      // blank rather than given one of them (AC-D2c). The server decides this, and it is
+      // said out loud here rather than guessed at in the dialog beforehand.
+      if (result.header_conflicts?.length) {
+        toast.warning(
+          `The invoices name different containers, so the container number, seal and bill of lading were left blank.`,
+        );
+      }
       if (result.skipped_invoices?.length) {
         toast.warning(
           `Not converted: ${result.skipped_invoices
@@ -635,6 +672,38 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         enableSorting: false,
         meta: {
           headerTitle: 'Qty',
+          headerClassName: 'text-right',
+          cellClassName: 'text-right tabular-nums',
+        },
+      },
+      {
+        id: 'packed',
+        header: ({ column }) => <DataGridColumnHeader title="Packed" column={column} />,
+        // The packed quantity, checked against the invoiced one (AC-B11). No packing
+        // rows at all reads "-", not 0 - a line nobody has packed yet is not the same
+        // fact as a line packed short.
+        cell: ({ row }) => {
+          const lineId = row.original.id;
+          if (!lineId) return <span className="text-muted-foreground">{EM_DASH}</span>;
+          const packed = packedQtyForLine(lineId, packingRowsRef.current);
+          if (packed == null) return <span className="text-muted-foreground">{EM_DASH}</span>;
+          const invoiced = num(row.original.qty);
+          const mismatched = invoiced != null && packed !== invoiced;
+          if (!mismatched) return fmtQty(packed);
+          return (
+            <Badge
+              variant="destructive"
+              appearance="light"
+              title={`Invoiced ${fmtQty(invoiced)}, packed ${fmtQty(packed)}`}
+            >
+              {fmtQty(packed)}
+            </Badge>
+          );
+        },
+        size: 100,
+        enableSorting: false,
+        meta: {
+          headerTitle: 'Packed',
           headerClassName: 'text-right',
           cellClassName: 'text-right tabular-nums',
         },
@@ -1078,14 +1147,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       </Badge>
     );
 
-  /** Every line, per shipment, that actually went there - built once for the tab below. */
-  const placedLines = (shipmentId: string) =>
-    invoice.lines.filter((ln) => ln.packing_lists.some((p) => p.shipment_id === shipmentId));
-
-  const stillToPlace = invoice.lines.filter(
-    (ln) => ln.remaining_qty > 0 || ln.unmatched_reason,
-  );
-
   return (
     <div className="space-y-4">
       {/* The record header - what the invoice IS, and what can be done to it. Above the
@@ -1111,6 +1172,10 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 {placementBadge}
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
+                {/* Ours is the title; the supplier's own reference (S1, AC-A5) is the
+                    first fact under it - what she matches against the paper on her desk. */}
+                {invoice.supplier_ref ?? 'no supplier reference'}
+                {' · '}
                 {invoice.source_ref ?? 'No source file'}
                 {' · '}
                 Uploaded by {invoice.uploaded_by ?? 'unknown'} on {fmtDate(invoice.created_at)}
@@ -1227,6 +1292,10 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
             <ListOrdered />
             <span>Lines</span>
           </TabsTrigger>
+          <TabsTrigger value="packing">
+            <PackageSearch />
+            <span>Packing</span>
+          </TabsTrigger>
           <TabsTrigger value="revisions">
             <GitBranch />
             <span>Revisions</span>
@@ -1311,6 +1380,48 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
               ) : null}
             </section>
           </Card>
+
+          {/* The PI's own uploaded files (S2, AC-B14) - never the shipment's, which has
+              its own Documents tab for what a converted draft carries. */}
+          <Card>
+            <CardHeader>
+              <CardHeading>
+                <CardTitle>Source files</CardTitle>
+              </CardHeading>
+            </CardHeader>
+            <section aria-label="Source files" className="p-4">
+              {!invoice.source_ref && !packing.data?.file ? (
+                <p className="text-sm text-muted-foreground">No source file on record.</p>
+              ) : (
+                <ul className="divide-y divide-border rounded-lg border text-sm">
+                  {invoice.source_ref ? (
+                    <li className="flex items-center justify-between gap-2 p-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium" title={invoice.source_ref}>
+                          {invoice.source_ref}
+                        </p>
+                        <p className="text-2xs text-muted-foreground">
+                          Proforma invoice · {fmtDate(invoice.created_at)}
+                        </p>
+                      </div>
+                    </li>
+                  ) : null}
+                  {packing.data?.file ? (
+                    <li className="flex items-center justify-between gap-2 p-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium" title={packing.data.file.name}>
+                          {packing.data.file.name}
+                        </p>
+                        <p className="text-2xs text-muted-foreground">
+                          Packing list · {fmtDate(packing.data.file.uploaded_at)}
+                        </p>
+                      </div>
+                    </li>
+                  ) : null}
+                </ul>
+              )}
+            </section>
+          </Card>
         </TabsContent>
 
         <TabsContent value="lines" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -1353,98 +1464,32 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           ) : null}
         </TabsContent>
 
+        <TabsContent value="packing" className="mt-0 focus-visible:outline-none">
+          {/* The supplier's packing list as filed (S2, AC-B9) - always rendered, with an
+              explicit empty state: the packing list arriving days after the invoice is
+              the normal case (Kailu), not an error. */}
+          <ProformaInvoicePackingTab
+            invoice={invoice}
+            canAdjust={canAdjust}
+            onAttach={() => setPackingUploadOpen(true)}
+            onReplace={() => setPackingUploadOpen(true)}
+          />
+        </TabsContent>
+
         <TabsContent value="revisions" className="mt-0 focus-visible:outline-none">
           {/* Always rendered with its own empty state, per the CRUD standard. */}
           <ProformaRevisionsCard invoice={invoice} />
         </TabsContent>
 
         <TabsContent value="packing-lists" className="mt-0 focus-visible:outline-none">
-          {/* Where the goods went, and what is left. "Split" is a real state: one invoice
-              legitimately sits in two containers (Q9, AC-F8). */}
-          <Card>
-            <CardHeader>
-              <CardHeading>
-                <CardTitle>Packing lists</CardTitle>
-              </CardHeading>
-            </CardHeader>
-            <div className="space-y-4 p-4">
-              {invoice.packing_lists.length === 0 ? (
-                <div className="flex flex-col items-start gap-3">
-                  <p className="text-sm text-muted-foreground">
-                    Nothing from this invoice is in a packing list yet.
-                  </p>
-                  {showConvert ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => setConvertOpen(true)}
-                    >
-                      <Boxes className="size-4" />
-                      {convertLabel}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : (
-                <ul className="divide-y divide-border rounded-lg border">
-                  {invoice.packing_lists.map((pl) => (
-                    <li key={pl.shipment_id} className="space-y-1 p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Link
-                          href={`/procurement-management/packing-lists/${pl.shipment_id}`}
-                          className="font-medium text-primary hover:underline"
-                        >
-                          {pl.shipment_number ?? 'Draft'}
-                        </Link>
-                        <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                          {fmtQty(pl.qty)} of {fmtQty(invoice.total_qty)}
-                          {pl.shipment_status ? (
-                            <Badge variant="secondary" appearance="light">
-                              {pl.shipment_status}
-                            </Badge>
-                          ) : null}
-                        </span>
-                      </div>
-                      <p className="text-2xs text-muted-foreground">
-                        {placedLines(pl.shipment_id)
-                          .map((ln) => ln.item_code)
-                          .join(', ') || 'No line recorded against this container.'}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {/* Named, never silently absent: a line that cannot go is the reason a convert
-                  reports fewer lines than the invoice carries. */}
-              <div className="space-y-1">
-                <p className="text-xs font-medium">Still to place</p>
-                {stillToPlace.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    Every line on this invoice has been placed.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-border rounded-lg border text-xs">
-                    {stillToPlace.map((ln) => (
-                      <li
-                        key={ln.id}
-                        className="flex flex-wrap items-center justify-between gap-2 p-2.5"
-                      >
-                        <span className="truncate font-medium" title={ln.item_code}>
-                          {ln.item_code}
-                        </span>
-                        <span className="text-muted-foreground">
-                          {ln.unmatched_reason
-                            ? ln.unmatched_reason
-                            : `${fmtQty(ln.remaining_qty)} left`}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-          </Card>
+          {/* Which containers this invoice's goods went into (ruling 26). One row per
+              packing list and nothing else: what is still to place is the convert dialog's
+              own table, and why a line cannot go is the Lines tab's Matched column. */}
+          <ProformaInvoicePackingListsTab
+            invoice={invoice}
+            onConvert={showConvert ? () => setConvertOpen(true) : undefined}
+            convertLabel={convertLabel}
+          />
         </TabsContent>
       </Tabs>
 
@@ -1482,6 +1527,21 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         invoiceIds={[id]}
         pending={convertToDraftShipment.isPending}
         onConvert={(args) => void runConvert(args)}
+      />
+
+      {/* Attach / Replace packing list (S2, AC-B10) - the shared dialog, opened with the
+          supplier and THIS invoice preselected and locked. */}
+      <SupplierDocumentsUploadDialog
+        open={packingUploadOpen}
+        onOpenChange={setPackingUploadOpen}
+        supplierId={invoice.supplier_id}
+        supplierName={invoice.supplier_name}
+        attachTo={{ id: invoice.id, pi_number: invoice.pi_number }}
+        onImported={() => {
+          // The apply wrote the rows onto this invoice; read it again so the tab, the
+          // Packed column and the Source files block all show what landed.
+          packingMutations.refresh();
+        }}
       />
     </div>
   );

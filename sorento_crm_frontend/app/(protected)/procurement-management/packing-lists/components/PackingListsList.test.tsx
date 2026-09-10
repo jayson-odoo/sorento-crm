@@ -194,13 +194,13 @@ describe('PackingListsList - Upload is the primary CTA (AC-B1, CAPTAIN REVERSED 
     expect(screen.getByTestId('default-directory-id')).toHaveTextContent('dir-1');
   });
 
-  it('puts Upload supplier documents, Create Packing List and Import Container Status in the gear', () => {
+  it('puts Create Packing List and Import Container Status in the gear, with no supplier-document upload of its own (S3, AC-C2)', () => {
     renderList();
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
 
-    expect(screen.getByRole('button', { name: /Upload supplier documents/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Create Packing List/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Import Container Status/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Upload supplier documents/i })).not.toBeInTheDocument();
   });
 
   it('Create Packing List in the gear routes to the manual form', () => {
@@ -209,15 +209,6 @@ describe('PackingListsList - Upload is the primary CTA (AC-B1, CAPTAIN REVERSED 
     fireEvent.click(screen.getByRole('button', { name: /Create Packing List/i }));
 
     expect(routerPush).toHaveBeenCalledWith('/procurement-management/packing-lists/new');
-  });
-
-  it('Upload supplier documents in the gear opens the reader dialog', () => {
-    renderList();
-    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
-    fireEvent.click(screen.getByRole('button', { name: /Upload supplier documents/i }));
-
-    // The reader is a real (unmocked) dialog - its own title is the signal it opened.
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });
 
@@ -229,28 +220,6 @@ describe('PackingListsList - falls back to unpreset Upload when the type cannot 
 
     expect(screen.getByTestId('default-type-id')).toHaveTextContent('');
     expect(screen.getByTestId('lock-type')).toHaveTextContent('false');
-  });
-});
-
-describe('PackingListsList - review B4: the reader drops from the gear when its write route is out of reach', () => {
-  it('without scm.reorder.run: Upload supplier documents is gone, Upload stays primary', () => {
-    useHasAnyPermission.mockImplementation((slugs: string[]) =>
-      slugs.includes('scm.reorder.run') ? false : true,
-    );
-    renderList();
-
-    expect(screen.getByRole('button', { name: /^Upload$/i })).toBeInTheDocument();
-    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
-    expect(screen.queryByRole('button', { name: /Upload supplier documents/i })).not.toBeInTheDocument();
-  });
-
-  it('without the scm module enabled: same fallback, even with the permission', () => {
-    useTenantModules.mockReturnValue({ enabledModuleKeys: new Set(['procurement']), isLoading: false });
-    renderList();
-
-    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
-    expect(screen.queryByRole('button', { name: /Upload supplier documents/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Upload$/i })).toBeInTheDocument();
   });
 });
 

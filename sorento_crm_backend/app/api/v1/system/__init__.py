@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from app.api.v1.system import (
     api_call_logs,
     health,
+    import_field_aliases,
     import_logs,
     jobs,
     calendar,
@@ -39,6 +40,7 @@ router.include_router(calendar.router, tags=["calendar"])
 router.include_router(outgoing_mails.router, tags=["outgoing-mails"])
 router.include_router(scheduled_tasks.router, tags=["scheduled-tasks"])
 router.include_router(numbering_rules.router, tags=["numbering-rules"])
+router.include_router(import_field_aliases.router, tags=["import-field-aliases"])
 router.include_router(embeddings.router, tags=["embeddings"])
 router.include_router(ai_assistant.router, tags=["ai-assistant"])
 router.include_router(references.router, tags=["references"])

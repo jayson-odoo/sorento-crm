@@ -61,9 +61,8 @@ import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/for
 import { ConvertToPackingListDialog } from './ConvertToPackingListDialog';
 import { OverCapacityDialog } from './OverCapacityDialog';
 // The shared "Upload supplier documents" dialog (R12, purchasing consolidation batch, lane
-// C): this page's own `ProformaUploadDialog` (single-file, proforma only) is retired once
-// this lands, since every caller of it now opens the shared one instead.
-import { PackingListUploadDialog as ProformaUploadDialog } from '@/app/(protected)/procurement-management/packing-lists/components/PackingListUploadDialog';
+// C; its only remaining home since S3, AC-C2/C3 - Packing Lists has no upload of its own).
+import { SupplierDocumentsUploadDialog } from './SupplierDocumentsUploadDialog';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -271,6 +270,24 @@ export function ProformaInvoicesView() {
         meta: { headerTitle: 'PI number' },
       },
       {
+        accessorKey: 'supplier_ref',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier ref" column={column} />,
+        // The supplier's own reference (S1, AC-A5) - null when the file states none, or
+        // (Phase 1) until the backend sends it at all.
+        cell: ({ row }) => {
+          const ref = row.original.supplier_ref;
+          if (!ref) return <span className="text-muted-foreground">{EM_DASH}</span>;
+          return (
+            <span className="block truncate" title={ref}>
+              {ref}
+            </span>
+          );
+        },
+        size: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Supplier ref' },
+      },
+      {
         id: 'supplier',
         header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
         // The NAME, once. The normalised code under it said the same fact in a spelling
@@ -390,25 +407,32 @@ export function ProformaInvoicesView() {
           cellClassName: 'text-right tabular-nums',
         },
       },
+      // WHEN and WHO, one line each (ruling 27): stacked in one cell they read as a single
+      // wrapped value, and neither could be sized, hidden or moved on its own.
       {
-        id: 'uploaded',
-        header: ({ column }) => <DataGridColumnHeader title="Uploaded" column={column} />,
+        id: 'uploaded_at',
+        header: ({ column }) => <DataGridColumnHeader title="Uploaded at" column={column} />,
         cell: ({ row }) => (
-          <div className="flex flex-col">
-            <span className="text-muted-foreground">{fmtDate(row.original.created_at)}</span>
-            {row.original.uploaded_by ? (
-              <span
-                className="truncate text-xs text-muted-foreground"
-                title={row.original.uploaded_by}
-              >
-                {row.original.uploaded_by}
-              </span>
-            ) : null}
-          </div>
+          <span className="text-muted-foreground">{fmtDate(row.original.created_at)}</span>
         ),
-        size: 150,
+        size: 120,
         enableSorting: false,
-        meta: { headerTitle: 'Uploaded' },
+        meta: { headerTitle: 'Uploaded at' },
+      },
+      {
+        id: 'uploaded_by',
+        header: ({ column }) => <DataGridColumnHeader title="Uploaded by" column={column} />,
+        cell: ({ row }) => (
+          <span
+            className="block truncate text-muted-foreground"
+            title={row.original.uploaded_by ?? undefined}
+          >
+            {row.original.uploaded_by || EM_DASH}
+          </span>
+        ),
+        size: 160,
+        enableSorting: false,
+        meta: { headerTitle: 'Uploaded by' },
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -477,6 +501,15 @@ export function ProformaInvoicesView() {
         result.lines_skipped > 0
           ? ` (${result.lines_skipped} line${result.lines_skipped === 1 ? '' : 's'} could not be matched to a product and were skipped)`
           : '';
+      // The selected invoices named different containers, so the draft's header was left
+      // blank rather than given one of them (AC-D2c). Said here as well as on the detail
+      // page: this is the surface where SEVERAL invoices are converted at once, so it is
+      // where the disagreement actually happens.
+      if (result.header_conflicts?.length) {
+        toast.warning(
+          `The invoices name different containers, so the container number, seal and bill of lading were left blank.`,
+        );
+      }
       // An invoice with nothing left to place is NAMED rather than quietly left out of the
       // count, so the operator can see which of their selection did not move (AC-F7).
       if (result.skipped_invoices?.length) {
@@ -493,9 +526,8 @@ export function ProformaInvoicesView() {
           result.lines_created === 1 ? '' : 's'
         }${skippedMsg}`,
       );
-      // The captain's second amendment moves the packing-list-to-SPO journey to the
-      // procurement packing-list book, over this same `inbound_shipments` row - so the
-      // convert hand-off lands there, by id, rather than on `/scm/incoming`.
+      // The packing-list-to-SPO journey lives in the procurement packing-list book, over
+      // this same `inbound_shipments` row - so the convert hand-off lands there, by id.
       router.push(`/procurement-management/packing-lists/${result.shipment_id}`);
     } catch (e) {
       // An over-capacity refusal is a question, not a failure: it names the volume and the
@@ -578,7 +610,7 @@ export function ProformaInvoicesView() {
                   onChange={setSearchInput}
                   isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
                   aria-label="Search proforma invoices"
-                  placeholder="Search PI, supplier, container or BL..."
+                  placeholder="Search PI number, supplier ref, supplier, container or BL..."
                   className="w-72"
                 />
               }
@@ -721,7 +753,7 @@ export function ProformaInvoicesView() {
       {/* No auto-close on import here: the dialog's own result summary ("Created N,
           updated M") would never paint if the parent closed it the instant the apply
           finished. The user dismisses it themselves once they have read the result. */}
-      <ProformaUploadDialog
+      <SupplierDocumentsUploadDialog
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         onImported={invalidateProformaLists}

@@ -130,6 +130,7 @@ const writes = {
   forgetMatch: vi.fn(),
   save: vi.fn(),
   markAsRevision: vi.fn(),
+  convert: vi.fn(),
 };
 
 vi.mock('../../../hooks/useProformaInvoices', () => ({
@@ -143,7 +144,7 @@ vi.mock('../../../hooks/useProformaInvoices', () => ({
   // show a pager (RecordNavigation's `items.length < 2` guard), so it stays out of the way.
   useProformaInvoices: () => ({ data: undefined, isLoading: false }),
   useConvertProformaInvoicesToDraftShipment: () => ({
-    mutateAsync: vi.fn(),
+    mutateAsync: writes.convert,
     isPending: false,
   }),
   useSaveProformaInvoice: () => ({ mutateAsync: writes.save, isPending: false }),
@@ -166,6 +167,10 @@ vi.mock('../../../hooks/useFulfilment', () => ({
     ],
     isLoading: false,
   }),
+  // The Packing tab's "Attach packing list" mounts `SupplierDocumentsUploadDialog`
+  // (S2), whose self-serve supplier picker reads this hook - irrelevant here since the
+  // dialog is opened with `supplierId` already fixed to the invoice's own.
+  useFulfilmentSuppliers: () => ({ data: [], isLoading: false }),
 }));
 
 import { ProformaInvoiceDetail } from './ProformaInvoiceDetail';
@@ -177,9 +182,14 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
     supplier_code: 'KAILU',
     supplier_name: 'Kailu Hardware Factory',
     pi_number: 'PI-2026-001',
+    // Ours and theirs: `pi_number` is the number we minted, `supplier_ref` the one the
+    // factory printed on the document (S1, AC-A2/A5).
+    supplier_ref: 'KL20260801',
     invoice_date: '2026-08-01',
     currency: 'CNY',
     container_no: 'TEMU1234567',
+    seal_no: 'WHA4528193',
+    consignee: 'SORENTO SDN BHD',
     bl_no: 'BL-991',
     total_amount: 1000,
     line_count: 1,
@@ -371,9 +381,12 @@ describe('ProformaInvoiceDetail - the record header', () => {
     state.data = detail({ adjusted_by: 'Ms Tee', adjusted_at: '2026-08-02T02:00:00' });
     renderDetail();
 
-    expect(screen.getByText(/proforma\.xlsx/)).toBeInTheDocument();
-    expect(screen.getByText(/Uploaded by Ms Tee/)).toBeInTheDocument();
-    expect(screen.getByText(/Adjusted by Ms Tee/)).toBeInTheDocument();
+    // "proforma.xlsx" now ALSO names an entry in the General tab's own Source files
+    // block (S2, AC-B14) - a second, legitimate occurrence, so the meta line itself is
+    // found by its own unique text and its source-file mention checked from there.
+    const meta = screen.getByText(/Uploaded by Ms Tee/).closest('p')!;
+    expect(within(meta).getByText(/proforma\.xlsx/)).toBeInTheDocument();
+    expect(within(meta).getByText(/Adjusted by Ms Tee/)).toBeInTheDocument();
   });
 
   it('offers Convert as the ONE primary action, with everything else in the gear menu', () => {
@@ -397,6 +410,58 @@ describe('ProformaInvoiceDetail - the record header', () => {
     fireEvent.click(screen.getByRole('button', { name: /convert to packing list/i }));
 
     expect(screen.getByLabelText('Container size')).toBeInTheDocument();
+  });
+
+  it('sends the ticked packing rows, and leaves an unticked one off the draft (AC-D2b, ruling 23)', async () => {
+    const row = (id: string, rowNo: number, qty: number) => ({
+      id,
+      proforma_invoice_line_id: 'line-1',
+      row_no: rowNo,
+      item_code: 'ITEM-1',
+      supplier_code: 'ITEM-1',
+      description: 'Widget',
+      product_id: 'prod-item-1',
+      product_set_id: null,
+      qty,
+      cartons: 1,
+      pcs_per_carton: qty,
+      carton_length_cm: null,
+      carton_width_cm: null,
+      carton_height_cm: null,
+      cbm_per_carton: null,
+      cbm_total: null,
+      net_weight: null,
+      gross_weight: null,
+      total_net_weight: null,
+      total_gross_weight: null,
+      material: null,
+      container_no: null,
+      remark: null,
+      match_state: 'matched',
+      unmatched_reason: null,
+    });
+    state.data = detail({
+      packing_lines: [row('row-1', 1, 6), row('row-2', 2, 4)],
+    } as Partial<ProformaInvoiceDetailData>);
+    writes.convert.mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'PL-2609-001',
+      lines_created: 1,
+      lines_skipped: 0,
+      invoices: [],
+      unmatched: [],
+      skipped_invoices: [],
+    });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /convert to packing list/i }));
+    // Both rows start ticked - "everything goes" is the default. Untick the second.
+    const second = await screen.findByLabelText(/place row 2 of ITEM-1/i);
+    fireEvent.click(second);
+    fireEvent.click(screen.getByRole('button', { name: /^Convert$/ }));
+
+    await waitFor(() => expect(writes.convert).toHaveBeenCalled());
+    expect(writes.convert.mock.calls[0][0].packingRowIds).toEqual(['row-1']);
   });
 
   it('lists every secondary action in the gear menu, in one place', () => {
@@ -547,12 +612,15 @@ describe('ProformaInvoiceDetail - the tab lives in the URL (S1)', () => {
 });
 
 describe('ProformaInvoiceDetail - the tabs', () => {
-  it('renders four tabs, in a fixed order', () => {
+  it('renders five tabs, in a fixed order', () => {
     state.data = detail();
     renderDetail();
 
+    // Packing (S2, AC-B9) sits between Lines and Revisions - the supplier's own packing
+    // rows, a different question from the Packing lists tab (which SHIPMENT this
+    // invoice's lines went to, once converted).
     const names = screen.getAllByRole('tab').map((t) => t.textContent);
-    expect(names).toEqual(['General', 'Lines', 'Revisions', 'Packing lists']);
+    expect(names).toEqual(['General', 'Lines', 'Packing', 'Revisions', 'Packing lists']);
   });
 
   it('names each card of the General tab as its own region', () => {
@@ -593,6 +661,56 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     expect(screen.getByText('Widget')).toBeInTheDocument();
     expect(screen.getByText('40')).toBeInTheDocument();
     expect(screen.getByText('50')).toBeInTheDocument();
+  });
+
+  it('marks the Packed cell destructive when the packed quantity disagrees with the invoiced one (AC-B11)', async () => {
+    // `packing_lines` travels on the SAME detail payload `useProformaInvoicePacking` reads
+    // off (`getProformaInvoicePacking`) - no second fetch, so seeding it here is enough.
+    state.data = detail({
+      packing_lines: [
+        {
+          id: 'row-1',
+          proforma_invoice_line_id: 'line-1',
+          row_no: 1,
+          item_code: 'ITEM-1',
+          supplier_code: 'ITEM-1',
+          description: 'Widget',
+          product_id: 'prod-item-1',
+          product_set_id: null,
+          qty: 8,
+          cartons: 1,
+          pcs_per_carton: 8,
+          carton_length_cm: null,
+          carton_width_cm: null,
+          carton_height_cm: null,
+          cbm_per_carton: null,
+          cbm_total: null,
+          net_weight: null,
+          gross_weight: null,
+          total_net_weight: null,
+          total_gross_weight: null,
+          material: null,
+          container_no: null,
+          remark: null,
+          match_state: 'matched',
+          unmatched_reason: null,
+        },
+      ],
+    } as Partial<ProformaInvoiceDetailData>);
+    renderDetail();
+    openTab('Lines');
+
+    // Invoiced 10, packed 8 (from the one row above) - a Badge, not a plain number.
+    const packedCell = await screen.findByText('8');
+    expect(packedCell).toHaveAttribute('title', 'Invoiced 10, packed 8');
+  });
+
+  it('shows "-" in the Packed column when the line has no packing rows at all', () => {
+    state.data = detail(); // no packing_lines
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
   });
 
   it('states plainly when the invoice has no lines, rather than an empty table', () => {
@@ -655,9 +773,17 @@ describe('ProformaInvoiceDetail - the tabs', () => {
       'href',
       '/procurement-management/packing-lists/sh-1',
     );
-    expect(screen.getByText('6 left')).toBeInTheDocument();
+    // The tab is the containers this invoice went into and nothing else (ruling 26): the
+    // state it is in, and how much of the invoice it carries. What is LEFT is the convert
+    // dialog's own table now, so it is no longer restated here.
+    // Title case, through the shared status pill the packing lists page uses (ruling 33).
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    expect(screen.getByText('4 of 10')).toBeInTheDocument();
   });
 
+  // Ruling 26 moved this off the Packing lists tab, which is now the containers alone: an
+  // unmatched line says so in the LINES tab's own Matched column, which is also where the
+  // reader fixes it.
   it('names a line nothing could carry, instead of calling it placed', () => {
     state.data = detail({
       lines: [
@@ -671,7 +797,7 @@ describe('ProformaInvoiceDetail - the tabs', () => {
       ],
     });
     renderDetail();
-    openTab('Packing lists');
+    openTab('Lines');
 
     expect(
       screen.getByText(/No catalogue product matches this line's item code/),
@@ -694,6 +820,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
       'General',
       'Lines',
+      'Packing',
       'Revisions',
       'Packing lists',
     ]);

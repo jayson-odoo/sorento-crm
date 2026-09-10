@@ -21,12 +21,10 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from decimal import Decimal
-from io import BytesIO
 
 import pytest
 
 from app.models.entity_attachment import EntityAttachmentLink
-from app.models.import_alias import ImportFieldAlias
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.resources import Attachment, AttachmentType
@@ -38,26 +36,13 @@ from app.schemas.procurement import (
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.error_handler import AppException
 from app.services.procurement_service import InboundShipmentService
-from app.services.scm import packing_list_service, shipment_line_photos
+from app.services.scm import shipment_line_photos
 from tests._pg_fixture import blank_session
 
 MARKER = "ZZMS"
 
 #: "the payload said nothing about this field", as distinct from "the payload said None".
 _UNSET = object()
-
-#: The headers migration 311 seeds for doc type `packing_list`. Seeded by the test rather
-#: than borrowed from the database, because CI's is empty.
-_ALIASES = [
-    ("item_code", "产品型号"),
-    ("product_name", "品名"),
-    ("qty", "数量"),
-    ("cartons", "箱数"),
-    ("cbm_per_unit", "体积(cbm)"),
-    ("cbm_total", "总体积(cbm)"),
-    ("container_no", "货柜号"),
-    ("remark", "备注"),
-]
 
 
 @pytest.fixture
@@ -676,34 +661,6 @@ def test_the_same_edit_naming_the_supplier_per_line_updates_the_right_one(db):
     }
 
 
-def test_editing_a_lines_product_into_a_collision_is_refused(db):
-    """The grid (S10) lets any row's product be repicked freely; picking one that lands on
-    the same (product, supplier) another row already holds would otherwise be silently
-    summed into that row by `_merge_shipment_lines` - the behaviour that helper exists FOR
-    when one upload states the same item twice at two prices
-    (`test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average`, the import
-    channel). Here it is one operator editing one row on screen, not a packing list saying
-    the same thing twice, so the save is refused instead - naming the product the row now
-    collides with - rather than quietly losing the other row's identity.
-    """
-    w, shipment = _mixed_container(db)
-
-    with pytest.raises(AppException) as excinfo:
-        # Kailu's tap line repicked to Caizhou's sink - the same (product, supplier) pair
-        # Caizhou's own sink line already holds.
-        w.update(
-            shipment.id,
-            lines=[(w.sink, 10, str(w.caizhou.id)), (w.sink, 5, str(w.caizhou.id))],
-        )
-
-    assert excinfo.value.status_code == 409
-    assert w.sink.product_code in excinfo.value.detail["message"]
-    db.rollback()
-    # Nothing was written: both rows are exactly as they were.
-    lines = _by_product(w.lines(shipment.id))
-    assert set(lines.keys()) == {str(w.tap.id), str(w.sink.id)}
-
-
 def test_the_update_schema_carries_the_per_line_supplier_and_its_volume(db):
     """`InboundShipmentUpdate.shipment_lines` is the same line schema the upload uses.
 
@@ -941,68 +898,67 @@ def test_the_container_workbook_fields_travel_back_out_on_the_read():
 
 
 # --------------------------------------------------------------------------- #
-# packing_list_service.apply - the same story through a workbook                #
+# Ported from packing_list_service.apply (retired, S3 follow-up, captain ruling 9 Sep):  #
+# the reader-to-shipment pipeline moved to supplier_document_service +                  #
+# proforma_invoice_packing_service, which never create a shipment (AC-C1). What this    #
+# test protects - InboundShipmentService.create_shipment's OWN multi-supplier merge -   #
+# is unchanged and already proven by test_a_second_factorys_packing_list_does_not_erase_#
+# the_first below; this is the same shape built directly against the payload, with the  #
+# cbm/remarks carry-over the retired reader used to compute.                            #
 # --------------------------------------------------------------------------- #
-
-
-def _seed_aliases(db) -> None:
-    for field, alias in _ALIASES:
-        db.add(
-            ImportFieldAlias(
-                id=str(uuid.uuid4()), doc_type="packing_list", field=field, alias=alias, locale="zh"
-            )
-        )
-    db.flush()
-
-
-def _workbook(container: str, rows: list[tuple[str, float, float, float, str]]) -> bytes:
-    import openpyxl
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append([f"货柜号：{container}"])
-    ws.append(["产品型号", "品名", "数量", "箱数", "体积(cbm)", "备注"])
-    for code, qty, cartons, cbm, remark in rows:
-        ws.append([code, "座厕", qty, cartons, cbm, remark])
-    buf = BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
 
 
 def test_two_workbooks_for_one_container_keep_both_factories(db):
     w = World(db)
-    _seed_aliases(db)
-    db.commit()
 
-    packing_list_service.apply(
-        db,
-        _workbook(w.container, [(w.tap.product_code, 10, 2, 0.21, "loaded first")]),
-        supplier_id=str(w.kailu.id),
+    first = InboundShipmentService(db).create_shipment(
+        InboundShipmentCreate(
+            shipment_number=w.container,
+            supplier_id=str(w.kailu.id),
+            shipment_date=date(2026, 1, 1),
+            shipping_container_number=w.container,
+            shipment_lines=[
+                InboundShipmentLineCreate(
+                    product_id=str(w.tap.id),
+                    quantity_shipped=10,
+                    supplier_id=str(w.kailu.id),
+                    cartons_count=2,
+                    cbm=Decimal("2.1"),  # 0.21 per unit x 10
+                    remarks="loaded first",
+                )
+            ],
+        )
     )
     db.commit()
-    out = packing_list_service.apply(
-        db,
-        _workbook(w.container, [(w.sink.product_code, 5, 1, 0.5, "")]),
-        supplier_id=str(w.caizhou.id),
+    out = InboundShipmentService(db).create_shipment(
+        InboundShipmentCreate(
+            shipment_number=w.container,
+            supplier_id=str(w.caizhou.id),
+            shipment_date=date(2026, 1, 1),
+            shipping_container_number=w.container,
+            shipment_lines=[
+                InboundShipmentLineCreate(
+                    product_id=str(w.sink.id),
+                    quantity_shipped=5,
+                    supplier_id=str(w.caizhou.id),
+                    cartons_count=1,
+                    cbm=Decimal("2.5"),
+                )
+            ],
+        )
     )
     db.commit()
 
-    assert out["shipments_created"] == 0
-    assert out["shipments_updated"] == 1
+    # One container is one shipment, updated in place.
+    assert out.id == first.id
+    assert getattr(out, "_already_existed", False) is True
 
-    shipments = (
-        db.query(InboundShipment)
-        .filter(InboundShipment.shipping_container_number == w.container)
-        .all()
-    )
-    assert len(shipments) == 1
-    lines = _by_product(w.lines(shipments[0].id))
+    lines = _by_product(w.lines(first.id))
     assert len(lines) == 2
 
     tap = lines[str(w.tap.id)]
     assert str(tap.supplier_id) == str(w.kailu.id)
     assert tap.quantity_shipped == 10
-    # cbm and the supplier's own remark are carried, not thrown away: 0.21 per unit x 10.
     assert float(tap.cbm) == pytest.approx(2.1)
     assert tap.remarks == "loaded first"
 
@@ -1012,4 +968,7 @@ def test_two_workbooks_for_one_container_keep_both_factories(db):
     assert float(sink.cbm) == pytest.approx(2.5)
     assert sink.remarks is None
 
-    assert shipments[0].supplier_id is None  # mixed container
+    # A mixed container has no single supplier, so the header states none rather than
+    # naming whichever uploaded last.
+    db.refresh(first)
+    assert first.supplier_id is None

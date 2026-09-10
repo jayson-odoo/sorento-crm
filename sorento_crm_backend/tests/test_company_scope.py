@@ -511,7 +511,16 @@ def test_every_company_id_table_is_registered():
     # company-scoped query. `product_companion_rule_hosts` is deliberately NOT owned: it
     # reaches its scope through its parent rule, the way `product_set_members` reaches
     # it through `product_sets`, so scoping it too would filter it twice.
-    expected_owned = 130
+    # PLAN-scm-supplier-documents-pi-first.md adds 1: `scm.proforma_invoice_packing_line`
+    # is one row of the SUPPLIER's own packing list, filed against the invoice that prices
+    # it. Owned for the same reason `proforma_invoice_line` beside it is owned, and not
+    # left to its parent: `replace_packing_rows` deletes and reinserts the whole set BY
+    # invoice id (a re-upload is a correction), every dismiss / undo / match loads the row
+    # BY ID off a route that names only the invoice and the row, and `rebind_packing_rows`
+    # reaches rows across invoices by supplier and item code - three id-keyed paths that
+    # never pass through a scoped parent query. The mixin also stamps the company at
+    # insert, which is what keeps a row written under one scope unreadable under another.
+    expected_owned = 131
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

@@ -55,6 +55,7 @@ from app.schemas.procurement import (
     SPODocument, SPODocumentLine, SPODocumentRow,
 )
 from app.services.error_handler import (
+    AppException,
     handle_not_found,
     handle_conflict,
     handle_unprocessable,
@@ -471,6 +472,29 @@ def compute_inbound_shipment_line_status(
     return "in_transit"
 
 
+def _apportion(total: int, lines: list) -> dict[str, int]:
+    """Split a PER-PRODUCT total (allocated, or received) across that product's own
+    shipment lines (S4, AC-D5) - `lines` already in `(created_at, id)` order.
+
+    Each line takes up to its own `quantity_shipped`; the LAST line takes whatever is
+    LEFT, never its own capped share - that is what lets 100 allocated against 50 + 35
+    shipped read as 50 / 50 rather than 50 / 35 with 15 unaccounted for. Retires the
+    CAVEAT this function's own callers used to carry: `spo_allocated_quantity` /
+    `quantity_received` were summed per PRODUCT and stamped onto every line of it, which
+    doubled up whenever a container held the same product on two lines.
+    """
+    remaining = int(total or 0)
+    out: dict[str, int] = {}
+    for i, line in enumerate(lines):
+        if i == len(lines) - 1:
+            out[str(line.id)] = max(remaining, 0)
+            continue
+        take = min(remaining, int(line.quantity_shipped or 0))
+        out[str(line.id)] = take
+        remaining -= take
+    return out
+
+
 def shipment_supplier_predicate(supplier_id):
     """Containers this supplier is ON: the header names them, or any of their lines does.
 
@@ -633,30 +657,6 @@ def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list
         ) / total_qty
 
     return list(merged.values())
-
-
-def _duplicate_line_product_id(
-    lines_data, header_supplier_id: Optional[str]
-) -> Optional[str]:
-    """The first `product_id` stated twice in one line set for the same effective supplier.
-
-    `_merge_shipment_lines` would silently SUM two lines that land on the same
-    `(product, supplier)` key - correct where a packing list legitimately states one item
-    twice at two prices, a mid-order renegotiation
-    (`test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average`, the
-    import channel). `update_shipment`'s only caller is the Shipment lines grid, where the
-    same collision means an operator just repicked one row's product onto a row already on
-    screen - losing the other row's identity into a silent sum there reads as data loss, not
-    a stated fact about the container, so it is refused before the merge runs.
-    """
-    seen: set[tuple[str, Optional[str]]] = set()
-    for line_data in lines_data or []:
-        d = line_data.model_dump(exclude_unset=True) if hasattr(line_data, "model_dump") else dict(line_data)
-        key = (str(d["product_id"]), _effective_line_supplier(d, header_supplier_id))
-        if key in seen:
-            return d["product_id"]
-        seen.add(key)
-    return None
 
 
 def _line_company_kwargs(shipment: "InboundShipment") -> dict:
@@ -1123,11 +1123,11 @@ class InboundShipmentService:
         `in_transit` forever, while the detail page (a joined relationship load) showed
         the very lines it could not find.
 
-        CAVEAT (S4, review round 1): `spo_allocated_quantity` is summed per PRODUCT, not
-        per line, so a container carrying the same product on two lines gives BOTH lines
-        the whole product's allocated figure. Pre-existing and left as is here - the
-        column has one writer and changing what it means is a change to every reader of
-        it. Backlogged in `PLAN-scm-purchasing-consolidation-6sep.md` (Deviations, lane D).
+        `spo_allocated_quantity` / `quantity_received` are APPORTIONED per line (S4,
+        AC-D5, `_apportion`) rather than the product's whole total stamped onto every
+        line of it - a container carrying the same product on two lines (Kailu's own
+        carton split) used to give BOTH lines the whole figure, doubling what counted
+        as incoming. Each product's own lines are walked in `(created_at, id)` order.
         """
         shipment = (
             self.db.query(InboundShipment)
@@ -1147,14 +1147,29 @@ class InboundShipmentService:
         )
         spo_by_product = {str(p): int(t) for p, t in totals_alloc}
         received_by_product = self.get_received_quantities_by_product(shipment_id)
+
+        lines_by_product: dict[str, list] = {}
+        for line in lines:
+            lines_by_product.setdefault(str(line.product_id), []).append(line)
+        alloc_by_line: dict[str, int] = {}
+        recv_by_line: dict[str, int] = {}
+        for product_id, product_lines in lines_by_product.items():
+            product_lines.sort(key=lambda l: (l.created_at or datetime.min, str(l.id)))
+            alloc_by_line.update(
+                _apportion(spo_by_product.get(product_id, 0), product_lines)
+            )
+            recv_by_line.update(
+                _apportion(received_by_product.get(product_id, 0), product_lines)
+            )
+
         for line in lines:
             # Self-heal: a line belongs to the company of the container it hangs off,
             # and an earlier company-less write may have stamped it with the incumbent
             # company instead. Put it back, or the next scoped read loses it again.
             if shipment.company_id and line.company_id != shipment.company_id:
                 line.company_id = shipment.company_id
-            alloc = spo_by_product.get(str(line.product_id), 0)
-            recv = received_by_product.get(str(line.product_id), 0)
+            alloc = alloc_by_line.get(str(line.id), 0)
+            recv = recv_by_line.get(str(line.id), 0)
             line.spo_allocated_quantity = alloc
             line.quantity_received = recv
             line.line_status = compute_inbound_shipment_line_status(
@@ -1282,12 +1297,13 @@ class InboundShipmentService:
         AFTER its own commit, same ordering `delete_photo` uses.
         """
         existing = list(shipment.shipment_lines) if existing_lines is None else list(existing_lines)
-        by_pair: dict[tuple[str, Optional[str]], InboundShipmentLine] = {}
+        existing_by_id = {str(line.id): line for line in existing}
+        by_pair: dict[tuple[str, Optional[str]], list[InboundShipmentLine]] = {}
         by_product: dict[str, list[InboundShipmentLine]] = {}
         for line in existing:
             product_id = str(line.product_id)
             supplier_id = str(line.supplier_id) if line.supplier_id else None
-            by_pair[(product_id, supplier_id)] = line
+            by_pair.setdefault((product_id, supplier_id), []).append(line)
             by_product.setdefault(product_id, []).append(line)
 
         claimed: set[str] = set()
@@ -1313,12 +1329,54 @@ class InboundShipmentService:
                 "state supplier_id per line"
             )
 
+        def line_id_required(product_id: str, supplier_id: Optional[str]):
+            code = (
+                self.db.query(Product.product_code)
+                .filter(Product.id == product_id)
+                .scalar()
+            ) or product_id
+            where = "for this supplier" if supplier_id else "with no supplier stated"
+            return AppException(
+                409,
+                f"Product {code} is on two lines {where}; edit them by line.",
+                code="line_id_required",
+            )
+
+        # ID-first (S4, AC-D4): a payload line naming an id that IS one of this
+        # container's own claims exactly that line, whatever its own (product, supplier)
+        # says - the same key can now repeat (AC-D1's own carton split), so an edit that
+        # already knows which line it means is never left to the guesswork below.
+        id_claims: list[dict] = []
+        remaining_incoming: list[dict] = []
+        for raw in incoming or []:
+            d = dict(raw)
+            line_id = d.pop("id", None)
+            if line_id and str(line_id) in existing_by_id:
+                id_claims.append((str(line_id), d))
+            else:
+                remaining_incoming.append(d)
+        for line_id, d in id_claims:
+            target = existing_by_id[line_id]
+            claimed.add(str(target.id))
+            updates.append((target, d))
+        incoming = remaining_incoming
+
         # Attributed first: see the docstring.
         for d in sorted(incoming, key=lambda d: d.get("supplier_id") is None):
             product_id = str(d["product_id"])
             supplier_id = str(d["supplier_id"]) if d.get("supplier_id") else None
             if supplier_id is not None:
-                target = by_pair.get((product_id, supplier_id))
+                named = [
+                    line for line in by_pair.get((product_id, supplier_id), [])
+                    if str(line.id) not in claimed
+                ]
+                if len(named) > 1:
+                    # AC-D1's own scenario: two lines already share (product, supplier)
+                    # (Kailu's carton split) - an id-LESS edit naming only the pair
+                    # cannot say which one it means, and guessing would move a quantity
+                    # from one carton to the other silently.
+                    raise line_id_required(product_id, supplier_id)
+                target = named[0] if named else None
                 if target is None:
                     # Nothing on this container under that supplier yet. Claim the
                     # unattributed row for the product rather than replacing it, so an
@@ -1337,7 +1395,13 @@ class InboundShipmentService:
             else:
                 candidates = unclaimed(product_id, unattributed_only=False)
                 if len(candidates) > 1:
-                    raise ambiguous(product_id)
+                    # Two DIFFERENT suppliers already ship this product and the payload
+                    # names neither (pre-existing, unchanged) - `line_id_required` is for
+                    # the NEW case below it, where the id-less line names a pair that is
+                    # itself ambiguous (two lines of the SAME supplier).
+                    if len({str(l.supplier_id) if l.supplier_id else None for l in candidates}) > 1:
+                        raise ambiguous(product_id)
+                    raise line_id_required(product_id, candidates[0].supplier_id)
                 target = candidates[0] if candidates else None
             if target is None:
                 inserts.append(d)
@@ -1471,77 +1535,92 @@ class InboundShipmentService:
             for k, v in shipment_dict.items():
                 if v is not None:
                     setattr(existing, k, v)
-            # Replace lines, but only the ones this upload speaks for. One container
-            # carries several factories and each sends its own packing list, so replacing
-            # every line on a supplier-stated upload deleted the other factories' lines -
-            # the data-loss this rule exists to end. An upload that names NO supplier
-            # (the n8n PDF path, legacy callers) still speaks for the whole container, as
-            # it always did.
-            merged_lines = _merge_shipment_lines(
-                shipment_data.shipment_lines, shipment_data.supplier_id
-            )
-            incoming_suppliers = {
-                str(d["supplier_id"]) if d["supplier_id"] else None for d in merged_lines
-            }
-            incoming_products = {str(d["product_id"]) for d in merged_lines}
-            if not merged_lines and shipment_data.supplier_id:
-                # No lines at all: the upload clears what that supplier had on the container.
-                incoming_suppliers = {str(shipment_data.supplier_id)}
-            states_supplier = bool(shipment_data.supplier_id) or any(
-                (line.supplier_id or None) for line in (shipment_data.shipment_lines or [])
+            from app.models.scm import ProformaInvoiceShipmentLink
+
+            # AC-D4b (S4): a CONVERTED draft's lines are sourced from proforma invoices,
+            # not this forwarder's own PDF/Excel - the manual -> n8n -> back flow updates
+            # the HEADER only and leaves convert's own split lines untouched. A shipment
+            # with no PI links keeps today's per-product line replacement below.
+            has_pi_links = (
+                self.db.query(ProformaInvoiceShipmentLink.id)
+                .filter(ProformaInvoiceShipmentLink.inbound_shipment_id == existing.id)
+                .first()
+                is not None
             )
             photo_objects: list[tuple[str, str]]
-            if states_supplier:
-                # REUSE: every real, in-app upload names a supplier (R12 asks for one per
-                # file), so this is the path a re-uploaded packing list actually takes.
-                # `_upsert_shipment_lines` matches an incoming line to the row already
-                # there by `(product, supplier)` and updates it IN PLACE rather than
-                # deleting and recreating: a re-upload used to mint a new line id every
-                # time, which orphaned that line's photos (`entity_attachment_links` has
-                # no real FK onto the line) - browser-test round, finding 1. Scoped to
-                # this upload's own lines, same as the delete used to be: a line outside
-                # `_is_superseded_line` belongs to another factory's own list and is left
-                # alone entirely.
-                scoped_existing = [
-                    line
-                    for line in existing.shipment_lines
-                    if _is_superseded_line(line, incoming_suppliers, incoming_products)
-                ]
-                photo_objects = self._upsert_shipment_lines(
-                    existing, merged_lines, existing_lines=scoped_existing
-                )
+            if has_pi_links:
+                photo_objects = []
+                setattr(existing, "lines_skipped_reason", "lines_from_proforma_invoices")
             else:
-                # RE-POINT is not applicable here either: every merged line's
-                # `supplier_id` is explicitly `None` (this upload names no supplier at
-                # all), which never matches an existing line's OWN (possibly attributed)
-                # supplier under the `(product, supplier)` key `_upsert_shipment_lines`
-                # reuses by - reusing here would leave a line's old, real supplier
-                # silently intact although nothing in this upload said so
-                # (`test_an_n8n_resend_clears_the_header_the_container_used_to_name`).
-                # This upload restates the WHOLE container from scratch (the n8n PDF
-                # path, legacy callers) - every existing line is superseded, deleted
-                # outright, and its photos purged with it before the fresh rows land.
-                departing_ids = [str(line.id) for line in existing.shipment_lines]
-                from app.models.scm import ProformaInvoiceShipmentLink
-                from app.services.scm import shipment_line_photos
-
-                if departing_ids:
-                    self.db.query(ProformaInvoiceShipmentLink).filter(
-                        ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
-                            departing_ids
-                        )
-                    ).delete(synchronize_session=False)
-                    self.db.flush()
-                photo_objects = shipment_line_photos.purge_for_lines(self.db, departing_ids)
-                for line in existing.shipment_lines[:]:
-                    self.db.delete(line)
-                self.db.flush()
-                for d in merged_lines:
-                    line = InboundShipmentLine(
-                        **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+                # Replace lines, but only the ones this upload speaks for. One container
+                # carries several factories and each sends its own packing list, so
+                # replacing every line on a supplier-stated upload deleted the other
+                # factories' lines - the data-loss this rule exists to end. An upload that
+                # names NO supplier (the n8n PDF path, legacy callers) still speaks for
+                # the whole container, as it always did.
+                merged_lines = _merge_shipment_lines(
+                    shipment_data.shipment_lines, shipment_data.supplier_id
+                )
+                incoming_suppliers = {
+                    str(d["supplier_id"]) if d["supplier_id"] else None for d in merged_lines
+                }
+                incoming_products = {str(d["product_id"]) for d in merged_lines}
+                if not merged_lines and shipment_data.supplier_id:
+                    # No lines at all: the upload clears what that supplier had on the container.
+                    incoming_suppliers = {str(shipment_data.supplier_id)}
+                states_supplier = bool(shipment_data.supplier_id) or any(
+                    (line.supplier_id or None) for line in (shipment_data.shipment_lines or [])
+                )
+                if states_supplier:
+                    # REUSE: every real, in-app upload names a supplier (R12 asks for one per
+                    # file), so this is the path a re-uploaded packing list actually takes.
+                    # `_upsert_shipment_lines` matches an incoming line to the row already
+                    # there by `(product, supplier)` and updates it IN PLACE rather than
+                    # deleting and recreating: a re-upload used to mint a new line id every
+                    # time, which orphaned that line's photos (`entity_attachment_links` has
+                    # no real FK onto the line) - browser-test round, finding 1. Scoped to
+                    # this upload's own lines, same as the delete used to be: a line outside
+                    # `_is_superseded_line` belongs to another factory's own list and is left
+                    # alone entirely.
+                    scoped_existing = [
+                        line
+                        for line in existing.shipment_lines
+                        if _is_superseded_line(line, incoming_suppliers, incoming_products)
+                    ]
+                    photo_objects = self._upsert_shipment_lines(
+                        existing, merged_lines, existing_lines=scoped_existing
                     )
-                    self.db.add(line)
-                self.db.flush()
+                else:
+                    # RE-POINT is not applicable here either: every merged line's
+                    # `supplier_id` is explicitly `None` (this upload names no supplier at
+                    # all), which never matches an existing line's OWN (possibly attributed)
+                    # supplier under the `(product, supplier)` key `_upsert_shipment_lines`
+                    # reuses by - reusing here would leave a line's old, real supplier
+                    # silently intact although nothing in this upload said so
+                    # (`test_an_n8n_resend_clears_the_header_the_container_used_to_name`).
+                    # This upload restates the WHOLE container from scratch (the n8n PDF
+                    # path, legacy callers) - every existing line is superseded, deleted
+                    # outright, and its photos purged with it before the fresh rows land.
+                    departing_ids = [str(line.id) for line in existing.shipment_lines]
+                    from app.services.scm import shipment_line_photos
+
+                    if departing_ids:
+                        self.db.query(ProformaInvoiceShipmentLink).filter(
+                            ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
+                                departing_ids
+                            )
+                        ).delete(synchronize_session=False)
+                        self.db.flush()
+                    photo_objects = shipment_line_photos.purge_for_lines(self.db, departing_ids)
+                    for line in existing.shipment_lines[:]:
+                        self.db.delete(line)
+                    self.db.flush()
+                    for d in merged_lines:
+                        line = InboundShipmentLine(
+                            **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+                        )
+                        self.db.add(line)
+                    self.db.flush()
             self._derive_header_supplier(existing, shipment_data.supplier_id)
             self.db.commit()
             for provider, key in photo_objects:
@@ -1635,26 +1714,22 @@ class InboundShipmentService:
 
         photo_objects: list[tuple[str, str]] = []
         if "shipment_lines" in shipment_data.model_dump(exclude_unset=True):
-            # The whole line set, upserted onto what is already there (grouped by product
-            # AND supplier - the same key `create_shipment` merges on, because the same
-            # product from two factories is two rows).
+            # The whole line set, upserted onto what is already there - id FIRST
+            # (`_upsert_shipment_lines`, S4/AC-D4), never merged: two lines of one
+            # product from one supplier are legal now (Kailu's own carton split), and
+            # `_merge_shipment_lines` would silently sum them back into one, which is
+            # exactly the loss the per-line grid exists to stop. The external n8n create
+            # route still merges (its payload has no carton grain) - only THIS edit-form
+            # path drops it.
             header_supplier = getattr(shipment, "supplier_id", None)
-            duplicate_product_id = _duplicate_line_product_id(
-                shipment_data.shipment_lines, header_supplier
-            )
-            if duplicate_product_id:
-                code = (
-                    self.db.query(Product.product_code)
-                    .filter(Product.id == duplicate_product_id)
-                    .scalar()
-                ) or duplicate_product_id
-                raise handle_conflict(
-                    f"Product {code} is on this line set twice for the same supplier; "
-                    "combine the two lines or pick a different product on one of them."
+            incoming = [
+                {**d, "supplier_id": _effective_line_supplier(d, header_supplier)}
+                for d in (
+                    ln.model_dump(exclude_unset=True) if hasattr(ln, "model_dump") else dict(ln)
+                    for ln in shipment_data.shipment_lines
                 )
-            photo_objects = self._upsert_shipment_lines(
-                shipment, _merge_shipment_lines(shipment_data.shipment_lines, header_supplier)
-            )
+            ]
+            photo_objects = self._upsert_shipment_lines(shipment, incoming)
             # The lines just changed, so the header has to be re-derived from them or it
             # keeps naming a supplier that is no longer on the container.
             self._derive_header_supplier(shipment, header_supplier)

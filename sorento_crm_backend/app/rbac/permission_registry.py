@@ -368,6 +368,10 @@ PERMISSION_REGISTRY.extend([
     {"slug": "system.numbering_rules.view", "name": "View Running Numbers", "description": "Permission to view document numbering rules."},
     {"slug": "system.numbering_rules.edit", "name": "Edit Running Numbers", "description": "Permission to edit document numbering rules."},
 ])
+PERMISSION_REGISTRY.extend([
+    {"slug": "system.import_field_aliases.view", "name": "View Import Column Mappings", "description": "Permission to view which header spellings resolve to which import field, per document type."},
+    {"slug": "system.import_field_aliases.edit", "name": "Edit Import Column Mappings", "description": "Permission to add or remove a header-to-field mapping for a document type's importer."},
+])
 PERMISSION_REGISTRY.append({
     "slug": "system.modules.manage",
     "name": "Manage App Store Modules",

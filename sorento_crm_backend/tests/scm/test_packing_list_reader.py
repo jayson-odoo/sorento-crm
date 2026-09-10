@@ -201,11 +201,26 @@ def test_an_unmeasured_line_stays_unmeasured_rather_than_zero(resolver):
     assert out.blocks[0].lines[0].cbm_per_unit is None
 
 
-def test_a_row_with_no_quantity_is_skipped_not_guessed(resolver):
-    out = read_workbook(workbook([HEADER, ["SRT-1", "座厕", None, 1, 0.2],
-                                  ["SRT-2", "面盆", 3, 1, 0.2]]), resolver)
+def test_a_row_with_no_quantity_is_kept_when_it_states_a_packing_figure_else_skipped(resolver):
+    # Ruling 4 (`ee1375fb6`, captain ruling 9 Sep): a code/description with NO quantity but
+    # SOME packing figure (cartons, CBM, a weight) is still a packing row - qty stays None,
+    # never dropped, because the Jinbaichuan sheet's own container-summary row states a
+    # total CBM and nothing else. A row with NEITHER a quantity NOR any packing figure is
+    # still the accessory-note shape `_note_from` keeps instead, and stays skipped.
+    out = read_workbook(
+        workbook([
+            HEADER,
+            ["SRT-1", "座厕", None, 1, 0.2],
+            ["SRT-2", "面盆", 3, 1, 0.2],
+            ["SRT-3", "垫圈", None, None, None],
+        ]),
+        resolver,
+    )
 
-    assert [ln.item_code for ln in out.blocks[0].lines] == ["SRT-2"]
+    lines = {ln.item_code: ln for ln in out.blocks[0].lines}
+    assert set(lines) == {"SRT-1", "SRT-2"}
+    assert lines["SRT-1"].qty is None
+    assert lines["SRT-2"].qty == 3
 
 
 def test_a_file_with_no_recognisable_header_says_what_is_missing(resolver):
@@ -244,6 +259,24 @@ def test_a_bill_of_lading_with_slashes_reads_verbatim(resolver):
     out = read_workbook(workbook(rows), resolver)
 
     assert out.blocks[0].bl_no == "SZX/2026/001"
+
+
+def test_a_blank_bill_of_lading_label_does_not_swallow_the_next_label(resolver):
+    # AC-P2.4, ported from `test_packing_list_import.py` (S3): the shared `_labelled`
+    # helper's fix lives once (`test_proforma_invoice_reader.py::test_a_blank_bill_of_
+    # lading_does_not_read_the_next_label` pins it for the PI reader) and must not read a
+    # candidate that itself resolves to a KNOWN field (here "货柜号：..." after a blank
+    # "提单号：") as if it were a value - pinned here too since the two readers each call it.
+    rows = [
+        ["提单号：", None, "货柜号：ABCU1000009"],
+        HEADER,
+        ["SRT-1", "座厕", 5, 1, 0.2],
+    ]
+
+    out = read_workbook(workbook(rows), resolver)
+
+    assert out.blocks[0].bl_no is None
+    assert out.blocks[0].container_no == "ABCU1000009"
 
 
 def test_a_date_with_slashes_is_not_split_by_the_multi_sep(resolver):

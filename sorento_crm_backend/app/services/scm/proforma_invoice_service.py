@@ -35,6 +35,7 @@ from app.models.scm import (
     ContainerSize,
     ProformaInvoice,
     ProformaInvoiceLine,
+    ProformaInvoicePackingLine,
     ProformaInvoiceShipmentLink,
     SupplierProductCodeAlias,
 )
@@ -44,7 +45,9 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.numbering_defaults import (
     INBOUND_SHIPMENT_DRAFT_DOC_TYPE,
+    PROFORMA_INVOICE_DOC_TYPE,
     seed_inbound_shipment_draft_rule,
+    seed_proforma_invoice_rule,
 )
 from app.services.numbering_service import NumberingService
 from app.services.scm.container_capacity import container_sizes as _container_sizes
@@ -85,7 +88,7 @@ _NO_CURRENCY = (
 #: all of which describe a container the AGENT has actually loaded or shipped - this one
 #: exists only because CRM lines were pre-filled from proforma invoices (AC per
 #: PLAN-scm-proforma-to-spo.md's Amendment). The real packing list, when it arrives, is
-#: uploaded through the existing `packing_list_service.apply` path same as any other.
+#: uploaded through `supplier_document_service.apply` (S2/S3) same as any other.
 _DRAFT_SHIPMENT_STATUS = "draft"
 
 #: `NumberingService` doc_type for a draft packing list's own series - kept distinct from a
@@ -118,42 +121,93 @@ def _parse(db: Session, data: bytes) -> ProformaReadResult:
     return read_workbook(data, db=db)
 
 
-def pi_number_for(
-    doc: ProformaDocument, *, source_ref: Optional[str],
-    siblings: Optional[list[ProformaDocument]] = None,
-) -> str:
-    """What this invoice is called, so two blocks in one file are two invoices.
+def supplier_ref_for(
+    doc: ProformaDocument, *, siblings: Optional[list[ProformaDocument]] = None,
+) -> Optional[str]:
+    """The supplier's own reference for this document (S1, AC-A2), verbatim - `None` when
+    the file states none (the pre-loading list's five blocks carry no invoice number at
+    all; `pi_number` is minted regardless - see `_pi_number` below).
 
-    The document's own number when it states one, verbatim - UNLESS this same parse yields
-    MORE THAN ONE document sharing that number (`siblings`, the Jiexia condition, RULED 6
-    Sep review round 1): the Jiexia sample states ONE invoice number for two containers,
-    and `scm.proforma_invoice`'s identity is `(company, supplier, pi_number)` - one row per
-    number, not per container. Suffixing with the container is what keeps each one its own
-    row and its own priced lines rather than the second container's apply silently
-    overwriting the first's. A single-container document with a stated number - every
-    fixture before Jiexia, and the common case even when the document happens to fill in a
-    container cell - keeps its number VERBATIM, so a re-upload updates the same row in
-    place rather than minting a second one under a container-suffixed name (AC-P2.5).
+    UNLESS this same parse yields MORE THAN ONE document sharing that reference
+    (`siblings`, the Jiexia condition, RULED 6 Sep review round 1): the Jiexia sample
+    states ONE invoice number for two containers, and identity is `(company, supplier,
+    supplier_ref)` - one row per reference, not per container. Suffixing with the
+    container is what keeps each one its own row and its own priced lines rather than the
+    second container's apply matching the first's. A single-container document with a
+    stated reference - every fixture before Jiexia, and the common case even when the
+    document happens to fill in a container cell - keeps it VERBATIM, so a re-upload
+    updates the same row in place rather than a container-suffixed second one (AC-P2.5).
 
-    With no stated number at all: the file's own name plus the block's position - the
-    pre-loading list numbers none of its five invoices, and deriving rather than
-    generating is what makes a re-upload update them in place (AC-P2.5).
+    Renamed from `pi_number_for` (S1): `pi_number` stopped being the supplier's own text
+    the moment it became a minted running number - what this function answers now is the
+    identity key a re-upload matches on, not the number printed on the document.
     """
-    if doc.pi_number:
-        base = doc.pi_number.strip()
-        if doc.container_no and siblings is not None:
-            shared = sum(
-                1 for d in siblings
-                if d.pi_number and d.pi_number.strip().lower() == base.lower()
-            )
-            if shared > 1:
-                return f"{base}-{doc.container_no}"[:100]
-        return base[:100]
-    # The STEM is truncated, not the composed name: a long filename would otherwise push the
-    # block index off the end of a `String(100)` column and turn five distinct invoices into
-    # one name that each block in turn overwrites.
-    stem = (source_ref or "proforma").rsplit("/", 1)[-1].rsplit(".", 1)[0][:80]
-    return f"{_DERIVED_PREFIX}-{stem}-{doc.index}"
+    if not doc.pi_number:
+        return None
+    base = doc.pi_number.strip()
+    if not base:
+        return None
+    if doc.container_no and siblings is not None:
+        shared = sum(
+            1 for d in siblings
+            if d.pi_number and d.pi_number.strip().lower() == base.lower()
+        )
+        if shared > 1:
+            return f"{base}-{doc.container_no}"[:100]
+    return base[:100]
+
+
+def _disambiguated_ref(db: Session, *, supplier_id: str, ref: Optional[str]) -> Optional[str]:
+    """A ref for an explicit "file as new" that would otherwise collide with the CURRENT
+    row it was matched against (AC-E6's untick, S1 follow-up): identity is `(company,
+    supplier, supplier_ref)` and only one CURRENT row ever occupies it (migration 500), so
+    an operator who explicitly wants a second, separate document under the same reference
+    gets one that carries it apart - `-2`, `-3`, ... - rather than a 500 with a unique
+    constraint in it. The base ref is untouched, so a later plain re-upload of the
+    ORIGINAL document still matches on it, not on the row filed apart from it.
+    """
+    if not ref:
+        return ref
+    candidate = ref
+    n = 2
+    while (
+        db.query(ProformaInvoice.id)
+        .filter(
+            ProformaInvoice.supplier_id == supplier_id,
+            ProformaInvoice.supplier_ref == candidate,
+            func.coalesce(ProformaInvoice.status, "current") == "current",
+        )
+        .first()
+        is not None
+    ):
+        candidate = f"{ref}-{n}"[:100]
+        n += 1
+    return candidate
+
+
+def _pi_number(db: Session, company_id: Optional[str]) -> str:
+    """Our own PI number (S1, AC-A1) - the next `PI-{yy}{month:02d}-NNN` from the numbering
+    rule, minted once at insert. Same lazy-seed pattern `_draft_shipment_number` (above)
+    uses for the packing-list draft series: a company with no rule yet gets one HERE, in
+    the caller's transaction, rather than failing the first proforma invoice it ever holds.
+    """
+    def _next() -> Optional[str]:
+        return NumberingService(db).get_next_number(
+            PROFORMA_INVOICE_DOC_TYPE, _date.today(), company_id=company_id, commit_rule=False
+        )
+
+    number = _next()
+    if not number:
+        seed_proforma_invoice_rule(db, company_id=company_id)
+        number = _next()
+    if not number:
+        raise AppException(
+            500,
+            "No numbering rule is configured for a proforma invoice, so one cannot be "
+            "numbered. Add the 'proforma_invoice' rule under System > Numbering.",
+            code="numbering_rule_missing",
+        )
+    return number
 
 
 def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
@@ -297,7 +351,10 @@ def _summarise(
         documents.append(
             {
                 "index": doc.index,
-                "pi_number": pi_number_for(doc, source_ref=source_ref, siblings=parsed.documents),
+                # The supplier's own reference (S1) - `pi_number` itself is minted only at
+                # apply, on the actual row, so the preview cannot show it in advance without
+                # drawing a number nobody may end up using.
+                "pi_number": supplier_ref_for(doc, siblings=parsed.documents),
                 "pi_number_stated": bool(doc.pi_number),
                 "invoice_date": doc.invoice_date.isoformat() if doc.invoice_date else None,
                 "container_no": doc.container_no,
@@ -464,42 +521,6 @@ def _revision_targets(
                 code="superseded",
             )
     return found
-
-
-def _available_number(
-    db: Session,
-    supplier_id: str,
-    base: str,
-    attempt: int,
-    marker: str = "R",
-    always_suffix: bool = False,
-) -> str:
-    """A document number free for THIS supplier, starting from what the file derived.
-
-    Identity is (company, supplier, pi_number) and the pre-loading list derives its number
-    positionally from the file, so a revision taken from the same file lands on the number it
-    is revising. `-R2` is appended rather than a random suffix, because the number is read by
-    people and "PI-预装清单-1-R2" says what it is. `marker` is empty for a document filed as
-    NEW rather than as a revision: it is not revision 2 of anything, it is a second
-    document, and "-2" is what says so. `always_suffix` starts the search AT the suffix
-    rather than trying the bare base first: a document filed as new is never the stem on its
-    own, it is the next ordinal after it.
-    """
-    number = f"{base[:90]}-{marker}{attempt}" if always_suffix else base
-    if always_suffix:
-        attempt += 1
-    while (
-        db.query(ProformaInvoice)
-        .filter(
-            ProformaInvoice.supplier_id == str(supplier_id),
-            ProformaInvoice.pi_number == number,
-        )
-        .first()
-        is not None
-    ):
-        number = f"{base[:90]}-{marker}{attempt}"
-        attempt += 1
-    return number[:100]
 
 
 def _chain(db: Session, invoice: ProformaInvoice) -> list[ProformaInvoice]:
@@ -875,6 +896,8 @@ def apply(
     # place" and produced no new row at all.
     filed_as_new = {str(i) for i in (file_as_new or [])}
 
+    company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
+
     known = _products_by_code(
         db, {ln.item_code for d in parsed.documents for ln in d.lines}
     )
@@ -897,19 +920,23 @@ def apply(
     results: list[dict] = []
 
     for doc in parsed.documents:
-        number = pi_number_for(doc, source_ref=source_ref, siblings=parsed.documents)
+        ref = supplier_ref_for(doc, siblings=parsed.documents)
         code, source = resolved.get(doc.index, (None, "none"))
         prior = targets.get(str((revision_of or {}).get(str(doc.index)) or ""))
 
         if prior is not None:
             # A revision is always a NEW row: the prior one is what the supplier sent on the
             # day, it is what the diff is read against, and overwriting it would delete the
-            # only evidence that anything changed (AC-E7).
+            # only evidence that anything changed (AC-E7). Its OWN pi_number is minted, same
+            # as any other new row (S1) - `uq_scm_proforma_invoice_number` forbids reusing
+            # the prior's, and `revision_no`/`revision_of_id` are what say these two are one
+            # document's history, not the number.
             revision_no = int(prior.revision_no or 1) + 1
             invoice = ProformaInvoice(
                 id=_uuid(),
                 supplier_id=supplier_id,
-                pi_number=_available_number(db, supplier_id, number, revision_no),
+                pi_number=_pi_number(db, company_id),
+                supplier_ref=ref,
                 revision_of_id=str(prior.id),
                 revision_no=revision_no,
                 status="current",
@@ -917,37 +944,42 @@ def apply(
             db.add(invoice)
             prior.status = "superseded"
             existed = False
-        elif str(doc.index) in filed_as_new:
-            # The STEM is the base, not the number the file derived. A derived number is
-            # `PI-<file stem>-<block>`, so appending to it produced `<stem>-1-2` and then
-            # `<stem>-1-3`; the ordinal after the stem is which document this is, and the
-            # search skips the ones already taken. A STATED number is not an ordinal and is
-            # never chopped - `202605-S0060` would become `202605`.
-            base = number if doc.pi_number else re.sub(r"-\d+$", "", number)
+        elif ref is None or str(doc.index) in filed_as_new:
+            # No reference to match on at all - there is nothing an update-in-place lookup
+            # could find, so this is always a new row (AC-A2: `pi_number` is still minted
+            # regardless of whether the file states a reference; a NULL ref never conflicts
+            # with another NULL, so no disambiguation is needed here). The SAME path is what
+            # an explicit "file as new" tick takes for a document that DOES have a matching
+            # ref but the operator wants filed separately anyway (the revision offer
+            # unticked) - THAT ref would collide with the CURRENT row it was matched
+            # against, so it is disambiguated apart from it instead.
+            filed_ref = (
+                _disambiguated_ref(db, supplier_id=supplier_id, ref=ref)
+                if str(doc.index) in filed_as_new
+                else ref
+            )
             invoice = ProformaInvoice(
-                id=_uuid(),
-                supplier_id=supplier_id,
-                # The next free number for this supplier: `-2`, `-3`. Not `-R2` - it is a
-                # second document rather than a second version of one.
-                pi_number=_available_number(
-                    db, supplier_id, base, 2, marker="", always_suffix=True
-                ),
+                id=_uuid(), supplier_id=supplier_id,
+                pi_number=_pi_number(db, company_id), supplier_ref=filed_ref,
             )
             db.add(invoice)
             existed = False
         else:
+            # AC-A3: identity is (company, supplier, supplier_ref) - `ref` is never None
+            # here (the branch above already routed that case to a fresh row).
             invoice = (
                 db.query(ProformaInvoice)
                 .filter(
                     ProformaInvoice.supplier_id == supplier_id,
-                    ProformaInvoice.pi_number == number,
+                    ProformaInvoice.supplier_ref == ref,
                 )
                 .first()
             )
             existed = invoice is not None
             if invoice is None:
                 invoice = ProformaInvoice(
-                    id=_uuid(), supplier_id=supplier_id, pi_number=number
+                    id=_uuid(), supplier_id=supplier_id,
+                    pi_number=_pi_number(db, company_id), supplier_ref=ref,
                 )
                 db.add(invoice)
             else:
@@ -958,7 +990,16 @@ def apply(
         # unpriced one has nothing to denominate and stays NULL. Never a house default (AC-P3.3).
         invoice.currency = code or invoice.currency
         invoice.container_ref = doc.container_no
+        # `bl_ref` holds `提单号`, which the 6 Sep ruling put in the SO field on the draft,
+        # not in a bill of lading - the column name is historical.
         invoice.bl_ref = doc.bl_no
+        # The other two header facts the document states (ruling 28). Written only when the
+        # document HAS them, so a re-upload of an invoice that states neither does not wipe
+        # what the packing list filled in beside it.
+        if doc.seal_no:
+            invoice.seal_ref = doc.seal_no
+        if doc.consignee:
+            invoice.consignee_ref = doc.consignee
         # The document's own total when it states one - it is the number on the paper the
         # supplier sent, and the line sum is what we make of it. Where it states none, the
         # sum is the honest stand-in.
@@ -1127,6 +1168,11 @@ def _placements(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
             ProformaInvoiceShipmentLink.inbound_shipment_id,
             InboundShipment.shipment_number,
             InboundShipment.shipment_status,
+            # The container it went in, and when the draft was made - the PI detail's own
+            # Packing lists tab states both (ruling 26), and both are facts about the
+            # SHIPMENT, so they travel with it rather than being fetched a second time.
+            InboundShipment.shipping_container_number,
+            InboundShipment.created_at,
             func.sum(func.coalesce(ProformaInvoiceShipmentLink.qty, 0)),
             func.count(func.distinct(ProformaInvoiceShipmentLink.proforma_invoice_line_id)),
         )
@@ -1143,11 +1189,13 @@ def _placements(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
             ProformaInvoiceShipmentLink.inbound_shipment_id,
             InboundShipment.shipment_number,
             InboundShipment.shipment_status,
+            InboundShipment.shipping_container_number,
+            InboundShipment.created_at,
         )
         .all()
     )
     out: dict[str, dict] = {}
-    for invoice_id, shipment_id, number, status, qty, lines in rows:
+    for invoice_id, shipment_id, number, status, container, created_at, qty, lines in rows:
         entry = out.setdefault(str(invoice_id), {"placed_qty": 0.0, "packing_lists": []})
         entry["placed_qty"] += float(qty or 0)
         entry["packing_lists"].append(
@@ -1155,6 +1203,8 @@ def _placements(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
                 "shipment_id": str(shipment_id),
                 "shipment_number": number,
                 "shipment_status": status,
+                "container_number": container,
+                "created_at": created_at.isoformat() if created_at else None,
                 "qty": float(qty or 0),
                 "lines": int(lines or 0),
             }
@@ -1503,6 +1553,7 @@ def convert_to_draft_shipment(
     override_reason: Optional[str] = None,
     line_quantities: Optional[dict] = None,
     container_size_id: Optional[str] = None,
+    packing_row_ids: Optional[list[str]] = None,
 ) -> dict:
     """One or more proforma invoices become ONE NEW draft inbound shipment (the packing-list
     amendment, `PLAN-scm-proforma-to-spo.md`): "pick one or more PIs -> the system creates a
@@ -1517,7 +1568,8 @@ def convert_to_draft_shipment(
     to which size is the default still applies to a shipment nobody explicitly sized.
 
     Not built here: the real packing list replacing/reconciling this draft (that is the
-    EXISTING upload path, `packing_list_service.apply`, unchanged by this function - a draft's
+    EXISTING upload path, `supplier_document_service.apply` (S2/S3), unchanged by this
+    function - a draft's
     `shipment_number` is its own series so it never collides with what a real upload derives,
     and nothing here teaches that upload to find this row; reconciling onto the exact draft
     is follow-up work) and the "Create SPO" action off the shipment (the next slice).
@@ -1645,8 +1697,109 @@ def convert_to_draft_shipment(
     # settled and repeatable.
     members_by_set = _set_members(db, {ln.product_set_id for ln in lines if ln.product_set_id})
 
+    # S4 (AC-D2): convert writes one shipment line per MATCHED packing row when the PI
+    # line has any; a line with none converts as before (unchanged, below). Grouped by
+    # the PI LINE the row matched, since that is the grain a single `line_quantities`/
+    # `packing_row_ids` request names.
+    packing_rows_by_line: dict[str, list[ProformaInvoicePackingLine]] = {}
+    #: Every row of the invoice, matched or not - AC-D2c's own header carry-over reads a
+    #: PI's container off whichever of its rows states one, regardless of match_state
+    #: (a dismissed spare still shipped in the same box).
+    rows_by_invoice: dict[str, list[ProformaInvoicePackingLine]] = {}
+    #: AC-D3 - a dismissed or unmatched row never becomes a shipment line, but its
+    #: description is named on the shipment's own notes so customs filler is not lost.
+    unplaced_row_descriptions: list[str] = []
+    #: Every PI line that has a packing row AT ALL (any match_state) - such a line never
+    #: falls back to the (product, supplier) grouping below, even when none of its own
+    #: rows are matched (ACC-KT2001 dismissed BEFORE apply, AC-D3): a line whose only row
+    #: is dismissed has nothing left to place, not "no packing list at all".
+    lines_with_rows: set[str] = set()
+    for row in (
+        db.query(ProformaInvoicePackingLine)
+        .filter(ProformaInvoicePackingLine.proforma_invoice_id.in_(ids))
+        .order_by(ProformaInvoicePackingLine.row_no)
+        .all()
+    ):
+        rows_by_invoice.setdefault(str(row.proforma_invoice_id), []).append(row)
+        if row.proforma_invoice_line_id:
+            lines_with_rows.add(str(row.proforma_invoice_line_id))
+        if row.match_state == "matched" and row.proforma_invoice_line_id:
+            packing_rows_by_line.setdefault(str(row.proforma_invoice_line_id), []).append(row)
+        elif row.match_state in ("dismissed", "unmatched"):
+            unplaced_row_descriptions.append(row.item_code or row.description or "")
+    selected_row_ids = {str(i) for i in (packing_row_ids or [])} or None
+    # Every packing row of these invoices that is ALREADY in a box (ruling 31). One query
+    # for the whole convert: the link table records the row it placed, so "what is left" is
+    # a set difference rather than arithmetic over an order nobody promised.
+    placed_row_ids = {
+        str(row[0])
+        for row in db.query(ProformaInvoiceShipmentLink.proforma_invoice_packing_line_id)
+        .filter(
+            ProformaInvoiceShipmentLink.proforma_invoice_id.in_(ids),
+            ProformaInvoiceShipmentLink.proforma_invoice_packing_line_id.isnot(None),
+            ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+        )
+        .all()
+    }
+
     for ln in lines:
         invoice = found_by_id[str(ln.invoice_id)]
+        if str(ln.id) in lines_with_rows:
+            rows_for_line = packing_rows_by_line.get(str(ln.id), [])
+            if str(ln.id) in requested:
+                raise AppException(
+                    422,
+                    f"{ln.item_code} places whole packing rows, not a partial quantity.",
+                    code="packing_rows_place_whole",
+                )
+            # What a PREVIOUS convert already took (AC-D2b, ruling 31): the ROWS that have a
+            # link, not a quantity walked over the line's rows in order. That walk read "50
+            # placed" as "the FIRST row is placed", which is only true when the selection
+            # was a prefix of the list - untick the first carton and the next convert
+            # shipped it twice while the other never shipped at all.
+            selected_rows = [
+                r for r in rows_for_line
+                if str(r.id) not in placed_row_ids
+                and (selected_row_ids is None or str(r.id) in selected_row_ids)
+            ]
+            for row in selected_rows:
+                qty = _dec(row.qty) if row.qty is not None else Decimal("0")
+                key = ("row", str(row.id))
+                group = {
+                    "product_id": str(row.product_id or ln.product_id),
+                    "supplier_id": str(invoice.supplier_id) if invoice.supplier_id else None,
+                    "quantity_shipped": qty,
+                    "unit_cost": ln.unit_price,
+                    "currency": invoice.currency,
+                    "cbm": row.cbm_total,
+                    "cartons": row.cartons,
+                    "measurements": {
+                        k: v
+                        for k, v in (
+                            ("material", row.material),
+                            ("pcs_per_carton", row.pcs_per_carton),
+                            ("carton_length_cm", row.carton_length_cm),
+                            ("carton_width_cm", row.carton_width_cm),
+                            ("carton_height_cm", row.carton_height_cm),
+                            ("net_weight_per_carton", row.net_weight),
+                            ("gross_weight_per_carton", row.gross_weight),
+                        )
+                        if v is not None
+                    },
+                    "remarks": [row.remark] if row.remark else [],
+                    "description": ln.description,
+                    "source_lines": [ln],
+                    "placed": {str(ln.id): float(qty)},
+                    # WHICH row this line is, so the link records it (ruling 31).
+                    "packing_row_id": str(row.id),
+                }
+                groups[key] = group
+                product_ids.add(group["product_id"])
+                placing_cbm = _f(row.cbm_total)
+                if placing_cbm is not None:
+                    placing[str(ln.invoice_id)] = placing.get(str(ln.invoice_id), 0.0) + placing_cbm
+            continue
+
         if ln.product_id is None and ln.product_set_id is None:
             skipped.append((ln, "No catalogue product matches this line's item code."))
             continue
@@ -1816,6 +1969,31 @@ def convert_to_draft_shipment(
 
     invoice_dates = [inv.invoice_date for inv in invoices if inv.invoice_date]
 
+    # AC-D2c: the header carries over when every selected PI names ONE container -
+    # its own packing rows first (a container can differ from the header when a PI was
+    # applied before the real container was assigned), else its header `container_ref`.
+    # Seal/BL live on the header alone (rows carry no seal/BL of their own).
+    def _pi_container(inv: ProformaInvoice) -> Optional[str]:
+        containers = {
+            r.container_no for r in rows_by_invoice.get(str(inv.id), []) if r.container_no
+        }
+        return next(iter(containers)) if len(containers) == 1 else inv.container_ref
+
+    per_invoice_containers = {str(inv.id): _pi_container(inv) for inv in invoices}
+    distinct_containers = {v for v in per_invoice_containers.values() if v}
+    header_conflicts: list[str] = []
+    carry_container = carry_seal = carry_bl = None
+    carry_consignee = None
+    if len(distinct_containers) == 1:
+        carry_container = next(iter(distinct_containers))
+        carry_seal = next((inv.seal_ref for inv in invoices if inv.seal_ref), None)
+        carry_bl = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
+        carry_consignee = next(
+            (inv.consignee_ref for inv in invoices if inv.consignee_ref), None
+        )
+    elif len(distinct_containers) > 1:
+        header_conflicts.append("container_number")
+
     # A NEW packing list, every time (Q6). "Add to an existing draft" is gone: a convert
     # that could land in somebody else's box needed the box picking, and the pick was the
     # dialog this screen no longer has.
@@ -1823,14 +2001,30 @@ def convert_to_draft_shipment(
         id=_uuid(),
         shipment_number=_draft_shipment_number(db),
         shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
+        shipping_container_number=carry_container,
+        seal_number=carry_seal,
+        # `提单号` is the forwarder's SO, not a bill of lading (Q1 ruling, 6 Sep) - the
+        # same field `_header_of` already fills from it on the upload preview.
+        forwarder_order_ref=carry_bl,
+        consignee=carry_consignee,
         shipment_status=_DRAFT_SHIPMENT_STATUS,
         created_by=created_by,
         container_size_id=str(container_size_id) if container_size_id else None,
     )
     db.add(shipment)
     db.flush()
-    # `notes` is left alone either way (R17): which invoices a container was drafted from is
+    # `notes` is otherwise left alone (R17): which invoices a container was drafted from is
     # the Proforma invoices tab's answer, and it is a table's worth rather than a sentence.
+    # AC-D3's own line is the one exception - a dismissed or unmatched packing row never
+    # becomes a shipment line, and its description would otherwise vanish entirely rather
+    # than just not being billed.
+    if unplaced_row_descriptions:
+        named = ", ".join(sorted(set(d for d in unplaced_row_descriptions if d)))
+        if named:
+            shipment.notes = (
+                (shipment.notes + "\n" if shipment.notes else "")
+                + f"Supplier packing list also lists: {named}"
+            )
     _record_over_capacity(db, shipment.id, over, override_reason, created_by)
 
     # The box is new, so nothing is on it yet: two invoices naming the same model were
@@ -1887,6 +2081,10 @@ def convert_to_draft_shipment(
                     # HOW MUCH of the line came here. The line's own quantity is no longer
                     # the answer: since Q9 it may be split across two containers.
                     qty=group["placed"].get(str(source_line.id)),
+                    # And WHICH packing row, where one was placed (ruling 31) - what the
+                    # next convert reads to know this carton is already in a box. NULL for
+                    # a line-grain placement, which names no row.
+                    proforma_invoice_packing_line_id=group.get("packing_row_id"),
                 )
             )
     # A skip is recorded ONCE per line. A repeat convert of the same invoice would otherwise
@@ -1935,6 +2133,10 @@ def convert_to_draft_shipment(
         "supplier_id": str(shipment.supplier_id) if shipment.supplier_id else None,
         "lines_created": len(groups),
         "lines_skipped": len(skipped),
+        # AC-D2c: which header fields were left blank because the selected PIs disagree,
+        # named so the dialog can show the one line rather than a blank field with no
+        # explanation.
+        "header_conflicts": header_conflicts,
         # Invoices in the selection that had nothing left to place. Named rather than
         # silently dropped, so the caller can say which ones did not move (AC-F7).
         "skipped_invoices": skipped_invoices,
@@ -2093,8 +2295,8 @@ def bulk_delete(db: Session, invoice_ids: list[str]) -> dict:
     list; before this the list said "Not converted" and the delete said "already converted"
     about the same invoice (captain, 27 Aug, three all-skipped PIs on the dev copy). Cascading
     the link instead would silently sever a draft shipment's line from the document that
-    justified it, and a shipment already visible on `/scm/incoming` losing its "why" with no
-    trace is worse than a delete the operator has to go and untangle by hand (delete the
+    justified it, and a shipment already visible on the packing lists page losing its "why"
+    with no trace is worse than a delete the operator has to go and untangle by hand (delete the
     shipment first, or accept the PI stays on file). Named per invoice so the caller knows
     exactly which ones were blocked and why, rather than the batch failing outright.
     """
@@ -2711,8 +2913,9 @@ def list_for_supplier(
 
     needle = (query or "").strip()
     if needle:
-        # The four things somebody has in their hand when they come looking for an invoice:
-        # its number, whose it is, which box it went in and which bill of lading covers it.
+        # The five things somebody has in their hand when they come looking for an invoice:
+        # our number, the supplier's own reference, whose it is, which box it went in and
+        # which bill of lading covers it.
         # The supplier is matched through a scoped subquery rather than a join, so the
         # company filter the ORM puts on `Supplier` still applies and the page count below
         # stays one query.
@@ -2727,6 +2930,9 @@ def list_for_supplier(
         )
         q = q.filter(
             func.lower(ProformaInvoice.pi_number).like(func.lower(like))
+            # Ours and theirs both: Ms Tee has the supplier's own number in the email in
+            # front of her far more often than she has ours (AC-A5).
+            | func.lower(ProformaInvoice.supplier_ref).like(func.lower(like))
             | func.lower(ProformaInvoice.container_ref).like(func.lower(like))
             | func.lower(ProformaInvoice.bl_ref).like(func.lower(like))
             | ProformaInvoice.supplier_id.in_(db.query(supplier_ids.c.id))
@@ -2840,9 +3046,18 @@ def serialize(
         "supplier_code": supplier_code,
         "supplier_name": supplier_name,
         "pi_number": invoice.pi_number,
+        # What the SUPPLIER calls this document (AC-A2/AC-A5). Ours is `pi_number`; this is
+        # the number Ms Tee quotes back to the factory, and the list column and header meta
+        # both read it, so it belongs on the payload rather than only in the identity key.
+        "supplier_ref": invoice.supplier_ref,
         "invoice_date": invoice.invoice_date.isoformat() if invoice.invoice_date else None,
         "currency": invoice.currency or None,
         "container_no": invoice.container_ref,
+        # The seal the packing list stated, carried onto the draft at convert (AC-D2c) and
+        # shown beside the container it belongs to.
+        "seal_no": invoice.seal_ref,
+        # Who the document bills (ruling 28), carried onto the draft with the other three.
+        "consignee": invoice.consignee_ref,
         "bl_no": invoice.bl_ref,
         "total_amount": _f(invoice.total_amount),
         "line_count": invoice.line_count,
@@ -3058,6 +3273,93 @@ def serialize(
         }
         for ln in lines
     ]
+
+    # S2 (AC-B9/B11): the supplier's own packing rows, read off the SAME detail payload -
+    # the FE derives the Packed column and the tab's own roll-up from this array itself
+    # (`packedQtyForLine`/`rollupForLine`), never a second GET.
+    packing_rows = (
+        db.query(ProformaInvoicePackingLine)
+        .filter(ProformaInvoicePackingLine.proforma_invoice_id == invoice.id)
+        .order_by(ProformaInvoicePackingLine.row_no)
+        .all()
+    )
+    out["packing_lines"] = [
+        {
+            "id": str(r.id),
+            "proforma_invoice_line_id": (
+                str(r.proforma_invoice_line_id) if r.proforma_invoice_line_id else None
+            ),
+            "row_no": r.row_no,
+            "item_code": r.item_code,
+            "supplier_code": r.supplier_code,
+            "description": r.description,
+            "product_id": str(r.product_id) if r.product_id else None,
+            "product_set_id": str(r.product_set_id) if r.product_set_id else None,
+            "qty": _f(r.qty),
+            "cartons": _f(r.cartons),
+            "pcs_per_carton": _f(r.pcs_per_carton),
+            "carton_length_cm": _f(r.carton_length_cm),
+            "carton_width_cm": _f(r.carton_width_cm),
+            "carton_height_cm": _f(r.carton_height_cm),
+            "cbm_per_carton": _f(r.cbm_per_carton),
+            "cbm_total": _f(r.cbm_total),
+            "net_weight": _f(r.net_weight),
+            "gross_weight": _f(r.gross_weight),
+            "total_net_weight": _f(r.total_net_weight),
+            "total_gross_weight": _f(r.total_gross_weight),
+            "material": r.material,
+            "container_no": r.container_no,
+            "remark": r.remark,
+            "match_state": r.match_state,
+            # AC-B6's own name for "resolved a product no line of this PI holds, or none at
+            # all" - never stored, since `match_state` already says all a re-upload needs to
+            # know; computed here only because the FE's own row reads it.
+            "unmatched_reason": "not_on_invoice" if r.match_state == "unmatched" else None,
+        }
+        for r in packing_rows
+    ]
+    # AC-B14: every file filed against this PI (`EntityAttachmentLink`, the same generic
+    # linkage `inbound_shipment` already uses) - the General tab's Source files block.
+    # `packing_file` is the MOST RECENT one filed under the Packing List type specifically
+    # (AC-B10's own header/empty-state), never a second GET.
+    from app.services.entity_attachment_service import EntityAttachmentService
+    from app.services.scm.packing_list_service import _PACKING_LIST_TYPE_NAME
+
+    links = EntityAttachmentService(db).list_links("proforma_invoice", str(invoice.id))
+    out["source_files"] = [
+        {
+            "id": str(link.id),
+            "name": getattr(link.attachment, "original_filename", None),
+            "type": (
+                link.attachment.attachment_type.type_name
+                if link.attachment and link.attachment.attachment_type
+                else None
+            ),
+            "uploaded_at": (
+                link.attachment.uploaded_at.isoformat()
+                if link.attachment and link.attachment.uploaded_at
+                else link.created_at.isoformat()
+            ),
+            "download_url": f"/api/v1/resource-management/attachments/{link.attachment_id}/download",
+        }
+        for link in links
+        if link.attachment is not None
+    ]
+    # The file the packing rows came off, for the tab's header (AC-B10). The Packing List
+    # type names it outright; a COMBINED sheet (Jinbaichuan) is ONE file filed once, under
+    # the invoice's own type, and it is the packing file too - so when this PI holds packing
+    # rows and nothing is filed under the packing type, the newest source file is what fed
+    # them. `zip(out["source_files"], links)` used to pair these two lists positionally,
+    # which is only correct while no link has a missing attachment - and `source_files`
+    # drops exactly those.
+    packing_files = [f for f in out["source_files"] if f["type"] == _PACKING_LIST_TYPE_NAME]
+    if not packing_files and out["packing_lines"] and out["source_files"]:
+        packing_files = out["source_files"][-1:]
+    out["packing_file"] = (
+        {"name": packing_files[-1]["name"], "uploaded_at": packing_files[-1]["uploaded_at"]}
+        if packing_files
+        else None
+    )
     return out
 
 
