@@ -1424,8 +1424,8 @@ def test_unrecognised_label_clarifies_as_a_document_type():
     question (the unrecognised word names a FILE LABEL, not a class/product_type
     word).
     """
-    from app.models.product import UnitOfMeasure
-    from app.models.resources import AttachmentType
+    from app.models.product import ProductAttachment, UnitOfMeasure
+    from app.models.resources import Attachment, AttachmentType
     from tests._pg_fixture import unique_code
 
     with blank_session() as db:
@@ -1434,14 +1434,31 @@ def test_unrecognised_label_clarifies_as_a_document_type():
         uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=unique_code("UOM")[:20], uom_name="Each")
         db.add(uom)
         db.flush()
-        _basin_product(db, category_id=category.id, uom_id=uom.id)
+        basin = _basin_product(db, category_id=category.id, uom_id=uom.id)
+        attachment_type = AttachmentType(
+            id=str(uuid.uuid4()),
+            code="PRODUCT_PHOTOS",
+            type_name="Product Photos",
+            allowed_extensions="jpg,png",
+        )
+        db.add(attachment_type)
+        db.flush()
+        # AC-1329's product-facing rule: a type must appear in `product_attachments`
+        # to be listed - linked to the basin here the same way `_linked_type` does
+        # in `test_document_types_listed_are_product_facing_only`, or this type is
+        # correctly excluded and the "Product Photos" assertion below fails for a
+        # reason unrelated to what this test is actually about.
+        attachment = Attachment(
+            id=str(uuid.uuid4()),
+            original_filename="basin-photo.jpg",
+            stored_filename="basin-photo.jpg",
+            file_path="https://cdn/basin-photo.jpg",
+            attachment_type_id=attachment_type.id,
+        )
+        db.add(attachment)
+        db.flush()
         db.add(
-            AttachmentType(
-                id=str(uuid.uuid4()),
-                code="PRODUCT_PHOTOS",
-                type_name="Product Photos",
-                allowed_extensions="jpg,png",
-            )
+            ProductAttachment(id=str(uuid.uuid4()), product_id=basin.id, attachment_id=attachment.id)
         )
         db.commit()
 
