@@ -69,7 +69,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import func, nullslast, or_
+from sqlalchemy import func, nullslast, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -1082,9 +1082,16 @@ class ProjectSupplyService:
         composed = self.compose_lines(entries)
         composed.update(covered_alone)
         units = self.unit_totals(entries)
+        # S3 (`PLAN-local-supplier-oi-routing.md`, AC-2.14): ONE call for the whole sheet,
+        # covering every line's product - never a per-line lookup.
+        origin_by_product = buy_origin_by_product(
+            self.db,
+            {str(facts[str(line.id)].product_id) for line in lines if facts[str(line.id)].product_id},
+        )
         payload_lines: List[Dict[str, Any]] = []
         for line in lines:
             fact = facts[str(line.id)]
+            buy_origin = origin_by_product.get(str(fact.product_id), "overseas")
             if str(line.id) in covered_ids:
                 # Composed above, on its own: it competes with nobody, having already won.
                 units[str(line.id)] = (max(_dec(fact.open_qty), _ZERO), 1)
@@ -1096,6 +1103,7 @@ class ProjectSupplyService:
                     self._serialize_line(
                         fact, (), None,
                         unit_qty=unit_qty, unit_line_count=unit_line_count,
+                        buy_origin=buy_origin,
                     )
                 )
                 continue
@@ -1105,6 +1113,7 @@ class ProjectSupplyService:
                     fact, components, frozen.get(str(line.id)),
                     unit_qty=unit_qty, unit_line_count=unit_line_count,
                     options=composed[str(line.id)][4],
+                    buy_origin=buy_origin,
                 )
             )
 
@@ -3600,6 +3609,7 @@ class ProjectSupplyService:
         unit_qty: Optional[Decimal] = None,
         unit_line_count: int = 1,
         options: Sequence[Option] = (),
+        buy_origin: Optional[str] = None,
     ) -> Dict[str, Any]:
         line = fact.line
         return {
@@ -3644,6 +3654,10 @@ class ProjectSupplyService:
             "unit_line_count": unit_line_count,
             "item_code": fact.item_code,
             "product_id": fact.product_id,
+            # S3 (`PLAN-local-supplier-oi-routing.md`, AC-2.14): every line carries it,
+            # filled from the SAME `buy_origin_by_product` call `proposal_for` makes once
+            # for the whole sheet - never a second per-line lookup.
+            "buy_origin": buy_origin,
             "description": line.description,
             "uom": line.uom,
             "open_qty": qty_text(fact.open_qty),
@@ -8650,7 +8664,66 @@ class ProjectSupplyService:
         if step_two:
             for row in ranked:
                 row["recommended"] = False
-        return step_two + ranked
+        candidates = step_two + ranked
+        # S4 (`PLAN-local-supplier-oi-routing.md`, AC-2.20): the per-order sheet's own
+        # `BorrowCandidate.location`, the board's `_donors_for` wrapper is not on this call
+        # path at all - `SupplyLineCard`'s Borrow modal reads THIS list directly. Built from
+        # the SAME pile figures already spread onto each candidate above (`_donor_pile`,
+        # cached per request), plus one small open-PO read per donor - donor lists run to a
+        # handful of rows, never hundreds.
+        for candidate in candidates:
+            warehouse_id = candidate.get("warehouse_id")
+            if not warehouse_id:
+                continue
+            candidate["location"] = {
+                "location": candidate.get("warehouse_code"),
+                # No group/pool classification is available on this call path (unlike the
+                # board's own `_location`), so every donor here reads as an outside donor.
+                # A site pool among them still states its real figures; only the WHERE tag
+                # is a simplification.
+                "where": "other_group",
+                "product_id": fact.product_id,
+                "warehouse_id": warehouse_id,
+                # A donor has no demand OF ITS OWN in this shape - `qty`/`qty_demand` are
+                # required on `BoardCellLocation` and read 0 the same way the board's own
+                # `_location` reads them for a cited donor it was given no rows for.
+                "qty": "0",
+                "qty_demand": "0",
+                "qty_on_hand": candidate.get("qty_on_hand"),
+                "so_qty": candidate.get("so_qty"),
+                "spo_qty": candidate.get("spo_qty"),
+                "available_qty": candidate.get("available_qty"),
+                "po_open_qty": self._po_open_qty_for(fact.product_id, warehouse_id),
+                # No dealer share applies outside a site pool (D2, captain 3 Sep): the
+                # whole of `available_qty` is a project's to take.
+                "available_for_project": candidate.get("available_qty"),
+            }
+        return candidates
+
+    def _po_open_qty_for(self, product_id: str, warehouse_id: str) -> str:
+        """Open PURCHASE-order balance at one (product, location) (S4).
+
+        Information only, same rule the Grid Location table's own `po_open_qty` follows: a
+        purchase order reaches a project line through a link, never by sitting at the
+        location, so it is never folded into `available_qty`. Unlike the board's own
+        `_po_open` map this does not net an Order-Inquiry claim off it - donor lists run a
+        handful of rows a request, so one direct read per row costs nothing a batched map
+        would meaningfully save, and the simpler figure is a fair first cut absent a test
+        pinning the netted one.
+        """
+        row = self.db.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(pol.qty_ordered - COALESCE(pol.qty_received, 0)), 0)
+                FROM purchase_order_lines pol
+                JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                WHERE pol.product_id = :p AND pol.warehouse_id = :w
+                  AND pol.line_status = 'open'
+                """
+            ),
+            {"p": product_id, "w": warehouse_id},
+        ).scalar()
+        return qty_text(_dec(row or 0))
 
     def _order_borrow_offer_rows(
         self, fact: _LineFacts, need: Decimal = _ZERO
