@@ -523,3 +523,218 @@ def test_class_word_in_query_scopes_the_described_set(client, db):
     )
     assert unscoped.status_code == 200
     assert unscoped.json()["predicate"]["qualifying_total"] == 2, unscoped.json()["predicate"]
+
+
+# --------------------------------------------------------------------------- #
+# Fix round (console findings, 11 Sep 2026, committed 3779b32d6) - AC-1305, C1:  #
+# the gate is a WORD/CODE shape test, never a match TIER. Today's                #
+# `_has_exact_product_match` (references.py ~line 1470) still gates on          #
+# `match_tier in ("exact", "head_code")` alone, so a code-shaped PREFIX match    #
+# (tier "prefix", never in that tuple) sails through and wrongly runs HAS, and   #
+# a WORD that happens to hit an exact-tier product-code equality (a product     #
+# literally coded "SORENTO") wrongly blocks it. Both are console-measured,      #
+# not theoretical: "check stock srtwc286" (7 code variants, prefix tier) turned #
+# into a set answer with a header, and "which sorento bidet has cert" stayed a  #
+# picker because "sorento" resolved exact by CODE, not because it named a full  #
+# product.                                                                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_code_shaped_prefix_token_keeps_the_forward_path(client, db):
+    """AC-1305: a CODE-SHAPED token (letters+digits mixed - "zztwc286") that
+    resolves via PREFIX (not exact/head_code) to seven code variants must still
+    block HAS - the response with `require` stays byte-identical to the same
+    request without it. Contrast in the same test: a WORD token ("bidet",
+    substring tier) with `require` still runs HAS - `predicate` present.
+
+    RED: `_has_exact_product_match` only recognises tier in ("exact",
+    "head_code"). "zztwc286" resolves at tier "prefix", which is not in that
+    tuple, so the function returns False, `require` is NOT skipped, and the
+    prefix case wrongly grows a `predicate` block today.
+    """
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+    variants = [
+        "ZZTWC286-SH", "ZZTWC286-SH-150", "ZZTWC286-SH-200", "ZZTWC286-BL",
+        "ZZTWC286-BL-150", "ZZTWC286-WH", "ZZTWC286-WH-CR",
+    ]
+    for code in variants:
+        db.add(
+            Product(
+                id=str(uuid.uuid4()),
+                product_code=code,
+                product_name=code,
+                description="SORENTO WATER CLOSET SUITE",
+                category_id=cat.id,
+                base_uom_id=uom.id,
+                list_price=Decimal("1.00"),
+            )
+        )
+    db.flush()
+
+    with_require = client.post(
+        ENDPOINT,
+        json={"query": "zztwc286", "tokens": ["zztwc286"], "require": {"stock": True}},
+    )
+    without_require = client.post(
+        ENDPOINT,
+        json={"query": "zztwc286", "tokens": ["zztwc286"]},
+    )
+    assert with_require.status_code == 200
+    assert without_require.status_code == 200
+    with_body = with_require.json()
+    without_body = without_require.json()
+    with_body.pop("elapsed_ms", None)
+    without_body.pop("elapsed_ms", None)
+    assert with_body == without_body
+    assert "predicate" not in with_body
+
+    # Contrast: a WORD token, substring tier, still runs HAS.
+    _three_bidets(db)
+    word_response = client.post(
+        ENDPOINT,
+        json={"query": "bidet", "tokens": ["bidet"], "require": {"certificate": True}},
+    )
+    assert word_response.status_code == 200
+    assert "predicate" in word_response.json()
+
+
+def test_word_token_with_an_exact_name_hit_does_not_block_has(client, db):
+    """AC-1305: a WORD token that happens to resolve at the "exact" tier - a
+    product literally coded "SORENTO" (case-insensitive equality is the only way
+    a product probe assigns "exact") - must never block HAS: the shape test is
+    the TOKEN's own, not the tier it happened to resolve at. `require` still
+    runs, `predicate` present.
+
+    RED: `_has_exact_product_match` returns True for ANY product match at tier
+    "exact", whatever shape the token is - "sorento" blocks `require` today,
+    same as a real code would, so `predicate` is wrongly absent.
+    """
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+    db.add(
+        Product(
+            id=str(uuid.uuid4()),
+            product_code="SORENTO",
+            product_name="SORENTO",
+            description="SORENTO BRAND PLACEHOLDER ROW",
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+        )
+    )
+    db.flush()
+    _three_bidets(db)
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "sorento bidet",
+            "tokens": ["sorento", "bidet"],
+            "require": {"certificate": True},
+        },
+    )
+    assert response.status_code == 200
+    assert "predicate" in response.json(), response.json()
+
+
+# --------------------------------------------------------------------------- #
+# Fix round - AC-1306, C2: the scope term comes from the ENTITY the head        #
+# retyped (a category noun -> an unresolved product token), never from taking   #
+# every leftover content word in the raw sentence as one joined phrase. Both    #
+# cases below currently reproduce green under direct construction (see the      #
+# tester's own report) - kept in the suite as the AC-1306 regression guard the  #
+# captain named, not withdrawn, but flagged HONESTLY per each docstring rather   #
+# than forced red: this file's job is the acceptance criterion, and a defect     #
+# that does not reproduce under the given inputs is itself a finding to hand     #
+# back, not a reason to invent different inputs until something breaks.          #
+# --------------------------------------------------------------------------- #
+
+
+def test_scope_term_comes_from_the_entity_not_the_sentence(client, db):
+    """AC-1306/C2: a certified class-Tap product and a certified class-Wash-Basin
+    product; "which tap has cert" with `tokens: ["tap"]` (the head's retype of a
+    category entity into an unresolved product token) and `predicate_words`
+    covering every cert-word variant must scope to ONLY the tap
+    (`qualifying_total == 1`), never report the compound "tap cert" (or "tap
+    certificate") in `unrecognized_terms`. Second case: the same world, `tokens:
+    []` (no product token sent at all - the plain chatbot-lane shape), query
+    "which tap has certificate" instead - same result.
+
+    NOT RED as constructed - measured directly against this exact world and
+    these exact parameters (`git show`-able probe, dropped after confirming):
+    both cases already return `qualifying_total == 1` and
+    `unrecognized_terms == []` today. `_has_turn_free_terms`
+    (`app/api/v1/system/references.py`) already strips `predicate_words` from
+    `query_text` before calling `_content_words`, and `_PHRASE_STOPWORDS`
+    already carries "which" and "has" (A2), so neither case's remainder ever
+    contains more than the bare class word "tap". Reported to the captain as a
+    finding rather than forced: the console defect this AC names may already be
+    fixed by the C2 repair commit (`b7833f48c`, which landed before the console
+    findings were measured), or it needs an input shape this construction does
+    not reach. Kept as the regression guard AC-1306 asks for.
+    """
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+
+    def _certified_tail_class(code: str, description: str) -> Product:
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            description=description,
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        from app.models.certificate import Certificate, CertificateProduct
+
+        cert = Certificate(
+            id=str(uuid.uuid4()),
+            scheme="ZZT-SIRIM",
+            certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+            status="active",
+        )
+        db.add(cert)
+        db.flush()
+        db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+        db.flush()
+        return product
+
+    tap = _certified_tail_class("ZZTSCOPE1", "ZZT CHROME TAP")
+    _certified_tail_class("ZZTSCOPE2", "ZZT WHITE WASH BASIN")
+
+    case1 = client.post(
+        ENDPOINT,
+        json={
+            "query": "which tap has cert",
+            "tokens": ["tap"],
+            "require": {"certificate": True},
+            "predicate_words": ["cert", "certificate", "Certification"],
+        },
+    )
+    assert case1.status_code == 200
+    predicate1 = case1.json()["predicate"]
+    assert predicate1["qualifying_total"] == 1, predicate1
+    assert predicate1["unrecognized_terms"] == [], predicate1
+    assert "tap cert" not in predicate1["unrecognized_terms"]
+    assert "tap certificate" not in predicate1["unrecognized_terms"]
+
+    case2 = client.post(
+        ENDPOINT,
+        json={
+            "query": "which tap has certificate",
+            "tokens": [],
+            "require": {"certificate": True},
+            "predicate_words": ["certificate", "Certification"],
+        },
+    )
+    assert case2.status_code == 200
+    predicate2 = case2.json()["predicate"]
+    assert predicate2["qualifying_total"] == 1, predicate2
+    assert predicate2["unrecognized_terms"] == [], predicate2
+    assert "tap cert" not in predicate2["unrecognized_terms"]
+    assert "tap certificate" not in predicate2["unrecognized_terms"]

@@ -192,11 +192,21 @@ def test_gate_bypasses_ambiguity_and_subject_block_when_predicate_present():
 
 # --------------------------------------------------------------------------- #
 # E1 - AC-1315: a HAS turn's fetch passes every qualifying id to the SAME domain #
-# tool, limit=5.                                                                #
+# tool.                                                                         #
+#                                                                                #
+# AC-1316 REVISED (console findings, 11 Sep 2026, committed 3779b32d6): "the    #
+# tool's row limit stays at its default" - a page is five PRODUCTS, never five  #
+# ROWS (measured live: `limit=5` on the stock tool cut the answer to 5          #
+# warehouse rows spanning 4 products under a header saying "Showing 5"). The    #
+# `assert args.get("limit") == 5` this test used to carry is the SUPERSEDED     #
+# half of that AC; fixed here in the same round as the new                     #
+# `test_has_fetch_pages_five_products_not_five_rows` below, which is the one    #
+# that actually proves the id-slicing this world (3 ids, all shown) is too      #
+# small to prove.                                                              #
 # --------------------------------------------------------------------------- #
 
 
-def test_has_turn_fetch_passes_all_ids_to_the_domain_tool_with_limit_5():
+def test_has_turn_fetch_passes_all_ids_to_the_domain_tool():
     from app.services.chatbot.lanes.business import fetch
     from app.services.chatbot.lanes.business.gate import run_gate
 
@@ -213,7 +223,54 @@ def test_has_turn_fetch_passes_all_ids_to_the_domain_tool_with_limit_5():
     )
 
     assert set(args.get("product_ids") or []) == set(uuids)
-    assert args.get("limit") == 5
+    assert "limit" not in args, args.get("limit")
+
+
+def test_has_fetch_pages_five_products_not_five_rows():
+    """AC-1315/AC-1316 (console finding, 11 Sep 2026): with SEVEN qualifying
+    product ids the fetch step must carry `product_ids` == the FIRST FIVE (a
+    page of PRODUCTS) and must NOT carry `limit: 5` at all (the tool's row
+    limit stays at its own default) - `_predicate_world`'s own three-id world
+    is too small to prove this: three ids all fit on one page either way, so
+    the same three would appear whether the code slices to five or not. Same
+    for both domains named in the console finding: the stock tool (rows can
+    outnumber products) and the cert tool (files per product).
+
+    RED: `fetch.py`'s own `entity_ids_transformer` sets `out["limit"] = 5`
+    unconditionally whenever `trig.get("predicate")` is not None (no product
+    slicing exists anywhere in the function), so today ALL SEVEN ids land in
+    `product_ids` (not sliced to five) AND `limit` is wrongly present at 5.
+    """
+    from app.services.chatbot.lanes.business import fetch
+
+    ids = [str(uuid.uuid4()) for _ in range(7)]
+    entities = [
+        {"uuid": pid, "entity_type": "product", "canonical_code": f"ZZT-PAGE-{i}"}
+        for i, pid in enumerate(ids)
+    ]
+    predicate = {"require": {"stock": True}, "qualifying_total": 7, "truncated": False, "unrecognized_terms": []}
+
+    stock_args = fetch.entity_ids_transformer(
+        {
+            "entities": entities,
+            "tool": "crm_inventory_stock_balance_list",
+            "semantic_input": {"contact_id": "1", "space_id": "364817"},
+            "predicate": predicate,
+        }
+    )
+    assert stock_args.get("product_ids") == ids[:5], stock_args.get("product_ids")
+    assert "limit" not in stock_args, stock_args.get("limit")
+
+    cert_args = fetch.entity_ids_transformer(
+        {
+            "entities": entities,
+            "tool": "crm_master_product_attachments_list",
+            "semantic_input": {"contact_id": "1", "space_id": "364817"},
+            "predicate": {**predicate, "require": {"certificate": True}},
+        }
+    )
+    assert cert_args.get("product_ids") == ids[:5], cert_args.get("product_ids")
+    assert "limit" not in cert_args, cert_args.get("limit")
 
 
 # --------------------------------------------------------------------------- #
@@ -1851,3 +1908,189 @@ def test_ids_are_capped_at_200_and_the_reply_asks_to_narrow(session_factory, stu
 
     variables_b = _s4_session_vars(session_factory, contact_id_b).get("variables") or {}
     assert variables_b.get("selection_context") != "set_page", variables_b
+
+
+# --------------------------------------------------------------------------- #
+# Fix round (console findings, 11 Sep 2026, committed 3779b32d6) - AC-1316,     #
+# AC-1320: a "category" entity the head retypes into an unresolved PRODUCT      #
+# token must still yield a set answer, never fall through to a clarify; and     #
+# a term with genuinely NO nearest class-label candidate must offer the three   #
+# most common labels, never the empty "Did you mean the product types I        #
+# know?".                                                                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_category_entity_yields_a_set_answer_not_a_clarify():
+    """AC-1316/AC-1320: world of 3 certified class-Tap products and 1 certified
+    class-Wash-Basin product (product codes carry NO literal "tap"/"basin"
+    substring, so a pass here cannot be the accidental LOOKUP-by-code-substring
+    shortcut S3's own module banner warns about - the scoping has to come from
+    the class binding). Message "which tap has cert" with an EXPLICIT product
+    entity {"hint": "product", "raw": "tap"} that will not resolve (the shape
+    the head produces when it retypes a parser "category" entity) plus the
+    attachment_type entity carrying a `canonical_code` - reply opens "3 taps
+    have certificates." and never says "I don't know" anywhere.
+
+    NOT RED as constructed - measured directly against this exact world and
+    entity shape (probe dropped after confirming): the reply already reads "3
+    taps have certificates." with no clarify text. Reported to the captain as
+    a finding rather than forced: this council finding may already be covered
+    by the existing C2/C4 wiring, or it needs a shape this construction does
+    not reach. Kept as the AC-1316/AC-1320 regression guard the captain named.
+    """
+    with blank_session() as db:
+        _seed_registry(db)
+        category_id, uom_id = _seed_category_and_uom(db)
+        from app.models.product import Product
+        from app.services.product_spec_derivation import derive_for_code
+        from tests._pg_fixture import unique_code
+
+        def _certified(description: str) -> Product:
+            code = unique_code("ZQ")[:20]
+            product = Product(
+                id=str(uuid.uuid4()),
+                product_code=code,
+                product_name=code,
+                description=f"{unique_code('ZQ')[:10]} {description}",
+                category_id=category_id,
+                base_uom_id=uom_id,
+                list_price=10,
+                is_active=True,
+            )
+            db.add(product)
+            db.flush()
+            derive_for_code(db, code)
+            _certificate_for(db, product_id=product.id)
+            return product
+
+        for _ in range(3):
+            _certified("CHROME TAP")
+        _certified("WHITE WASH BASIN")
+        db.commit()
+
+        ctx = {
+            "text": {"message": {"message": {"text": "which tap has cert"}}},
+            "contact": {"id": "999"},
+            "parse": {
+                "output": {
+                    "message_type": "business_query",
+                    "intent_hint": "check_product_attachment",
+                    "domain_hint": "product_attachment",
+                    "match_mode": "or",
+                    "access_levels": [],
+                    "entities": [
+                        {"raw": "tap", "hint": "product"},
+                        {"raw": "cert", "hint": "attachment_type", "canonical_code": "certificate"},
+                    ],
+                }
+            },
+        }
+        out, fragment = _run_has_lane(db, ctx, fake_call_tool=_cert_fake_call_tool(db))
+        assert out.get("_exit_kind") == "continue", out.get("gate_reason")
+        reply = (fragment.get("fetch") or {}).get("response") or ""
+
+    lines = reply.splitlines()
+    assert lines and lines[0] == "3 taps have certificates.", reply
+    assert "i don't know" not in reply.lower(), reply
+
+
+def test_clarify_with_no_candidate_offers_common_product_types():
+    """AC-1320: a term with NO nearest class-label candidate at all ("zzqx" -
+    `difflib.get_close_matches` against Tap / Wash Basin / Water Closet at
+    cutoff 0.6 returns nothing, and no exact word match either) must clarify
+    with "Try a product type such as <a>, <b>, <c>." naming the world's own
+    common class labels, never the contentless "Did you mean the product
+    types I know?".
+
+    RED: `not_found_error_message` (`answer.py`) has exactly one branch for
+    `qualifying_total == 0` with a non-empty `unrecognized_terms` - when
+    `predicate.suggestions` is empty it falls back to the literal string "the
+    product types I know" ("Did you mean the product types I know?"); no
+    "Try a product type such as" text exists anywhere in the file.
+    """
+    with blank_session() as db:
+        # A term nothing binds to ("zzqx") falls through every probe to the last-
+        # resort trigram fallback across EVERY entity type, including transporters
+        # - whose `similarity()` call needs `pg_trgm`, installed in `public`.
+        # `blank_session()`'s own `search_path` deliberately excludes `public` (so
+        # raw SQL cannot leak onto the real tables); appending it here is scoped to
+        # THIS test's `SET LOCAL` and never widens what any other test can reach.
+        from sqlalchemy import text as sa_text
+
+        current_search_path = db.execute(sa_text("SHOW search_path")).scalar()
+        db.execute(sa_text(f"SET LOCAL search_path TO {current_search_path}, public"))
+
+        _seed_registry(db)
+        category_id, uom_id = _seed_category_and_uom(db)
+        from app.models.product import Product
+        from app.services.product_spec_derivation import derive_for_code
+        from tests._pg_fixture import unique_code
+
+        def _seeded(description: str) -> Product:
+            code = unique_code("ZQ")[:20]
+            product = Product(
+                id=str(uuid.uuid4()),
+                product_code=code,
+                product_name=code,
+                description=f"{unique_code('ZQ')[:10]} {description}",
+                category_id=category_id,
+                base_uom_id=uom_id,
+                list_price=10,
+                is_active=True,
+            )
+            db.add(product)
+            db.flush()
+            derive_for_code(db, code)
+            _certificate_for(db, product_id=product.id)
+            return product
+
+        _seeded("CHROME TAP")
+        _seeded("WHITE WASH BASIN")
+        _seeded("AUTO WATER CLOSET")
+        db.commit()
+
+        from app.services.chatbot.lanes.business import resolve_gate
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+        from app.services.chatbot.lanes.business.services import ResolveGateServices
+        from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
+        from app.config import settings
+
+        def resolve_entity(body: dict) -> dict:
+            payload = {**body, "spec_fallback": False, "understand_phrase": False}
+            principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
+            return resolve_reference_post(ResolveReferenceRequest(**payload), current_user=principal, db=db)
+
+        services = ResolveGateServices(
+            access_types=lambda **_: [], resolve_entity=resolve_entity, probe=lambda **_: None
+        )
+
+        ctx = {
+            "text": {"message": {"message": {"text": "which zzqx has cert"}}},
+            "contact": {"id": "999"},
+            "parse": {
+                "output": {
+                    "message_type": "business_query",
+                    "intent_hint": "check_product_attachment",
+                    "domain_hint": "product_attachment",
+                    "match_mode": "or",
+                    "access_levels": [],
+                    "entities": [
+                        {"raw": "zzqx", "hint": "product"},
+                        {"raw": "cert", "hint": "attachment_type"},
+                    ],
+                }
+            },
+        }
+        out = resolve_gate.run(ctx, "resolve", {}, services=services, space_id="364817")
+        parser = ctx["parse"]["output"]
+        resolved = out.get("resolved") or {}
+        gate = out.get("gate") or {}
+
+        msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        text = (msg.get("escalate_message") or "").strip()
+
+    assert "I don't know 'zzqx' as a product type" in text, text
+    assert "Try a product type such as" in text, text
+    for label in ("tap", "wash basin", "water closet"):
+        assert label in text.lower(), text
+    assert "Did you mean the product types I know?" not in text, text
