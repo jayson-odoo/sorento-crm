@@ -880,7 +880,7 @@ class ProjectSupplyService:
         # no Borrow must not pay for three more reads. `None` means "not asked yet".
         self._pile_cache: Optional[Dict[Tuple[str, str], Dict[str, Decimal]]] = None
         # The open PURCHASE-order balance per pile, for the donor rows' own `po_open_qty`
-        # (`_po_open_facts`). Same lifetime as the pile it is read over. `None` means
+        # (`po_open_facts`). Same lifetime as the pile it is read over. `None` means
         # "not asked yet".
         self._po_open_cache: Optional[Dict[Tuple[str, str], Decimal]] = None
         # The products the current read is about, stated by whichever fact builder ran.
@@ -8762,22 +8762,36 @@ class ProjectSupplyService:
                 out[(str(product_id), str(warehouse_id))] += left
         return dict(out)
 
-    def _po_open_facts(self) -> Dict[Tuple[str, str], Decimal]:
-        """`open_po_balance` over the whole donor span, read ONCE per request.
+    def po_open_facts(
+        self,
+        *,
+        also_products: Iterable[str] = (),
+        also_warehouses: Iterable[str] = (),
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """`open_po_balance` for the whole request, read ONCE (CI fix round).
 
         `donor_location` below is called per CANDIDATE, and the board calls it for every
-        donor of every cell, so reading it per row would be two queries per row - one of
-        them an aggregate over every placed order-inquiry row in the book. The span is the
-        pile's own (`_pile_facts`), which every donor comes from, and the figure per
-        (product, location) does not depend on how wide the `IN` was: the netting is per PO
-        line. So this is the same number the board's Location table states for that
-        warehouse in the same request, at one read for the lot.
+        donor of every cell, so reading per row would be two statements per row - one of
+        them an aggregate over every placed order-inquiry row in the book. The board's own
+        Location table needs the same figures over a slightly different span (its rows can
+        name an INACTIVE warehouse a frozen decision points at, which no pile covers), so
+        it names that span with `also_*` on the FIRST call and both readers then share the
+        one map. The per-key figure does not depend on how wide the `IN` was - the netting
+        is per PO line - so a wider span changes no number, it only saves a round trip.
+
+        Ordering matters and is not incidental: the board calls this AFTER `demand_facts`,
+        which is what fixes the pile span (and resets this cache with it). Called before
+        that, it would cache a map built over an empty request.
         """
         if self._po_open_cache is None:
             pile = self._pile_facts()
             self._po_open_cache = self.open_po_balance(
-                {product_id for product_id, _warehouse_id in pile},
-                {warehouse_id for _product_id, warehouse_id in pile},
+                {product_id for product_id, _warehouse_id in pile} | {
+                    str(product_id) for product_id in also_products if product_id
+                },
+                {warehouse_id for _product_id, warehouse_id in pile} | {
+                    str(warehouse_id) for warehouse_id in also_warehouses if warehouse_id
+                },
             )
         return self._po_open_cache
 
@@ -8816,7 +8830,7 @@ class ProjectSupplyService:
             {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO},
         )
         available = pile["on_hand"] - pile["so_qty"] + pile["spo_qty"]
-        po_open = self._po_open_facts().get((product_id, warehouse_id), _ZERO)
+        po_open = self.po_open_facts().get((product_id, warehouse_id), _ZERO)
         is_pool = warehouse_id in self.site_pool_warehouses()
         if is_pool:
             where = "site_pool"

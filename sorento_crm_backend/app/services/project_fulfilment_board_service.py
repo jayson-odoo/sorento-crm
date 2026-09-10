@@ -2025,10 +2025,6 @@ class FulfilmentBoardService:
         self._held = self.supply.held_stock_by_location(product_ids)
         self._pressure = self._demand_pressure(product_ids, warehouse_ids)
         self._incoming = self.supply.incoming_by_location(product_ids, warehouse_ids)
-        # S4 (`PLAN-local-supplier-oi-routing.md`): moved onto `ProjectSupplyService` as
-        # `open_po_balance`, the ONE implementation both this board and a donor's own
-        # `donor_location` read.
-        self._po_open = self.supply.open_po_balance(product_ids, warehouse_ids)
         # Facts for every plannable row, covered ones included: a covered line is not run
         # through the ladder (its share fields come back empty, and `_apply_frozen` reads
         # none of them), but its DONORS are still read below, from the same fact - Amend on a
@@ -2053,6 +2049,18 @@ class FulfilmentBoardService:
                 for row in plannable
             ],
             exclude_line_ids=list(self._exclude_covered_line_ids) or None,
+        )
+
+        # S4 (`PLAN-local-supplier-oi-routing.md`): moved onto `ProjectSupplyService` as
+        # `open_po_balance`, the ONE implementation both this board and a donor's own
+        # `donor_location` read - and read ONCE for both through `po_open_facts`, which
+        # this call primes with the board's own span (`also_*`). A board row can name a
+        # warehouse no donor pile covers - an inactive one a frozen decision points at -
+        # so the span is the union, and the donors then read the same map rather than
+        # paying a second pair of statements for it. AFTER `demand_facts`, which is what
+        # fixes the pile span the cache is built over.
+        self._po_open = self.supply.po_open_facts(
+            also_products=product_ids, also_warehouses=warehouse_ids
         )
 
         # The pool piles behind rung 2, in AutoCount's own triple, read once for every pool a
