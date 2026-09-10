@@ -800,12 +800,12 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     if product_ids is not None:
         if not product_ids:
             return []
-        where.append("np.product_id::text = ANY(:pids)")
+        where.append("keys.product_id::text = ANY(:pids)")
         params["pids"] = [str(p) for p in product_ids]
     if warehouse_ids is not None:
         if not warehouse_ids:
             return []
-        where.append("np.warehouse_id::text = ANY(:wids)")
+        where.append("keys.warehouse_id::text = ANY(:wids)")
         params["wids"] = [str(w) for w in warehouse_ids]
 
     # The PLAN's own committed figure, on every run (`PLAN-scm-oi-handshake.md` section 3).
@@ -818,9 +818,22 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # here that could answer differently. Computed ONCE as a CTE (`cv_all`) rather than a
     # bare subquery, because G1 below reads it a second time (product admission) and a CTE
     # spares Postgres re-running the same 4-leg UNION twice.
-    cv_with = f"WITH cv_all AS ({demand.horizon_committed_select_sql()})"
+    # AC-3 (reviewer B2, Phase 3): widened INSIDE this query's own CTEs, never in the
+    # shared `scm.net_position_v` view - a widened VIEW adds all-zero rows the Stock
+    # Health dashboard (`dashboard_service._base_rows`, untouched by this lane) would read
+    # as Stockout (~347 rows measured on the prod copy). `keys` is every (product,
+    # warehouse) pair either the net-position view OR the PO book knows about, so a
+    # site-pool warehouse holding ONLY an open PO line (no stock/SPO/committed row) still
+    # gets a row here; `np` is then LEFT-joined back onto it and every value read off `np`
+    # below is COALESCEd to 0 for the pair that came from `po_ordered_v` alone.
+    cv_with = f"""WITH cv_all AS ({demand.horizon_committed_select_sql()}),
+    keys AS (
+        SELECT product_id, warehouse_id FROM scm.net_position_v
+        UNION
+        SELECT product_id, warehouse_id FROM scm.po_ordered_v
+    )"""
     cv_join = ("LEFT JOIN cv_all cv "
-               "ON cv.product_id = np.product_id AND cv.warehouse_id = np.warehouse_id")
+               "ON cv.product_id = keys.product_id AND cv.warehouse_id = keys.warehouse_id")
     committed_col = "COALESCE(cv.committed, 0) AS committed"
     committed_expr = "COALESCE(cv.committed, 0)"
     params["horizon"] = horizon
@@ -866,7 +879,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         product_admit_join = """
         JOIN (
             SELECT DISTINCT product_id FROM cv_all WHERE COALESCE(committed, 0) > 0
-        ) admitted_product ON admitted_product.product_id = np.product_id"""
+        ) admitted_product ON admitted_product.product_id = keys.product_id"""
 
     # Captain, 20 Aug: "the on hand need to consider pool quantity only ... project on
     # hand quantity is not really an actual usable quantity." `w.segment` is the test
@@ -897,14 +910,16 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # SELECT returns read the identical site-pool-scoped figure - one expression, not two
     # readings that could drift (AC-1, AC-2, AC-4, AC-5).
     is_dealer_expr = SITE_POOL_SQL
-    on_hand_expr = f"(CASE WHEN {is_dealer_expr} THEN np.quantity_on_hand ELSE 0 END)"
-    on_order_expr = f"(CASE WHEN {is_dealer_expr} THEN np.on_order ELSE 0 END)"
+    # `np` is LEFT-joined onto `keys` now (AC-3), so a PO-only pair carries NULL on every
+    # `np.*` column - COALESCEd to 0 here, the one place these two values are read.
+    on_hand_expr = f"(CASE WHEN {is_dealer_expr} THEN COALESCE(np.quantity_on_hand, 0) ELSE 0 END)"
+    on_order_expr = f"(CASE WHEN {is_dealer_expr} THEN COALESCE(np.on_order, 0) ELSE 0 END)"
     po_ordered_expr = f"(CASE WHEN {is_dealer_expr} THEN COALESCE(po.ordered, 0) ELSE 0 END)"
     net_position_col = f"({on_hand_expr} + {on_order_expr} - {committed_expr}) AS net_position"
 
     sql = text(f"""
         {cv_with}
-        SELECT np.product_id, np.warehouse_id,
+        SELECT keys.product_id, keys.warehouse_id,
                p.product_code, p.product_name, pc.category_code, p.list_price,
                -- Master-data reorder settings. Shown beside what the plan computed so the
                -- buyer can see where the two disagree; the engine does not read them.
@@ -943,19 +958,21 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                {po_ordered_expr} AS po_ordered,
                ds.avg_daily_demand, ds.demand_cv, ds.sample_days, ds.window_days,
                ic.abc_class, ic.xyz_class
-        FROM scm.net_position_v np
-        JOIN products p ON p.id = np.product_id
-        JOIN warehouses w ON w.id = np.warehouse_id
+        FROM keys
+        LEFT JOIN scm.net_position_v np
+          ON np.product_id = keys.product_id AND np.warehouse_id = keys.warehouse_id
+        JOIN products p ON p.id = keys.product_id
+        JOIN warehouses w ON w.id = keys.warehouse_id
         LEFT JOIN warehouses pw ON pw.id = w.pool_warehouse_id
         {cv_join}
         {product_admit_join}
         LEFT JOIN scm.po_ordered_v po
-          ON po.product_id = np.product_id AND po.warehouse_id = np.warehouse_id
+          ON po.product_id = keys.product_id AND po.warehouse_id = keys.warehouse_id
         LEFT JOIN product_categories pc ON pc.id = p.category_id
         LEFT JOIN scm.demand_stat ds
-          ON ds.product_id = np.product_id AND ds.warehouse_id = np.warehouse_id
+          ON ds.product_id = keys.product_id AND ds.warehouse_id = keys.warehouse_id
         LEFT JOIN scm.item_classification ic
-          ON ic.product_id = np.product_id AND ic.warehouse_id = np.warehouse_id
+          ON ic.product_id = keys.product_id AND ic.warehouse_id = keys.warehouse_id
         WHERE {' AND '.join(where)}
         ORDER BY p.product_code, w.warehouse_code
     """)
