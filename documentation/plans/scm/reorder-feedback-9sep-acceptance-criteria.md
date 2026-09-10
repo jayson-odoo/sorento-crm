@@ -331,3 +331,37 @@ label. MOQ edits land only as `set_moq_override` on the recommendation (per run)
 - AC-S14.10 [E2E] Actions > Order sheet Excel on the lane's latest completed plan: the
   workbook opens with the 14 headers styled, a project row shows its inquiry customers one
   per line, BRW on hand differs from the grid's On hand where a project bin holds stock.
+
+### S15 (owner, 10 Sep 2026): Supplier column = last PO supplier
+
+Measured on the prod copy: 11,804 of 11,807 `product_suppliers` links point at one
+placeholder supplier, code DEFAULT, none marked primary - `resolve_default_supplier_id`
+(`app/services/rules/product_rules.py`) auto-links every new/imported product to it. Of
+the 5,353 products with PO history, only 1 already had a link matching its own last PO.
+
+- AC-S15.1 [BE] The sheet's Supplier column reads the product's LAST purchase order's
+  supplier (`purchase_orders.issue_date` desc, NULLs last, `created_at` desc as the
+  tiebreak), never the `product_suppliers` link. `_last_po_supplier_map` replaces
+  `_suggested_supplier_map` in `summary_order_service.py`.
+- AC-S15.2 [BE] A product with NO purchase order history prints a BLANK Supplier, never
+  DEFAULT and never a link-table fallback.
+- AC-S15.3 [BE] A buyer's explicit chosen supplier (`record_decision`) still wins over the
+  engine's last-PO reading, unchanged from before S15.
+- AC-S15.4 [BE] A PO with a NULL `issue_date` sorts LAST, not first, so it is never read as
+  "newest" merely because it was inserted last.
+- AC-S15.5 [BE] Remarks' MOQ (and `order_multiple`) is read from the SAME last-PO
+  supplier's own `product_suppliers` link when one exists, else null - never another
+  supplier's terms, so the Supplier column and the Remarks MOQ always describe one choice.
+- AC-S15.6 [BE] `scripts/backfill_product_supplier_from_last_po.py`: dry-run by default,
+  `--apply` to write. Per product with PO history, upserts a `product_suppliers` link to
+  the last-PO supplier as `is_primary_supplier=true` (clearing the flag on the product's
+  other links, touching nothing else on them), then deletes that product's DEFAULT link
+  (identified by `--default-supplier-code`, default `DEFAULT`) unless the last-PO supplier
+  IS DEFAULT itself. `--drop-default-all` additionally deletes the DEFAULT link of products
+  with NO PO history. Idempotent (a second run creates/promotes/removes 0). Reports
+  products seen, links created, links promoted, DEFAULT links removed, and up to 10 sample
+  `product_code -> supplier_code` lines.
+- AC-S15.7 [T] pytest in `tests/scm/test_supplier_last_po_s15.py`: AC-S15.1-S15.5 against
+  the shared chain fixture; AC-S15.6 against an empty scratch schema (the script sweeps
+  every product with PO history under company scope, so an exact count needs a blank
+  slate rather than the shared prod-copy DB).

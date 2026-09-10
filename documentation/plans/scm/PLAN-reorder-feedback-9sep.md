@@ -1,6 +1,6 @@
 # PLAN: Reorder planning feedback batch (9 Sep 2026)
 
-Status: BUILT 9 Sep 2026, PR #784 ready; round 3 (S14, the sheet's layout and sources) in build 10 Sep. All rulings settled (captain, lavish review 9 Sep 14:20). Issues #770-#778 (S1-S9 in order).
+Status: BUILT 9 Sep 2026, PR #784 ready; round 3 (S14, the sheet's layout and sources) built 10 Sep; S15 (Supplier column = last PO supplier) built 10 Sep. All rulings settled (captain, lavish review 9 Sep 14:20; owner ruling 10 Sep for S15). Issues #770-#778 (S1-S9 in order).
 UAC: `reorder-feedback-9sep-acceptance-criteria.md` (journey J1-J7 lives there).
 Lane: worktree `.claude/worktrees/reorder-feedback-9sep`, branch `feat/reorder-feedback-9sep`
 off `origin/main` 3c3738ad7.
@@ -286,11 +286,46 @@ Design (S14):
 Out: the grid's own columns; a per-warehouse reorder level (none is set); windowing the
 inquiry legs by horizon.
 
+### S15 (owner, 10 Sep 2026): Supplier column = last PO supplier
+
+Measured (DB `sorento_ai_automation_0907`, prod copy, 10 Sep): the Supplier column
+(`_suggested_supplier_map` in `summary_order_service.py` ~line 725) was filled from the
+PRIMARY `product_suppliers` link, else any link. `product_suppliers` holds 11,807 links;
+11,804 point at ONE supplier, code DEFAULT (`suppliers.created_at` 2025-12-24, the oldest
+supplier), none primary. So every sheet row printed "DEFAULT". Cause:
+`resolve_default_supplier_id` (`app/services/rules/product_rules.py:244`) auto-links every
+new/imported product to `system_settings.default_product_supplier_id`, else the OLDEST
+supplier - DEFAULT here. Of the 5,353 products with `purchase_order_lines`, only 1 has a
+`product_suppliers` link that agrees with its own last PO.
+
+Ruling 1 (owner): the sheet's Supplier is the LAST-PO supplier, always - the supplier of
+the newest PO line (`purchase_orders.issue_date desc nulls last, created_at desc`). A
+buyer's explicit `chosen_supplier_id` on the row still wins (unchanged). A product with no
+PO history prints blank, never DEFAULT, never the link table. Remarks' MOQ / order
+multiple describe that SAME supplier: read from its `product_suppliers` link when one
+exists, else null. `_suggested_supplier_map` -> `_last_po_supplier_map`.
+
+Ruling 2 (owner): `scripts/backfill_product_supplier_from_last_po.py`, dry-run by default,
+`--apply` to write, same shape as `scripts/backfill_grn_spo_allocation_links.py`. Per
+product with PO history: upsert a `product_suppliers` link to the last-PO supplier,
+`is_primary_supplier=true` (clearing the flag elsewhere on the product, touching nothing
+else on those other links), `standard_lead_time_days` from
+`resolve_standard_lead_time_days(settings)` when creating; then delete the product's
+DEFAULT link unless the last-PO supplier IS DEFAULT. `--drop-default-all` additionally
+drops the DEFAULT link of products with NO PO history. Reports products seen, links
+created/promoted, DEFAULT links removed, and 10 sample `product_code -> supplier_code`
+lines. Never touches a link to any other supplier beyond its primary flag.
+
+Out: changing `_supplier_constraints` (a separate purpose - the engine's order-quantity
+MOQ rounding, `_channel_freeze`); running the backfill script against real data (owner
+runs it after review, on the owner's go).
+
 ## 5. Build order
 
-S1, S2 (FE only, no backend) -> S3 -> S6 -> S5 -> S4 -> S7 -> S8 -> S9. S1 and S2 are
-Phase 1 and Phase 2 in one (no contract change). S3-S9: FE mock first where the contract
-changes (S4 window, S5 switch, S9 columns), then BE test-first.
+S1, S2 (FE only, no backend) -> S3 -> S6 -> S5 -> S4 -> S7 -> S8 -> S9 -> S14 -> S15. S1
+and S2 are Phase 1 and Phase 2 in one (no contract change). S3-S9: FE mock first where the
+contract changes (S4 window, S5 switch, S9 columns), then BE test-first. S14 and S15 are
+BE-only, test-first, no FE contract change.
 
 ## 6. Out of scope
 
