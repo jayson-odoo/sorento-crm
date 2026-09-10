@@ -1,9 +1,12 @@
 """`--all-suppliers` on `scripts/backfill_product_supplier_from_last_po.py`
 (PLAN-product-supplier-all-po.md, 10 Sep 2026).
 
-Phase 2 RED tests, written before any implementation exists. `product-supplier-all-po-
-acceptance-criteria.md` (AC-ALL.1-11) is the contract; the plan's own "Test list" (T1-T9)
-names one test per item here, each docstring citing the AC id(s) it covers.
+Phase 2 tests, from `product-supplier-all-po-acceptance-criteria.md` (AC-ALL.1-13) and the
+plan's own "Test list" (T1-T9), each docstring citing the AC id(s) it covers. Round 2 adds
+two reviewer kill-test cases (AC-ALL.12, AC-ALL.13) and extends T1/T4/T5/T7/T9 per the
+plan's "Rulings addendum" (deterministic tiebreaks, cost-never-without-currency, DEFAULT
+never a secondary link) - the implementation for all of this already landed
+(`3c08f335a`, `ae3947bc5`), so these run GREEN.
 
 The script-level tests (T1-T7, T9) run on an EMPTY scratch schema
 (`tests._pg_fixture.blank_session`), exactly like the existing S15 script tests in
@@ -126,7 +129,9 @@ def test_default_path_unchanged_without_flag(scratch_db):
     ONE non-DEFAULT link per product - the last-PO supplier, primary - and a supplier Q
     known only through a cancelled PO gets no link at all (ruling 3 applies in the
     default path too: `all_suppliers=False` keeps today's behaviour "byte-for-byte
-    except ruling 3")."""
+    except ruling 3"). Since the flag is off, the created link's terms stay NULL -
+    nothing here invents a commercial term - and the report's created/promoted/
+    default_removed counts are exactly 1/0/1."""
     from scripts.backfill_product_supplier_from_last_po import run as backfill_run
 
     db = scratch_db
@@ -145,7 +150,7 @@ def test_default_path_unchanged_without_flag(scratch_db):
     _seed_po_line(db, p, wh, q, status="cancelled", issue_date=date(2026, 6, 1),
                   unit_cost=5, order_currency="USD")
 
-    backfill_run(db, apply=True)
+    report = backfill_run(db, apply=True)
 
     links = {
         str(l.supplier_id): l
@@ -153,6 +158,11 @@ def test_default_path_unchanged_without_flag(scratch_db):
     }
     assert set(links) == {str(y.id)}
     assert links[str(y.id)].is_primary_supplier is True
+    assert links[str(y.id)].unit_cost is None
+    assert links[str(y.id)].currency is None
+    assert report["created"] == 1
+    assert report["promoted"] == 0
+    assert report["default_removed"] == 1
 
 
 # =========================================================================== #
@@ -236,10 +246,11 @@ def test_terms_come_from_newest_priced_line_line_currency_wins(scratch_db):
 
 
 def test_existing_keyed_price_kept_null_price_filled(scratch_db):
-    """T4 / AC-ALL.5: (P, X) already exists with unit_cost 12.00 / MYR - the sweep must
-    leave it exactly as-is and `terms_filled` must not count it, even though X has a
-    newer priced PO line (99.00 USD). (P, W) already exists with unit_cost NULL and W
-    has a priced PO line (7.25 CNY) - the sweep fills it and counts it once in
+    """T4 / AC-ALL.5: (P, X) already exists with unit_cost 12.00 / MYR, moq 25,
+    order_multiple 5, lead 14 - the sweep must leave every one of those fields exactly
+    as-is and `terms_filled` must not count it, even though X has a newer priced PO line
+    (99.00 USD). (P, W) already exists with unit_cost NULL and W has a priced PO line
+    (7.25 CNY) - the sweep fills unit_cost/currency and counts it once in
     `terms_filled`."""
     from scripts.backfill_product_supplier_from_last_po import run as backfill_run
 
@@ -248,7 +259,7 @@ def test_existing_keyed_price_kept_null_price_filled(scratch_db):
     x = _seed_supplier(db, unique_code("X")[:30], "Supplier X")
     w = _seed_supplier(db, unique_code("W")[:30], "Supplier W")
     p = _seed_product(db, code_stem="P1")
-    _link(db, p, x, cost=Decimal("12.00"), currency="MYR")
+    _link(db, p, x, cost=Decimal("12.00"), currency="MYR", lead=14, moq=25, multiple=5)
     _link(db, p, w, cost=None, currency=None)
     _seed_po_line(db, p, wh, x, issue_date=date(2024, 1, 1), unit_cost=Decimal("99.00"),
                   order_currency="USD")
@@ -263,6 +274,9 @@ def test_existing_keyed_price_kept_null_price_filled(scratch_db):
     }
     assert links[str(x.id)].unit_cost == Decimal("12.00")
     assert links[str(x.id)].currency == "MYR"
+    assert links[str(x.id)].standard_lead_time_days == 14
+    assert links[str(x.id)].moq == 25
+    assert links[str(x.id)].order_multiple == 5
     assert links[str(w.id)].unit_cost == Decimal("7.25")
     assert links[str(w.id)].currency == "CNY"
     assert report["terms_filled"] == 1
@@ -276,7 +290,10 @@ def test_existing_keyed_price_kept_null_price_filled(scratch_db):
 def test_cancelled_pos_do_not_exist_for_the_sweep(scratch_db):
     """T5 / AC-ALL.6: supplier Q's only PO for P is 'cancelled' - no (P, Q) link is
     created. P's newest PO (supplier R) is also cancelled; P's newest non-cancelled PO
-    names supplier Y - (P, Y) is primary and no (P, R) link exists."""
+    names supplier Y - (P, Y) is primary and no (P, R) link exists. Y ALSO has a PRICED
+    but cancelled line newer than its own non-cancelled one - the cancelled filter must
+    apply inside the `priced` CTE too, separately from the `pairs` one, so (P, Y) still
+    gets NULL unit_cost rather than the cancelled line's price."""
     from scripts.backfill_product_supplier_from_last_po import run as backfill_run
 
     db = scratch_db
@@ -288,7 +305,9 @@ def test_cancelled_pos_do_not_exist_for_the_sweep(scratch_db):
     _seed_po_line(db, p, wh, q, status="cancelled", issue_date=date(2024, 1, 1),
                   unit_cost=5, order_currency="USD")
     _seed_po_line(db, p, wh, y, status="closed", issue_date=date(2024, 6, 1),
-                  unit_cost=10, order_currency="USD")
+                  unit_cost=None, order_currency="USD")
+    _seed_po_line(db, p, wh, y, status="cancelled", issue_date=date(2025, 1, 1),
+                  unit_cost=Decimal("77.00"), order_currency="USD")
     _seed_po_line(db, p, wh, r, status="cancelled", issue_date=date(2026, 1, 1),
                   unit_cost=15, order_currency="USD")
 
@@ -301,6 +320,7 @@ def test_cancelled_pos_do_not_exist_for_the_sweep(scratch_db):
     assert str(q.id) not in links
     assert str(r.id) not in links
     assert links[str(y.id)].is_primary_supplier is True
+    assert links[str(y.id)].unit_cost is None
 
 
 # =========================================================================== #
@@ -350,29 +370,42 @@ def test_second_apply_is_a_pure_no_op(scratch_db):
 
 def test_dry_run_writes_nothing_reports_pairs_seen_and_created(scratch_db):
     """T7 / AC-ALL.8: `run(apply=False, all_suppliers=True)` writes nothing; the report
-    shows `pairs_seen` 2, `created` 2, and `product_suppliers` for P is exactly the rows
-    that existed before the call - none, since none pre-existed here."""
+    shows `pairs_seen` 2 and `created` 1 (X already has a link, only Y's is new).
+    `product_suppliers` for P is exactly the rows that existed before the call: X's
+    pre-existing non-primary link (keyed unit_cost 12.00 / MYR) and its DEFAULT link -
+    both untouched in every field, and no Y row is written."""
     from scripts.backfill_product_supplier_from_last_po import run as backfill_run
 
     db = scratch_db
     wh = _seed_warehouse(db)
+    default = _seed_supplier(db, "DEFAULT", "Default Supplier")
     x = _seed_supplier(db, unique_code("X")[:30], "Supplier X")
     y = _seed_supplier(db, unique_code("Y")[:30], "Supplier Y")
     p = _seed_product(db, code_stem="P1")
+    _link(db, p, default, primary=True)
+    _link(db, p, x, cost=Decimal("12.00"), currency="MYR", primary=False)
     _seed_po_line(db, p, wh, x, issue_date=date(2024, 3, 1), unit_cost=Decimal("10.00"),
                   order_currency="USD")
     _seed_po_line(db, p, wh, y, issue_date=date(2026, 5, 1), unit_cost=Decimal("20.00"),
                   order_currency="USD")
 
     before = db.query(ProductSupplier).filter(ProductSupplier.product_id == p.id).all()
+    before_by_supplier = {str(l.supplier_id): (l.is_primary_supplier, l.unit_cost, l.currency)
+                           for l in before}
 
     report = backfill_run(db, apply=False, all_suppliers=True)
 
     assert report["pairs_seen"] == 2
-    assert report["created"] == 2
+    assert report["created"] == 1
     after = db.query(ProductSupplier).filter(ProductSupplier.product_id == p.id).all()
     assert after == before
-    assert len(after) == 0
+    assert len(after) == 2
+    after_by_supplier = {str(l.supplier_id): (l.is_primary_supplier, l.unit_cost, l.currency)
+                          for l in after}
+    assert after_by_supplier == before_by_supplier
+    assert str(default.id) in after_by_supplier
+    assert str(x.id) in after_by_supplier
+    assert str(y.id) not in after_by_supplier
 
 
 # =========================================================================== #
@@ -443,3 +476,91 @@ def test_cli_parses_all_suppliers_flag(monkeypatch):
 
     assert rc == 0
     assert captured.get("all_suppliers") is True
+
+
+def test_print_report_shows_pairs_seen_and_terms_filled_only_when_all_suppliers(capsys):
+    """T9 / AC-ALL.11: `_print_report` prints the `pairs seen` and `terms filled` labels
+    when `all_suppliers=True`, and omits both when it is False (or left at its default)."""
+    import scripts.backfill_product_supplier_from_last_po as script
+
+    report = {
+        "mode": "DRY-RUN (no writes)", "products_seen": 1, "pairs_seen": 2,
+        "created": 1, "promoted": 0, "terms_filled": 1, "default_removed": 1,
+        "default_all_removed": 0, "default_supplier_found": True, "samples": [],
+    }
+
+    script._print_report(report, drop_default_all=False, all_suppliers=True)
+    on_output = capsys.readouterr().out
+    assert "pairs seen" in on_output
+    assert "terms filled" in on_output
+
+    script._print_report(report, drop_default_all=False, all_suppliers=False)
+    off_output = capsys.readouterr().out
+    assert "pairs seen" not in off_output
+    assert "terms filled" not in off_output
+
+
+# =========================================================================== #
+# AC-ALL.12 - DEFAULT is never a secondary link (review round 2)
+# =========================================================================== #
+
+
+def test_default_is_never_a_secondary_link(scratch_db):
+    """AC-ALL.12: the DEFAULT supplier has an OLDER non-cancelled PO line for P; Y has a
+    newer one. After `run(apply=True, all_suppliers=True)`: no (P, DEFAULT) link exists
+    at all (DEFAULT is skipped as a non-primary pair, never created or kept as a
+    secondary link), (P, Y) is primary, and `default_removed == 1` counts the
+    pre-existing DEFAULT link that was removed."""
+    from scripts.backfill_product_supplier_from_last_po import run as backfill_run
+
+    db = scratch_db
+    wh = _seed_warehouse(db)
+    default = _seed_supplier(db, "DEFAULT", "Default Supplier")
+    y = _seed_supplier(db, unique_code("Y")[:30], "Supplier Y")
+    p = _seed_product(db, code_stem="P1")
+    _link(db, p, default, primary=True)
+    _seed_po_line(db, p, wh, default, issue_date=date(2024, 1, 1),
+                  unit_cost=Decimal("1.00"), order_currency="USD")
+    _seed_po_line(db, p, wh, y, issue_date=date(2026, 1, 1),
+                  unit_cost=Decimal("2.00"), order_currency="USD")
+
+    report = backfill_run(db, apply=True, all_suppliers=True)
+
+    links = {
+        str(l.supplier_id): l
+        for l in db.query(ProductSupplier).filter(ProductSupplier.product_id == p.id).all()
+    }
+    assert str(default.id) not in links
+    assert set(links) == {str(y.id)}
+    assert links[str(y.id)].is_primary_supplier is True
+    assert report["default_removed"] == 1
+
+
+# =========================================================================== #
+# AC-ALL.13 - cost is never written without its currency (review round 2)
+# =========================================================================== #
+
+
+def test_priced_line_with_no_currency_writes_no_price(scratch_db):
+    """AC-ALL.13: a priced PO line for (P, Z) whose LINE currency AND ORDER currency are
+    both NULL. The created link gets unit_cost NULL and currency NULL - a cost is never
+    written without its currency - and `terms_filled` stays 0 (this is a CREATED link,
+    not a fill on an existing one)."""
+    from scripts.backfill_product_supplier_from_last_po import run as backfill_run
+
+    db = scratch_db
+    wh = _seed_warehouse(db)
+    z = _seed_supplier(db, unique_code("Z")[:30], "Supplier Z")
+    p = _seed_product(db, code_stem="P1")
+    _seed_po_line(db, p, wh, z, issue_date=date(2024, 1, 1), unit_cost=Decimal("50.00"),
+                  order_currency=None, line_currency=None)
+
+    report = backfill_run(db, apply=True, all_suppliers=True)
+
+    links = {
+        str(l.supplier_id): l
+        for l in db.query(ProductSupplier).filter(ProductSupplier.product_id == p.id).all()
+    }
+    assert links[str(z.id)].unit_cost is None
+    assert links[str(z.id)].currency is None
+    assert report["terms_filled"] == 0
