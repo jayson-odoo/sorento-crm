@@ -180,6 +180,10 @@ tool. No new reply format.
   is in a warehouse with `is_active = false` does not qualify; the same row in an active warehouse
   does. Evidence: pytest on `resolve_product_set` with two warehouses; console "which bathroom
   accessory has stock" shows five products for five ids.
+- AC-1347 The paging words (more, next, lagi, please, show) are phrase stopwords: a HAS turn whose
+  remainder is only such words scopes nothing and never reports them as unrecognized. Evidence:
+  pytest on `filter_specs` with free term "more"; console "which tap has cert" -> "which water tap
+  has cert" -> "more" answers a set header, not "I don't know 'more'".
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
