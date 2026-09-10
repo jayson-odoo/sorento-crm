@@ -529,6 +529,10 @@ _PHRASE_STOPWORDS: frozenset[str] = NEGATOR_WORDS | frozenset(
         # "which" - a set answer names the described thing, never the question
         # word that introduced it (AC-1320 / work item A2).
         "which", "what", "who", "where", "when", "how", "many",
+        # R9 (console fix round 2, AC-1330): the customer's own imperative verb,
+        # not a description - "check stock srtwc286" is not naming a product
+        # attribute called "check". Measured live: `unrecognized_terms: ["check"]`.
+        "check", "checking", "list", "tell",
     }
 )
 
