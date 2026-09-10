@@ -44,10 +44,10 @@ tool. No new reply format.
 
 ## C. The resolver runs HAS only when LOOKUP found no exact code [BE]
 
-- AC-1305 With `require` present and at least one product resolution carrying an `exact` or
-  `head_code` match (the customer typed a full product code), the response is byte-identical to the same
-  request without `require`. With only prefix / substring / trgm / embedding product matches
-  (e.g. "bidet" → 3 name matches) HAS runs. Evidence: pytest `tests/test_resolve_predicate.py`,
+- AC-1305 With `require` present and a CODE-SHAPED product token that resolved to any product
+  match (the customer typed a code or a code prefix such as "srtwc286"), the response is byte-identical to the same
+  request without `require`. With only WORD tokens ("bidet" → 3 name matches, "sorento" → an exact
+  brand-name hit, "tap" as a `category` entity) HAS runs whatever tier they resolved at. Evidence: pytest `tests/test_resolve_predicate.py`,
   deep-equal on the head_code case, predicate block present on the substring case.
 - AC-1306 With `require` present and no exact code, the resolver builds the described set from
   the union of: product ids LOOKUP matched by name or code prefix for the caller's product
@@ -109,7 +109,8 @@ tool. No new reply format.
   for stock, `crm_incoming_stock_list` for incoming, `crm_marketing_promotion_products_list`
   for promotion) through the existing `TYPE_TO_PARAM` product → `product_ids` path. No new tool
   name appears in any trace. Evidence: pytest asserting the picked tool name per predicate.
-- AC-1316 The fetch limit for a HAS turn is 5 products; the render is the existing block (for
+- AC-1316 A HAS turn fetches the first 5 qualifying PRODUCTS (all their rows or files; the tool's
+  row limit stays at its default); the render is the existing block (for
   cert: Product Code / Attachment Type / File Name / Certificate Number / Valid Until / Validity,
   files attached) preceded by one header line "<qualifying_total> <set noun> have <predicate
   noun>. Showing <n>." e.g. "1,256 taps have certificates. Showing 5." When
