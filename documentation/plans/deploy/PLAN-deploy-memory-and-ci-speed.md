@@ -152,3 +152,33 @@ Mirror the same edits into the local gitignored copy so the two do not drift.
 ## Progress
 
 - 2026-09-10: plan + UAC written, lane created. S1 tester writing red tests.
+- 2026-09-10: S1 tester red tests landed (`a222e21e6`,
+  `sorento_crm_backend/tests/test_gunicorn_conf.py`, 5 tests, all red).
+- 2026-09-10: S3 (CI speed) landed (`49274a90c`) - `build-images` matrix job in parallel with
+  the gates, 4-shard vitest matrix, `typecheck-frontend` job added but NOT yet gating the
+  deploy (24-errors-in-test-files finding, see below).
+- 2026-09-10: S1 (gunicorn preload) landed (`fed2a2a2e`) - `gunicorn.conf.py` +
+  `post_fork` engine dispose; `tests/test_gunicorn_conf.py` 5/5 green; local boot check passed
+  (4 workers, `GET /health` + DB-backed GET, no protocol-error log lines).
+- 2026-09-10: typecheck-frontend scoped and wired into the deploy gate (`b5bf025df`) -
+  `tsconfig.typecheck.json` mirrors what `next build` always checked; 21 pre-existing errors
+  in 11 test files found (not 24, corrected from an initial miscount), tracked as issue #821;
+  `typecheck-frontend` added to `build-and-deploy`'s `needs`.
+- 2026-09-10: tag-safety fix (`9acc7dcd0`) - `build-images` pushes only the SHA tag;
+  `build-and-deploy` promotes to the moving release tag with `docker buildx imagetools`
+  only after every gate is green, so a manual `docker compose up` on the server can never pull
+  an image whose commit failed a gate.
+- 2026-09-10: review round 1 applied (`d7745fde5`) - `next typegen` step for route types
+  (F1), typecheck exclude list matches Next's own ignore regexes exactly (F6/F7), cache-dance
+  narrowed to `.next/cache` only to protect the shared 10 GB `actions/cache` quota (F4),
+  redundant redis post_fork disposal removed with the measured reasoning (F8), SIGHUP/rebuild
+  note added (F9), `.buildkit-cache/` gitignored (F11), and the `sorento_crm/docker-compose.yml`
+  full-stack template's inline entrypoint (carrying the same `--keep-alive 5` regression
+  documented in `gunicorn.conf.py`) deleted so it inherits the Dockerfile's `start.sh`
+  entrypoint (F3b).
+- 2026-09-10: docs commit - PLAN Progress + UAC ticks for UAC-1/2/3/4/5/12/13/16/17, UAC-4
+  reviewer-measured confirmation, UAC-5 rerun with the macOS fork-safety prefix and extended
+  race-condition grep, new UAC-21 (prod entrypoint check, F3), UAC-19 quota-check command
+  (F4), UAC-18 billable-minutes note (F12).
+- 2026-09-10: merging `origin/main` into the lane next (one commit ahead, #814, no file
+  overlap expected).
