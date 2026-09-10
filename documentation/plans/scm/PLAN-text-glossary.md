@@ -1,6 +1,6 @@
 # PLAN: Text glossary - English for the supplier's own wording on PI lines and packing rows
 
-Status: aligned, building (2026-09-10; revised same day after Phase 1 found the existing translation memory)
+Status: in review, PR open (2026-09-10; revised same day after Phase 1 found the existing translation memory; reviewed + browser verified)
 Domain: scm
 UAC: `text-glossary-acceptance-criteria.md`
 Lane: `feat/text-glossary`, branched off `main` after #793 (PI-first) merged 2026-09-10.

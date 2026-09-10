@@ -19,14 +19,14 @@ on System Management > Translations) walks the whole table.
 
 
 Revision ID: 510_pi_description_en
-Revises: 509_merge_508_summary_exclwh
+Revises: 511_supplier_country_id
 Create Date: 2026-09-10
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "510_pi_description_en"
-down_revision = "509_merge_508_summary_exclwh"
+down_revision = "511_supplier_country_id"
 branch_labels = None
 depends_on = None
 
