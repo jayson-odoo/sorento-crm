@@ -1255,3 +1255,82 @@ def test_predicate_words_are_stripped_word_by_word(client, db):
     predicate = response.json()["predicate"]
     assert predicate["unrecognized_terms"] == [], predicate
     assert not predicate.get("class_labels"), predicate
+
+
+# --------------------------------------------------------------------------- #
+# Security review (11 Sep 2026, PLAN-attribute-first-asks.md SEC-S1, AC-1334) #
+# --------------------------------------------------------------------------- #
+
+
+def test_resolver_threads_access_levels_into_the_promotion_leg(client, db):
+    """AC-1334/SEC-S1: the resolve endpoint must thread its own `access_levels`
+    field into the promotion leg, not only into the ordinary entity-resolution
+    filter `_apply_promotion_access_levels_filter` already covers - a HAS turn
+    ("which tap has promo") must count only the promotions the caller's tier
+    can see.
+
+    World: two class-Tap products (mirrors the `test_product_predicate_
+    service.py` world), one promotion open to access code X, the other
+    restricted to code Y; POST with `access_levels: ["<name for X>"]`.
+
+    RED: the require branch never reads `payload.access_levels` at all when
+    calling `resolve_product_set` (measured: `references.py`'s require branch
+    has no `access_levels=` keyword in that call) - `qualifying_total` counts
+    BOTH promotions regardless of the caller's tier, so this is 2, not the 1
+    this AC demands.
+    """
+    from app.models.access import ContactAccessType
+    from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+
+    db.add(ContactAccessType(code="zzt_code_x", name="ZZT Level X"))
+    db.add(ContactAccessType(code="zzt_code_y", name="ZZT Level Y"))
+    db.flush()
+
+    def _promo_tap(code, access_levels):
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            description="ZZT CHROME BASIN TAP",
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        promo = Promotion(
+            id=str(uuid.uuid4()), description=f"ZZT promo {code}", is_active=True, access_levels=access_levels
+        )
+        db.add(promo)
+        db.flush()
+        group = PromotionGroup(id=uuid.uuid4(), promotion_id=promo.id, group_name="G")
+        db.add(group)
+        db.flush()
+        db.add(
+            PromotionProduct(
+                id=str(uuid.uuid4()), promotion_id=promo.id, promotion_group_id=group.id, product_id=product.id
+            )
+        )
+        db.flush()
+
+    _promo_tap("ZZTPROMOX", ["zzt_code_x"])
+    _promo_tap("ZZTPROMOY", ["zzt_code_y"])
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which tap has promo",
+            "tokens": [],
+            "match_mode": "and",
+            "access_levels": ["ZZT Level X"],
+            "require": {"promotion": True},
+            "predicate_words": ["promo"],
+        },
+    )
+    assert response.status_code == 200
+    predicate = response.json()["predicate"]
+    assert predicate["qualifying_total"] == 1, predicate

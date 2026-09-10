@@ -2822,3 +2822,360 @@ def test_clarify_with_no_candidate_offers_common_product_types():
     for label in ("tap", "wash basin", "water closet"):
         assert label in text.lower(), text
     assert "Did you mean the product types I know?" not in text, text
+
+
+# --------------------------------------------------------------------------- #
+# Security review (11 Sep 2026, PLAN-attribute-first-asks.md SEC-B1/N1,       #
+# AC-1333/AC-1336) - full `engine.run_turn` harness (S4 section above).       #
+# --------------------------------------------------------------------------- #
+
+
+def _sec_promo_fake_call_tool(db, calls: list[dict[str, Any]]):
+    """Records every MCP call (name, args) so a test can inspect the
+    `access_levels` argument the fetch step actually sent, and returns a
+    plausible promotion-products envelope keyed off whatever `product_ids`
+    the call carried."""
+    import json
+
+    from app.models.marketing import PromotionProduct
+    from app.models.product import Product
+
+    def fake_call_tool(name: str, args: dict[str, Any]) -> str:
+        calls.append({"name": name, "args": dict(args)})
+        product_ids = list(args.get("product_ids") or [])
+        rows = (
+            db.query(Product)
+            .join(PromotionProduct, PromotionProduct.product_id == Product.id)
+            .filter(Product.id.in_(product_ids))
+            .order_by(Product.product_code)
+            .distinct()
+            .all()
+        )
+        items = [
+            {
+                "title": p.product_code,
+                "fields": [{"key": "product_code", "label": "Product Code", "value": p.product_code}],
+                "flags": {},
+            }
+            for p in rows
+        ]
+        return json.dumps(
+            {
+                "result_type": "promotion_products",
+                "intro": "Promotions found.",
+                "items": items,
+                "has_result": bool(items),
+            }
+        )
+
+    return fake_call_tool
+
+
+def _sec_seed_seven_promo_taps(db, *, access_levels: list[str]) -> list[str]:
+    from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+
+    codes: list[str] = []
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    for _ in range(7):
+        product = _tap_product(db, category_id=category_id, uom_id=uom_id)
+        promo = Promotion(
+            id=str(uuid.uuid4()),
+            description=f"ZZT promo {uuid.uuid4().hex[:6]}",
+            is_active=True,
+            access_levels=access_levels,
+        )
+        db.add(promo)
+        db.flush()
+        group = PromotionGroup(id=uuid.uuid4(), promotion_id=promo.id, group_name="G")
+        db.add(group)
+        db.flush()
+        db.add(
+            PromotionProduct(
+                id=str(uuid.uuid4()), promotion_id=promo.id, promotion_group_id=group.id, product_id=product.id
+            )
+        )
+        codes.append(product.product_code)
+    db.commit()
+    return codes
+
+
+def _sec_wire_promo_engine(session_factory, monkeypatch, *, resolve_entity, fetch_mcp_call, access_types):
+    from app.models.user import SystemSetting
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.lanes.business.services import FetchServices, ResolveGateServices
+    from tests.chatbot.conftest import set_chatbot_switches
+
+    set_chatbot_switches(session_factory, business_lane=True, ordering=True)
+    db = session_factory()
+    setting = db.query(SystemSetting).first()
+    setting.chatbot_completed_lanes = ["business_query", "check_promotion"]
+    db.commit()
+
+    bundle = ResolveGateServices(access_types=access_types, resolve_entity=resolve_entity, probe=lambda **_: None)
+    monkeypatch.setattr(
+        engine_mod.business_services, "production_services", lambda db, *, space_id=None: bundle
+    )
+    monkeypatch.setattr(
+        engine_mod.business_services, "fetch_services", lambda db: FetchServices(mcp_call=fetch_mcp_call)
+    )
+    monkeypatch.setattr(
+        engine_mod.business_services, "answer_services_for", lambda session_factory: _s4_no_probe_answer_services()
+    )
+    return engine_mod
+
+
+def _sec_promo_parser_output(**overrides: Any):
+    from tests.chatbot.test_engine import _parser_output
+
+    base = dict(
+        intent_hint="check_promotion",
+        domain_hint="promotion",
+        match_mode="and",
+        entities=[
+            {"raw": "tap", "hint": "category", "canonical_code": None, "current_message": True, "confident": True}
+        ],
+    )
+    base.update(overrides)
+    return _parser_output(**base)
+
+
+def test_more_page_carries_the_contacts_access_levels(session_factory, stub_parser, stub_access, monkeypatch):
+    """AC-1333/SEC-B1: a "more" page's promotion tool call must carry the SAME
+    (non-empty) access_levels turn 1's own fetch used - never `[]` - or the
+    tier filter silently disappears from the page and the customer can be
+    shown promotions their tier cannot see.
+
+    World: a contact holding ONE access type ("Sorento Dealer"), seven class-Tap
+    products each in its own active promotion open to that same tier.
+
+    RED: `_set_page_reply`'s "next page" arm stamps `tier_gate: None`
+    unconditionally and only overrides the mutated parser's `domain_hint`, never
+    its `access_levels` - so `_fetch_semantic_input` (no tier_gate to read
+    `access_levels_recomposed` from) falls to the bare "more" parser output's own
+    `access_levels`, which is `[]`. Turn 1's tool call carries `["Sorento
+    Dealer"]` (from `tier_gate.access_levels_recomposed`); the page turn's carries
+    `[]`.
+    """
+    from app.models.access import ContactAccessType
+
+    contact_id = _s4_contact_id("secpromo")
+    db = session_factory()
+    db.add(ContactAccessType(code="sorento_dealer", name="Sorento Dealer"))
+    db.commit()
+    codes = _sec_seed_seven_promo_taps(db, access_levels=["sorento_dealer"])
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+
+    calls: list[dict[str, Any]] = []
+    engine_mod = _sec_wire_promo_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_sec_promo_fake_call_tool(db, calls),
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+    )
+    stub_parser(_sec_promo_parser_output())
+    stub_access()
+
+    turn1 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-1a", text="which tap has promo"),
+        session_factory=session_factory,
+    )
+    assert turn1.status == "done", turn1.error
+    assert calls, "no MCP call recorded on turn 1"
+    turn1_access_levels = calls[-1]["args"].get("access_levels")
+    assert turn1_access_levels, ("turn 1's own tool call must carry a non-empty access_levels", turn1_access_levels)
+
+    calls.clear()
+    stub_parser(_s4_bare_parser_output())
+    turn2 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-1b", text="more"),
+        session_factory=session_factory,
+    )
+    assert turn2.status == "done", turn2.error
+    assert calls, "no MCP call recorded on the 'more' turn"
+    turn2_access_levels = calls[-1]["args"].get("access_levels")
+    assert turn2_access_levels == turn1_access_levels, (turn1_access_levels, turn2_access_levels)
+    assert turn2_access_levels != [], turn2_access_levels
+
+
+def test_tier_ask_turn_does_not_arm_the_carry(session_factory, stub_parser, stub_access, monkeypatch):
+    """AC-1333: a promotion turn the contact's OWN multi-tier entitlement forces
+    to the existing tier-ask flow ("Which access level do you need ...") must
+    arm NOTHING - a following "more" is not a paged reply.
+
+    World: a contact holding TWO tiers of the SAME brand ("Sorento Dealer",
+    "Sorento Office") - `needs_tier_ask` returns True for more than one held
+    tier - over the same 7-tap promotion world.
+
+    RED: the set_page carry is armed off `gate.predicate` alone (a predicate
+    block is present regardless of whether the fetch actually rendered a set
+    answer or hit the tier-ask arm first), so this turn wrongly arms
+    `selection_context = "set_page"` even though nothing was ever shown.
+    """
+    contact_id = _s4_contact_id("secask")
+    db = session_factory()
+    codes = _sec_seed_seven_promo_taps(db, access_levels=["sorento_dealer"])
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+
+    calls: list[dict[str, Any]] = []
+    engine_mod = _sec_wire_promo_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_sec_promo_fake_call_tool(db, calls),
+        access_types=lambda **_: [{"name": "Sorento Dealer"}, {"name": "Sorento Office"}],
+    )
+    stub_parser(_sec_promo_parser_output())
+    stub_access()
+
+    turn1 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-2a", text="which tap has promo"),
+        session_factory=session_factory,
+    )
+    assert turn1.status == "done", turn1.error
+
+    variables = _s4_session_vars(session_factory, contact_id).get("variables") or {}
+    assert variables.get("selection_context") != "set_page", variables
+
+    resolve_calls: dict[str, int] = {}
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+    monkeypatch.setattr(
+        engine_mod.business_services,
+        "production_services",
+        lambda db, *, space_id=None: ResolveGateServices(
+            access_types=lambda **_: [{"name": "Sorento Dealer"}, {"name": "Sorento Office"}],
+            resolve_entity=_s4_counting_resolve_entity(resolve_calls),
+            probe=lambda **_: None,
+        ),
+    )
+    stub_parser(_s4_bare_parser_output())
+    turn2 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-2b", text="more"),
+        session_factory=session_factory,
+    )
+    reply2 = (turn2.reply or {}).get("text") or ""
+    assert "Showing" not in reply2, reply2
+    assert not reply2.lower().startswith("7 taps"), reply2
+
+
+def test_carry_clears_on_a_non_page_business_answer(session_factory, stub_parser, stub_access, monkeypatch):
+    """AC-1336/SEC-N1: the set_page carry clears on ANY business answer that is
+    not itself a page - not only on a domain change - so a following unrelated
+    turn never mistakenly pages a stale set, and a fresh set answer re-arms
+    cleanly (offset 5, not compounded on old state).
+
+    Turn 1: "which tap has cert" -> set answer, carry armed.
+    Turn 2: "SRTWC1 stock" (a forward, code-exact stock turn) -> `selection_
+    context` must no longer be "set_page".
+    Turn 3: "which tap has cert" again -> re-armed, `offset == 5`.
+
+    GREEN today under this exact construction, measured directly: turn 2 IS a
+    domain change (product_attachment -> inventory), and clearing on a domain
+    change already works (`test_domain_change_clears_the_set_page_carry`,
+    unchanged by this security round). SEC-N1's own gap is narrower - the SAME
+    domain, a non-page answer - which this turn 2 does not exercise. Kept as
+    the AC-1336 regression guard (three turns, re-arm at a fresh offset of 5),
+    reported honestly per this file's own "CONTRACT CONTRADICTION" convention
+    rather than forced red.
+    """
+    contact_id = _s4_contact_id("secclear")
+    db = session_factory()
+    codes = _s4_seed_seven_taps(db)
+
+    from app.models.inventory import Stock, Warehouse
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from tests._pg_fixture import unique_code
+
+    category = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+    stock_product = Product(
+        id=str(uuid.uuid4()),
+        product_code="ZZTWC1",
+        product_name="ZZTWC1",
+        description="ZZTWC1 SORENTO WATER CLOSET",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=10,
+        is_active=True,
+    )
+    db.add(stock_product)
+    db.flush()
+    warehouse = Warehouse(
+        id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:50], warehouse_name="ZZT Warehouse", is_active=True
+    )
+    db.add(warehouse)
+    db.flush()
+    db.add(
+        Stock(
+            id=str(uuid.uuid4()),
+            product_id=stock_product.id,
+            warehouse_id=warehouse.id,
+            quantity_on_hand=10,
+            quantity_reserved=0,
+        )
+    )
+    db.commit()
+
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_cert_fake_call_tool(db),
+    )
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+    stub_parser(_s4_cert_parser_output())
+    stub_access()
+
+    turn1 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-3a", text="which tap has cert"),
+        session_factory=session_factory,
+    )
+    assert turn1.status == "done", turn1.error
+    variables_after_1 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
+    assert variables_after_1.get("selection_context") == "set_page", variables_after_1
+
+    from tests.chatbot.test_engine import _parser_output as _plain_parser_output
+    from app.services.chatbot.lanes.business.services import FetchServices as _FetchServices
+
+    monkeypatch.setattr(
+        engine_mod.business_services, "fetch_services", lambda db: _FetchServices(mcp_call=_stock_fake_call_tool(db))
+    )
+    stub_parser(
+        _plain_parser_output(
+            intent_hint="check_stock",
+            domain_hint="inventory",
+            match_mode="and",
+            entities=[
+                {
+                    "raw": "ZZTWC1",
+                    "hint": "product",
+                    "canonical_code": "ZZTWC1",
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        )
+    )
+    turn2 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-3b", text="ZZTWC1 stock"),
+        session_factory=session_factory,
+    )
+    assert turn2.status == "done", turn2.error
+    variables_after_2 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
+    assert variables_after_2.get("selection_context") != "set_page", variables_after_2
+
+    monkeypatch.setattr(
+        engine_mod.business_services, "fetch_services", lambda db: _FetchServices(mcp_call=_cert_fake_call_tool(db))
+    )
+    stub_parser(_s4_cert_parser_output())
+    turn3 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-3c", text="which tap has cert"),
+        session_factory=session_factory,
+    )
+    assert turn3.status == "done", turn3.error
+    variables_after_3 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
+    assert variables_after_3.get("selection_context") == "set_page", variables_after_3
+    carry_after_3 = variables_after_3.get("last_result_set") or {}
+    assert carry_after_3.get("offset") == 5, carry_after_3

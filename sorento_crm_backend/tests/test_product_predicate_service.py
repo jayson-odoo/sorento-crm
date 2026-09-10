@@ -737,3 +737,121 @@ def test_schemes_on_file_is_company_scoped(db):
     assert out["qualifying_total"] == 0
     assert "WCM" not in out["schemes_on_file"]
     assert out["schemes_on_file"] == ["PPS", "SPAN"]
+
+
+# --------------------------------------------------------------------------- #
+# Security review (11 Sep 2026, PLAN-attribute-first-asks.md SEC-S1/S2,       #
+# AC-1334/AC-1335)                                                             #
+# --------------------------------------------------------------------------- #
+
+
+def test_promotion_leg_respects_access_levels(db):
+    """AC-1334/SEC-S1: the promotion leg must intersect `Promotion.access_levels`
+    with the caller's OWN tier(s), the same name -> code translation
+    `references.py`'s `_apply_promotion_access_levels_filter` already uses
+    (`ContactAccessType.name` case-insensitive -> `.code`) - a promotion the
+    contact's tier cannot see must never count toward `qualifying_total` nor
+    name its product.
+
+    World: two class-Tap products, each in its own active promotion - product A's
+    promotion open to access code X, product B's restricted to code Y.
+
+    RED: `resolve_product_set` has no `access_levels` parameter at all today, so
+    `resolve_product_set(require={"promotion": True}, access_levels=[...])`
+    raises `TypeError` before any filtering logic runs - `_leg_promotion` reads
+    only `PromotionProduct` / `Promotion.is_active` / the date window, never the
+    caller's tier.
+    """
+    from app.models.access import ContactAccessType
+
+    db.add(ContactAccessType(code="zzt_code_x", name="ZZT Level X"))
+    db.add(ContactAccessType(code="zzt_code_y", name="ZZT Level Y"))
+    db.flush()
+
+    product_a = _product(db, "ZZT-PROMO-A", "SORENTO CHROME TAP A")
+    product_b = _product(db, "ZZT-PROMO-B", "SORENTO CHROME TAP B")
+
+    promo_a = Promotion(
+        id=str(uuid.uuid4()), description="ZZT promo A", is_active=True, access_levels=["zzt_code_x"]
+    )
+    db.add(promo_a)
+    db.flush()
+    group_a = PromotionGroup(id=uuid.uuid4(), promotion_id=promo_a.id, group_name="G")
+    db.add(group_a)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()), promotion_id=promo_a.id, promotion_group_id=group_a.id, product_id=product_a.id
+        )
+    )
+
+    promo_b = Promotion(
+        id=str(uuid.uuid4()), description="ZZT promo B", is_active=True, access_levels=["zzt_code_y"]
+    )
+    db.add(promo_b)
+    db.flush()
+    group_b = PromotionGroup(id=uuid.uuid4(), promotion_id=promo_b.id, group_name="G")
+    db.add(group_b)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()), promotion_id=promo_b.id, promotion_group_id=group_b.id, product_id=product_b.id
+        )
+    )
+    db.flush()
+
+    out = resolve_product_set(db, require={"promotion": True}, access_levels=["ZZT Level X"])
+    assert out["qualifying_total"] == 1
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == ["ZZT-PROMO-A"]
+
+    out_no_tier = resolve_product_set(db, require={"promotion": True}, access_levels=None)
+    assert out_no_tier["qualifying_total"] == 2
+
+
+def test_common_and_nearest_class_labels_are_company_scoped(db):
+    """AC-1335/SEC-S2: `_common_class_labels` and `_nearest_class_labels` must
+    read only the CALLER's own catalogue - a class label that exists solely in
+    another company must never reach a company A reply.
+
+    World: company B (Mocha, via `tests/_mc_lookup_seed.seed_mocha`) owns a
+    product whose derived spec class is the nonsense label "Zzqsecretclass" -
+    unique enough that its presence can only be explained by a cross-company
+    leak, never a coincidence.
+
+    RED: `ProductSpecifications` carries no `company_id` at all (not a
+    `CompanyScopedMixin` model) and neither helper joins `Product` (the scoped
+    side) to filter by it - `_common_class_labels` groups the whole table
+    unconditionally, and `_nearest_class_labels`'s own `stored_class_labels` runs
+    raw `text()` SQL with no company filter whatsoever - so under company A's
+    scope both still see company B's secret class label.
+    """
+    from tests._mc_lookup_seed import seed_mocha
+    from app.models.base import set_company_scope
+    from app.models.product_spec import ProductSpecifications
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from app.services.product_predicate_service import _common_class_labels, _nearest_class_labels
+
+    mocha = seed_mocha(db)
+    with company_scope(db, frozenset({mocha.id})):
+        secret_product = _product(db, "ZZT-MCH-SECRET", "MOCHA SECRET ITEM")
+        # `_product` already ran `derive_for_code`, which inserted the row (the
+        # description names no known class, so it derived nothing) - UPDATE the
+        # existing row rather than inserting a second one under the same
+        # `product_id` (a real UNIQUE constraint), which is exactly how a
+        # deterministic class derivation would have written it in production.
+        spec_row = (
+            db.query(ProductSpecifications)
+            .filter(ProductSpecifications.product_id == secret_product.id)
+            .one()
+        )
+        spec_row.values = {"class": {"value": "Zzqsecretclass"}}
+        db.flush()
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    common = _common_class_labels(db, limit=50)
+    assert "Zzqsecretclass" not in common, common
+
+    nearest = _nearest_class_labels(db, "zzqsecretclas")
+    assert nearest == [], nearest
