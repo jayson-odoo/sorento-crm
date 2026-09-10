@@ -8,6 +8,7 @@
     "start": "next start",
     "build:staging": "cp .env.staging .env.local && next build",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

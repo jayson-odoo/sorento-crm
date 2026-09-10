@@ -592,6 +592,15 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
+    # The FULL vitest suite (~950 files / ~10.5k tests) on a 2-vCPU runner was
+    # the single longest gate (19.5 min). Split into 4 shards that run in
+    # parallel matrix jobs instead of one job iterating serially; together
+    # they cover the exact same suite (vitest's `--shard` partitions the full
+    # collected file list, nothing runs twice or is dropped).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -610,13 +619,154 @@ jobs:
         working-directory: sorento_crm_frontend
         run: npm ci --force
 
-      # The FULL vitest suite (~950 files / ~10.5k tests). Needs no database
-      # or service containers; api-client calls are mocked. Single-test flakes
-      # under runner load are absorbed by `retry: 2` in vitest.config.ts (CI
-      # only); a test that fails three times in a row still blocks the deploy.
+      # One shard of the FULL vitest suite. Needs no database or service
+      # containers; api-client calls are mocked. Single-test flakes under
+      # runner load are absorbed by `retry: 2` in vitest.config.ts (CI only);
+      # a test that fails three times in a row still blocks the deploy.
       - name: Run vitest suite (executing gate)
         working-directory: sorento_crm_frontend
-        run: npx vitest run
+        run: npx vitest run --shard=${{ matrix.shard }}/4
+
+  # Type-checks application code on the runner, in parallel with the test
+  # gates, instead of inside the Docker build (see next.config.mjs and the
+  # frontend Dockerfile's NEXT_SKIP_TYPECHECK). NOT currently in
+  # build-and-deploy's `needs`: `tsc --noEmit` across the whole tsconfig
+  # (which, unlike Next's build-time check, also walks files no page/route
+  # imports) surfaced 24 pre-existing type errors, all in *.test.ts(x) files,
+  # none in application code - see the coder's report on this PR/lane for the
+  # file list. Wiring this into the deploy gate as-is would block every
+  # deploy on debt this lane did not introduce. Flagged for the captain;
+  # add `typecheck-frontend` to build-and-deploy's `needs` once resolved
+  # (fix the test files, or scope the tsconfig this script runs against).
+  typecheck-frontend:
+    name: Type-check frontend
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sorento_crm_frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: sorento_crm_frontend
+        run: npm ci --force
+
+      - name: Run tsc --noEmit
+        working-directory: sorento_crm_frontend
+        run: npm run typecheck
+
+  # Builds and pushes all three images in parallel with the test/validate gates
+  # above, instead of serially inside build-and-deploy after they all pass.
+  # This is the single biggest win in this slice: the old build-and-deploy job
+  # spent 6.5+2.3+0.3 = ~9 min building images with no buildx and no
+  # cache-from/cache-to, after every gate had already finished.
+  #
+  # Pushing a SHA-tagged image for a commit whose gates have not finished (or
+  # fail) is safe: the deploy step below only pulls by the exact commit SHA,
+  # and only after build-and-deploy's `needs` (which includes every gate) is
+  # green. An image sitting in the registry for a commit that never deploys
+  # costs registry storage, nothing else. `validate-backend` and
+  # `validate-mcp` already warm the `backend` and `mcp` gha cache scopes this
+  # job reads via `cache-from`, so those two matrix legs are close to free.
+  build-images:
+    name: Build and push images
+    needs: [changes]
+    # Same condition as build-and-deploy: only build for real on a push to
+    # main or a manual dispatch. A PR run still needs the images to exist for
+    # its own validate-backend/validate-mcp legs, which build separately
+    # (load: true, no push) and are unaffected by this job's `if`.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, backend, mcp]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # See validate-backend: authenticate so base-image pulls aren't
+      # anonymous (avoids Docker Hub rate-limit timeouts on shared runner IPs).
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        id: setup-buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Frontend only, UAC-19 (provisional): restores the `.next/cache` and
+      # npm caches the Dockerfile's `RUN --mount=type=cache` lines read from,
+      # across separate CI runs (a BuildKit cache mount otherwise lives only
+      # on the runner that created it, and GitHub-hosted runners are
+      # ephemeral). If this does not deliver a faster frontend build within
+      # two main deploys, drop this step and the next one and keep just the
+      # `cache-from`/`cache-to: type=gha` below - see UAC-19.
+      - name: Restore frontend buildkit cache directories
+        if: matrix.service == 'frontend'
+        id: fe-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.buildkit-cache/next
+            ${{ github.workspace }}/.buildkit-cache/npm
+          key: ${{ runner.os }}-fe-buildkit-${{ hashFiles('sorento_crm_frontend/package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-fe-buildkit-${{ hashFiles('sorento_crm_frontend/package-lock.json') }}-
+            ${{ runner.os }}-fe-buildkit-
+
+      - name: Inject frontend buildkit cache mounts
+        if: matrix.service == 'frontend'
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.setup-buildx.outputs.name }}
+          cache-map: |
+            {
+              ".buildkit-cache/next": "/app/.next/cache",
+              ".buildkit-cache/npm": "/root/.npm"
+            }
+          skip-extraction: ${{ steps.fe-cache.outputs.cache-hit }}
+
+      # Frontend build-args need the NEXT_PUBLIC_VAPID_PUBLIC_KEY secret (see
+      # the frontend Dockerfile); backend and mcp Dockerfiles do not declare
+      # that ARG, so they get their own step rather than an unused build-arg
+      # on every matrix leg.
+      - name: Build and push frontend image
+        if: matrix.service == 'frontend'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./sorento_crm_frontend
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+          tags: |
+            ${{ env.IMAGE_REPO }}:frontend-${{ env.RELEASE_TAG }}
+            ${{ env.IMAGE_REPO }}:frontend-${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Build and push image
+        if: matrix.service != 'frontend'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./sorento_crm_${{ matrix.service }}
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_REPO }}:${{ matrix.service }}-${{ env.RELEASE_TAG }}
+            ${{ env.IMAGE_REPO }}:${{ matrix.service }}-${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   build-and-deploy:
     needs:
@@ -627,6 +777,7 @@ jobs:
         validate-frontend,
         test-backend,
         test-backend-scm,
+        build-images,
       ]
     # Deliberately NOT `merge_group`: a queue entry only validates the merge
     # candidate. The deploy belongs to the `push` to main that lands after the
@@ -656,51 +807,9 @@ jobs:
           echo "mode=full" >> "$GITHUB_OUTPUT"
           echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
-      - name: Login to Docker Hub
-        if: steps.targets.outputs.should_deploy == 'true'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Build and Push Frontend
-        if: steps.targets.outputs.should_deploy == 'true' && steps.targets.outputs.frontend == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          context: ./sorento_crm_frontend
-          platforms: linux/amd64
-          push: true
-          # NEXT_PUBLIC_* must be baked at build time. Set the
-          # NEXT_PUBLIC_VAPID_PUBLIC_KEY repo secret to enable PWA web push in
-          # prod (empty = installable but no push subscription).
-          build-args: |
-            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
-          tags: |
-            ${{ env.IMAGE_REPO }}:frontend-${{ env.RELEASE_TAG }}
-            ${{ env.IMAGE_REPO }}:frontend-${{ github.sha }}
-
-      - name: Build and Push Backend
-        if: steps.targets.outputs.should_deploy == 'true' && steps.targets.outputs.backend == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          context: ./sorento_crm_backend
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE_REPO }}:backend-${{ env.RELEASE_TAG }}
-            ${{ env.IMAGE_REPO }}:backend-${{ github.sha }}
-
-      - name: Build and Push MCP
-        if: steps.targets.outputs.should_deploy == 'true' && steps.targets.outputs.mcp == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          context: ./sorento_crm_mcp
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE_REPO }}:mcp-${{ env.RELEASE_TAG }}
-            ${{ env.IMAGE_REPO }}:mcp-${{ github.sha }}
-
+      # Images are built and pushed by `build-images` (matrix, runs in
+      # parallel with the gates) - nothing left here needs a Docker Hub
+      # session; the ssh/scp steps below authenticate separately.
       - name: Sync deploy script to server
         if: steps.targets.outputs.should_deploy == 'true'
         uses: appleboy/scp-action@v0.1.7
