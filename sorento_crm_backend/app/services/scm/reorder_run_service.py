@@ -53,7 +53,7 @@ from app.services.scm.money import (
 )
 from app.services.scm import plan_grain
 from app.services.scm import product_supplier_service
-from app.services.scm.pool_predicate import SITE_POOL_SQL
+from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL, SITE_POOL_SQL
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     DEFAULT_OVERSTOCK_DAYS,
@@ -910,11 +910,19 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # SELECT returns read the identical site-pool-scoped figure - one expression, not two
     # readings that could drift (AC-1, AC-2, AC-4, AC-5).
     is_dealer_expr = SITE_POOL_SQL
+    # AC-3b (reviewer B1, review fix round B): SPO/PO are a DOCUMENT-BOOK read, not the
+    # on-hand-quantity one - an INACTIVE warehouse is still a real bin nobody has told
+    # AutoCount to stop counting, and `ACTIVE_SITE_POOL_SQL` (every other reader's
+    # constant - `site_pool_supply`, `spo_supply`, `po_book_service`,
+    # `purchase_trend_service`) is the one that excludes it. `on_hand_expr` keeps
+    # `is_dealer_expr` (`SITE_POOL_SQL`, segment only) - that gate is pre-existing (R19,
+    # captain 28 Aug) and out of scope for this lane.
+    is_active_site_pool_expr = ACTIVE_SITE_POOL_SQL
     # `np` is LEFT-joined onto `keys` now (AC-3), so a PO-only pair carries NULL on every
     # `np.*` column - COALESCEd to 0 here, the one place these two values are read.
     on_hand_expr = f"(CASE WHEN {is_dealer_expr} THEN COALESCE(np.quantity_on_hand, 0) ELSE 0 END)"
-    on_order_expr = f"(CASE WHEN {is_dealer_expr} THEN COALESCE(np.on_order, 0) ELSE 0 END)"
-    po_ordered_expr = f"(CASE WHEN {is_dealer_expr} THEN COALESCE(po.ordered, 0) ELSE 0 END)"
+    on_order_expr = f"(CASE WHEN {is_active_site_pool_expr} THEN COALESCE(np.on_order, 0) ELSE 0 END)"
+    po_ordered_expr = f"(CASE WHEN {is_active_site_pool_expr} THEN COALESCE(po.ordered, 0) ELSE 0 END)"
     net_position_col = f"({on_hand_expr} + {on_order_expr} - {committed_expr}) AS net_position"
 
     sql = text(f"""
@@ -3303,7 +3311,7 @@ def net_breakdown(db: Session, product_id: str,
     pos = db.execute(text(f"""
         SELECT COALESCE(SUM(CASE WHEN {SITE_POOL_SQL} THEN np.quantity_on_hand ELSE 0 END), 0)
                  AS on_hand,
-               COALESCE(SUM(CASE WHEN {SITE_POOL_SQL} THEN np.on_order ELSE 0 END), 0)
+               COALESCE(SUM(CASE WHEN {ACTIVE_SITE_POOL_SQL} THEN np.on_order ELSE 0 END), 0)
                  AS on_order,
                COALESCE(SUM(np.committed), 0) AS committed
         FROM scm.net_position_v np
@@ -3314,10 +3322,11 @@ def net_breakdown(db: Session, product_id: str,
     # Same view `_planning_rows` reads for the S10 checklist column - "still to come" on
     # an open, not-fully-received PO line. Summed the same way (product, optional
     # warehouse) as the three legs above so all four are read off the identical scope,
-    # site-pool gated the same way (AC-6).
+    # site-pool gated the same way (AC-6, AC-3b: PO/SPO gate on ACTIVE_SITE_POOL_SQL, not
+    # the segment-only SITE_POOL_SQL on_hand keeps).
     wh_po = "AND po.warehouse_id = :wid" if warehouse_id else ""
     po_ordered = db.execute(text(f"""
-        SELECT COALESCE(SUM(CASE WHEN {SITE_POOL_SQL} THEN po.ordered ELSE 0 END), 0)
+        SELECT COALESCE(SUM(CASE WHEN {ACTIVE_SITE_POOL_SQL} THEN po.ordered ELSE 0 END), 0)
                  AS po_ordered
         FROM scm.po_ordered_v po
         JOIN warehouses w ON w.id = po.warehouse_id
