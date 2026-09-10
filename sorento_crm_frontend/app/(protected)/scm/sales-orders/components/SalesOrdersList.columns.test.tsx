@@ -200,6 +200,37 @@ describe('SalesOrdersList - Delivery date column', () => {
   });
 });
 
+describe('SalesOrdersList - Project column (AC-F1)', () => {
+  it('is headed "Project" and sits after Customer', async () => {
+    stub([order({ project_label: 'BAMBOO RESIDENCE / KUALA LUMPUR' })]);
+    renderList();
+
+    const headers = await screen.findAllByRole('columnheader');
+    const labels = headers.map((h) => h.textContent);
+    const customerIndex = labels.findIndex((t) => t?.includes('Customer'));
+    const projectIndex = labels.findIndex((t) => t?.includes('Project'));
+    expect(customerIndex).toBeGreaterThan(-1);
+    expect(projectIndex).toBeGreaterThan(customerIndex);
+  });
+
+  it('renders the label, truncated with a title', async () => {
+    stub([order({ project_label: 'BAMBOO RESIDENCE / KUALA LUMPUR' })]);
+    renderList();
+
+    const cell = await screen.findByText('BAMBOO RESIDENCE / KUALA LUMPUR');
+    expect(cell).toHaveAttribute('title', 'BAMBOO RESIDENCE / KUALA LUMPUR');
+    expect(cell.className).toContain('truncate');
+  });
+
+  it('reads "-" when no source has ever named a project', async () => {
+    stub([order({ project_label: null })]);
+    renderList();
+
+    await screen.findByText('SO900001');
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+  });
+});
+
 describe('SalesOrdersList - Total amount column', () => {
   it('prints the order total in ringgit', async () => {
     stub([order({ total_amount: '31985.00' })]);

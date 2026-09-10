@@ -430,6 +430,16 @@ class SalesOrder(Base, CompanyScopedMixin):
     # keep a project name it cannot resolve to a customer.
     source_doc_no = Column(String, nullable=True)
     internal_note = Column(Text, nullable=True)
+    # The project this order belongs to, in the reader's own words - never a UUID. Resolved
+    # by `app.services.project_label_rules` from whichever of four sources ranks highest
+    # (see `project_label_source` below); a manual correction (rank 5) is a later slice.
+    # Nothing ever clears it once written.
+    project_label = Column(Text, nullable=True)
+    # Which rule wrote `project_label`: `inquiry` (the Order Inquiry sheet) > `note` (the
+    # AutoCount note's PROJECT line) > `ref` (AutoCount `SO.Ref`) > `delivery` (a delivery
+    # address in the note). Decides whether a later, lower-ranked write is allowed to
+    # overwrite it (`apply_project_label`).
+    project_label_source = Column(String(16), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
