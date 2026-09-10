@@ -19,7 +19,9 @@ class SupplierBase(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     postal_code: Optional[str] = None
-    country: Optional[str] = None
+    # S2 (`PLAN-local-supplier-oi-routing.md`): replaces the free-text `country`.
+    # 422 (never a raw FK violation) on an id `SupplierService` cannot resolve.
+    country_id: Optional[str] = None
     payment_terms_days: Optional[int] = 30
     is_active: bool = True
 
@@ -39,7 +41,7 @@ class SupplierUpdate(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     postal_code: Optional[str] = None
-    country: Optional[str] = None
+    country_id: Optional[str] = None
     payment_terms_days: Optional[int] = None
     is_active: Optional[bool] = None
 
@@ -57,7 +59,11 @@ class SupplierResponse(SupplierBase):
     id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+    # Read-only, joined off `country_id` (`Supplier.country_code`/`country_name`
+    # properties) - the client never computes or sends these back.
+    country_code: Optional[str] = None
+    country_name: Optional[str] = None
+
     class Config:
         from_attributes = True
 

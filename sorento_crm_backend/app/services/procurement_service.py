@@ -757,11 +757,21 @@ class SupplierService:
             raise handle_not_found("Supplier", supplier_id)
         return supplier
     
+    def _validate_country_id(self, country_id: Optional[str]) -> None:
+        """S2: an unresolvable `country_id` is a 422, never a raw FK violation."""
+        if not country_id:
+            return
+        from app.models.country import Country
+
+        if not self.db.query(Country.id).filter(Country.id == country_id).first():
+            raise handle_unprocessable("Unknown country.")
+
     def create_supplier(self, supplier_data: SupplierCreate):
         """Create a new supplier."""
         # D17: case/whitespace-insensitive, same as every other channel.
         if resolve_master_by_code(self.db, Supplier, supplier_data.supplier_code):
             raise handle_conflict("Supplier code already exists.")
+        self._validate_country_id(supplier_data.country_id)
 
         data = supplier_data.model_dump()
         # D2: AutoCount's trailing currency note (`"ACME (RMB)"`) is not part
@@ -773,12 +783,14 @@ class SupplierService:
         self.db.commit()
         self.db.refresh(supplier)
         return supplier
-    
+
     def update_supplier(self, supplier_id: str, supplier_data: SupplierUpdate):
         """Update a supplier."""
         supplier = self.get_supplier(supplier_id)
 
         update_data = supplier_data.model_dump(exclude_unset=True)
+        if "country_id" in update_data:
+            self._validate_country_id(update_data["country_id"])
         # D2 (review nit): the trailing currency note (`"ACME (RMB)"`) is not
         # part of the legal name on create - `update_supplier` used to write
         # it through unstripped, so an edit could quietly restore the note
@@ -787,7 +799,7 @@ class SupplierService:
             update_data["supplier_name"] = clean_supplier_name(update_data["supplier_name"])
         for key, value in update_data.items():
             setattr(supplier, key, value)
-        
+
         self.db.commit()
         self.db.refresh(supplier)
         return supplier
