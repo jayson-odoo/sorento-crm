@@ -629,15 +629,14 @@ jobs:
 
   # Type-checks application code on the runner, in parallel with the test
   # gates, instead of inside the Docker build (see next.config.mjs and the
-  # frontend Dockerfile's NEXT_SKIP_TYPECHECK). NOT currently in
-  # build-and-deploy's `needs`: `tsc --noEmit` across the whole tsconfig
-  # (which, unlike Next's build-time check, also walks files no page/route
-  # imports) surfaced 24 pre-existing type errors, all in *.test.ts(x) files,
-  # none in application code - see the coder's report on this PR/lane for the
-  # file list. Wiring this into the deploy gate as-is would block every
-  # deploy on debt this lane did not introduce. Flagged for the captain;
-  # add `typecheck-frontend` to build-and-deploy's `needs` once resolved
-  # (fix the test files, or scope the tsconfig this script runs against).
+  # frontend Dockerfile's NEXT_SKIP_TYPECHECK). This job replaces the
+  # in-image `next build` check it took over from, and that check never
+  # walked *.test.ts(x) - Next's build-time type check only follows files
+  # reachable from a page/route, not orphan test files - so
+  # tsconfig.typecheck.json excludes them here too: parity with what always
+  # gated deploys, not a new gate. vitest owns test-file correctness. The
+  # excluded files carried 24 pre-existing type errors on the day this job
+  # was added; tracked as a follow-up issue, not fixed in this lane.
   typecheck-frontend:
     name: Type-check frontend
     needs: [changes]
@@ -778,6 +777,7 @@ jobs:
         test-backend,
         test-backend-scm,
         build-images,
+        typecheck-frontend,
       ]
     # Deliberately NOT `merge_group`: a queue entry only validates the merge
     # candidate. The deploy belongs to the `push` to main that lands after the
