@@ -270,6 +270,38 @@ def _schemes_on_file(db: Session) -> list[str]:
     return sorted({str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()})
 
 
+def recover_certificate_scheme(
+    db: Session, require: dict[str, Any], words: list[str]
+) -> tuple[dict[str, Any], list[str]]:
+    """R14/AC-1338 (third console pass): a BARE `{"certificate": True}` require
+    whose described-set remainder still holds the scheme word never split off
+    the attachment_type raw ("which item has PPS cert" - "PPS" was never
+    separated from "cert" upstream). Tried only when `require["certificate"]`
+    is exactly `True` (an already-scoped `{"scheme": ...}` object is left
+    untouched) - each word is tried, in order, against the register's own
+    active scheme spellings (`_schemes_on_file`, case-insensitive) then the
+    `certificate_scheme` lookup set's keywords, and the FIRST hit promotes
+    `require` to `{"certificate": {"scheme": <register spelling>}}` and
+    reports that ONE word CONSUMED, so the caller can drop it from the
+    described-set remainder before it reaches `filter_specs` as an
+    unrecognized set word. No hit at all returns `require`/`words` unchanged -
+    a remainder that names no real scheme stays exactly as honest as it is
+    today (AC-1320's own regression guard).
+    """
+    if require.get("certificate") is not True:
+        return require, []
+    schemes_on_file = _schemes_on_file(db)
+    by_lower = {scheme.lower(): scheme for scheme in schemes_on_file}
+    for word in words:
+        cleaned = str(word or "").strip()
+        if not cleaned:
+            continue
+        resolved = by_lower.get(cleaned.lower()) or _lookup_resolve(db, "certificate_scheme", cleaned)
+        if resolved:
+            return {**require, "certificate": {"scheme": resolved}}, [word]
+    return require, []
+
+
 def _leg_certificate(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
     """In the certificate register. Bare ``true`` = any active-register cert
     (decided); the object form narrows: ``scheme`` through the

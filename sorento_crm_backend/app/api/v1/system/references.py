@@ -2566,7 +2566,11 @@ def resolve_reference_post(
     # customer typed a complete code, so the response stays byte-identical to the
     # same request without `require`.
     if payload.require and not _has_exact_product_match(result, payload.tokens):
-        from app.services.product_predicate_service import resolve_product_set
+        from app.services.product_predicate_service import (
+            recover_certificate_scheme,
+            resolve_product_set,
+        )
+        from app.services.product_spec_search import _content_words
         from app.services.product_spec_understanding import derive_search_inputs
 
         # C2: the described set's other half besides `product_ids` - class /
@@ -2591,6 +2595,22 @@ def resolve_reference_post(
         # BINDINGS (`specs`) are wanted here; ranking still runs on exactly the
         # free terms the caller sent, unchanged.
         query_text = _strip_predicate_words(payload.query or "", payload.predicate_words)
+
+        # R14/AC-1338 (third console pass): a bare `{"certificate": True}`
+        # require whose remainder still holds the scheme word (never split
+        # off the attachment_type raw upstream - "which item has PPS cert"
+        # never separated "PPS" from "cert") is promoted here, off the SAME
+        # remainder `derive_search_inputs` is about to read. The consumed
+        # word is dropped from `query_text` BEFORE it reaches either
+        # `derive_search_inputs` or `_has_turn_free_terms` (both read this
+        # one shared variable), so it never lands in `filter_specs` as an
+        # unrecognized set word.
+        require, consumed_scheme_words = recover_certificate_scheme(
+            db, payload.require, _content_words(query_text)
+        )
+        if consumed_scheme_words:
+            query_text = _strip_predicate_words(query_text, consumed_scheme_words)
+
         specs, _derived_free_terms, _exclusions, _understanding = derive_search_inputs(
             db,
             query_text,
@@ -2624,7 +2644,11 @@ def resolve_reference_post(
         # 7-qualifying answer with only the first 5 to page through.
         outcome = resolve_product_set(
             db,
-            require=payload.require,
+            # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
+            # scheme from the remainder above), never `payload.require`
+            # unconditionally - `require` is that same dict unchanged when
+            # nothing was recovered.
+            require=require,
             specs=specs,
             free_terms=payload.free_terms,
             scope_terms=scope_terms,
