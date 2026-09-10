@@ -151,6 +151,17 @@ export default function SuppliersList() {
         meta: { headerTitle: 'Email', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
+        accessorKey: 'country_name',
+        header: ({ column }) => <DataGridColumnHeader title="Country" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.country_name ?? ''}>
+            {row.original.country_name || '-'}
+          </span>
+        ),
+        size: 140,
+        meta: { headerTitle: 'Country' },
+      },
+      {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
