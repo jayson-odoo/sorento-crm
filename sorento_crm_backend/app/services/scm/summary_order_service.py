@@ -39,7 +39,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
-from sqlalchemy import func, or_, text
+from sqlalchemy import Numeric, cast, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
@@ -1435,18 +1435,33 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
     return buf.getvalue()
 
 
-def _hidden_product_codes_for_run(db: Session, run_id: str) -> set[str]:
-    """PLAN-plan-list-tile-sheet-one-scope.md, S7 (AC-3): which product codes the SAME
+def _hidden_product_ids_for_run(db: Session, run_id: str) -> set[str]:
+    """PLAN-plan-list-tile-sheet-one-scope.md, S7 (AC-3): which products the SAME
     `plan_scope.hidden_by_default` rule the recommendations list and the Decisions tile
     already read also hides, for the run's own PRODUCT-GRAIN recommendation rows
     (`warehouse_id IS NULL` - `order_summary_row` is one row per product per run, the
     same cardinality). ORM, not raw SQL, so the company isolation filter on
     `ReorderRecommendation` applies without a hand-written predicate.
+
+    Keyed on `product_id`, not `product_code` (reviewer pass 3, round D, D2): a code
+    repeats across companies, an id does not, and `order_summary_row` already carries
+    `product_id` directly - no join to `products` is needed here at all.
+
+    Selects only the four scalars the rule needs - `rec_type`,
+    `inputs->>'policy_type'`, `(inputs->>'reorder_level')::numeric`,
+    `(inputs->>'master_reorder_level')::numeric` - plus `net_position`, never the whole
+    `inputs` JSONB (D1: measured on the 12,948-rec run, fetching the full blob cost
+    29.3 MB / 356 ms against 69 ms for this narrow shape).
     """
     rows = (
-        db.query(Product.product_code, ReorderRecommendation.rec_type,
-                 ReorderRecommendation.inputs, ReorderRecommendation.net_position)
-        .join(Product, Product.id == ReorderRecommendation.product_id)
+        db.query(
+            ReorderRecommendation.product_id,
+            ReorderRecommendation.rec_type,
+            ReorderRecommendation.inputs["policy_type"].astext,
+            cast(ReorderRecommendation.inputs["reorder_level"].astext, Numeric),
+            cast(ReorderRecommendation.inputs["master_reorder_level"].astext, Numeric),
+            ReorderRecommendation.net_position,
+        )
         .filter(
             ReorderRecommendation.run_id == run_id,
             ReorderRecommendation.warehouse_id.is_(None),
@@ -1454,16 +1469,17 @@ def _hidden_product_codes_for_run(db: Session, run_id: str) -> set[str]:
         .all()
     )
     hidden: set[str] = set()
-    for code, rec_type, inputs, net_position in rows:
-        inp = inputs or {}
+    for pid, rec_type, policy_type, reorder_level, master_reorder_level, net_position in rows:
         if plan_scope.hidden_by_default(
             rec_type=rec_type,
-            policy_type=inp.get("policy_type"),
-            reorder_level=inp.get("reorder_level"),
-            master_reorder_level=inp.get("master_reorder_level"),
+            policy_type=policy_type,
+            reorder_level=float(reorder_level) if reorder_level is not None else None,
+            master_reorder_level=(
+                float(master_reorder_level) if master_reorder_level is not None else None
+            ),
             net_position=float(net_position) if net_position is not None else None,
         ):
-            hidden.add(code)
+            hidden.add(str(pid))
     return hidden
 
 
@@ -1499,18 +1515,19 @@ def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
         FROM scm.order_summary_row WHERE run_id = :rid {co_clause}
     """), {"rid": str(run.id), **co_params}).mappings().first()
 
-    hidden_codes = _hidden_product_codes_for_run(db, str(run.id))
+    hidden_ids = _hidden_product_ids_for_run(db, str(run.id))
     hidden_count = 0
-    if hidden_codes:
+    if hidden_ids:
         co_osr, co_osr_params = company_sql_predicate(
             db, "osr.company_id", param_prefix="egsh"
         )
         co_osr_clause = f"AND {co_osr}" if co_osr else ""
+        # D2: no join to `products` here - `order_summary_row` carries `product_id`
+        # directly.
         hidden_count = db.execute(text(f"""
             SELECT COUNT(*) FROM scm.order_summary_row osr
-            JOIN products p ON p.id = osr.product_id
-            WHERE osr.run_id = :rid AND p.product_code = ANY(:codes) {co_osr_clause}
-        """), {"rid": str(run.id), "codes": list(hidden_codes), **co_osr_params}).scalar() or 0
+            WHERE osr.run_id = :rid AND osr.product_id::text = ANY(:ids) {co_osr_clause}
+        """), {"rid": str(run.id), "ids": list(hidden_ids), **co_osr_params}).scalar() or 0
 
     return {
         "run_id": str(run.id),
@@ -1535,12 +1552,20 @@ def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[byte
     rule the list and the Decisions tile already read) are dropped here, AFTER `report()`
     - `report()` itself stays untouched (AC-4), so a caller reading the frozen sheet whole
     still sees every planned product; only the printed/exported document narrows to what
-    the buyer would see on the list.
+    the buyer would see on the list. `_hidden_product_ids_for_run` is keyed on
+    `product_id` (D2); `report()`'s own rows carry only `product_code` (never an id - no
+    UUID crosses this module's output), so the ids are resolved to codes with a SECOND,
+    narrow join scoped to just the hidden set - typically a handful of products, not the
+    whole run.
     """
     rep = report(db, run_id=run_id)
     rows = rep["rows"]
-    hidden_codes = _hidden_product_codes_for_run(db, rep["run_id"])
-    if hidden_codes:
+    hidden_ids = _hidden_product_ids_for_run(db, rep["run_id"])
+    if hidden_ids:
+        hidden_codes = {
+            code for (code,) in
+            db.query(Product.product_code).filter(Product.id.in_(hidden_ids)).all()
+        }
         rows = [r for r in rows if r["product_code"] not in hidden_codes]
     if len(rows) > MAX_EXPORT_ROWS:
         raise AppException(422, "Narrow the plan first")

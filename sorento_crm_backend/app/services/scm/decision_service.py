@@ -46,7 +46,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import Numeric, cast, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.inventory import Warehouse
@@ -1391,12 +1391,19 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     # S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-2): a hidden-by-default row (the SAME
     # `plan_scope.hidden_by_default` rule the recommendations list serializer stamps) is
     # not decidable BY DEFAULT, so it does not count toward the tile's total - "tile
-    # counts what the list show" (owner, 10 Sep). Read per-candidate rather than in the
-    # COUNT itself: the rule needs `inputs` (JSON) and `net_position` together, which SQL
-    # would have to re-derive twice (here and in `_row`) rather than share one function.
+    # counts what the list show" (owner, 10 Sep). Reviewer pass 3 (round D, D1): SELECTs
+    # only the four scalars the rule needs, extracted with `->>`/cast in SQL, never the
+    # whole `inputs` JSONB - measured on the 12,948-rec run, fetching the full blob (this
+    # query's earlier shape) cost 29.3 MB / 356 ms against 69 ms for the narrow read.
     candidates = (
-        db.query(ReorderRecommendation.product_id, ReorderRecommendation.rec_type,
-                 ReorderRecommendation.inputs, ReorderRecommendation.net_position)
+        db.query(
+            ReorderRecommendation.product_id,
+            ReorderRecommendation.rec_type,
+            ReorderRecommendation.inputs["policy_type"].astext,
+            cast(ReorderRecommendation.inputs["reorder_level"].astext, Numeric),
+            cast(ReorderRecommendation.inputs["master_reorder_level"].astext, Numeric),
+            ReorderRecommendation.net_position,
+        )
         .filter(
             ReorderRecommendation.run_id == run_id,
             ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
@@ -1404,12 +1411,16 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
         .all()
     )
     decidable_product_ids = {
-        pid for pid, rec_type, inputs, net_position in candidates
+        pid
+        for pid, rec_type, policy_type, reorder_level, master_reorder_level, net_position
+        in candidates
         if not plan_scope.hidden_by_default(
             rec_type=rec_type,
-            policy_type=(inputs or {}).get("policy_type"),
-            reorder_level=(inputs or {}).get("reorder_level"),
-            master_reorder_level=(inputs or {}).get("master_reorder_level"),
+            policy_type=policy_type,
+            reorder_level=float(reorder_level) if reorder_level is not None else None,
+            master_reorder_level=(
+                float(master_reorder_level) if master_reorder_level is not None else None
+            ),
             net_position=float(net_position) if net_position is not None else None,
         )
     }
