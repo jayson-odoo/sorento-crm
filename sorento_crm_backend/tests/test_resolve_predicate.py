@@ -1135,3 +1135,123 @@ def test_scheme_word_matches_the_register_spelling_without_a_lookup_option(clien
     assert predicate["qualifying_total"] == 1, predicate
     assert predicate["unrecognized_terms"] == [], predicate
     assert "schemes_on_file" not in predicate, predicate
+
+
+# --------------------------------------------------------------------------- #
+# Third console pass (11 Sep 2026, PLAN-attribute-first-asks.md R13,           #
+# AC-1332) - the LLM parser variant that put `understand_phrase: true` on the  #
+# wire tripped a MODEL read the HAS branch was never meant to run: the         #
+# deterministic replay of the same stored parser output (no model key at all) #
+# answered cleanly, while the live turn's model-derived free term "item pps"  #
+# poisoned the described set.                                                 #
+# --------------------------------------------------------------------------- #
+
+
+def _pps_certified_world(db):
+    """One PPS-scheme certified product, unrelated to class scoping - just
+    enough register data for the `certificate.scheme` leg to resolve "PPS"
+    without also tripping AC-1328/R5's own scheme-miss path."""
+    from app.models.certificate import Certificate, CertificateProduct
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+    product = Product(
+        id=str(uuid.uuid4()),
+        product_code="ZZTPPS01",
+        product_name="ZZTPPS01",
+        description="ZZT SOME PRODUCT",
+        category_id=cat.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("1.00"),
+    )
+    db.add(product)
+    db.flush()
+    cert = Certificate(
+        id=str(uuid.uuid4()), scheme="PPS", certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}", status="active"
+    )
+    db.add(cert)
+    db.flush()
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+    db.flush()
+    return product
+
+
+def test_has_branch_never_calls_the_model_phrase_reader(client, db, monkeypatch):
+    """AC-1332/R13 (third console pass): the HAS branch (`require` present) must
+    derive its class/product_type/brand bindings deterministically ONLY - the
+    MODEL phrase reader stays on the spec_fallback path where it was built for
+    (it costs 2-3 seconds and is gated there by design), never invoked here even
+    when the caller's own `understand_phrase` is true, which is the lane's real
+    value on every turn. Measured live: "which item has PPS cert" answered "I
+    don't know 'item pps' as a product type" - "item pps" is a MODEL-derived free
+    term, never produced by the deterministic word-level reader, and never seen
+    in the replay of the exact same stored parser output run without the model.
+
+    RED: `app/api/v1/system/references.py`'s require branch calls
+    `derive_search_inputs(..., allow_model=payload.understand_phrase)` - a
+    caller that sends the lane's own real `understand_phrase: true` lets the
+    model run, tripping this test's monkeypatched guard with an AssertionError
+    (caught nowhere on this path, so it surfaces as a 500, not a clean miss).
+    """
+    import app.services.product_spec_understanding as psu
+
+    real_derive_search_inputs = psu.derive_search_inputs
+
+    def _guarded(db_arg, *args, **kwargs):
+        if kwargs.get("allow_model"):
+            raise AssertionError(
+                "derive_search_inputs called with allow_model=True on a HAS (require-present) turn"
+            )
+        return real_derive_search_inputs(db_arg, *args, **kwargs)
+
+    monkeypatch.setattr(psu, "derive_search_inputs", _guarded)
+    # references.py's require branch does `from app.services.product_spec_understanding
+    # import derive_search_inputs` INSIDE the function body, so this patch of the
+    # module attribute is read fresh on every call - no second patch target needed.
+
+    _pps_certified_world(db)
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which item has PPS cert",
+            "tokens": [],
+            "match_mode": "and",
+            "understand_phrase": True,
+            "require": {"certificate": {"scheme": "PPS"}},
+            "predicate_words": ["PPS cert"],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["predicate"]["unrecognized_terms"] == []
+
+
+def test_predicate_words_are_stripped_word_by_word(client, db):
+    """AC-1332 (third console pass): a phrase-shaped `predicate_words` entry
+    ("PPS cert", the parser's single attachment_type raw) must strip cleanly out
+    of the described-set remainder, word by word - not survive as a leftover
+    unrecognised phrase. The query names no class, so the scoped set is
+    unrestricted (no `class_labels`) and nothing is reported unrecognized.
+
+    Likely green today, kept as the regression guard AC-1332 asks for: the
+    query's predicate word IS one contiguous phrase in the sentence
+    ("...has PPS cert"), so `_strip_predicate_words`'s own whole-phrase regex
+    already matches it without needing a word-by-word split.
+    """
+    _pps_certified_world(db)
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which item has PPS cert",
+            "tokens": [],
+            "match_mode": "and",
+            "understand_phrase": False,
+            "require": {"certificate": {"scheme": "PPS"}},
+            "predicate_words": ["PPS cert"],
+        },
+    )
+    assert response.status_code == 200
+    predicate = response.json()["predicate"]
+    assert predicate["unrecognized_terms"] == [], predicate
+    assert not predicate.get("class_labels"), predicate

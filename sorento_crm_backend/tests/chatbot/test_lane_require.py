@@ -1614,6 +1614,98 @@ def test_document_types_listed_are_product_facing_only():
     assert "Complaint Document" not in text, text
 
 
+# --------------------------------------------------------------------------- #
+# Third console pass (11 Sep 2026, PLAN-attribute-first-asks.md R12, AC-1331)  #
+# - a parser variant folds a two-word product description into ONE product    #
+# entity ("Sorento bidet" -> token "Sorentobidet"), which never matches any    #
+# real product code. The certificate leg still finds the real product through #
+# the brand + class binding, but the reply took the miss copy anyway.         #
+# --------------------------------------------------------------------------- #
+
+
+def test_unresolved_word_token_is_the_description_not_a_miss():
+    """AC-1331/R12 (third console pass): when `predicate.qualifying_total > 0`,
+    an unresolved WORD token (the parser's single product entity "Sorento
+    bidet", folded to "Sorentobidet" and matching no real code) must never be
+    listed as a miss - it IS the described set's own description, and the set
+    answer must render.
+
+    World: one Sorento-branded, certified product whose description contains
+    "BIDET" (`derive_for_code` reads `product_type: "bidet"` off it), plus two
+    unrelated, uncertified products (a class-Tap and a class-Wash-Basin one) so
+    the set answer naming exactly the one product is not a coincidence of an
+    all-matching world.
+
+    GREEN TODAY under this exact world, measured directly: `resolve_gate.run`
+    exits `continue` (`gate_reason` "ok"), and the fetch renders "1 bidet has
+    certificates." followed by the certificate block for ZZTWT5875 - never the
+    "Couldn't find" / "Here's what you want: ... But no certificate matched
+    these" combiner (`answer.py`'s `build_breakdown_msg`, reached only when the
+    gate does NOT pass). AC-1326's own `predicate_bypass`
+    (`isinstance(resolver.get("predicate"), dict)`) already short-circuits the
+    ambiguity picker AND the product_attachment "subject did not resolve" block
+    that would otherwise fail this turn on the unresolved "Sorentobidet" token,
+    so this exact input shape does not reproduce R12's console finding here.
+    Kept as the regression guard AC-1331 asks for, reported honestly per this
+    file's own "CONTRACT CONTRADICTION" convention (see the S3 banner earlier
+    in this file) rather than forced red by inventing a different world; if the
+    live turn's actual parser output carried something this construction does
+    not (a different domain_hint, a missing `canonical_code`, an additional
+    entity), that is this test's own finding to hand back, not a reason to
+    keep guessing inputs until it breaks.
+    """
+    from app.models.product import Brand, Product
+    from app.services.product_spec_derivation import derive_for_code
+    from tests._pg_fixture import unique_code
+
+    with blank_session() as db:
+        _seed_registry(db)
+        category_id, uom_id = _seed_category_and_uom(db)
+
+        sorento = Brand(id=str(uuid.uuid4()), brand_code=unique_code("ZZT-SRT")[:20], brand_name="SORENTO")
+        db.add(sorento)
+        db.flush()
+
+        target = Product(
+            id=str(uuid.uuid4()),
+            product_code="ZZTWT5875",
+            product_name="ZZTWT5875",
+            description="SORENTO CHROME BIDET SPRAY SET",
+            category_id=category_id,
+            base_uom_id=uom_id,
+            brand_id=sorento.id,
+            list_price=10,
+            is_active=True,
+        )
+        db.add(target)
+        db.flush()
+        derive_for_code(db, "ZZTWT5875")
+        _certificate_for(db, product_id=target.id)
+
+        # Two unrelated, UNCERTIFIED products - so a reply naming only ZZTWT5875
+        # is proof of real scoping, not a coincidence of an all-matching world.
+        _tap_product(db, category_id=category_id, uom_id=uom_id)
+        _basin_product(db, category_id=category_id, uom_id=uom_id)
+        db.commit()
+
+        ctx = _cert_ctx(
+            "which sorento bidet has cert",
+            [
+                {"hint": "product", "raw": "Sorento bidet"},
+                {"hint": "attachment_type", "raw": "cert", "canonical_code": "certificate"},
+            ],
+        )
+        out, fragment = _run_has_lane(db, ctx, fake_call_tool=_cert_fake_call_tool(db))
+        reply = (fragment.get("fetch") or {}).get("response") or ""
+
+    lines = reply.splitlines()
+    assert lines and lines[0].startswith("1 "), reply
+    assert "has certificates." in lines[0], reply
+    assert "ZZTWT5875" in reply, reply
+    assert "Couldn't find" not in reply, reply
+    assert "no certificate matched" not in reply, reply
+
+
 def test_set_header_names_the_scheme():
     """AC-1316 (second console pass): a scheme-narrowed certificate require must
     name the SCHEME in the set header, not the bare "certificates" noun - "which
