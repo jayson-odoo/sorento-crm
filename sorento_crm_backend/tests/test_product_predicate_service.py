@@ -1333,6 +1333,43 @@ def test_access_level_codes_expands_a_bare_tier_token(db):
     assert _access_level_codes(db, []) is None
 
 
+def test_access_level_codes_treats_wildcard_characters_literally(db):
+    """AC-1348/R24 (both reviewers, should-fix): the bare-tier-token suffix
+    match interpolates the caller's own value straight into a SQL LIKE pattern
+    with no escaping - a value that itself contains `%`, `_` or `\\` must still
+    be read as its LITERAL spelling, never as a wildcard that widens the
+    match.
+
+    RED: measured live, `_access_level_codes(db, ["%"])` returns SEVEN of the
+    eight seeded codes (every one carrying an underscore, since the
+    interpolated "%" makes the pattern `%\_%`, "any code with an underscore in
+    it") instead of the empty set this AC demands. `["%dealer"]` and
+    `["d%r"]` must also select nothing - neither is any seeded code's literal
+    spelling.
+    """
+    from app.models.access import ContactAccessType
+    from app.services.product_predicate_service import _access_level_codes
+
+    db.add_all(
+        [
+            ContactAccessType(code="dealer", name="Sorento Dealer"),
+            ContactAccessType(code="cabana_dealer", name="Cabana Dealer"),
+            ContactAccessType(code="mocha_dealer", name="Mocha Dealer"),
+            ContactAccessType(code="sorento_office", name="Sorento Office"),
+            ContactAccessType(code="cabana_office", name="Cabana Office"),
+            ContactAccessType(code="end_user", name="End User"),
+            ContactAccessType(code="sorento_end_user", name="Sorento End User"),
+        ]
+    )
+    db.flush()
+
+    assert _access_level_codes(db, ["%"]) == set(), _access_level_codes(db, ["%"])
+    assert _access_level_codes(db, ["%dealer"]) == set(), _access_level_codes(db, ["%dealer"])
+    assert _access_level_codes(db, ["d%r"]) == set(), _access_level_codes(db, ["d%r"])
+    # The ordinary bare-token contract is unaffected by the escaping fix.
+    assert _access_level_codes(db, ["dealer"]) == {"dealer", "cabana_dealer", "mocha_dealer"}
+
+
 def test_promotion_leg_respects_a_bare_tier_token(db):
     """AC-1342/R18: `resolve_product_set`'s promotion leg must resolve a bare
     TIER TOKEN the same way `_access_level_codes` does - "dealer" must count a
@@ -1374,3 +1411,72 @@ def test_promotion_leg_respects_a_bare_tier_token(db):
 
     out_office = resolve_product_set(db, require={"promotion": True}, access_levels=["office"])
     assert out_office["qualifying_total"] == 0, out_office
+
+
+# --------------------------------------------------------------------------- #
+# Round 3 re-check (R25, AC-1349): the resolver-level half of the contract -   #
+# a stated tier NAME must count only the promotion restricted to its OWN      #
+# code, never an unrelated tier's.                                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_product_set_counts_only_the_stated_tiers_promotion(db):
+    """AC-1349/R25: `resolve_product_set(require={"promotion": True},
+    access_levels=["Sorento Dealer"])` must count ONLY the promotion
+    restricted to the "dealer" code - a promotion restricted to "end_user"
+    must never count toward a dealer's own `qualifying_total`.
+
+    This is the resolver-level half of the contract `resolve_entity_body`
+    must now feed with the tier gate's own recomposed names rather than the
+    parser's bare tokens; the leg itself (`_access_level_codes` / `_leg_
+    promotion`) already translates a NAME correctly, so this may already be
+    green - kept as the pinned contract regardless, per the captain's
+    instruction.
+    """
+    from app.models.access import ContactAccessType
+
+    db.add_all(
+        [
+            ContactAccessType(code="dealer", name="Sorento Dealer"),
+            ContactAccessType(code="end_user", name="End User"),
+        ]
+    )
+    db.flush()
+
+    dealer_product = _product(db, "ZZT-TIER-DEALER", "SORENTO CHROME TAP DEALER")
+    dealer_promo = Promotion(
+        id=str(uuid.uuid4()), description="ZZT promo dealer", is_active=True, access_levels=["dealer"]
+    )
+    db.add(dealer_promo)
+    db.flush()
+    dealer_group = PromotionGroup(id=uuid.uuid4(), promotion_id=dealer_promo.id, group_name="G")
+    db.add(dealer_group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()), promotion_id=dealer_promo.id, promotion_group_id=dealer_group.id,
+            product_id=dealer_product.id,
+        )
+    )
+
+    end_user_product = _product(db, "ZZT-TIER-ENDUSER", "SORENTO CHROME TAP END USER")
+    end_user_promo = Promotion(
+        id=str(uuid.uuid4()), description="ZZT promo end user", is_active=True, access_levels=["end_user"]
+    )
+    db.add(end_user_promo)
+    db.flush()
+    end_user_group = PromotionGroup(id=uuid.uuid4(), promotion_id=end_user_promo.id, group_name="G")
+    db.add(end_user_group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()), promotion_id=end_user_promo.id, promotion_group_id=end_user_group.id,
+            product_id=end_user_product.id,
+        )
+    )
+    db.flush()
+
+    out = resolve_product_set(db, require={"promotion": True}, access_levels=["Sorento Dealer"])
+    assert out["qualifying_total"] == 1, out
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == ["ZZT-TIER-DEALER"], codes

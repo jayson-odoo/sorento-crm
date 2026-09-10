@@ -256,6 +256,73 @@ def test_resolve_entity_body_adds_require_and_predicate_words_only_when_derived(
 
 
 # --------------------------------------------------------------------------- #
+# Round 3 re-check (R25, AC-1349): `needs_tier_ask` fires only for a contact    #
+# entitled to MORE than one tier, so a single-tier contact's resolve body       #
+# sends the parser's own bare `access_levels` - never the tier gate's own      #
+# RECOMPOSED names - and the promotion leg counts what the parser tokens       #
+# translate to, which can be the wrong tier once a brand qualifies the code.    #
+# --------------------------------------------------------------------------- #
+
+
+def _tier_ctx(access_levels: list[str]) -> dict[str, Any]:
+    return {
+        "text": {"message": {"message": {"text": "which tap has promo"}}},
+        "contact": {"id": "1"},
+        "parse": {
+            "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "match_mode": "and",
+                "access_levels": access_levels,
+                "entities": [],
+            }
+        },
+    }
+
+
+def test_resolve_entity_body_uses_the_tier_gates_recomposed_access_levels():
+    """AC-1349/R25(a): when the tier gate ran and produced any recomposed
+    names, `resolve_entity_body`'s own `access_levels` must be exactly those
+    names - never the parser's bare tokens - so a stated tier translates to
+    the CORRECT brand-qualified code (`['Sorento Dealer'] -> {'dealer'}`)
+    rather than whatever `_access_level_codes` makes of the raw parser token
+    alone.
+
+    RED today: `resolve_entity_body` accepts no `tier_gate` keyword at all -
+    the call itself raises `TypeError: resolve_entity_body() got an
+    unexpected keyword argument 'tier_gate'`, the accepted red shape for this
+    AC (measured, no such parameter exists in the current signature).
+    """
+    from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
+
+    ctx = _tier_ctx(["dealer"])
+    body = resolve_entity_body(ctx, tier_gate={"access_levels_recomposed": ["Sorento Dealer"]})
+    assert body.get("access_levels") == ["Sorento Dealer"], body
+
+
+def test_resolve_entity_body_falls_back_to_parser_tokens_with_no_tier_gate():
+    """AC-1349/R25(b): `tier_gate=None` (the tier gate never ran on this turn)
+    or a tier gate that ran but recomposed NOTHING (an empty list - no
+    entitlement, no stated tier) must both keep today's behaviour: the
+    parser's own `access_levels`, unchanged.
+
+    RED today for the SAME reason as the sibling test: the keyword itself
+    does not exist yet, so both calls raise `TypeError` before either
+    fallback path is reached.
+    """
+    from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
+
+    ctx = _tier_ctx(["dealer"])
+
+    body_none = resolve_entity_body(ctx, tier_gate=None)
+    assert body_none.get("access_levels") == ["dealer"], body_none
+
+    body_empty = resolve_entity_body(ctx, tier_gate={"access_levels_recomposed": []})
+    assert body_empty.get("access_levels") == ["dealer"], body_empty
+
+
+# --------------------------------------------------------------------------- #
 # C4 - AC-1326: a qualifying predicate bypasses the ambiguity picker AND the    #
 # product_attachment "subject did not resolve" block.                          #
 # --------------------------------------------------------------------------- #
@@ -3646,3 +3713,73 @@ def test_carry_clears_on_a_same_domain_zero_qualifying_clarify(
     reply3 = (turn3.reply or {}).get("text") or ""
     assert "Showing 6 to 7" not in reply3, reply3
     assert not (_s4_codes_in(reply3) & set(codes)), (reply3, codes)
+
+
+# --------------------------------------------------------------------------- #
+# Round 3 re-check (R26, AC-1350): the page arm's `fetch_rendered_result`      #
+# guard (`_set_page_carry`, compile_state.py ~line 1947) has no test of its    #
+# own today - the reviewer proved disabling it leaves the whole file green.   #
+# --------------------------------------------------------------------------- #
+
+
+def test_set_page_carry_page_arm_keeps_the_offset_when_the_fetch_never_rendered():
+    """AC-1350/R26: a page-continuation turn (`gate_json.predicate.page`
+    present, off a carried `set_page` selection) whose OWN fetch never
+    reached the tool (`fetch_rendered_result=False` - a tier-ask, an
+    infrastructure error, the gate's own picker) must leave the carry's
+    `offset` EXACTLY as `prev` left it - nothing new was shown, so a retried
+    "more" has to start from the SAME position, not skip past rows the
+    customer never actually saw.
+
+    Unit-level, not a full engine turn: measured directly that a genuine MCP
+    failure fails the WHOLE turn before `compile_current_state` ever runs at
+    all (`engine.py`'s `fetch_failed_hard` path), so a full-turn construction
+    of this scenario would pass whether or not the guard exists - proving
+    nothing. Calling `_set_page_carry` itself is the only construction that
+    actually exercises the guarded branch.
+
+    GREEN today (the guard already exists at compile_state.py ~line 1947) -
+    confirmed as a genuine kill test by manually disabling the guard locally
+    (offset then advances to 7, the fabricated page's own `new_offset`) and
+    reverting; not committed as a mutation, this docstring is the record.
+    """
+    from app.services.chatbot.tail.compile_state import _set_page_carry
+
+    prev_carry = {
+        "kind": "set_page",
+        "qualifying_ids": ["a", "b", "c", "d", "e", "f", "g"],
+        "offset": 5,
+        "qualifying_total": 7,
+        "require": {"certificate": True},
+        "set_noun": "taps",
+        "domain": "product_attachment",
+        "access_levels": [],
+    }
+    prev = {
+        "selection_context": "set_page",
+        "last_result_set": prev_carry,
+        "domain_hint": "product_attachment",
+    }
+    gate_json = {
+        "predicate": {
+            "require": {"certificate": True},
+            "qualifying_total": 7,
+            "page": {"start": 6, "end": 7, "new_offset": 7, "set_noun": "taps"},
+        }
+    }
+    variables: dict[str, Any] = {}
+
+    touched = _set_page_carry(
+        variables,
+        gate_json=gate_json,
+        gate_ran=True,
+        prev=prev,
+        qf={"domain_hint": "product_attachment"},
+        fetch_rendered_result=False,
+    )
+
+    assert touched is True
+    assert variables.get("selection_context") == "set_page"
+    carry = variables.get("last_result_set")
+    assert carry == prev_carry, carry
+    assert carry["offset"] == 5, carry

@@ -15,8 +15,10 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from tests._pg_fixture import blank_session
@@ -36,10 +38,36 @@ def _load_migration():
     return module
 
 
+def _script_directory() -> ScriptDirectory:
+    root = Path(__file__).resolve().parents[1]
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "alembic"))
+    return ScriptDirectory.from_config(cfg)
+
+
 def test_the_revision_id_is_under_32_characters_and_chains_onto_head():
+    """AC-1350/R26: `scripts/alembic-reparent.sh` changes `down_revision` every
+    time origin/main moves past this lane's own base - asserting a SPELLED
+    parent id here (the old `"510_strip_rtf_so_notes"`) breaks the test on
+    every reparent, which is not a defect in this migration. The chain
+    property is what must actually hold: the parent exists as a real
+    revision somewhere in `alembic/versions`, and the whole tree still has
+    exactly ONE head - this lane's own revision id, since D3 is the newest
+    migration once merged onto main's current head.
+
+    RED after the reparent (down_revision now "510_pi_description_en"): the
+    OLD assertion `module.down_revision == "510_strip_rtf_so_notes"` fails on
+    a plain string mismatch - the exact defect this rewrite removes.
+    """
     module = _load_migration()
     assert len(module.revision) <= 32, (module.revision, len(module.revision))
-    assert module.down_revision == "510_strip_rtf_so_notes"
+
+    script_dir = _script_directory()
+    known_revisions = {rev.revision for rev in script_dir.walk_revisions()}
+    assert module.down_revision in known_revisions, (module.down_revision, sorted(known_revisions))
+
+    heads = script_dir.get_heads()
+    assert list(heads) == [module.revision], (heads, module.revision)
 
 
 def _set_rows(db):
