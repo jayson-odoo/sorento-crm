@@ -1467,9 +1467,9 @@ class ResolveReferenceRequest(BaseModel):
     )
 
 
-def _has_exact_product_match(result: dict[str, Any]) -> bool:
-    """AC-1305 (fix round, 11 Sep): did a CODE-SHAPED caller token already
-    resolve to a product match, at ANY tier?
+def _has_exact_product_match(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
+    """AC-1305/R1 (console fix round 2, 11 Sep): did a CODE-SHAPED caller token
+    already resolve to a product match, at ANY tier?
 
     The shape test is the TOKEN's own (this file's own `_is_code_shaped`, the
     "mixed letters and digits" `_CODE_RE` test - NOT `answer.py`'s
@@ -1483,6 +1483,16 @@ def _has_exact_product_match(result: dict[str, Any]) -> bool:
     `predicate` block). A WORD token ("bidet", "sorento") never blocks HAS,
     even when it happens to resolve at the "exact" tier (a product literally
     coded "SORENTO") - the customer's own word is not thereby a code.
+
+    R1: the lane ALWAYS sends `match_mode: "and"`, and AND mode's own product
+    probe stamps EVERY row `match_tier="and"` - it never produces "exact" or
+    "head_code" - so the OLD tier-based `intersection` check could never fire
+    on the lane's real request shape (measured: `scripts/chatbot_replay_
+    resolve.py` on "check stock srtwc286"). `intersection` carries no per-row
+    token (AND mode blends every token into one list), so the shape test runs
+    against the CALLER's own `tokens` instead: a code-shaped token sent AT ALL,
+    with `intersection` carrying any product match, is the same "typed a
+    complete code" signal the OR-mode branch above reads per-resolution.
     """
     for resolution in result.get("resolutions") or []:
         token = (resolution or {}).get("token")
@@ -1491,14 +1501,11 @@ def _has_exact_product_match(result: dict[str, Any]) -> bool:
         for match in (resolution or {}).get("matches") or []:
             if (match or {}).get("entity_type") == "product":
                 return True
-    # AND-mode intersection carries no per-match token to shape-test, so this
-    # stays on the old tier check - unexercised by any test, kept conservative.
-    tiers = ("exact", "head_code")
-    for match in result.get("intersection") or []:
-        if (match or {}).get("entity_type") == "product" and (match or {}).get(
-            "match_tier"
-        ) in tiers:
-            return True
+    intersection = result.get("intersection") or []
+    if intersection and any(_is_code_shaped(str(t or "")) for t in (tokens or [])):
+        for match in intersection:
+            if (match or {}).get("entity_type") == "product":
+                return True
     return False
 
 
@@ -1570,11 +1577,12 @@ def _has_turn_free_terms(
     explicit `free_terms` of its own (an ordinary caller that DID supply
     `free_terms` keeps using exactly what it sent - see the caller).
 
-    When every product-entity token DID resolve ("which sorento bidet has cert" -
-    "bidet" matched three real products), the set is already described through
-    those matches' own ids - nothing here scopes it a second time, so this
-    returns `[]`. Otherwise (no product-entity token at all - a bare class word
-    turn - OR at least one that resolved to nothing) the remainder of
+    When every product-entity token DID resolve to an actual PRODUCT match
+    ("which sorento bidet has cert" - "bidet" matched three real products), the
+    set is already described through those matches' own ids - nothing here
+    scopes it a second time, so this returns `[]`. Otherwise (no product-entity
+    token at all - a bare class word turn - OR at least one that resolved to
+    NO product, whatever else it may have matched) the remainder of
     `query_text` (predicate_words already stripped) becomes ONE term, off its own
     WORDS rather than `payload.tokens` - `_token_of` FOLDS a product token's
     separators out ("water tap" -> "watertap"), which is right for code matching
@@ -1583,22 +1591,35 @@ def _has_turn_free_terms(
     tap has cert" scope to class Tap and "which item has cert" (no class word at
     all) leave the set unscoped rather than reporting "item" as unrecognized.
 
+    R7/AC-1330 (console fix round 2): "resolved" here means resolved to a
+    PRODUCT, specifically - a word token that resolved to some OTHER entity type
+    only ("sink" hitting nothing but a customer whose code happens to start
+    with "SINK") is NOT thereby "already described"; its raw still has to reach
+    `filter_specs` or the set goes unscoped ("count every open-incoming
+    product", not "count only Kitchen Sinks"). Measured live: "which sink has
+    incoming" counted all 620 products across nine classes instead of the one
+    that is actually a sink.
+
     Before this, nothing on the require branch ever populated a HAS turn's
     `free_terms` at all, so `filter_specs` never saw the class word either way and
     "which tap has cert" counted every certified product, unscoped.
     """
     tokens = payload.tokens or []
     allowed = payload.allowed_entity_types or []
-    resolved_tokens = {
+    resolved_product_tokens = {
         str((resolution or {}).get("token") or "").strip().lower()
         for resolution in result.get("resolutions") or []
-        if isinstance(resolution, dict) and resolution.get("matches")
+        if isinstance(resolution, dict)
+        and any(
+            (match or {}).get("entity_type") == "product"
+            for match in resolution.get("matches") or []
+        )
     }
     product_indices = [
         i for i, a in enumerate(allowed) if str(a or "").strip().lower() == "product"
     ]
     if product_indices and all(
-        str(tokens[i] if i < len(tokens) else "").strip().lower() in resolved_tokens
+        str(tokens[i] if i < len(tokens) else "").strip().lower() in resolved_product_tokens
         for i in product_indices
     ):
         return []
@@ -2300,6 +2321,37 @@ def _spec_attach_token(result: dict[str, Any], tokens: list[str] | None) -> str 
     return None
 
 
+def _strip_word_token_product_matches(result: dict[str, Any]) -> None:
+    """AC-1327/R2 (console fix round 2): once HAS ran, a WORD token's own
+    forward product match - a plain substring/prefix/exact/"and"-tier hit on
+    the product CODE, unrelated to the described set - must not survive
+    alongside the spec_search resolution: only a `match_tier="spec_search"`
+    product match may reach the customer. Console finding, 11 Sep: "which tap
+    has cert" answered "Found: <200 codes>" plus a picker of two products named
+    "...COLD TAP" - the forward substring hit for "tap" sat right beside the
+    real 908-qualifying spec_search resolution, and the GATE's own ambiguity
+    block (`still_ambiguous`) fires on any token group whose matches are not
+    ALL `spec_search` tier.
+
+    Mutates `result["resolutions"]` and `result["intersection"]` in place;
+    every NON-product match (attachment_type, brand, customer, ...) is
+    untouched - this is a product-only rule.
+    """
+
+    def _keep(match: Any) -> bool:
+        if not isinstance(match, dict):
+            return True
+        if match.get("entity_type") != "product":
+            return True
+        return match.get("match_tier") == "spec_search"
+
+    for resolution in result.get("resolutions") or []:
+        if isinstance(resolution, dict) and isinstance(resolution.get("matches"), list):
+            resolution["matches"] = [m for m in resolution["matches"] if _keep(m)]
+    if isinstance(result.get("intersection"), list):
+        result["intersection"] = [m for m in result["intersection"] if _keep(m)]
+
+
 def _emit_spec_matches(
     result: dict[str, Any],
     candidates: list[dict],
@@ -2507,7 +2559,7 @@ def resolve_reference_post(
     # UNLESS a caller token already resolved to a full product code (AC-1305): the
     # customer typed a complete code, so the response stays byte-identical to the
     # same request without `require`.
-    if payload.require and not _has_exact_product_match(result):
+    if payload.require and not _has_exact_product_match(result, payload.tokens):
         from app.services.product_predicate_service import resolve_product_set
         from app.services.product_spec_understanding import derive_search_inputs
 
@@ -2583,6 +2635,11 @@ def resolve_reference_post(
         # from "not a scheme question".
         if "schemes_on_file" in outcome:
             result["predicate"]["schemes_on_file"] = outcome["schemes_on_file"]
+        # R6/AC-1329: present ONLY on an attachment-LABEL miss ("photo", not a
+        # class/product_type word) - the reply clarifies it as a document type,
+        # never the product-type sentence below.
+        if "attachment_types_on_file" in outcome:
+            result["predicate"]["attachment_types_on_file"] = outcome["attachment_types_on_file"]
         # F2/AC-1320: nearest class-label suggestions on an unrecognized-term
         # zero - absent whenever the resolver found none to offer, same
         # present-only-on-the-relevant-miss convention as `schemes_on_file`.
@@ -2601,6 +2658,13 @@ def resolve_reference_post(
         if outcome.get("class_labels"):
             result["predicate"]["class_labels"] = outcome["class_labels"]
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
+        # R2 only fires on a genuine HAS answer (qualifying_total > 0): the
+        # existing zero-qualifying miss flow names its own candidate codes off
+        # these SAME forward matches (F1's pre-existing "Couldn't find a bidet
+        # with a certificate. ACC-BIDET, CAB-BIDET, SRT-BIDET" copy) - stripping
+        # them there would silence the very codes that message names.
+        if outcome["qualifying_total"]:
+            _strip_word_token_product_matches(result)
         return _stamp_brand_on_products(db, result)
 
     # Spec search is a FALLBACK, never a parallel path. It runs only when the caller
