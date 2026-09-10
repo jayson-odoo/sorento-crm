@@ -55,6 +55,13 @@ moves to ONE backend function and the three readers use it; the frontend stops r
   appears in none of the three by default and in the list under the "Covered by stock"
   filter.
 
+## Known limitation
+
+- The export's hidden set is read off PRODUCT-grain recs (`warehouse_id IS NULL`). On a
+  location-grain run the sheet hides nothing while the list still hides per-location rows
+  (reviewer pass 3). Product grain is the rollout default; the location-grain case is left
+  as is, the same way the #828 lane left grouped location lines in the SPO modal.
+
 ## Out of scope
 
 - Reversing the 12 Aug hiding rule.
