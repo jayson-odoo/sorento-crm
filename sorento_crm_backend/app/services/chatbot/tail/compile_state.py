@@ -1944,6 +1944,16 @@ def _set_page_carry(
         prev_carry = jsc.get(prev, "last_result_set")
         if not isinstance(prev_carry, dict) or not prev_carry:
             return True
+        if not fetch_rendered_result:
+            # R19 (third console pass): a page turn whose OWN fetch never
+            # reached the tool call (tier-ask, infrastructure error, the
+            # gate's own picker) must not advance the offset - nothing new
+            # was shown, so a retried "more" has to start from the SAME
+            # position, not skip past rows the customer never actually saw.
+            # The carry is kept exactly as `prev` left it.
+            variables["selection_context"] = "set_page"
+            variables["last_result_set"] = prev_carry
+            return True
         new_offset = jsc.js_number(jsc.get(page, "new_offset"))
         new_offset = 0 if jsc.is_nan(new_offset) else int(new_offset)
         ids = prev_carry.get("qualifying_ids") or []
@@ -2069,22 +2079,18 @@ def _offer_carry(
     prev_ctx = jsc.get(prev, "selection_context")
     prev_set = jsc.get(prev, "last_result_set")
     if prev_ctx == "set_page" and isinstance(prev_set, dict) and prev_set:
-        # E3's own DICT-shaped kind, given its own arm: every OTHER carry below is
-        # an array roster (`jsc.is_array`), which a set_page carry never is. An
-        # intervening turn that named neither a "more" reply (this turn's own
-        # ladder would have armed `selection_context` itself, above) nor a domain
-        # change still has a set answer on screen worth paging later.
-        #
-        # SEC-N1/AC-1336 (third console pass, REV-S1): an ANSWERED turn clears it
-        # too, same-domain or not - the carry has no lifetime beyond "the customer
-        # is still looking at this set", and a business answer to something else
-        # (a stock/cert lookup for an unrelated product, still `product_attachment`
-        # or `inventory`) means they are not. Without this, `topic.changed` alone
-        # left a stale set armed for a LATER unrelated "more" to page through.
-        if answered or topic.changed(jsc.get(prev, "domain_hint"), jsc.get(qf, "domain_hint")):
-            return None
-        variables["selection_context"] = prev_ctx
-        variables["last_result_set"] = prev_set
+        # R19/AC-1343 (third console pass, REV-S1 re-check): the carry survives
+        # ONLY `_set_page_carry`'s own page-continuation arm, which returns
+        # `set_page_handled=True` and short-circuits this whole function above
+        # - reaching HERE at all already means this turn did not continue an
+        # existing page (a fresh RENDER, whether it re-armed or not, also
+        # short-circuits above via that same flag). So every OTHER business-
+        # lane turn clears the carry unconditionally: same domain or not,
+        # answered or not - a same-domain clarify that rendered NOTHING
+        # (AC-1320's own zero-qualifying-with-unrecognized-terms shape) is not
+        # "the customer still looking at this set" either, and the earlier
+        # `answered or topic.changed` condition left it armed for exactly that
+        # gap.
         return None
     if not jsc.truthy(prev_ctx) or not jsc.is_array(prev_set) or len(prev_set) == 0:
         return None
