@@ -950,6 +950,25 @@ describe('SalesOrderDetail - the note', () => {
     renderDetail();
     expect(screen.getByText('A COMPANY NOT IN THE CRM / 300-NOSUCH')).toBeInTheDocument();
   });
+
+  it('renders a paragraph break as an actual line break, not a run-on sentence', () => {
+    // The backend now sends plain text with `\n` line breaks (AutoCount's RTF push is
+    // stripped at ingest) - `whitespace-pre-wrap` is what turns that into visible lines
+    // instead of collapsing them into one, the way a bare `<p>` would; `break-words`
+    // is the repo convention alongside it, so a long unbroken token (a URL, a run-on
+    // reference number) cannot overflow the card at 375px.
+    useSalesOrder.mockReturnValue({
+      data: so({ internal_note: 'LINE ONE\nLINE TWO' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    const note = screen.getByText(
+      (_, element) => element?.tagName === 'P' && element.textContent === 'LINE ONE\nLINE TWO'
+    );
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveClass('whitespace-pre-wrap');
+  });
 });
 
 describe('SalesOrderDetail - the agent', () => {

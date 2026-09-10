@@ -65,3 +65,6 @@ xlrd>=2.0.1
 # duration the caller claimed. Pure Python, so it needs no ffprobe/ffmpeg binary
 # in the image, and nothing else in this repo can measure audio.
 mutagen>=1.47
+# Converts the raw RTF AutoCount pushes for a sales order's internal_note into
+# plain text at ingest (app/utils/rtf.py). Pure Python.
+striprtf>=0.0.33
