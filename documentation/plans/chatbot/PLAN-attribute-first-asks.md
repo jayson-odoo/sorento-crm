@@ -169,6 +169,11 @@ Multiple keys AND. Unknown key stays a 422.
 - The parser version label in the console reads v6 while the lane plan for broaden-domain
   names v7; irrelevant here since the prompt is untouched, noted so nobody "fixes" it in this
   lane.
+- Test-fixture friction, not a lane defect (tester, fix round 2): `resolve_classes_for_term` resolves a
+  bare class word ("basin") only through a category's `search_synonyms`, which are seeded only when
+  the category code follows the real `<BRAND>-<SUFFIX>` convention (e.g. `ZZT-WB`); a generic test
+  category never gets them. Lane tests seed categories with that convention. Worth a note in
+  LESSONS-LEARNT when the lane merges.
 - 220 cert-covered products have no spec row; they are reachable only through LOOKUP ids or a
   bare "anything with cert". Out of scope; belongs to spec derivation coverage.
 
