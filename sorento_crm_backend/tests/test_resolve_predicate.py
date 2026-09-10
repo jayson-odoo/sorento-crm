@@ -788,3 +788,350 @@ def test_scope_term_comes_from_the_entity_not_the_sentence(client, db):
     assert predicate3["unrecognized_terms"] == [], predicate3
     assert "tap cert" not in predicate3["unrecognized_terms"]
     assert "tap certificate" not in predicate3["unrecognized_terms"]
+
+
+# --------------------------------------------------------------------------- #
+# Console fix round 2 (11 Sep 2026, PLAN-attribute-first-asks.md R1/R2/R5/R7,   #
+# AC-1305/AC-1327/AC-1328/AC-1330). The lane's own request ALWAYS carries       #
+# `match_mode: "and"` (see the uncommitted `scripts/chatbot_replay_resolve.py`  #
+# the captain measured this round with), so the forward result for the lane's  #
+# real shape lives in `intersection` (or, once the AND probe fails outright     #
+# and `fallback_to_all_types` degrades to OR-mode-under-whitelist, back in      #
+# `resolutions`) - never the bare OR-mode `resolutions` shape every test above  #
+# this banner posts.                                                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_code_shaped_prefix_in_and_mode_keeps_the_forward_path(client, db):
+    """AC-1305/R1 (fix round 2): the lane ALWAYS sends `match_mode: "and"`. AND
+    mode's own product probe (`_and_probe_product`) stamps EVERY row it returns
+    `match_tier="and"` - it never produces `"exact"` or `"head_code"` - so a
+    code-shaped PREFIX match (seven products sharing the "ZZTWC286" prefix) can
+    NEVER satisfy `_has_exact_product_match`'s AND-mode branch, which still gates
+    on `match_tier in ("exact", "head_code")` alone. Under the lane's real
+    request shape the code-shape gate silently never fires, and a caller who
+    typed a complete code gets `require` run over it anyway.
+
+    RED: `with_require` and `without_require` diverge (`with_require` grows a
+    `predicate` block) instead of being byte-identical.
+    """
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+    variants = [
+        "ZZTWC286-SH", "ZZTWC286-SH-150", "ZZTWC286-SH-200", "ZZTWC286-BL",
+        "ZZTWC286-BL-150", "ZZTWC286-WH", "ZZTWC286-WH-CR",
+    ]
+    for code in variants:
+        db.add(
+            Product(
+                id=str(uuid.uuid4()),
+                product_code=code,
+                product_name=code,
+                description="SORENTO WATER CLOSET SUITE",
+                category_id=cat.id,
+                base_uom_id=uom.id,
+                list_price=Decimal("1.00"),
+            )
+        )
+    db.flush()
+
+    with_require = client.post(
+        ENDPOINT,
+        json={
+            "query": "zztwc286",
+            "tokens": ["zztwc286"],
+            "match_mode": "and",
+            "require": {"stock": True},
+        },
+    )
+    without_require = client.post(
+        ENDPOINT,
+        json={"query": "zztwc286", "tokens": ["zztwc286"], "match_mode": "and"},
+    )
+    assert with_require.status_code == 200
+    assert without_require.status_code == 200
+    with_body = with_require.json()
+    without_body = without_require.json()
+    with_body.pop("elapsed_ms", None)
+    without_body.pop("elapsed_ms", None)
+    assert with_body == without_body
+    assert "predicate" not in with_body
+
+
+def test_has_removes_word_token_product_matches_from_the_forward_result(client, db):
+    """AC-1327/R2 (fix round 2): once HAS ran, a WORD token's own forward product
+    matches (a plain substring hit on the product CODE, unrelated to the
+    described set) must not survive alongside the spec_search resolution - only
+    the spec_search resolution may carry product matches. A non-product
+    resolution (the attachment_type hit for "certificate") is untouched.
+
+    World: two products whose CODE contains "TAP" as a plain substring
+    ("ZZT-COLD-TAP", "ZZT-HOT-TAP", neither certified - a forward hit for the
+    WORD token "tap", tier "substring", nothing to do with the certificate leg),
+    plus three certified class-Tap products whose codes do NOT contain "tap" at
+    all, so they can only qualify through the class binding / spec search.
+
+    Posted with `match_mode: "and"` and `allowed_entity_types` covering the
+    lane's own hint shape (`category` for "tap", `attachment_type` for
+    "certificate") plus `fallback_to_all_types: True` - the lane's real body
+    shape, and also the ONLY way "tap" (which no product CODE starts with)
+    reaches the forward substring probe at all: the AND-mode cross-token
+    intersection is empty (product resolution is code-only, and no code
+    contains both "tap" and "certificate"), so the resolver degrades to
+    OR-mode-under-whitelist and per-token fallback - exactly the path a live
+    "which tap has cert" turn takes.
+
+    RED: nothing on this path strips a WORD token's own forward product matches
+    once HAS has run - `_emit_spec_matches` only APPENDS the spec_search
+    resolution - so the "tap" resolution's two forward substring matches sit
+    right beside the 3-match spec_search resolution.
+    """
+    from app.models.certificate import Certificate, CertificateProduct
+    from app.models.resources import AttachmentType
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+
+    at = AttachmentType(
+        id=str(uuid.uuid4()), code="CERTIFICATE", type_name="Certificate", allowed_extensions="pdf"
+    )
+    db.add(at)
+    db.flush()
+
+    def _plain(code, name):
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=name,
+            description=f"{name} DESCRIPTION",
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        return product
+
+    _plain("ZZT-COLD-TAP", "ZZT COLD TAP")
+    _plain("ZZT-HOT-TAP", "ZZT HOT TAP")
+
+    def _certified_tap(code):
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            description="ZZT CHROME BASIN TAP",
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        cert = Certificate(
+            id=str(uuid.uuid4()),
+            scheme="ZZT-SIRIM",
+            certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+            status="active",
+        )
+        db.add(cert)
+        db.flush()
+        db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+        db.flush()
+        return product
+
+    certified_codes = sorted(_certified_tap(f"ZZTCERT0{i}").product_code for i in range(3))
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which tap has certificate",
+            "tokens": ["tap", "certificate"],
+            "allowed_entity_types": ["category", "attachment_type"],
+            "match_mode": "and",
+            "domain": "product_attachment",
+            "fallback_to_all_types": True,
+            "require": {"certificate": True},
+            "predicate_words": ["cert"],
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["predicate"]["qualifying_total"] == 3, payload["predicate"]
+
+    product_codes_by_token: dict[str, list[str]] = {}
+    for resolution in payload.get("resolutions") or []:
+        codes = [
+            m["canonical_code"]
+            for m in resolution.get("matches") or []
+            if m.get("entity_type") == "product"
+        ]
+        if codes:
+            product_codes_by_token[resolution.get("token")] = codes
+
+    # Only the spec_search resolution (keyed on the whole query text) may carry
+    # product matches once HAS has run.
+    assert set(product_codes_by_token) <= {"which tap has certificate"}, product_codes_by_token
+    assert sorted(product_codes_by_token.get("which tap has certificate", [])) == certified_codes
+
+    attachment_resolution = next(
+        (r for r in payload.get("resolutions") or [] if r.get("token") == "certificate"), None
+    )
+    assert attachment_resolution is not None, payload.get("resolutions")
+    assert any(
+        m.get("entity_type") == "attachment_type" for m in attachment_resolution.get("matches") or []
+    )
+
+    for m in payload.get("intersection") or []:
+        assert m.get("entity_type") != "product" or m.get("match_tier") == "spec_search"
+
+
+def test_word_token_resolving_to_non_products_still_scopes_the_set(client, db):
+    """AC-1330/R7 (fix round 2): a WORD token's raw ALWAYS defines the described
+    set's scope, whatever entity type it happened to resolve to - "sink"
+    resolving to a CUSTOMER (never a product) must still scope the incoming-leg
+    count to class Kitchen Sink, not fall through to "nothing describes the set,
+    count every open-incoming product regardless of class".
+
+    World: a customer whose code starts with "SINK" (`_prefix_probe_customer`'s
+    own tier), a class-Kitchen-Sink product with an open incoming line, and a
+    class-Tap product ALSO with an open incoming line - two DIFFERENT classes,
+    both qualifying the `incoming` leg, so "count everything" (2) and "count
+    only the Kitchen Sink" (1) are not the same number. Neither product's CODE
+    contains "sink" as a substring (unlike its class-naming description) - AND
+    mode's own product probe is CODE-ONLY, so a code that happened to contain
+    "sink" would short-circuit the very fallback-to-customer path this AC is
+    about, and "sink" would never reach the customer probe at all.
+
+    RED: `_has_turn_free_terms` treats "sink" as an ALREADY-RESOLVED product
+    token the moment ANY resolution (of ANY entity_type) carries a match for it
+    - the customer hit alone satisfies that check - so it returns `[]` free
+    terms, the described set is left unscoped, and `resolve_product_set` counts
+    BOTH products (`qualifying_total == 2`), never the 1 this AC demands.
+    """
+    from datetime import date
+
+    from app.models.order import Customer
+    from app.models.procurement import InboundShipment, InboundShipmentLine
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+
+    customer = Customer(id=str(uuid.uuid4()), customer_code="SINK-TR", customer_name="ZZT SINK TRADING")
+    db.add(customer)
+    db.flush()
+
+    def _open_incoming_product(code, description):
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            description=description,
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        shipment = InboundShipment(
+            id=str(uuid.uuid4()),
+            shipment_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+            shipment_date=date.today(),
+            actual_arrival_date=None,
+        )
+        db.add(shipment)
+        db.flush()
+        db.add(
+            InboundShipmentLine(
+                id=str(uuid.uuid4()),
+                shipment_id=shipment.id,
+                product_id=product.id,
+                quantity_shipped=10,
+                quantity_received=0,
+            )
+        )
+        db.flush()
+        return product
+
+    _open_incoming_product("ZZT-9001", "SORENTO S/STEEL KITCHEN SINK")
+    _open_incoming_product("ZZT-9002", "ZZT CHROME BASIN TAP")
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which sink has incoming",
+            "tokens": ["sink"],
+            "allowed_entity_types": ["product"],
+            "match_mode": "and",
+            "fallback_to_all_types": True,
+            "require": {"incoming": True},
+            "predicate_words": ["incoming"],
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    predicate = payload["predicate"]
+    assert predicate["qualifying_total"] == 1, predicate
+    assert predicate.get("class_labels") == ["Kitchen Sink"], predicate
+
+
+def test_scheme_word_matches_the_register_spelling_without_a_lookup_option(client, db):
+    """AC-1328/R5 (fix round 2): `_leg_certificate` must match a scheme word
+    against the register's OWN active scheme spellings by case-insensitive
+    equality BEFORE consulting the (possibly empty/absent) `certificate_scheme`
+    lookup set - "pps" against a register carrying "PPS" and "SPAN", with NO
+    lookup set at all, must count only the PPS product and report nothing
+    unrecognized.
+
+    RED: `_leg_certificate` only calls `_lookup_resolve(db, "certificate_scheme",
+    scheme)` - with no matching option/keyword it returns None and the leg
+    raises `_UnrecognizedLabel("pps", ...)`, so `qualifying_total` is 0 and "pps"
+    lands in `unrecognized_terms` instead of the 1 this case demands.
+    """
+    from app.models.certificate import Certificate, CertificateProduct
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+
+    def _certified(code, scheme):
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            description="SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)",
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        cert = Certificate(
+            id=str(uuid.uuid4()),
+            scheme=scheme,
+            certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+            status="active",
+        )
+        db.add(cert)
+        db.flush()
+        db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+        db.flush()
+
+    _certified("ZZTSCH01", "PPS")
+    _certified("ZZTSCH02", "SPAN")
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which kitchen sink has pps cert",
+            "free_terms": ["kitchen sink"],
+            "require": {"certificate": {"scheme": "pps"}},
+        },
+    )
+    assert response.status_code == 200
+    predicate = response.json()["predicate"]
+    assert predicate["qualifying_total"] == 1, predicate
+    assert predicate["unrecognized_terms"] == [], predicate
+    assert "schemes_on_file" not in predicate, predicate

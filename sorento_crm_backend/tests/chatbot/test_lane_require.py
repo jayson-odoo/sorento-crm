@@ -97,6 +97,53 @@ def test_derive_require_extracts_a_scheme_word_from_the_cert_raw(raw, expected):
 
 
 # --------------------------------------------------------------------------- #
+# R4 (fix round 2, AC-1328): a scheme-only attachment_type raw ("PPS") carries  #
+# no `_CERT_RE` word of its own (that regex names a BODY - cert/ikram/span/     #
+# sirim/bomba/ms####/halal - never the bare register spelling), so             #
+# `derive_require` must mirror `derive_routing`'s `is_cert`: ALSO certificate   #
+# when the intent is check_product_attachment and `_CERTIFICATE_RE` matches    #
+# `user_goal` or the message text.                                             #
+# --------------------------------------------------------------------------- #
+
+
+def test_derive_require_reads_a_scheme_only_attachment_raw_as_a_certificate():
+    """AC-1328 (fix round 2, R4): "which item has PPS cert" - the parser emitted
+    ONE `attachment_type` entity, raw "PPS" (no cert-word entity at all) - must
+    still map to `{"certificate": {"scheme": "PPS"}}`, the same way
+    `derive_routing`'s `is_cert` already treats a `check_product_attachment`
+    intent whose `user_goal` matches `_CERTIFICATE_RE` as a certificate question
+    regardless of what the attachment_type raw itself says.
+
+    Two halves: `user_goal` carries the sentence (the parser's own field,
+    `derive_routing` reads the exact same one), and - when `user_goal` is absent
+    - the message text reaches `derive_require` through a `message_text` keyword,
+    the same seam `resolve_entity_body` already has to hand (`_query_text(ctx)`).
+
+    RED: `derive_require` only tests `_CERT_RE` against the raw itself ("PPS"
+    matches none of cert/ikram/span/sirim/bomba/ms####/halal), so today it falls
+    to the generic `{"attachment_type": "PPS"}` branch - the actual console
+    finding ("I don't know 'PPS' as a product type").
+    """
+    from app.services.chatbot.lanes.business.predicate import derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [{"hint": "attachment_type", "raw": "PPS", "canonical_code": None}],
+        "user_goal": "which item has PPS cert",
+    }
+    assert derive_require(parser_output) == {"certificate": {"scheme": "PPS"}}
+
+    parser_output_no_goal = {
+        "intent_hint": "check_product_attachment",
+        "entities": [{"hint": "attachment_type", "raw": "PPS", "canonical_code": None}],
+        "user_goal": None,
+    }
+    assert derive_require(
+        parser_output_no_goal, message_text="which item has PPS cert"
+    ) == {"certificate": {"scheme": "PPS"}}
+
+
+# --------------------------------------------------------------------------- #
 # B2 - AC-1304 / AC-1322: resolve_entity_body gains require + predicate_words ONLY   #
 # when derive_require returns something, every other key stays byte-identical. #
 # --------------------------------------------------------------------------- #
@@ -1183,6 +1230,429 @@ def test_stock_set_answer_matches_forward_block_for_a_dealer():
     assert "Sellable" not in reply_has, reply_has
     lines_has = reply_has.splitlines()
     assert lines_has and lines_has[0] == "2 taps have stock.", reply_has
+
+
+# --------------------------------------------------------------------------- #
+# Console fix round 2 (11 Sep 2026, PLAN-attribute-first-asks.md R2/R3/R6/R9/   #
+# R10, AC-1327/AC-1329) - full lane runs, real resolver (`_run_has_lane`, the   #
+# same seam S3's tests above use). Every world below seeds a WORD-token         #
+# forward hit alongside the real certified/stocked set, so a picker built off   #
+# the forward hit (rather than the predicate) is provably wrong, not merely     #
+# untested.                                                                     #
+# --------------------------------------------------------------------------- #
+
+
+def _wash_basin_category(db):
+    """A category whose CODE `backfill_category_signals` recognises as
+    `<brand>-WB` (`product_class_signal.CLASS_SUFFIXES["WB"] == "Wash Basin"`),
+    so `resolve_classes_for_term(db, "basin")` finds it through the category's
+    OWN `search_synonyms` (`CLASS_SYNONYMS["Wash Basin"]` lists "basin"
+    verbatim) - not only through `stored_class_labels`' whole-label match,
+    which "basin" alone can never satisfy against the two-word label "Wash
+    Basin". `_seed_category_and_uom`'s own generic `CAT...` code carries no
+    such mapping, which is why a test that needs the bare word "basin" to
+    resolve needs this category instead of that one.
+    """
+    from app.services.product_class_signal import backfill_category_signals
+    from app.models.product import ProductCategory
+
+    category = ProductCategory(
+        id=str(uuid.uuid4()), category_code="ZZT-WB", category_name="ZZT Wash Basin"
+    )
+    db.add(category)
+    db.flush()
+    backfill_category_signals(db)
+    db.refresh(category)
+    return category
+
+
+def test_set_answer_replaces_the_found_line_and_no_picker_forms():
+    """AC-1327/AC-1326 (R2/R3, fix round 2): "which tap has cert" against a world
+    with a genuine forward hit for the word token "tap" (two products whose CODE
+    contains "TAP" as a plain substring, neither certified) must still answer the
+    3-certified-tap SET, never a "Found: ..." + "Please choose" picker built off
+    that forward hit.
+
+    RED: nothing on the require path strips the "tap" token's own forward product
+    matches once HAS has run (same gap `test_has_removes_word_token_product_
+    matches_from_the_forward_result` pins at the resolver level) - the gate's own
+    per-token ambiguity block (`gate.py`, `REQUIRE_SPECIFIC_DOMAINS`) only skips a
+    group whose matches are ALL `spec_search` tier, and the "tap" resolution's two
+    forward substring matches are tier "substring" - so it falls to `still_
+    ambiguous` and the reply carries the "Found: ..." / "Please choose" picker
+    text instead of the header this AC demands - measured directly: `gate_reason`
+    is "'product_attachment' ambiguous (no single exact match); user must pick"
+    and `_exit_kind` is "not_found", never "continue".
+    """
+    with blank_session() as db:
+        _seed_registry(db)
+        category_id, uom_id = _seed_category_and_uom(db)
+
+        def _plain(code, name):
+            from app.models.product import Product
+
+            row = Product(
+                id=str(uuid.uuid4()),
+                product_code=code,
+                product_name=name,
+                description=f"{name} DESCRIPTION",
+                category_id=category_id,
+                base_uom_id=uom_id,
+                list_price=10,
+                is_active=True,
+            )
+            db.add(row)
+            db.flush()
+            return row
+
+        _plain("ZZT-COLD-TAP", "ZZT COLD TAP")
+        _plain("ZZT-HOT-TAP", "ZZT HOT TAP")
+
+        for _ in range(3):
+            product = _tap_product(db, category_id=category_id, uom_id=uom_id)
+            _certificate_for(db, product_id=product.id)
+        db.commit()
+
+        ctx = _cert_ctx(
+            "which tap has cert",
+            [
+                {"hint": "category", "raw": "tap"},
+                {"hint": "attachment_type", "raw": "cert", "canonical_code": "certificate"},
+            ],
+        )
+        out, fragment = _run_has_lane(db, ctx, fake_call_tool=_cert_fake_call_tool(db))
+
+        assert out.get("_exit_kind") == "continue", out.get("gate_reason")
+        reply = (fragment.get("fetch") or {}).get("response") or ""
+
+    lines = reply.splitlines()
+    assert lines and lines[0] == "3 taps have certificates.", reply
+    assert "Found:" not in reply, reply
+    assert "Please choose" not in reply, reply
+    assert "needs to be more specific" not in reply, reply
+
+
+def test_brand_and_category_words_give_a_set_answer_not_a_picker():
+    """AC-1327 (R3, fix round 2): "which sorento bidet has cert" - a brand word
+    plus a category word, both forward-hitting NON-certified products (three
+    bidets, one branded Sorento, none certified) - alongside a FOURTH, unrelated
+    Sorento product whose derived spec `product_type` is "bidet" and which DOES
+    carry a certificate - must answer the 1-qualifying SET, never keep the
+    3-bidet picker the forward hits would otherwise build.
+    """
+    from app.models.product import Brand, Product
+    from tests._pg_fixture import unique_code
+
+    with blank_session() as db:
+        _seed_registry(db)
+        category_id, uom_id = _seed_category_and_uom(db)
+
+        sorento = Brand(id=str(uuid.uuid4()), brand_code=unique_code("ZZT-SRT")[:20], brand_name="SORENTO")
+        cabana = Brand(id=str(uuid.uuid4()), brand_code=unique_code("ZZT-CAB")[:20], brand_name="CABANA")
+        db.add_all([sorento, cabana])
+        db.flush()
+
+        def _bidet(code, brand_id):
+            row = Product(
+                id=str(uuid.uuid4()),
+                product_code=code,
+                product_name=code,
+                description="BIDET SPRAY SET",
+                category_id=category_id,
+                base_uom_id=uom_id,
+                brand_id=brand_id,
+                list_price=10,
+                is_active=True,
+            )
+            db.add(row)
+            db.flush()
+            return row
+
+        _bidet("ACC-BIDET", cabana.id)
+        _bidet("CABANA-BIDET", cabana.id)
+        srt_bidet = _bidet("SRT-BIDET", sorento.id)
+
+        cert_product = Product(
+            id=str(uuid.uuid4()),
+            product_code="SRTWT5875",
+            product_name="SRTWT5875",
+            description="SORENTO CHROME BIDET SPRAY",
+            category_id=category_id,
+            base_uom_id=uom_id,
+            brand_id=sorento.id,
+            list_price=10,
+            is_active=True,
+        )
+        db.add(cert_product)
+        db.flush()
+        from app.services.product_spec_derivation import derive_for_code
+
+        derive_for_code(db, "SRTWT5875")
+        _certificate_for(db, product_id=cert_product.id)
+        db.commit()
+
+        ctx = _cert_ctx(
+            "which sorento bidet has cert",
+            [
+                {"hint": "brand", "raw": "sorento"},
+                {"hint": "category", "raw": "bidet"},
+                {"hint": "attachment_type", "raw": "cert", "canonical_code": "certificate"},
+            ],
+        )
+        out, fragment = _run_has_lane(db, ctx, fake_call_tool=_cert_fake_call_tool(db))
+
+        assert out.get("_exit_kind") == "continue", out.get("gate_reason")
+        reply = (fragment.get("fetch") or {}).get("response") or ""
+
+    lines = reply.splitlines()
+    assert lines and lines[0] in (
+        "1 Sorento bidet has certificates.",
+        "1 bidet has certificates.",
+    ), reply
+    assert cert_product.product_code in reply, reply
+    assert "Please choose" not in reply, reply
+    assert srt_bidet.product_code not in reply, reply
+
+
+def test_unrecognised_label_clarifies_as_a_document_type():
+    """AC-1329 (R6, fix round 2): "which basin has photo" against an EMPTY
+    `attachment_type_alias` set must clarify "photo" as a DOCUMENT type, naming
+    the product-facing AttachmentType names on file - never the product-type
+    sentence ("I don't know 'photo' as a product type"), which answers the wrong
+    question (the unrecognised word names a FILE LABEL, not a class/product_type
+    word).
+    """
+    from app.models.product import UnitOfMeasure
+    from app.models.resources import AttachmentType
+    from tests._pg_fixture import unique_code
+
+    with blank_session() as db:
+        _seed_registry(db)
+        category = _wash_basin_category(db)
+        uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=unique_code("UOM")[:20], uom_name="Each")
+        db.add(uom)
+        db.flush()
+        _basin_product(db, category_id=category.id, uom_id=uom.id)
+        db.add(
+            AttachmentType(
+                id=str(uuid.uuid4()),
+                code="PRODUCT_PHOTOS",
+                type_name="Product Photos",
+                allowed_extensions="jpg,png",
+            )
+        )
+        db.commit()
+
+        from app.services.chatbot.lanes.business import resolve_gate
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+        from app.services.chatbot.lanes.business.services import ResolveGateServices
+        from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
+        from app.config import settings
+
+        def resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+            payload = {**body, "spec_fallback": False, "understand_phrase": False}
+            principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
+            return resolve_reference_post(
+                ResolveReferenceRequest(**payload), current_user=principal, db=db
+            )
+
+        services = ResolveGateServices(
+            access_types=lambda **_: [], resolve_entity=resolve_entity, probe=lambda **_: None
+        )
+
+        ctx = _cert_ctx(
+            "which basin has photo",
+            [
+                {"hint": "category", "raw": "basin"},
+                {"hint": "attachment_type", "raw": "photo"},
+            ],
+        )
+        out = resolve_gate.run(ctx, "resolve", {}, services=services, space_id="364817")
+        parser = ctx["parse"]["output"]
+        resolved = out.get("resolved") or {}
+        gate = out.get("gate") or {}
+
+        msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        text = (msg.get("escalate_message") or "").strip()
+
+    assert "I don't know 'photo' as a document type" in text, text
+    assert "Types I know:" in text, text
+    assert "Product Photos" in text, text
+    assert "as a product type" not in text, text
+
+
+def test_common_product_types_fallback_is_never_empty_under_contact_scope():
+    """AC-1329 (R10, fix round 2): "which zzqx has cert" (a nonsense product word,
+    no class/product_type binds) must clarify with a "Try a product type such
+    as ..." fallback drawn from the catalogue's OWN class labels under the
+    request's real scope, ordered by how common each class is in that scope -
+    never the generic "a class or product type I know" placeholder, and never
+    empty. World: 3 taps, 2 wash basins, 1 water closet, so frequency order is
+    tap, wash basin, water closet.
+
+    GREEN TODAY, kept as the regression guard AC-1329/R10 asks for: measured
+    directly against this exact world, `_common_class_labels`
+    (`product_predicate_service.py`) already returns the frequency-ordered
+    labels under the single-company scope `blank_session()` seeds into (the
+    conftest default), so this scenario does not reproduce R10's console
+    finding - the plan's own cause ("returned nothing under the live CONTACT
+    scope") names a multi-company / real-contact scope this fixture cannot
+    build. Reported honestly rather than forced red (the file's own
+    "CONTRACT CONTRADICTION" convention, see the S3 banner above); the test 8
+    sibling right above (`test_unrecognised_label_clarifies_as_a_document_
+    type`) already pins the OTHER half of R10/AC-1329 - an attachment-label
+    miss (`_leg_attachment_type`'s `_UnrecognizedLabel`) carries no
+    `common_class_labels` at all, so a caller that reaches the generic
+    product-type sentence via THAT path always sees the empty placeholder,
+    whatever the catalogue holds. If the coder's fix genuinely needs a
+    multi-company repro to fail here, that is this test's own finding to hand
+    back, not a reason to invent different inputs until it breaks.
+    """
+    with blank_session() as db:
+        _seed_registry(db)
+        category_id, uom_id = _seed_category_and_uom(db)
+        for _ in range(3):
+            _tap_product(db, category_id=category_id, uom_id=uom_id)
+        for _ in range(2):
+            _basin_product(db, category_id=category_id, uom_id=uom_id)
+
+        from app.models.product import Product
+        from app.services.product_spec_derivation import derive_for_code
+        from tests._pg_fixture import unique_code
+
+        wc_code = unique_code("ZZWC")[:50]
+        wc = Product(
+            id=str(uuid.uuid4()),
+            product_code=wc_code,
+            product_name=wc_code,
+            description=f"{wc_code} SORENTO WATER CLOSET",
+            category_id=category_id,
+            base_uom_id=uom_id,
+            list_price=10,
+            is_active=True,
+        )
+        db.add(wc)
+        db.flush()
+        derive_for_code(db, wc_code)
+        db.commit()
+
+        from app.services.chatbot.lanes.business import resolve_gate
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+        from app.services.chatbot.lanes.business.services import ResolveGateServices
+        from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
+        from app.config import settings
+
+        def resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+            payload = {**body, "spec_fallback": False, "understand_phrase": False}
+            principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
+            return resolve_reference_post(
+                ResolveReferenceRequest(**payload), current_user=principal, db=db
+            )
+
+        services = ResolveGateServices(
+            access_types=lambda **_: [], resolve_entity=resolve_entity, probe=lambda **_: None
+        )
+
+        ctx = _cert_ctx(
+            "which zzqx has cert",
+            [
+                {"hint": "product", "raw": "zzqx"},
+                {"hint": "attachment_type", "raw": "cert", "canonical_code": "certificate"},
+            ],
+        )
+        out = resolve_gate.run(ctx, "resolve", {}, services=services, space_id="364817")
+        parser = ctx["parse"]["output"]
+        resolved = out.get("resolved") or {}
+        gate = out.get("gate") or {}
+
+        msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        text = (msg.get("escalate_message") or "").strip()
+
+    assert "Try a product type such as tap, wash basin, water closet" in text, text
+    assert "a class or product type I know" not in text, text
+
+
+def test_shown_counts_products_not_rows():
+    """AC-1330 (R8, fix round 2): "which basin got stock" over five class-Wash-
+    Basin products, each carrying stock rows in THREE warehouses (15 rows total),
+    must count PRODUCTS in the header - `shown` is distinct product codes
+    rendered, never tool rows. Five or fewer products leaves no "Showing"; seven
+    products shows exactly five distinct codes and says "Showing 5.".
+
+    Entities carry `hint: "product"` for "basin" (not "category") - matching
+    `test_stock_set_answer_matches_forward_block_for_a_dealer`'s own convention
+    just above: `inventory` is not in `_DOMAIN_HINT_EXPANSIONS`, so a `category`
+    hint there widens only to `promotion` (never `product`), and "basin" would
+    reach no product probe at all.
+    """
+    with blank_session() as db:
+        _seed_registry(db)
+        category = _wash_basin_category(db)
+        _, uom_id = _seed_category_and_uom(db)
+        warehouses = [_warehouse(db) for _ in range(3)]
+        products = [_basin_product(db, category_id=category.id, uom_id=uom_id) for _ in range(5)]
+        for product in products:
+            for warehouse in warehouses:
+                _stock_for(db, product_id=product.id, warehouse_id=warehouse.id)
+        db.commit()
+
+        ctx = {
+            "text": {"message": {"message": {"text": "which basin got stock"}}},
+            "contact": {"id": "999"},
+            "parse": {
+                "output": {
+                    "message_type": "business_query",
+                    "intent_hint": "check_stock",
+                    "domain_hint": "inventory",
+                    "match_mode": "or",
+                    "access_levels": [],
+                    "entities": [{"hint": "product", "raw": "basin"}],
+                }
+            },
+        }
+        out, fragment = _run_has_lane(db, ctx, fake_call_tool=_stock_fake_call_tool(db))
+
+        assert out.get("_exit_kind") == "continue", out.get("gate_reason")
+        reply = (fragment.get("fetch") or {}).get("response") or ""
+
+    lines = reply.splitlines()
+    assert lines and lines[0] == "5 wash basins have stock.", reply
+    assert "Showing" not in reply, reply
+
+    with blank_session() as db:
+        _seed_registry(db)
+        category = _wash_basin_category(db)
+        _, uom_id = _seed_category_and_uom(db)
+        warehouses = [_warehouse(db) for _ in range(3)]
+        products = [_basin_product(db, category_id=category.id, uom_id=uom_id) for _ in range(7)]
+        for product in products:
+            for warehouse in warehouses:
+                _stock_for(db, product_id=product.id, warehouse_id=warehouse.id)
+        db.commit()
+
+        ctx = {
+            "text": {"message": {"message": {"text": "which basin got stock"}}},
+            "contact": {"id": "999"},
+            "parse": {
+                "output": {
+                    "message_type": "business_query",
+                    "intent_hint": "check_stock",
+                    "domain_hint": "inventory",
+                    "match_mode": "or",
+                    "access_levels": [],
+                    "entities": [{"hint": "product", "raw": "basin"}],
+                }
+            },
+        }
+        out, fragment = _run_has_lane(db, ctx, fake_call_tool=_stock_fake_call_tool(db))
+
+        assert out.get("_exit_kind") == "continue", out.get("gate_reason")
+        reply = (fragment.get("fetch") or {}).get("response") or ""
+
+    lines = reply.splitlines()
+    assert lines and lines[0] == "7 wash basins have stock. Showing 5.", reply
+    shown_codes = _s4_codes_in(reply)
+    assert len(shown_codes) == 5, reply
 
 
 # --------------------------------------------------------------------------- #

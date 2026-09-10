@@ -1220,4 +1220,21 @@ def test_content_words_drop_question_words(db):
     assert "which" not in words
     assert "what" not in words
     assert "how" not in words
+
+
+def test_content_words_drop_check_and_list():
+    """R9/A2 (console fix round 2): "check", "list" and "tell" name no product
+    attribute either - a customer's own imperative verb, not a description - and
+    must never reach the unrecognized-word check as if it were one. Measured
+    live: `unrecognized_terms: ["check"]` on a "check stock srtwc286" turn.
+
+    RED: `_PHRASE_STOPWORDS` carries the question words A2 already added
+    ("which", "what", "who", "where", "when", "how", "many") but not "check",
+    "checking", "list" or "tell" - `_content_words` still returns them.
+    """
+    from app.services.product_spec_search import _content_words
+
+    assert "check" not in _content_words("check stock srtwc286")
+    assert "list" not in _content_words("list the taps")
+    assert "tell" not in _content_words("tell me which basin")
     assert "many" not in words
