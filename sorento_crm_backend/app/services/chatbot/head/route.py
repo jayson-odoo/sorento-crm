@@ -264,6 +264,26 @@ def decide(
         except Exception:
             return ""
 
+    def is_set_page_more_reply() -> bool:
+        # E3 (attribute-first asks, AC-1317): a bare "more" / "next" / "lagi" reply is
+        # CONTENT-FREE by every one of `is_low_signal`'s own four clauses (no domain,
+        # no intent, no entities - the parser tags nothing on it, same as any other
+        # short reply), so without this it is swallowed by `is_low_signal` above and
+        # answered by the casual lane instead of reaching the business lane's own
+        # `resolve_gate.run`, which is where the carried set actually gets paged.
+        # D11-reproduced-by-plan-exception: E3 names this file as the bare-word arm's
+        # home explicitly, so this is plan-approved new business logic, not a new
+        # PARITY text-sniffing site the module docstring's rule forbids.
+        try:
+            variables = _prev_variables(ctx)
+            if variables.get("selection_context") != "set_page":
+                return False
+            from app.services.chatbot.lanes.business.answer import is_more_reply
+
+            return is_more_reply(raw_msg)
+        except Exception:
+            return False
+
     menu = _tier_menu()
     # `tier_menu`'s mere presence already scopes this to the promotion thread; the domain
     # guard only rejects a turn that EXPLICITLY named a different one (loose null, same
@@ -306,6 +326,10 @@ def decide(
         branch_kind = "escalation_declined"
     elif tier_hit:
         branch_kind = "check_promotion"
+    # E3: intercepts BEFORE `is_clarification`/`is_low_signal`, the two arms that
+    # would otherwise eat a bare "more" (see `is_set_page_more_reply`'s own note).
+    elif is_set_page_more_reply():
+        branch_kind = "business_query"
     # `is_clarification` sits ABOVE `is_low_signal`, where live has it below. The two
     # message_type sets are disjoint (`clarification` is in neither of low_signal's four
     # clauses), so the swap changes nothing for a parse the live ladder ever saw - it only

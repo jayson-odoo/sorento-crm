@@ -895,6 +895,16 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         turn_state=turn_state,
     )
 
+    # ---- E3 (attribute-first asks, AC-1317): the set-answer "more" carry ---- #
+    # BEFORE `_offer_carry`: a HAS turn's answer arms its OWN memory here (a set
+    # of qualifying ids, never a customer/order roster), and `_offer_carry`'s own
+    # very first line - "this turn owns the roster" - reads `variables.
+    # selection_context`, so writing it here is what stops the OLD carry from
+    # also being re-armed underneath the new one.
+    set_page_handled = _set_page_carry(
+        variables, gate_json=gate_json, gate_ran=gate_ran, prev=prev, qf=qf
+    )
+
     # ---- the offer survives until the topic changes (owner ruling K1) ----- #
     # AFTER miss-company-routing, so a clarify arm that armed its own context this turn
     # still wins, and BEFORE the `pending` marker below, which describes what the
@@ -907,6 +917,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         escalated=escalated,
         selection_context=selection_context,
         answered=answered,
+        set_page_handled=set_page_handled,
     )
 
     # ---- search-scope disclosure (delivery orders only) ------------------- #
@@ -1855,6 +1866,98 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
             variables["picker_families_carried"] = True  # diagnostic
 
 
+def _set_page_carry(
+    variables: dict[str, Any],
+    *,
+    gate_json: Mapping[str, Any],
+    gate_ran: bool,
+    prev: Mapping[str, Any],
+    qf: Mapping[str, Any],
+) -> bool:
+    """AC-1317 (work item E3): a set-answer's "more" carry - a DICT-shaped kind,
+    never the array roster every OTHER `selection_context` above carries.
+
+    Returns whether THIS turn touched a set_page interaction at all (fresh,
+    continued or terminated) - the caller passes it to `_offer_carry` so a
+    turn that just CONSUMED the carry (the "that was all" / "narrow" terminal
+    replies, `resolve_gate.run`'s own short-circuit) is not immediately
+    re-armed underneath by `_offer_carry`'s own dict-shaped arm, which reads
+    `prev` with no way to tell "still open" from "just closed".
+
+    Three arms, in order:
+
+    * **a TERMINAL reply** (`resolve_gate.run`'s short-circuit stamps
+      `gate.set_page_terminal`) already composed "that was all" / "narrow" as
+      its OWN `escalate_message` - nothing to carry, ever.
+    * **a PAGE-CONTINUATION turn** (the same short-circuit stamps
+      `gate.predicate.page`) ADVANCES the SAME carry read straight off `prev` -
+      no id list is ever recomputed, because the whole point of the carry is
+      that a "more" turn runs no resolver call at all.
+    * **a FRESH set answer** (`gate.predicate` with no `page` marker and
+      `qualifying_total > 5`) arms a NEW carry, offset 5 - the header already
+      showed 5 (`fetch.entity_ids_transformer`'s own slicing, E1). A set
+      answer that already fit on one page (`qualifying_total <= 5`) arms
+      nothing: there is no second page to carry.
+    """
+    if not gate_ran:
+        return False
+    if jsc.truthy(jsc.get(gate_json, "set_page_terminal")):
+        return True
+
+    predicate = jsc.get(gate_json, "predicate")
+    if not isinstance(predicate, dict):
+        return False
+    qualifying_total = jsc.js_number(jsc.get(predicate, "qualifying_total"))
+    qualifying_total = 0 if jsc.is_nan(qualifying_total) else int(qualifying_total)
+    page = jsc.get(predicate, "page")
+
+    if isinstance(page, dict):
+        prev_carry = jsc.get(prev, "last_result_set")
+        if not isinstance(prev_carry, dict) or not prev_carry:
+            return True
+        new_offset = jsc.js_number(jsc.get(page, "new_offset"))
+        new_offset = 0 if jsc.is_nan(new_offset) else int(new_offset)
+        ids = prev_carry.get("qualifying_ids") or []
+        if new_offset >= len(ids) or new_offset >= qualifying_total:
+            return True  # exhausted - nothing left to carry into a further "more"
+        variables["selection_context"] = "set_page"
+        variables["last_result_set"] = {
+            **prev_carry,
+            "offset": new_offset,
+            "qualifying_total": qualifying_total,
+        }
+        return True
+
+    if qualifying_total <= 5:
+        return False
+    from app.services.chatbot.lanes.business import fetch as fetch_mod
+    from app.services.chatbot.lanes.business.answer import SET_PAGE_ID_CAP, set_noun_for
+
+    ids = [
+        jsc.get(e, "uuid")
+        for e in jsc.array(jsc.get(gate_json, "compatible_entities"))
+        if jsc.truthy(e) and jsc.get(e, "entity_type") == "product" and jsc.truthy(jsc.get(e, "uuid"))
+    ]
+    ids = ids[:SET_PAGE_ID_CAP]
+    if not ids:
+        return False
+    domain = jsc.get(qf, "domain_hint")
+    tool_candidates = fetch_mod.select_tool(domain)
+    tool = tool_candidates[0]["name"] if tool_candidates else None
+    variables["selection_context"] = "set_page"
+    variables["last_result_set"] = {
+        "kind": "set_page",
+        "qualifying_ids": ids,
+        "offset": min(5, len(ids)),
+        "qualifying_total": qualifying_total,
+        "require": jsc.get(predicate, "require") or {},
+        "set_noun": set_noun_for(jsc.array(jsc.get(predicate, "class_labels"))),
+        "domain": domain,
+        "tool": tool,
+    }
+    return True
+
+
 def _offer_carry(
     variables: dict[str, Any],
     *,
@@ -1864,6 +1967,7 @@ def _offer_carry(
     escalated: bool,
     selection_context: Any,
     answered: bool,
+    set_page_handled: bool = False,
 ) -> int | None:
     """"Choosing 1, 2, 3 works sequentially until I change domain or ask for another
     promotion." (owner, 2026-09-06)
@@ -1915,10 +2019,29 @@ def _offer_carry(
 
     Returns the carried `ttl` for `pending.derive`, or `None` when nothing was carried.
     """
+    if set_page_handled:
+        # `_set_page_carry` already decided this turn's set_page state (armed,
+        # advanced, or - the reason this guard exists - just TERMINATED by the
+        # "that was all" / "narrow" reply, which leaves `variables.
+        # selection_context` at its ladder default of `None` rather than a
+        # truthy value). Without this, `prev`'s STILL-"set_page" state below
+        # would be re-armed underneath the very reply that just closed it.
+        return None
     if jsc.truthy(selection_context) or jsc.truthy(variables.get("selection_context")):
         return None  # this turn owns the roster
     prev_ctx = jsc.get(prev, "selection_context")
     prev_set = jsc.get(prev, "last_result_set")
+    if prev_ctx == "set_page" and isinstance(prev_set, dict) and prev_set:
+        # E3's own DICT-shaped kind, given its own arm: every OTHER carry below is
+        # an array roster (`jsc.is_array`), which a set_page carry never is. An
+        # intervening turn that named neither a "more" reply (this turn's own
+        # ladder would have armed `selection_context` itself, above) nor a domain
+        # change still has a set answer on screen worth paging later.
+        if topic.changed(jsc.get(prev, "domain_hint"), jsc.get(qf, "domain_hint")):
+            return None
+        variables["selection_context"] = prev_ctx
+        variables["last_result_set"] = prev_set
+        return None
     if not jsc.truthy(prev_ctx) or not jsc.is_array(prev_set) or len(prev_set) == 0:
         return None
     if prev_ctx == "team_clarify":

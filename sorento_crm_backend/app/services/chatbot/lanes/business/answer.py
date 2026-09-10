@@ -2248,6 +2248,64 @@ def set_noun_for(class_labels: list[str] | None) -> str:
     return f"{labels[0].strip().lower()}s"
 
 
+# --------------------------------------------------------------------------- #
+# E3 (attribute-first asks, AC-1317): "more" paging through the set_page carry.
+# --------------------------------------------------------------------------- #
+
+#: The carried id list's own cap - a 2,704-long qualifying set is carried as ids,
+#: not re-queried, so it has to stop somewhere short of the whole catalogue.
+#: Named so a test can monkeypatch it (`raising=False`) rather than seed the real
+#: count.
+SET_PAGE_ID_CAP = 200
+
+_MORE_WORD_RE = re.compile(r"\b(more|next|lagi)\b", re.IGNORECASE)
+_MORE_MAX_WORDS = 4
+
+
+def is_more_reply(text: Any) -> bool:
+    """AC-1317: a bare "more" / "next" / "lagi" reply, standalone or inside a
+    short (four words or fewer) courtesy phrase ("more please", "show more") -
+    never a longer message that merely CONTAINS one of those words as part of a
+    different, longer question ("more taps with stock please and thanks").
+    """
+    words = jsc.js_string(text).strip().split()
+    if not words or len(words) > _MORE_MAX_WORDS:
+        return False
+    return bool(_MORE_WORD_RE.search(jsc.js_string(text)))
+
+
+def build_set_page_header(
+    qualifying_total: int, start: int, end: int, set_noun: str, require: dict[str, Any]
+) -> str:
+    """AC-1317: "<qualifying_total> <set noun> have <predicate noun>. Showing
+    <start> to <end>." - the CONTINUATION page's own header, off the SAME
+    predicate-noun phrase `build_set_header` uses, with a pre-known `set_noun`
+    (the carry's own, never re-derived from `class_labels` - a "more" turn runs
+    no resolver call and so never re-computes them).
+    """
+    verb = "has" if qualifying_total == 1 else "have"
+    return (
+        f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}. "
+        f"Showing {start} to {end}."
+    )
+
+
+def build_set_page_exhausted_message(qualifying_total: int, set_noun: str) -> str:
+    """AC-1317: "That was all <N> <noun>." - the fixed idiom, never conjugated
+    off `qualifying_total` ("was", not "were", even for a plural count)."""
+    return f"That was all {qualifying_total:,} {set_noun}."
+
+
+def build_set_page_narrow_message(set_noun: str) -> str:
+    """AC-1317: past the CARRIED id list's own cap (`SET_PAGE_ID_CAP`) - real
+    qualifying products remain, but the carry ran out before they did, so the
+    honest answer is to ask for a narrower question, never "that was all"."""
+    return (
+        f"That's as many {set_noun} as I can carry in one list - narrow the ask "
+        f"(a brand, or a more specific type) and I can show you the right ones."
+    )
+
+
 def not_found_error_message(
     item: dict[str, Any] | None,
     *,

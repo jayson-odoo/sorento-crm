@@ -1531,6 +1531,18 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
 
 _PREDICATE_WORD_RE_CACHE: dict[str, "re.Pattern[str]"] = {}
 
+# A COPY of `app.services.chatbot.head.output_exchange._CERT_RE`, never an import of it:
+# this file sits outside the chatbot module boundary (`tests/chatbot/test_import_boundary
+# .py`'s AC-002), so the same cert-word test is duplicated here rather than reached across
+# it. Keep the two in lockstep by hand if the word list ever changes.
+_CERT_WORD_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal", re.IGNORECASE)
+
+# A COPY of `app.services.chatbot.lanes.business.answer.SET_PAGE_ID_CAP`, for the same
+# module-boundary reason `_CERT_WORD_RE` above is a copy: the "more" carry (E3, AC-1317)
+# pages off however many qualifying ids `resolve_product_set` is asked for, so this file
+# has to ask for at least this many rather than the ordinary LOOKUP page size.
+_SET_PAGE_ID_CAP = 200
+
 
 def _strip_predicate_words(text: str, words: list[str] | None) -> str:
     """`query` with every `predicate_words` entry removed, whole-word, case-insensitive.
@@ -1591,7 +1603,6 @@ def _has_turn_free_terms(
     ):
         return []
 
-    from app.services.chatbot.head.output_exchange import _CERT_RE
     from app.services.product_spec_search import _content_words
 
     # Fix round, 11 Sep: `predicate_words` only strips its OWN entries whole-word,
@@ -1599,10 +1610,11 @@ def _has_turn_free_terms(
     # canonical word ("certificate"/"Certification") that never matches the
     # literal word the customer typed ("cert") - so `predicate_words` alone can
     # leave "cert" sitting in the remainder ("which tap has cert" -> "tap cert").
-    # `_CERT_RE` is the SAME cert-word test `derive_require`/`derive_routing`
-    # already use, so every cert-shaped word (and a bare scheme word like "span")
-    # is dropped here too, not just the ones the parser happened to echo back.
-    words = [w for w in _content_words(query_text) if not _CERT_RE.search(w)]
+    # `_CERT_WORD_RE` is the SAME cert-word test `derive_require`/`derive_routing`
+    # already use (a local copy, see its own docstring), so every cert-shaped
+    # word (and a bare scheme word like "span") is dropped here too, not just
+    # the ones the parser happened to echo back.
+    words = [w for w in _content_words(query_text) if not _CERT_WORD_RE.search(w)]
     return [" ".join(words)] if words else []
 
 
@@ -2543,13 +2555,17 @@ def resolve_reference_post(
         # `product_ids`-only match that carries no spec row at all.
         scope_terms = None if payload.free_terms else _has_turn_free_terms(payload, result, query_text)
 
+        # E3/AC-1317: the "more" carry pages by 5 off the QUALIFYING ids
+        # themselves, capped at `_SET_PAGE_ID_CAP` (200) - never the ordinary
+        # LOOKUP page size (`payload.limit`, 15), which would leave a
+        # 7-qualifying answer with only the first 5 to page through.
         outcome = resolve_product_set(
             db,
             require=payload.require,
             specs=specs,
             free_terms=payload.free_terms,
             scope_terms=scope_terms,
-            limit=payload.limit,
+            limit=max(payload.limit or 0, _SET_PAGE_ID_CAP),
             product_ids=_collect_lookup_product_ids(result) or None,
             brand=brand,
         )

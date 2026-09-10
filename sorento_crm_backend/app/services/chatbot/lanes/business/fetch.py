@@ -1722,23 +1722,36 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # would be circular.
     predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
     if predicate is not None:
-        from app.services.chatbot.lanes.business.answer import build_set_header, set_noun_for
-
-        shown = len(e.get("items") or [])
-        qualifying_total = jsc.get(predicate, "qualifying_total") or 0
-        set_noun = set_noun_for(jsc.array(jsc.get(predicate, "class_labels")))
-        # `set_noun_for` is always plural (its own contract, AC-1316) - singular
-        # only for the ONE-qualifying-product header ("1 tap has ...", never
-        # "1 taps has ..."), by dropping the trailing "s" our own pluralisation
-        # always adds.
-        if qualifying_total == 1 and set_noun.endswith("s"):
-            set_noun = set_noun[:-1]
-        header = build_set_header(
-            qualifying_total,
-            shown,
-            set_noun,
-            jsc.get(predicate, "require") or {},
+        from app.services.chatbot.lanes.business.answer import (
+            build_set_header,
+            build_set_page_header,
+            set_noun_for,
         )
+
+        qualifying_total = jsc.get(predicate, "qualifying_total") or 0
+        require = jsc.get(predicate, "require") or {}
+        # E3/AC-1317: a "more" continuation page carries its OWN pre-known
+        # `set_noun` and page bounds (`page`) - a "more" turn runs no resolver
+        # call, so there are no fresh `class_labels` to re-derive one from.
+        page = jsc.get(predicate, "page")
+        if isinstance(page, dict):
+            header = build_set_page_header(
+                qualifying_total,
+                jsc.get(page, "start"),
+                jsc.get(page, "end"),
+                jsc.js_string(jsc.get(page, "set_noun")) or "products",
+                require,
+            )
+        else:
+            shown = len(e.get("items") or [])
+            set_noun = set_noun_for(jsc.array(jsc.get(predicate, "class_labels")))
+            # `set_noun_for` is always plural (its own contract, AC-1316) - singular
+            # only for the ONE-qualifying-product header ("1 tap has ...", never
+            # "1 taps has ..."), by dropping the trailing "s" our own pluralisation
+            # always adds.
+            if qualifying_total == 1 and set_noun.endswith("s"):
+                set_noun = set_noun[:-1]
+            header = build_set_header(qualifying_total, shown, set_noun, require)
         msg = f"{header}\n{msg}"
 
     out: dict[str, Any] = {
