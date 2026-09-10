@@ -269,6 +269,7 @@ def test_route_list_do_without_include_summary_has_no_pipeline(client, db):
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
     o1 = order(db, company_id=DEFAULT_COMPANY_ID, customer_id=cust.id)
+    o1.estimated_delivery_date = date(2026, 9, 12)
     order_line(db, company_id=DEFAULT_COMPANY_ID, order_id=o1.id, product_id=prod.id, warehouse_id=wh.id)
     db.commit()
 
@@ -277,6 +278,10 @@ def test_route_list_do_without_include_summary_has_no_pipeline(client, db):
     body = resp.json()
     assert "summary" not in body or body.get("summary") is None
     assert "groups" not in body or body.get("groups") is None
+    # AC4 (chatbot-eta-not-in-turn): the CRM orders API itself still returns the
+    # date - only MCP and the chatbot turn output drop it (entity_resolver.py,
+    # answer.py). The UI reads this field unchanged.
+    assert body["data"][0]["estimated_delivery_date"] is not None
 
 
 # ----------------------------- should-fix 7: the external cap applies to this bucket too

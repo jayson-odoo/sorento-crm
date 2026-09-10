@@ -21,7 +21,7 @@ and must not reach the chatbot / turn API response.
 | --- | --- |
 | `crm_order_management_orders_list` / `_get` (MCP) | already dropped, `_ORDERS_LIST_DROP_ROW_KEYS` (TCK-2026-000023) |
 | `crm_order_management_orders_by_product_list` | `OrderSimpleRef` has no such field - clean |
-| `entity_resolver.py` customer_order `display` (3 sites: ~1015, ~1883, ~3757) | LEAKS - reaches the turn engine in process (`services.resolve_entity`) and `GET/POST /system/references/resolve` |
+| `entity_resolver.py` customer_order `display` (3 sites: ~1015, ~1883, ~3757) | LEAKS - reaches the turn engine in process (`services.resolve_entity`) and `GET/POST /system/references/resolve`. A fourth customer_order builder exists (trgm tier, ~3021) but its `display={}` never carried the field - nothing to drop there. |
 | `answer.py` ~2859 `eta_text` in the delivered-status miss message | LEAKS - prints the resolver value |
 
 ## Change

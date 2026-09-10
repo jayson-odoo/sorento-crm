@@ -11,6 +11,7 @@ def _raw_order_row():
         "id": "11111111-1111-1111-1111-111111111111",
         "order_number": "DO-2026-0001",
         "order_date": "2026-06-01T00:00:00",
+        "estimated_delivery_date": "2026-06-03",
         "debtor_code": "VB001",
         "debtor_name": "V Bath",
         "created_by": "22222222-2222-2222-2222-222222222222",
@@ -57,6 +58,7 @@ def test_orders_row_drops_all_uuids_and_created_by():
     row = _slim_orders_list_row(_raw_order_row())
     for key in ("id", "created_by", "updated_by", "customer_id"):
         assert key not in row
+    assert "estimated_delivery_date" not in row
     line = row["lines"][0]
     for key in ("id", "order_id", "product_id", "warehouse_id"):
         assert key not in line
