@@ -112,6 +112,13 @@ tool. No new reply format.
   gate of AC-1305 reads both `intersection` (the lane's AND mode) and `resolutions`. `shown` in the
   header counts distinct products. Evidence: pytest on the resolver in AND mode and a stock lane
   run with multi-row products.
+- AC-1331 When `predicate.qualifying_total > 0`, an unresolved word token (e.g. the parser's single
+  entity "Sorento bidet") is never listed under "Couldn't find"; the set answer renders. Evidence:
+  lane run with a real resolver, the folded token resolving to nothing.
+- AC-1332 The HAS branch derives bindings deterministically: the model phrase reader is never
+  invoked while `require` is present, and predicate_words are stripped word by word ("PPS cert"
+  removes both words). Evidence: pytest with the model reader patched to fail if called, plus the
+  phrase-stripping case.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
