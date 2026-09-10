@@ -103,9 +103,9 @@ binding is applied as a filter on the whole set.
 
 | Slice | Delivers | Work items | ACs |
 |-------|----------|------------|-----|
-| S1 | The predicate reaches the resolver and a set answer renders through the existing block. Both screenshot utterances change. | A, A2, B1, B2, C1, C2, C3, C4, E1, F1 (zero → existing miss, set named) | 1301 to 1310, 1315, 1319, 1322 to 1324, 1326 |
-| S2 | Incoming leg; scheme and label aliases through lookup sets; the two sets created empty | D1, D2, D3 | 1311 to 1314, 1321 |
-| S3 | Count header, validity default, clarify copy for unknown terms | E2, F2, F3 | 1316, 1318, 1320 |
+| S1 | The predicate reaches the resolver and a set answer renders through the existing block. Both screenshot utterances change. | A, A2, B1, B2, C1, C2, C3, C4, E1, F1 (zero → existing miss, set named) | 1301 to 1309, 1310 (four existing legs), 1315, 1319, 1322, 1324, 1326 |
+| S2 | Incoming leg; scheme and label aliases through lookup sets; the two sets created empty | D1, D2, D3 | 1310 (incoming leg), 1311 to 1314, 1321 |
+| S3 | Count header, validity default, clarify copy for unknown terms, field-reveal parity | E2, F2, F3 | 1316, 1318, 1320, 1323 |
 | S4 | "more" paging by 5 through the offer carry | E3 | 1317 |
 | H | Console verification on the prod copy, test report | H | 1325 |
 
