@@ -1470,6 +1470,13 @@ export interface BoardBorrowCandidate {
   lower_ranked?: boolean;
   /** The donor shares this line's own sales agent (section 8) - offered at any rank. */
   same_agent?: boolean;
+  /**
+   * The SAME location facts the Grid Location table states for this warehouse (S4,
+   * `PLAN-local-supplier-oi-routing.md`), threaded through `borrowCandidatesOf` onto
+   * `BorrowCandidate.location` for the manual Borrow modal. Absent on a server that has not
+   * wired this yet.
+   */
+  location?: BoardCellLocation;
 }
 
 /** One incoming purchase leg at a location, with the document that carries it. */

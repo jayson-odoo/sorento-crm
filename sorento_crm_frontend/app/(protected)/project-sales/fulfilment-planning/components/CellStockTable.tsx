@@ -160,6 +160,28 @@ export interface CellStockTableProps {
    * board in hand (this component's own tests) still renders the documented rule.
    */
   poolSharePct?: number;
+  /**
+   * Radio selection for a donor picker (S4, `PLAN-local-supplier-oi-routing.md`): the
+   * currently chosen row's `warehouse_id`, and the setter, rendered as a radio in the
+   * Location cell before the code. Absent renders no radio - this table's ordinary caller,
+   * the cell dialog, never needs one.
+   */
+  selectable?: {
+    value: string;
+    onChange: (warehouseId: string) => void;
+  };
+  /**
+   * Badge labels per row, keyed by `warehouse_id` (S4): `Recommended` on the ranked donor,
+   * `Same agent` on one sharing the asking line's own sales agent. Absent renders no badge -
+   * only `BorrowAddDialog` has anything to say here.
+   */
+  badges?: Record<string, ReadonlyArray<'Recommended' | 'Same agent'>>;
+  /**
+   * Hides the section subtotal rows and the grand-total footer (S4). Defaults to `true`,
+   * the table's ordinary behaviour - a donor list is not a group, and summing donors that
+   * were never going to be combined would print a number nobody asked for.
+   */
+  showGroupSubtotal?: boolean;
 }
 
 /**
@@ -184,6 +206,9 @@ export const CellStockTable = React.forwardRef<
     filterText,
     landOnMount,
     poolSharePct = DEFAULT_POOL_SHARE_PCT,
+    selectable,
+    badges,
+    showGroupSubtotal = true,
   },
   ref,
 ) {
@@ -460,15 +485,48 @@ export const CellStockTable = React.forwardRef<
                         )}
                       </td>
                       <td className={cn(LOCATION_COL, BODY_CELL)}>
-                        <span
-                          className={cn(
-                            'block truncate font-medium',
-                            !entry.location && 'text-destructive',
-                          )}
-                          title={entry.location ?? 'No location'}
-                        >
-                          {entry.location ?? 'No location'}
-                        </span>
+                        <div className="flex items-start gap-2">
+                          {selectable && entry.warehouse_id ? (
+                            <input
+                              type="radio"
+                              className="mt-0.5"
+                              aria-label={`Choose ${entry.location ?? 'this location'}`}
+                              data-testid={`stock-select-${testKey}`}
+                              checked={selectable.value === entry.warehouse_id}
+                              onChange={() =>
+                                selectable.onChange(entry.warehouse_id as string)
+                              }
+                            />
+                          ) : null}
+                          <span className="min-w-0">
+                            <span
+                              className={cn(
+                                'block truncate font-medium',
+                                !entry.location && 'text-destructive',
+                              )}
+                              title={entry.location ?? 'No location'}
+                            >
+                              {entry.location ?? 'No location'}
+                            </span>
+                            {badges?.[entry.warehouse_id ?? '']?.length ? (
+                              <span className="mt-0.5 flex flex-wrap gap-1">
+                                {badges[entry.warehouse_id ?? '']?.map((label) => (
+                                  <span
+                                    key={label}
+                                    className={cn(
+                                      'inline-block rounded-sm px-1.5 py-0.5 text-2xs font-medium',
+                                      label === 'Recommended'
+                                        ? 'bg-primary/10 text-primary'
+                                        : 'bg-amber-100 text-amber-800',
+                                    )}
+                                  >
+                                    {label}
+                                  </span>
+                                ))}
+                              </span>
+                            ) : null}
+                          </span>
+                        </div>
                       </td>
                       <td className={cn(WHERE_COL, BODY_CELL)}>
                         <span
@@ -558,7 +616,8 @@ export const CellStockTable = React.forwardRef<
               // is the figure the ladder actually drew on. The two differ on purpose: the net
               // covers every location of the group, and this table lists the ones this cell
               // consulted.
-              ...(showSubtotals &&
+              ...(showGroupSubtotal &&
+              showSubtotals &&
               (section.rows.length > 1 || section.net !== null)
                 ? [
                     <tr
@@ -693,7 +752,7 @@ export const CellStockTable = React.forwardRef<
             ])}
           </tbody>
 
-          {showTotals && (
+          {showGroupSubtotal && showTotals && (
             // Only when there is something to add up. One location IS its own total, and a totals
             // row repeating it is a row that says nothing.
             <tfoot>
