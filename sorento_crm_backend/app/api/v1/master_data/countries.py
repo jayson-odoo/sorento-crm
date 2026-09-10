@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
-from app.schemas.common import ListResponse
+from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.country import CountryCreate, CountryResponse, CountrySelectItem, CountryUpdate
 from app.services.country_service import CountryService
 from app.services.error_handler import handle_internal_error
@@ -18,7 +18,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[CountryResponse])
 async def get_countries(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),

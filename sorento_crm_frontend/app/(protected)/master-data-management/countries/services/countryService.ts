@@ -77,8 +77,3 @@ export async function updateCountry(
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to update country'));
   return (await response.json()) as Country;
 }
-
-export async function deleteCountry(id: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete country'));
-}

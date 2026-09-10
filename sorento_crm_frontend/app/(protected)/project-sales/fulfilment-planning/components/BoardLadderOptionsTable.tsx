@@ -83,8 +83,8 @@ export function BoardLadderOptionsTable({
               }`}
             >
               <td className="max-w-[220px] px-3 py-1.5">
-                <span className="flex items-center gap-1.5">
-                  <span className="truncate" title={option.label}>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="min-w-0 truncate" title={option.label}>
                     {option.label}
                   </span>
                   {/* S3: a local Buy raises no Order Inquiry on confirm. Overseas, or a

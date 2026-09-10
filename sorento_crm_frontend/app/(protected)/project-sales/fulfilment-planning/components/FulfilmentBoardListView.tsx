@@ -270,7 +270,7 @@ export function FulfilmentBoardListView({
           return (
             <div className="min-w-0 space-y-1">
               <span className="flex min-w-0 items-center gap-1.5">
-                <span className="block truncate" title={text}>
+                <span className="block min-w-0 truncate" title={text}>
                   {text || (
                     <span className="text-muted-foreground">
                       Nothing proposed
@@ -315,7 +315,7 @@ export function FulfilmentBoardListView({
           return (
             <div className="min-w-0 space-y-1">
               <span className="flex min-w-0 items-center gap-1.5">
-                <span className="block truncate" title={text}>
+                <span className="block min-w-0 truncate" title={text}>
                   {text}
                 </span>
                 {contribution.buy_origin === 'local' && hasBuy(parts) && (

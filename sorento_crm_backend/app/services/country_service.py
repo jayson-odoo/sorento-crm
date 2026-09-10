@@ -61,7 +61,11 @@ class CountryService:
     def create_country(self, data: CountryCreate) -> Country:
         if self._duplicate_code(data.code):
             raise handle_conflict("A country with this code already exists.")
-        country = Country(**data.model_dump())
+        payload = data.model_dump()
+        # sec N4/N2: normalised here too, not only by the FE form - an API-key or MCP
+        # caller never runs the client's own `.toUpperCase()`.
+        payload["code"] = payload["code"].strip().upper()
+        country = Country(**payload)
         self.db.add(country)
         self.db.commit()
         self.db.refresh(country)
@@ -70,8 +74,10 @@ class CountryService:
     def update_country(self, country_id: str, data: CountryUpdate) -> Country:
         country = self.get_country(country_id)
         update_data = data.model_dump(exclude_unset=True)
-        if "code" in update_data and self._duplicate_code(update_data["code"], exclude_id=country_id):
-            raise handle_conflict("A country with this code already exists.")
+        if "code" in update_data:
+            if self._duplicate_code(update_data["code"], exclude_id=country_id):
+                raise handle_conflict("A country with this code already exists.")
+            update_data["code"] = update_data["code"].strip().upper()
         for key, value in update_data.items():
             setattr(country, key, value)
         self.db.commit()
