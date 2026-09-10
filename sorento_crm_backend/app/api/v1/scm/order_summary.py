@@ -147,6 +147,20 @@ def export_order_summary(
     if stats["row_count"] > svc.MAX_EXPORT_ROWS:
         raise AppException(422, "Narrow the plan first")
 
+    # AC-16b (security S5, review fix round B): one in-flight sheet per user per run - no
+    # queue machinery, just a guard on what `user_downloads` already states. `fail_stale`
+    # (run on every drawer poll) is what clears a row a dead worker left stuck, so this
+    # never wedges a caller out past the 20-minute window.
+    if DownloadService(db).has_in_flight(
+        user_id=str(current_user["id"]), kind_prefix="order_sheet_",
+        source_entity_type="reorder_run", source_entity_id=stats["run_id"],
+    ):
+        raise AppException(
+            status_code=409,
+            message="An order sheet for this plan is already being prepared - check My "
+                    "Downloads.",
+        )
+
     filename = f"order-sheet-{_ddmmyyyy_compact(stats['as_of'])}.{fmt}"
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),

@@ -52,6 +52,31 @@ class DownloadService:
             .first()
         )
 
+    def has_in_flight(
+        self, *, user_id: str, kind_prefix: str, source_entity_type: str, source_entity_id: str
+    ) -> bool:
+        """One in-flight export per user, per kind, per source entity (security S5, AC-16b).
+
+        No queue machinery: a second request for the same thing this user already has
+        `pending`/`processing` is simply refused, and `fail_stale` (already run on every
+        drawer poll) is what clears a row a dead worker left stuck - after 20 minutes it
+        reads `failed` and this check stops seeing it.
+        """
+        return (
+            self.db.query(UserDownload.id)
+            .filter(
+                UserDownload.user_id == str(user_id),
+                UserDownload.kind.like(f"{kind_prefix}%"),
+                UserDownload.source_entity_type == source_entity_type,
+                UserDownload.source_entity_id == str(source_entity_id),
+                UserDownload.status.in_(
+                    [DownloadStatus.PENDING.value, DownloadStatus.PROCESSING.value]
+                ),
+            )
+            .first()
+            is not None
+        )
+
     def fail_stale(self, user_id: str) -> int:
         """Flip the user's long-stuck pending/processing rows to 'failed'.
 
