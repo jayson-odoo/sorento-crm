@@ -30,6 +30,9 @@ from app.models.scm import ReorderRecommendation
 from app.services.scm import summary_order_service as svc
 from tests.scm.conftest import requires_pg
 from tests.scm.test_channel_read_model import _confirmed_leg
+from tests.scm.test_product_grain_summary import _product as _pg_product
+from tests.scm.test_product_grain_summary import _run as _pg_run
+from tests.scm.test_product_grain_summary import _warehouse as _pg_warehouse
 from tests.scm.test_summary_order_service import _link as _summary_link  # noqa: F401
 from tests.scm.test_summary_order_service import (  # noqa: F401
     _po,
@@ -340,6 +343,92 @@ def test_a_supplier_named_as_a_formula_exports_as_a_string_cell(db, chain):
 
 
 # =====================================================================================
+# issue #795 (PLAN-product-grain-project-buy-no-level.md Slice 2, AC-7 .. AC-9): the
+# order sheet carries Suggested qty + Suggestion immediately left of Order qty, and no
+# row is dropped for a suggested quantity of 0.
+# =====================================================================================
+
+def test_export_xlsx_prints_suggested_and_suggestion_next_to_order_qty(db):
+    """Plan Slice 2 test 7. The new columns sit between Dealer o/s and Order qty, in that
+    order; Suggested qty is the engine figure printed as a NUMBER (0 stays 0, unlike the
+    blank rule for Order qty); Suggestion is the engine's own reason text; Order qty stays
+    the pen column, blank until chosen. A covered product with nothing to order still
+    prints, with Suggested qty 0 and its own suggestion (AC-9)."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    run = _pg_run(db, decision_grain="product", contract_version=1)
+    wh = _pg_warehouse(db)
+    buy_p = _pg_product(db, stem="S795XBUY")
+    covered_p = _pg_product(db, stem="S795XCOV")
+
+    buy_reason = "project buy: 12 confirmed unplaced Buy"
+    covered_reason = "40 available across every location covers 12 committed"
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="buy", product_id=buy_p.id,
+        warehouse_id=wh.id, rounded_qty=12, status="proposed",
+        triggered_reason=buy_reason,
+    ))
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="covered", product_id=covered_p.id,
+        warehouse_id=wh.id, rounded_qty=0, status="proposed",
+        triggered_reason=covered_reason,
+    ))
+    db.flush()
+
+    assert svc.write_rows(db, run.id) == 2, "both products are on the book"
+
+    payload, content_type, _filename = svc.export_report(db, run_id=run.id, fmt="xlsx")
+    assert content_type == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    wb = load_workbook(BytesIO(payload))
+    ws = wb.active
+
+    header = tuple(c.value for c in ws[1])
+    assert header == (
+        "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
+        "Suggested qty", "Suggestion", "Order qty", "Delivery", "Project / customer",
+        "Supplier", "BRW PO qty", "BRW incoming qty", "Last in qty", "Last in date",
+        "Remarks",
+    )
+
+    rows_by_code = {r[0]: r for r in ws.iter_rows(min_row=2, values_only=True)}
+    assert buy_p.product_code in rows_by_code
+    assert covered_p.product_code in rows_by_code, "no row is dropped for suggested 0"
+
+    buy_row = rows_by_code[buy_p.product_code]
+    assert buy_row[5] == 12.0, "Suggested qty is a number, left of Suggestion"
+    assert buy_row[6] == buy_reason
+    # A blank cell round-trips as None through openpyxl load_workbook - it writes ""
+    # and None identically, so this reload can never observe "" (the tuple-level ""
+    # contract is pinned directly by the sibling `_export_xlsx_rows` test instead).
+    assert buy_row[7] is None, "Order qty stays blank until the buyer chooses"
+
+    covered_row = rows_by_code[covered_p.product_code]
+    assert covered_row[5] == 0.0, "Suggested qty prints 0, not blank"
+    assert covered_row[6] == covered_reason
+
+
+def test_export_pdf_html_header_cells_are_the_16_columns_in_order():
+    """Plan Slice 2 test 8: the PDF's own header row carries the same 16 columns, Suggested
+    qty and Suggestion immediately left of Order qty, nothing else moved. Reads
+    `_export_pdf_html` directly (as the existing S14 PDF tests do) - it only builds a
+    string, so this needs no Chromium round trip and nothing to skip."""
+    import re
+
+    html = svc._export_pdf_html([], "2026-09-10")
+    headers = re.findall(r"<th>(.*?)</th>", html)
+    assert tuple(headers) == (
+        "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
+        "Suggested qty", "Suggestion", "Order qty", "Delivery", "Project / customer",
+        "Supplier", "BRW PO qty", "BRW incoming qty", "Last in qty", "Last in date",
+        "Remarks",
+    )
+
+
+# =====================================================================================
 # S14 (PLAN-reorder-feedback-9sep.md Round 3, reorder-feedback-9sep-acceptance-criteria.md
 # AC-S14.1 - S14.7) - "the sheet reads like the paper one".
 #
@@ -538,10 +627,13 @@ def test_s14_a_superseded_decision_contributes_nothing_to_the_sheet(db, chain):
 # --- AC-S14.4: export columns, in the paper sheet's order ---------------------------
 
 def test_s14_export_columns_match_the_paper_sheet_order():
+    # issue #795 (Slice 2 test 10): Suggested qty + Suggestion now sit between Dealer o/s
+    # and Order qty; every other column keeps its old order (AC-7).
     assert svc._EXPORT_COLUMNS == (
         "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
-        "Order qty", "Delivery", "Project / customer", "Supplier", "BRW PO qty",
-        "BRW incoming qty", "Last in qty", "Last in date", "Remarks",
+        "Suggested qty", "Suggestion", "Order qty", "Delivery", "Project / customer",
+        "Supplier", "BRW PO qty", "BRW incoming qty", "Last in qty", "Last in date",
+        "Remarks",
     )
 
 
@@ -557,6 +649,10 @@ _FULL_ROW = {
         {"label": "Beta Co", "qty": 3},
     ],
     "dealer_outstanding": 12,
+    # issue #795: the engine's own figure and reason, distinct from `chosen_qty` so a test
+    # reading one instead of the other is caught red-handed too.
+    "suggested_qty": 12,
+    "suggestion": "below level: net 5 <= ROP 10",
     "chosen_qty": 20,
     "delivery_by_month": [{"month": "2026-07", "qty": 5}, {"month": "2026-08", "qty": 3}],
     "supplier_name": "Acme Supplier",
@@ -573,6 +669,10 @@ _BLANK_ROW = {
     "project_demand": 0,
     "project_customers": [],
     "dealer_outstanding": 0,
+    # issue #795: Suggested qty is a MEASURED figure - 0 prints as 0, never blank (AC-8) -
+    # unlike `chosen_qty`/Order qty, the pen column, which stays blank until chosen.
+    "suggested_qty": 0,
+    "suggestion": None,
     "chosen_qty": None,
     "delivery_by_month": [],
     "supplier_name": None,
@@ -586,7 +686,7 @@ _BLANK_ROW = {
 def test_s14_export_rows_project_qty_is_the_customers_sum_not_project_demand():
     (row,) = svc._export_rows([_FULL_ROW])
     assert row == (
-        "ZZTS14-SKU", "100", "250", "8", "12", "20",
+        "ZZTS14-SKU", "100", "250", "8", "12", "12", "below level: net 5 <= ROP 10", "20",
         "Jul - 5\nAug - 3", "Acme Co / Tower A - 5\nBeta Co - 3",
         "Acme Supplier", "40", "15", "300", "21/07/2026", "MOQ 1000",
     )
@@ -595,20 +695,22 @@ def test_s14_export_rows_project_qty_is_the_customers_sum_not_project_demand():
 def test_s14_export_rows_blank_cells_when_the_row_has_nothing_to_show():
     (row,) = svc._export_rows([_BLANK_ROW])
     assert row == (
-        "ZZTS14-BLANK", "0", "", "0", "0", "",
+        "ZZTS14-BLANK", "0", "", "0", "0", "0", "", "",
         "", "", "", "0", "0", "", "", "",
     )
 
 
 def test_s14_export_xlsx_rows_keep_quantities_as_numbers_and_blanks_as_empty_string():
     (full, blank) = svc._export_xlsx_rows([_FULL_ROW, _BLANK_ROW])
-    # Item code / Delivery / Project-customer / Supplier / Remarks are text; every other
-    # column is a NUMBER (H1) so summing a column in Excel keeps working.
-    for idx in (1, 2, 3, 4, 5, 9, 10, 11):
+    # Item code / Suggestion / Delivery / Project-customer / Supplier / Remarks are text;
+    # every other column is a NUMBER (H1) so summing a column in Excel keeps working.
+    # issue #795: Suggested qty (5) joins the numeric set; Order qty moves to 7.
+    for idx in (1, 2, 3, 4, 5, 7, 11, 12, 13):
         assert isinstance(full[idx], float), f"column {idx} must be numeric, got {full[idx]!r}"
     assert blank[2] == "", "a NULL reorder level must be a blank cell, not 0"
-    assert blank[5] == "", "no chosen qty must be a blank cell, not 0"
-    assert blank[12] == "", "no last-in date must be a blank cell"
+    assert blank[5] == 0.0, "Suggested qty prints 0, not blank, even on an empty row"
+    assert blank[7] == "", "no chosen qty must be a blank cell, not 0"
+    assert blank[14] == "", "no last-in date must be a blank cell"
 
 
 def test_s14_null_pool_on_hand_exports_blank_not_zero():
@@ -671,11 +773,13 @@ def test_s14_render_export_xlsx_styles_header_borders_wrap_and_freeze():
             assert cell.alignment.wrap_text is True
 
     assert ws.freeze_panes == "A2"
-    # Column H is "Project / customer" (1=Item code .. 8=Project/customer).
-    assert ws.column_dimensions["H"].width > 30
+    # issue #795: Suggested qty + Suggestion push every later column two to the right -
+    # "Project / customer" is now column J (1=Item code .. 6=Suggested qty, 7=Suggestion,
+    # 8=Order qty, 9=Delivery, 10=Project/customer).
+    assert ws.column_dimensions["J"].width > 30
 
-    # A multi-month Delivery cell (column G) carries a newline.
-    delivery_cell = ws.cell(row=2, column=7)
+    # A multi-month Delivery cell (now column I) carries a newline.
+    delivery_cell = ws.cell(row=2, column=9)
     assert "\n" in delivery_cell.value
 
     # A quantity cell stays numeric.

@@ -1006,3 +1006,89 @@ def test_a_legacy_run_rejects_every_decision(db):
         svc.record_decision(db, product.product_code, run_id=run.id, chosen_qty=8,
                             supplier_code=sup.supplier_code, actor="mr loo")
     assert e.value.status_code == 409
+
+
+# =========================================================================== #
+# issue #795 (PLAN-product-grain-project-buy-no-level.md Slice 2): every planned
+# product is on the book, with a `suggestion` string (AC-7 .. AC-10)
+# =========================================================================== #
+
+def test_write_rows_admits_buy_covered_and_needs_level_products_with_a_suggestion(db):
+    """AC-9: `_belongs_on_the_book` becomes "has any product-grain rec" - buy, covered and
+    needs_level products are ALL on the book now, not only a buy or firm project need.
+    `suggested_qty` stays 0 for covered/needs_level, and every row carries the engine's own
+    one-line reason on a NEW `suggestion` column - the buy row's is its own
+    `triggered_reason` (plan Slice 2 test 6).
+    """
+    run = _run(db, decision_grain="product", contract_version=1)
+    wh = _warehouse(db)
+    buy_p = _product(db, stem="S795BUY")
+    covered_p = _product(db, stem="S795COV")
+    needs_p = _product(db, stem="S795NDL")
+
+    buy_reason = "below level: net 5 <= ROP 10"
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="buy", product_id=buy_p.id,
+        warehouse_id=wh.id, rounded_qty=12, status="proposed",
+        triggered_reason=buy_reason,
+    ))
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="covered", product_id=covered_p.id,
+        warehouse_id=wh.id, rounded_qty=0, status="proposed",
+        triggered_reason="200 available in this pool covers 150 committed",
+    ))
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="needs_level", product_id=needs_p.id,
+        warehouse_id=None, rounded_qty=None, status="proposed",
+        triggered_reason="no reorder level set - set one to plan this product",
+    ))
+    db.flush()
+
+    assert svc.write_rows(db, run.id) == 3, (
+        "buy, covered and needs_level products are all on the book now"
+    )
+
+    buy_row = _row(db, run, buy_p)
+    covered_row = _row(db, run, covered_p)
+    needs_row = _row(db, run, needs_p)
+
+    assert float(buy_row.suggested_qty) == 12.0
+    assert buy_row.suggestion == buy_reason
+
+    assert float(covered_row.suggested_qty) == 0.0
+    assert covered_row.suggestion, "a covered row still states why it suggests 0"
+
+    assert float(needs_row.suggested_qty) == 0.0
+    assert needs_row.suggestion, "a needs_level row still states why it suggests 0"
+
+
+def test_record_decision_accepts_a_row_whose_suggested_qty_is_zero(db):
+    """AC-10 (plan Slice 2 test 9): a buyer can choose an order quantity on a row the
+    engine suggested 0 for - covered stock here - and `record_decision` must not refuse it
+    for having nothing suggested. Fails today because the covered product never reaches the
+    book at all (`_belongs_on_the_book`), not because of a guard inside `record_decision`
+    itself - there is none.
+    """
+    run = _run(db, decision_grain="product", contract_version=1)
+    wh = _warehouse(db)
+    product = _product(db, stem="S795ZERO")
+    sup = _supplier_link(db, product)
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="covered", product_id=product.id,
+        warehouse_id=wh.id, rounded_qty=0, status="proposed",
+        triggered_reason="40 available in this pool covers 30 committed",
+    ))
+    db.flush()
+
+    assert svc.write_rows(db, run.id) == 1, "the covered product is on the book"
+    row = _row(db, run, product)
+    assert float(row.suggested_qty) == 0.0
+
+    out = svc.record_decision(
+        db, product.product_code, run_id=run.id, chosen_qty=5,
+        supplier_code=sup.supplier_code, actor="mr loo",
+    )
+
+    assert out["chosen_qty"] == 5.0
+    row = _row(db, run, product)
+    assert float(row.chosen_qty) == 5.0

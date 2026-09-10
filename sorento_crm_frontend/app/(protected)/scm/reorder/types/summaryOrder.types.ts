@@ -166,6 +166,15 @@ export interface OrderSummaryRow {
   /** The run's own frozen reorder level for this product (S14), or null when no
    *  recommendation carried one. */
   reorder_level?: number | null;
+  /** The engine's own one-line reason for `suggested_qty` - why 12, or why 0 (issue
+   *  #795). Null on a row nothing carries a reason for. */
+  suggestion?: string | null;
+  /** Open BRW PO lines behind `po_open_qty`, one entry per document (issue #795 Slice
+   *  3). Empty when nothing is open. */
+  po_open_docs?: { number: string; qty: number }[];
+  /** Open incoming SPO allocations behind `incoming_spo_qty`, one entry per document
+   *  (issue #795 Slice 3). Empty when nothing is open. */
+  incoming_spo_docs?: { number: string; qty: number }[];
 }
 
 /** The whole report for one run, as of one date (AC-C2.9). */

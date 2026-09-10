@@ -961,6 +961,19 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
     #: one product-wide level, never a per-warehouse one).
     reorder_level = Column(Numeric, nullable=True)
 
+    # --- issue #795 (Slice 2): the engine's own reason for the row, so a covered or
+    # needs_level row - now on the book beside a buy - still says why it suggests 0. ---
+    #: One sentence, the row's own `triggered_reason` (falling back to a short label when
+    #: a hand-built recommendation carries none).
+    suggestion = Column(Text, nullable=True)
+
+    # --- issue #795 (Slice 3): traceability under the BRW PO qty / BRW incoming qty
+    # cells. Population is Slice 3's; the columns land now so migration 508 needs no
+    # second pass. `[{"number": str, "qty": float}]`, grouped by document, sorted by
+    # number; NULL/empty until Slice 3 populates them. ---
+    po_open_docs = Column(JSONB, nullable=True)
+    incoming_spo_docs = Column(JSONB, nullable=True)
+
     __table_args__ = (
         # One row per product per run, or the report reads whichever duplicate comes back
         # first (the `system_settings` singleton lesson).
