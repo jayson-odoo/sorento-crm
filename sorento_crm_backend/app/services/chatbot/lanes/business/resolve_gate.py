@@ -494,6 +494,12 @@ def _set_page_reply(ctx: dict[str, Any], parser: dict[str, Any]) -> dict[str, An
         **gate_item,
         "ctx": {**mutated_ctx, "resolved": {}, "entities": None, "gate": gate_item},
     }
+    # SEC-B1/AC-1333: a `tier_gate` dict carrying the FIRST page's own recomposed
+    # access_levels - never `None` - so `_fetch_semantic_input` reads it the same
+    # way it does off a real tier gate, instead of falling to the bare "more"
+    # parser output's own (empty) `access_levels` and silently dropping the tier
+    # filter from a promotion page.
+    page_tier_gate = {"access_levels_recomposed": list(carry.get("access_levels") or [])}
     return exit_item(
         item_out,
         exit_kind="continue",
@@ -502,7 +508,7 @@ def _set_page_reply(ctx: dict[str, Any], parser: dict[str, Any]) -> dict[str, An
             "gate": gate_item,
             "ctx_resolved": item_out,
             "aggregate": None,
-            "tier_gate": None,
+            "tier_gate": page_tier_gate,
         },
     )
 

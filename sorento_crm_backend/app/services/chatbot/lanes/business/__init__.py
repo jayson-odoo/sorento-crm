@@ -420,6 +420,12 @@ def run_fetch(
                 },
             )
     item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
+    # SEC-B1/AC-1333: the RECOMPOSED access_levels this turn's tool call actually
+    # carried (`semantic_input`'s own, built above from `tier_gate.access_levels_
+    # recomposed` when a tier gate ran) - `_set_page_carry` stores this in the
+    # set_page carry so a later "more" page can re-inject the SAME tier, rather
+    # than falling to the bare parser's own (empty, on a "more" turn) list.
+    item["access_levels"] = semantic_input.get("access_levels")
     return {
         "kind": "result",
         "_fetch_arm": item["_fetch_arm"],
@@ -521,7 +527,17 @@ def complete_answer(
     aggregate = payload.get("aggregate") if isinstance(payload.get("aggregate"), dict) else None
     entities_names = aggregate.get("name") if aggregate is not None else None
 
-    fragments: dict[str, Any] = {"ctx": ctx, "resolved": resolved, "gate": gate}
+    fragments: dict[str, Any] = {
+        "ctx": ctx,
+        "resolved": resolved,
+        "gate": gate,
+        # SEC-B1/AC-1333: the recomposed access_levels THIS fetch actually used
+        # (None on any arm that never called the tool - tier_ask, error, offer)
+        # - `compile_state._set_page_carry` reads it off `values["access_levels_
+        # used"]` for the set_page carry, and it is what tells that function
+        # whether a set answer actually rendered this turn at all.
+        "access_levels_used": fetch.get("access_levels"),
+    }
     lane_item: dict[str, Any]
 
     # `fetch-result`'s own arm names, spelled the way IT spells them: `tier-ask` with a

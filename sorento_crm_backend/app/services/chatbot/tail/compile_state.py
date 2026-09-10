@@ -281,6 +281,16 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     `resolved` and `gate` are `sub-output`'s `resolve-entity` / `disallowed-entity-gate`
     carriers, i.e. the trigger's own nullable fields. `execution_id` stands in for
     `$execution.id`, which the dym offer stamps as its identity - the CRM's turn id.
+
+    SEC-B1/AC-1333: `gate` also carries two engine-injected facts under
+    `_fetch_rendered_result` / `_access_levels_used` - whether THIS turn's
+    fetch step actually reached the tool call and rendered a result (never
+    true on the tier_ask / error / offer arms, which `gate.predicate` alone
+    cannot tell apart from a genuine set answer) and the recomposed
+    access_levels that call used, both read by `_set_page_carry` below. Folded
+    into `gate` rather than added as their own keyword params so a caller
+    stubbing this function with the ORIGINAL four-parameter signature (several
+    do, across `test_dry_run_isolation.py`) is unaffected.
     """
     qf = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     outcome = jsc.get(item, "outcome") or {}
@@ -288,6 +298,8 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     gate_json = gate if isinstance(gate, dict) else {}
     resolver_json = resolved if isinstance(resolved, dict) else {}
     prev = _prev_variables(ctx)
+    fetch_rendered_result = jsc.truthy(jsc.get(gate_json, "_fetch_rendered_result"))
+    access_levels_used = jsc.get(gate_json, "_access_levels_used")
 
     # ---- the reply ladder ------------------------------------------------- #
     response: Any = UNDEFINED
@@ -902,7 +914,13 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # selection_context`, so writing it here is what stops the OLD carry from
     # also being re-armed underneath the new one.
     set_page_handled = _set_page_carry(
-        variables, gate_json=gate_json, gate_ran=gate_ran, prev=prev, qf=qf
+        variables,
+        gate_json=gate_json,
+        gate_ran=gate_ran,
+        prev=prev,
+        qf=qf,
+        fetch_rendered_result=fetch_rendered_result,
+        access_levels_used=access_levels_used,
     )
 
     # ---- the offer survives until the topic changes (owner ruling K1) ----- #
@@ -1873,6 +1891,8 @@ def _set_page_carry(
     gate_ran: bool,
     prev: Mapping[str, Any],
     qf: Mapping[str, Any],
+    fetch_rendered_result: bool = False,
+    access_levels_used: Any = None,
 ) -> bool:
     """AC-1317 (work item E3): a set-answer's "more" carry - a DICT-shaped kind,
     never the array roster every OTHER `selection_context` above carries.
@@ -1898,6 +1918,15 @@ def _set_page_carry(
       showed 5 (`fetch.entity_ids_transformer`'s own slicing, E1). A set
       answer that already fit on one page (`qualifying_total <= 5`) arms
       nothing: there is no second page to carry.
+
+    SEC-B1/AC-1333 (third console pass): the FRESH arm additionally requires
+    `fetch_rendered_result` - `gate_json.predicate` is present the moment the
+    RESOLVER ran, whatever the fetch step did with it afterwards, so a turn
+    the tier-ask / error / offer arm intercepted BEFORE the tool call still
+    carried a predicate and wrongly armed the carry off it alone. The carry
+    also stores `access_levels_used` (the SAME recomposed tier this render
+    actually used), so a later "more" page can re-inject it rather than
+    falling to the bare "more" parser's own empty list.
     """
     if not gate_ran:
         return False
@@ -1928,9 +1957,16 @@ def _set_page_carry(
         }
         return True
 
+    if not fetch_rendered_result:
+        # SEC-B1: the resolver ran and produced a predicate, but the fetch step
+        # never reached the tool call (a tier-ask, an infrastructure error, the
+        # gate's own picker) - nothing was ever SHOWN, so there is nothing to
+        # page through. Falling through to `gate_ran` alone would arm a carry
+        # for a set answer the customer never saw.
+        return False
+
     if qualifying_total <= 5:
         return False
-    from app.services.chatbot.lanes.business import fetch as fetch_mod
     from app.services.chatbot.lanes.business.answer import SET_PAGE_ID_CAP, set_noun_for
 
     ids = [
@@ -1942,8 +1978,6 @@ def _set_page_carry(
     if not ids:
         return False
     domain = jsc.get(qf, "domain_hint")
-    tool_candidates = fetch_mod.select_tool(domain)
-    tool = tool_candidates[0]["name"] if tool_candidates else None
     variables["selection_context"] = "set_page"
     variables["last_result_set"] = {
         "kind": "set_page",
@@ -1953,7 +1987,10 @@ def _set_page_carry(
         "require": jsc.get(predicate, "require") or {},
         "set_noun": set_noun_for(jsc.array(jsc.get(predicate, "class_labels"))),
         "domain": domain,
-        "tool": tool,
+        # SEC-B1/AC-1333: the tier this render actually used, re-injected by
+        # `resolve_gate._set_page_reply` on the next "more" page - never the
+        # bare parser's own (empty) list a page turn carries.
+        "access_levels": access_levels_used if isinstance(access_levels_used, list) else [],
     }
     return True
 
@@ -2037,7 +2074,14 @@ def _offer_carry(
         # intervening turn that named neither a "more" reply (this turn's own
         # ladder would have armed `selection_context` itself, above) nor a domain
         # change still has a set answer on screen worth paging later.
-        if topic.changed(jsc.get(prev, "domain_hint"), jsc.get(qf, "domain_hint")):
+        #
+        # SEC-N1/AC-1336 (third console pass, REV-S1): an ANSWERED turn clears it
+        # too, same-domain or not - the carry has no lifetime beyond "the customer
+        # is still looking at this set", and a business answer to something else
+        # (a stock/cert lookup for an unrelated product, still `product_attachment`
+        # or `inventory`) means they are not. Without this, `topic.changed` alone
+        # left a stale set armed for a LATER unrelated "more" to page through.
+        if answered or topic.changed(jsc.get(prev, "domain_hint"), jsc.get(qf, "domain_hint")):
             return None
         variables["selection_context"] = prev_ctx
         variables["last_result_set"] = prev_set
