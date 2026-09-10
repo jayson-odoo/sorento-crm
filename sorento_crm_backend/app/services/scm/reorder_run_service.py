@@ -888,9 +888,19 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # that read it added it back into the gap it was sizing. On hand is the pool, on every
     # basis, and no path holds a second figure that could re-admit a bin.
     # The site-pool test, from the one module that spells it (`pool_predicate`).
+    #
+    # PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S1: the SAME gate now also
+    # covers `np.on_order` (SPO) and `po.ordered` (open PO), for the SAME reason as
+    # on-hand above - a project bin's SPO/PO belongs to its own Order Inquiry, not to a
+    # retail/dealer buy decision. Gating them here, inside `net_position_col`, means the
+    # netting (`net = net_position + po_ordered`, further down) and the per-row cells this
+    # SELECT returns read the identical site-pool-scoped figure - one expression, not two
+    # readings that could drift (AC-1, AC-2, AC-4, AC-5).
     is_dealer_expr = SITE_POOL_SQL
     on_hand_expr = f"(CASE WHEN {is_dealer_expr} THEN np.quantity_on_hand ELSE 0 END)"
-    net_position_col = f"({on_hand_expr} + np.on_order - {committed_expr}) AS net_position"
+    on_order_expr = f"(CASE WHEN {is_dealer_expr} THEN np.on_order ELSE 0 END)"
+    po_ordered_expr = f"(CASE WHEN {is_dealer_expr} THEN COALESCE(po.ordered, 0) ELSE 0 END)"
+    net_position_col = f"({on_hand_expr} + {on_order_expr} - {committed_expr}) AS net_position"
 
     sql = text(f"""
         {cv_with}
@@ -910,7 +920,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                COALESCE(w.pool_warehouse_id, w.id) AS pool_warehouse_id,
                COALESCE(pw.warehouse_code, w.warehouse_code) AS pool_warehouse_code,
                {on_hand_expr} AS quantity_on_hand,
-               np.on_order, {committed_col}, {net_position_col},
+               {on_order_expr} AS on_order, {committed_col}, {net_position_col},
                -- Front planning 5.3: the SAME committed figure, split by demand channel.
                -- Read off `committed_v` (or, under a horizon, its run-scoped override)
                -- rather than `net_position_v` so the netting view keeps exactly the
@@ -930,7 +940,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                -- S10 - the buyer checks outstanding PO and incoming SPO by hand every week.
                -- `np.on_order` is SPO (supplier POs on the water); `po_ordered_v` is the
                -- ordered-not-received PO book. Two different questions, two columns.
-               COALESCE(po.ordered, 0) AS po_ordered,
+               {po_ordered_expr} AS po_ordered,
                ds.avg_daily_demand, ds.demand_cv, ds.sample_days, ds.window_days,
                ic.abc_class, ic.xyz_class
         FROM scm.net_position_v np
@@ -3252,27 +3262,40 @@ def net_breakdown(db: Session, product_id: str,
     key; the old three legs and their meanings do not change).
 
     When ``warehouse_id`` is None (a network rec) positions are summed across all of the
-    product's warehouse cells and the committed SO lines are listed network-wide."""
-    wh_pos = "AND warehouse_id = :wid" if warehouse_id else ""
+    product's warehouse cells and the committed SO lines are listed network-wide.
+
+    PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S1 (AC-6): ``on_hand``,
+    ``on_order`` and ``po_ordered`` join ``warehouses`` and apply the SAME site-pool gate
+    ``_planning_rows`` uses, so this drill's three legs foot to the SAME frozen ``net`` a
+    product-grain row with a project-bin SPO/PO carries - a bin's supply must not explain
+    a net the engine never counted it into. ``committed`` is untouched: the site-pool rule
+    is a SUPPLY rule, not a demand one."""
+    wh_pos = "AND np.warehouse_id = :wid" if warehouse_id else ""
     params: dict[str, Any] = {"pid": product_id}
     if warehouse_id:
         params["wid"] = warehouse_id
     pos = db.execute(text(f"""
-        SELECT COALESCE(SUM(quantity_on_hand), 0) AS on_hand,
-               COALESCE(SUM(on_order), 0)         AS on_order,
-               COALESCE(SUM(committed), 0)        AS committed
-        FROM scm.net_position_v
-        WHERE product_id = :pid {wh_pos}
+        SELECT COALESCE(SUM(CASE WHEN {SITE_POOL_SQL} THEN np.quantity_on_hand ELSE 0 END), 0)
+                 AS on_hand,
+               COALESCE(SUM(CASE WHEN {SITE_POOL_SQL} THEN np.on_order ELSE 0 END), 0)
+                 AS on_order,
+               COALESCE(SUM(np.committed), 0) AS committed
+        FROM scm.net_position_v np
+        JOIN warehouses w ON w.id = np.warehouse_id
+        WHERE np.product_id = :pid {wh_pos}
     """), params).mappings().first()
 
     # Same view `_planning_rows` reads for the S10 checklist column - "still to come" on
     # an open, not-fully-received PO line. Summed the same way (product, optional
-    # warehouse) as the three legs above so all four are read off the identical scope.
-    wh_po = "AND warehouse_id = :wid" if warehouse_id else ""
+    # warehouse) as the three legs above so all four are read off the identical scope,
+    # site-pool gated the same way (AC-6).
+    wh_po = "AND po.warehouse_id = :wid" if warehouse_id else ""
     po_ordered = db.execute(text(f"""
-        SELECT COALESCE(SUM(ordered), 0) AS po_ordered
-        FROM scm.po_ordered_v
-        WHERE product_id = :pid {wh_po}
+        SELECT COALESCE(SUM(CASE WHEN {SITE_POOL_SQL} THEN po.ordered ELSE 0 END), 0)
+                 AS po_ordered
+        FROM scm.po_ordered_v po
+        JOIN warehouses w ON w.id = po.warehouse_id
+        WHERE po.product_id = :pid {wh_po}
     """), params).scalar() or 0
 
     wh_sol = "AND sol.warehouse_id = :wid" if warehouse_id else ""
