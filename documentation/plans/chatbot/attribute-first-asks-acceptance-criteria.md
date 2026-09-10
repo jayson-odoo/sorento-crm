@@ -66,9 +66,16 @@ tool. No new reply format.
 - AC-1309 Qualifying ids land in `resolutions[].matches` with `entity_type="product"` and
   `match_tier="spec_search"`, plus `result["predicate"]` = `{require, qualifying_total,
   truncated, unrecognized_terms}`. Evidence: pytest asserting the shape the fetch step reads.
-- AC-1310 Company scope holds per leg: two companies, same product codes, a contact of company
-  A never sees company B's qualifying products or count. Evidence: pytest, one case per leg
-  including the new `incoming` leg (the old plan's cross-bleed test extended).
+- AC-1310 Company scope holds per leg, INSIDE the leg: with the product in the caller's company
+  and the child row (stock, attachment link, shipment line, promotion link) in company B, the
+  product does not qualify; with the child in the caller's company on a company-B product, it does
+  not qualify either. Evidence: pytest, both directions for every leg including `incoming`; a leg
+  rewritten as unscoped SQL must turn these red (reviewer kill test).
+- AC-1337 `is_more_reply` accepts only the fixed paging phrases (more, next, lagi, more please,
+  show more, next 5, next five, lagi 5, "more <number>"); "no more" and "next week?" are not pages.
+  `set_noun_for` pluralises "Bathroom Accessory" as "bathroom accessories" and the header's
+  singular is the class label itself. `answer.SET_PAGE_ID_CAP` and the resolver's copy are pinned
+  equal by a test, as are the two cert regexes. Evidence: pytest.
 
 ## D. Legs and aliases [BE]
 
@@ -93,7 +100,8 @@ tool. No new reply format.
   Lookup Sets). With an empty or absent set, a scheme word or alias word is reported in
   `unrecognized_terms` and the request never fails. Evidence: alembic upgrade on an empty
   scratch DB creates the two sets; pytest for the empty-set and missing-set paths.
-- AC-1327 When HAS ran, `resolutions` and `intersection` carry no product matches for WORD tokens
+- AC-1327 (the shipped header for "which sorento bidet has cert" reads "1 tap has certificates.":
+  the class label wins over the product_type binding, accepted 11 Sep) When HAS ran, `resolutions` and `intersection` carry no product matches for WORD tokens
   other than the single spec_search resolution; non-product resolutions (attachment_type, brand,
   customer) are untouched. The lane's reply never prints a "Found:" enumeration of the qualifying
   codes; the set header stands in its place. Evidence: pytest on the resolver response shape and a
