@@ -2265,7 +2265,42 @@ class FulfilmentBoardService:
         """
         cache_key = (fact.product_id, row.warehouse_id, need)
         if cache_key not in borrow_cache:
-            borrow_cache[cache_key] = self.supply.borrow_candidates_for(fact, need=need)
+            candidates = self.supply.borrow_candidates_for(fact, need=need)
+            own_demand = self._own_demand(row)
+            for candidate in candidates:
+                warehouse_id = candidate.get("warehouse_id")
+                if not warehouse_id:
+                    continue
+                # S4 (`PLAN-local-supplier-oi-routing.md`): the SAME location facts the Grid
+                # Location table states for this warehouse, built by the SAME `_location`
+                # this board already draws that table from - so the manual Borrow modal can
+                # render `CellStockTable` instead of a second, narrower table of its own, and
+                # the two can never disagree about what a donor holds.
+                is_pool = warehouse_id in self._pool_warehouses
+                where = (
+                    WHERE_SITE_POOL
+                    if is_pool
+                    else WHERE_OTHER_GROUP
+                    if candidate.get("rung") == RUNG_GROUP_TAKE
+                    else WHERE_GROUP
+                )
+                location = self._location(
+                    candidate.get("warehouse_code"),
+                    (),
+                    product_id=fact.product_id,
+                    warehouse_id=warehouse_id,
+                    where=where,
+                    own_demand=own_demand,
+                )
+                # `_project_share_fields` states `available_for_project` on a site-pool row
+                # only - every other row's whole `available_qty` is a project's to take (D2,
+                # captain 3 Sep), the same fallback the FE's `availableForProjectOf` applies
+                # to a `BoardCellLocation` it renders directly. The candidate's own location
+                # is read with no client-side arithmetic (S4), so the fallback is stated here
+                # instead of left for a reader to reconstruct.
+                location.setdefault("available_for_project", location.get("available_qty"))
+                candidate["location"] = location
+            borrow_cache[cache_key] = candidates
         return borrow_cache[cache_key]
 
     def _suggest_live_for_covered(
@@ -4079,6 +4114,23 @@ class FulfilmentBoardService:
                         own_demand=own_demand,
                     )
                 )
+            # S4 (`PLAN-local-supplier-oi-routing.md`): every donor the Borrow modal OFFERS,
+            # not only the one a proposal took - "why is this not on the table" was
+            # unanswerable for a candidate the ladder never composed with. Reuses the exact
+            # dict `_donors_for` already built for `candidate["location"]`, so the row here
+            # and the figure the modal shows can never disagree.
+            for candidate in row.borrow_candidates or []:
+                code = candidate.get("warehouse_code")
+                warehouse_id = candidate.get("warehouse_id")
+                location = candidate.get("location")
+                if not code or not warehouse_id or location is None or code in seen:
+                    continue
+                seen.add(code)
+                is_pool = warehouse_id in self._pool_warehouses
+                group = None if is_pool else sales_agent_service.group_of_warehouse_code(code)
+                if group and group not in donor_groups and group not in self._group_warehouses:
+                    donor_groups.append(group)
+                out.append(location)
         # The cited donor's SIBLINGS. Resolved after the cited rows so the site the ladder
         # actually drew from keeps its place in the list, and its group fills in around it.
         for group, pairs in self._warehouses_for_groups(donor_groups).items():
@@ -4570,6 +4622,10 @@ class FulfilmentBoardService:
                     "available_after_need": candidate.get("available_after_need"),
                     "recommended": bool(candidate.get("recommended")),
                     "donor_impact": candidate.get("donor_impact"),
+                    # S4 (`PLAN-local-supplier-oi-routing.md`): the Grid Location table's own
+                    # facts for this donor, so the manual Borrow modal renders `CellStockTable`
+                    # instead of a second, narrower table of its own.
+                    "location": candidate.get("location"),
                 }
                 for candidate in row.borrow_candidates
             ],
