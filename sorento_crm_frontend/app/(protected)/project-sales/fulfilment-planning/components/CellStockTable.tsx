@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
@@ -92,8 +93,19 @@ const WHERE_LABELS: Record<BoardLocationWhere, string> = {
  * sales order names no location at all. That one row keeps its blanks, and it is now the only
  * row that can have any - the server states a figure for every location it names.
  */
+/**
+ * A location row, with two OPTIONAL client-only fields a donor picker sets (S4/review B2,
+ * `PLAN-local-supplier-oi-routing.md`): `rowKey`, so two donors sharing one warehouse (a
+ * same-agent Borrow off two different sales-order lines at one bin) render as two rows
+ * and select independently, and `label`, the donor's own identity ("SO371334 line 2",
+ * "Another project") shown under the location code. Absent on every ordinary Grid
+ * Location table row, which keys and labels itself off the location alone exactly as
+ * before.
+ */
+export type DonorLocationRow = BoardCellLocation & { rowKey?: string; label?: string };
+
 export interface CellStockTableProps {
-  locations: BoardCellLocation[];
+  locations: DonorLocationRow[];
   /**
    * Why this table is showing the line's own location and nothing else, when that is all there
    * is (`BoardCell.location_group_note`). The rows are normally the sales agent's whole
@@ -161,19 +173,23 @@ export interface CellStockTableProps {
    */
   poolSharePct?: number;
   /**
-   * Radio selection for a donor picker (S4, `PLAN-local-supplier-oi-routing.md`): the
-   * currently chosen row's `warehouse_id`, and the setter, rendered as a radio in the
-   * Location cell before the code. Absent renders no radio - this table's ordinary caller,
-   * the cell dialog, never needs one.
+   * Radio selection for a donor picker (S4/review B2, `PLAN-local-supplier-oi-routing.md`):
+   * the currently chosen row's KEY, and the setter, rendered as a radio in the Location cell
+   * before the code. Keyed by `rowKey` when a row carries one, else `warehouse_id` - a plain
+   * Grid Location table row (no `rowKey`) still keys itself by warehouse, but a donor picker
+   * needs the finer key so two donors at one bin (a same-agent Borrow off two different
+   * sales-order lines) are two independently selectable rows rather than one. Absent renders
+   * no radio - this table's ordinary caller, the cell dialog, never needs one.
    */
   selectable?: {
     value: string;
-    onChange: (warehouseId: string) => void;
+    onChange: (rowKey: string) => void;
   };
   /**
-   * Badge labels per row, keyed by `warehouse_id` (S4): `Recommended` on the ranked donor,
-   * `Same agent` on one sharing the asking line's own sales agent. Absent renders no badge -
-   * only `BorrowAddDialog` has anything to say here.
+   * Badge labels per row, keyed the SAME way `selectable` is (`rowKey` else `warehouse_id`)
+   * (S4): `Recommended` on the ranked donor, `Same agent` on one sharing the asking line's
+   * own sales agent. Absent renders no badge - only `BorrowAddDialog` has anything to say
+   * here.
    */
   badges?: Record<string, ReadonlyArray<'Recommended' | 'Same agent'>>;
   /**
@@ -438,7 +454,15 @@ export const CellStockTable = React.forwardRef<
           <tbody>
             {sections.flatMap((section) => [
               ...section.rows.map((entry) => {
-                const key = entry.location ?? '__none__';
+                // S4/review B2: a donor picker's own `rowKey` wins when a row carries one,
+                // so two donors sharing one warehouse (a same-agent Borrow off two
+                // different sales-order lines at one bin) are two rows that select and
+                // expand independently, not one merged by location - every OTHER caller
+                // sets no `rowKey` and keys exactly as before.
+                const key = entry.rowKey ?? entry.location ?? '__none__';
+                // The row's DOM ADDRESS stays the location it is about, `rowKey` or not:
+                // it is what a reader (and every test) names a row by, and a composite
+                // candidate key in the attribute would name nothing anyone can point at.
                 const testKey = entry.location ?? 'none';
                 // Only a position the server ADDRESSED can be opened: two products share the code
                 // B2155-NL-BLUE on the live book, so resolving one from the code would answer
@@ -490,12 +514,10 @@ export const CellStockTable = React.forwardRef<
                             <input
                               type="radio"
                               className="mt-0.5"
-                              aria-label={`Choose ${entry.location ?? 'this location'}`}
+                              aria-label={`Choose ${entry.label ?? entry.location ?? 'this location'}`}
                               data-testid={`stock-select-${testKey}`}
-                              checked={selectable.value === entry.warehouse_id}
-                              onChange={() =>
-                                selectable.onChange(entry.warehouse_id as string)
-                              }
+                              checked={selectable.value === key}
+                              onChange={() => selectable.onChange(key)}
                             />
                           ) : null}
                           <span className="min-w-0">
@@ -508,20 +530,28 @@ export const CellStockTable = React.forwardRef<
                             >
                               {entry.location ?? 'No location'}
                             </span>
-                            {badges?.[entry.warehouse_id ?? '']?.length ? (
+                            {/* S4/review B2: the donor's own identity - "SO371334 line 2",
+                                "Another project" - under the location code, so two donors at
+                                one bin (same code, different candidate) are told apart. */}
+                            {entry.label ? (
+                              <span
+                                className="block truncate text-muted-foreground"
+                                title={entry.label}
+                                data-testid={`stock-donor-label-${testKey}`}
+                              >
+                                {entry.label}
+                              </span>
+                            ) : null}
+                            {badges?.[key]?.length ? (
                               <span className="mt-0.5 flex flex-wrap gap-1">
-                                {badges[entry.warehouse_id ?? '']?.map((label) => (
-                                  <span
+                                {badges[key]?.map((label) => (
+                                  <Badge
                                     key={label}
-                                    className={cn(
-                                      'inline-block rounded-sm px-1.5 py-0.5 text-2xs font-medium',
-                                      label === 'Recommended'
-                                        ? 'bg-primary/10 text-primary'
-                                        : 'bg-amber-100 text-amber-800',
-                                    )}
+                                    variant={label === 'Recommended' ? 'secondary' : 'warning'}
+                                    size="sm"
                                   >
                                     {label}
-                                  </span>
+                                  </Badge>
                                 ))}
                               </span>
                             ) : null}
@@ -852,7 +882,7 @@ type StockSection = {
   label: string;
   /** What the SET nets, when the server states one. `null` for a set with no net. */
   net: string | null;
-  rows: BoardCellLocation[];
+  rows: DonorLocationRow[];
 };
 
 /**
@@ -868,7 +898,7 @@ type StockSection = {
  * rows in the order the reader walks them, and quietly moving one up beside an earlier row of
  * the same set would rearrange a table somebody is comparing against AutoCount.
  */
-function sectionsOf(locations: BoardCellLocation[]): StockSection[] {
+function sectionsOf(locations: DonorLocationRow[]): StockSection[] {
   const sections: StockSection[] = [];
   const used = new Set<string>();
   locations.forEach((entry) => {

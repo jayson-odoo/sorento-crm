@@ -15,11 +15,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
-import { CellStockTable } from './CellStockTable';
-import type {
-  BoardCellLocation,
-  BorrowCandidate,
-} from '../../_shared/types/fulfilmentPlanning.types';
+import { CellStockTable, type DonorLocationRow } from './CellStockTable';
+import type { BorrowCandidate } from '../../_shared/types/fulfilmentPlanning.types';
 
 /**
  * Borrowing takes exactly one approval: the CS actor who confirms the sales order, with the
@@ -72,39 +69,54 @@ export function BorrowAddDialog({
   // row disabled and unselectable is gone, so the opening selection is simply the first of
   // the ranked list - which is also the recommended one.
   const first = candidates[0];
-  const [selectedWarehouseId, setSelectedWarehouseId] = React.useState(
-    first?.warehouse_id ?? '',
-  );
+  // S4/review B2: keyed by CANDIDATE, not by warehouse - two donors can share one bin (a
+  // same-agent Borrow off two different sales-order lines), and `warehouse_id` alone would
+  // make the second row's radio silently select the first.
+  const [selectedKey, setSelectedKey] = React.useState(first ? candidateKey(first) : '');
   const [qty, setQty] = React.useState(openingQty(first));
   const [reason, setReason] = React.useState('');
   const [authorisation, setAuthorisation] = React.useState('');
 
-  const selected =
-    candidates.find((candidate) => candidate.warehouse_id === selectedWarehouseId) ?? first;
+  const selected = candidates.find((candidate) => candidateKey(candidate) === selectedKey) ?? first;
   const trimmed = reason.trim();
   const authorised = authorisation.trim();
   const needsAuthorisation = Boolean(selected?.same_agent);
   const amount = Number.parseFloat(qty);
   const typed = Number.isFinite(amount) && amount > 0 ? amount : null;
+
+  // S4/review S3: `rowKey`/`label` are CellStockTable's own opt-in fields for a donor
+  // picker - every OTHER caller (the Grid Location table) sets neither and keys/labels
+  // itself off the location alone, unchanged.
+  const locations = React.useMemo<DonorLocationRow[]>(
+    () =>
+      candidates
+        .filter((c) => c.location)
+        .map((c) => ({
+          ...(c.location as NonNullable<BorrowCandidate['location']>),
+          rowKey: candidateKey(c),
+          label: donorLabel(c),
+        })),
+    [candidates],
+  );
+  // Every candidate lacks a `location` (a server that has not wired S4) reads the same as
+  // no candidates at all: the DIALOG's own empty state, never `CellStockTable`'s "No stock
+  // position for this cell" - that message is about a CELL with several products, and is
+  // simply the wrong sentence for a donor list with nothing to offer.
+  const hasDonors = locations.length > 0;
   const valid =
+    hasDonors &&
     Boolean(selected) &&
     typed !== null &&
     Boolean(trimmed) &&
     (!needsAuthorisation || Boolean(authorised));
 
-  const locations = React.useMemo<BoardCellLocation[]>(
-    () => candidates.map((c) => c.location).filter((l): l is BoardCellLocation => Boolean(l)),
-    [candidates],
-  );
-
   const badges = React.useMemo(() => {
     const map: Record<string, ('Recommended' | 'Same agent')[]> = {};
     for (const candidate of candidates) {
-      if (!candidate.warehouse_id) continue;
       const tags: ('Recommended' | 'Same agent')[] = [];
       if (candidate.recommended) tags.push('Recommended');
       if (candidate.same_agent) tags.push('Same agent');
-      if (tags.length > 0) map[candidate.warehouse_id] = tags;
+      if (tags.length > 0) map[candidateKey(candidate)] = tags;
     }
     return map;
   }, [candidates]);
@@ -128,9 +140,13 @@ export function BorrowAddDialog({
           <DialogBody className="max-h-[60vh] space-y-4 overflow-y-auto">
             <fieldset className="space-y-2">
               <legend className="mb-1.5 text-sm font-medium">Source</legend>
-              {candidates.length === 0 ? (
+              {!hasDonors ? (
                 // Rendered rather than hidden, per the CRUD standard: the dialog is opened
                 // from a Buy, and "there is nowhere to borrow from" is the answer to why.
+                // Review S3: this is the dialog's OWN empty state, shown whether there are
+                // no candidates at all or every candidate lacks a `location` - never
+                // `CellStockTable`'s own "No stock position for this cell", which answers a
+                // different question (a cell holding several products, not a donor list).
                 <div
                   data-testid="borrow-donor-empty"
                   className="rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground"
@@ -145,13 +161,13 @@ export function BorrowAddDialog({
                   <CellStockTable
                     locations={locations}
                     selectable={{
-                      value: selectedWarehouseId,
-                      onChange: (warehouseId) => {
+                      value: selectedKey,
+                      onChange: (key) => {
                         const next = candidates.find(
-                          (candidate) => candidate.warehouse_id === warehouseId,
+                          (candidate) => candidateKey(candidate) === key,
                         );
                         if (!next) return;
-                        setSelectedWarehouseId(warehouseId);
+                        setSelectedKey(key);
                         setQty(openingQty(next));
                         // The authorisation names ONE agent and belongs to the donor it was
                         // typed for. Carrying it onto the next donor would file somebody
@@ -323,4 +339,44 @@ function storedReason(
 ): string {
   if (!candidate.same_agent || !authorised) return reason;
   return `${authorisationLabel(candidate)}: ${authorised}. ${reason}`;
+}
+
+/**
+ * A stable identity for ONE candidate, not for the warehouse it names (S4/review B2).
+ * `warehouse_id` alone collided the moment two donor lines shared a bin - a same-agent
+ * Borrow off two different sales-order lines at MWH-BB is two rows, and without
+ * `donor_core_line_id` in the key the second row's radio silently selected the first.
+ */
+function candidateKey(candidate: BorrowCandidate): string {
+  return [
+    candidate.warehouse_id ?? '',
+    candidate.source,
+    candidate.donor_core_line_id ?? '',
+    candidate.donor_project_ref ?? '',
+  ].join('|');
+}
+
+/**
+ * The donor's own identity, shown under the location code (S4/review B2) - never a bare
+ * warehouse code, which two donor lines at the same location would otherwise share.
+ * `undefined` for a plain free-stock donor: the code alone already fully identifies it.
+ */
+function donorLabel(candidate: BorrowCandidate): string | undefined {
+  if (candidate.rung === 'group_borrow') {
+    return donorSoLabel(candidate);
+  }
+  if (candidate.source === 'other_project') {
+    return candidate.donor_project_ref ?? 'Another project';
+  }
+  return undefined;
+}
+
+/** "SO371334 line 2" - a group-borrow donor's own identity, never a bare warehouse code. */
+function donorSoLabel(candidate: BorrowCandidate): string {
+  const so = candidate.donor_so_number ?? 'An unnamed sales order';
+  const line =
+    candidate.donor_line_no !== null && candidate.donor_line_no !== undefined
+      ? ` line ${candidate.donor_line_no}`
+      : '';
+  return `${so}${line}`;
 }
