@@ -130,6 +130,23 @@ itself is covered at the pytest level (`test_export_post_answers_409_while_a_she
 in_flight`, which mocks the enqueue to hold the row `pending` for the assertion window -
 not reproducible from a real browser against this fast a worker).
 
+### Final check - per-format guard, after the last task round (run-scoped company adoption, A2/C3)
+
+Worker restarted with the final task code; route now guards per format (AC-16b amended,
+`d7491d6fc`). Actions > Order sheet Excel, then immediately Order sheet PDF, on the same
+plan. Both POSTs answered 200 (`network requests --filter order-summary/export`) - no 409
+across formats. `AC-16b-final-both-formats-ready-no-409.png`: the drawer shows both new
+rows (8:43 pm) `Ready`. SQL confirms both, created seconds apart:
+
+```
+id       kind              status  created_at (UTC)            ready_at                     storage_key
+562c5d20 order_sheet_pdf   ready   2026-09-10 12:43:47.65       2026-09-10 12:43:55.99       exports/order-sheet/562c5d20.../order-sheet-10092026.pdf
+212a2c83 order_sheet_xlsx  ready   2026-09-10 12:43:34.63       2026-09-10 12:43:36.06       exports/order-sheet/212a2c83.../order-sheet-10092026.xlsx
+```
+
+Both `status='ready'` with a non-null `storage_key`, `error` empty on both. No 409, no
+`failed` row.
+
 ## Console / network
 
 `errors` and `console` showed no uncaught page errors across the whole run (one pre-existing
