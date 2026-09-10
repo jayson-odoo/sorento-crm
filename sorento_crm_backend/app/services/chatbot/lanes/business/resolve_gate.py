@@ -41,6 +41,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.contracts import EXIT_CONTRACT_FIELDS
 from app.services.chatbot.lanes.business import pickers
 from app.services.chatbot.lanes.business.gate import run_gate
+from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
 from app.services.chatbot.lanes.business.services import ResolveGateServices
 from app.services.chatbot.lanes.business.tier_gate import tier_gate as run_tier_gate
 
@@ -468,6 +469,27 @@ def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[s
                     pins[token] = jsc.get(x, "uuid")
         if pins:
             body["entity_pins"] = pins
+
+    # Shape B (attribute-first asks, work item B2, AC-1304): a `require` predicate
+    # derived mechanically from what the parser already emitted, never from a second
+    # read of the message text. Added ONLY when there is one - every other key above
+    # is untouched, so a turn with no leg stays byte-identical to today.
+    #
+    # Gated on `REQUIRE_LEGS` (imported, never a second copy of the leg list): S1
+    # ships four legs, `check_incoming` -> `{"incoming": true}` (AC-1303) is a real
+    # `derive_require` mapping today even though the `incoming` leg itself is S2
+    # (work item D1). Sending it anyway 422s `resolve_product_set` on "Unknown
+    # require key(s): incoming" for every ordinary incoming turn - the exact
+    # AC-1322 invariant this lane must not break. A leg lands the day its
+    # `REQUIRE_LEGS` entry does, with no change needed here.
+    from app.services.product_predicate_service import REQUIRE_LEGS
+
+    require = derive_require(parse_output)
+    if require is not None and not set(require) <= set(REQUIRE_LEGS):
+        require = None
+    if require is not None:
+        body["require"] = require
+        body["predicate_words"] = derive_predicate_words(parse_output, require)
     return body
 
 
