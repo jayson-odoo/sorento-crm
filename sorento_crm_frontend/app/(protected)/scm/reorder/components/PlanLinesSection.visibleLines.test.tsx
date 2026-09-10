@@ -17,10 +17,11 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import type { PlanLine } from '../lib/planLine';
 import { recToPlanLine } from '../lib/planLine';
 import type { ReorderRecommendation } from '../types/reorder.types';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -58,10 +59,30 @@ function stubPlanEdits(over: Record<string, unknown> = {}) {
   });
 }
 
+/**
+ * AC-5b: the grid owns `filterGroup` and is expected to report the applied group upward
+ * (the plan's `onFilterGroupChange` prop) - not itself under test here (`PlanLinesGrid` is
+ * mocked), so the callback is captured off the props the SECTION passes down and invoked
+ * directly, the same way a real grid's `useEffect(() => onFilterGroupChange?.(filterGroup),
+ * [filterGroup])` would call it. `undefined` (the prop not wired yet) makes every AC-5b
+ * case below red for the right reason: the call is a no-op and the grid keeps receiving
+ * the default (hidden-respecting) list.
+ */
+let latestOnFilterGroupChange:
+  | ((group: ListQueryFilterGroup | null) => void)
+  | undefined;
+
 vi.mock('./PlanLinesGrid', () => ({
-  PlanLinesGrid: ({ lines }: { lines: PlanLine[] }) => (
-    <div>plan-lines-grid lines={lines.map((l) => l.sku).join(',')}</div>
-  ),
+  PlanLinesGrid: ({
+    lines,
+    onFilterGroupChange,
+  }: {
+    lines: PlanLine[];
+    onFilterGroupChange?: (group: ListQueryFilterGroup | null) => void;
+  }) => {
+    latestOnFilterGroupChange = onFilterGroupChange;
+    return <div>plan-lines-grid lines={lines.map((l) => l.sku).join(',')}</div>;
+  },
 }));
 vi.mock('./PlanBudgetReview', () => ({ PlanBudgetReview: () => <div>budget-review</div> }));
 vi.mock('./LevelChangesPanel', () => ({ LevelChangesPanel: () => <div>level-changes</div> }));
@@ -138,6 +159,7 @@ beforeEach(() => {
   toastError.mockReset();
   toastInfo.mockReset();
   stubPlanEdits();
+  latestOnFilterGroupChange = undefined;
 });
 
 describe('PlanLinesSection.visibleLines - reads rec.hidden_by_default (AC-5)', () => {
@@ -205,5 +227,110 @@ describe('PlanLinesSection.visibleLines - reads rec.hidden_by_default (AC-5)', (
     const skus = gridSkus();
     expect(skus).toHaveLength(2);
     expect(skus).toEqual(['SRTWT7408', 'SRTWT7408']);
+  });
+});
+
+/**
+ * PLAN-plan-list-tile-sheet-one-scope.md, AC-5b (7e3960e38) - owner ruling 10 Sep: "better
+ * to reveal them for flexibility". A Filters condition on the builder's own `rec_type`
+ * field, value `covered_by_stock` (equals or `in`, at any nesting depth), makes
+ * `visibleLines` hand the grid the hidden-by-default rows too - the grid reports the
+ * applied group upward (`onFilterGroupChange`, not yet wired from `PlanLinesSection` at
+ * this point in the lane) and the section is expected to detect it via a new helper,
+ * `filterGroupAsksForRecType` (`lib/planLineFilters.ts`, also not yet built - see its own
+ * dedicated unit test file). Both are red today: the callback captured off the mocked
+ * grid's props is `undefined`, so invoking it is a no-op and the grid keeps the DEFAULT
+ * (hidden-respecting) list regardless of what group is "applied".
+ */
+describe('PlanLinesSection.visibleLines - a Filters condition reveals the hidden rows (AC-5b)', () => {
+  function threeLineFixture() {
+    const hidden = line({
+      id: 'a', sku: 'HIDDEN-1', type: 'covered', policy_type: 'reorder_level',
+      reorder_level: 50, net_position: 999, hidden_by_default: true,
+    });
+    const shownBuy = line({ id: 'b', sku: 'SHOWN-A', type: 'buy' });
+    const shownCovered = line({
+      id: 'c', sku: 'SHOWN-B', type: 'covered', policy_type: 'reorder_level',
+      reorder_level: 50, net_position: 10, hidden_by_default: false,
+    });
+    return { hidden, shownBuy, shownCovered, lines: [hidden, shownBuy, shownCovered] };
+  }
+
+  const EQUALS_GROUP: ListQueryFilterGroup = {
+    op: 'and',
+    children: [{ field_key: 'rec_type', op: 'eq', value: 'covered_by_stock' }],
+  };
+
+  // Nested one group deep (AND wrapping an OR), operator `in` over a single-value list -
+  // both variations the brief calls out in one condition.
+  const NESTED_IN_GROUP: ListQueryFilterGroup = {
+    op: 'and',
+    children: [
+      {
+        op: 'or',
+        children: [{ field_key: 'rec_type', op: 'in', value: ['covered_by_stock'] }],
+      },
+    ],
+  };
+
+  it('a top-level "Rec type equals Covered by stock" condition reveals all 3 of 3, and clearing it hides the 1 hidden row again (2 of 3)', () => {
+    const { lines } = threeLineFixture();
+    stubPlanLines({ lines });
+    render(<PlanLinesSection runId="run-1" />);
+
+    expect(gridSkus()).toHaveLength(2); // default: HIDDEN-1 excluded
+
+    act(() => {
+      latestOnFilterGroupChange?.(EQUALS_GROUP);
+    });
+    expect(gridSkus()).toHaveLength(3);
+    expect(gridSkus()).toContain('HIDDEN-1');
+
+    act(() => {
+      latestOnFilterGroupChange?.(null);
+    });
+    expect(gridSkus()).toHaveLength(2);
+    expect(gridSkus()).not.toContain('HIDDEN-1');
+  });
+
+  it('the same condition nested one group deep, operator "in" over [covered_by_stock], also reveals 3 of 3', () => {
+    const { lines } = threeLineFixture();
+    stubPlanLines({ lines });
+    render(<PlanLinesSection runId="run-1" />);
+
+    act(() => {
+      latestOnFilterGroupChange?.(NESTED_IN_GROUP);
+    });
+    expect(gridSkus()).toHaveLength(3);
+    expect(gridSkus()).toContain('HIDDEN-1');
+  });
+
+  it('the tile totals stay on the DEFAULT list while the reveal filter is applied - a lens, not a scope change', () => {
+    const { lines } = threeLineFixture();
+    stubPlanLines({ lines, decidedCount: 4, totalDecidableCount: 9 });
+    const onTotalsChange = vi.fn();
+    const onDecisionProgressChange = vi.fn();
+    render(
+      <PlanLinesSection
+        runId="run-1"
+        onTotalsChange={onTotalsChange}
+        onDecisionProgressChange={onDecisionProgressChange}
+      />,
+    );
+
+    onTotalsChange.mockClear();
+    act(() => {
+      latestOnFilterGroupChange?.(EQUALS_GROUP);
+    });
+
+    // The grid now sees all 3, but the cash/decision totals must still be counted over
+    // the 2 the buyer would see by default - HIDDEN-1 must not inflate "undecided".
+    expect(gridSkus()).toHaveLength(3);
+    expect(onTotalsChange).toHaveBeenCalledWith(
+      expect.objectContaining({ decided: 0, undecided: 2 }),
+    );
+    // The server-owned "N of Total made" header is untouched either way - it never read
+    // `visibleLines` in the first place.
+    expect(onDecisionProgressChange).toHaveBeenCalledWith({ decided: 4, total: 9 });
   });
 });
