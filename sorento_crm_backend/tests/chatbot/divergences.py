@@ -936,23 +936,26 @@ BROADEN_ALL_IS_A_CLARIFICATION = Divergence(
 )
 
 
-# Owner console pass, 6 Sep 2026. `not-found-error-message`'s status-aware arm derives
-# `eta` (` (estimated delivery <date>)`) and then never uses it - the JS computes the string
-# and drops it on the floor. The owner's ruling wants the date said: "Order <code>
-# (<customer>) hasn't been delivered yet - current status: <status> (estimated delivery
-# <date>)". The value is on the resolved order's own display, so nothing extra is read.
+# H61 reversed (owner ruling, 10 Sep 2026). The 6 Sep 2026 owner console pass had wanted
+# the delivered-status miss message to STATE the estimated delivery date the JS computes
+# and discards. That ruling is now reversed: `orders.estimated_delivery_date` is not a
+# real promise - the import stamps it as `order_date + 2 business days`
+# (`order_service.py` ~2824) on every master row - so the CRM UI may keep showing it, but
+# the chatbot / turn API must not say it. The delivered-status arm names the order and its
+# current status only: "Order <code> (<customer>) hasn't been delivered yet - current
+# status: <status>. Would you like me to escalate to <team> team?", with no ETA suffix.
 #
 # Not fixture-visible: no graded `not-found-error-message` capture reaches the
 # `order_status: 'delivered'` arm with an estimated delivery date on the match. Pinned by
-# tests/chatbot/test_s6c_answer_lane.py::TestStatusAwareMissMessageIncludesTheEtaDate.
-STATUS_MISS_MESSAGE_STATES_THE_ETA = Divergence(
+# tests/chatbot/test_s6c_answer_lane.py::TestStatusAwareMissMessageOmitsTheEtaDate.
+STATUS_MISS_MESSAGE_OMITS_THE_ETA = Divergence(
     node="not-found-error-message",
     fixture=None,
-    hazard="H61 (owner console pass, 6 Sep 2026)",
+    hazard="H61 reversed (owner ruling, 10 Sep 2026)",
     reason=(
-        "the delivered-status miss message states the estimated delivery date the JS "
-        "derives and discards. Not fixture-visible: no capture reaches that arm with a "
-        "date on the resolved order."
+        "the delivered-status miss message must NOT state the estimated delivery date: "
+        "the import stamps it as order_date + 2 business days, not a real promise. Not "
+        "fixture-visible: no capture reaches that arm with a date on the resolved order."
     ),
 )
 

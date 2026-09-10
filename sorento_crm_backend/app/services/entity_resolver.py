@@ -986,7 +986,6 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
             Order.order_number,
             Order.debtor_name,
             Order.order_date,
-            Order.estimated_delivery_date,
             Order.actual_delivery_date,
             Order.pickup_time,
             Order.transporter,
@@ -1012,7 +1011,6 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
                     "customer_name": row.debtor_name,
                     "status": row.status_name or row.status_code,
                     "order_date": _iso(row.order_date),
-                    "estimated_delivery_date": _iso(row.estimated_delivery_date),
                     "actual_delivery_date": _iso(row.actual_delivery_date),
                     "pickup_time": row.pickup_time,
                     "transporter": row.transporter,
@@ -1861,7 +1859,6 @@ def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity
             Order.id,
             Order.order_number,
             Order.debtor_name,
-            Order.estimated_delivery_date,
             Order.actual_delivery_date,
             OrderStatus.status_name,
         )
@@ -1880,7 +1877,6 @@ def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity
             display={
                 "customer_name": row.debtor_name,
                 "status": row.status_name,
-                "estimated_delivery_date": _iso(row.estimated_delivery_date),
                 "actual_delivery_date": _iso(row.actual_delivery_date),
             },
         )
@@ -3738,7 +3734,7 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
     if not conds:
         return []
     rows = (
-        db.query(Order.id, Order.order_number, Order.debtor_name, Order.actual_delivery_date, Order.estimated_delivery_date)
+        db.query(Order.id, Order.order_number, Order.debtor_name, Order.actual_delivery_date)
         .filter(Order.deleted_at.is_(None), *conds)
         .limit(AND_MODE_LIMIT)
         .all()
@@ -3754,7 +3750,6 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
             display={
                 "customer_name": row.debtor_name,
                 "actual_delivery_date": _iso(row.actual_delivery_date),
-                "estimated_delivery_date": _iso(row.estimated_delivery_date),
             },
         )
         for row in rows
