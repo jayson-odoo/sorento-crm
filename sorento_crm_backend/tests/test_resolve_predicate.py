@@ -1367,3 +1367,133 @@ def test_predicate_words_strip_word_by_word_when_not_contiguous(client, db):
     assert response.status_code == 200
     predicate = response.json()["predicate"]
     assert predicate["unrecognized_terms"] == [], predicate
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 (11 Sep 2026, PLAN-attribute-first-asks.md R14, AC-1338) - a     #
+# bare `{"certificate": true}` require whose remainder holds a word equal      #
+# (case-insensitive) to a register scheme spelling or a `certificate_scheme`   #
+# lookup keyword must be promoted to `{"certificate": {"scheme": ...}}`.       #
+# --------------------------------------------------------------------------- #
+
+
+def test_bare_certificate_true_recovers_a_register_scheme_from_the_remainder(client, db):
+    """AC-1338/R14(a): "which item has PPS cert" with a BARE `{"certificate":
+    true}` require (the lane's real shape today - the scheme was never split
+    off the attachment_type raw) must recover "PPS" from the remainder against
+    the register's own active scheme spelling, promote `require` to
+    `{"certificate": {"scheme": "PPS"}}`, and never report "pps" unrecognized.
+
+    RED: the resolver's HAS branch never attempts scheme recovery for a bare
+    `true` - `require` stays exactly `{"certificate": true}` and "pps" reaches
+    `filter_specs` as an ordinary described-set word, which the vocabulary does
+    not recognize.
+    """
+    _pps_certified_world(db)
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which item has PPS cert",
+            "tokens": [],
+            "match_mode": "and",
+            "require": {"certificate": True},
+            "predicate_words": ["certificate"],
+        },
+    )
+    assert response.status_code == 200
+    predicate = response.json()["predicate"]
+    assert predicate["require"] == {"certificate": {"scheme": "PPS"}}, predicate
+    assert "pps" not in [str(t).lower() for t in predicate["unrecognized_terms"]], predicate
+    assert predicate["qualifying_total"] >= 1, predicate
+
+
+def test_bare_certificate_true_recovers_a_scheme_through_the_lookup_keyword(client, db):
+    """AC-1338/R14(b): the same recovery through a `certificate_scheme` lookup
+    KEYWORD, not just the register's own spelling - "watermark" mapped to
+    scheme "WCM" via a seeded lookup option/keyword, register carrying only
+    "WCM" itself (no "watermark" spelling to match by equality).
+
+    RED: no scheme recovery runs at all for a bare `true`, so "watermark"
+    reaches `filter_specs` as an unrecognized set word and `require` stays
+    `{"certificate": true}`.
+    """
+    from app.models.certificate import Certificate, CertificateProduct
+    from app.models.lookup import LookupOption, LookupOptionKeyword, LookupSet
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+    product = Product(
+        id=str(uuid.uuid4()),
+        product_code="ZZTWCM01",
+        product_name="ZZTWCM01",
+        description="ZZT SOME PRODUCT",
+        category_id=cat.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("1.00"),
+    )
+    db.add(product)
+    db.flush()
+    cert = Certificate(
+        id=str(uuid.uuid4()), scheme="WCM", certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}", status="active"
+    )
+    db.add(cert)
+    db.flush()
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+    db.flush()
+
+    lookup_set = LookupSet(
+        id=str(uuid.uuid4()), tenant_id=None, set_key="certificate_scheme",
+        name="Certificate Scheme", is_active=True,
+    )
+    db.add(lookup_set)
+    db.flush()
+    option = LookupOption(id=str(uuid.uuid4()), set_id=lookup_set.id, value="WCM", label="WCM", is_active=True)
+    db.add(option)
+    db.flush()
+    db.add(LookupOptionKeyword(id=str(uuid.uuid4()), option_id=option.id, keyword="watermark"))
+    db.flush()
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which item has watermark cert",
+            "tokens": [],
+            "match_mode": "and",
+            "require": {"certificate": True},
+            "predicate_words": ["certificate"],
+        },
+    )
+    assert response.status_code == 200
+    predicate = response.json()["predicate"]
+    assert predicate["require"] == {"certificate": {"scheme": "WCM"}}, predicate
+    assert "watermark" not in [str(t).lower() for t in predicate["unrecognized_terms"]], predicate
+
+
+def test_bare_certificate_true_stays_bare_when_remainder_names_no_scheme(client, db):
+    """AC-1338/R14(c) regression: "which zzqx has cert" names no scheme word at
+    all ("zzqx" is neither a register spelling nor a lookup keyword) - `require`
+    must stay bare `{"certificate": true}` and "zzqx" must still be reported
+    unrecognized, exactly as it is today. Guards the fix against treating every
+    remainder word as a candidate scheme.
+
+    Likely GREEN today (no scheme recovery runs at all yet, so `require` is
+    already bare and "zzqx" already unrecognized) - kept as the regression
+    guard R14(c) names explicitly, reported honestly rather than forced red.
+    """
+    _pps_certified_world(db)
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which zzqx has cert",
+            "tokens": ["zzqx"],
+            "match_mode": "and",
+            "require": {"certificate": True},
+            "predicate_words": ["certificate"],
+        },
+    )
+    assert response.status_code == 200
+    predicate = response.json()["predicate"]
+    assert predicate["require"] == {"certificate": True}, predicate
+    assert "zzqx" in [str(t).lower() for t in predicate["unrecognized_terms"]], predicate

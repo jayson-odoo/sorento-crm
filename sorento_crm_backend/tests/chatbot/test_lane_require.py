@@ -428,6 +428,76 @@ def test_zero_qualifying_enters_the_existing_miss_flow_naming_the_set():
 
 
 # --------------------------------------------------------------------------- #
+# Fix round 3 - R16/AC-1340: the zero-qualifying miss copy never reads "a a    #
+# match" - the subject is brand + product + category/product_type raws, then  #
+# the predicate's class labels; when ALL of those are empty the sentence is    #
+# "Couldn't find any product with <predicate>.", never "a a match".            #
+# --------------------------------------------------------------------------- #
+
+
+def test_zero_copy_names_the_category_raw_not_a_a_match():
+    """AC-1340/R16(1): a category-hint entity ("bathroom accessory") must be the
+    zero-copy's subject - the same standing brand/product raws already have.
+
+    RED: the subject builder (`answer.py`'s `subject_words`) reads only
+    `brand` + `hint == "product"` raws - a `hint == "category"` entity is
+    invisible to it, so `subject_words` stays empty, `subject` falls to the
+    literal "a match", and the sentence reads "Couldn't find a a match with
+    stock." - never naming "bathroom accessory" at all.
+    """
+    from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+    parser = {
+        "domain_hint": "product_query",
+        "entities": [{"raw": "bathroom accessory", "hint": "category"}],
+    }
+    gate = {
+        "gate_passed": True,
+        "predicate": {
+            "qualifying_total": 0,
+            "unrecognized_terms": [],
+            "require": {"stock": True},
+            "class_labels": ["Bathroom Accessory"],
+        },
+    }
+    msg = not_found_error_message({}, parser=parser, resolved={}, gate=gate)
+    text = (msg.get("escalate_message") or "").strip()
+
+    assert "a a match" not in text.lower(), text
+    assert "a match" not in text.lower(), text
+    assert text.startswith("Couldn't find a bathroom accessory with stock."), text
+
+
+def test_zero_copy_says_any_product_when_nothing_names_the_subject():
+    """AC-1340/R16(2): no brand/product/category raw AND no `class_labels` at
+    all - the sentence must read "Couldn't find any product with <predicate>.",
+    never "Couldn't find a a match with <predicate>.".
+
+    RED: `subject_words` stays empty (as in the category case above) and
+    falls to the literal "a match" regardless - the sentence reads "Couldn't
+    find a a match with stock.", never "any product".
+    """
+    from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+    parser = {"domain_hint": "product_query", "entities": []}
+    gate = {
+        "gate_passed": True,
+        "predicate": {
+            "qualifying_total": 0,
+            "unrecognized_terms": [],
+            "require": {"stock": True},
+            "class_labels": [],
+        },
+    }
+    msg = not_found_error_message({}, parser=parser, resolved={}, gate=gate)
+    text = (msg.get("escalate_message") or "").strip()
+
+    assert "a a match" not in text.lower(), text
+    assert "a match" not in text.lower(), text
+    assert text.startswith("Couldn't find any product with"), text
+
+
+# --------------------------------------------------------------------------- #
 # F3 - AC-1321 (S2): a scheme miss names the schemes on file, not a generic "no  #
 # certificate matched these".                                                   #
 # --------------------------------------------------------------------------- #
@@ -3285,3 +3355,195 @@ def test_set_noun_for_irregular_plurals():
         build_set_header(1, 1, "bathroom accessory", {"stock": True})
         == "1 bathroom accessory has stock."
     )
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 - R19/AC-1343 (REV-S1 re-check): the set_page carry survives     #
+# ONLY a page continuation - a same-domain non-page answer and a same-domain  #
+# zero-qualifying clarify both clear it, so "more" afterwards answers the     #
+# no-set copy; a rendered set answer re-arms it fresh.                        #
+# --------------------------------------------------------------------------- #
+
+
+def test_fresh_set_answer_rearms_the_carry_with_its_own_set(session_factory, stub_parser, stub_access, monkeypatch):
+    """AC-1343/R19: a second, SAME-DOMAIN set answer for a DIFFERENT class
+    ("which basin has cert" right after "which tap has cert") must re-arm the
+    carry with the basin set alone - never merge with or retain the old tap
+    identity.
+
+    Likely GREEN today, measured directly: `_set_page_carry`'s fresh arm
+    writes a brand-new dict (no `**prev_carry` spread, unlike its own
+    page-continuation arm), so a second genuine RENDER already replaces the
+    carry wholesale. Kept as the AC-1343 regression guard the fix must not
+    break while closing the (different) clarify gap below, reported honestly
+    rather than forced red.
+    """
+    contact_id = _s4_contact_id("r19rearm")
+    db = session_factory()
+    tap_codes = _s4_seed_seven_taps(db)
+
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    category = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+    # The bare word "basin" only resolves to class "Wash Basin" through a
+    # category coded `<brand>-WB`'s own `search_synonyms` - a plain product's
+    # class derivation (from its description) is unaffected by which category
+    # it sits under, so this is vocabulary-only, not a category reassignment.
+    _wash_basin_category(db)
+    basin_codes: list[str] = []
+    for _ in range(6):
+        product = _basin_product(db, category_id=category.id, uom_id=uom.id)
+        _certificate_for(db, product_id=product.id)
+        basin_codes.append(product.product_code)
+    db.commit()
+
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_cert_fake_call_tool(db),
+    )
+    stub_parser(_s4_cert_parser_output())
+    stub_access()
+
+    turn1 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19r-1", text="which tap has cert"),
+        session_factory=session_factory,
+    )
+    assert turn1.status == "done", turn1.error
+
+    stub_parser(
+        _s4_cert_parser_output(
+            entities=[
+                {
+                    "raw": "basin",
+                    "hint": "product",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                },
+                {
+                    "raw": "cert",
+                    "hint": "attachment_type",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                },
+            ]
+        )
+    )
+    turn2 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19r-2", text="which basin has cert"),
+        session_factory=session_factory,
+    )
+    assert turn2.status == "done", turn2.error
+
+    variables = _s4_session_vars(session_factory, contact_id).get("variables") or {}
+    assert variables.get("selection_context") == "set_page", variables
+    carry = variables.get("last_result_set") or {}
+    ids = set(carry.get("qualifying_ids") or [])
+
+    basin_ids = {row.id for row in db.query(Product).filter(Product.product_code.in_(basin_codes)).all()}
+    tap_ids = {row.id for row in db.query(Product).filter(Product.product_code.in_(tap_codes)).all()}
+
+    assert ids == basin_ids, (ids, basin_ids, tap_ids)
+    assert not (ids & tap_ids), (ids, tap_ids)
+
+
+def test_carry_clears_on_a_same_domain_zero_qualifying_clarify(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1343/R19: after "which tap has cert", a SAME-DOMAIN clarify that
+    renders nothing (AC-1320's own zero-qualifying-with-unrecognized-terms
+    shape) must clear the set_page carry - not leave the tap set armed for a
+    later, unrelated "more" to page through under the wrong header.
+
+    Turn 1: "which tap has cert" -> set answer, carry armed (7 taps, offset 5).
+    Turn 2: "which flurbish has cert" -> AC-1320 clarify (qualifying_total 0,
+    unrecognized_terms carrying "flurbish"), same domain (product_attachment),
+    NOTHING rendered, no roster - `selection_context` must no longer be
+    "set_page".
+    Turn 3: "more" - since the carry is gone, `resolve_gate._set_page_reply`
+    must not intercept it (its own guard is `prev.selection_context ==
+    "set_page"`), so the reply must carry NONE of turn 1's tap codes and must
+    not read the old page header ("7 taps have certificates. Showing 6 to 7.").
+
+    RED: `_offer_carry`'s set_page arm only clears on `answered or topic.
+    changed(...)` - turn 2 is neither answered (nothing was ever rendered) nor
+    a domain change (still product_attachment), so `variables["selection_
+    context"]` is restored to "set_page" off `prev` and turn 3's bare "more"
+    pages the STALE tap set under the old header.
+    """
+    contact_id = _s4_contact_id("r19clear")
+    db = session_factory()
+    codes = _s4_seed_seven_taps(db)
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_cert_fake_call_tool(db),
+    )
+    stub_parser(_s4_cert_parser_output())
+    stub_access()
+
+    turn1 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19-1", text="which tap has cert"),
+        session_factory=session_factory,
+    )
+    assert turn1.status == "done", turn1.error
+    variables_after_1 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
+    assert variables_after_1.get("selection_context") == "set_page", variables_after_1
+
+    stub_parser(
+        _s4_cert_parser_output(
+            entities=[
+                {
+                    "raw": "flurbish",
+                    "hint": "product",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                },
+                {
+                    "raw": "cert",
+                    "hint": "attachment_type",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                },
+            ]
+        )
+    )
+    turn2 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19-2", text="which flurbish has cert"),
+        session_factory=session_factory,
+    )
+    assert turn2.status == "done", turn2.error
+    variables_after_2 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
+    assert variables_after_2.get("selection_context") != "set_page", variables_after_2
+
+    resolve_calls: dict[str, int] = {}
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+    monkeypatch.setattr(
+        engine_mod.business_services,
+        "production_services",
+        lambda db, *, space_id=None: ResolveGateServices(
+            access_types=lambda **_: [],
+            resolve_entity=_s4_counting_resolve_entity(resolve_calls),
+            probe=lambda **_: None,
+        ),
+    )
+    stub_parser(_s4_bare_parser_output())
+    turn3 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19-3", text="more"),
+        session_factory=session_factory,
+    )
+    assert turn3.status == "done", turn3.error
+    reply3 = (turn3.reply or {}).get("text") or ""
+    assert "Showing 6 to 7" not in reply3, reply3
+    assert not (_s4_codes_in(reply3) & set(codes)), (reply3, codes)

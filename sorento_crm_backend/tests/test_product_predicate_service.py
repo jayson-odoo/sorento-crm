@@ -1016,3 +1016,265 @@ def test_promotion_leg_respects_company_scope_in_both_directions(db):
     out_b = _totals(db, {"promotion": True}, ["kitchen sink"])
     assert out_b["qualifying_total"] == 0, out_b
 
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 (11 Sep 2026, PLAN-attribute-first-asks.md R14, AC-1338(d)) -   #
+# unit test for the new `recover_certificate_scheme` helper.                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_recover_certificate_scheme_promotes_bare_true_and_consumes_the_word(db):
+    """AC-1338/R14(d): `recover_certificate_scheme(db, require, words)` must
+    promote a BARE `{"certificate": True}` require to `{"certificate":
+    {"scheme": "PPS"}}` when `words` carries a case-insensitive match against
+    the register's own active scheme spelling, returning the word CONSUMED (so
+    the caller can drop it from the described-set remainder); a non-bare
+    require (already an object) is returned UNCHANGED with nothing consumed.
+
+    RED: `recover_certificate_scheme` does not exist in
+    `app.services.product_predicate_service` yet - `ImportError`.
+    """
+    from app.services.product_predicate_service import recover_certificate_scheme
+
+    certified = _product(db, "ZZT-R14-PPS", "SORENTO ITEM WITH CERT")
+    cert = Certificate(
+        id=str(uuid.uuid4()), scheme="PPS", certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}", status="active"
+    )
+    db.add(cert)
+    db.flush()
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=certified.id))
+    db.flush()
+
+    require, consumed = recover_certificate_scheme(db, {"certificate": True}, ["item", "pps"])
+    assert require == {"certificate": {"scheme": "PPS"}}, require
+    assert consumed == ["pps"], consumed
+
+    require_unchanged, consumed_none = recover_certificate_scheme(
+        db, {"certificate": {"scheme": "PPS"}}, ["item", "pps"]
+    )
+    assert require_unchanged == {"certificate": {"scheme": "PPS"}}, require_unchanged
+    assert consumed_none == [], consumed_none
+
+    require_other_key, consumed_other = recover_certificate_scheme(db, {"stock": True}, ["item", "pps"])
+    assert require_other_key == {"stock": True}, require_other_key
+    assert consumed_other == [], consumed_other
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 - R15, AC-1339: `filter_specs` class membership must include a  #
+# category-sourced class row, not only a description-derived one.             #
+# --------------------------------------------------------------------------- #
+
+
+def test_filter_specs_class_membership_includes_category_sourced_rows(db):
+    """AC-1339/R15: a product filed under a class SOLELY through its category
+    (provenance.class.source == "category") is still a member of the described
+    set for that class - the company's own filing IS a real claim about what
+    the product is, the same standing as a class the description itself named.
+
+    RED: `filter_specs`'s class-membership clause ANDs in
+    `provenance.class.source IS DISTINCT FROM 'category'`, which drops the
+    category-sourced row - `codes` is `{"ZZT-BA-DER"}`, not both.
+    """
+    from app.models.product_spec import ProductSpecifications
+
+    category_sourced = _product(db, "ZZT-BA-CAT", "ZZT GENERIC ACCESSORY ITEM")
+    derived = _product(db, "ZZT-BA-DER", "ZZT BATHROOM ACCESSORY HOLDER")
+
+    cat_spec = db.query(ProductSpecifications).filter(ProductSpecifications.product_id == category_sourced.id).one()
+    cat_spec.values = {"class": {"value": "Bathroom Accessory"}}
+    cat_spec.provenance = {"class": {"source": "category"}}
+    db.flush()
+
+    der_spec = db.query(ProductSpecifications).filter(ProductSpecifications.product_id == derived.id).one()
+    der_spec.values = {"class": {"value": "Bathroom Accessory"}}
+    der_spec.provenance = {"class": {"source": "derived"}}
+    db.flush()
+
+    verdict = filter_specs(db, specs=[{"key": "class", "value": "Bathroom Accessory"}])
+    assert verdict["clause"] is not None, verdict
+
+    rows = (
+        db.query(Product.product_code)
+        .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+        .filter(verdict["clause"])
+        .all()
+    )
+    codes = {row[0] for row in rows}
+    assert codes == {"ZZT-BA-CAT", "ZZT-BA-DER"}, codes
+
+
+def test_resolve_product_set_counts_a_category_sourced_class_with_stock(db):
+    """AC-1339/R15: `resolve_product_set(require={"stock": True}, scope_terms=
+    ["bathroom accessory"])` must count a product whose only class evidence is
+    its category filing - the same "which bathroom accessory has stock" turn
+    measured live (2,040 products carry the class solely through category
+    filing, 999 of them with stock, all reported as qualifying 0 today).
+
+    RED: the class-membership clause's category-provenance exclusion drops the
+    row from the described set entirely, so `qualifying_total` is 0, not 1.
+    """
+    from app.models.product_spec import ProductSpecifications
+
+    product = _product(db, "ZZT-BA-STOCK", "ZZT GENERIC ACCESSORY ITEM")
+    spec = db.query(ProductSpecifications).filter(ProductSpecifications.product_id == product.id).one()
+    spec.values = {"class": {"value": "Bathroom Accessory"}}
+    spec.provenance = {"class": {"source": "category"}}
+    db.flush()
+    _stock(db, product, 5)
+
+    out = resolve_product_set(db, require={"stock": True}, scope_terms=["bathroom accessory"])
+    assert out["qualifying_total"] == 1, out
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 - R17/AC-1341 (REV-B1 re-check): the certificate leg is the ONE  #
+# leg REV-B1 left without a same-company predicate.                           #
+# --------------------------------------------------------------------------- #
+
+
+def test_certificate_leg_respects_company_scope_in_both_directions(db):
+    """AC-1341/R17 (REV-B1 re-check): `_leg_certificate`'s exists() join
+    through `CertificateProduct`/`Certificate` carries no same-company
+    predicate against `Product` at all. `Certificate` is `__company_shared__`
+    (a NULL `company_id` is a deliberately SHARED row), so the fix must keep
+    that NULL arm counting while still excluding a certificate stamped to a
+    DIFFERENT company.
+
+    (a) product in the caller's company, Certificate stamped to another
+        company -> 0.
+    (b) the reverse (product in another company, certificate in the caller's
+        own scope) -> 0 (the outer Product filter's own job).
+    (c) shared arm: a Certificate with company_id NULL linked to the caller's
+        own product still counts -> 1.
+
+    RED (a): measured live, `resolve_product_set(require={"certificate":
+    True})` under company A counts a certificate stamped to company B and
+    linked to A's product - `qualifying_total` is 1, not 0.
+    """
+    other = Company(id=str(uuid.uuid4()), code="ZZT-REVB1-CERT", name="ZZT Rev Cert Co")
+    db.add(other)
+    db.flush()
+
+    ours = _product(db, "ZZT-REV-CERT-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+    cert_other = Certificate(
+        id=str(uuid.uuid4()), scheme="ZZT-SIRIM", certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+        status="active", company_id=other.id,
+    )
+    db.add(cert_other)
+    db.flush()
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert_other.id, product_id=ours.id))
+    db.flush()
+    out_a = _totals(db, {"certificate": True}, ["kitchen sink"])
+    assert out_a["qualifying_total"] == 0, out_a
+
+    with company_scope(db, frozenset({other.id})):
+        theirs = _product(db, "ZZT-REV-CERT-B", "MOCHA S/STEEL KITCHEN SINK (900X500X200MM)")
+    cert_ours = Certificate(
+        id=str(uuid.uuid4()), scheme="ZZT-SIRIM", certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}", status="active"
+    )
+    db.add(cert_ours)
+    db.flush()
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert_ours.id, product_id=theirs.id))
+    db.flush()
+    out_b = _totals(db, {"certificate": True}, ["kitchen sink"])
+    assert out_b["qualifying_total"] == 0, out_b
+
+    shared_product = _product(db, "ZZT-REV-CERT-C", "SORENTO S/STEEL KITCHEN SINK (700X400X180MM)")
+    cert_shared = Certificate(
+        id=str(uuid.uuid4()), scheme="ZZT-SIRIM", certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+        status="active", company_id=None,
+    )
+    db.add(cert_shared)
+    db.flush()
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert_shared.id, product_id=shared_product.id))
+    db.flush()
+    out_c = _totals(db, {"certificate": True}, ["kitchen sink"])
+    assert out_c["qualifying_total"] == 1, out_c
+    codes_c = [cand["product_code"] for cand in out_c["candidates"]]
+    assert codes_c == ["ZZT-REV-CERT-C"], out_c
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 - R18/AC-1342 (SEC-S1 re-check): `_access_level_codes` must also #
+# accept a bare TIER TOKEN (dealer/office/end_user), not only a               #
+# `contact_access_types.name`.                                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_access_level_codes_expands_a_bare_tier_token(db):
+    """AC-1342/R18: `_access_level_codes` must accept a `contact_access_types.
+    code` value directly and a BARE TIER TOKEN that is not itself any single
+    code ("dealer") - the parsed head's own recomposed tier vocabulary - by
+    matching every code that IS the token or ENDS WITH `_<token>`, read off
+    the table with no list in code. A name still translates as before; an
+    unknown value still yields the empty set; an empty list is no restriction
+    (`None`).
+
+    RED: `_access_level_codes` only equality-matches `access_levels` against
+    `ContactAccessType.name` - "dealer" (a CODE-shaped tier token, not a name)
+    matches no row's `name` at all, so `{"dealer"} -> set()`, not the two codes
+    this AC demands.
+    """
+    from app.models.access import ContactAccessType
+    from app.services.product_predicate_service import _access_level_codes
+
+    db.add_all(
+        [
+            ContactAccessType(code="dealer", name="Sorento Dealer"),
+            ContactAccessType(code="cabana_dealer", name="Cabana Dealer"),
+            ContactAccessType(code="sorento_office", name="Sorento Office"),
+            ContactAccessType(code="end_user", name="End User"),
+        ]
+    )
+    db.flush()
+
+    assert _access_level_codes(db, ["dealer"]) == {"dealer", "cabana_dealer"}
+    assert _access_level_codes(db, ["office"]) == {"sorento_office"}
+    assert _access_level_codes(db, ["Sorento Dealer"]) == {"dealer"}
+    assert _access_level_codes(db, ["zzq"]) == set()
+    assert _access_level_codes(db, []) is None
+
+
+def test_promotion_leg_respects_a_bare_tier_token(db):
+    """AC-1342/R18: `resolve_product_set`'s promotion leg must resolve a bare
+    TIER TOKEN the same way `_access_level_codes` does - "dealer" must count a
+    promotion restricted to "cabana_dealer" (a brand-qualified dealer code, no
+    name equal to "dealer" itself), and "office" must count NONE of it.
+
+    RED: `_access_level_codes` only equality-matches `access_levels` against
+    `ContactAccessType.name`; "dealer" translates to an EMPTY set and the
+    promotion counts ZERO, not the 1 this AC demands.
+    """
+    from app.models.access import ContactAccessType
+
+    db.add_all(
+        [
+            ContactAccessType(code="cabana_dealer", name="Cabana Dealer"),
+            ContactAccessType(code="sorento_office", name="Sorento Office"),
+        ]
+    )
+    db.flush()
+
+    product = _product(db, "ZZT-TIER-A", "SORENTO CHROME TAP A")
+    promo = Promotion(
+        id=str(uuid.uuid4()), description="ZZT promo tier", is_active=True, access_levels=["cabana_dealer"]
+    )
+    db.add(promo)
+    db.flush()
+    group = PromotionGroup(id=uuid.uuid4(), promotion_id=promo.id, group_name="G")
+    db.add(group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()), promotion_id=promo.id, promotion_group_id=group.id, product_id=product.id
+        )
+    )
+    db.flush()
+
+    out_dealer = resolve_product_set(db, require={"promotion": True}, access_levels=["dealer"])
+    assert out_dealer["qualifying_total"] == 1, out_dealer
+
+    out_office = resolve_product_set(db, require={"promotion": True}, access_levels=["office"])
+    assert out_office["qualifying_total"] == 0, out_office
