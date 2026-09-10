@@ -51,18 +51,28 @@ def _world(db, company_id=None, inputs=None):
         {"id": wid, "c": unique_code("W")[:20], **({"co": company_id} if company_id else {})})
 
     def add_po(number, status, qty, received, line_status="open", expected=None):
+        # `purchase_orders`/`purchase_order_lines.company_id` fall to the column default
+        # (the legacy shared company) when omitted - correctly invisible under a scoped
+        # test company since `_PO_BOOK_SQL` gained `company_sql_predicate` (round A,
+        # 877365a5f). Stamped with the SAME `company_id` the warehouse/run/recommendation
+        # above already carry, so a company-scoped `_world()` produces PO rows that
+        # company can actually see.
         poid = _u()
         db.execute(text(
             "INSERT INTO purchase_orders (id, po_number, status, expected_date, issue_date, "
-            "currency, source_system) VALUES (:id, :n, :s, :e, :d, 'CNY', 'test')"),
+            "currency, source_system"
+            + (", company_id) VALUES (:id, :n, :s, :e, :d, 'CNY', 'test', :co)" if company_id
+               else ") VALUES (:id, :n, :s, :e, :d, 'CNY', 'test')")),
             {"id": poid, "n": f"{MARKER}-{number}", "s": status, "e": expected,
-             "d": date(2026, 7, 1)})
+             "d": date(2026, 7, 1), **({"co": company_id} if company_id else {})})
         db.execute(text(
             "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, "
-            "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status) "
-            "VALUES (:id, :po, :p, :w, :q, :r, 10, 'CNY', :ls)"),
+            "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status"
+            + (", company_id) VALUES (:id, :po, :p, :w, :q, :r, 10, 'CNY', :ls, :co)"
+               if company_id
+               else ") VALUES (:id, :po, :p, :w, :q, :r, 10, 'CNY', :ls)")),
             {"id": _u(), "po": poid, "p": pid, "w": wid, "q": qty, "r": received,
-             "ls": line_status})
+             "ls": line_status, **({"co": company_id} if company_id else {})})
 
     add_po("OPEN", "active", 504, 0, expected=date(2026, 8, 10))
     add_po("PART", "partial", 100, 40)

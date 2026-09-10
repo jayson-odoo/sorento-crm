@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ColumnDef,
   ExpandedState,
@@ -258,6 +258,7 @@ export function PlanLinesGrid({
   readOnlyReason = null,
   groupByChannel = false,
   isLoading,
+  onFilterGroupChange,
 }: {
   lines: PlanLine[];
   decisions: PlanDecisionMap;
@@ -354,6 +355,12 @@ export function PlanLinesGrid({
    */
   groupByChannel?: boolean;
   isLoading?: boolean;
+  /** PLAN-plan-list-tile-sheet-one-scope.md, AC-5b: reports the APPLIED filter group
+   *  upward whenever it changes - from the builder's own `onChange`, from applying a
+   *  saved segment, or from clearing one - so a caller (`PlanLinesSection`) can detect a
+   *  "Rec type = Covered by stock" condition and reveal the hidden-by-default rows
+   *  without this grid needing to know that rule exists. */
+  onFilterGroupChange?: (group: ListQueryFilterGroup | null) => void;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   // No column is actively sorted by default: the DEFAULT order comes from `tableData` below
@@ -394,6 +401,13 @@ export function PlanLinesGrid({
   const [filterGroup, setFilterGroup] = useState<ListQueryFilterGroup | null>(null);
   const [segmentId, setSegmentId] = useState<string | null>(null);
   const filterFields = useMemo(() => planLineFilterFields(decisions), [decisions]);
+
+  // AC-5b: reports the applied group upward on every change, whichever of the three
+  // paths set it (the builder's own onChange, a segment apply, a segment/filter clear) -
+  // one effect covers all three rather than threading the callback into each setter.
+  useEffect(() => {
+    onFilterGroupChange?.(filterGroup);
+  }, [filterGroup, onFilterGroupChange]);
 
   // Search/status/builder - every filter that does NOT read a decision. Deliberately kept
   // decision-independent (S3 perf, AC-3.5): `groupPlanLinesByChannel` below is fed by THIS

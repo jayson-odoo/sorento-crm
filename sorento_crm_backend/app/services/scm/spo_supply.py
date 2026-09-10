@@ -36,9 +36,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, text
 
+from app.models.inventory import Warehouse
 from app.models.procurement import InboundShipment, SPOAllocation, Supplier
+from app.services.scm.pool_predicate import active_site_pool_sql
 
 #: Receipt statuses that mean the goods are in. `fully_received` is the value the column's
 #: own CHECK constraint allows; `received` is kept beside it because migration 337's view
@@ -127,47 +129,45 @@ def overdue_days(arrival_date: Optional[date], as_of: Optional[date] = None) -> 
     return max((reference - arrival_date).days, 0)
 
 
-def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
+def spo_history_for_product(db, run_id: str, product_id: str,
+                            warehouse_id: Optional[str] = None) -> dict:
     """The SPO book behind a plan row's SPO cell: open first, then what has landed.
 
-    Scoped to the row's SITE POOL and nothing else (R15). A run writes recommendations for
-    the locations that carry demand, which on live data is usually a project BIN rather
-    than the pool itself, so the pool is resolved the same way every other reader resolves
-    it - ``COALESCE(warehouses.pool_warehouse_id, warehouses.id)`` off the run's own rows
-    for this product. A shipment bound for a project bin, or for another site entirely, is
-    absent: the cell it explains deliberately excludes both.
+    PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S2 (AC-7, AC-8): scoped to the
+    ONE site-pool rule (`pool_predicate.active_site_pool_sql`). The old pool-id resolution
+    (`COALESCE(w.pool_warehouse_id, w.id)` off the run's recommendation rows for this
+    product) narrowed to whichever locations happened to be in THIS run's plan basis - a
+    warehouse that holds a shipment but no committed demand of its own was invisible even
+    though it is real site-pool supply the product-grain cell must sum.
+
+    Review fix round B (reviewer S1, AC-7 amended): a LOCATION-grain row's modal must read
+    that row's OWN warehouse only - the same grain rule `po_book_service._po_book_sql`
+    already applies (its `pr.warehouse_id IS NOT NULL` branch). Resolution:
+
+    1. `warehouse_id` given (the caller already knows which row/location it is opening -
+       the route/FE passes the plan row's own `warehouse_id` for a location-grain line) -
+       that warehouse alone, and only when it passes `active_site_pool_sql` (a project bin
+       explicitly named answers empty, never falls back to a wider read).
+    2. Omitted - every active site-pool warehouse, product-wide (unchanged since S2).
+
+    A caller-supplied `warehouse_id` is what tells the two grains apart, mirroring
+    `purchase_trend_service.purchase_trend_for_run`'s own `warehouse_id` kwarg - the same
+    "the caller who already resolved the row's grain names its warehouse; the function
+    itself does not re-derive it from `scm.reorder_recommendation`" shape. An
+    auto-detecting third branch (infer location-grain from this run's OWN recommendation
+    rows when no `warehouse_id` is given) was tried and dropped: no red test exercises it,
+    and the one available signal - any rec for this run/product carrying a non-NULL
+    `warehouse_id` - misclassifies `tests/scm/test_spo_history_to_pool.py`'s fixture
+    (`_revamp_fixtures.recommendation()` always stamps a location, even on a run whose
+    `decision_grain` is `'product'`), breaking 4 of its 5 already-green tests. Flagged to
+    the captain rather than implemented against no evidence (PRINCIPLES.md, "simplest
+    thing that works").
 
     `open` uses the one rule in this module (`open_incoming_clauses` plus "something is
-    still to come"); everything else the pool has ever been promised is history. Both are
-    newest-promise-first, so a buyer reads the next arrival at the top.
+    still to come"); everything else the site pool has ever been promised is history.
+    Both are newest-promise-first, so a buyer reads the next arrival at the top.
     """
-    from sqlalchemy import text as _text
-
-    # BOTH ways a run states where a row's demand sits. A location-grain row names its
-    # warehouse on the column; a PRODUCT-grain row names NONE - it is one buy for the whole
-    # product, and the locations it was netted over live in the frozen
-    # `inputs.plan_basis.locations` (`_emit_product`). Reading only the column returned an
-    # empty book for every row on the live plan, which is the shape the rollout default
-    # produces.
-    pool_ids = [
-        r[0] for r in db.execute(_text("""
-            SELECT DISTINCT COALESCE(w.pool_warehouse_id, w.id)::text
-              FROM scm.reorder_recommendation rr
-              JOIN warehouses w ON w.id = rr.warehouse_id
-             WHERE rr.run_id = CAST(:run AS uuid)
-               AND rr.product_id = CAST(:pid AS uuid)
-            UNION
-            SELECT DISTINCT COALESCE(lw.pool_warehouse_id, lw.id)::text
-              FROM scm.reorder_recommendation rr
-              CROSS JOIN LATERAL jsonb_array_elements(
-                  COALESCE(rr.inputs -> 'plan_basis' -> 'locations', '[]'::jsonb)) loc
-              JOIN warehouses lw ON lw.id = CAST(loc ->> 'warehouse_id' AS uuid)
-             WHERE rr.run_id = CAST(:run AS uuid)
-               AND rr.product_id = CAST(:pid AS uuid)
-        """), {"run": run_id, "pid": product_id}).all()
-    ]
-    if not pool_ids:
-        return {"open": [], "history": []}
+    wh_filter = [warehouse_id] if warehouse_id else None
 
     # ORM, not raw SQL, for two reasons. The company isolation filter runs on ORM
     # execution only, and this reads a company-owned table (`SPOAllocation` is
@@ -175,7 +175,7 @@ def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
     # orders. And the open/closed test is `open_incoming_clauses()` itself, evaluated in
     # SQL and returned per row, rather than a second Python copy of the same three
     # conditions that could drift from the module they are meant to share.
-    rows = (
+    query = (
         db.query(
             SPOAllocation.spo_number,
             Supplier.supplier_name,
@@ -185,22 +185,24 @@ def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
             InboundShipment.actual_arrival_date,
             and_(*open_incoming_clauses()).label("is_open"),
         )
+        .join(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
         .outerjoin(Supplier, Supplier.id == SPOAllocation.supplier_id)
         .outerjoin(InboundShipment,
                    InboundShipment.id == SPOAllocation.inbound_shipment_id)
         .filter(
             SPOAllocation.product_id == product_id,
-            SPOAllocation.warehouse_id.in_(pool_ids),
+            text(active_site_pool_sql("warehouses")),
             # R7: a retired line is omitted from both legs below, not only labelled
             # by `open_incoming_clauses()` above - that tuple is a SELECTED LABEL
             # here (`is_open`), never a filter, so without this a retired line would
             # still land in "open" or "history".
             *visible_line_clauses(),
         )
-        .order_by(SPOAllocation.expected_date.desc().nullslast(),
-                  SPOAllocation.spo_number)
-        .all()
     )
+    if wh_filter is not None:
+        query = query.filter(SPOAllocation.warehouse_id.in_(wh_filter))
+    rows = query.order_by(SPOAllocation.expected_date.desc().nullslast(),
+                          SPOAllocation.spo_number).all()
 
     open_rows: list[dict] = []
     history: list[dict] = []

@@ -8,6 +8,7 @@ fields - SKU/warehouse/supplier resolve to human codes/names.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Response
@@ -34,6 +35,7 @@ from app.services.dealer_kit import product_images
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.scm import cover_service
 from app.services.scm import plan_grain
+from app.services.scm import plan_scope
 from app.services.scm import price_history_service
 from app.services.scm import spo_supply
 from app.services.scm import (
@@ -626,6 +628,12 @@ def list_cover_sources(
 def get_spo_history(
     run_id: str,
     product_id: str = Query(...),
+    warehouse_id: Optional[uuid.UUID] = Query(
+        None,
+        description="The row's OWN warehouse, for a location-grain line - narrows the "
+                    "modal to that warehouse alone. Omitted (a product-grain line) reads "
+                    "every active site-pool warehouse, product-wide.",
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -634,9 +642,15 @@ def get_spo_history(
     Scoped to the row's SITE POOL and nothing else (R15) - a shipment bound for a project
     bin is already claimed by an Order Inquiry, and the cell this explains excludes it.
     The SPO is a FACT on the row, never an input (R2), so this endpoint only reads.
+
+    `warehouse_id` (review fix round B, reviewer S1, AC-7 amended): typed as a UUID so a
+    malformed value 422s via FastAPI's own validation rather than reaching the service as
+    a string that silently matches nothing.
     """
     svc.assert_run_visible(db, run_id)
-    return spo_supply.spo_history_for_product(db, run_id, product_id)
+    return spo_supply.spo_history_for_product(
+        db, run_id, product_id, warehouse_id=str(warehouse_id) if warehouse_id else None
+    )
 
 
 @router.get("/reorder-runs/{run_id}/price-history")
@@ -781,6 +795,12 @@ def get_po_book(
 def get_purchase_trend(
     run_id: str,
     warehouse: Optional[str] = Query(None),
+    scope: Optional[str] = Query(
+        None,
+        description='Omitted = run-wide (unchanged). "site_pool" narrows to active '
+                    "site-pool warehouses, product-wide - the read a product-grain row "
+                    "(no pool code) asks for. Ignored when `warehouse` is also given.",
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -791,10 +811,22 @@ def get_purchase_trend(
     monthly trend (`recent_qty` vs `previous_qty`) plus the last few purchase lines
     (supplier, date, quantity, cost), newest first. A draft this run itself proposed is
     never read back as a purchase we made.
+
+    UAC AC-10 (amended, 10 Sep 2026): the bare default (no `warehouse`, no `scope`) is
+    run-wide and UNCHANGED - it feeds a row's Last price / price history and must not
+    narrow silently. `scope=site_pool` is the one recognised value that opts into the
+    site-pool-wide read; anything else is a 422 rather than a silently-ignored typo.
     """
     svc.assert_run_visible(db, run_id)
+    site_pool_only = False
+    if scope is not None:
+        if scope != "site_pool":
+            raise AppException(status_code=422, message='scope must be "site_pool".')
+        site_pool_only = True
     return purchase_trend_service.purchase_trend_for_run(
-        db, run_id, warehouse_id=_warehouse_id_for_code(db, warehouse))
+        db, run_id, warehouse_id=_warehouse_id_for_code(db, warehouse),
+        site_pool_only=site_pool_only,
+    )
 
 
 @router.get("/reorder-runs/{run_id}/product-economics")
@@ -1298,6 +1330,18 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "last_purchase_supplier_code": (inp.get("last_purchase") or {}).get("supplier_code"),
         "last_purchase_supplier_name": (inp.get("last_purchase") or {}).get("supplier_name"),
         "policy_type": inp.get("policy_type"),
+        # S6, PLAN-plan-list-tile-sheet-one-scope.md (AC-1): the ONE rule
+        # (`plan_scope.hidden_by_default`) the list, the Decisions tile total and the
+        # order sheet export all read, off the SAME stored fields this row already
+        # surfaces above (`policy_type`, `reorder_level`, `master_reorder_level`) plus the
+        # rec's own `net_position` column - never the engine's decision net.
+        "hidden_by_default": plan_scope.hidden_by_default(
+            rec_type=r["rec_type"],
+            policy_type=inp.get("policy_type"),
+            reorder_level=inp.get("reorder_level"),
+            master_reorder_level=inp.get("master_reorder_level"),
+            net_position=_f(r["net_position"]),
+        ),
         "supplier_selection": inp.get("selection"),
         # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---
         # `unit_cost` is what the SUPPLIER charges, in `currency`. `cash_impact` is what the

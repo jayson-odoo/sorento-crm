@@ -106,13 +106,22 @@ export async function savePlanEdits(
   return res.json();
 }
 
-/** The shipping orders behind the SPO cell, for the site pool only (R15). */
+/**
+ * The shipping orders behind the SPO cell, for the site pool only (R15).
+ *
+ * `warehouseId` (review fix round B, AC-7 amended): the row's OWN warehouse, for a
+ * location-grain line - narrows the modal to that warehouse alone. Omitted (a
+ * product-grain line, or a grouped/pool line) reads every active site-pool warehouse,
+ * product-wide, exactly as before.
+ */
 export async function getSpoHistory(
   runId: string,
   productId: string,
+  warehouseId?: string | null,
 ): Promise<SpoHistoryResponse> {
   if (!runId || !productId) return { open: [], history: [] };
   const qs = new URLSearchParams({ product_id: productId });
+  if (warehouseId) qs.set('warehouse_id', warehouseId);
   const res = await apiFetch(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/spo-history?${qs.toString()}`,
   );
@@ -137,8 +146,15 @@ export async function getPoHistoryToPool(
   productId: string,
   warehouseCode: string | null,
 ): Promise<PoHistoryResponse> {
-  if (!runId || !productId || !warehouseCode) return { history: [] };
-  const qs = new URLSearchParams({ warehouse: warehouseCode });
+  if (!runId || !productId) return { history: [] };
+  // S2 (AC-11, amended 10 Sep 2026): a product-grain row carries no pool code - that no
+  // longer skips the call. It reads `scope=site_pool` (AC-10's explicit site-pool scope),
+  // never the bare default - the bare default stays RUN-WIDE (every warehouse, undirected
+  // lines included) because it feeds a row's Last price / price history and must not
+  // narrow silently. A row WITH a pool code keeps `warehouse=<code>` exactly as before.
+  const qs = new URLSearchParams(
+    warehouseCode ? { warehouse: warehouseCode } : { scope: 'site_pool' },
+  );
   const res = await apiFetch(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/purchase-trend?${qs.toString()}`,
   );

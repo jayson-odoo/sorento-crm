@@ -81,8 +81,16 @@ def _world(db):
     return plan, prod, sup, pool, bin_, elsewhere
 
 
-def test_open_first_then_received_and_another_site_is_excluded(db):
-    plan, prod, sup, pool, _bin, elsewhere = _world(db)
+def test_open_first_then_received_and_a_project_bin_is_excluded(db):
+    """PLAN-po-spo-site-pool-and-order-sheet-downloads.md, owner assumption 2 (product-
+    wide, every ACTIVE SITE-POOL warehouse - amended 10 Sep, superseding this test's old
+    "another site is excluded" premise): `elsewhere` (a second, unrelated site-pool
+    warehouse, e.g. MWH) now counts too - a shipment sitting there is still real
+    site-pool supply for the product. What is still excluded is a PROJECT bin
+    (`segment='project'`) - its allocation belongs to an Order Inquiry, never the site
+    pool cell. Open-then-history ordering is unchanged.
+    """
+    plan, prod, sup, pool, bin_, elsewhere = _world(db)
 
     _spo(db, prod=prod, wh=pool, sup=sup, number="ZZTRVMP-SPO-OPEN", qty=100,
          expected=date(2026, 9, 30))
@@ -91,13 +99,19 @@ def test_open_first_then_received_and_another_site_is_excluded(db):
          arrived=date(2026, 7, 5))
     _spo(db, prod=prod, wh=elsewhere, sup=sup, number="ZZTRVMP-SPO-DC1", qty=999,
          expected=date(2026, 9, 30))
+    _spo(db, prod=prod, wh=bin_, sup=sup, number="ZZTRVMP-SPO-BIN", qty=50,
+         expected=date(2026, 9, 30))
 
     out = spo_supply.spo_history_for_product(db, str(plan.id), str(prod.id))
 
-    assert [s["spo_number"] for s in out["open"]] == ["ZZTRVMP-SPO-OPEN"]
+    # Same expected_date, so the tie-break is spo_number ascending: DC1 < OPEN.
+    assert [s["spo_number"] for s in out["open"]] == [
+        "ZZTRVMP-SPO-DC1", "ZZTRVMP-SPO-OPEN",
+    ]
     assert [s["spo_number"] for s in out["history"]] == ["ZZTRVMP-SPO-IN"]
     numbers = {s["spo_number"] for s in out["open"] + out["history"]}
-    assert "ZZTRVMP-SPO-DC1" not in numbers, "a shipment bound elsewhere is not this pool's"
+    assert "ZZTRVMP-SPO-DC1" in numbers, "another active site-pool warehouse counts too"
+    assert "ZZTRVMP-SPO-BIN" not in numbers, "a project bin's allocation is not site pool"
 
 
 def test_every_field_the_dialog_prints_is_present(db):
