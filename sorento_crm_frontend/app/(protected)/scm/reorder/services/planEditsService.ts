@@ -106,13 +106,22 @@ export async function savePlanEdits(
   return res.json();
 }
 
-/** The shipping orders behind the SPO cell, for the site pool only (R15). */
+/**
+ * The shipping orders behind the SPO cell, for the site pool only (R15).
+ *
+ * `warehouseId` (review fix round B, AC-7 amended): the row's OWN warehouse, for a
+ * location-grain line - narrows the modal to that warehouse alone. Omitted (a
+ * product-grain line, or a grouped/pool line) reads every active site-pool warehouse,
+ * product-wide, exactly as before.
+ */
 export async function getSpoHistory(
   runId: string,
   productId: string,
+  warehouseId?: string | null,
 ): Promise<SpoHistoryResponse> {
   if (!runId || !productId) return { open: [], history: [] };
   const qs = new URLSearchParams({ product_id: productId });
+  if (warehouseId) qs.set('warehouse_id', warehouseId);
   const res = await apiFetch(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/spo-history?${qs.toString()}`,
   );
