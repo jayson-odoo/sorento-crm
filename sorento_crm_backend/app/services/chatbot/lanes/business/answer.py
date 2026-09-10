@@ -3054,6 +3054,17 @@ def not_found_error_message(
                 # the predicate, and the codes actually checked - never the generic
                 # "no {attach_noun} matched these" below, which names only the
                 # predicate word and drops the set the customer actually asked about.
+                # R16/AC-1340 (third console pass): a category / product_type raw
+                # names the subject too, not only brand + product - "which
+                # bathroom accessory has stock" carries no brand and no `hint:
+                # "product"` entity at all, so the old subject_words stayed
+                # empty and the literal fallback "a match" glued onto the
+                # sentence's own leading "a" read "Couldn't find a a match with
+                # stock.". When NO raw of any kind names it either, the
+                # predicate's OWN `class_labels` (real evidence: the described
+                # set's class) is the next fallback; only when THAT is also
+                # empty does the sentence drop the article entirely ("any
+                # product"), never "a" + a placeholder noun.
                 brand_raw = jsc.get(
                     jsc.find(entities_list, lambda e: jsc.get(e, "hint") == "brand"), "raw"
                 )
@@ -3062,10 +3073,25 @@ def not_found_error_message(
                     for e in entities_list
                     if jsc.get(e, "hint") == "product" and jsc.truthy(jsc.get(e, "raw"))
                 ]
+                category_or_type_raw_words = [
+                    jsc.js_string(jsc.get(e, "raw"))
+                    for e in entities_list
+                    if jsc.get(e, "hint") in ("category", "product_type") and jsc.truthy(jsc.get(e, "raw"))
+                ]
                 subject_words = (
-                    [jsc.js_string(brand_raw)] if jsc.truthy(brand_raw) else []
-                ) + product_raw_words
-                subject = " ".join(subject_words) if subject_words else "a match"
+                    ([jsc.js_string(brand_raw)] if jsc.truthy(brand_raw) else [])
+                    + product_raw_words
+                    + category_or_type_raw_words
+                )
+                if not subject_words:
+                    predicate_class_labels = [
+                        jsc.js_string(c).strip()
+                        for c in jsc.array(jsc.get(predicate, "class_labels"))
+                        if jsc.truthy(c)
+                    ]
+                    if predicate_class_labels:
+                        subject_words = [predicate_class_labels[0].lower()]
+                subject_phrase = f"a {' '.join(subject_words)}" if subject_words else "any product"
                 # Read straight off the RESOLVER's own resolutions, never off this
                 # gate's `compatible_entities` - the zero-qualifying carve-out
                 # (`gate.py`'s `_is_a_described_word` branch) deliberately keeps a
@@ -3086,7 +3112,7 @@ def not_found_error_message(
                     else ""
                 )
                 escalate_message = (
-                    f"Couldn't find a {subject} with "
+                    f"Couldn't find {subject_phrase} with "
                     f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}. "
                     f"Would you like me to escalate to {team} team?"
                 )
