@@ -2485,6 +2485,11 @@ def resolve_reference_post(
             "truncated": outcome["truncated"],
             "unrecognized_terms": outcome["unrecognized_terms"],
         }
+        # D2/AC-1313: present ONLY on a scheme miss - a resolvable scheme carries
+        # no such key at all, so a caller reading it never has to tell "no schemes"
+        # from "not a scheme question".
+        if "schemes_on_file" in outcome:
+            result["predicate"]["schemes_on_file"] = outcome["schemes_on_file"]
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
         return _stamp_brand_on_products(db, result)
 

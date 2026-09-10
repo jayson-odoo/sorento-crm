@@ -34,10 +34,12 @@ from sqlalchemy.sql import ColumnElement
 from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
 from app.models.inventory import Stock
 from app.models.marketing import Promotion, PromotionProduct
+from app.models.procurement import InboundShipment, InboundShipmentLine
 from app.models.product import Brand, Product, ProductAttachment
 from app.models.product_spec import ProductSpecifications
 from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import AppException
+from app.services.lookup_resolver import LookupResolverService
 from app.services.product_spec_search import filter_specs, search_specs, values_only
 
 
@@ -46,23 +48,34 @@ class _UnrecognizedLabel(Exception):
 
     Same honesty class as an unrecognized free term: "your word mapped to no
     document type" must reach the customer as a clarify, not as a silent "none".
+
+    ``extra`` merges straight into `resolve_product_set`'s own return dict on
+    the miss (D2, AC-1313) - the certificate leg's only use today is
+    ``schemes_on_file``, so a scheme miss can still name what IS on file.
     """
 
-    def __init__(self, label: str):
+    def __init__(self, label: str, *, extra: dict[str, Any] | None = None):
         super().__init__(label)
         self.label = label
+        self.extra = extra or {}
 
 
-def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
-    """Has an attachment of the type the CUSTOMER NAMED — label in, not code.
+def _lookup_resolve(db: Session, set_key: str, raw: str) -> str | None:
+    """The lookup set's own resolved VALUE, or None on any miss.
 
-    Resolution mirrors `_probe_attachment_type` (exact case-insensitive on code OR
-    type_name) so "technical drawing" works wherever it already works. Resolving
-    server-side is what keeps new document classes out of the parser prompt: the
-    parser ships four key names, the labels live in this table.
+    Covers both 404 shapes `LookupResolverService` raises: the set itself is
+    missing (an install nobody has run the owner's data entry on yet), and the
+    set exists but no option/keyword matches `raw`. Either way a leg reads this
+    as "unrecognized", never a 500 (D3, AC-1314).
     """
-    label = str(value or "").strip()
-    row = (
+    try:
+        return LookupResolverService(db).resolve(set_key, raw).value
+    except AppException:
+        return None
+
+
+def _attachment_type_row(db: Session, label: str) -> AttachmentType | None:
+    return (
         db.query(AttachmentType)
         .filter(
             or_(
@@ -72,6 +85,24 @@ def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
         )
         .first()
     )
+
+
+def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
+    """Has an attachment of the type the CUSTOMER NAMED - label in, not code.
+
+    Resolution tries, in order: exact code / type_name (today, mirrors
+    `_probe_attachment_type` so "technical drawing" works wherever it already
+    works), then the `attachment_type_alias` lookup set (D2, AC-1312) - "photo",
+    "picture", "gambar" reach whatever type the owner has aliased them to.
+    Resolving server-side is what keeps new document classes out of the parser
+    prompt: the parser ships four key names, the labels live in this table.
+    """
+    label = str(value or "").strip()
+    row = _attachment_type_row(db, label)
+    if row is None:
+        aliased_label = _lookup_resolve(db, "attachment_type_alias", label)
+        if aliased_label:
+            row = _attachment_type_row(db, aliased_label)
     if row is None:
         raise _UnrecognizedLabel(label)
     clause = exists().where(
@@ -85,11 +116,24 @@ def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
     return clause
 
 
+def _schemes_on_file(db: Session) -> list[str]:
+    """Every distinct scheme the register carries an ACTIVE certificate under,
+    sorted, company-scoped (`Certificate` is `__company_shared__` - the
+    `do_orm_execute` listener already ORs in the NULL-company shared rows, so a
+    plain scoped query is correct here without any manual company_id filter)."""
+    rows = db.query(Certificate.scheme).filter(Certificate.status == "active").distinct().all()
+    return sorted({str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()})
+
+
 def _leg_certificate(db: Session, value: Any) -> ColumnElement:
     """In the certificate register. Bare ``true`` = any active-register cert
-    (decided); the object form narrows: ``scheme`` by equality,
-    ``validity_state: "valid"`` through the current revision's window — validity
-    is DERIVED from revision dates, never stored (see the certificate model).
+    (decided); the object form narrows: ``scheme`` through the
+    `certificate_scheme` lookup set (D2, AC-1313) then equality on the resolved
+    value, ``validity_state: "valid"`` through the current revision's window -
+    validity is DERIVED from revision dates, never stored (see the certificate
+    model). A scheme with no matching option/keyword raises with
+    `schemes_on_file` attached, so the reply can name what IS on file rather
+    than answer a silent zero.
 
     Joins through ``Certificate`` because ``certificate_products`` has no
     company_id — the scoped side is what keeps the leg isolated per company.
@@ -99,10 +143,15 @@ def _leg_certificate(db: Session, value: Any) -> ColumnElement:
         Certificate.id == CertificateProduct.certificate_id,
         Certificate.status == "active",
     ]
+    resolved_value = value
     if isinstance(value, dict):
         scheme = str(value.get("scheme") or "").strip()
         if scheme:
-            conditions.append(func.lower(Certificate.scheme) == scheme.lower())
+            resolved_scheme = _lookup_resolve(db, "certificate_scheme", scheme)
+            if resolved_scheme is None:
+                raise _UnrecognizedLabel(scheme, extra={"schemes_on_file": _schemes_on_file(db)})
+            conditions.append(func.lower(Certificate.scheme) == resolved_scheme.lower())
+            resolved_value = {**value, "scheme": resolved_scheme}
         if str(value.get("validity_state") or "").strip().lower() == "valid":
             conditions.extend(
                 [
@@ -113,7 +162,10 @@ def _leg_certificate(db: Session, value: Any) -> ColumnElement:
                     ),
                 ]
             )
-    return exists().where(*conditions)
+    clause = exists().where(*conditions)
+    if resolved_value is not value:
+        clause._resolved_display = resolved_value  # type: ignore[attr-defined]
+    return clause
 
 
 def _leg_promotion(db: Session, value: Any) -> ColumnElement:
@@ -136,6 +188,23 @@ def _leg_stock(db: Session, value: Any) -> ColumnElement:
     return exists().where(Stock.product_id == Product.id, Stock.quantity_on_hand > 0)
 
 
+def _leg_incoming(db: Session, value: Any) -> ColumnElement:
+    """An open shipment line: shipped minus received is still positive AND the
+    shipment has not actually arrived yet (D1, AC-1311). Joins through
+    `InboundShipment` for the arrival check - the line's own company scope
+    already isolates it, but the shipment side needs the join regardless."""
+    return exists().where(
+        InboundShipmentLine.product_id == Product.id,
+        InboundShipment.id == InboundShipmentLine.shipment_id,
+        (
+            func.coalesce(InboundShipmentLine.quantity_shipped, 0)
+            - func.coalesce(InboundShipmentLine.quantity_received, 0)
+        )
+        > 0,
+        InboundShipment.actual_arrival_date.is_(None),
+    )
+
+
 # One entry per domain. A new domain lands as one function + one line here + one
 # noun in the n8n parser — never as another inline block in references.py.
 REQUIRE_LEGS: dict[str, Callable[[Session, Any], ColumnElement]] = {
@@ -143,6 +212,7 @@ REQUIRE_LEGS: dict[str, Callable[[Session, Any], ColumnElement]] = {
     "certificate": _leg_certificate,
     "promotion": _leg_promotion,
     "stock": _leg_stock,
+    "incoming": _leg_incoming,
 }
 
 
@@ -161,7 +231,7 @@ def resolve_product_set(
     The described set is the UNION of ``product_ids`` (ids LOOKUP already
     matched by name or code prefix) and the ``class`` / ``product_type`` /
     ``brand`` membership `filter_specs` derives from ``specs`` / ``free_terms``
-    — attribute-first asks, work item C3, AC-1306/1308. Either alone is enough
+    - attribute-first asks, work item C3, AC-1306/1308. Either alone is enough
     to describe the set; when both are given a product only needs ONE of them.
     ``brand`` scopes the WHOLE set on top of that union (D3): it reads
     `Product.brand_id` live, not the spec-derived echo, so it is correct even
@@ -207,6 +277,7 @@ def resolve_product_set(
                 "truncated": False,
                 "unrecognized_terms": unrecognized,
                 "require": require_echo | {k: v for k, v in require.items() if k != key},
+                **miss.extra,
             }
         require_echo[key] = getattr(clause, "_resolved_display", value)
         legs.append(clause)
@@ -214,7 +285,7 @@ def resolve_product_set(
     described_given = bool([t for t in (free_terms or []) if t and t.strip()]) or bool(specs)
     # What the caller has to RANK against, not merely what defines membership.
     # `specs`-only calls (structural bindings, no customer words) fall to the
-    # deterministic listing below — `search_specs` drops any candidate with no
+    # deterministic listing below - `search_specs` drops any candidate with no
     # positive evidence, which would silently evict a product that only
     # qualified through `product_ids`, the OTHER half of the union.
     rank_by_words = bool([t for t in (free_terms or []) if t and t.strip()])
