@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -176,10 +177,13 @@ def test_export_post_guards_run_before_a_row_exists(scm_app):
 
 
 def test_export_post_answers_409_while_a_sheet_is_in_flight(scm_app, monkeypatch):
-    """AC-16b (security S5, Phase 3 fix round): a second POST for the SAME run while the
-    caller already has an `order_sheet_*` download `pending`/`processing` for that run is
-    refused with 409 and creates no second row - one in-flight sheet per user per run, no
-    queue machinery needed to enforce it."""
+    """AC-16b (amended, reviewer R1, d7491d6fc): the in-flight guard is PER FORMAT, not
+    per run - a second POST for the SAME run AND the SAME format while that exact
+    `order_sheet_<fmt>` download is `pending`/`processing` answers 409 and creates no
+    row, but the OTHER format is never blocked (matches the AC-23 evidence: PDF then
+    Excel back to back both succeed). Today `has_in_flight` still matches on the bare
+    `order_sheet_` prefix (no format), so the pdf-after-xlsx request is wrongly refused
+    too - this is the RED half."""
     from app.services import queue_service
 
     app, db = _client(scm_app, "purchasing")
@@ -189,18 +193,77 @@ def test_export_post_answers_409_while_a_sheet_is_in_flight(scm_app, monkeypatch
     monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: type("J", (), {"id": "x"})())
 
     with TestClient(app) as c:
-        first = c.post("/api/v1/scm/order-summary/export",
-                       json={"run_id": run_id, "format": "xlsx"})
-        assert first.status_code == 200, first.text
+        first_xlsx = c.post("/api/v1/scm/order-summary/export",
+                            json={"run_id": run_id, "format": "xlsx"})
+        assert first_xlsx.status_code == 200, first_xlsx.text
 
-        second = c.post("/api/v1/scm/order-summary/export",
-                        json={"run_id": run_id, "format": "pdf"})
+        second_xlsx = c.post("/api/v1/scm/order-summary/export",
+                             json={"run_id": run_id, "format": "xlsx"})
+        assert second_xlsx.status_code == 409, second_xlsx.text
+        xlsx_count = db.execute(text(
+            "SELECT count(*) FROM user_downloads "
+            "WHERE source_entity_id = :r AND kind = 'order_sheet_xlsx'"
+        ), {"r": run_id}).scalar()
+        assert xlsx_count == 1, (
+            f"the same-format guard let a second xlsx row through: {xlsx_count}"
+        )
 
-    assert second.status_code == 409, second.text
-    count = db.execute(text(
-        "SELECT count(*) FROM user_downloads WHERE source_entity_id = :r"
+        pdf_while_xlsx_pending = c.post("/api/v1/scm/order-summary/export",
+                                        json={"run_id": run_id, "format": "pdf"})
+
+    assert pdf_while_xlsx_pending.status_code == 200, (
+        f"a pending xlsx must not block a pdf request for the same run: "
+        f"{pdf_while_xlsx_pending.text}"
+    )
+    pdf_count = db.execute(text(
+        "SELECT count(*) FROM user_downloads "
+        "WHERE source_entity_id = :r AND kind = 'order_sheet_pdf'"
     ), {"r": run_id}).scalar()
-    assert count == 1, f"the in-flight guard let a second row through: {count}"
+    assert pdf_count == 1, f"the pdf request must create its own row: {pdf_count}"
+
+
+def test_export_in_flight_guard_sweeps_a_stale_row_first(scm_app, monkeypatch):
+    """AC-16b (amended, reviewer R1): the guard sweeps stale rows (`DownloadService.
+    fail_stale`) BEFORE checking for an in-flight one - a `pending` row older than
+    `_STALE_AFTER` (20 min, a dead worker's leftover) must not lock the buyer out for
+    the rest of that window. Today `has_in_flight` never calls `fail_stale`, so the
+    stale row still blocks - this is the RED half."""
+    from app.services import queue_service
+    from app.services.download_service import DownloadService, _STALE_AFTER
+
+    app, db, gcu, gcuak = scm_app
+    uid = seed_user(db, "purchasing")
+    as_user(app, gcu, gcuak, uid)
+    run_id = _seed_run(db)
+    db.flush()
+
+    stale = DownloadService(db).create(
+        user_id=uid, kind="order_sheet_xlsx", source_entity_type="reorder_run",
+        source_entity_id=run_id, filename="order-sheet-stale.xlsx",
+    )
+    old_created_at = (
+        datetime.now(timezone.utc).replace(tzinfo=None) - _STALE_AFTER - timedelta(minutes=5)
+    )
+    db.execute(text(
+        "UPDATE user_downloads SET created_at = :ts WHERE id = :id"
+    ), {"ts": old_created_at, "id": str(stale.id)})
+    db.flush()
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export",
+                      json={"run_id": run_id, "format": "xlsx"})
+
+    assert resp.status_code == 200, (
+        f"a stale pending row must not block a fresh export: {resp.text}"
+    )
+    stale_row = db.execute(text(
+        "SELECT status FROM user_downloads WHERE id = :id"
+    ), {"id": str(stale.id)}).mappings().first()
+    assert stale_row["status"] == "failed", (
+        f"the stale row must be swept to failed, not left pending: {stale_row['status']}"
+    )
 
 
 def test_export_post_rejects_api_key_only_principal(scm_app):
