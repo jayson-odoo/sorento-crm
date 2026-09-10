@@ -1182,3 +1182,42 @@ def test_a_size_with_no_unit_is_not_assumed_to_be_millimetres(db):
 
     thin = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["thickness 8"])}
     assert thin.get("thickness") == 8.0, "a small measurement that is not an envelope is fine"
+
+
+# --------------------------------------------------------------------------- #
+# Attribute-first asks S1 - AC-1301, AC-1320 (PLAN-attribute-first-asks.md)     #
+# --------------------------------------------------------------------------- #
+
+
+def test_filter_specs_reports_a_phrase_that_names_no_set(db):
+    """AC-1301: "water tap" is a phrase whose content words are EACH known to the
+    catalogue's own vocabulary ("water" from the "Water Closet" synonym set, "tap" from
+    the "Tap" class synonyms) but which, as a two-word phrase, names no class, no
+    product_type and no brand. Today `filter_specs` reports this as an honest EMPTY list
+    (word-level alien check only) - the fix must report the phrase itself.
+    """
+    from app.services.product_spec_search import _search_vocabulary, filter_specs
+
+    vocabulary = _search_vocabulary(db)
+    assert "water" in vocabulary, "precondition: 'water' alone is already known vocabulary"
+
+    verdict = filter_specs(db, free_terms=["water tap"])
+    assert verdict["clause"] is None
+    assert verdict["unrecognized_terms"] == ["water tap"]
+
+
+def test_content_words_drop_question_words(db):
+    """AC-1320 / work item A2: question words ("which", "what", "how", "many", ...) carry
+    no product meaning and must never reach the vocabulary check as if they were a
+    customer's own description - "which basin got stock" must not report "which" as an
+    unrecognised word.
+    """
+    from app.services.product_spec_search import _content_words
+
+    assert _content_words("which basin got stock") == ["basin", "stock"]
+
+    words = _content_words("how many basin")
+    assert "which" not in words
+    assert "what" not in words
+    assert "how" not in words
+    assert "many" not in words

@@ -365,3 +365,154 @@ def test_search_specs_product_ids_whitelist_restricts_candidates(db):
     found = search_specs(db, free_terms=["kitchen sink"], product_ids=[a.id])
     codes = [c["product_code"] for c in found["candidates"]]
     assert codes == ["ZZT-SINK-A"]
+
+
+# --------------------------------------------------------------------------- #
+# Attribute-first asks S1 (PLAN-attribute-first-asks.md)                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_product_set_never_returns_a_silent_zero(db):
+    """AC-1302: "water tap" names no class/product_type/brand (AC-1301), and
+    `resolve_product_set` must carry that honesty through rather than answering a
+    silent, indistinguishable-from-real zero.
+    """
+    out = _totals(db, {"certificate": True}, ["water tap"])
+    assert out["qualifying_total"] == 0
+    assert "water tap" in out["unrecognized_terms"]
+
+
+def test_filter_specs_membership_accepts_product_type_and_brand(db):
+    """AC-1307: `filter_specs` membership widens beside `class` to `product_type` and
+    `brand` - today only a `class` spec entry defines membership, so a `product_type` /
+    `brand` entry is silently dropped and the clause stays `None`.
+    """
+    from sqlalchemy import func
+
+    from app.models.product_spec import ProductSpecifications
+
+    bidet = _product(db, "ZZT-PT-BIDET", "SORENTO BIDET SPRAY")
+    shower = _product(db, "ZZT-PT-SHOWER", "SORENTO SHOWER SET")
+
+    def _set_values(product, **extra):
+        row = (
+            db.query(ProductSpecifications)
+            .filter(ProductSpecifications.product_id == product.id)
+            .first()
+        )
+        values = dict(row.values or {}) if row is not None else {}
+        for key, value in extra.items():
+            values[key] = {"value": value}
+        if row is None:
+            row = ProductSpecifications(product_id=product.id, values=values, provenance={})
+            db.add(row)
+        else:
+            row.values = values
+        db.flush()
+
+    _set_values(bidet, product_type="bidet", brand="SORENTO")
+    _set_values(shower, product_type="shower_set", brand="SORENTO")
+
+    def _count(clause):
+        return (
+            db.query(func.count(ProductSpecifications.product_id))
+            .filter(clause)
+            .scalar()
+        )
+
+    by_type = filter_specs(db, specs=[{"key": "product_type", "value": "bidet"}])
+    assert by_type["clause"] is not None
+    assert _count(by_type["clause"]) == 1
+
+    by_brand = filter_specs(db, specs=[{"key": "brand", "value": "SORENTO"}])
+    assert by_brand["clause"] is not None
+    assert _count(by_brand["clause"]) == 2
+
+
+def test_resolve_product_set_intersects_given_product_ids_with_legs(db):
+    """AC-1308 (ids only): the LOOKUP-matched ids are the described set, intersected
+    with the legs like any other described set."""
+    a = _product(db, "ZZT-PID-A", "PRODUCT A")
+    b = _product(db, "ZZT-PID-B", "PRODUCT B")
+    c = _product(db, "ZZT-PID-C", "PRODUCT C")
+    _certificate(db, a)
+    out = resolve_product_set(db, require={"certificate": True}, product_ids=[a.id, b.id, c.id])
+    assert out["qualifying_total"] == 1
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == ["ZZT-PID-A"]
+
+
+def test_resolve_product_set_unions_product_ids_with_bindings(db):
+    """AC-1308 (both): product A is matched ONLY through the given `product_ids`;
+    product B is matched ONLY through the class binding; product C is certified but in
+    neither and must stay excluded - the described set is a UNION of the two, then
+    intersected with the legs."""
+    a = _product(db, "ZZT-UN-A", "SORENTO WIDGET A")
+    b = _product(db, "ZZT-UN-B", "SORENTO S/STEEL KITCHEN SINK (900X500X200MM)")
+    c = _product(db, "ZZT-UN-C", "SORENTO WIDGET C")
+    for p in (a, b, c):
+        _certificate(db, p)
+
+    out = resolve_product_set(
+        db,
+        require={"certificate": True},
+        product_ids=[a.id],
+        specs=[{"key": "class", "value": "kitchen sink"}],
+    )
+    assert out["qualifying_total"] == 2
+    codes = {cand["product_code"] for cand in out["candidates"]}
+    assert codes == {"ZZT-UN-A", "ZZT-UN-B"}
+
+
+def test_resolve_product_set_brand_scopes_the_set(db):
+    """AC-1306 / D3: a `brand` filter scopes the whole set, applied on top of the
+    described set and the legs - two certified kitchen sinks, one Sorento and one
+    Cabana, and only the Sorento one qualifies once `brand="SORENTO"` is asked."""
+    from app.models.product import Brand
+
+    sorento = Brand(id=str(uuid.uuid4()), brand_code="ZZT-SRT", brand_name="SORENTO")
+    cabana = Brand(id=str(uuid.uuid4()), brand_code="ZZT-CAB", brand_name="CABANA")
+    db.add_all([sorento, cabana])
+    db.flush()
+
+    a = _product(db, "ZZT-BR-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+    b = _product(db, "ZZT-BR-B", "CABANA S/STEEL KITCHEN SINK (1000X500X220MM)")
+    a.brand_id = sorento.id
+    b.brand_id = cabana.id
+    db.flush()
+    _certificate(db, a)
+    _certificate(db, b)
+
+    out = resolve_product_set(
+        db,
+        require={"certificate": True},
+        specs=[{"key": "class", "value": "kitchen sink"}],
+        brand="SORENTO",
+    )
+    assert out["qualifying_total"] == 1
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == ["ZZT-BR-A"]
+
+
+def test_product_ids_path_does_not_bleed_across_companies(db):
+    """AC-1310: the new `product_ids` leg is fail-closed per company exactly like the
+    other four - two companies share a product CODE, both certified, and a
+    `product_ids` list naming both uuids must still qualify only the caller's own
+    company's row."""
+    other = Company(id=str(uuid.uuid4()), code="ZZT-MC2", name="ZZT Mocha 2")
+    db.add(other)
+    db.flush()
+
+    ours = _product(db, "ZZT-DUP", "SORENTO WIDGET")
+    _certificate(db, ours)
+
+    with company_scope(db, frozenset({other.id})):
+        theirs = _product(db, "ZZT-DUP", "MOCHA WIDGET")
+        _certificate(db, theirs)
+
+    # Session scope is Sorento (conftest default): `theirs.id` must not qualify even
+    # though it was explicitly named in `product_ids`.
+    out = resolve_product_set(db, require={"certificate": True}, product_ids=[ours.id, theirs.id])
+    assert out["qualifying_total"] == 1
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == ["ZZT-DUP"]
