@@ -1536,8 +1536,6 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
     return ids
 
 
-_PREDICATE_WORD_RE_CACHE: dict[str, "re.Pattern[str]"] = {}
-
 # A COPY of `app.services.chatbot.head.output_exchange._CERT_RE`, never an import of it:
 # this file sits outside the chatbot module boundary (`tests/chatbot/test_import_boundary
 # .py`'s AC-002), so the same cert-word test is duplicated here rather than reached across
@@ -1556,17 +1554,25 @@ def _strip_predicate_words(text: str, words: list[str] | None) -> str:
 
     So "which sorento bidet has cert" does not also ask the described-set reader to
     bind the word "cert" it was for the PREDICATE, not the description.
+
+    REV-S4/AC-1332 (third console pass): each entry is split on whitespace and
+    stripped WORD BY WORD, never matched as one contiguous phrase - the parser's
+    own normalisation can widen a word ("cert" to "certificate") so the phrase
+    "PPS cert" is no longer contiguous in "which item has PPS certificate", and a
+    single whole-phrase regex (with its own trailing word-boundary assertion)
+    then fails to match at all, leaving "PPS" in the remainder as an
+    unrecognized leftover. Compiled inline (REV-S2): the pattern is built from a
+    customer-controlled string, so caching it by that string is an unbounded,
+    caller-fed dict.
     """
     stripped = text or ""
-    for word in words or []:
-        cleaned = str(word or "").strip()
-        if not cleaned:
-            continue
-        pattern = _PREDICATE_WORD_RE_CACHE.get(cleaned)
-        if pattern is None:
+    for phrase in words or []:
+        for word in re.split(r"\s+", str(phrase or "").strip()):
+            cleaned = word.strip()
+            if not cleaned:
+                continue
             pattern = re.compile(rf"(?<!\w){re.escape(cleaned)}(?!\w)", re.IGNORECASE)
-            _PREDICATE_WORD_RE_CACHE[cleaned] = pattern
-        stripped = pattern.sub(" ", stripped)
+            stripped = pattern.sub(" ", stripped)
     return re.sub(r"\s+", " ", stripped).strip()
 
 
@@ -2625,6 +2631,12 @@ def resolve_reference_post(
             limit=max(payload.limit or 0, _SET_PAGE_ID_CAP),
             product_ids=_collect_lookup_product_ids(result) or None,
             brand=brand,
+            # SEC-S1/AC-1334: the promotion leg must see the caller's OWN tier,
+            # not only the ordinary entity-resolution filter
+            # (`_apply_promotion_access_levels_filter`) further down - a HAS
+            # turn's qualifying_total must never count a tier-restricted
+            # promotion the contact cannot see.
+            access_levels=payload.access_levels,
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
