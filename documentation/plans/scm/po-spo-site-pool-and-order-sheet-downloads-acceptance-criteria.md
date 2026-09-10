@@ -75,8 +75,12 @@ line still counts. A location-grain row reads its own warehouse when it is site 
 
 - **AC-7 [BE]** `GET /reorder-runs/{run}/spo-history?product_id=` Open tab: for a run whose
   recs for the product are PRODUCT grain, allocations at active site-pool warehouses,
-  product-wide; for LOCATION-grain recs, allocations at the recs' own warehouses when those
-  are site pool, nothing for a bin (the same grain rule the PO book applies, reviewer S1). The
+  product-wide; for a single LOCATION-grain row the FE passes the row's `warehouse_id` and the
+  modal lists that warehouse only when it is site pool, nothing for a bin (the same grain rule
+  the PO book applies, reviewer S1). Narrowing is explicit (`?warehouse_id=`), never inferred
+  from the recs: the rec fixture stamps a warehouse on product-grain runs too, so inference
+  misclassifies (coder, round B). A GROUPED location-grain line passes no warehouse and reads
+  product-wide - a documented limitation, location grain is not the rollout default. The
   sum of `qty - received_qty` over Open rows equals the row's `incoming_spo` (AC-1 data: one
   row, BRW, 40; the BRW-BB allocation is absent from both tabs; a location row at BRW-BB lists
   nothing).
