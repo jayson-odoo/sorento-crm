@@ -31,24 +31,35 @@ export function DescriptionEnCell({
   const [value, setValue] = useState(descriptionEn ?? '');
   const inputRef = useRef<HTMLInputElement>(null);
   const mutation = useProformaInvoiceTranslationMutation(invoiceId);
+  // Enter saves and, on success, swaps this `<Input>` for the read-mode button - which
+  // removes a still-focused element from the DOM and makes the browser fire a real `blur`
+  // on it as part of that removal, replaying `onBlur={save}` a second time with the SAME
+  // (already-saved) value before React finishes unmounting. Guards the one real request
+  // per edit session; reset the moment a NEW edit starts.
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (!editing) setValue(descriptionEn ?? '');
   }, [descriptionEn, editing]);
 
   useEffect(() => {
-    if (editing) inputRef.current?.focus();
+    if (editing) {
+      savingRef.current = false;
+      inputRef.current?.focus();
+    }
   }, [editing]);
 
   const editable = canAdjust && !!description?.trim();
 
   const save = () => {
+    if (savingRef.current) return;
     const trimmed = value.trim();
     if (!trimmed || trimmed === (descriptionEn ?? '')) {
       setEditing(false);
       setValue(descriptionEn ?? '');
       return;
     }
+    savingRef.current = true;
     mutation.mutate(
       { source_text: description as string, target_text: trimmed },
       { onSuccess: () => setEditing(false) },
