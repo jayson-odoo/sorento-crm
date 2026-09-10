@@ -745,4 +745,5 @@ def test_a_level_sets_bypass_never_fires_when_stock_already_covers_the_confirmed
 
     assert not _buys(rows), "net 550 against a level of 500 is not a shortage"
     row = _sizing_row(rows)
+    assert row["rec_type"] == "covered", "stock already covers it - a suggestion, not a gap"
     assert float(row["inputs"]["net"]) == 550.0

@@ -47,6 +47,7 @@ from app.models.procurement import ProductSupplier, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import OrderSummaryRow, ReorderRecommendation, ReorderRun
 from app.services.error_handler import AppException
+from app.services.scm import decision_service as dsvc
 from app.services.scm import reorder_engine as eng
 from app.services.scm import summary_order_service as svc
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
@@ -1068,6 +1069,15 @@ def test_record_decision_accepts_a_row_whose_suggested_qty_is_zero(db):
     for having nothing suggested. Fails today because the covered product never reaches the
     book at all (`_belongs_on_the_book`), not because of a guard inside `record_decision`
     itself - there is none.
+
+    Extended (review round) through Confirm: `_persist_location_split` (called by
+    `record_decision`) replays the allocator ONLY over this run's `rec_type == "buy"`
+    recommendations - a covered-only product has none, so it returns `[]` no matter the
+    chosen quantity, and `_confirm_product_grain`'s fallback path then finds no
+    `OrderSummaryLocationAllocation` row and silently skips the product
+    (`continue  # no real location to name`). RED on HEAD: `location_allocations` comes
+    back `[]` and `confirmed_count` comes back 0 - a buyer's own decision on a covered
+    row is accepted and then never drafted, which is the gap AC-10 exists to close.
     """
     run = _run(db, decision_grain="product", contract_version=1)
     wh = _warehouse(db)
@@ -1092,3 +1102,27 @@ def test_record_decision_accepts_a_row_whose_suggested_qty_is_zero(db):
     assert out["chosen_qty"] == 5.0
     row = _row(db, run, product)
     assert float(row.chosen_qty) == 5.0
+
+    assert out["location_allocations"] == [
+        {"warehouse_code": wh.warehouse_code, "warehouse_name": wh.warehouse_name,
+         "allocated_qty": 5.0},
+    ], "the chosen 5 must be split across the product's real member warehouse, not dropped"
+
+    confirmed = dsvc.confirm_decisions(db, run.id, ids=None, actor="mr loo")
+    assert confirmed["confirmed_count"] == 1
+
+    line = db.execute(text(
+        "SELECT purchase_order_id::text AS po_id, qty_ordered, "
+        "warehouse_id::text AS warehouse_id FROM purchase_order_lines "
+        "WHERE product_id = :p AND source_system = 'scm_order_summary_row'"
+    ), {"p": product.id}).mappings().first()
+    assert line is not None, (
+        "Confirm must draft a PO line for a covered product a buyer chose to order anyway"
+    )
+    assert float(line["qty_ordered"]) == 5.0
+    assert line["warehouse_id"] == wh.id
+
+    worklist = svc.po_worklist(db, run_id=run.id)
+    wl_row = next(r for r in worklist["rows"] if r["product_code"] == product.product_code)
+    codes = {a["warehouse_code"] for a in wl_row["location_allocations"]}
+    assert wh.warehouse_code in codes, "the worklist row must still name the real location"

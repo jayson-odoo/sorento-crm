@@ -186,6 +186,7 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     computed_at = to_naive_datetime(datetime.now(MALAYSIA_TZ))
     run = _run_for(db, run_id)
     is_legacy = plan_grain.is_legacy_run(run)
+    decision_grain = plan_grain.decision_grain_of(run)
 
     # Read per LOCATION, not pre-summed: the channel breakdown, the shared supply
     # references and the location split all live on the individual frozen rows, and the
@@ -208,7 +209,8 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     by_product: dict[str, list] = {}
     for r in rec_rows:
         by_product.setdefault(str(r.product_id), []).append(r)
-    product_ids = [pid for pid, recs in by_product.items() if _belongs_on_the_book(recs)]
+    product_ids = [pid for pid, recs in by_product.items()
+                   if _belongs_on_the_book(recs, decision_grain)]
     if not product_ids:
         return 0
 
@@ -363,33 +365,56 @@ _SUGGESTION_FALLBACK = {
 def _suggestion_text(recs: list) -> Optional[str]:
     """The engine's own one-line reason for this row, product-wide (issue #795).
 
-    `recs[0]` - the first recommendation - because the product-grain engine freezes
-    exactly ONE planning row per product (`_sizing_row` in `test_reorder_per_product.py`
-    pins this); a location-grain pool or network run still states one group decision
-    across however many rows it emitted, so which is "first" is arbitrary by
-    construction, the same reasoning `reorder_level` above already relies on.
+    `recs` carries no ORDER BY from the query that built it, so picking `recs[0]` picked
+    whichever row Postgres happened to return first - fine on the product-grain engine's
+    normal shape (`_sizing_row` in `test_reorder_per_product.py` pins ONE planning row per
+    product), but a location-grain pool or network run can still emit several KINDS of row
+    for one product (a `buy` at location A beside a `needs_level` at location B), and an
+    arbitrary pick could state the wrong one (review fix round). Preference order: a `buy`
+    is the actionable row and its reason is the one a buyer needs; failing that an
+    `exception` (still a firm need, just unsourced); failing that whichever row came back
+    first - `covered` and `needs_level` both describe the same "nothing to buy" product,
+    so which one speaks is arbitrary by construction, the same reasoning `reorder_level`
+    above already relies on.
     """
-    first = recs[0]
-    return first.triggered_reason or _SUGGESTION_FALLBACK.get(first.rec_type)
+    chosen = (
+        next((r for r in recs if r.rec_type == "buy"), None)
+        or next((r for r in recs if r.rec_type == "exception"), None)
+        or recs[0]
+    )
+    return chosen.triggered_reason or _SUGGESTION_FALLBACK.get(chosen.rec_type)
 
 
-def _belongs_on_the_book(recs: list) -> bool:
+def _belongs_on_the_book(recs: list, decision_grain: Optional[str]) -> bool:
     """Does this product get a Summary Order Report row at all?
 
-    Yes for ANY product-grain recommendation the run produced - `buy`, `exception`,
-    `covered`, `needs_level` (issue #795, owner's ruling 10 Sep, superseding AC-C2.2a's
-    exclusion). The owner: "include the rows with suggested quantity = 0 also, otherwise
-    the user might want to order even though we suggest 0" - a covered or needs_level
-    product still has a `suggestion` explaining the 0, and the buyer can still choose to
-    order over it (AC-9, AC-10). Measured on the local prod-copy database (10 Sep): buy
-    374 + covered 575 + needs_level 1 lands the sheet at under 1,000 rows, well inside
-    `_MAX_EXPORT_ROWS` 2000.
+    On the PRODUCT grain: yes for ANY product-grain recommendation the run produced -
+    `buy`, `exception`, `covered`, `needs_level` (issue #795, owner's ruling 10 Sep,
+    superseding AC-C2.2a's exclusion, but only for the grain the owner was looking at).
+    The owner: "include the rows with suggested quantity = 0 also, otherwise the user
+    might want to order even though we suggest 0" - a covered or needs_level product
+    still has a `suggestion` explaining the 0, and the buyer can still choose to order
+    over it (AC-9, AC-10). Measured on the local prod-copy database (10 Sep, product
+    grain): buy 374 + covered 575 + needs_level 1 lands the sheet at under 1,000 rows,
+    well inside `_MAX_EXPORT_ROWS` 2000.
 
-    `recs` is already filtered to `CHANNEL_REC_TYPES` by the caller, so this is `bool(recs)`
-    in substance; kept as a named function because the call site reads better naming the
-    question than inlining the truth value.
+    On every OTHER grain (location-grain, or `None`/legacy): the OLD rule stands - a row
+    only when the run SIZED a purchase for the product, or owes firm Project Buy the run
+    could not size (review fix round, 10 Sep). A location-grain run names ONE recommendation
+    per warehouse, so a product can hold a `covered` row at every one of its bins; widening
+    admission on that grain the same way would put roughly 4,000 undecidable rows on an
+    unpaginated report and trip the export's own 2,000-row refusal - the exact fatigue
+    AC-C2.2a exists to prevent, just relocated to the grain the owner was not asking about.
     """
-    return bool(recs)
+    if decision_grain == plan_grain.PRODUCT_GRAIN:
+        return bool(recs)
+    for r in recs:
+        if r.rec_type == BUY_REC_TYPE:
+            return True
+        basis = (r.inputs or {}).get("plan_basis") or {}
+        if float(basis.get("project_need") or 0.0) > 0:
+            return True
+    return False
 
 
 def _sizing_groups(recs: list) -> dict:
@@ -781,16 +806,22 @@ def _grouped_supply_map(rows) -> dict[str, dict]:
     rows of ``(product_id, document_number, qty)`` collapse to ``{pid: {"qty": total,
     "docs": [{"number", "qty"}, ...]}}``.
 
-    `docs` is sorted by number, a NULL number groups under "(no number)", and a document
-    whose remainder is 0 (or negative) is dropped from the list - it has nothing to trace.
-    `qty` is the sum of EVERY group, the zero ones included, so it is exactly the single
-    SQL SUM the old ungrouped query already returned: grouping one more level (by document)
-    and then adding the groups back up is the same arithmetic as summing the rows directly.
+    `docs` is sorted by number, a NULL number groups under "(no number)". Each document's
+    remainder is CLAMPED to 0 before it is added to `qty` or considered for the list
+    (review fix round, AC-15): an over-received still-open line (a line the book marks
+    open despite `qty_received > qty_ordered`, or an SPO allocation over-received the
+    same way) would otherwise SUBTRACT from the total while contributing nothing to the
+    list, so the listed lines no longer summed to the figure printed above them. An
+    over-received line is not incoming supply either way, so 0 is the right reading of
+    it, not a negative one. This makes `qty` NO LONGER byte-identical to the old
+    ungrouped SUM on an over-received line - deliberately: the old SUM let a negative
+    remainder net other documents down, which is the same bug restated as an arithmetic
+    "feature" rather than fixed.
     """
     out: dict[str, dict] = {}
     for pid, number, qty in rows:
         key = str(pid)
-        q = float(qty or 0.0)
+        q = max(float(qty or 0.0), 0.0)
         bucket = out.setdefault(key, {"qty": 0.0, "docs": []})
         bucket["qty"] += q
         if q > 0:
@@ -2209,13 +2240,22 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
     A re-decision REPLACES the split rather than rescaling it: rescaling a previous
     apportionment compounds its rounding and would drift away from the parent, and the
     frozen inputs it is derived from have not changed.
+
+    A covered or needs_level product owns NO `buy` recommendation at all (review fix
+    round, issue #795/#796): the run never sized a purchase for it, so there is nothing
+    to replay a deficit off. A buyer can still choose to order over the suggestion
+    (AC-10), and that quantity still needs a real warehouse to land in - the fallback
+    below reads whichever product-grain recommendation the product actually has instead.
     """
     db.query(OrderSummaryLocationAllocation).filter(
         OrderSummaryLocationAllocation.order_summary_row_id == str(row.id)
     ).delete(synchronize_session=False)
 
     chosen = float(row.chosen_qty or 0)
-    all_recs = (
+    if chosen <= 0:
+        return []
+
+    buy_recs = (
         db.query(ReorderRecommendation)
         .filter(
             ReorderRecommendation.run_id == str(row.run_id),
@@ -2224,9 +2264,7 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
         )
         .all()
     )
-    recs = [r for r in all_recs if r.warehouse_id is not None]
-    if chosen <= 0 or not all_recs:
-        return []
+    recs = [r for r in buy_recs if r.warehouse_id is not None]
 
     inputs = []
     for rec in recs:
@@ -2248,7 +2286,24 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
         # buyer with a quantity and nowhere to put it (AC-F08, AC-F12). The run's own
         # frozen basis carries the member locations and the share the engine gave each,
         # which is exactly the deficit signal the per-location rows would have supplied.
-        for g in _sizing_groups(all_recs).values():
+        #
+        # `buy_recs` is empty for a covered/needs_level product - there is no buy row to
+        # read a basis off, so the fallback reads whichever product-grain recommendation
+        # type the product actually has (`CHANNEL_REC_TYPES`) instead. `_plan_basis`
+        # freezes `locations` on EVERY row it emits, buy or not - `location_suggested_qty`
+        # reads 0 for every member there (nothing was sized), and `eng_allocate` already
+        # falls back to a demand-weighted (or even) split when every deficit is 0, so the
+        # buyer's chosen quantity still lands somewhere real rather than nowhere.
+        channel_recs = buy_recs or (
+            db.query(ReorderRecommendation)
+            .filter(
+                ReorderRecommendation.run_id == str(row.run_id),
+                ReorderRecommendation.product_id == str(row.product_id),
+                ReorderRecommendation.rec_type.in_(CHANNEL_REC_TYPES),
+            )
+            .all()
+        )
+        for g in _sizing_groups(channel_recs).values():
             for loc in g.get("locations") or []:
                 if not loc.get("warehouse_id"):
                     continue
@@ -2258,6 +2313,23 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
                     "demand_rate": float(loc.get("avg_daily_demand") or 0.0),
                     "recommendation_id": None,
                 })
+        if not inputs:
+            # No frozen `plan_basis` either - a hand-built recommendation predating the
+            # freeze (or a legacy one). The recommendation's OWN `warehouse_id` is the
+            # last fact left to split against: one location per distinct warehouse a
+            # channel-type rec actually named, no deficit or demand signal to weigh them
+            # by - `eng_allocate` already falls back to an even split across inputs whose
+            # deficit and demand are both 0, so the chosen quantity still lands on a real
+            # place rather than nowhere.
+            seen: dict[str, None] = {}
+            for rec in channel_recs:
+                if rec.warehouse_id is not None:
+                    seen.setdefault(str(rec.warehouse_id), None)
+            inputs = [
+                {"warehouse_id": wid, "deficit": 0.0, "demand_rate": 0.0,
+                 "recommendation_id": None}
+                for wid in seen
+            ]
     if not inputs:
         return []
     rec_by_wid = {i["warehouse_id"]: i["recommendation_id"] for i in inputs}

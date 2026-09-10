@@ -206,6 +206,20 @@ def test_export_pdf_html_renders_one_document_per_line():
     assert "5\nPO-A - 4\nPO-B - 1" in html or "5<br>PO-A - 4<br>PO-B - 1" in html
     assert "30\nSPO-X - 30" in html or "30<br>SPO-X - 30" in html
 
+    # The substrings above pass whether or not the cell actually wraps - `_export_pdf_html`
+    # only wraps (`class="list"`, `white-space: pre-line`) a column index listed in
+    # `_PDF_LIST_COLUMNS`, so pin the indices AND the class on the cell itself, or removing
+    # the wrap here stays green.
+    assert 11 in svc._PDF_LIST_COLUMNS and 12 in svc._PDF_LIST_COLUMNS, (
+        "BRW PO qty (11) and BRW incoming qty (12) must be in the wrapped set"
+    )
+    assert '<td class="list">5\nPO-A - 4\nPO-B - 1</td>' in html, (
+        "the BRW PO qty cell itself must carry the list (wrap) class"
+    )
+    assert '<td class="list">30\nSPO-X - 30</td>' in html, (
+        "the BRW incoming qty cell itself must carry the list (wrap) class"
+    )
+
 
 # =========================================================================== #
 # test 14 (AC-15): out-of-scope supply contributes nothing
@@ -233,3 +247,34 @@ def test_a_project_bin_po_and_a_fully_received_spo_contribute_nothing(db):
     assert row.po_open_docs == []
     assert float(row.incoming_spo_qty) == 0.0
     assert row.incoming_spo_docs == []
+
+
+# =========================================================================== #
+# review round: an over-received still-open PO line clamps at 0 per document
+# =========================================================================== #
+
+def test_an_over_received_still_open_po_line_clamps_at_zero_per_document(db):
+    """Ruling (review round): an over-received but still-open PO line (`qty_received >
+    qty_ordered`, so its own remainder is negative) must not subtract from the total and
+    must not appear in the document list - clamp per document at 0, in both places, not
+    only at the end. PO-A owes 4; PO-OVER's remainder is -3 (5 ordered, 8 received, still
+    `line_status = 'open'`). The listed lines must keep summing to the printed total
+    (AC-15): `po_open_qty` 4, `po_open_docs` naming PO-A alone.
+    """
+    run = _run(db, decision_grain="product", contract_version=1)
+    wh = _warehouse(db)
+    product = _product(db, stem="S796CLAMP")
+    _buy_rec(db, run, product, wh)
+
+    _open_po_line(db, product, wh, po_number="PO-A", qty_ordered=4)
+    _open_po_line(db, product, wh, po_number="PO-OVER", qty_ordered=5, qty_received=8)
+
+    assert svc.write_rows(db, run.id) == 1
+    row = _row(db, run, product)
+
+    assert float(row.po_open_qty) == 4.0, (
+        "PO-OVER's negative remainder must be clamped at 0, not subtracted from PO-A's 4"
+    )
+    assert row.po_open_docs == [{"number": "PO-A", "qty": 4}], (
+        "an over-received document has nothing open to list, so it is left off entirely"
+    )
