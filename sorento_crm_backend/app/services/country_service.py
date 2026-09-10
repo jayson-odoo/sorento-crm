@@ -4,6 +4,7 @@ from typing import Optional
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.models.base import company_scope
 from app.models.country import Country
 from app.models.procurement import Supplier
 from app.schemas.country import CountryCreate, CountryUpdate
@@ -79,7 +80,13 @@ class CountryService:
 
     def delete_country(self, country_id: str) -> None:
         country = self.get_country(country_id)
-        count = self.db.query(Supplier).filter(Supplier.country_id == country_id).count()
+        # Countries is company-SHARED (`__company_shared__`), so a row here can be
+        # referenced by a supplier belonging to ANY company - counted here across all of
+        # them, or the ambient (single-company) scope would undercount and let the delete
+        # through, to fail loudly on the DB's own `ON DELETE RESTRICT` instead of the
+        # clean 409 this guard exists to give.
+        with company_scope(self.db, None):
+            count = self.db.query(Supplier).filter(Supplier.country_id == country_id).count()
         if count:
             raise handle_conflict(
                 f"Cannot delete this country: {count} supplier{'s' if count != 1 else ''} "
