@@ -12,14 +12,14 @@ schema built by `Base.metadata.create_all` never runs this migration, so
 `tests/test_countries.py` against a rolled-back connection or a `blank_session`.
 
 Revision ID: 510_countries
-Revises: 510_strip_rtf_so_notes
+Revises: 511_so_project_label
 """
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "510_countries"
-down_revision = "510_strip_rtf_so_notes"
+down_revision = "511_so_project_label"
 branch_labels = None
 depends_on = None
 
