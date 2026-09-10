@@ -147,6 +147,49 @@ id       kind              status  created_at (UTC)            ready_at         
 Both `status='ready'` with a non-null `storage_key`, `error` empty on both. No 409, no
 `failed` row.
 
+## AC-7 (folded scope) - plan list / decisions tile / order sheet share one scope
+
+Verified 10 Sep, commit `446f99c5a` (S6+S7 landed), lane stack `:3082`/`:8082`. Plan
+`4f72aefe-d927-4597-851e-baddb603fad6` (10/09/2026 19:39), the same 950-rec plan the rest of
+this file uses (412 buy + 537 covered + 1 needs_level).
+
+| Source | N |
+| --- | --- |
+| Decisions tile | "0 of **415** made / 415 left to decide" |
+| Grid pagination | "1 - 25 of **415**" |
+| API (`type=buy` + `type=needs_level` + `type=covered` rows where `hidden_by_default !== true`) | 412 + 1 + 2 = **415** |
+| Downloaded Order sheet xlsx (`openpyxl`, `ws.max_row - 1`) | **415** |
+
+All four agree. `type=covered` returned 537 rows total, of which 535 carry
+`hidden_by_default: true` and 2 do not - the 2 shown-covered rows are what close the gap
+between 413 (buy+needs_level) and 415.
+
+`B2154-NL`: absent from the default search (grid: "1 - 0 of 0"), absent from the downloaded
+workbook (`openpyxl` scan of the Item code column, 415 rows, no match).
+
+**Gap, not new**: could not reveal `B2154-NL` through a live "Covered by stock" status
+filter as the brief described. Traced in the FE source: `PlanLinesSection`'s bypass
+(`statusFilter === 'covered_by_stock'` unlocks `planLines.lines` unfiltered,
+`PlanLinesSection.tsx:106`) is real and unit-tested (AC-5), but `ReorderPlanView.tsx` renders
+`PlanLinesSection` UNCONTROLLED (no `statusFilter`/`onStatusFilterChange` passed - only
+`decidedFilter` is wired), and the only internal path that can set `ownStatusFilter` is
+`PlanLinesGrid`'s `applySegment` reading a saved segment's `quick_filters.status`
+(`PlanLinesGrid.tsx:1188`) - the Filters popover itself dropped its status preset in a prior
+slice (AC-S2.1) and offers no way to create such a segment. The popover's "Rec type equals
+Covered by stock" condition (which does look like a status filter) instead filters WITHIN
+the already-hidden `visibleLines` set (`PlanLinesGrid.tsx:406-410`, fed `lines` = the
+pre-filtered prop from `PlanLinesSection.tsx:323`), so it can only ever surface the 2 rows
+already shown - confirmed live: applying it plus searching `B2154-NL` still returned "1 - 0
+of 0". This matches this file's own pre-existing "Negative test" section above (2026-09-10,
+before this slice) reaching the same dead end for a different SKU - a standing UX gap the
+reviewer should weigh, not a regression from S6/S7.
+
+Screenshots: `AC-7-scope-tile-pagination.png` (Decisions tile "0 of 415 made"),
+`AC-7-scope-pagination.png` (grid footer "1 - 25 of 415"), `AC-7-scope-b2154-absent.png`
+(search "B2154-NL" -> "1 - 0 of 0"), `AC-7-scope-drawer-ready.png` (My Downloads,
+`order-sheet-10092026.xlsx`, 11:02 pm, Ready). No "B2154-NL under the filter" screenshot -
+see the gap above.
+
 ## Console / network
 
 `errors` and `console` showed no uncaught page errors across the whole run (one pre-existing
