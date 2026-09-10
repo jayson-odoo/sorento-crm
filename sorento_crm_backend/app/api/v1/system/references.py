@@ -1468,21 +1468,32 @@ class ResolveReferenceRequest(BaseModel):
 
 
 def _has_exact_product_match(result: dict[str, Any]) -> bool:
-    """AC-1305: did a caller token already resolve to a full product code?
+    """AC-1305 (fix round, 11 Sep): did a CODE-SHAPED caller token already
+    resolve to a product match, at ANY tier?
 
-    `exact` is the probe's own default tier (`entity_resolver.py:506`); `head_code`
-    is the code-head retry. Either means the customer typed a complete code, and
-    `require`'s described-set machinery must not run over an answer that is already
-    a single record - the response stays byte-identical to the same request
-    without `require`.
+    The shape test is the TOKEN's own (this file's own `_is_code_shaped`, the
+    "mixed letters and digits" `_CODE_RE` test - NOT `answer.py`'s
+    same-named function, which exists for a different job: filtering a
+    did-you-mean candidate LIST of already-known codes, and is deliberately
+    loose there). A code-shaped token ("zztwc286") that resolves only by
+    PREFIX still means the customer typed a complete-enough code, so
+    `require`'s described-set machinery must not run over it - `tier` no
+    longer gates this at all (`exact`/`head_code` used to be the only tiers
+    checked, which let a PREFIX-tier code slip through and wrongly grow a
+    `predicate` block). A WORD token ("bidet", "sorento") never blocks HAS,
+    even when it happens to resolve at the "exact" tier (a product literally
+    coded "SORENTO") - the customer's own word is not thereby a code.
     """
-    tiers = ("exact", "head_code")
     for resolution in result.get("resolutions") or []:
+        token = (resolution or {}).get("token")
+        if not _is_code_shaped(str(token or "")):
+            continue
         for match in (resolution or {}).get("matches") or []:
-            if (match or {}).get("entity_type") == "product" and (match or {}).get(
-                "match_tier"
-            ) in tiers:
+            if (match or {}).get("entity_type") == "product":
                 return True
+    # AND-mode intersection carries no per-match token to shape-test, so this
+    # stays on the old tier check - unexercised by any test, kept conservative.
+    tiers = ("exact", "head_code")
     for match in result.get("intersection") or []:
         if (match or {}).get("entity_type") == "product" and (match or {}).get(
             "match_tier"
@@ -1580,9 +1591,18 @@ def _has_turn_free_terms(
     ):
         return []
 
+    from app.services.chatbot.head.output_exchange import _CERT_RE
     from app.services.product_spec_search import _content_words
 
-    words = _content_words(query_text)
+    # Fix round, 11 Sep: `predicate_words` only strips its OWN entries whole-word,
+    # and the parser sometimes normalises the attachment_type entity's raw to a
+    # canonical word ("certificate"/"Certification") that never matches the
+    # literal word the customer typed ("cert") - so `predicate_words` alone can
+    # leave "cert" sitting in the remainder ("which tap has cert" -> "tap cert").
+    # `_CERT_RE` is the SAME cert-word test `derive_require`/`derive_routing`
+    # already use, so every cert-shaped word (and a bare scheme word like "span")
+    # is dropped here too, not just the ones the parser happened to echo back.
+    words = [w for w in _content_words(query_text) if not _CERT_RE.search(w)]
     return [" ".join(words)] if words else []
 
 
@@ -2552,6 +2572,12 @@ def resolve_reference_post(
         # present-only-on-the-relevant-miss convention as `schemes_on_file`.
         if outcome.get("suggestions"):
             result["predicate"]["suggestions"] = outcome["suggestions"]
+        # F2/AC-1320 fix round: the last-resort fallback (the catalogue's own
+        # most common class labels) when NOTHING was near enough to offer as a
+        # `suggestions` entry - a distinct key because it carries different
+        # copy ("Try a product type such as ...", never "Did you mean ...?").
+        if outcome.get("common_class_labels"):
+            result["predicate"]["common_class_labels"] = outcome["common_class_labels"]
         # E2/AC-1316: the described set's class label(s), for the set-answer
         # header's noun (`answer.set_noun_for`) - present only when non-empty
         # (AC-1309's own shape-lock test asserts `predicate` carries EXACTLY its

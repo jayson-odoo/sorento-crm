@@ -95,6 +95,26 @@ def _nearest_class_labels(db: Session, term: str, *, limit: int = 3) -> list[str
     return found[:limit]
 
 
+def _common_class_labels(db: Session, *, limit: int = 3) -> list[str]:
+    """The class labels the MOST products carry, most-common first (AC-1320's
+    last-resort fallback): when a term names nothing `_nearest_class_labels`
+    can read at all - no exact word match, no fuzzy near-miss - the reply still
+    has to offer SOMETHING real ("Try a product type such as tap, wash basin,
+    water closet."), never the contentless "Did you mean the product types I
+    know?".
+    """
+    expr = ProductSpecifications.values["class"]["value"].astext
+    rows = (
+        db.query(expr, func.count())
+        .filter(expr.isnot(None))
+        .group_by(expr)
+        .order_by(func.count().desc())
+        .limit(limit)
+        .all()
+    )
+    return [row[0] for row in rows if row[0]]
+
+
 def _lookup_resolve(db: Session, set_key: str, raw: str) -> str | None:
     """The lookup set's own resolved VALUE, or None on any miss.
 
@@ -349,18 +369,30 @@ def resolve_product_set(
         # is no id set either: the described set is undefined. Answering the
         # predicate over the WHOLE catalogue would be an answer to a question
         # nobody asked.
-        return {
+        # AC-1320/F2: nearest class-label suggestions for the FIRST unrecognized
+        # term, so the reply can offer a real "did you mean" instead of naming
+        # nothing at all. When NOTHING is near enough either (no exact word
+        # match, no fuzzy near-miss), the fallback is the catalogue's own most
+        # common class labels under a DIFFERENT sentence template
+        # ("common_class_labels", never "suggestions") - the two carry
+        # different copy in `answer.not_found_error_message` and must not be
+        # conflated into one key.
+        nearest = _nearest_class_labels(db, unrecognized[0]) if unrecognized else []
+        zero_result: dict[str, Any] = {
             "candidates": [],
             "qualifying_total": 0,
             "truncated": False,
             "unrecognized_terms": unrecognized,
             "require": require_echo,
             "class_labels": verdict["class_labels"],
-            # AC-1320/F2: nearest class-label suggestions for the FIRST unrecognized
-            # term, so the reply can offer a real "did you mean" instead of naming
-            # nothing at all.
-            "suggestions": _nearest_class_labels(db, unrecognized[0]) if unrecognized else [],
         }
+        if nearest:
+            zero_result["suggestions"] = nearest
+        elif unrecognized:
+            common = _common_class_labels(db)
+            if common:
+                zero_result["common_class_labels"] = common
+        return zero_result
 
     parent = aliased(Product)
     family = func.coalesce(parent.product_code, Product.product_code)

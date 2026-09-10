@@ -2904,10 +2904,27 @@ def not_found_error_message(
                     for s in jsc.array(jsc.get(predicate, "suggestions"))
                     if jsc.truthy(s)
                 ]
-                suggestion_text = _human_list(suggestions) if suggestions else "the product types I know"
-                escalate_message = (
-                    f"I don't know '{term}' as a product type. Did you mean {suggestion_text}?"
-                )
+                if suggestions:
+                    escalate_message = (
+                        f"I don't know '{term}' as a product type. "
+                        f"Did you mean {_human_list(suggestions)}?"
+                    )
+                else:
+                    # Fix round, F2: NOTHING was near enough to offer as a real
+                    # "did you mean" - the catalogue's own most common class
+                    # labels (`common_class_labels`) still give a real answer,
+                    # never the contentless "Did you mean the product types I
+                    # know?".
+                    common = [
+                        jsc.js_string(c).strip().lower()
+                        for c in jsc.array(jsc.get(predicate, "common_class_labels"))
+                        if jsc.truthy(c)
+                    ]
+                    common_text = ", ".join(common) if common else "a class or product type I know"
+                    escalate_message = (
+                        f"I don't know '{term}' as a product type. "
+                        f"Try a product type such as {common_text}."
+                    )
                 is_clarification = True
             elif (
                 isinstance(predicate, dict)
