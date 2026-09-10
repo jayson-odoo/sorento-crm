@@ -29,9 +29,11 @@ tool. No new reply format.
   no message-text matching beyond the existing `_CERT_RE` on the attachment_type entity raw:
   `check_stock` → `{"stock": true}`; `check_incoming` → `{"incoming": true}`;
   `check_promotion` → `{"promotion": true}`; `check_product_attachment` with an
-  `attachment_type` entity whose raw matches `_CERT_RE` → `{"certificate": true}` (plus
-  `{"scheme": <raw>}` when a second attachment_type raw or the same raw names a scheme
-  word from the `certificate_scheme` lookup set); `check_product_attachment` with any other
+  `attachment_type` entity whose raw matches `_CERT_RE` → `{"certificate": true}` when the raw
+  is only the cert word ("cert", "certificate", "sijil"), else `{"certificate": {"scheme":
+  <raw minus the cert word>}}` ("pps cert" → scheme "pps", "watermark certificate" → scheme
+  "watermark"); the function stays pure, the resolver normalises the scheme word through the
+  `certificate_scheme` lookup set (AC-1313); `check_product_attachment` with any other
   attachment_type raw → `{"attachment_type": <raw>}`; every other intent → `None`.
   Evidence: pytest, one case per row, `tests/test_chatbot_lane_require.py` (new).
 - AC-1304 `resolve_entity_body` includes `require` exactly when `derive_require` is not None,
@@ -83,8 +85,9 @@ tool. No new reply format.
 - AC-1313 `certificate.scheme` is normalised through the `certificate_scheme` lookup set before
   equality: "pps", "PPS", "span" resolve; "watermark" does NOT resolve (no option carries it)
   and the leg returns `qualifying_total=0` with `unrecognized_terms=["watermark"]` and
-  `predicate.schemes_on_file` listing the register's distinct schemes, so the reply can name
-  them. Evidence: pytest.
+  `predicate.schemes_on_file` listing the register's distinct active schemes (company-scoped,
+  sorted), so the reply can name them; `resolve_product_set` returns the same list as
+  `schemes_on_file` on a scheme miss. Evidence: pytest.
 - AC-1314 Data: a migration creates the two lookup sets `certificate_scheme` and
   `attachment_type_alias` with NO options (the owner enters options and keywords on System >
   Lookup Sets). With an empty or absent set, a scheme word or alias word is reported in
