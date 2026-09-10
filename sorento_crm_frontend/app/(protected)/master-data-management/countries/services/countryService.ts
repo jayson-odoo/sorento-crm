@@ -4,7 +4,7 @@
  * Layering: hooks (useCountries) -> THIS service -> lib/api -> backend
  * `/api/v1/master-data/countries`.
  *
- * -- PHASE-2 BACKEND CONTRACT (not yet built, `PLAN-local-supplier-oi-routing.md` S1) --------
+ * -- PHASE-2 BACKEND CONTRACT, LIVE since S1 (`PLAN-local-supplier-oi-routing.md`) ----------
  *
  *   GET    /master-data/countries              ?page&limit&query&sort&dir
  *          -> DataGridApiResponse<Country>, same shape as every other DataGrid listing
@@ -23,7 +23,7 @@
  *          `country.delete` (see `hooks/useDeferredRowAction`), same hard-delete window every
  *          other reference table uses.
  *
- * Seeded with the full ISO 3166-1 alpha-2 list by migration `499_countries`; `MY` is
+ * Seeded with the full ISO 3166-1 alpha-2 list by migration `510_countries`; `MY` is
  * `Malaysia`. A deviation from this shape updates this header and both sides in the same
  * change.
  */

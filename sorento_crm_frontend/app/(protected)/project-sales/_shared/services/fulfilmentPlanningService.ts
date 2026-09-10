@@ -406,12 +406,14 @@ export async function confirmSupply(
  * `NEXT_PUBLIC_LADDER_OPTIONS_MOCK` flag it hung off are deleted, so the flag being set on a
  * running dev server does nothing at all.
  *
- * ── LOCAL SUPPLIER ROUTING (`PLAN-local-supplier-oi-routing.md`, PHASE 1 MOCK) ──────────────
+ * ── LOCAL SUPPLIER ROUTING (`PLAN-local-supplier-oi-routing.md`) ────────────────────────────
  *
- * Not yet built on the server. Two additive fields, once S3/S4 land:
+ * Two additive fields. LIVE on the board since S3/S4:
  *
  *   BoardContribution.buy_origin   'local' | 'overseas' | undefined
- *   SupplyLine.buy_origin          same, on the per-order sheet
+ *   SupplyLine.buy_origin          same shape declared on the per-order sheet, NOT YET
+ *                                  populated there (no caller sets it on `SupplyLine` yet -
+ *                                  only the board computes and attaches it).
  *
  * Computed once per product for the whole board request, off the primary `product_suppliers`
  * link, else the newest-PO supplier, else `overseas`. `local` iff that supplier's country
@@ -421,11 +423,12 @@ export async function confirmSupply(
  *
  *   BorrowCandidate.location       BoardCellLocation | undefined
  *
- * The SAME shape the Grid Location table's `locations[]` already carries, keyed to one
- * donor, so the manual Borrow modal (`BorrowAddDialog`) can render `CellStockTable` fed by
- * `candidates.map(c => c.location)` instead of a second, narrower table of its own. Absent
- * candidates fall back to the plain `qty_on_hand` / `so_qty` / ... fields already on
- * `BorrowCandidate`, which stay on the wire for exactly that reason.
+ * LIVE on the board's `borrow_candidates[]` (S4): the SAME `_location()` builder the Grid
+ * Location table's `locations[]` reads from, decorated onto each donor by
+ * `FulfilmentBoardService._donors_for`, so the manual Borrow modal (`BorrowAddDialog`) renders
+ * `CellStockTable` fed by `candidates.map(c => c.location)` instead of a second, narrower
+ * table of its own. Absent candidates fall back to the plain `qty_on_hand` / `so_qty` / ...
+ * fields already on `BorrowCandidate`, which stay on the wire for exactly that reason.
  */
 export async function getPlanningBoard(
   soNumbers: string[],

@@ -21,11 +21,14 @@ async def get_countries(
     limit: int = Query(50, ge=1, le=200),
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission_with_api_key("master_data.countries.view")),
     db: Session = Depends(get_db),
 ):
     try:
-        return CountryService(db).list_countries(page=page, limit=limit, query=query, sort=sort)
+        return CountryService(db).list_countries(
+            page=page, limit=limit, query=query, sort=sort, sort_dir=dir
+        )
     except HTTPException:
         raise
     except Exception as e:

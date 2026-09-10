@@ -1,7 +1,7 @@
 /**
  * Suppliers - feature service.
  *
- * -- PHASE-2 BACKEND CONTRACT (not yet built, `PLAN-local-supplier-oi-routing.md` S2) --------
+ * -- PHASE-2 BACKEND CONTRACT, LIVE since S2 (`PLAN-local-supplier-oi-routing.md`) ----------
  *
  * The free-text `country` field is REPLACED by a country reference:
  *

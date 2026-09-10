@@ -22,6 +22,7 @@ class CountryService:
         limit: int = 50,
         query: Optional[str] = None,
         sort: Optional[str] = None,
+        sort_dir: Optional[str] = None,
     ):
         q = self.db.query(Country)
         if query:
@@ -32,7 +33,8 @@ class CountryService:
                 )
             )
         sort_map = {"code": Country.code, "name": Country.name}
-        q = q.order_by(sort_map.get(sort, Country.name).asc())
+        sort_column = sort_map.get(sort, Country.name)
+        q = q.order_by(sort_column.desc() if sort_dir == "desc" else sort_column.asc())
 
         total = q.count()
         offset = (page - 1) * limit
