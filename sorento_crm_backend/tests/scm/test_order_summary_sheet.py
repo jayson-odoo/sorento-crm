@@ -308,7 +308,12 @@ def test_export_refuses_above_2000_rows_to_order(scm_app):
 
 def test_a_supplier_named_as_a_formula_exports_as_a_string_cell(db, chain):
     """H1: a supplier name shaped like a spreadsheet formula must reach the workbook as
-    inert text - never as something Excel evaluates on open."""
+    inert text - never as something Excel evaluates on open.
+
+    S15 (10 Sep 2026) moved the Supplier column off the `product_suppliers` link onto
+    the product's last PURCHASE ORDER, so the formula-shaped name needs a PO behind it
+    to reach the row at all - the link (`_moq_link`) alone now only supplies the MOQ.
+    """
     from io import BytesIO
 
     from openpyxl import load_workbook
@@ -317,6 +322,7 @@ def test_a_supplier_named_as_a_formula_exports_as_a_string_cell(db, chain):
     _stock(db, f["product"], f["bin"], 5)
     sup = _supplier(db, '=HYPERLINK("http://evil.example","click")')
     _moq_link(db, f["product"], sup, moq=10)
+    _po(db, f["product"], f["bin"], 5, supplier=sup)
     db.flush()
 
     assert svc.write_rows(db, f["run"].id) == 1

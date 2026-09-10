@@ -22,6 +22,13 @@ because defaulting decides a split nobody stated.
 
 **No ids on the wire.** Everything is addressed by human code. `run_id` is the single
 exception and it is opaque: it says which week is being read and is never rendered.
+
+**The sheet's Supplier column reads purchase-order history, not `product_suppliers`**
+(S15, PLAN-reorder-feedback-9sep.md, ruling 1, 10 Sep 2026 - `_last_po_supplier_map`).
+The link table auto-links nearly every product to one placeholder supplier (DEFAULT) on
+create/import (`resolve_default_supplier_id`), so reading it here would print "DEFAULT"
+on effectively every row; the newest PO line names who the product was actually bought
+from.
 """
 from __future__ import annotations
 
@@ -228,7 +235,9 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     # the buyer's own book (deliveries, project customers, supply, receipts, MOQ) exists
     # on every run whatever the plan's own front-planning contract version is.
     inquiry = _project_inquiry_map(db, product_ids)
-    suggested_supplier = _suggested_supplier_map(db, product_ids)
+    # S15 (ruling 1): the sheet's Supplier column is the LAST-PO supplier, never the
+    # `product_suppliers` link - see `_last_po_supplier_map`'s own docstring for why.
+    last_po_supplier = _last_po_supplier_map(db, product_ids)
     po_open = _po_open_qty_map(db, product_ids)
     incoming_spo = _incoming_spo_qty_map(db, product_ids)
     last_receipt = _last_receipt_map(db, product_ids)
@@ -299,7 +308,7 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         pid_inquiry = inquiry.get(pid) or {}
         row.delivery_by_month = _months_list(pid_inquiry.get("months", {}))
         row.project_customers = _customers_list(pid_inquiry.get("customers", {}))
-        sup = suggested_supplier.get(pid) or {}
+        sup = last_po_supplier.get(pid) or {}
         row.supplier_name = sup.get("supplier_name")
         row.moq = sup.get("moq")
         row.po_open_qty = po_open.get(pid, 0.0)
@@ -722,36 +731,68 @@ def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
     return {str(pid): float(total or 0.0) for pid, total in rows}
 
 
-def _suggested_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """``{product_id: {supplier_name, moq, order_multiple}}`` - the engine's own supplier
-    suggestion for the sheet: the PRIMARY product-supplier link, or any link when none is
-    primary. Same precedence `_supplier_constraints` already uses for moq/order_multiple,
-    restated here so the supplier's own NAME travels with them - the Remarks column needs
-    the MOQ, the Supplier column needs the name, and both must describe the same choice.
+def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
+    """``{product_id: {supplier_name, moq, order_multiple}}`` - the sheet's Supplier column
+    (S15, PLAN-reorder-feedback-9sep.md, ruling 1, 10 Sep 2026), read from PURCHASE ORDER
+    HISTORY rather than `product_suppliers`.
+
+    Measured on the prod copy 10 Sep 2026: 11,804 of 11,807 `product_suppliers` links point
+    at the ONE supplier code DEFAULT, none marked primary. The cause is
+    `resolve_default_supplier_id` (`app/services/rules/product_rules.py`) - it auto-links
+    every new or imported product to `system_settings.default_product_supplier_id`, or the
+    OLDEST supplier when nothing is configured, which is DEFAULT here. So the old link-table
+    read (`_supplier_constraints`'s own precedence, PRIMARY else any) printed "DEFAULT" on
+    effectively every row. Of the 5,353 products with PO history, only 1 has a
+    `product_suppliers` link that already agrees with its own last PO.
+
+    The newest PO line for the product (`purchase_orders.issue_date` desc, NULLs last,
+    then `created_at` desc as the tiebreak) names who it was actually bought from last,
+    which is the buyer's own reading of "Supplier". A product with NO PO history gets no
+    entry here at all - `write_rows` then leaves `supplier_name`/`moq` NULL, printing
+    BLANK on the sheet, never DEFAULT and never a link-table fallback.
+
+    `moq`/`order_multiple` are read from THAT SAME last-PO supplier's `product_suppliers`
+    link when one exists, else null - never another supplier's terms, so the Remarks
+    column's MOQ always describes the same supplier the Supplier column names.
+
+    Raw SQL for the newest-PO-line lookup (`DISTINCT ON`, the same shape `_last_receipt_map`
+    uses beside it); the moq/order_multiple lookup is plain ORM over the resolved
+    (product, supplier) pairs, no raw predicate needed since `ProductSupplier` is read
+    through the ORM's own company-scope listener.
     """
     if not product_ids:
         return {}
-    rows = (
+    co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="lps")
+    po_rows = db.execute(text(f"""
+        SELECT DISTINCT ON (pol.product_id) pol.product_id::text AS pid,
+               po.supplier_id::text AS supplier_id, s.supplier_name
+        FROM purchase_order_lines pol
+        JOIN purchase_orders po ON po.id = pol.purchase_order_id
+        JOIN suppliers s ON s.id = po.supplier_id
+        WHERE pol.product_id::text = ANY(:pids)
+          {("AND " + co) if co else ""}
+        ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC
+    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
+    if not po_rows:
+        return {}
+    by_pid = {pid: (supplier_id, name) for pid, supplier_id, name in po_rows}
+    supplier_ids = {sid for sid, _name in by_pid.values()}
+    link_rows = (
         db.query(
-            ProductSupplier.product_id,
-            Supplier.supplier_name,
-            ProductSupplier.moq,
-            ProductSupplier.order_multiple,
-            ProductSupplier.is_primary_supplier,
+            ProductSupplier.product_id, ProductSupplier.supplier_id,
+            ProductSupplier.moq, ProductSupplier.order_multiple,
         )
-        .join(Supplier, Supplier.id == ProductSupplier.supplier_id)
-        .filter(ProductSupplier.product_id.in_(product_ids))
+        .filter(
+            ProductSupplier.product_id.in_(by_pid.keys()),
+            ProductSupplier.supplier_id.in_(supplier_ids),
+        )
         .all()
     )
+    links = {(str(p), str(s)): (moq, mult) for p, s, moq, mult in link_rows}
     out: dict[str, dict] = {}
-    for pid, name, moq, multiple, is_primary in rows:
-        key = str(pid)
-        current = out.get(key)
-        if current is None or (is_primary and not current.get("is_primary")):
-            out[key] = {
-                "supplier_name": name, "moq": _f(moq), "order_multiple": _f(multiple),
-                "is_primary": bool(is_primary),
-            }
+    for pid, (supplier_id, name) in by_pid.items():
+        moq, multiple = links.get((pid, supplier_id), (None, None))
+        out[pid] = {"supplier_name": name, "moq": _f(moq), "order_multiple": _f(multiple)}
     return out
 
 
@@ -1074,7 +1115,10 @@ def _customers_text(groups: list[dict]) -> str:
 
 def _remarks_text(row: dict) -> str:
     """"MOQ 1000" or blank (S14, AC-S14.4): PO qty, incoming qty, last-in qty and last-in
-    date each moved to their OWN column, so Remarks says only what has nowhere else to go."""
+    date each moved to their OWN column, so Remarks says only what has nowhere else to go.
+    `row["moq"]` is frozen from `_last_po_supplier_map` (S15), the same last-PO supplier
+    named in the Supplier column - so this figure and that name always describe one
+    supplier, never two."""
     moq = row.get("moq")
     return f"MOQ {_qty_text(moq)}" if moq is not None else ""
 
