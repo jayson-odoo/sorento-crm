@@ -10,8 +10,8 @@ product" for rows the list hides.
 The buyer opens a plan. The Decisions tile says how many rows are on the list to decide, the
 list shows exactly those rows, and Actions > Order sheet prints exactly those rows. A covered
 row on the manual reorder-level basis whose net sits above its level is "not my business"
-(owner, 12 Aug 2026) and appears in none of the three unless the buyer asks for it with the
-"Covered by stock" status filter.
+(owner, 12 Aug 2026) and appears in none of the three unless the buyer asks for it with a Filters condition
+Rec type = "Covered by stock" (AC-5b).
 
 Measured (local prod copy, plan of 10 Sep 19:39): 950 recs = 412 Buy + 537 Covered + 1 Needs
 level; the list shows 415 (412 + 1 + 2 breached covered rows), the tile says "0 of 950", the
@@ -49,6 +49,13 @@ moves to ONE backend function and the three readers use it; the frontend stops r
   `lineBreachStatus` from that path; the "product's own row stays while the product is on the
   plan for another reason" exception is unchanged. The "Covered by stock" status filter still
   shows every covered row.
+- **AC-5b [FE]** The hidden rows are REACHABLE (owner, 10 Sep: "better to reveal them for
+  flexibility"): when the applied Filters condition (the dynamic builder or a saved segment)
+  asks for Rec type equals "Covered by stock", `visibleLines` includes the hidden-by-default
+  rows, so B2154-NL appears; remove that condition and it is hidden again. The retired status
+  preset is not brought back; the builder's own Rec type field is the one path. The
+  Decisions tile keeps counting the DEFAULT list (415), not the revealed one: the filter is a
+  lens, not a scope change.
 - **AC-6 [FE]** Decisions tile reads "0 of 415 made / 415 left to decide" on the measured
   plan (server count, unchanged wiring).
 - **AC-7 [E2E]** Same plan: list total 415, tile 415, Excel row count 415, and B2154-NL

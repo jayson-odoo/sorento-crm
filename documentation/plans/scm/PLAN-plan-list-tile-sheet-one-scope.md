@@ -35,6 +35,11 @@ One backend function, three callers. No column, no flag, no setting.
 - Frontend: `visibleLines` filters on `l.rec.hidden_by_default`; keep the "product's own row"
   exception; delete the client-side breach recomputation from that path only
   (`lineBreachStatus` stays for the ledger sentence).
+- Reveal (AC-5b): the grid already owns `filterGroup`; it reports the applied group upward
+  (`onFilterGroupChange`) and `PlanLinesSection.visibleLines` early-returns the full list when a
+  small helper `filterGroupAsksForRecType(group, 'covered')` is true (walks the group's
+  conditions for the builder's rec-type field with operator equals/in and value covered). No
+  new control, no new preset.
 
 ## Slices
 
@@ -52,6 +57,7 @@ One backend function, three callers. No column, no flag, no setting.
 - AC-3 `test_export_omits_hidden_rows_and_guard_counts_the_same` (xlsx row count + guard).
 - AC-4 `test_report_endpoint_still_lists_every_product`.
 - AC-5 vitest `PlanLinesSection.visibleLines.test.tsx`: hides on the flag, filter shows all, own-row exception intact.
+- AC-5b vitest same file: a filter group with Rec type = covered reveals hidden rows; removing it hides again; tile totals unchanged (still the default list); helper unit test on nested groups.
 - AC-7 browser: list total, tile, Excel row count all equal; B2154-NL absent by default.
 
 ## Backlog
