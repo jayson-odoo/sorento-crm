@@ -11,8 +11,8 @@ Branch `feat/chatbot-attribute-first-asks`. Lane backend on the restored prod co
 |-----|--------|
 | `tests/test_product_spec_search.py`, `tests/test_product_predicate_service.py`, `tests/test_resolve_predicate.py`, `tests/test_migration_511_attribute_first_lookup_sets.py` | 118 passed |
 | `tests/chatbot/test_lane_require.py` (S1 to S4 + two fix rounds) | 125 passed together with `test_product_spec_search.py` |
-| Fix round 3 (R14 to R22): the five lane files together | 228 passed, 0 failed (commit d331bec78) |
-| `tests/chatbot` full after fix round 3 | 1656 passed, 72 skipped, 5 xfailed, 5 failed (the same `test_s7_*` baseline) |
+| Fix round 3 (R14 to R26): the five lane files + migration test together | 238 passed, 0 failed (commit 2a4112354, origin/main merged, 511 reparented) |
+| `tests/chatbot` full after fix round 3 | 1659 passed, 72 skipped, 5 xfailed, 5 failed (the same `test_s7_*` baseline) |
 
 The 5 failures are `test_s7_dispatch_edges.py` (3) and `test_s7_ordering_and_offload.py` (2): the
 Redis-outage turns die at `route.py:224` (`is_stock_check_denied`, a None settings row), a line
@@ -66,6 +66,9 @@ Baseline (main, detached checkout of d6cb5b624 with the lane venv, 11 Sep 2026):
 | 1344 | PASS | dash scan of every lane file empty; pre-push guard |
 | 1345 | PASS | pytest, seven inflections incl. "sijil" and "PPS certification" |
 | 1346 | PASS | pytest; console pass 7 bathroom accessory "Showing 5." for five ids (pass 6 showed 4: ACC-SRT9012's only stock was in inactive warehouse SPARE/P) |
+| 1348 | PASS | pytest, `["%"]`, `["%dealer"]`, `["d%r"]` select nothing (security re-check measured `["%"]` selecting seven codes before R24) |
+| 1349 | PASS | pytest, `resolve_entity_body(tier_gate=...)` sends the recomposed names; single-tier contacts no longer count promotions of other tiers |
+| 1350 | PASS | pytest, page-arm guard kill-tested by the tester; migration test asserts the chain, green after the reparent |
 | 1347 | PASS | pytest, four paging terms; console pass 8 sequence 2: the carry-less "more" answers "2,704 products have certificates. Showing 5." (the reused certificate question, unscoped) instead of "I don't know 'more'" |
 
 ## Console pass 7 (AC-1325, FINAL after fix round 3), lane backend WITHOUT reload, commit d331bec78
@@ -91,7 +94,9 @@ Multi-turn sequences (`pass6-sequences.yaml` in the session scratchpad, three ca
 | which tap has cert / which water tap has cert / more | set answer / clarify / NOT paged (AC-1343). The third reply on d331bec78 read "I don't know 'more' as a product type": the head's entity reuse re-asked the certificate question with "more" as the only remainder word (R23). Rerun on 242af5589 (console pass 8, all three sequences PASS): "2,704 products have certificates. Showing 5." |
 | any shower set on promo / 1 / more | tier ask / "I found 4 promotions for shower set." on the check_promotion lane with `access_levels: ["Dealer"]` / page with the recomposed tiers in the tool args (AC-1333). Promotion sets page by product, so a promotion file attached to several products appears on both pages; accepted |
 
-Transcripts: `console-run-7.txt`, `console-run-7-sequences.txt`, `console-run-8-sequences.txt` in the session scratchpad.
+Console pass 9 (final, commit 2a4112354 with origin/main merged): the same ten utterances and three sequences, identical replies to pass 7/8 (`console-run-9.txt`, `console-run-9-sequences.txt`).
+
+Transcripts: `console-run-7.txt`, `console-run-7-sequences.txt`, `console-run-8-sequences.txt`, `console-run-9*.txt` in the session scratchpad.
 
 ## Console pass 4 (AC-1325, FINAL), lane backend started WITHOUT reload, commit 677d240b1
 
@@ -148,7 +153,7 @@ reader is off on the set path, so the resolve is SQL only.
 
 ## Review rounds
 
-Fix round 3 re-check (11 Sep): security-reviewer closed B1 and S2, raised the certificate leg (R17, blocker) and the tier-token mismatch (R18); reviewer closed B1 and S4, found the same-domain carry gap (R19) and the certificate leg (N1). All adopted, red test first. Round 3 re-check verdicts are appended below when they land.
+Fix round 3 re-check (11 Sep): security-reviewer closed B1 and S2, raised the certificate leg (R17, blocker) and the tier-token mismatch (R18); reviewer closed B1 and S4, found the same-domain carry gap (R19) and the certificate leg (N1). All adopted, red test first. Round 3 re-check verdicts (11 Sep, at d331bec78): security-reviewer closed the certificate blocker (all five legs 0 on a foreign child, 1 on an own child, shared NULL arm counts), R14 has no cross-company scheme oracle, R22 only narrows; open should-fix R25 (single-tier contacts) and nit R24 (LIKE wildcard), both fixed in 721d6313d / 2a4112354 with red tests first. Reviewer: R19 kill test bites (1 failed / 88 passed on revert), R17 both arms pinned (strict equality fails 16 tests), R15 has one caller and the AC-1308 repair still proves the union, R14 order of operations verified, R18 LIKE escaping (R24), R22 keeps the four scope tests meaningful. Verdict from both: ready.
 
 Security review (11 Sep): one blocker (paging a promotion set dropped the tier filter), two
 should-fix (promotion leg blind to access levels; class-label helpers cross-company). Correctness
