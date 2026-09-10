@@ -1540,6 +1540,52 @@ def _strip_predicate_words(text: str, words: list[str] | None) -> str:
     return re.sub(r"\s+", " ", stripped).strip()
 
 
+def _has_turn_free_terms(
+    payload: "ResolveReferenceRequest", result: dict[str, Any], query_text: str
+) -> list[str]:
+    """C2 repair: the described set's free-text half, for a HAS turn that sent NO
+    explicit `free_terms` of its own (an ordinary caller that DID supply
+    `free_terms` keeps using exactly what it sent - see the caller).
+
+    When every product-entity token DID resolve ("which sorento bidet has cert" -
+    "bidet" matched three real products), the set is already described through
+    those matches' own ids - nothing here scopes it a second time, so this
+    returns `[]`. Otherwise (no product-entity token at all - a bare class word
+    turn - OR at least one that resolved to nothing) the remainder of
+    `query_text` (predicate_words already stripped) becomes ONE term, off its own
+    WORDS rather than `payload.tokens` - `_token_of` FOLDS a product token's
+    separators out ("water tap" -> "watertap"), which is right for code matching
+    and wrong for a phrase a human is meant to read back. Reusing
+    `_content_words`'s own stopword/short-word/digit filter is what makes "which
+    tap has cert" scope to class Tap and "which item has cert" (no class word at
+    all) leave the set unscoped rather than reporting "item" as unrecognized.
+
+    Before this, nothing on the require branch ever populated a HAS turn's
+    `free_terms` at all, so `filter_specs` never saw the class word either way and
+    "which tap has cert" counted every certified product, unscoped.
+    """
+    tokens = payload.tokens or []
+    allowed = payload.allowed_entity_types or []
+    resolved_tokens = {
+        str((resolution or {}).get("token") or "").strip().lower()
+        for resolution in result.get("resolutions") or []
+        if isinstance(resolution, dict) and resolution.get("matches")
+    }
+    product_indices = [
+        i for i, a in enumerate(allowed) if str(a or "").strip().lower() == "product"
+    ]
+    if product_indices and all(
+        str(tokens[i] if i < len(tokens) else "").strip().lower() in resolved_tokens
+        for i in product_indices
+    ):
+        return []
+
+    from app.services.product_spec_search import _content_words
+
+    words = _content_words(query_text)
+    return [" ".join(words)] if words else []
+
+
 def _result_has_zero_matches(result: dict[str, Any]) -> bool:
     """True when neither OR-mode nor AND-mode produced any match."""
     if "intersection" in result:
@@ -2467,11 +2513,22 @@ def resolve_reference_post(
         brand = str(brand_entry["value"]) if brand_entry else None
         specs = [e for e in specs if e.get("key") != "brand"]
 
+        # C2 repair: a caller that sent its own `free_terms` keeps them untouched
+        # (test_require_returns_the_predicate_block_and_ordinary_matches's own
+        # ["kitchen sink"]); the ordinary chatbot lane never sends this key at
+        # all, so THIS is the one place a bare class word ("tap", "basin")
+        # reaches `filter_specs` for a HAS turn. Passed as `scope_terms`, never
+        # merged into `free_terms`: a derived class word scopes the set but must
+        # never also drive `search_specs` ranking, which would silently evict a
+        # `product_ids`-only match that carries no spec row at all.
+        scope_terms = None if payload.free_terms else _has_turn_free_terms(payload, result, query_text)
+
         outcome = resolve_product_set(
             db,
             require=payload.require,
             specs=specs,
             free_terms=payload.free_terms,
+            scope_terms=scope_terms,
             limit=payload.limit,
             product_ids=_collect_lookup_product_ids(result) or None,
             brand=brand,

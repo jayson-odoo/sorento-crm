@@ -677,6 +677,32 @@ def unrecognized_terms(
     return reported
 
 
+# Words that name NO set at all and are not reported as unrecognized either -
+# "item", "product(s)", "anything" are the customer saying nothing about WHAT they
+# mean, not naming something this catalogue fails to understand (C2 repair,
+# attribute-first asks S3: "which item has cert" must leave the described set
+# unscoped, never clarify "I don't know 'item'"). Distinct from `_PHRASE_STOPWORDS`
+# (grammar words dropped before a term is even formed) - these ARE the customer's
+# whole free term, and still mean "no description given".
+_GENERIC_DESCRIPTION_WORDS: frozenset[str] = frozenset(
+    {"item", "items", "product", "products", "anything", "thing", "things"}
+)
+
+
+def is_generic_free_term(term: str) -> bool:
+    """True when `term` names NO set at all - every content word in it is a
+    generic stand-in ("item", "product", "anything"), never a real description.
+
+    Exposed so `product_predicate_service.resolve_product_set` can tell "the
+    caller described nothing" (leave the set unscoped) apart from "the caller
+    described something this catalogue could not read" (AC-1302's honest zero) -
+    `filter_specs` alone only reports the DIFFERENCE in its clause/unrecognized
+    shape, not in a boolean a caller can branch on before calling it.
+    """
+    content = _content_words(term)
+    return bool(content) and all(word in _GENERIC_DESCRIPTION_WORDS for word in content)
+
+
 # Spec keys that define SET MEMBERSHIP, beside `class` - broad, catalogue-wide
 # vocabularies where "names this key" is an unambiguous yes/no (attribute-first
 # asks, work item C3). `product_type` is the noun a customer says inside a
@@ -725,13 +751,15 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
     vocabulary = _search_vocabulary(db) if free_terms else frozenset()
     unrecognized: list[str] = []
     for term in free_terms:
+        content = _content_words(term)
+        if is_generic_free_term(term):
+            continue  # "no description given" - never a label, never unrecognized
         classes = resolve_classes_for_term(db, term)
         if classes:
             membership.setdefault("class", set()).update(classes)
         # Any registry spec at all - a value key like `mounting` counts as
         # "understood" here even though it is never membership-defining.
         bound_specs = resolve_terms_to_specs(db, [term])
-        content = _content_words(term)
         alien = [word for word in content if word not in vocabulary]
         if content and len(alien) == len(content):
             if term not in unrecognized:

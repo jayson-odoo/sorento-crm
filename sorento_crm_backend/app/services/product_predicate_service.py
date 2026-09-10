@@ -40,7 +40,12 @@ from app.models.product_spec import ProductSpecifications
 from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import AppException
 from app.services.lookup_resolver import LookupResolverService
-from app.services.product_spec_search import filter_specs, search_specs, values_only
+from app.services.product_spec_search import (
+    filter_specs,
+    is_generic_free_term,
+    search_specs,
+    values_only,
+)
 
 
 class _UnrecognizedLabel(Exception):
@@ -222,6 +227,7 @@ def resolve_product_set(
     require: dict,
     specs: list[dict] | None = None,
     free_terms: list[str] | None = None,
+    scope_terms: list[str] | None = None,
     limit: int | None = None,
     product_ids: list[str] | None = None,
     brand: str | None = None,
@@ -231,11 +237,22 @@ def resolve_product_set(
     The described set is the UNION of ``product_ids`` (ids LOOKUP already
     matched by name or code prefix) and the ``class`` / ``product_type`` /
     ``brand`` membership `filter_specs` derives from ``specs`` / ``free_terms``
-    - attribute-first asks, work item C3, AC-1306/1308. Either alone is enough
-    to describe the set; when both are given a product only needs ONE of them.
-    ``brand`` scopes the WHOLE set on top of that union (D3): it reads
-    `Product.brand_id` live, not the spec-derived echo, so it is correct even
-    when a product's brand changed since its spec row was last derived.
+    / ``scope_terms`` - attribute-first asks, work item C3, AC-1306/1308. Either
+    alone is enough to describe the set; when both are given a product only
+    needs ONE of them. ``brand`` scopes the WHOLE set on top of that union
+    (D3): it reads `Product.brand_id` live, not the spec-derived echo, so it is
+    correct even when a product's brand changed since its spec row was last
+    derived.
+
+    ``scope_terms`` (C2 repair) is membership-ONLY - a caller-derived class word
+    ("tap" out of "which tap has cert") that must scope the set but must NEVER
+    also drive `search_specs` ranking: a product that qualifies purely through
+    `product_ids` and carries no `ProductSpecifications` row at all (routine for
+    a LOOKUP-only match) would otherwise be silently evicted by the ranker's own
+    evidence floor the moment ANY free term made `rank_by_words` true, even
+    though the term named nothing about that specific product's attributes.
+    ``free_terms`` keeps its old, dual role (membership AND ranking) for a
+    caller that supplies real descriptive text of its own.
 
     Returns ``{candidates, qualifying_total, truncated, unrecognized_terms,
     require}`` — candidates are ranker-shaped (stage 2 runs `search_specs` over
@@ -255,7 +272,8 @@ def resolve_product_set(
             code="UNKNOWN_REQUIRE_KEY",
         )
 
-    verdict = filter_specs(db, specs=specs, free_terms=free_terms)
+    scoping_terms = [*(free_terms or []), *(scope_terms or [])]
+    verdict = filter_specs(db, specs=specs, free_terms=scoping_terms)
     unrecognized = list(verdict["unrecognized_terms"])
 
     require_echo: dict[str, Any] = {}
@@ -282,7 +300,14 @@ def resolve_product_set(
         require_echo[key] = getattr(clause, "_resolved_display", value)
         legs.append(clause)
 
-    described_given = bool([t for t in (free_terms or []) if t and t.strip()]) or bool(specs)
+    # A free term whose every content word is generic ("item", "product",
+    # "anything") named NOTHING about what the customer means - "no description
+    # given", not "described something unreadable" (AC-1302's honest zero stays
+    # for a REAL word like "water tap" that still binds nothing).
+    described_given = (
+        any(t and t.strip() and not is_generic_free_term(t) for t in scoping_terms)
+        or bool(specs)
+    )
     # What the caller has to RANK against, not merely what defines membership.
     # `specs`-only calls (structural bindings, no customer words) fall to the
     # deterministic listing below - `search_specs` drops any candidate with no
