@@ -1652,7 +1652,14 @@ def test_more_words_are_recognised_and_long_messages_are_not(
     reply = (result.reply or {}).get("text") or ""
 
     if should_page:
-        assert reply.strip() == "7 taps have certificates. Showing 6 to 7.", reply
+        # AC-1317: a "more" turn returns the next five PRODUCTS WITH their
+        # blocks under the header, not the header alone -
+        # `test_more_returns_the_next_page_without_resolving` already proves
+        # that shape; this test's own job is which WORDS trigger paging at
+        # all, so it checks the header line only (captain's ruling on the
+        # coder's dispute, 11 Sep 2026).
+        lines = reply.splitlines()
+        assert lines and lines[0] == "7 taps have certificates. Showing 6 to 7.", reply
     else:
         assert "Showing" not in reply, reply
 
