@@ -1220,6 +1220,7 @@ def test_content_words_drop_question_words(db):
     assert "which" not in words
     assert "what" not in words
     assert "how" not in words
+    assert "many" not in words
 
 
 def test_content_words_drop_check_and_list():
@@ -1237,4 +1238,3 @@ def test_content_words_drop_check_and_list():
     assert "check" not in _content_words("check stock srtwc286")
     assert "list" not in _content_words("list the taps")
     assert "tell" not in _content_words("tell me which basin")
-    assert "many" not in words

@@ -1403,15 +1403,17 @@ def test_brand_and_category_words_give_a_set_answer_not_a_picker():
 
         assert out.get("_exit_kind") == "continue", out.get("gate_reason")
         reply = (fragment.get("fetch") or {}).get("response") or ""
+        cert_product_code = cert_product.product_code
+        srt_bidet_code = srt_bidet.product_code
 
     lines = reply.splitlines()
     assert lines and lines[0] in (
         "1 Sorento bidet has certificates.",
         "1 bidet has certificates.",
     ), reply
-    assert cert_product.product_code in reply, reply
+    assert cert_product_code in reply, reply
     assert "Please choose" not in reply, reply
-    assert srt_bidet.product_code not in reply, reply
+    assert srt_bidet_code not in reply, reply
 
 
 def test_unrecognised_label_clarifies_as_a_document_type():
