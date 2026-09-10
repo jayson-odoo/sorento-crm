@@ -29,7 +29,7 @@ from sqlalchemy import text
 from app.services.scm import reorder_level_service as rl
 from app.services.scm import reorder_run_service as svc
 from tests.scm.conftest import as_user, requires_pg, seed_user
-from tests.scm.test_channel_read_model import _confirmed_leg, _core_line_for_run
+from tests.scm.test_channel_read_model import _confirmed_leg, _core_line_for_run, _summary
 from tests.scm.test_m3_run import (
     _link,
     _mk_demand,
@@ -615,3 +615,134 @@ def test_a_covered_rows_available_stock_is_the_pool_only(scm_app):
 
     assert row["rec_type"] == "covered"
     assert float(row["inputs"]["covered_available"]) == 4000.0, "not 4,500"
+
+
+# --- issue #794: confirmed project Buy bypasses a missing product level ----------------
+#
+# `PLAN-product-grain-project-buy-no-level.md`: `_emit_product` honours `_compute_cell`'s
+# AC-E05 bypass for a PER-LOCATION cell and `_emit_pool`'s bypass for a POOL, but never its
+# own - a product with no level anywhere and firm confirmed unplaced Order Inquiry Buy
+# nets `project_need = min(sum, recommended=0) = 0` and is silently named `needs_level`
+# with the 914 dropped, even though CS already confirmed it.
+
+def test_a_confirmed_buy_is_bought_even_with_no_level_anywhere(scm_app):
+    """AC-1 / AC-2: no master level, no override, 914 confirmed unplaced Buy, a linked
+    supplier with no MOQ - the plan buys exactly 914, names the reason, and states the
+    level is still unset without also emitting a `needs_level` row beside the buy."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid, wh_code = _wh(db, "PB914")
+    pid, code = _product(db)
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} PB914"), moq=None, mult=None)
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=914)
+    db.flush()
+
+    run_id = _run(db, [wh_code], code)
+    rows = _recs(db, run_id, pid)
+
+    # `_sizing_row` asserts exactly one planning row for the product - the buy - so a
+    # coder who still emits `needs_level` beside it fails here first.
+    row = _sizing_row(rows)
+    assert row["rec_type"] == "buy"
+    assert float(row["rounded_qty"]) == 914.0
+    assert (row["triggered_reason"] or "").startswith("project buy"), row["triggered_reason"]
+    assert float(row["inputs"]["project_need"]) == 914.0
+    assert row["inputs"].get("needs_level") is True, (
+        "the level is still unset - the panel keeps offering 'Set AutoCount level to N'"
+    )
+
+    summary = _summary(db, run_id, pid)
+    assert float(summary["suggested_qty"]) == 914.0
+    assert float(summary["project_buy_qty"]) == 914.0
+    assert float(summary["retail_replenishment_qty"]) == 0.0
+
+
+def test_no_level_with_retail_only_demand_still_asks_for_a_level_and_buys_nothing(scm_app):
+    """AC-3: a no-level product with ONLY retail-open-SO demand (no confirmed project Buy)
+    is unchanged - `needs_level`, no buy. Companion to
+    `test_a_product_with_no_level_anywhere_is_named_not_guessed_at`, seeded with a bare
+    committed retail line (no forecast demand rate) so the case is retail-only, not
+    retail-plus-forecast."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid, wh_code = _wh(db, "RTLONLY")
+    pid, code = _product(db)
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} RTLONLY"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wid, qty=40, demand_class="retail")
+    db.flush()
+
+    rows = _recs(db, _run(db, [wh_code], code), pid)
+
+    assert not _buys(rows)
+    row = _sizing_row(rows)
+    assert row["rec_type"] == "needs_level"
+
+
+def test_a_confirmed_buy_rounds_up_to_the_suppliers_moq_with_no_level(scm_app):
+    """AC-1's other half: the 914 is still shaped by the supplier's terms. A MOQ of 1,000
+    (no order multiple) floors the buy at 1,000."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid, wh_code = _wh(db, "PBMOQ")
+    pid, code = _product(db)
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} PBMOQ"), moq=1000, mult=None)
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=914)
+    db.flush()
+
+    row = _sizing_row(_recs(db, _run(db, [wh_code], code), pid))
+
+    assert row["rec_type"] == "buy"
+    assert float(row["rounded_qty"]) == 1000.0
+
+
+def test_a_confirmed_buy_with_no_linked_supplier_is_an_exception_not_dropped(scm_app):
+    """AC-4: with no supplier for the product, the bypassed trigger still fires but the
+    engine cannot source it - an `exception` row, carrying the project need, and the
+    summary still states the customer commitment is owed (mirrors
+    `test_confirmed_project_buy_survives_a_location_with_no_supplier`)."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid, wh_code = _wh(db, "PBNOSUP")
+    pid, code = _product(db)
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    # No `_link`: the product has no supplier.
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=914)
+    db.flush()
+
+    run_id = _run(db, [wh_code], code)
+    row = _sizing_row(_recs(db, run_id, pid))
+
+    assert row["rec_type"] == "exception"
+    assert float(row["inputs"]["project_need"]) == 914.0
+
+    summary = _summary(db, run_id, pid)
+    assert float(summary["suggested_qty"]) == 914.0
+
+
+def test_a_level_sets_bypass_never_fires_when_stock_already_covers_the_confirmed_buy(scm_app):
+    """AC-5: byte-identical to today for a level-set product. 600 on hand less the 50
+    confirmed Buy nets 550, still above a level of 500 - no trigger, no buy - and the
+    no-level bypass this change adds must never force one here just because a confirmed
+    Buy exists."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid, wh_code = _wh(db, "LVLBYP")
+    pid, code = _product(db, master_level=500)
+    _mk_stock(db, pid, wid, 600)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} LVLBYP"), moq=None, mult=None)
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=50)
+    db.flush()
+
+    rows = _recs(db, _run(db, [wh_code], code), pid)
+
+    assert not _buys(rows), "net 550 against a level of 500 is not a shortage"
+    row = _sizing_row(rows)
+    assert float(row["inputs"]["net"]) == 550.0
