@@ -93,6 +93,25 @@ tool. No new reply format.
   Lookup Sets). With an empty or absent set, a scheme word or alias word is reported in
   `unrecognized_terms` and the request never fails. Evidence: alembic upgrade on an empty
   scratch DB creates the two sets; pytest for the empty-set and missing-set paths.
+- AC-1327 When HAS ran, `resolutions` and `intersection` carry no product matches for WORD tokens
+  other than the single spec_search resolution; non-product resolutions (attachment_type, brand,
+  customer) are untouched. The lane's reply never prints a "Found:" enumeration of the qualifying
+  codes; the set header stands in its place. Evidence: pytest on the resolver response shape and a
+  lane run with two forward substring product matches on the word token.
+- AC-1328 `derive_require` returns `{"certificate": {"scheme": "PPS"}}` for intent
+  check_product_attachment with a single attachment_type entity raw "PPS" when `user_goal` or the
+  message text matches the certificate regex; `_leg_certificate` matches a scheme word by
+  case-insensitive equality against the register's active schemes before consulting the lookup
+  set. Evidence: pytest, both halves.
+- AC-1329 An unrecognised attachment label clarifies as a DOCUMENT type: "I don't know 'photo' as a
+  document type. Types I know: <product-facing AttachmentType names>."; an unrecognised scheme
+  uses the AC-1321 sentence; only an unrecognised set word uses the product-type sentence, and its
+  fallback list of common product types is never empty. Evidence: pytest, three cases.
+- AC-1330 For a word token (not code-shaped) the raw always defines the described set, whatever it
+  resolved to: "sink" resolving to customers still scopes to class Kitchen Sink. The code-shaped
+  gate of AC-1305 reads both `intersection` (the lane's AND mode) and `resolutions`. `shown` in the
+  header counts distinct products. Evidence: pytest on the resolver in AND mode and a stock lane
+  run with multi-row products.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`

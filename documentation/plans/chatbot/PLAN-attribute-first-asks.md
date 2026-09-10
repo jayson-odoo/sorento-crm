@@ -109,6 +109,24 @@ binding is applied as a filter on the whole set.
 | S4 | "more" paging by 5 through the offer carry | E3 | 1317 |
 | H | Console verification on the prod copy, test report | H | 1325 |
 
+## Console fix round 2 (11 Sep 2026, replayed through the real parser output)
+
+Measured with the stored `chatbot.turns` parser output replayed through `resolve_entity_body` and the resolver (script kept in the session scratchpad as `replay_resolve.py`; its output is the evidence for every line below).
+
+| # | Observed | Cause | Rule |
+|---|----------|-------|------|
+| R1 | "check stock srtwc286" got a set header ("7 water closets have stock.") | the lane sends `match_mode: "and"`, so the forward result lives in `result["intersection"]`, and the code-shape gate only read `resolutions`; the 7 prefix matches never counted as "a code-shaped token resolved" | C1 reads both shapes: HAS is skipped when any code-shaped token has a product match in `intersection` OR in its own resolution |
+| R2 | "which tap has cert" answered "Found: <200 codes>" plus a picker of two products named "...COLD TAP" | HAS ran (908 taps) but the forward substring matches for the word token "tap" stayed in `resolutions`, the gate built its picker from them, and the found line enumerated the 200 spec_search ids | when HAS ran, product matches of WORD tokens are removed from `resolutions` and `intersection` (only the spec_search resolution carries products; attachment_type and other non-product resolutions stay); a HAS reply prints the set header in place of the "Found:" enumeration, never a code list |
+| R3 | "which sorento bidet has cert" kept the 3-bidet picker although HAS found 1 (SRTWT5875, a Sorento product with product_type bidet and a cert) | same as R2 | same as R2; the correct reply is "1 Sorento bidet has certificates." plus its block |
+| R4 | "which item has PPS cert" answered "I don't know 'PPS' as a product type" | the parser emitted ONE attachment_type entity, raw "PPS", and no cert-word entity; `derive_require` saw no `_CERT_RE` raw and produced `{"attachment_type": "PPS"}` | `derive_require` mirrors `derive_routing`'s `is_cert`: certificate when any attachment_type raw matches `_CERT_RE` OR the intent is check_product_attachment and `_CERTIFICATE_RE` matches `user_goal` or the message text; every attachment_type raw that does NOT match `_CERT_RE` becomes the scheme word |
+| R5 | a scheme word that IS a register spelling would still miss while the lookup set is empty | the leg consulted only the set | `_leg_certificate` first tries case-insensitive equality against the register's distinct active schemes (company-scoped), then the lookup set; only then unrecognised with `schemes_on_file` |
+| R6 | "which basin has photo" answered "I don't know 'photo' as a product type" | the clarify copy assumed the unrecognised word was a set word; it was the attachment label (alias set empty, as designed) | F2 branches on WHICH require key went unrecognised: attachment label → "I don't know 'photo' as a document type. Types I know: Product Photos, Technical Specifications, Certification, Product Videos." (product-facing AttachmentType names, company-scoped); scheme → the AC-1321 sentence; set word → the product-type sentence |
+| R7 | "which sink has incoming" counted all 620 incoming products with nine class labels | "sink" was a product entity that "resolved" to customers and promotions, so C2 treated it as resolved and derived no scope term | C2: for every WORD token (not code-shaped) the raw ALWAYS goes to free_terms, whatever it resolved to; its LOOKUP product matches (if any) are unioned in as before; code-shaped tokens never reach HAS (R1) |
+| R8 | "which basin got stock" said "Showing 11." over five products | `shown` counted tool rows (warehouse x location), not products | E2: `shown` = distinct product codes rendered |
+| R9 | `unrecognized_terms: ["check"]` on the stock turn | "check" is not a phrase stopword | A2 adds "check", "checking", "list", "tell" |
+| R10 | "which zzqx has cert" fell back to "Try a product type such as a class or product type I know." | `_common_class_labels` returned nothing under the live contact scope | the query runs against `product_specifications` under the request's scope and falls back to the registry's known class names when the scoped query is empty; never an empty list in the sentence |
+| R11 | "any shower set on promo" → "You have no access levels configured to get promotions." | console contact 482766833 has no access levels; a data prerequisite of the promotion domain | verification uses a contact with access levels for the promotion case; not a lane change |
+
 ## Leg semantics
 
 | key | payload | predicate (EXISTS on Product.id) |
