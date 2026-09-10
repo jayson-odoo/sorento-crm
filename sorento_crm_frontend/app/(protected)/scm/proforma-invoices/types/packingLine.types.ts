@@ -13,10 +13,8 @@ export interface ProformaInvoicePackingLine {
   item_code: string;
   supplier_code: string | null;
   description: string | null;
-  /** The glossary's English for `description` (S2, text glossary lane) - `null` for a
-   *  word the glossary has never seen, even an already-English one (R7). Optional
-   *  because the real backend does not send it until S1 lands; `applyMockDescriptionEn`
-   *  fills it client-side until then (`proformaInvoiceTranslationService.ts`). */
+  /** The translation_memory English for `description` (S2, text glossary lane) - `null`
+   *  for a word the memory has never seen, even an already-English one (R7). */
   description_en?: string | null;
   product_id: string | null;
   product_set_id: string | null;

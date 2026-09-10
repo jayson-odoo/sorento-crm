@@ -663,6 +663,37 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     expect(screen.getByText('50')).toBeInTheDocument();
   });
 
+  it('S2: shows Description (EN) beside Description in view mode, dash for null (AC-E1/E3)', () => {
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          description: '连体马桶',
+          description_en: 'One-piece toilet',
+        },
+      ],
+    });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByText('连体马桶')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'One-piece toilet' })).toBeInTheDocument();
+  });
+
+  it('S2: renders the SAME Description (EN) cell in edit mode, and editing it does not dirty the line form (AC-E3)', () => {
+    state.data = detail({
+      lines: [{ ...detail().lines[0], description: '连体马桶', description_en: null }],
+    });
+    renderDetail();
+    openTab('Lines');
+    beginEdit();
+
+    // Still the dash-button cell, not folded into the line's own Description <Input>.
+    expect(screen.getByRole('button', { name: 'Add English for 连体马桶' })).toBeInTheDocument();
+    // The line's own Description field is untouched, still an editable input.
+    expect(screen.getByDisplayValue('连体马桶')).toBeInTheDocument();
+  });
+
   it('marks the Packed cell destructive when the packed quantity disagrees with the invoiced one (AC-B11)', async () => {
     // `packing_lines` travels on the SAME detail payload `useProformaInvoicePacking` reads
     // off (`getProformaInvoicePacking`) - no second fetch, so seeding it here is enough.

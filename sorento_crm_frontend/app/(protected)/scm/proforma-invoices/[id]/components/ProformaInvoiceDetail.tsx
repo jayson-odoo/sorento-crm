@@ -53,7 +53,6 @@ import {
   useProformaInvoice,
   useSaveProformaInvoice,
 } from '../../../hooks/useProformaInvoices';
-import { useMockGlossaryVersion } from '../../../hooks/useProformaInvoiceTranslation';
 import {
   useProformaInvoicePacking,
   useProformaInvoicePackingMutations,
@@ -68,7 +67,6 @@ import {
 } from '../../../services/proformaInvoiceService';
 import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
 import { DescriptionEnCell } from '../../components/DescriptionEnCell';
-import { applyMockDescriptionEn } from '../../services/proformaInvoiceTranslationService';
 import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
 import { ProformaInvoicePackingListsTab } from './ProformaInvoicePackingListsTab';
@@ -278,19 +276,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
    *  the supplier and this invoice preselected and locked (`attachTo`). */
   const [packingUploadOpen, setPackingUploadOpen] = useState(false);
 
-  // `applyMockDescriptionEn` is a Phase 1 stand-in (S1/BE has not landed): the real
-  // detail payload will carry `description_en` on every line itself. `mockGlossaryVersion`
-  // is the dependency that actually matters here - `data` keeps the SAME reference after a
-  // save (React Query's structural sharing sees identical backend JSON), so without it a
-  // save would write the mock and never repaint this tab.
-  const mockGlossaryVersion = useMockGlossaryVersion();
-  const lines = useMemo<ProformaInvoiceLine[]>(
-    () => applyMockDescriptionEn(data?.lines ?? []),
-    // `mockGlossaryVersion` is not read in the body; it exists ONLY to force this memo to
-    // recompute on every glossary write (see the docstring on `subscribeMockGlossary`).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, mockGlossaryVersion],
-  );
+  const lines = useMemo<ProformaInvoiceLine[]>(() => data?.lines ?? [], [data]);
   const packing = useProformaInvoicePacking(data);
   const packingRows = packing.data?.rows ?? [];
   // Read by the Packed cell INSTEAD of `packingRows` directly, for the same reason

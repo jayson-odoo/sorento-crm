@@ -210,3 +210,35 @@ describe('ProformaInvoicePackingTab - populated state renders off the ROWS, not 
     expect(screen.getAllByText('Matched').length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('ProformaInvoicePackingTab - Description (EN) column (S2, AC-E1)', () => {
+  it('shows the glossary English beside the supplier description', async () => {
+    const invoice = {
+      ...baseInvoice(),
+      packing_file: null,
+      packing_lines: [packingRow({ description: '连体马桶', description_en: 'One-piece toilet' })],
+    } as unknown as ProformaInvoiceDetail;
+
+    renderTab(invoice);
+
+    expect(await screen.findByText('连体马桶')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'One-piece toilet' })).toBeInTheDocument();
+  });
+
+  it('shows a dash for a description the glossary has never seen, including one already in English', async () => {
+    const invoice = {
+      ...baseInvoice(),
+      packing_file: null,
+      packing_lines: [
+        packingRow({ id: 'row-1', row_no: 1, description: '连体马桶', description_en: null }),
+        packingRow({ id: 'row-2', row_no: 2, item_code: 'C2', description: 'Already English', description_en: null }),
+      ],
+    } as unknown as ProformaInvoiceDetail;
+
+    renderTab(invoice);
+
+    expect(await screen.findByText('连体马桶')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add English for 连体马桶' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add English for Already English' })).toBeInTheDocument();
+  });
+});

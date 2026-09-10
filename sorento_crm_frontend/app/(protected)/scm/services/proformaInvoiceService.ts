@@ -63,9 +63,9 @@
  * wrong on a document that already carries the answer. The backend's `currency` form field
  * is still accepted; nothing in this app sends it.
  *
- * `description_en` on each line (S2, text glossary lane) is not sent by the backend yet
- * (S1 has not landed) - `proformaInvoiceTranslationService.ts` fills it client-side from
- * an in-memory mock glossary until then; that file owns the contract for the write path.
+ * `description_en` on each line (S2, text glossary lane) travels here on the detail
+ * payload itself; `proforma-invoices/services/proformaInvoiceTranslationService.ts` owns
+ * the write path that fills it (`PUT .../{id}/translations`).
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -250,10 +250,8 @@ export interface ProformaInvoiceLine {
   row_number: number | null;
   item_code: string;
   description: string | null;
-  /** The glossary's English for `description` (S2, text glossary lane) - `null` for a
-   *  word the glossary has never seen, even an already-English one (R7). Optional
-   *  because the real backend does not send it until S1 lands; `applyMockDescriptionEn`
-   *  fills it client-side until then (`proformaInvoiceTranslationService.ts`). */
+  /** The translation_memory English for `description` (S2, text glossary lane) - `null`
+   *  for a word the memory has never seen, even an already-English one (R7). */
   description_en?: string | null;
   qty: number | null;
   uom: string | null;
