@@ -27,6 +27,12 @@ bin's PO or SPO is that project's, already linked from its Order Inquiry, and ne
 
 Decisions the buyer makes: none new. Everything is derived from the run.
 
+## Company stamp on raw SQL
+
+Every raw-SQL read this lane adds or rewrites over a company-scoped table carries
+`company_sql_predicate` (`_PO_BOOK_SQL`, `explain_net`'s three legs, `site_pool_supply`,
+`purchase_trend`): security S2/S3. Products being company-scoped is not the gate.
+
 ## Site pool - the one rule
 
 `app/services/scm/pool_predicate.py` (`active_site_pool_sql` / `ACTIVE_SITE_POOL_SQL`): a
@@ -47,7 +53,15 @@ line still counts. A location-grain row reads its own warehouse when it is site 
   product, then the product-grain row's `outstanding_po` is 42.
 - **AC-3 [BE]** Given a site-pool warehouse (BRW) that holds ONLY an open PO line for the
   product (no stock row, no SPO, no committed SO), then that PO still counts in the row's
-  `outstanding_po` (product-wide read, not plan-basis only).
+  `outstanding_po` (product-wide read, not plan-basis only). The widening is INSIDE the
+  engine's own planning query, never in the shared `scm.net_position_v` view: widening the
+  view's key set adds all-zero rows that the Stock Health dashboard reads as Stockout
+  (reviewer B2, measured: ~347 rows on the prod copy). No migration.
+- **AC-3b [BE]** Given an INACTIVE, non-project warehouse holding open PO 176 and SPO 62 for
+  the product beside an active BRW holding PO 42 / SPO 40, then the product-grain row reads
+  `outstanding_po` 42 and `incoming_spo` 40, and the sheet and both modals agree (reviewer B1:
+  the engine's gate is `ACTIVE_SITE_POOL_SQL`, active AND not project, the same constant every
+  other reader in this lane uses).
 - **AC-4 [BE]** Given a product whose only supply is 500 SPO at a project bin and retail
   committed of 100 at BRW with 0 on hand, then the plan sizes a Buy (the bin SPO no longer
   nets the retail need to zero). The same product with the 500 SPO at BRW is covered.
@@ -59,10 +73,13 @@ line still counts. A location-grain row reads its own warehouse when it is site 
 
 ### Slice S2 - the two modals read what the cell summed
 
-- **AC-7 [BE]** `GET /reorder-runs/{run}/spo-history?product_id=` Open tab: allocations at
-  active site-pool warehouses for the product, product-wide, any grain. The sum of
-  `qty - received_qty` over Open rows equals the row's `incoming_spo` (AC-1 data: one row,
-  BRW, 40; the BRW-BB allocation is absent from both tabs).
+- **AC-7 [BE]** `GET /reorder-runs/{run}/spo-history?product_id=` Open tab: for a run whose
+  recs for the product are PRODUCT grain, allocations at active site-pool warehouses,
+  product-wide; for LOCATION-grain recs, allocations at the recs' own warehouses when those
+  are site pool, nothing for a bin (the same grain rule the PO book applies, reviewer S1). The
+  sum of `qty - received_qty` over Open rows equals the row's `incoming_spo` (AC-1 data: one
+  row, BRW, 40; the BRW-BB allocation is absent from both tabs; a location row at BRW-BB lists
+  nothing).
 - **AC-8 [BE]** Same endpoint, History tab: landed / fully received / closed allocations at
   site-pool warehouses only.
 - **AC-9 [BE]** `GET /reorder-runs/{run}/po-book`: a product-grain row's key `<pid>:` carries
@@ -102,9 +119,20 @@ line still counts. A location-grain row reads its own warehouse when it is site 
   failed and answers 503.
 - **AC-16 [BE]** Guards run BEFORE a row is created, synchronously: unknown format 422,
   malformed / invisible run 404, more than `_MAX_EXPORT_ROWS` rows to order 422 "Narrow the
-  plan first" - the existing messages, unchanged.
+  plan first" - the existing messages, unchanged. The row-count guard is a COUNT over
+  `scm.order_summary_row`, not a full `report()` render on the request thread (reviewer nit).
+- **AC-16b [BE]** A second POST for the same run while the caller already has an
+  `order_sheet_*` download in `pending` / `processing` for that run answers 409 and creates
+  no row (security S5: one in-flight sheet per user per run; no queue machinery).
+- **AC-16c [BE]** The route requires a real signed-in user (`require_permission`, not the
+  API-key-tolerant dependency): a write endpoint is never reachable by `X-API-Key` alone
+  (security S4, `app/dependencies.py` rule).
+- **AC-16d [BE]** When `enqueue_job` raises, the row is marked failed and the route answers
+  503 (reviewer S4 / security N3: covering test).
 - **AC-17 [BE]** `generate_order_sheet(download_id, run_id, fmt, user_id)` in
-  `app/tasks/export_tasks.py`: `mark_processing`, renders via `export_report`, uploads to
+  `app/tasks/export_tasks.py`: adopts the RUN's company scope (`frozenset({company_id})`, the
+  `generate_promotions_pdf` precedent; never `set_company_scope(db, None)`, security S1),
+  `mark_processing`, renders via `export_report`, uploads to
   `exports/order-sheet/{download_id}/{filename}` on the default provider, `mark_ready` with
   the content type's filename. Any exception (WeasyPrint unavailable included) → `mark_failed`
   with the message; never raises into RQ.

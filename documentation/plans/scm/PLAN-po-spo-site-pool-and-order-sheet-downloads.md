@@ -54,9 +54,10 @@ shared module and have the engine, the modals and the PO book call the same func
   present only in `po_ordered_v`, absent from `net_position_v`'s keys), add `po_ordered_v` to
   the `keys` UNION of `scm.net_position_v` (new migration, view replace; no data). `explain_net`
   (~L3204) applies the same gate by joining `warehouses` in its two sums (AC-6).
-- **SPO modal (S2):** `spo_history_for_product` drops the pool-id resolution and filters on
-  `active_site_pool_sql("warehouses")` product-wide, keeping `visible_line_clauses` and the
-  open/history split (AC-7, AC-8).
+- **SPO modal (S2):** `spo_history_for_product` follows the PO book's grain rule: product-grain
+  recs -> `active_site_pool_sql("warehouses")` product-wide; location-grain recs -> the recs'
+  own warehouses when site pool, nothing for a bin (AC-7, AC-8; reviewer S1). Keeps
+  `visible_line_clauses` and the open/history split.
 - **PO book (S2):** `_PO_BOOK_SQL` pairs become `(product_id, key_warehouse)`: for a rec with
   `warehouse_id IS NULL` the key is `''` and the lines are every open line to an active
   site-pool warehouse; for a location rec the key is its own warehouse and the line must be
@@ -81,15 +82,15 @@ shared module and have the engine, the modals and the PO book call the same func
   `ReorderPlanView.orderSheet` calls the mutation. `saveBlobAs`/`filenameFromContentDisposition`
   imports go.
 
-No registry, no flag, no config. Two new functions in one module, one view migration, one
-task, one route swapped GET → POST.
+No registry, no flag, no config. Two new functions in one module, no migration, one task, one
+route swapped GET → POST (real-user dependency, 409 on a duplicate in-flight sheet).
 
 ## Slices
 
 | Slice | Scope | Phase |
 | --- | --- | --- |
 | S4-FE | `useExportOrderSheet` + service + Actions wiring against a mocked POST | Phase 1 (frontend-first, mocks) |
-| S1 | engine gate + view migration + `explain_net` | Phase 2, tester-first |
+| S1 | engine gate (active site pool) + engine-local key widening + `explain_net` | Phase 2, tester-first |
 | S2 | `site_pool_supply.py`, SPO modal, PO book, purchase-trend + FE history call | Phase 2 |
 | S3 | sheet imports the shared read; parity test | Phase 2 |
 | S4-BE | POST route + task; GET removed | Phase 2 |
@@ -102,6 +103,9 @@ Worker restart is required after S4-BE (`app/tasks/*` edit).
 - AC-1 `test_product_grain_spo_cell_counts_site_pool_only` - seed SPO 96 @BRW-BB, 40 @BRW; plan; `incoming_spo == 40`.
 - AC-2 `test_product_grain_po_cell_counts_site_pool_only` - PO 400 @BRW-IR, 42 @BRW; `outstanding_po == 42`.
 - AC-3 `test_po_only_site_pool_warehouse_still_counts` - BRW has a PO line and no stock/SPO/SO row; `outstanding_po` includes it.
+- AC-3b `test_inactive_site_pool_warehouse_counts_nowhere` - inactive non-project warehouse with PO 176 / SPO 62 beside BRW 42 / 40: cell, sheet, PO book, SPO modal all read 42 / 40.
+- AC-7 (location grain) `test_spo_history_location_row_at_a_bin_lists_nothing` + `..._at_brw_lists_brw_only`.
+- AC-16b `test_export_post_answers_409_while_a_sheet_is_in_flight`; AC-16c `test_export_post_rejects_api_key_only_principal`; AC-16d `test_export_post_marks_failed_and_503_when_enqueue_raises`.
 - AC-4 `test_bin_spo_no_longer_covers_a_retail_need` - 500 SPO @BRW-BB, retail committed 100 @BRW, on hand 0 → a Buy rec; move the SPO to BRW → covered.
 - AC-5 `test_location_grain_row_at_a_bin_reads_zero_supply`.
 - AC-6 `test_explain_net_legs_sum_to_net_with_bin_spo_present`.
