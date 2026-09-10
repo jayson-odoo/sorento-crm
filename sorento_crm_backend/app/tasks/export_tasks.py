@@ -496,3 +496,62 @@ def generate_chat_history_csv(download_id: str, filters: dict) -> dict:
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
+
+
+def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) -> dict:
+    """Render the reorder run's order sheet, store it, and update the download row.
+
+    S4, PLAN-po-spo-site-pool-and-order-sheet-downloads.md (AC-15..AC-17). Mirrors
+    `generate_complaint_pdf` line for line: `mark_processing`, render, upload, `mark_ready`
+    - `_record_failure` on any exception, never raising into RQ.
+
+    The row's OWN filename - stamped by the route at creation time, `order-sheet-
+    <as_of ddmmyyyy>.<ext>` (AC-15) - is read back and reused for the storage key and the
+    `mark_ready` call, rather than `summary_order_service.export_report`'s own returned
+    name: that function still carries the "order-summary-..." convention the retired
+    synchronous GET used, and passing it through would silently rename the row.
+    """
+    db = SessionLocal()
+    # Worker sessions default to the fail-closed UNSET scope; the run itself is
+    # company-scoped elsewhere (`assert_run_visible`, at request time), and this task
+    # only re-reads what that request already proved visible - same shape as the
+    # complaint/stock-inquiry PDF exports above.
+    set_company_scope(db, None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        from app.services.scm import summary_order_service
+
+        file_bytes, content_type, fallback_filename = summary_order_service.export_report(
+            db, run_id=run_id, fmt=fmt,
+        )
+        filename = filename or fallback_filename
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/order-sheet/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=content_type,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_order_sheet: download %s ready (%d bytes)", download_id, len(file_bytes)
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_order_sheet failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_order_sheet")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()

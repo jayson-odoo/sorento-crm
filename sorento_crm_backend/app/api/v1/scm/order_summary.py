@@ -27,13 +27,14 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Query, Response
+from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
+from app.schemas.download import DownloadResponse
+from app.services.download_service import DownloadService
 from app.services.error_handler import AppException
-from app.services.pdf_render import PDFRenderingUnavailable
 from app.services.uuid_path_param import validate_uuid_path
 from app.schemas.scm_order_summary import (
     KeyedStatusIn,
@@ -41,6 +42,7 @@ from app.schemas.scm_order_summary import (
     OrderSummaryDecisionIn,
     OrderSummaryDecisionOut,
     OrderSummaryDemandDrillOut,
+    OrderSummaryExportIn,
     OrderSummaryLocationsOut,
     OrderSummaryReportOut,
     OrderSummarySuppliersOut,
@@ -90,56 +92,85 @@ def get_order_summary(
     return svc.report(db, run_id=run_id)
 
 
-@router.get("/order-summary/export")
-def export_order_summary(
-    run_id: Optional[str] = Query(
-        None,
-        description=(
-            "Which plan's report to export. Omitted means the newest completed plan. "
-            "Opaque, and never rendered."
-        ),
-    ),
-    format: str = Query(
-        ..., description="pdf or xlsx - the sheet's own nine columns, one row per product."
-    ),
-    db: Session = Depends(get_db),
-    _user: dict = Depends(_VIEW),
-):
-    """The Order summary sheet as a document (S9, AC-S9.3): landscape PDF or an Excel
-    workbook, the same rows and figures the grid shows - nothing on the export is typed
-    twice. Same permission as the grid it prints (``scm.dashboard.view``).
+def _ddmmyyyy_compact(iso: Optional[str]) -> str:
+    """`2026-09-10` -> `10092026`, for a FILENAME (no separators). Falls back to today
+    when the run froze no rows (`report()`'s own `as_of` is then None) - the row itself
+    still needs a name, and today is the only date anyone has to stamp on it."""
+    from datetime import date as _date, datetime as _datetime
 
-    L1/L2 (Phase 3 security review): a named ``run_id`` is validated as a UUID (404 on a
-    malformed one, the same non-committal answer a genuinely-absent run gets) and its
-    visibility is checked with the SAME gate every other run-scoped route uses, before
-    ``export_report`` ever runs a query keyed on it.
+    if not iso:
+        return _date.today().strftime("%d%m%Y")
+    try:
+        return _datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d%m%Y")
+    except ValueError:
+        return _date.today().strftime("%d%m%Y")
+
+
+@router.post("/order-summary/export", response_model=DownloadResponse)
+def export_order_summary(
+    payload: OrderSummaryExportIn = Body(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(_VIEW),
+):
+    """Queue the order sheet through My Downloads (S4, G6 ruling 9 Sep 2026 - "our export
+    of the excel and pdf needs to use My Downloads process, similar to other downloading
+    buttons"). Same permission as the grid it prints (``scm.dashboard.view``): exporting
+    states nothing new, it only prints what the report already answers.
+
+    AC-16: every guard - format, a malformed run id, an absent/invisible run, too many
+    rows to order - runs SYNCHRONOUSLY here, before any ``user_downloads`` row exists, so
+    a rejected request never leaves a row behind for the drawer to show. L1/L2 (Phase 3
+    security review, carried over from the old GET): a named ``run_id`` is validated as a
+    UUID (404 on a malformed one, the same non-committal answer a genuinely-absent run
+    gets) and its visibility is checked with the SAME gate every other run-scoped route
+    uses, before the report is ever read.
     """
-    fmt = (format or "").strip().lower()
+    fmt = (payload.format or "").strip().lower()
     if fmt not in ("pdf", "xlsx"):
         raise AppException(status_code=422, message="format must be pdf or xlsx.")
+    run_id = payload.run_id
     if run_id:
         run_id = validate_uuid_path(run_id, resource="Reorder run")
         reorder_run_service.assert_run_visible(db, run_id)
+
+    # Reads the SAME frozen report `export_report` renders from, so the row-count guard
+    # (M1, Phase 3 security review) and the sheet's own `as_of` - which names the file -
+    # come off one query rather than two readings of the run that could disagree.
+    rep = svc.report(db, run_id=run_id)
+    if len(rep["rows"]) > svc._MAX_EXPORT_ROWS:
+        raise AppException(422, "Narrow the plan first")
+
+    filename = f"order-sheet-{_ddmmyyyy_compact(rep.get('as_of'))}.{fmt}"
+    download = DownloadService(db).create(
+        user_id=str(current_user["id"]),
+        kind=f"order_sheet_{fmt}",
+        source_entity_type="reorder_run",
+        source_entity_id=str(rep["run_id"]),
+        filename=filename,
+    )
     try:
-        payload, content_type, filename = svc.export_report(db, run_id=run_id, fmt=fmt)
-    except PDFRenderingUnavailable as unavailable:
-        # L3: the detail is an operational fact for an administrator's log, never a
-        # response body - a stack-trace-shaped string from a native-library failure has
-        # no business reaching an API client.
-        log.exception("order-summary export: PDF rendering unavailable (%s)", unavailable)
+        from app.services.queue_service import enqueue_job
+        from app.tasks.export_tasks import generate_order_sheet
+
+        enqueue_job(
+            generate_order_sheet,
+            str(download.id),
+            str(rep["run_id"]),
+            fmt,
+            str(current_user["id"]),
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:
+        DownloadService(db).mark_failed(
+            str(download.id), f"Could not queue order sheet generation: {e}"
+        )
         raise AppException(
             status_code=503,
-            message=(
-                "PDF rendering is not available on this server. Ask an administrator to "
-                "install the rendering libraries."
-            ),
-            code="pdf_rendering_unavailable",
+            message="Could not queue order sheet generation. Please try again.",
         )
-    return Response(
-        content=payload,
-        media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+
+    return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
 
 
 @router.get(
