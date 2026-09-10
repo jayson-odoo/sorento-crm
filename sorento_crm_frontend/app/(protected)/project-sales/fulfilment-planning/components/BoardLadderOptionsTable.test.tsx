@@ -13,7 +13,7 @@
  *   empty five-row table claiming a walk nobody made.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { BoardLadderOption } from '../../_shared/types/fulfilmentPlanning.types';
@@ -155,5 +155,50 @@ describe('BoardLadderOptionsTable', () => {
 
     expect(container.firstChild).toBeNull();
     expect(screen.queryByTestId(`ladder-options-${KEY}`)).toBeNull();
+  });
+
+  // -------------------------------------------------------------- AC-1.2
+  it('never renders an option reason sub-line, even when the option still carries one', () => {
+    const withReason = OPTIONS.map((option) => ({
+      ...option,
+      reason: `${option.label} has nothing to spare for projects.`,
+    })) as BoardLadderOption[];
+    render(<BoardLadderOptionsTable options={withReason} contributionKey={KEY} />);
+
+    for (const option of OPTIONS) {
+      expect(
+        screen.queryByTestId(`ladder-option-reason-${KEY}-${option.step}`),
+      ).not.toBeInTheDocument();
+    }
+    expect(screen.queryByText(/has nothing to spare for projects/)).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------- AC-1.3
+  describe('the Local pill on the Buy row', () => {
+    it('shows Local on the Buy row when buyOrigin is local, and nowhere else', () => {
+      render(
+        <BoardLadderOptionsTable options={OPTIONS} contributionKey={KEY} buyOrigin="local" />,
+      );
+
+      const buyRow = screen.getByTestId(`ladder-option-${KEY}-buy`);
+      expect(within(buyRow).getByText('Local')).toBeInTheDocument();
+
+      const useRow = screen.getByTestId(`ladder-option-${KEY}-use`);
+      expect(within(useRow).queryByText('Local')).not.toBeInTheDocument();
+    });
+
+    it('shows no Local pill when buyOrigin is overseas or absent', () => {
+      render(
+        <BoardLadderOptionsTable options={OPTIONS} contributionKey={KEY} buyOrigin="overseas" />,
+      );
+      expect(
+        within(screen.getByTestId(`ladder-option-${KEY}-buy`)).queryByText('Local'),
+      ).not.toBeInTheDocument();
+
+      render(<BoardLadderOptionsTable options={OPTIONS} contributionKey={`${KEY}-2`} />);
+      expect(
+        within(screen.getByTestId(`ladder-option-${KEY}-2-buy`)).queryByText('Local'),
+      ).not.toBeInTheDocument();
+    });
   });
 });

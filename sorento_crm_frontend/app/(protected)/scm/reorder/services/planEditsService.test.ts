@@ -3,6 +3,11 @@
  * F5, F6): the bulk save PUT, the SPO history read (site pool only, R15) and the PO-history
  * read narrowed to a pool via `purchase-trend`'s `warehouse` filter, field-remapped from the
  * wire's `order_date`/`expected_date` to the dialog's `issued_at`/`eta`.
+ *
+ * S2 (PLAN-po-spo-site-pool-and-order-sheet-downloads, AC-10/AC-11, amended 10 Sep): a
+ * product-grain row (no pool code) no longer skips the call - it reads
+ * `?scope=site_pool` instead, never the bare run-wide default and never a guessed
+ * `warehouse`.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -144,10 +149,41 @@ describe('getPoHistoryToPool (F6) - purchase-trend narrowed to one destination',
     ]);
   });
 
-  it('returns no history when the row names no pool at all - never guesses a destination', async () => {
+  it('AC-10/AC-11 (amended 10 Sep): a null pool code reads scope=site_pool instead of '
+    + 'skipping the call - never a bare, run-wide default and never guessing one '
+    + 'warehouse', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        products: {
+          p1: {
+            lines: [{
+              po_number: 'PO-90', supplier_name: 'Acme', qty: 30, unit_cost: 9.5,
+              currency: 'MYR', order_date: '2026-07-01', expected_date: '2026-07-20',
+              status: 'received',
+            }],
+          },
+        },
+      }),
+    );
+
     const result = await getPoHistoryToPool('run-1', 'p1', null);
-    expect(result).toEqual({ history: [] });
-    expect(apiFetch).not.toHaveBeenCalled();
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    const url = calledUrl();
+    expect(url.pathname).toBe('/api/v1/scm/reorder-runs/run-1/purchase-trend');
+    expect(url.searchParams.get('scope')).toBe('site_pool');
+    expect(url.searchParams.has('warehouse')).toBe(false);
+    expect(result.history).toHaveLength(1);
+  });
+
+  it('a row WITH a pool code keeps warehouse=<code> and carries no scope param', async () => {
+    apiFetch.mockResolvedValue(ok({ products: { p1: { lines: [] } } }));
+
+    await getPoHistoryToPool('run-1', 'p1', 'BRW');
+
+    const url = calledUrl();
+    expect(url.searchParams.get('warehouse')).toBe('BRW');
+    expect(url.searchParams.has('scope')).toBe(false);
   });
 
   it('a product absent from the response reads as no history, not an error', async () => {

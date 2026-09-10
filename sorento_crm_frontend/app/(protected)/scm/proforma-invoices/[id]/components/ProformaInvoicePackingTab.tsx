@@ -33,6 +33,7 @@ import { EM_DASH, fmtDate, fmtQty, fmtTrimmedDecimal } from '../../../lib/format
 import type { ProformaInvoiceDetail } from '../../../services/proformaInvoiceService';
 import type { ProformaInvoicePackingLine } from '../../types/packingLine.types';
 import MatchToProductDialog from '../../../components/MatchToProductDialog';
+import { DescriptionEnCell } from '../../components/DescriptionEnCell';
 
 /** Keyed off the read permission plus a stable id, matching the Lines grid's own
  *  `scm.dashboard.view::proforma-invoice-lines` convention next door. */
@@ -248,6 +249,22 @@ export function ProformaInvoicePackingTab({
         ),
         size: 200,
         meta: { headerTitle: 'Description' },
+      },
+      {
+        // `accessorKey`, not a bare `id`, so sorting has a value to sort BY - matches its
+        // twin (`description` above), which sorts too (review round, 10 Sep).
+        accessorKey: 'description_en',
+        header: ({ column }) => <DataGridColumnHeader title="Description (EN)" column={column} />,
+        cell: ({ row }) => (
+          <DescriptionEnCell
+            invoiceId={invoice.id}
+            description={row.original.description}
+            descriptionEn={row.original.description_en ?? null}
+            canAdjust={canAdjust}
+          />
+        ),
+        size: 200,
+        meta: { headerTitle: 'Description (EN)' },
       },
       {
         accessorKey: 'qty',

@@ -162,7 +162,18 @@ def test_retail_so_line_contributes_nothing_to_delivery(db, chain):
     assert row["delivery_by_month"] == []
 
 
-# --- AC-S9.3: export ----------------------------------------------------------------
+# --- AC-S9.3: export ------------------------------------------------------------------
+#
+# S4 (PLAN-po-spo-site-pool-and-order-sheet-downloads, AC-15..AC-18) retired the
+# synchronous `GET /order-summary/export` - a GET now answers 405
+# (`test_order_sheet_export_downloads.py::test_export_get_is_gone`). The two content-type
+# tests below are ported to call `svc.export_report` directly (the bytes are still
+# produced by that function, only the transport moved off it). The three guard cases
+# that were GET-only here (unknown format 422, malformed run 404, invisible run 404) are
+# DROPPED rather than re-added as POST duplicates -
+# `test_order_sheet_export_downloads.py::test_export_post_guards_run_before_a_row_exists`
+# already covers all three through the real route. Only the row-count guard (M1, >2000
+# rows) had no POST-level coverage yet, so it is ported in place.
 
 @pytest.fixture()
 def api_app(scm_app):
@@ -181,13 +192,11 @@ def test_export_pdf_returns_the_right_content_type(scm_app):
     ), {"id": _u(), "co": SORENTO_COMPANY_ID}).scalar()
     db_.flush()
 
-    with TestClient(app) as c:
-        resp = c.get("/api/v1/scm/order-summary/export", params={
-            "run_id": run_id, "format": "pdf",
-        })
+    payload, content_type, filename = svc.export_report(db_, run_id=run_id, fmt="pdf")
 
-    assert resp.status_code == 200, resp.text
-    assert resp.headers.get("content-type", "").startswith("application/pdf")
+    assert payload, "no bytes were rendered"
+    assert content_type.startswith("application/pdf")
+    assert filename
 
 
 def test_export_xlsx_returns_the_right_content_type(scm_app):
@@ -201,73 +210,35 @@ def test_export_xlsx_returns_the_right_content_type(scm_app):
     ), {"id": _u(), "co": SORENTO_COMPANY_ID}).scalar()
     db_.flush()
 
-    with TestClient(app) as c:
-        resp = c.get("/api/v1/scm/order-summary/export", params={
-            "run_id": run_id, "format": "xlsx",
-        })
+    payload, content_type, filename = svc.export_report(db_, run_id=run_id, fmt="xlsx")
 
-    assert resp.status_code == 200, resp.text
-    assert resp.headers.get("content-type", "") == (
+    assert payload, "no bytes were rendered"
+    assert content_type == (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+    assert filename
 
 
-def test_export_unknown_format_answers_422(scm_app):
-    from tests.scm.test_m3_run import _client
+# --- Phase 3 security review, M1 -----------------------------------------------------
 
-    app, db_ = _client(scm_app, "purchasing")
-    run_id = db_.execute(text(
-        "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
-        "VALUES (:id, 'completed', false, now()) RETURNING id"
-    ), {"id": _u()}).scalar()
-    db_.flush()
-
-    with TestClient(app) as c:
-        resp = c.get("/api/v1/scm/order-summary/export", params={
-            "run_id": run_id, "format": "csv",
-        })
-
-    assert resp.status_code == 422, resp.text
-
-
-# --- Phase 3 security review, M1/L1/L2 ----------------------------------------------
-
-def test_export_answers_404_on_a_malformed_run_id(scm_app):
-    """L2: a run_id that is not even a UUID is refused the same way a genuinely absent
-    one is - never a 500 from a bad-format value reaching the database."""
-    from tests.scm.test_m3_run import _client
-
-    app, _db = _client(scm_app, "purchasing")
-    with TestClient(app) as c:
-        resp = c.get("/api/v1/scm/order-summary/export", params={
-            "run_id": "not-a-uuid", "format": "pdf",
-        })
-    assert resp.status_code == 404, resp.text
-
-
-def test_export_answers_404_when_the_run_is_not_visible(scm_app):
-    """L1: a well-formed but non-existent (or another company's) run id is refused by
-    the SAME `assert_run_visible` gate every other run-scoped route uses."""
-    from tests.scm.test_m3_run import _client
-
-    app, _db = _client(scm_app, "purchasing")
-    with TestClient(app) as c:
-        resp = c.get("/api/v1/scm/order-summary/export", params={
-            "run_id": _u(), "format": "pdf",
-        })
-    assert resp.status_code == 404, resp.text
-
-
-def test_export_refuses_above_2000_rows_to_order(scm_app):
+def test_export_refuses_above_2000_rows_to_order(scm_app, monkeypatch):
     """M1: the sheet only lists products to order - a run with more than 2,000 such rows
     is refused rather than exported (a several-thousand-row PDF is not a printable sheet).
     Bulk-inserted so 2,001 products + rows cost two statements, not two thousand ORM ones.
+
+    Ported onto the POST route (AC-16): the guard must run BEFORE any `user_downloads`
+    row is created, and `enqueue_job` is patched so a rejected request can never reach
+    Redis even if the guard regresses.
     """
     from tests.scm.test_m3_run import _client
 
+    from app.services import queue_service
     from tests.scm.conftest import SORENTO_COMPANY_ID
 
     app, db_ = _client(scm_app, "purchasing")
+    monkeypatch.setattr(queue_service, "enqueue_job",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("must not enqueue on a guard failure")))
     marker = f"ZZTEXPCAP{_u()[:6]}"
     cat_id = db_.execute(text(
         "INSERT INTO product_categories (id, category_code, category_name) "
@@ -300,13 +271,17 @@ def test_export_refuses_above_2000_rows_to_order(scm_app):
     """), {"run": run_id, "like": f"{marker}-%", "co": SORENTO_COMPANY_ID})
     db_.commit()
 
+    before = db_.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+
     with TestClient(app) as c:
-        resp = c.get("/api/v1/scm/order-summary/export", params={
-            "run_id": run_id, "format": "pdf",
+        resp = c.post("/api/v1/scm/order-summary/export", json={
+            "run_id": str(run_id), "format": "pdf",
         })
 
     assert resp.status_code == 422, resp.text
     assert "Narrow the plan first" in resp.text
+    after = db_.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+    assert after == before, "a guard failure left a download row behind"
 
 
 def test_a_supplier_named_as_a_formula_exports_as_a_string_cell(db, chain):

@@ -23,6 +23,9 @@
  *
  * `unmapped_headers` on the upload preview (S5, AC-E2) and the dialog's per-block
  * `attach_to` / `refusal` (AC-B5/B13) are documented in `fulfilmentService.ts`, not here.
+ *
+ * `description_en` on each row (S2, text glossary lane) travels on `packing_lines` itself
+ * - `proformaInvoiceTranslationService.ts` owns the write path that fills it.
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';

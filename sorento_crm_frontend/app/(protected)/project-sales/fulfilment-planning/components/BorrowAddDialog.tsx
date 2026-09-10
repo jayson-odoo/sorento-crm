@@ -14,61 +14,53 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { CellStockTable, type DonorLocationRow } from './CellStockTable';
 import type { BorrowCandidate } from '../../_shared/types/fulfilmentPlanning.types';
-
-const SOURCE_COL = 'w-[170px] min-w-[170px] max-w-[170px]';
-const NUMBER_COL = 'w-[88px] min-w-[88px] max-w-[88px]';
 
 /**
  * Borrowing takes exactly one approval: the CS actor who confirms the sales order, with the
  * donor's impact in front of them and a reason nobody can skip (AC-B09, AC-B10). So the
  * reason is mandatory here as well as at the Confirm gate.
  *
- * WHAT THE DONOR LIST NOW STATES, and why (PLAN 13.11). It read "MWH-IB 6990 free, 10
- * committed", and the captain's answer to it was: "before I decide to borrow, I need to know
- * I am not hurting them, so you need to let me know also what's their available, SO qty, SPO
- * and PO qty ... and what's the impact of borrowing. I assume this list is ranked by
- * recommendation, is it?" Free stock nets reserved and confirmed holds only, so on this book
- * it is very nearly raw on-hand - a donor with 6,990 free and 47,000 owed read as the safest
- * one to take from. Each donor is now a row of AutoCount's own columns, and the list arrives
- * RANKED by how little the borrow hurts, with the first row flagged.
+ * THE SOURCE IS THE GRID LOCATION TABLE (S4, `PLAN-local-supplier-oi-routing.md`,
+ * AC-1.4/AC-1.5): the same `CellStockTable` the Grid view renders, fed by each candidate's
+ * own `location` (`BoardCellLocation`), with a radio in the Location cell instead of the
+ * List view's read-only row and `Recommended` / `Same agent` badges beside the code. Row
+ * expansion mounts the same `StockDocumentsPanel` ledger, `This line` marking the line this
+ * dialog was opened for. Group subtotal rows are hidden (`showGroupSubtotal={false}`): a
+ * donor list is not a group.
  *
- * The ranking is the SERVER's and is never re-sorted here, including as the quantity is
- * typed: a list that reshuffles under the cursor is not a recommendation, and re-deriving the
- * order on the client would be a second implementation of it. It ranks each donor on what
- * meeting THIS line would leave it with (`available_after_need`), which is also what the
- * "After borrow" column shows until a quantity is typed over it.
+ * This replaces the dialog's own seven-column table (`On hand · SO qty · SPO qty ·
+ * Available · Free · Committed · After borrow`), which repeated arithmetic
+ * `CellStockTable` already carries and answered nothing about which sales orders sit on a
+ * source - the very question the Grid view's ledger exists to answer. Candidates carrying
+ * no `location` yet (a server that has not wired S4) render as though nothing were free
+ * there, same as an empty stock position.
  *
- * LADDER v7.1 (S3, AC-S3-11) changes what that order IS, and changes NOTHING here. Phase 2
- * makes this list the same donors ladder step 2 (`order_borrow`) walks, in the same order -
- * `(same_agent desc, required_date desc, same_group desc, same_warehouse desc)` (R4, R19): her
- * own agent first, then the order that can wait longest, then the same ownership group, then
- * the asker's own warehouse, because that is the fewest transfers. It is a SERVER ordering,
- * which is the whole reason this dialog needs no code for it. The contract is stated once, in
- * `services/fulfilmentPlanningService.ts`.
+ * The RANKING is unchanged and is still the SERVER's: `(same_agent desc, required_date desc,
+ * same_group desc, same_warehouse desc)` (R4, R19) - her own agent first, then the order that
+ * can wait longest, then the same ownership group, then the asker's own warehouse. This
+ * dialog never re-sorts it, including as the quantity is typed.
  *
  * A SAME-AGENT donor takes one more thing (AC-L6, section 1c): the agent whose other order
  * is being drawn on is offered at ANY rank precisely because she can authorise it, so the
  * dialog asks who did. Free text, required only on that donor, and folded into the reason
  * stored beside the quantity - one field to read later, not two.
- *
- * NOT a DataGrid, on the same carve-out `CellStockTable` documents: a fixed matrix of seven
- * named figures inside a dialog, with no column config, sort, resize or pagination to apply
- * to it. Its three obligations are met the same way - the table scrolls inside its own
- * container, cells carry fixed widths on a `w-max` table (never `table-fixed`, which overlaps
- * its columns), and long text truncates with a `title`.
  */
 export function BorrowAddDialog({
   lineNo,
   itemCode,
+  lineId,
   candidates,
   onDone,
   onAdd,
 }: {
   lineNo: number;
   itemCode?: string | null;
+  /** The mirror line this borrow is FOR, so its own rows are marked `This line` in the
+   * ledger a source row expands into. Absent on a caller with no mirror line yet. */
+  lineId?: string | null;
   candidates: BorrowCandidate[];
   onDone: () => void;
   onAdd: (candidate: BorrowCandidate, qty: string, reason: string) => void;
@@ -77,27 +69,61 @@ export function BorrowAddDialog({
   // row disabled and unselectable is gone, so the opening selection is simply the first of
   // the ranked list - which is also the recommended one.
   const first = candidates[0];
+  // S4/review B2: keyed by CANDIDATE, not by warehouse - two donors can share one bin (a
+  // same-agent Borrow off two different sales-order lines), and `warehouse_id` alone would
+  // make the second row's radio silently select the first.
   const [selectedKey, setSelectedKey] = React.useState(first ? candidateKey(first) : '');
   const [qty, setQty] = React.useState(openingQty(first));
   const [reason, setReason] = React.useState('');
   const [authorisation, setAuthorisation] = React.useState('');
 
-  const selected =
-    candidates.find((candidate) => candidateKey(candidate) === selectedKey) ?? first;
+  const selected = candidates.find((candidate) => candidateKey(candidate) === selectedKey) ?? first;
   const trimmed = reason.trim();
   const authorised = authorisation.trim();
   const needsAuthorisation = Boolean(selected?.same_agent);
   const amount = Number.parseFloat(qty);
   const typed = Number.isFinite(amount) && amount > 0 ? amount : null;
+
+  // S4/review S3: `rowKey`/`label` are CellStockTable's own opt-in fields for a donor
+  // picker - every OTHER caller (the Grid Location table) sets neither and keys/labels
+  // itself off the location alone, unchanged.
+  const locations = React.useMemo<DonorLocationRow[]>(
+    () =>
+      candidates
+        .filter((c) => c.location)
+        .map((c) => ({
+          ...(c.location as NonNullable<BorrowCandidate['location']>),
+          rowKey: candidateKey(c),
+          label: donorLabel(c),
+        })),
+    [candidates],
+  );
+  // Every candidate lacks a `location` (a server that has not wired S4) reads the same as
+  // no candidates at all: the DIALOG's own empty state, never `CellStockTable`'s "No stock
+  // position for this cell" - that message is about a CELL with several products, and is
+  // simply the wrong sentence for a donor list with nothing to offer.
+  const hasDonors = locations.length > 0;
   const valid =
+    hasDonors &&
     Boolean(selected) &&
     typed !== null &&
     Boolean(trimmed) &&
     (!needsAuthorisation || Boolean(authorised));
 
+  const badges = React.useMemo(() => {
+    const map: Record<string, ('Recommended' | 'Same agent')[]> = {};
+    for (const candidate of candidates) {
+      const tags: ('Recommended' | 'Same agent')[] = [];
+      if (candidate.recommended) tags.push('Recommended');
+      if (candidate.same_agent) tags.push('Same agent');
+      if (tags.length > 0) map[candidateKey(candidate)] = tags;
+    }
+    return map;
+  }, [candidates]);
+
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
-      <DialogContent className="max-h-[92vh] w-full max-w-4xl overflow-hidden">
+      <DialogContent className="max-h-[92vh] w-full max-w-5xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>Borrow for line {lineNo}</DialogTitle>
           <DialogDescription>{itemCode ?? 'This item'}</DialogDescription>
@@ -114,9 +140,13 @@ export function BorrowAddDialog({
           <DialogBody className="max-h-[60vh] space-y-4 overflow-y-auto">
             <fieldset className="space-y-2">
               <legend className="mb-1.5 text-sm font-medium">Source</legend>
-              {candidates.length === 0 ? (
+              {!hasDonors ? (
                 // Rendered rather than hidden, per the CRUD standard: the dialog is opened
                 // from a Buy, and "there is nowhere to borrow from" is the answer to why.
+                // Review S3: this is the dialog's OWN empty state, shown whether there are
+                // no candidates at all or every candidate lacks a `location` - never
+                // `CellStockTable`'s own "No stock position for this cell", which answers a
+                // different question (a cell holding several products, not a donor list).
                 <div
                   data-testid="borrow-donor-empty"
                   className="rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground"
@@ -126,127 +156,30 @@ export function BorrowAddDialog({
               ) : (
                 <div
                   data-testid="borrow-donor-table"
-                  className="max-h-[40vh] w-full overflow-x-auto overflow-y-auto overscroll-x-contain rounded-lg border border-border"
+                  className="max-h-[40vh] w-full overflow-x-auto overflow-y-auto overscroll-x-contain"
                 >
-                  <table className="w-max border-separate border-spacing-0 text-xs">
-                    <thead>
-                      <tr>
-                        <th scope="col" className={cn(SOURCE_COL, HEAD_CELL)}>
-                          Source
-                        </th>
-                        {NUMERIC_COLUMNS.map((column) => (
-                          <th
-                            key={column.key}
-                            scope="col"
-                            className={cn(NUMBER_COL, HEAD_CELL, 'text-end')}
-                          >
-                            {column.label}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {candidates.map((candidate) => {
-                        const key = candidateKey(candidate);
-                        const code = candidate.warehouse_code;
-                        const isGroupBorrow = candidate.rung === 'group_borrow';
-                        const donor = isGroupBorrow
-                          ? donorSoLabel(candidate)
-                          : candidate.source === 'other_project'
-                            ? (candidate.donor_project_ref ?? 'Another project')
-                            : code;
-                        const chosen = key === selectedKey;
-                        return (
-                          <tr key={key} data-testid={`borrow-donor-${code}`}>
-                            <td className={cn(SOURCE_COL, BODY_CELL)}>
-                              <label
-                                htmlFor={`borrow-${lineNo}-${key}`}
-                                className="flex cursor-pointer items-start gap-2"
-                              >
-                                <input
-                                  id={`borrow-${lineNo}-${key}`}
-                                  type="radio"
-                                  name={`borrow-source-${lineNo}`}
-                                  className="mt-0.5"
-                                  checked={chosen}
-                                  onChange={() => {
-                                    setSelectedKey(key);
-                                    setQty(openingQty(candidate));
-                                    // The authorisation names ONE agent and belongs to the
-                                    // donor it was typed for. Carrying it onto the next
-                                    // donor would file somebody else's approval against an
-                                    // order they never agreed to give stock from.
-                                    setAuthorisation('');
-                                  }}
-                                />
-                                <span className="min-w-0">
-                                  <span
-                                    className="block truncate font-medium"
-                                    title={donor}
-                                  >
-                                    {donor}
-                                  </span>
-                                  {isGroupBorrow && (
-                                    <span
-                                      className="block truncate text-muted-foreground"
-                                      title={`At ${code}`}
-                                    >
-                                      {`At ${code}`}
-                                    </span>
-                                  )}
-                                  {!isGroupBorrow && candidate.source === 'other_project' && (
-                                    <span
-                                      className="block truncate text-muted-foreground"
-                                      title={`Held at ${code}`}
-                                    >
-                                      {`Held at ${code}`}
-                                    </span>
-                                  )}
-                                  <span className="mt-0.5 flex flex-wrap gap-1">
-                                    {candidate.recommended && (
-                                      <span className="inline-block rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                                        Recommended
-                                      </span>
-                                    )}
-                                    {candidate.same_agent && (
-                                      <span
-                                        data-testid={`borrow-same-agent-${code}`}
-                                        className="inline-block rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
-                                        title="This donor shares the line's own sales agent, who can authorise moving her own stock."
-                                      >
-                                        Same agent
-                                      </span>
-                                    )}
-                                  </span>
-                                </span>
-                              </label>
-                            </td>
-                            {NUMERIC_COLUMNS.map((column) => {
-                              const value = column.of(candidate, typed);
-                              // Signed and never clamped: a negative Available IS the hole,
-                              // and the colour is what makes it the number the eye lands on.
-                              const negative = column.signed && isNegative(value);
-                              return (
-                                <td key={column.key} className={cn(NUMBER_COL, BODY_CELL)}>
-                                  <span
-                                    data-testid={`borrow-cell-${column.key}-${code}`}
-                                    className={cn(
-                                      'block truncate text-end tabular-nums',
-                                      value === null && 'text-muted-foreground',
-                                      negative && 'text-destructive',
-                                    )}
-                                    title={value ?? 'Not stated'}
-                                  >
-                                    {value ?? 'Not stated'}
-                                  </span>
-                                </td>
-                              );
-                            })}
-                          </tr>
+                  <CellStockTable
+                    locations={locations}
+                    selectable={{
+                      value: selectedKey,
+                      onChange: (key) => {
+                        const next = candidates.find(
+                          (candidate) => candidateKey(candidate) === key,
                         );
-                      })}
-                    </tbody>
-                  </table>
+                        if (!next) return;
+                        setSelectedKey(key);
+                        setQty(openingQty(next));
+                        // The authorisation names ONE agent and belongs to the donor it was
+                        // typed for. Carrying it onto the next donor would file somebody
+                        // else's approval against an order they never agreed to give stock
+                        // from.
+                        setAuthorisation('');
+                      },
+                    }}
+                    badges={badges}
+                    lineIds={lineId ? [lineId] : []}
+                    showGroupSubtotal={false}
+                  />
                 </div>
               )}
             </fieldset>
@@ -369,55 +302,6 @@ function BorrowImpact({
   );
 }
 
-const HEAD_CELL =
-  'sticky top-0 z-10 border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
-const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
-
-/**
- * AutoCount's own columns, in AutoCount's order, closed by what the typed quantity leaves.
- *
- * `Free` is what THIS donor can give - a location's free stock, or a donor project's own hold
- * - because that is the number the borrow is drawn from. The pile's own free figure travels
- * beside it in the payload for reconciliation and is deliberately not a column: two figures
- * both labelled "free" in one row is how a donor list starts lying.
- */
-const NUMERIC_COLUMNS: {
-  key: string;
-  label: string;
-  of: (candidate: BorrowCandidate, qty: number | null) => string | null;
-  /** May legitimately be negative, and is coloured when it is. */
-  signed?: boolean;
-}[] = [
-  { key: 'on-hand', label: 'On hand', of: (candidate) => candidate.qty_on_hand ?? null },
-  { key: 'so', label: 'SO qty', of: (candidate) => candidate.so_qty ?? null },
-  { key: 'spo', label: 'SPO qty', of: (candidate) => candidate.spo_qty ?? null },
-  {
-    key: 'available',
-    label: 'Available',
-    of: (candidate) => candidate.available_qty ?? null,
-    signed: true,
-  },
-  { key: 'free', label: 'Free', of: (candidate) => candidate.free_qty ?? null },
-  {
-    key: 'committed',
-    label: 'Committed',
-    of: (candidate) => candidate.qty_committed ?? candidate.donor_impact?.committed_qty ?? null,
-  },
-  {
-    key: 'after',
-    label: 'After borrow',
-    // Until a quantity is typed this is the server's own `available_after_need` - what the
-    // donor keeps once this line's residual is met, which is the figure it was ranked on.
-    // Typing a quantity asks the same question of every donor at that quantity instead.
-    of: (candidate, qty) => {
-      if (qty === null) return candidate.available_after_need ?? null;
-      if (candidate.available_qty === null || candidate.available_qty === undefined) return null;
-      return fromMinor(toMinor(candidate.available_qty) - toMinor(qty));
-    },
-    signed: true,
-  },
-];
-
 /**
  * What the box opens on: what this line still has to cover, capped at what the donor has.
  *
@@ -432,10 +316,6 @@ function openingQty(candidate: BorrowCandidate | undefined): string {
   const need = candidate.need_qty ?? null;
   if (need === null || toMinor(need) <= 0) return candidate.free_qty;
   return fromMinor(Math.min(toMinor(need), toMinor(candidate.free_qty)));
-}
-
-function isNegative(value: string | null): boolean {
-  return value !== null && Number(value) < 0;
 }
 
 /**
@@ -461,19 +341,42 @@ function storedReason(
   return `${authorisationLabel(candidate)}: ${authorised}. ${reason}`;
 }
 
-/** "SO371334 line 2", the group-borrow donor's own identity - never a bare warehouse code,
- * which two different donor lines at the same location would otherwise share. */
-function donorSoLabel(candidate: BorrowCandidate): string {
-  const so = candidate.donor_so_number ?? 'An unnamed sales order';
-  const line = candidate.donor_line_no !== null && candidate.donor_line_no !== undefined
-    ? ` line ${candidate.donor_line_no}`
-    : '';
-  return `${so}${line}`;
+/**
+ * A stable identity for ONE candidate, not for the warehouse it names (S4/review B2).
+ * `warehouse_id` alone collided the moment two donor lines shared a bin - a same-agent
+ * Borrow off two different sales-order lines at MWH-BB is two rows, and without
+ * `donor_core_line_id` in the key the second row's radio silently selected the first.
+ */
+function candidateKey(candidate: BorrowCandidate): string {
+  return [
+    candidate.warehouse_id ?? '',
+    candidate.source,
+    candidate.donor_core_line_id ?? '',
+    candidate.donor_project_ref ?? '',
+  ].join('|');
 }
 
-function candidateKey(candidate: BorrowCandidate): string {
-  return (
-    `${candidate.source}-${candidate.warehouse_code}-${candidate.donor_project_ref ?? ''}-` +
-    `${candidate.donor_core_line_id ?? ''}`
-  );
+/**
+ * The donor's own identity, shown under the location code (S4/review B2) - never a bare
+ * warehouse code, which two donor lines at the same location would otherwise share.
+ * `undefined` for a plain free-stock donor: the code alone already fully identifies it.
+ */
+function donorLabel(candidate: BorrowCandidate): string | undefined {
+  if (candidate.rung === 'group_borrow') {
+    return donorSoLabel(candidate);
+  }
+  if (candidate.source === 'other_project') {
+    return candidate.donor_project_ref ?? 'Another project';
+  }
+  return undefined;
+}
+
+/** "SO371334 line 2" - a group-borrow donor's own identity, never a bare warehouse code. */
+function donorSoLabel(candidate: BorrowCandidate): string {
+  const so = candidate.donor_so_number ?? 'An unnamed sales order';
+  const line =
+    candidate.donor_line_no !== null && candidate.donor_line_no !== undefined
+      ? ` line ${candidate.donor_line_no}`
+      : '';
+  return `${so}${line}`;
 }

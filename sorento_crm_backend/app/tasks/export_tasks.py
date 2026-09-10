@@ -496,3 +496,84 @@ def generate_chat_history_csv(download_id: str, filters: dict) -> dict:
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
+
+
+def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) -> dict:
+    """Render the reorder run's order sheet, store it, and update the download row.
+
+    S4, PLAN-po-spo-site-pool-and-order-sheet-downloads.md (AC-15..AC-17). Mirrors
+    `generate_complaint_pdf` line for line: `mark_processing`, render, upload, `mark_ready`
+    - `_record_failure` on any exception, never raising into RQ.
+
+    The row's OWN filename - stamped by the route at creation time, `order-sheet-
+    <as_of ddmmyyyy>.<ext>` (AC-15) - is read back and reused for the storage key and the
+    `mark_ready` call, rather than `summary_order_service.export_report`'s own returned
+    name: that function still carries the "order-summary-..." convention the retired
+    synchronous GET used, and passing it through would silently rename the row.
+    """
+    db = SessionLocal()
+    # Security S1 (review fix round A, A2): the worker has NO request-scoped company - a
+    # bare `set_company_scope(db, None)` here would read every company's rows, which is
+    # exactly the isolation break `_adopt_run_company_scope` exists to close for
+    # `run_reorder` itself. The run row is the one thing that states which company this
+    # export belongs to, so it is read under NO scope (the row itself is what tells us),
+    # then its OWN company is adopted before anything company-scoped is touched -
+    # `reorder_run_service._adopt_run_company_scope`, the same shape
+    # `generate_promotions_pdf` above uses via its own snapshotted `company_id` param.
+    from app.models.base import get_company_scope
+    from app.models.scm import ReorderRun
+    from app.services.scm.reorder_run_service import _adopt_run_company_scope
+
+    # C3 (review fix round C): restored in `finally`, the same shape `_execute_run` uses
+    # for `run_reorder` (reorder_run_service.py ~L548-560) - a caller whose session this
+    # task reuses (a synchronous test, `_NoCloseSession`) did not ask to have its scope
+    # changed underneath it, and leaving the run's company adopted after return would
+    # silently re-scope whatever that caller reads next.
+    caller_scope = get_company_scope(db)
+    set_company_scope(db, None)
+    run = db.get(ReorderRun, run_id)
+    if run is not None:
+        _adopt_run_company_scope(db, run)
+    else:
+        logger.warning(
+            "generate_order_sheet: run %s not found; export runs under no company", run_id
+        )
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        from app.services.scm import summary_order_service
+
+        file_bytes, content_type, fallback_filename = summary_order_service.export_report(
+            db, run_id=run_id, fmt=fmt,
+        )
+        filename = filename or fallback_filename
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/order-sheet/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=content_type,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_order_sheet: download %s ready (%d bytes)", download_id, len(file_bytes)
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_order_sheet failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_order_sheet")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()

@@ -275,6 +275,18 @@ class OrderSummarySuppliersOut(BaseModel):
     candidates: List[SupplierCandidateOut] = Field(default_factory=list)
 
 
+class OrderSummaryExportIn(BaseModel):
+    """S4, PLAN-po-spo-site-pool-and-order-sheet-downloads.md (AC-15): the async export
+    request. `run_id` is opaque, same rule as every other read here; omitted means the
+    newest completed run, exactly like the GET report. `format` is validated in the route
+    (422 on anything but ``pdf``/``xlsx``) rather than here, so the message stays the
+    existing wording the old synchronous export used.
+    """
+
+    run_id: Optional[str] = None
+    format: str
+
+
 class OrderSummaryDecisionIn(BaseModel):
     """What a decision writes (AC-C2.7, AC-C2.8).
 

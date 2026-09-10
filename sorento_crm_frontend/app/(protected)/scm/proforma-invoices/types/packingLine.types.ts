@@ -13,6 +13,9 @@ export interface ProformaInvoicePackingLine {
   item_code: string;
   supplier_code: string | null;
   description: string | null;
+  /** The translation_memory English for `description` (S2, text glossary lane) - `null`
+   *  for a word the memory has never seen, even an already-English one (R7). */
+  description_en?: string | null;
   product_id: string | null;
   product_set_id: string | null;
   qty: number;

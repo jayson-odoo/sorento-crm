@@ -56,7 +56,13 @@ class Supplier(Base, CompanyScopedMixin):
     city = Column(String(100), nullable=True)
     state = Column(String(100), nullable=True)
     postal_code = Column(String(20), nullable=True)
-    country = Column(String(100), nullable=True)
+    # S2 (`PLAN-local-supplier-oi-routing.md`): replaces the free-text `country` column,
+    # NULL on every row it ever held. RESTRICT: a country still named by a supplier is not
+    # a country `CountryService.delete_country` may remove out from under it.
+    country_id = Column(
+        UUID(as_uuid=False), ForeignKey("countries.id", ondelete="RESTRICT"),
+        nullable=True, index=True,
+    )
     payment_terms_days = Column(Integer, default=30, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     # SCM (M0): denormalized latest composite supplier score (written by M2 job).
@@ -66,7 +72,16 @@ class Supplier(Base, CompanyScopedMixin):
 
     product_suppliers = relationship("ProductSupplier", back_populates="supplier")
     inbound_shipments = relationship("InboundShipment", back_populates="supplier")
-    
+    country = relationship("Country")
+
+    @property
+    def country_code(self) -> "str | None":
+        return self.country.code if self.country else None
+
+    @property
+    def country_name(self) -> "str | None":
+        return self.country.name if self.country else None
+
     __table_args__ = (
         Index(
             "uq_suppliers_company_supplier_code",
@@ -74,7 +89,6 @@ class Supplier(Base, CompanyScopedMixin):
             unique=True,
         ),
         Index("ix_suppliers_is_active", "is_active"),
-        Index("ix_suppliers_country", "country"),
         Index("ix_suppliers_city", "city"),
     )
 

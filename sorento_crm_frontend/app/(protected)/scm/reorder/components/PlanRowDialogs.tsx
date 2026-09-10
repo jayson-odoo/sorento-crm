@@ -639,9 +639,14 @@ function spoColumns(totalQty: number): ColumnDef<SpoShipment>[] {
 function SpoTabs({ line, runId }: { line: PlanLine; runId: string | null }) {
   const productId = line.product_id;
   const pool = poolLocationLabel(line);
+  // Review fix round B (AC-7 amended): a single, non-grouped LOCATION-grain line names
+  // its own warehouse, so the modal narrows to it instead of the product-wide site-pool
+  // sum - the same grain rule the PO book already applies. A grouped (pool) line or a
+  // product-grain line (no warehouse of its own) passes nothing.
+  const warehouseId = !isGroupedLine(line) && line.warehouse_id ? line.warehouse_id : undefined;
   const spo = useQuery({
-    queryKey: ['plan-lines', runId, 'spo-history', productId],
-    queryFn: () => getSpoHistory(runId as string, productId as string),
+    queryKey: ['plan-lines', runId, 'spo-history', productId, warehouseId ?? null],
+    queryFn: () => getSpoHistory(runId as string, productId as string, warehouseId),
     enabled: Boolean(runId && productId),
     retry: false,
   });

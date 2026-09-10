@@ -119,7 +119,7 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
                         <br />
                       </>
                     )}
-                    {supplier.country}
+                    {supplier.country_name}
                   </>
                 )}
                 {!supplier.address_line1 && '-'}

@@ -407,6 +407,7 @@ export function SupplyLineCard({
         <BorrowAddDialog
           lineNo={line.line_no}
           itemCode={line.item_code}
+          lineId={line.project_line_id}
           candidates={line.borrow_candidates}
           onDone={() => setAdding(false)}
           onAdd={(candidate: BorrowCandidate, qty, reason) =>

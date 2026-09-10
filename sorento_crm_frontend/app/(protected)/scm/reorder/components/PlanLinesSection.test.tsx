@@ -284,6 +284,9 @@ describe('PlanLinesSection - reports totals upward for the decision-progress til
     const hiddenCovered = line({
       id: 'b', sku: 'COV-NOT-BREACHED', type: 'covered',
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+      // S6 (PLAN-plan-list-tile-sheet-one-scope.md): visibleLines now trusts the
+      // server's own flag instead of recomputing the rule from policy_type/net/level.
+      hidden_by_default: true,
     });
     stubPlanLines({ lines: [visibleBuy, hiddenCovered], decisions: {} });
     const onTotalsChange = vi.fn();
@@ -372,10 +375,12 @@ describe('PlanLinesSection - manual mode hides not-breached covered rows by defa
     const notBreached = line({
       id: 'a', sku: 'COV-NOT-BREACHED', type: 'covered',
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+      hidden_by_default: true,
     });
     const breached = line({
       id: 'b', sku: 'COV-BREACHED', type: 'covered',
       policy_type: 'reorder_level', reorder_level: 120, net_position: 30,
+      hidden_by_default: false,
     });
     stubPlanLines({ lines: [notBreached, breached] });
     render(<PlanLinesSection runId="run-1" />);
@@ -449,6 +454,7 @@ describe('PlanLinesSection - manual mode hides not-breached covered rows by defa
       id: 'a', sku: 'COV-ONLY', product_id: 'p-lonely', type: 'covered',
       warehouse_id: null, warehouse_code: null, warehouse_name: null,
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+      hidden_by_default: true,
     });
     const other = line({ id: 'b', sku: 'BUY-1', product_id: 'p-other', type: 'buy' });
     stubPlanLines({ lines: [lonely, other] });

@@ -39,18 +39,16 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
-from sqlalchemy import func, or_, text
+from sqlalchemy import Numeric, cast, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.project_so import INQUIRY_CANCELLED
 from app.models.procurement import (
-    InboundShipment,
     ProductSupplier,
     PurchaseOrder,
     PurchaseOrderLine,
-    SPOAllocation,
     Supplier,
 )
 from app.models.product import Product, UnitOfMeasure
@@ -71,9 +69,10 @@ from app.services.scm.demand import (
     BUY_VERB,
     UNPLACED_INQUIRY_STATE,
 )
-from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL, active_site_pool_sql
+from app.services.scm.pool_predicate import active_site_pool_sql
+from app.services.scm import plan_scope
 from app.services.scm.reorder_policy import resolve_global_cover_scope
-from app.services.scm.spo_supply import open_incoming_clauses
+from app.services.scm.site_pool_supply import open_po_by_product, open_spo_by_product
 from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.scm.reorder_engine import round_order_qty as eng_round_order_qty
 from app.services.scm.cost_capture_service import cost_variance
@@ -257,8 +256,8 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     # S15 (ruling 1): the sheet's Supplier column is the LAST-PO supplier, never the
     # `product_suppliers` link - see `_last_po_supplier_map`'s own docstring for why.
     last_po_supplier = _last_po_supplier_map(db, product_ids)
-    po_open = _po_open_qty_map(db, product_ids)
-    incoming_spo = _incoming_spo_qty_map(db, product_ids)
+    po_open = open_po_by_product(db, product_ids)
+    incoming_spo = open_spo_by_product(db, product_ids)
     last_receipt = _last_receipt_map(db, product_ids)
     pool_on_hand = _pool_on_hand_map(db, product_ids)
     existing = {
@@ -474,7 +473,7 @@ def _belongs_on_the_book(recs: list, decision_grain: Optional[str]) -> bool:
     still has a `suggestion` explaining the 0, and the buyer can still choose to order
     over it (AC-9, AC-10). Measured on the local prod-copy database (10 Sep, product
     grain): buy 374 + covered 575 + needs_level 1 lands the sheet at under 1,000 rows,
-    well inside `_MAX_EXPORT_ROWS` 2000.
+    well inside `MAX_EXPORT_ROWS` 2000.
 
     On every OTHER grain (location-grain, or `None`/legacy): the OLD rule stands - a row
     only when the run SIZED a purchase for the product, or owes firm Project Buy the run
@@ -828,7 +827,7 @@ def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
 
     ORM, not raw SQL: `Stock` is company-scoped and this query carries no manual predicate,
     so it relies on the ORM's own `do_orm_execute` isolation filter, same as
-    `_incoming_spo_qty_map` beside it.
+    `site_pool_supply.open_spo_by_product` beside it.
     """
     if not product_ids:
         return {}
@@ -861,10 +860,18 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
     `product_suppliers` link that already agrees with its own last PO.
 
     The newest PO line for the product (`purchase_orders.issue_date` desc, NULLs last,
-    then `created_at` desc as the tiebreak) names who it was actually bought from last,
-    which is the buyer's own reading of "Supplier". A product with NO PO history gets no
-    entry here at all - `write_rows` then leaves `supplier_name`/`moq` NULL, printing
-    BLANK on the sheet, never DEFAULT and never a link-table fallback.
+    then `created_at` desc, then `supplier_id` desc as the FINAL deterministic tiebreak -
+    two different suppliers can tie on both `issue_date` and `created_at` from a
+    same-transaction import, e.g. two products imported in one batch; without this last
+    key this query and `backfill_product_supplier_from_last_po.py`'s own primary-pick
+    could disagree on the tied row) names who it was actually bought from last, which is
+    the buyer's own reading of "Supplier". A cancelled PO does not exist for this lookup
+    (PLAN-product-supplier-all-po.md ruling 3, 10 Sep 2026) - it can never be the
+    "newest" PO that names the Supplier column, so this stays in agreement with
+    `backfill_product_supplier_from_last_po.py --all-suppliers`, which excludes cancelled
+    POs the same way. A product with NO PO history gets no entry here at all -
+    `write_rows` then leaves `supplier_name`/`moq` NULL, printing BLANK on the sheet,
+    never DEFAULT and never a link-table fallback.
 
     `moq`/`order_multiple` are read from THAT SAME last-PO supplier's `product_suppliers`
     link when one exists, else null - never another supplier's terms, so the Remarks
@@ -885,8 +892,10 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         JOIN suppliers s ON s.id = po.supplier_id
         WHERE pol.product_id::text = ANY(:pids)
+          AND po.status <> 'cancelled'
           {("AND " + co) if co else ""}
-        ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC
+        ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC,
+                 po.supplier_id DESC
     """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
     if not po_rows:
         return {}
@@ -909,102 +918,6 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
         moq, multiple = links.get((pid, supplier_id), (None, None))
         out[pid] = {"supplier_name": name, "moq": _f(moq), "order_multiple": _f(multiple)}
     return out
-
-
-def _grouped_supply_map(rows) -> dict[str, dict]:
-    """Common shape for `_po_open_qty_map` / `_incoming_spo_qty_map` (issue #796, AC-13):
-    rows of ``(product_id, document_number, qty)`` collapse to ``{pid: {"qty": total,
-    "docs": [{"number", "qty"}, ...]}}``.
-
-    `docs` is sorted by number, a NULL number groups under "(no number)". Each document's
-    remainder is CLAMPED to 0 before it is added to `qty` or considered for the list
-    (review fix round, AC-15): an over-received still-open line (a line the book marks
-    open despite `qty_received > qty_ordered`, or an SPO allocation over-received the
-    same way) would otherwise SUBTRACT from the total while contributing nothing to the
-    list, so the listed lines no longer summed to the figure printed above them. An
-    over-received line is not incoming supply either way, so 0 is the right reading of
-    it, not a negative one. This makes `qty` NO LONGER byte-identical to the old
-    ungrouped SUM on an over-received line - deliberately: the old SUM let a negative
-    remainder net other documents down, which is the same bug restated as an arithmetic
-    "feature" rather than fixed.
-    """
-    out: dict[str, dict] = {}
-    for pid, number, qty in rows:
-        key = str(pid)
-        q = max(float(qty or 0.0), 0.0)
-        bucket = out.setdefault(key, {"qty": 0.0, "docs": []})
-        bucket["qty"] += q
-        if q > 0:
-            bucket["docs"].append({"number": number or "(no number)", "qty": q})
-    for bucket in out.values():
-        bucket["docs"].sort(key=lambda d: d["number"])
-    return out
-
-
-def _po_open_qty_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """``{product_id: {"qty": total, "docs": [...]}}`` of open PO lines still owed at a
-    SITE POOL location - the sheet's own "BRW PO Qty" (Phase 3 nit), the same
-    `pool_predicate` module `po_book_service`/`reorder_run_service` already read, rather
-    than a second, wider reading that also counted project-bin PO lines a buyer would
-    never call "BRW PO Qty". A PO line naming no warehouse is not known to be pool supply
-    and is not counted either.
-
-    Grouped by `purchase_orders.po_number` too (issue #796, AC-13/AC-15): the buyer wants
-    to see WHICH document the total is owed on, for traceability.
-    """
-    if not product_ids:
-        return {}
-    co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="poo")
-    rows = db.execute(text(f"""
-        SELECT pol.product_id::text AS pid,
-               po.po_number AS po_number,
-               SUM(pol.qty_ordered - COALESCE(pol.qty_received, 0)) AS qty
-        FROM purchase_order_lines pol
-        JOIN warehouses w ON w.id = pol.warehouse_id
-        JOIN purchase_orders po ON po.id = pol.purchase_order_id
-        WHERE pol.product_id::text = ANY(:pids)
-          AND pol.line_status = 'open'
-          AND {ACTIVE_SITE_POOL_SQL}
-          {("AND " + co) if co else ""}
-        GROUP BY pol.product_id, po.po_number
-    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
-    return _grouped_supply_map(rows)
-
-
-def _incoming_spo_qty_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """``{product_id: {"qty": total, "docs": [...]}}`` still to come on an open SPO at a
-    SITE POOL warehouse only - `spo_supply`'s own "trust the book" rule (open, not yet
-    received, not landed), re-scoped (S14, AC-S14.2) to the same `pool_predicate` rule the
-    PO column's "BRW PO Qty" already applies - the sheet's own "BRW incoming Qty". An
-    allocation naming no warehouse, or naming a project bin, is not counted: not known to
-    be pool supply, or known not to be, either way it is not a site-pool figure.
-
-    Grouped by `spo_allocations.spo_number` too (issue #796, AC-13/AC-15) - the document
-    IS the line (D3, no header table), so the number is the row's own identity, one group
-    per allocation number.
-    """
-    if not product_ids:
-        return {}
-    rows = (
-        db.query(
-            SPOAllocation.product_id,
-            SPOAllocation.spo_number,
-            func.sum(
-                SPOAllocation.allocated_quantity
-                - func.coalesce(SPOAllocation.quantity_received, 0)
-            ),
-        )
-        .join(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
-        .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
-        .filter(
-            SPOAllocation.product_id.in_(product_ids),
-            *open_incoming_clauses(),
-            text(active_site_pool_sql("warehouses")),
-        )
-        .group_by(SPOAllocation.product_id, SPOAllocation.spo_number)
-        .all()
-    )
-    return _grouped_supply_map(rows)
 
 
 def _last_receipt_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
@@ -1305,8 +1218,10 @@ def _project_qty(row: dict) -> float:
 
 #: M1 (Phase 3 security review): the sheet only lists products to order - a run with
 #: thousands of covered/no-action rows must not turn "export the sheet" into a
-#: several-thousand-row document nobody asked to print.
-_MAX_EXPORT_ROWS = 2000
+#: several-thousand-row document nobody asked to print. PUBLIC (no leading underscore,
+#: review fix round A, A5): the async export route reads this beside `export_guard_stats`
+#: rather than a private module attribute.
+MAX_EXPORT_ROWS = 2000
 
 #: H1 (Phase 3 security review, L4): a text cell longer than this is truncated before it
 #: reaches the workbook - Excel's own per-cell character limit is 32,767; capped well short
@@ -1530,21 +1445,139 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
     return buf.getvalue()
 
 
+def _hidden_product_ids_for_run(db: Session, run_id: str) -> set[str]:
+    """PLAN-plan-list-tile-sheet-one-scope.md, S7 (AC-3): which products the SAME
+    `plan_scope.hidden_by_default` rule the recommendations list and the Decisions tile
+    already read also hides, for the run's own PRODUCT-GRAIN recommendation rows
+    (`warehouse_id IS NULL` - `order_summary_row` is one row per product per run, the
+    same cardinality). ORM, not raw SQL, so the company isolation filter on
+    `ReorderRecommendation` applies without a hand-written predicate.
+
+    Keyed on `product_id`, not `product_code` (reviewer pass 3, round D, D2): a code
+    repeats across companies, an id does not, and `order_summary_row` already carries
+    `product_id` directly - no join to `products` is needed here at all.
+
+    Selects only the four scalars the rule needs - `rec_type`,
+    `inputs->>'policy_type'`, `(inputs->>'reorder_level')::numeric`,
+    `(inputs->>'master_reorder_level')::numeric` - plus `net_position`, never the whole
+    `inputs` JSONB (D1: measured on the 12,948-rec run, fetching the full blob cost
+    29.3 MB / 356 ms against 69 ms for this narrow shape).
+    """
+    rows = (
+        db.query(
+            ReorderRecommendation.product_id,
+            ReorderRecommendation.rec_type,
+            ReorderRecommendation.inputs["policy_type"].astext,
+            cast(ReorderRecommendation.inputs["reorder_level"].astext, Numeric),
+            cast(ReorderRecommendation.inputs["master_reorder_level"].astext, Numeric),
+            ReorderRecommendation.net_position,
+        )
+        .filter(
+            ReorderRecommendation.run_id == run_id,
+            ReorderRecommendation.warehouse_id.is_(None),
+        )
+        .all()
+    )
+    hidden: set[str] = set()
+    for pid, rec_type, policy_type, reorder_level, master_reorder_level, net_position in rows:
+        if plan_scope.hidden_by_default(
+            rec_type=rec_type,
+            policy_type=policy_type,
+            reorder_level=float(reorder_level) if reorder_level is not None else None,
+            master_reorder_level=(
+                float(master_reorder_level) if master_reorder_level is not None else None
+            ),
+            net_position=float(net_position) if net_position is not None else None,
+        ):
+            hidden.add(str(pid))
+    return hidden
+
+
+def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
+    """What the ASYNC export route (`POST /order-summary/export`, AC-15/AC-16) needs to
+    decide the row-count refusal and name the file, WITHOUT rendering the whole report on
+    the request thread (reviewer nit, review fix round A, A5) - a `COUNT(*)`/`MAX(as_of)`
+    over `scm.order_summary_row` for the run, the exact same population `export_report`'s
+    own `len(rep["rows"])` counts (every row `write_rows` froze for the run - AC-9, owner's
+    ruling 10 Sep: every book row, not narrowed to "something to order").
+
+    Resolves `run_id` the SAME way `report()`/`export_report()` do (`_run_for` - a named
+    run or the newest completed one), so the row count, the `as_of` stamp and the resolved
+    id this returns describe the identical run the synchronous render would have used.
+
+    Company-scoped by hand (security S2/S3, UAC amended d7491d6fc): raw SQL never sees the
+    ORM isolation filter, and `OrderSummaryRow` is company-scoped - the same pattern every
+    other raw read this lane touches (`_PO_BOOK_SQL`, `explain_net`, `site_pool_supply`,
+    `purchase_trend`) already carries.
+
+    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): the count excludes hidden-by-default
+    rows - the SAME population `export_report` prints, so the guard cannot refuse (or
+    admit) a request the export would answer differently. `as_of` is unaffected by hiding
+    (every row of one frozen run shares the same stamp), so the aggregate stays a single
+    query; the hidden count is a second, narrow one, run only when there is anything to
+    subtract.
+    """
+    run = _run_for(db, run_id)
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="egs")
+    co_clause = f"AND {co}" if co else ""
+    row = db.execute(text(f"""
+        SELECT COUNT(*) AS n, MAX(as_of) AS as_of
+        FROM scm.order_summary_row WHERE run_id = :rid {co_clause}
+    """), {"rid": str(run.id), **co_params}).mappings().first()
+
+    hidden_ids = _hidden_product_ids_for_run(db, str(run.id))
+    hidden_count = 0
+    if hidden_ids:
+        co_osr, co_osr_params = company_sql_predicate(
+            db, "osr.company_id", param_prefix="egsh"
+        )
+        co_osr_clause = f"AND {co_osr}" if co_osr else ""
+        # D2: no join to `products` here - `order_summary_row` carries `product_id`
+        # directly.
+        hidden_count = db.execute(text(f"""
+            SELECT COUNT(*) FROM scm.order_summary_row osr
+            WHERE osr.run_id = :rid AND osr.product_id::text = ANY(:ids) {co_osr_clause}
+        """), {"rid": str(run.id), "ids": list(hidden_ids), **co_osr_params}).scalar() or 0
+
+    return {
+        "run_id": str(run.id),
+        "row_count": int(row["n"] or 0) - int(hidden_count),
+        "as_of": row["as_of"].isoformat() if row["as_of"] else None,
+    }
+
+
 def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[bytes, str, str]:
     """The Order summary sheet as a document (AC-S9.3): landscape PDF or an Excel workbook,
     the same rows and figures the grid shows, so nothing on the export is typed twice.
     Returns ``(bytes, content_type, filename)``.
 
-    M1 (Phase 3 security review): refused above `_MAX_EXPORT_ROWS` - a document that size is
+    M1 (Phase 3 security review): refused above `MAX_EXPORT_ROWS` - a document that size is
     not a sheet the buyer can print, it is a database dump wearing a PDF's clothes. Every
     book row prints now (issue #795, AC-9, owner's ruling 10 Sep superseding the earlier
     "something to act on" scope, `_rows_to_order`): `_belongs_on_the_book` already narrows
     the book to products the run actually planned, and a covered/needs_level product still
     has a `suggestion` worth printing even with nothing to order.
+
+    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): hidden-by-default rows (the SAME
+    rule the list and the Decisions tile already read) are dropped here, AFTER `report()`
+    - `report()` itself stays untouched (AC-4), so a caller reading the frozen sheet whole
+    still sees every planned product; only the printed/exported document narrows to what
+    the buyer would see on the list. `_hidden_product_ids_for_run` is keyed on
+    `product_id` (D2); `report()`'s own rows carry only `product_code` (never an id - no
+    UUID crosses this module's output), so the ids are resolved to codes with a SECOND,
+    narrow join scoped to just the hidden set - typically a handful of products, not the
+    whole run.
     """
     rep = report(db, run_id=run_id)
     rows = rep["rows"]
-    if len(rows) > _MAX_EXPORT_ROWS:
+    hidden_ids = _hidden_product_ids_for_run(db, rep["run_id"])
+    if hidden_ids:
+        hidden_codes = {
+            code for (code,) in
+            db.query(Product.product_code).filter(Product.id.in_(hidden_ids)).all()
+        }
+        rows = [r for r in rows if r["product_code"] not in hidden_codes]
+    if len(rows) > MAX_EXPORT_ROWS:
         raise AppException(422, "Narrow the plan first")
     stamp = rep.get("as_of") or _today().isoformat()
     if fmt == "pdf":

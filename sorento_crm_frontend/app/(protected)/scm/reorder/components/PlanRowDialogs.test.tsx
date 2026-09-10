@@ -401,7 +401,10 @@ describe('PlanRowDialog - SPO (F5)', () => {
 
     expect(await screen.findByText('Open to BRW (1)')).toBeInTheDocument();
     expect(screen.getByText('History to BRW (0)')).toBeInTheDocument();
-    expect(getSpoHistory).toHaveBeenCalledWith('run-1', 'p1');
+    // AC-7 amended (review round B): a single, non-grouped LOCATION-grain line now names
+    // its OWN warehouse (`line.warehouse_id`, 'w1' by default) as the third arg, so the
+    // modal narrows to it instead of reading the product-wide site-pool sum.
+    expect(getSpoHistory).toHaveBeenCalledWith('run-1', 'p1', 'w1');
 
     // AC-J3: the open tab foots its own qty too.
     const footer = screen.getByText('Total').closest('tr') as HTMLElement;
@@ -414,6 +417,21 @@ describe('PlanRowDialog - SPO (F5)', () => {
 
     expect(await screen.findByText('Open (0)')).toBeInTheDocument();
     expect(screen.queryByText(/to BRW/)).not.toBeInTheDocument();
+  });
+
+  it('a GROUPED (pooled) line passes no warehouse - reads product-wide (AC-7 amended: '
+    + 'a documented limitation, location grain is not the rollout default)', async () => {
+    getSpoHistory.mockResolvedValue({ open: [], history: [] });
+    const grouped = groupPlanLinesByChannel([
+      line({ id: 'r1', warehouse_id: 'w1', warehouse_code: 'BRW', pool_warehouse_id: 'w1' }),
+      line({ id: 'r2', warehouse_id: 'w2', warehouse_code: 'BRW-BB', pool_warehouse_id: 'w1' }),
+    ]);
+    const groupRow = grouped.find((l) => l.id.startsWith('group:')) as PlanLine;
+
+    renderDialog('spo', groupRow);
+
+    await screen.findByText(/Open/);
+    expect(getSpoHistory).toHaveBeenCalledWith('run-1', 'p1', undefined);
   });
 });
 

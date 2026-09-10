@@ -437,6 +437,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'master_data.units_of_measure.view',
           },
           {
+            title: 'Countries',
+            path: '/master-data-management/countries',
+            permission: 'master_data.countries.view',
+          },
+          {
             title: 'Certificates',
             path: '/master-data-management/certificates',
             permission: 'master_data.certificates.view',
@@ -1707,6 +1712,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       title: 'Units of Measure',
       path: '/master-data-management/units-of-measure',
       permission: 'master_data.units_of_measure.view',
+    },
+    {
+      title: 'Countries',
+      path: '/master-data-management/countries',
+      permission: 'master_data.countries.view',
     },
     ],
   },

@@ -477,6 +477,11 @@ describe('SupplyLineCard', () => {
     // Gap the ladder v2 coder disclosed: the dialog already names the donor SO and its
     // agent, but the card's own `onAdd` used to drop those fields on the floor, so the
     // confirm payload never named the donor and no order-back was raised for it.
+    //
+    // The Source section is now the Grid Location table (S4, `PLAN-local-supplier-oi-
+    // routing.md`, AC-1.4): it addresses a donor by its LOCATION, never by the donor SO +
+    // line the old bespoke table printed - so the row that used to be found by the text
+    // "SO371334 line 2" is now found by its location code, `BRW-BB`.
     const DONOR_LINE = 'd4000000-0000-4000-8000-000000000001';
     const source = line({
       open_qty: '100',
@@ -494,13 +499,27 @@ describe('SupplyLineCard', () => {
           donor_agent_code: 'JEREMY',
           donor_core_line_id: DONOR_LINE,
           same_agent: false,
+          location: {
+            location: 'BRW-BB',
+            where: 'group',
+            product_id: 'prod-1',
+            warehouse_id: WH_BRW,
+            qty: '0',
+            qty_demand: '0',
+            qty_on_hand: '40',
+            so_qty: '0',
+            spo_qty: '0',
+            available_qty: '40',
+            po_open_qty: '0',
+            incoming: [],
+          },
         },
       ],
     });
     renderCard(source);
 
     fireEvent.click(screen.getByRole('button', { name: /add a borrow/i }));
-    expect(screen.getByText('SO371334 line 2')).toBeInTheDocument();
+    expect(screen.getByTestId('cell-location-BRW-BB')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '40' } });
     fireEvent.change(screen.getByLabelText(/^Reason/), {

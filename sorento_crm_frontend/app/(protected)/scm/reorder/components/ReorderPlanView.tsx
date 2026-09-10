@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -33,7 +33,7 @@ import {
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { resetRunDecisions } from '../services/reorderRunService';
-import { downloadOrderSummaryExport } from '../services/summaryOrderService';
+import { useExportOrderSheet } from '../hooks/useSummaryOrder';
 import type { PlanTotals } from '../lib/planDecisions';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PlanHeaderTab } from './PlanHeaderTab';
@@ -85,22 +85,14 @@ export function ReorderPlanView({ runId }: { runId: string }) {
    * are views OF this run, so they belong on this page; none of them needs a permanent
    * button, and Reset planning least of all.
    *
-   * S10 (round 2, 9 Sep): the Order summary PAGE is retired - the same sheet is printed
-   * straight off this run through the existing export endpoint, so there is no view left
-   * to switch to. `downloadOrderSummaryExport` throws on failure (422 "Narrow the plan
-   * first" included), which the toast below surfaces the same way every other action here
-   * does.
+   * S10 (round 2, 9 Sep) retired the Order summary PAGE - the same sheet is printed
+   * straight off this run. S4 (PLAN-po-spo-site-pool-and-order-sheet-downloads) moved the
+   * export itself onto My Downloads: `useExportOrderSheet` starts the async render and
+   * toasts, it never saves a file directly - the buyer downloads it from the drawer once
+   * the worker marks it ready. Both items disable while the request is in flight so a
+   * double click starts one export, not two (AC-21).
    */
-  const orderSheet = useCallback(
-    async (format: 'pdf' | 'xlsx') => {
-      try {
-        await downloadOrderSummaryExport(runId, format);
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Failed to export the order sheet');
-      }
-    },
-    [runId],
-  );
+  const exportOrderSheet = useExportOrderSheet(runId);
 
   const actions = useMemo<ToolbarAction[]>(
     () => [
@@ -108,13 +100,15 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         key: 'order_sheet_pdf',
         label: 'Order sheet PDF',
         icon: FileText,
-        onClick: () => void orderSheet('pdf'),
+        onClick: () => exportOrderSheet.mutate('pdf'),
+        disabled: exportOrderSheet.isPending,
       },
       {
         key: 'order_sheet_xlsx',
         label: 'Order sheet Excel',
         icon: FileSpreadsheet,
-        onClick: () => void orderSheet('xlsx'),
+        onClick: () => exportOrderSheet.mutate('xlsx'),
+        disabled: exportOrderSheet.isPending,
       },
       {
         key: 'plan_exceptions',
@@ -136,7 +130,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         onClick: () => setResetOpen(true),
       },
     ],
-    [orderSheet],
+    [exportOrderSheet.mutate, exportOrderSheet.isPending],
   );
 
   const doReset = async () => {

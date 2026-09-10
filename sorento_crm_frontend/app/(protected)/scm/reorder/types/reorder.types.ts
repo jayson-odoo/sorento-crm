@@ -185,6 +185,14 @@ export interface ReorderRecommendation {
    *  one superseded, but the suggestion changed - flagged so the buyer decides again
    *  rather than trusting a carried figure. Absent/false on a run nobody re-planned. */
   needs_recheck?: boolean;
+  /** PLAN-plan-list-tile-sheet-one-scope.md, S6 (AC-1): true when the SAME rule
+   *  `PlanLinesSection.visibleLines` used to recompute client-side already hides this row
+   *  by default (a covered, manual-basis row whose net sits above its level - "not my
+   *  business", owner 12 Aug 2026). The list, the Decisions tile total and the order sheet
+   *  all read this ONE server-computed flag, so the three cannot disagree. Until the
+   *  backend sends it (S6, Phase 2), absent/undefined means SHOWN - the pre-existing
+   *  behaviour, never a silent hide. */
+  hidden_by_default?: boolean;
   /** Disposition action (disposition rows only). */
   disposition_action: DispositionAction | null;
   /** Advisory transfer hint, e.g. "consider transfer 60: WH-JB → WH-KL". */

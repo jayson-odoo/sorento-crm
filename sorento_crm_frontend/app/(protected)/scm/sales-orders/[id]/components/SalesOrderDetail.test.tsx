@@ -285,6 +285,65 @@ describe('SalesOrderDetail - states', () => {
     expect(screen.queryByText('Market segment')).not.toBeInTheDocument();
   });
 
+  it('shows the project label under the SO number, and nothing when there is none (AC-F2)', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: 'BAMBOO RESIDENCE / KUALA LUMPUR' }),
+      isLoading: false,
+      isError: false,
+    });
+    const { unmount } = renderDetail();
+    // Switching off the General tab proves this is the HEADER's own subtitle, not the
+    // Order card's "Project" field (which only exists on that tab) - the header is read-
+    // only metadata and must survive whichever tab is open.
+    openTab('Lines');
+    expect(screen.getByText('BAMBOO RESIDENCE / KUALA LUMPUR')).toBeInTheDocument();
+    unmount();
+
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    expect(screen.queryByText(/RESIDENCE|KUALA LUMPUR/)).not.toBeInTheDocument();
+  });
+
+  it('the Order card names the project with its muted source word, or a dash (AC-F3)', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: 'BAMBOO RESIDENCE / KUALA LUMPUR', project_label_source: 'inquiry' }),
+      isLoading: false,
+      isError: false,
+    });
+    const { unmount } = renderDetail();
+    // Order type's own value (`demandClassBadge`) also reads "Project" for a project-class
+    // order, so the FIELD's own label span is picked out by its exact class rather than by
+    // text alone - `screen.getByText('Project')` would otherwise match both.
+    const field = () =>
+      (screen.getByText('Project', { selector: 'span.text-xs.text-muted-foreground' }).closest(
+        'div',
+      ) as HTMLElement);
+    expect(within(field()).getByText('BAMBOO RESIDENCE / KUALA LUMPUR')).toBeInTheDocument();
+    expect(within(field()).getByText('· Inquiry sheet')).toBeInTheDocument();
+    unmount();
+
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: 'TAIGA RESIDENCE', project_label_source: 'note' }),
+      isLoading: false,
+      isError: false,
+    });
+    const second = renderDetail();
+    expect(within(field()).getByText('· Note')).toBeInTheDocument();
+    second.unmount();
+
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: null, project_label_source: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    expect(within(field()).getByText('-')).toBeInTheDocument();
+  });
+
   it('states what the order is worth, in ringgit, and a dash when nobody priced it', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     const { unmount } = renderDetail();
@@ -881,7 +940,14 @@ describe('SalesOrderDetail - the order type round trip', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
 
-    expect(screen.getByText('Project')).toBeInTheDocument();
+    // Scoped to the Order type FIELD's own wrapper, not a bare `getByText('Project')` -
+    // the Order card also carries its own "Project" field (PLAN-so-project-label.md) whose
+    // label reads the same word as this pill's project-class VALUE, and an unscoped query
+    // cannot tell a field's name from a value.
+    const orderTypeField = screen
+      .getByText('Order type', { selector: 'span.text-xs.text-muted-foreground' })
+      .closest('div') as HTMLElement;
+    expect(within(orderTypeField).getByText('Project')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent('Project');
 

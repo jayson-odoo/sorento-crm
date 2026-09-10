@@ -49,6 +49,13 @@ for status, decided, price answer, suggested action or level answer. Add conditi
 field, including **Rec type** and **Decision state** ("Already decided" / "Still to decide"),
 to slice the grid.
 
+By default the list, the **Decisions** tile and the exported order sheet all count the same
+rows: a covered product on the manual reorder-level basis whose net sits above its level is
+left off all three (not your business until it breaches, the 12 Aug rule). Open **Filters**
+and add a condition **Rec type is Covered by stock** to bring those rows back into the list;
+remove the condition and they're hidden again. The **Decisions** tile keeps counting the
+default list either way.
+
 ### Money and prices
 
 Every money figure on the grid and in the row panel renders with exactly two decimals, for
@@ -62,6 +69,19 @@ Under **Line cost**, if the last purchase's currency has no MYR exchange rate on
 panel shows "No MYR rate for CNY, set it under SCM policies" (a link) instead of a bare dash.
 Follow the link to **[Supply Chain → Policies](/scm/policies)**, **Exchange rates** tab, to add
 the missing rate.
+
+### SPO and PO
+
+The **SPO** and **PO** columns count only what is already on its way to a site-pool
+warehouse (BRW, MWH, WH3, DC1 and the like) - the stock you can sell from. Anything sitting
+in a project bin (BRW-BB, BRW-IR, ...) or at an inactive warehouse is never counted here; it
+belongs to that project's own Order Inquiry, not to this row.
+
+Click the SPO figure to open the shipments still to come, or the PO figure to open the open
+purchase order lines; the rows in the dialog sum to exactly the number you clicked, and its
+**History** tab lists what has already landed or been bought. The **Suggested qty** the
+engine proposes is sized against these same site-pool figures, so nothing waiting in a
+project bin quietly nets a Buy suggestion down.
 
 ## Deciding a row
 

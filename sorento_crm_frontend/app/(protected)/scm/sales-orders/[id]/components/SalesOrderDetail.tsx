@@ -174,6 +174,15 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: 'Manual',
 };
 
+/** Which rule wrote `project_label`, worded for the Order card's muted word beside the
+ *  name - never the internal source code. */
+const PROJECT_LABEL_SOURCE_WORDS: Record<string, string> = {
+  inquiry: 'Inquiry sheet',
+  note: 'Note',
+  ref: 'AutoCount ref',
+  delivery: 'Delivery address',
+};
+
 const PRIORITY_LABELS: Record<string, string> = {
   urgent: 'Urgent',
   high: 'High',
@@ -1261,11 +1270,21 @@ export function SalesOrderDetail({ id }: { id: string }) {
       <Card>
         <CardHeader className="block py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-3">
-              <CardTitle className="text-lg">{so.so_number}</CardTitle>
-              <Badge variant={salesOrderStatusVariant(so.status)} appearance="light" size="md">
-                {salesOrderStatusLabel(so.status)}
-              </Badge>
+            <div className="flex min-w-0 flex-col gap-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <CardTitle className="text-lg">{so.so_number}</CardTitle>
+                <Badge variant={salesOrderStatusVariant(so.status)} appearance="light" size="md">
+                  {salesOrderStatusLabel(so.status)}
+                </Badge>
+              </div>
+              {/* Read-only metadata belongs in the header, not a tab body - the project the
+                  order carries, resolved from whichever source ranked highest. Nothing when
+                  no source has ever named one. */}
+              {so.project_label ? (
+                <span className="truncate text-sm text-muted-foreground" title={so.project_label}>
+                  {so.project_label}
+                </span>
+              ) : null}
             </div>
             {/* In an edit session the header states ONE intent: Save or Cancel. Nav and the
                 way out act on the order as it is STORED, and offering them over a screen
@@ -1503,6 +1522,23 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 )}
               </Field>
               <Field label="Source">{SOURCE_LABELS[so.source ?? 'manual'] ?? 'Manual'}</Field>
+              {/* Resolved from whichever of the four rules ranked highest - the sheet, the
+                  note, the AutoCount `Ref`, or a delivery address. Read-only: correcting one
+                  is a later slice (rank 5, manual edit), not this one. */}
+              <Field label="Project">
+                {so.project_label ? (
+                  <span title={so.project_label}>
+                    {so.project_label}
+                    {so.project_label_source ? (
+                      <span className="ms-1 font-normal text-muted-foreground">
+                        · {PROJECT_LABEL_SOURCE_WORDS[so.project_label_source] ?? so.project_label_source}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : (
+                  '-'
+                )}
+              </Field>
               {/* What purchasing has been told to do about this order. Read-only in both
                   views, so nothing moves between them: it is a record of what happened,
                   not a field anybody sets here. Empty states as "-", never hidden. */}
