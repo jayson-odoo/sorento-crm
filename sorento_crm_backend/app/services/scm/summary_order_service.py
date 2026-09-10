@@ -70,6 +70,7 @@ from app.services.scm.demand import (
     UNPLACED_INQUIRY_STATE,
 )
 from app.services.scm.pool_predicate import active_site_pool_sql
+from app.services.scm import plan_scope
 from app.services.scm.reorder_policy import resolve_global_cover_scope
 from app.services.scm.site_pool_supply import open_po_by_product, open_spo_by_product
 from app.services.scm.reorder_engine import allocate as eng_allocate
@@ -1434,6 +1435,38 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
     return buf.getvalue()
 
 
+def _hidden_product_codes_for_run(db: Session, run_id: str) -> set[str]:
+    """PLAN-plan-list-tile-sheet-one-scope.md, S7 (AC-3): which product codes the SAME
+    `plan_scope.hidden_by_default` rule the recommendations list and the Decisions tile
+    already read also hides, for the run's own PRODUCT-GRAIN recommendation rows
+    (`warehouse_id IS NULL` - `order_summary_row` is one row per product per run, the
+    same cardinality). ORM, not raw SQL, so the company isolation filter on
+    `ReorderRecommendation` applies without a hand-written predicate.
+    """
+    rows = (
+        db.query(Product.product_code, ReorderRecommendation.rec_type,
+                 ReorderRecommendation.inputs, ReorderRecommendation.net_position)
+        .join(Product, Product.id == ReorderRecommendation.product_id)
+        .filter(
+            ReorderRecommendation.run_id == run_id,
+            ReorderRecommendation.warehouse_id.is_(None),
+        )
+        .all()
+    )
+    hidden: set[str] = set()
+    for code, rec_type, inputs, net_position in rows:
+        inp = inputs or {}
+        if plan_scope.hidden_by_default(
+            rec_type=rec_type,
+            policy_type=inp.get("policy_type"),
+            reorder_level=inp.get("reorder_level"),
+            master_reorder_level=inp.get("master_reorder_level"),
+            net_position=float(net_position) if net_position is not None else None,
+        ):
+            hidden.add(code)
+    return hidden
+
+
 def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
     """What the ASYNC export route (`POST /order-summary/export`, AC-15/AC-16) needs to
     decide the row-count refusal and name the file, WITHOUT rendering the whole report on
@@ -1450,6 +1483,13 @@ def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
     ORM isolation filter, and `OrderSummaryRow` is company-scoped - the same pattern every
     other raw read this lane touches (`_PO_BOOK_SQL`, `explain_net`, `site_pool_supply`,
     `purchase_trend`) already carries.
+
+    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): the count excludes hidden-by-default
+    rows - the SAME population `export_report` prints, so the guard cannot refuse (or
+    admit) a request the export would answer differently. `as_of` is unaffected by hiding
+    (every row of one frozen run shares the same stamp), so the aggregate stays a single
+    query; the hidden count is a second, narrow one, run only when there is anything to
+    subtract.
     """
     run = _run_for(db, run_id)
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="egs")
@@ -1458,9 +1498,23 @@ def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
         SELECT COUNT(*) AS n, MAX(as_of) AS as_of
         FROM scm.order_summary_row WHERE run_id = :rid {co_clause}
     """), {"rid": str(run.id), **co_params}).mappings().first()
+
+    hidden_codes = _hidden_product_codes_for_run(db, str(run.id))
+    hidden_count = 0
+    if hidden_codes:
+        co_osr, co_osr_params = company_sql_predicate(
+            db, "osr.company_id", param_prefix="egsh"
+        )
+        co_osr_clause = f"AND {co_osr}" if co_osr else ""
+        hidden_count = db.execute(text(f"""
+            SELECT COUNT(*) FROM scm.order_summary_row osr
+            JOIN products p ON p.id = osr.product_id
+            WHERE osr.run_id = :rid AND p.product_code = ANY(:codes) {co_osr_clause}
+        """), {"rid": str(run.id), "codes": list(hidden_codes), **co_osr_params}).scalar() or 0
+
     return {
         "run_id": str(run.id),
-        "row_count": int(row["n"] or 0),
+        "row_count": int(row["n"] or 0) - int(hidden_count),
         "as_of": row["as_of"].isoformat() if row["as_of"] else None,
     }
 
@@ -1476,9 +1530,18 @@ def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[byte
     "something to act on" scope, `_rows_to_order`): `_belongs_on_the_book` already narrows
     the book to products the run actually planned, and a covered/needs_level product still
     has a `suggestion` worth printing even with nothing to order.
+
+    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): hidden-by-default rows (the SAME
+    rule the list and the Decisions tile already read) are dropped here, AFTER `report()`
+    - `report()` itself stays untouched (AC-4), so a caller reading the frozen sheet whole
+    still sees every planned product; only the printed/exported document narrows to what
+    the buyer would see on the list.
     """
     rep = report(db, run_id=run_id)
     rows = rep["rows"]
+    hidden_codes = _hidden_product_codes_for_run(db, rep["run_id"])
+    if hidden_codes:
+        rows = [r for r in rows if r["product_code"] not in hidden_codes]
     if len(rows) > MAX_EXPORT_ROWS:
         raise AppException(422, "Narrow the plan first")
     stamp = rep.get("as_of") or _today().isoformat()
