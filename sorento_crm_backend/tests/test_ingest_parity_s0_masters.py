@@ -474,7 +474,18 @@ class TestAcP04SupplierAddressBlockAndDeprecatedFields:
     accepted, never retryable."""
 
     def test_supplier_contact_and_address_fields_land(self, db):
+        # S2 (`PLAN-local-supplier-oi-routing.md`, AC-2.10): `country` is resolved to
+        # `country_id`, never written as free text - `suppliers.country` is dropped. The
+        # blank scratch schema is `create_all`, not a migrated database, so it carries no
+        # migration seed (the ISO list); the one row this ingest needs to resolve against
+        # is seeded here, the same way AC-2.1's own test seeds it for the countries suite.
+        from app.models.country import Country
+
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        my = Country(id=str(uuid.uuid4()), code="MY", name="Malaysia")
+        db.add(my)
+        db.flush()
+
         code = _code("SUP1")
         svc = _esb(db, DEFAULT_COMPANY_ID)
         result = svc.ingest(
@@ -495,10 +506,12 @@ class TestAcP04SupplierAddressBlockAndDeprecatedFields:
             ],
         )
         assert result.created == 1, result.records[0].errors
+        # ::text, the suite's idiom (test_plan_row_decision.py, test_m4_cash.py): psycopg2
+        # returns a raw uuid column as `uuid.UUID`, which never equals the ORM's `str` id.
         row = db.execute(
             text(
                 "SELECT contact_name, address_line1, address_line2, city, state, "
-                "postal_code, country FROM suppliers WHERE supplier_code = :c"
+                "postal_code, country_id::text FROM suppliers WHERE supplier_code = :c"
             ),
             {"c": code},
         ).first()
@@ -509,7 +522,7 @@ class TestAcP04SupplierAddressBlockAndDeprecatedFields:
             "Kuala Lumpur",
             "Selangor",
             "50000",
-            "Malaysia",
+            str(my.id),
         )
 
     def test_customer_deprecated_fields_fail_validation_never_retryable(self, db):

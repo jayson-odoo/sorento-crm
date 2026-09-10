@@ -25,6 +25,7 @@ from app.models.procurement import (
     PurchaseOrderLine,
     ViewToken,
 )
+from app.models.country import Country
 from app.models.product import Product
 from app.models.resources import Attachment
 from app.models.user import User
@@ -698,7 +699,9 @@ class SupplierService:
         so offset position and prev/next neighbours are unambiguous when the
         primary sort column has equal values.
         """
-        q = self.db.query(Supplier)
+        # S2 (`PLAN-local-supplier-oi-routing.md`, review S6): eager, so `country_code`/
+        # `country_name` never cost an extra query per row on the way to `SupplierResponse`.
+        q = self.db.query(Supplier).options(joinedload(Supplier.country))
 
         if query:
             q = q.filter(
@@ -715,8 +718,14 @@ class SupplierService:
             "created_at": Supplier.created_at,
             "supplier_code": Supplier.supplier_code,
             "supplier_name": Supplier.supplier_name,
+            # review S5: sorting by the joined name needs its own join - `joinedload`
+            # above is for eager-loading the relationship attribute, not for referencing
+            # the join in an ORDER BY.
+            "country_name": Country.name,
         }
         sort_column = sort_map.get(sort_field, Supplier.created_at)
+        if sort_field == "country_name":
+            q = q.outerjoin(Country, Supplier.country_id == Country.id)
         if sort_dir == "desc":
             q = q.order_by(sort_column.desc(), Supplier.id.asc())
         else:
@@ -757,11 +766,19 @@ class SupplierService:
             raise handle_not_found("Supplier", supplier_id)
         return supplier
     
+    def _validate_country_id(self, country_id: Optional[str]) -> None:
+        """S2: an unresolvable `country_id` is a 422, never a raw FK violation."""
+        if not country_id:
+            return
+        if not self.db.query(Country.id).filter(Country.id == country_id).first():
+            raise handle_unprocessable("Unknown country.")
+
     def create_supplier(self, supplier_data: SupplierCreate):
         """Create a new supplier."""
         # D17: case/whitespace-insensitive, same as every other channel.
         if resolve_master_by_code(self.db, Supplier, supplier_data.supplier_code):
             raise handle_conflict("Supplier code already exists.")
+        self._validate_country_id(supplier_data.country_id)
 
         data = supplier_data.model_dump()
         # D2: AutoCount's trailing currency note (`"ACME (RMB)"`) is not part
@@ -773,12 +790,14 @@ class SupplierService:
         self.db.commit()
         self.db.refresh(supplier)
         return supplier
-    
+
     def update_supplier(self, supplier_id: str, supplier_data: SupplierUpdate):
         """Update a supplier."""
         supplier = self.get_supplier(supplier_id)
 
         update_data = supplier_data.model_dump(exclude_unset=True)
+        if "country_id" in update_data:
+            self._validate_country_id(update_data["country_id"])
         # D2 (review nit): the trailing currency note (`"ACME (RMB)"`) is not
         # part of the legal name on create - `update_supplier` used to write
         # it through unstripped, so an edit could quietly restore the note
@@ -787,7 +806,7 @@ class SupplierService:
             update_data["supplier_name"] = clean_supplier_name(update_data["supplier_name"])
         for key, value in update_data.items():
             setattr(supplier, key, value)
-        
+
         self.db.commit()
         self.db.refresh(supplier)
         return supplier

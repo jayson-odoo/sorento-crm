@@ -42,4 +42,5 @@ On the product form's **Specifications** tab, **Base Unit of Measure \*** is req
 
 * [Manage products](manage-products.md)
 * [Product categories & brands](product-categories-and-brands.md)
+* [Countries](countries.md)
 * [Product Management - Data analysis for the AI assistant](data-analysis.md)

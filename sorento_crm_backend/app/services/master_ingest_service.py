@@ -54,7 +54,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -374,11 +374,38 @@ def _supplier_columns(payload: Any, db: Session, company_id: str, warnings: list
         "city",
         "state",
         "postal_code",
-        "country",
         "payment_terms_days",
         "is_active",
     )
+    # S2 (`PLAN-local-supplier-oi-routing.md`, AC-2.10): `country` is a NAME or a
+    # 2-letter CODE, case-insensitively, resolved to `country_id` here rather than
+    # carried through as free text. Unresolved -> a row warning, field left null,
+    # row still imports (masters quarantine, they never block).
+    if "country" in payload.model_fields_set:
+        raw_country = payload.country
+        columns["country_id"] = _resolve_country_id(db, raw_country) if raw_country else None
+        if raw_country and columns["country_id"] is None:
+            warnings.append(f"Country '{raw_country}' was not resolved; left blank.")
     return columns
+
+
+def _resolve_country_id(db: Session, value: str) -> Optional[str]:
+    from app.models.country import Country
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+    row = (
+        db.query(Country.id)
+        .filter(
+            or_(
+                func.lower(Country.code) == normalized.lower(),
+                func.lower(Country.name) == normalized.lower(),
+            )
+        )
+        .first()
+    )
+    return str(row[0]) if row else None
 
 
 def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:

@@ -405,6 +405,33 @@ export async function confirmSupply(
  * this function reads them straight off the payload; `lib/ladderOptionsMock.ts` and the
  * `NEXT_PUBLIC_LADDER_OPTIONS_MOCK` flag it hung off are deleted, so the flag being set on a
  * running dev server does nothing at all.
+ *
+ * ── LOCAL SUPPLIER ROUTING (`PLAN-local-supplier-oi-routing.md`) ────────────────────────────
+ *
+ * Two additive fields. LIVE on BOTH surfaces since S3/S4:
+ *
+ *   BoardContribution.buy_origin   'local' | 'overseas' | undefined
+ *   SupplyLine.buy_origin          same shape, on the per-order sheet. `ProjectSupplyService.
+ *                                  proposal_for` computes the origin map once for the whole
+ *                                  sheet and stamps it on EVERY line, plannable or not.
+ *
+ * Computed once per product for the whole request, off the primary `product_suppliers`
+ * link, else the newest-PO supplier, else `overseas`. `local` iff that supplier's country
+ * equals the module's `HOME_COUNTRY_CODE` (`MY`). The client never derives this - it only
+ * reads it and shows a `Local` pill beside a Buy composition. A `local` Buy raises no Order
+ * Inquiry row on confirm (the server's own rule; nothing for the client to enforce).
+ *
+ *   BorrowCandidate.location       BoardCellLocation | undefined
+ *
+ * LIVE on BOTH `borrow_candidates[]` - the board's own and the per-order sheet's: ONE shared
+ * builder, `ProjectSupplyService.donor_location`, decorates every candidate on both call
+ * paths (the board's `_donors_for` calls it as `self.supply.donor_location`; the sheet's
+ * `_borrow_candidates` calls it directly), so a donor's figures can never come apart between
+ * the manual Borrow modal and the Grid Location table for the same warehouse in the same
+ * request. `BorrowAddDialog` renders `CellStockTable` fed by `candidates.map(c =>
+ * c.location)` instead of a second, narrower table of its own. Absent candidates fall back
+ * to the plain `qty_on_hand` / `so_qty` / ... fields already on `BorrowCandidate`, which stay
+ * on the wire for exactly that reason.
  */
 export async function getPlanningBoard(
   soNumbers: string[],
