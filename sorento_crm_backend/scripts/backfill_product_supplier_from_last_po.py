@@ -54,10 +54,13 @@ has ever bought under a non-cancelled PO" (PLAN-product-supplier-all-po.md rulin
 * Terms: a pair's link takes `unit_cost` + `currency` from THAT supplier's newest PRICED
   PO line for the product (`unit_cost IS NOT NULL`); a newer unpriced line never blanks an
   older priced one, and the LINE's own currency beats the ORDER's, exactly the cascade
-  `currency_rate_service.list_rates` reads. A pair with no priced line at all gets
-  `unit_cost`/`currency` left NULL - no invented price. An EXISTING link's `unit_cost` and
-  `currency` are only filled when the link's `unit_cost` IS NULL (counted in
-  `terms_filled`); a value the buyer already keyed is never overwritten.
+  `currency_rate_service.list_rates` reads. `unit_cost` and `currency` are always written
+  TOGETHER or not at all - a cost without its currency is not a price - so a pair with no
+  priced line, OR a priced line whose line AND order currency are both NULL, gets
+  `unit_cost`/`currency` left NULL rather than an invented or currency-less price. An
+  EXISTING link's `unit_cost` and `currency` are only filled when the link's `unit_cost`
+  IS NULL AND the pair has a usable price (counted in `terms_filled`); a value the buyer
+  already keyed is never overwritten.
 * Old pairs: EVERY pair is linked, however long ago it was last bought - `effective_to`
   stays NULL, the buyer retires a link by hand if wanted.
 * Cancelled POs do not exist for this sweep: a pair that exists only through a cancelled
@@ -66,9 +69,14 @@ has ever bought under a non-cancelled PO" (PLAN-product-supplier-all-po.md rulin
 
 The product's PRIMARY pair (the one whose `is_primary_supplier` is set True, everything
 else cleared) is the pair with the newest PO line - the same product this script would
-name without the flag. The DEFAULT supplier is only ever linked when it IS that primary
-pair; a non-primary DEFAULT pair is skipped entirely (never created as a secondary link),
-and an existing non-primary DEFAULT link is deleted, same rule as without the flag.
+name without the flag. When two different suppliers tie on BOTH `issue_date` AND
+`created_at` (measured live: a same-transaction import can do this), `supplier_id` is
+the final deterministic tiebreak, applied identically here, in `_last_po_suppliers` and
+in `summary_order_service._last_po_supplier_map` (review addendum, 10 Sep 2026) - so the
+flag on, the flag off, and the order sheet's Supplier column never disagree on a tied
+product. The DEFAULT supplier is only ever linked when it IS that primary pair; a
+non-primary DEFAULT pair is skipped entirely (never created as a secondary link), and an
+existing non-primary DEFAULT link is deleted, same rule as without the flag.
 
 SAFETY / IDEMPOTENCY
 ---------------------
@@ -140,7 +148,8 @@ def _last_po_suppliers(db) -> List[Tuple[str, str, str, str]]:
         JOIN suppliers s ON s.id = po.supplier_id
         JOIN products p ON p.id = pol.product_id
         WHERE po.status <> 'cancelled' {("AND " + co) if co else ""}
-        ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC
+        ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC,
+                 po.supplier_id DESC
     """), co_params).fetchall()
     return [(pid, code, sid, scode) for pid, code, sid, scode in rows]
 
@@ -168,7 +177,7 @@ def _po_supplier_pairs(db) -> List[Dict[str, Any]]:
             JOIN products p ON p.id = pol.product_id
             WHERE po.status <> 'cancelled' {("AND " + co) if co else ""}
             ORDER BY pol.product_id, po.supplier_id, po.issue_date DESC NULLS LAST,
-                     po.created_at DESC
+                     po.created_at DESC, po.supplier_id DESC
         ),
         priced AS (
             SELECT DISTINCT ON (pol.product_id, po.supplier_id)
@@ -180,7 +189,7 @@ def _po_supplier_pairs(db) -> List[Dict[str, Any]]:
             WHERE po.status <> 'cancelled' AND pol.unit_cost IS NOT NULL
                   {("AND " + co) if co else ""}
             ORDER BY pol.product_id, po.supplier_id, po.issue_date DESC NULLS LAST,
-                     po.created_at DESC
+                     po.created_at DESC, pol.created_at DESC, pol.id DESC
         )
         SELECT pairs.pid, pairs.product_code, pairs.sid, pairs.supplier_code,
                pairs.issue_date, pairs.created_at, priced.unit_cost, priced.currency
@@ -199,11 +208,17 @@ def _po_supplier_pairs(db) -> List[Dict[str, Any]]:
 
 
 def _pick_primary(pairs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """The pair with the newest PO line, same ordering `_last_po_suppliers` uses
-    (``issue_date`` desc, NULLs last, ``created_at`` desc as the tiebreak)."""
-    def key(pair: Dict[str, Any]) -> Tuple[bool, Any, Any]:
+    """The pair with the newest PO line, same ordering `_last_po_suppliers` /
+    `summary_order_service._last_po_supplier_map` use (``issue_date`` desc, NULLs last,
+    ``created_at`` desc, then ``supplier_id`` desc as the FINAL deterministic tiebreak -
+    two different suppliers can share both an ``issue_date`` and a ``created_at`` from
+    the same-transaction import, e.g. two lines of one PO split across suppliers, and
+    without this last key `max()` here and the SQL `DISTINCT ON`s elsewhere could pick
+    different "primary" suppliers on the same tied data)."""
+    def key(pair: Dict[str, Any]) -> Tuple[bool, Any, Any, str]:
         issue_date = pair["issue_date"]
-        return (issue_date is not None, issue_date or date.min, pair["created_at"])
+        return (issue_date is not None, issue_date or date.min, pair["created_at"],
+                pair["supplier_id"])
 
     return max(pairs, key=key)
 
@@ -223,7 +238,10 @@ def run(
     supplier of its newest non-cancelled PO line, terms left NULL. `all_suppliers=True`
     (PLAN-product-supplier-all-po.md) widens this to one link per (product, supplier)
     pair the company has ever bought under a non-cancelled PO, terms filled from that
-    pair's newest PRICED line - see the module docstring for the full rulings.
+    pair's newest PRICED line - `unit_cost` and `currency` are always written TOGETHER
+    or not at all (review addendum, 10 Sep 2026: a priced line whose line AND order
+    currency are both NULL leaves both fields NULL rather than a cost with no currency)
+    - see the module docstring for the full rulings.
 
     Returns a report dict: ``products_seen``, ``pairs_seen``, ``created``, ``promoted``,
     ``terms_filled``, ``default_removed``, ``default_all_removed``, ``samples`` (up to 10
@@ -247,6 +265,9 @@ def run(
             by_product.setdefault(pair["product_id"], []).append(pair)
     else:
         for pid, code, sid, scode in _last_po_suppliers(db):
+            # `issue_date`/`created_at` stay None - always safe, since `_pick_primary`
+            # (which sorts on them) only ever runs when `all_suppliers` is True; a
+            # single-pair group here is used as its own primary directly, never sorted.
             by_product[pid] = [{
                 "product_id": pid, "product_code": code,
                 "supplier_id": sid, "supplier_code": scode,
@@ -287,6 +308,10 @@ def run(
                 continue
             processed_supplier_ids.add(supplier_id)
             target = by_supplier.get(supplier_id)
+            # A cost without its currency is not a price: unit_cost and currency are
+            # only ever written TOGETHER, never one without the other (a priced line
+            # whose line AND order currency are both NULL leaves both fields NULL).
+            has_price = pair["unit_cost"] is not None and pair["currency"] is not None
 
             if target is None:
                 if len(samples) < 10:
@@ -298,16 +323,15 @@ def run(
                         product_id=product_id, supplier_id=supplier_id,
                         is_primary_supplier=is_primary,
                         standard_lead_time_days=resolve_standard_lead_time_days(settings),
-                        unit_cost=pair["unit_cost"], currency=pair["currency"],
+                        unit_cost=pair["unit_cost"] if has_price else None,
+                        currency=pair["currency"] if has_price else None,
                     )
                     db.add(target)
                     db.flush()
                 continue
 
-            # A keyed price is never overwritten - only fill an existing NULL one, and
-            # unit_cost/currency are written together (a cost without its currency is
-            # not a price).
-            filled_now = target.unit_cost is None and pair["unit_cost"] is not None
+            # A keyed price is never overwritten - only fill an existing NULL one.
+            filled_now = target.unit_cost is None and has_price
             promoted_now = is_primary and not target.is_primary_supplier
             if filled_now:
                 terms_filled += 1
