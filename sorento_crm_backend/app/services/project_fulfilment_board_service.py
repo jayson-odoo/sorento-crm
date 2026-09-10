@@ -88,6 +88,7 @@ from app.services.scm import priority
 from app.services.scm import sales_agent_service
 from app.services.scm import supply_assignment
 from app.services.scm.history_sources import SPO_HISTORY_SOURCE
+from app.services.scm.supply_origin import buy_origin_by_product
 from app.services.scm.planning_predicate import (
     OUTSIDE_FULFILMENT_PLANNING,
     outside_fulfilment_planning,
@@ -588,6 +589,7 @@ class FulfilmentBoardService:
             str(i) for i in (exclude_covered_line_ids or [])
         }
         self._locations_by_row = {}
+        self._buy_origin: Dict[str, str] = {}
         if granularity not in GRANULARITIES:
             raise AppException(
                 status_code=422,
@@ -611,6 +613,11 @@ class FulfilmentBoardService:
         policy_name, weights, class_weights, is_preview = self._policy(preview_policy)
 
         rows = self._demand_rows(numbers)
+        # S3 (`PLAN-local-supplier-oi-routing.md`): ONE call for the whole board, never per
+        # line - `test_buy_origin_computed_once_per_board_build` pins this.
+        self._buy_origin = buy_origin_by_product(
+            self.db, {row.product_id for row in rows if row.product_id}
+        )
         if self._exclude_covered_line_ids:
             for row in rows:
                 if row.project_line_id and row.project_line_id in self._exclude_covered_line_ids:
@@ -4688,6 +4695,9 @@ class FulfilmentBoardService:
             # it did not walk: an unplannable or covered line was judged against nothing.
             "item_flags": row.item_flags,
             "contested": row.contested,
+            # S3 (`PLAN-local-supplier-oi-routing.md`): whether this line's product is
+            # bought locally, computed once for the whole board (never per line).
+            "buy_origin": self._buy_origin.get(str(row.product_id)) if row.product_id else None,
         }
 
     def _buckets(

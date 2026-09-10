@@ -114,6 +114,7 @@ from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm import priority, spo_supply
+from app.services.scm.supply_origin import buy_origin_by_product
 from app.services.scm.container_request_service import OPEN_PO_STATUSES
 #: `purchase_orders.source_system` for a CRM-minted SPO document. Imported under a
 #: name that says whose stamp it is, so `_po_rows`' exclusion reads as "not a shipping
@@ -5596,6 +5597,15 @@ class ProjectSupplyService:
         # have reported the donor's write as this order's conflict.
         self._supersede_borrowed_donors(order, checked)
 
+        # S3 (`PLAN-local-supplier-oi-routing.md`): ONE call for the whole confirm, covering
+        # every product this order's Buy lines - checked or carried - could name, so a local
+        # Buy raises no Order Inquiry row (AC-2.15/AC-2.18) below.
+        origin_by_product = buy_origin_by_product(
+            self.db,
+            {str(fact.product_id) for _line, _entry, fact in checked if fact.product_id}
+            | {str(entry.fact.product_id) for entry in carried if entry.fact.product_id},
+        )
+
         buy_lines: List[Dict[str, Any]] = []
         for line, entry, fact in checked:
             self._write_allocations(decision, line, entry, fact, actor_user_id=actor_user_id)
@@ -5614,6 +5624,7 @@ class ProjectSupplyService:
                     "cited_document": (
                         (getattr(entry, "cited_document", None) or "").strip() or None
                     ),
+                    "origin": origin_by_product.get(str(fact.product_id), "overseas"),
                 }
             )
         for entry in carried:
@@ -5640,6 +5651,7 @@ class ProjectSupplyService:
                     # Re-raised under this revision, but not NEW to purchasing: the
                     # confirm result counts only what this confirmation decided.
                     "carried": True,
+                    "origin": origin_by_product.get(str(entry.fact.product_id), "overseas"),
                 }
             )
         # THE SAVED DECISIONS THIS CONFIRMATION PROMOTES GO WITH IT (S4, AC-4.4), in the
