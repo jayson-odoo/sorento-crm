@@ -1483,6 +1483,146 @@ def test_unrecognised_label_clarifies_as_a_document_type():
     assert "as a product type" not in text, text
 
 
+# --------------------------------------------------------------------------- #
+# Second live console pass (11 Sep 2026, PLAN-attribute-first-asks.md) - two    #
+# polish items on top of the already-fixed R6/E2 work.                         #
+# --------------------------------------------------------------------------- #
+
+
+def test_document_types_listed_are_product_facing_only():
+    """AC-1329 (R6 polish, second console pass): "Types I know:" must name only
+    AttachmentType rows that actually appear in `product_attachments` - never
+    the whole AttachmentType table. World: three product-facing types (Product
+    Photos, Technical Specifications, Certification), each linked to the one
+    seeded basin product through a real `product_attachments` row; two more
+    types (Container Status, Complaint Document) exist in the table but carry
+    NO product link at all - internal document classes a customer never asks
+    about.
+
+    RED: `_attachment_type_names_on_file` (`product_predicate_service.py`)
+    reads every `AttachmentType.type_name` with no join to `product_attachments`
+    at all, so both unlinked types leak into the reply - measured live: "which
+    item has PPS cert" listed Complaint Document, Container Status, GRN, Portal
+    Submission alongside the real product document classes.
+    """
+    from app.models.product import ProductAttachment, UnitOfMeasure
+    from app.models.resources import Attachment, AttachmentType
+    from tests._pg_fixture import unique_code
+
+    with blank_session() as db:
+        _seed_registry(db)
+        category = _wash_basin_category(db)
+        uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=unique_code("UOM")[:20], uom_name="Each")
+        db.add(uom)
+        db.flush()
+        basin = _basin_product(db, category_id=category.id, uom_id=uom.id)
+
+        def _linked_type(code: str, name: str) -> None:
+            at = AttachmentType(id=str(uuid.uuid4()), code=code, type_name=name, allowed_extensions="pdf")
+            db.add(at)
+            db.flush()
+            attachment = Attachment(
+                id=str(uuid.uuid4()),
+                original_filename=f"{code}.pdf",
+                stored_filename=f"{code}.pdf",
+                file_path=f"https://cdn/{code}.pdf",
+                attachment_type_id=at.id,
+            )
+            db.add(attachment)
+            db.flush()
+            db.add(
+                ProductAttachment(id=str(uuid.uuid4()), product_id=basin.id, attachment_id=attachment.id)
+            )
+            db.flush()
+
+        _linked_type("PRODUCT_PHOTOS", "Product Photos")
+        _linked_type("TECH_SPEC", "Technical Specifications")
+        _linked_type("CERTIFICATION", "Certification")
+
+        # Unlinked - carried in the table, never attached to any product.
+        db.add(
+            AttachmentType(
+                id=str(uuid.uuid4()),
+                code="CONTAINER_STATUS",
+                type_name="Container Status",
+                allowed_extensions="pdf",
+            )
+        )
+        db.add(
+            AttachmentType(
+                id=str(uuid.uuid4()),
+                code="COMPLAINT_DOC",
+                type_name="Complaint Document",
+                allowed_extensions="pdf",
+            )
+        )
+        db.commit()
+
+        from app.services.chatbot.lanes.business import resolve_gate
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+        from app.services.chatbot.lanes.business.services import ResolveGateServices
+        from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
+        from app.config import settings
+
+        def resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+            payload = {**body, "spec_fallback": False, "understand_phrase": False}
+            principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
+            return resolve_reference_post(
+                ResolveReferenceRequest(**payload), current_user=principal, db=db
+            )
+
+        services = ResolveGateServices(
+            access_types=lambda **_: [], resolve_entity=resolve_entity, probe=lambda **_: None
+        )
+
+        ctx = _cert_ctx(
+            "which basin has photo",
+            [
+                {"hint": "category", "raw": "basin"},
+                {"hint": "attachment_type", "raw": "photo"},
+            ],
+        )
+        out = resolve_gate.run(ctx, "resolve", {}, services=services, space_id="364817")
+        parser = ctx["parse"]["output"]
+        resolved = out.get("resolved") or {}
+        gate = out.get("gate") or {}
+
+        msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        text = (msg.get("escalate_message") or "").strip()
+
+    assert "Product Photos" in text, text
+    assert "Technical Specifications" in text, text
+    assert "Certification" in text, text
+    assert "Container Status" not in text, text
+    assert "Complaint Document" not in text, text
+
+
+def test_set_header_names_the_scheme():
+    """AC-1316 (second console pass): a scheme-narrowed certificate require must
+    name the SCHEME in the set header, not the bare "certificates" noun - "which
+    item has PPS cert" must read "940 products have PPS certificates. Showing
+    5.", never lose the scheme the customer asked about. A bare `{"certificate":
+    True}` require is untouched (no scheme to name).
+
+    RED: `build_set_header`'s own `_header_predicate_phrase` maps every
+    `require["certificate"]` value (bool OR the `{"scheme": ...}` dict) to the
+    same flat "certificates" noun via `_HEADER_PREDICATE_NOUN` - the scheme
+    value is never read - so the scheme case renders "940 products have
+    certificates. Showing 5.", losing the "PPS" the customer asked about
+    (measured live on "which item has PPS cert").
+    """
+    from app.services.chatbot.lanes.business.answer import build_set_header
+
+    assert (
+        build_set_header(940, 5, "products", {"certificate": {"scheme": "PPS"}})
+        == "940 products have PPS certificates. Showing 5."
+    )
+    assert (
+        build_set_header(2, 2, "taps", {"certificate": True})
+        == "2 taps have certificates."
+    )
+
+
 def test_common_product_types_fallback_is_never_empty_under_contact_scope():
     """AC-1329 (R10, fix round 2): "which zzqx has cert" (a nonsense product word,
     no class/product_type binds) must clarify with a "Try a product type such
