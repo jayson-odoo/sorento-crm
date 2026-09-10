@@ -90,12 +90,14 @@ tool. No new reply format.
   Lookup Sets). With an empty or absent set, a scheme word or alias word is reported in
   `unrecognized_terms` and the request never fails. Evidence: alembic upgrade on an empty
   scratch DB creates the two sets; pytest for the empty-set and missing-set paths.
-- AC-1326 A resolver result carrying `predicate` with `qualifying_total > 0` never enters the
-  gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
+- AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
+  never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
-  is True and no "needs to be more specific" picker is built. Evidence: pytest on the gate
+  is True and no "needs to be more specific" picker is built; with `qualifying_total` 0 the
+  turn proceeds to the miss flow of AC-1319, never to the picker. Evidence: pytest on the gate
   with a 3-match predicate result (product raw "water tap" unresolved) asserting
-  `require_specific` False, `gate_passed` True, three entities reach the fetch.
+  `require_specific` False, `gate_passed` True, three entities reach the fetch; the AC-1319 lane
+  test covers the zero case.
 
 ## E. Reply shape: existing fetch, existing render, one header line [BE]
 
