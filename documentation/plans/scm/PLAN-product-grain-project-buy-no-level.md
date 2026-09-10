@@ -78,7 +78,6 @@ No FE change: the sheet reads `suggested_qty` / `project_buy_qty` off the summar
    rules already in `eng.round_order_qty`).
 4. No level + confirmed Buy + no supplier -> `exception` row, `inputs.project_need` 914,
    summary `suggested_qty` 914 (mirrors `test_confirmed_project_buy_survives_a_location_with_no_supplier`).
-5. Level 500, on hand 600, confirmed Buy 50 -> unchanged from today (net 550 > 500, no buy)
-   ... wait: today `net` already subtracts committed (project included), so net = 550 -> no
-   trigger. The tester asserts current behaviour byte-identical (read the existing tests in
-   the file for the net arithmetic before writing this one).
+5. Level 500, on hand 600, confirmed Buy 50 -> byte-identical to today. `net` already
+   subtracts committed (project included): net 550 >= 500, no trigger, no buy, the bypass
+   must NOT fire on a level-set product. Read the file's existing net arithmetic first.
