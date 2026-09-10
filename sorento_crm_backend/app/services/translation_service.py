@@ -356,17 +356,54 @@ def remember(
             .first()
         )
         if row is None:
-            db.add(
-                TranslationMemory(
-                    id=str(uuid.uuid4()),
-                    source_text=source_text,
-                    source_lang=source_lang,
-                    target_lang=target_lang,
-                    target_text=target_text,
-                    source=SOURCE_MANUAL,
-                    created_by=user_id,
+            # A savepoint, same reason `_ai_fill_chunk` above takes one: two identical
+            # writes for a phrase neither has seen yet (a resubmitted click, or a
+            # browser replaying a still-focused input's `blur` after this cell already
+            # unmounted - reproduced live on the PI page) would otherwise hit
+            # `uq_translation_memory_phrase` as an uncaught `IntegrityError` (500).
+            #
+            # NOT a `with db.begin_nested():` block. `scm_app` (and every other TestClient
+            # fixture built the same way) restarts a savepoint from an
+            # `after_transaction_end` listener the instant one commits - including this
+            # one's. That restart is a SECOND `begin_nested()` call arriving WHILE this
+            # savepoint's own `with`-block `__exit__` is still unwinding, and SQLAlchemy's
+            # `_trans_ctx_check` refuses it: "Can't operate on closed transaction inside
+            # context manager." The `with` form is what trips the check - it sets
+            # `session._trans_context_manager` for the duration of the block, and the
+            # guard fires on ANY re-entrant `begin_nested()` while that attribute is set,
+            # not on the savepoint nesting depth itself. Driving the transaction object by
+            # hand (`.commit()`/`.rollback()`, no `with`) never sets that attribute, so the
+            # listener's restart lands after this function has already moved on.
+            savepoint = db.begin_nested()
+            try:
+                db.add(
+                    TranslationMemory(
+                        id=str(uuid.uuid4()),
+                        source_text=source_text,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                        target_text=target_text,
+                        source=SOURCE_MANUAL,
+                        created_by=user_id,
+                    )
                 )
-            )
+                db.flush()
+                savepoint.commit()
+            except IntegrityError:
+                savepoint.rollback()
+                row = (
+                    db.query(TranslationMemory)
+                    .filter(
+                        TranslationMemory.source_text == source_text,
+                        TranslationMemory.source_lang == source_lang,
+                        TranslationMemory.target_lang == target_lang,
+                    )
+                    .first()
+                )
+                if row is not None:
+                    row.target_text = target_text
+                    row.source = SOURCE_MANUAL
+                    row.created_by = user_id
         else:
             row.target_text = target_text
             row.source = SOURCE_MANUAL
