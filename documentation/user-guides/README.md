@@ -5,7 +5,7 @@ End-user documentation organised by department. The AI assistant is intended to 
 ## Structure
 
 * `**[_shared/](./_shared/)**` - flows reused by multiple departments (e.g. the generic Resource Management → Files upload flow). Department guides link here instead of repeating the same steps.
-* `**[purchasing/](./purchasing/)**` - packing list upload, proforma invoice upload (a supplier's own workbook, read line by line), product attachments, folder management, stock-inquiry review, product-master upload, SPO upload.
+* `**[purchasing/](./purchasing/)**` - packing list upload, proforma invoice upload (a supplier's own workbook, read line by line), translating a supplier's own wording into English on that invoice, product attachments, folder management, stock-inquiry review, product-master upload, SPO upload.
 * `**[warehouse/](./warehouse/)**` - GRN upload (header + lines), Delivery Order upload (tracking + lines).
 * `**[marketing/](./marketing/)**` - promotion upload, marketing-form upload.
 * `**[project-sales-admin/](./project-sales-admin/)**` - review submitted purchase requests / sponsorship forms and send them for approval.
