@@ -36,7 +36,7 @@ from sqlalchemy.sql import ColumnElement
 
 from app.models.access import ContactAccessType
 from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
-from app.models.inventory import Stock
+from app.models.inventory import Stock, Warehouse
 from app.models.marketing import Promotion, PromotionProduct
 from app.models.procurement import InboundShipment, InboundShipmentLine
 from app.models.product import Brand, Product, ProductAttachment
@@ -409,10 +409,20 @@ def _leg_stock(db: Session, value: Any, access_levels: list[str] | None = None) 
     predicate - `with_loader_criteria` does not reach a bare `exists()`
     subquery, so without this a `Stock` row stamped to another company still
     counts once its `product_id` matches.
+
+    R22/AC-1346 (console pass 6): also `Warehouse.company_id == Product.
+    company_id` and `Warehouse.is_active.is_(True)` - mirrors the stock list
+    tool's own visibility filter (`inventory_service.py`'s
+    ``Stock.warehouse.has(Warehouse.is_active.is_(True))``), so the header
+    never counts a product whose only on-hand row sits in an inactive
+    warehouse the answer itself would never show.
     """
     return exists().where(
         Stock.product_id == Product.id,
         Stock.company_id == Product.company_id,
+        Warehouse.id == Stock.warehouse_id,
+        Warehouse.company_id == Product.company_id,
+        Warehouse.is_active.is_(True),
         Stock.quantity_on_hand > 0,
     )
 
