@@ -25,7 +25,7 @@ import json
 import re
 from decimal import Decimal
 
-from sqlalchemy import cast, func, literal, or_
+from sqlalchemy import and_, cast, func, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -525,6 +525,10 @@ _PHRASE_STOPWORDS: frozenset[str] = NEGATOR_WORDS | frozenset(
         "any", "some", "all", "want", "wanted", "need", "have", "has", "got",
         "looking", "look", "find", "get", "send", "show", "please", "can", "you",
         "do", "does", "like", "would", "also", "just", "about", "price",
+        # Question words: "which basin got stock" asks about basins, not about
+        # "which" - a set answer names the described thing, never the question
+        # word that introduced it (AC-1320 / work item A2).
+        "which", "what", "who", "where", "when", "how", "many",
     }
 )
 
@@ -673,46 +677,67 @@ def unrecognized_terms(
     return reported
 
 
+# Spec keys that define SET MEMBERSHIP, beside `class` - broad, catalogue-wide
+# vocabularies where "names this key" is an unambiguous yes/no (attribute-first
+# asks, work item C3). `product_type` is the noun a customer says inside a
+# class ("bidet", "shower set"); `brand` is the catalogue's own name column. A
+# narrower or numeric key stays boost-only for the reason the docstring below
+# gives.
+_MEMBERSHIP_KEYS: tuple[str, ...] = ("class", "product_type", "brand")
+
+
 def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: list[str] | None = None) -> dict:
     """The described set as a MEMBERSHIP clause - shape B's filter leg.
 
-    Class-only by decision: class coverage is broad, so a class filter is safe;
-    spec-VALUE derivation is partial, so a value filter silently undercounts, and
-    numeric entries carry ops (at_least, tolerance windows) that have no boolean
-    meaning. Non-class entries are dropped here and still reach the ranker as
-    boosts, so the customer's number is heard, just not membership-defining.
+    `class` / `product_type` / `brand` only, by decision: their coverage is
+    broad, so a filter on any of them is safe; other spec-VALUE derivation is
+    partial, so a value filter silently undercounts, and numeric entries carry
+    ops (at_least, tolerance windows) that have no boolean meaning. Non-member
+    entries are dropped here and still reach the ranker as boosts, so the
+    customer's number is heard, just not membership-defining.
 
-    Three verdicts per word, because n8n renders them differently:
-    - names a class            -> membership
-    - names a known spec value -> dropped (recognized, boost-only)
-    - names nothing            -> `unrecognized_terms` (clarify, never "none")
+    Three verdicts per free-text word, because n8n renders them differently:
+    - names a class / product_type / brand -> membership
+    - names a known spec value (any registry key) -> dropped (recognized,
+      boost-only, e.g. "wall hung" names `mounting` without being a class)
+    - names nothing this catalogue can act on   -> `unrecognized_terms`
+      (clarify, never "none")
 
-    The third verdict is reached WORD by word, not term by term. A term that
-    bound something can still carry an alien word inside it - "sorento grommet"
-    resolves the brand and says nothing about the grommet - and a term-level
-    check called that a success, so the one thing the CRM could not honour was
-    the one thing it never mentioned. A term whose every content word is alien
-    is still reported verbatim: they asked it as one thing.
+    The third verdict is reached WORD by word for a term that is entirely
+    alien, but a term whose individual words are each independently known
+    ("water", "tap") is STILL reported verbatim when the phrase as a whole
+    binds nothing - a class, a product_type, a brand, or any other registry
+    spec (AC-1301). Answering that silently as "membership undefined" reads as
+    "understood, and none qualify", which is a different, false, answer.
 
     Returns `{"clause", "class_labels", "unrecognized_terms"}`; `clause` is a
-    predicate over `ProductSpecifications.values`, or None when no class was named.
+    predicate over `ProductSpecifications.values`, or None when nothing named
+    a member.
     """
     free_terms = [t for t in (free_terms or []) if t and t.strip()]
 
-    labels: set[str] = set()
+    membership: dict[str, set[str]] = {}
     for entry in specs or []:
-        if entry.get("key") == "class" and entry.get("value"):
-            labels.add(str(entry["value"]))
+        key = entry.get("key")
+        if key in _MEMBERSHIP_KEYS and entry.get("value"):
+            membership.setdefault(key, set()).add(str(entry["value"]))
 
     vocabulary = _search_vocabulary(db) if free_terms else frozenset()
     unrecognized: list[str] = []
     for term in free_terms:
         classes = resolve_classes_for_term(db, term)
         if classes:
-            labels.update(classes)
+            membership.setdefault("class", set()).update(classes)
+        # Any registry spec at all - a value key like `mounting` counts as
+        # "understood" here even though it is never membership-defining.
+        bound_specs = resolve_terms_to_specs(db, [term])
         content = _content_words(term)
         alien = [word for word in content if word not in vocabulary]
         if content and len(alien) == len(content):
+            if term not in unrecognized:
+                unrecognized.append(term)
+            continue
+        if content and not classes and not bound_specs:
             if term not in unrecognized:
                 unrecognized.append(term)
             continue
@@ -721,22 +746,40 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
                 unrecognized.append(word)
 
     clause = None
-    if labels:
+    key_clauses = []
+    for key, values in membership.items():
+        if not values:
+            continue
         # Scalar branch is case-insensitive, matching the ranker's `_states`. The
         # containment branch (case-sensitive, against the stored spelling the
         # resolvers returned) exists because a value may be a LIST - two finishes
         # on one product - and `#>>` renders a list as its JSON text.
-        lowered = [label.lower() for label in labels]
-        scalar = func.lower(ProductSpecifications.values["class"]["value"].astext).in_(lowered)
+        lowered = [value.lower() for value in values]
+        scalar = func.lower(ProductSpecifications.values[key]["value"].astext).in_(lowered)
         contained = [
-            ProductSpecifications.values["class"]["value"].op("@>")(cast(literal(json.dumps(label)), JSONB))
-            for label in sorted(labels)
+            ProductSpecifications.values[key]["value"].op("@>")(cast(literal(json.dumps(value)), JSONB))
+            for value in sorted(values)
         ]
-        clause = or_(scalar, *contained)
+        key_clause = or_(scalar, *contained)
+        if key == "class":
+            # `class` alone falls back to the CATEGORY's filing code when the
+            # description names nothing ("the weakest class signal there is",
+            # `product_spec_derivation.py`). That fallback is real evidence for
+            # ranking, but not for a hard membership filter: a generic-named
+            # product filed under Kitchen Sink is not the same claim as one
+            # whose own words say so, and a described set built to intersect
+            # against a domain predicate must not seat it on a filing code.
+            named_by_content = ProductSpecifications.provenance[key]["source"].astext.is_distinct_from(
+                "category"
+            )
+            key_clause = and_(key_clause, named_by_content)
+        key_clauses.append(key_clause)
+    if key_clauses:
+        clause = key_clauses[0] if len(key_clauses) == 1 else or_(*key_clauses)
 
     return {
         "clause": clause,
-        "class_labels": sorted(labels),
+        "class_labels": sorted(membership.get("class", set())),
         "unrecognized_terms": unrecognized,
     }
 

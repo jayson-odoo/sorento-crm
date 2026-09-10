@@ -34,7 +34,7 @@ from sqlalchemy.sql import ColumnElement
 from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
 from app.models.inventory import Stock
 from app.models.marketing import Promotion, PromotionProduct
-from app.models.product import Product, ProductAttachment
+from app.models.product import Brand, Product, ProductAttachment
 from app.models.product_spec import ProductSpecifications
 from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import AppException
@@ -153,8 +153,19 @@ def resolve_product_set(
     specs: list[dict] | None = None,
     free_terms: list[str] | None = None,
     limit: int | None = None,
+    product_ids: list[str] | None = None,
+    brand: str | None = None,
 ) -> dict:
     """(described set) ∩ (require legs), with an honest count.
+
+    The described set is the UNION of ``product_ids`` (ids LOOKUP already
+    matched by name or code prefix) and the ``class`` / ``product_type`` /
+    ``brand`` membership `filter_specs` derives from ``specs`` / ``free_terms``
+    — attribute-first asks, work item C3, AC-1306/1308. Either alone is enough
+    to describe the set; when both are given a product only needs ONE of them.
+    ``brand`` scopes the WHOLE set on top of that union (D3): it reads
+    `Product.brand_id` live, not the spec-derived echo, so it is correct even
+    when a product's brand changed since its spec row was last derived.
 
     Returns ``{candidates, qualifying_total, truncated, unrecognized_terms,
     require}`` — candidates are ranker-shaped (stage 2 runs `search_specs` over
@@ -200,11 +211,18 @@ def resolve_product_set(
         require_echo[key] = getattr(clause, "_resolved_display", value)
         legs.append(clause)
 
-    terms_given = bool([t for t in (free_terms or []) if t and t.strip()]) or bool(specs)
-    if verdict["clause"] is None and terms_given:
-        # Words were given and none named a class: the described set is
-        # undefined. Answering the predicate over the WHOLE catalogue would be
-        # an answer to a question nobody asked.
+    described_given = bool([t for t in (free_terms or []) if t and t.strip()]) or bool(specs)
+    # What the caller has to RANK against, not merely what defines membership.
+    # `specs`-only calls (structural bindings, no customer words) fall to the
+    # deterministic listing below — `search_specs` drops any candidate with no
+    # positive evidence, which would silently evict a product that only
+    # qualified through `product_ids`, the OTHER half of the union.
+    rank_by_words = bool([t for t in (free_terms or []) if t and t.strip()])
+    if verdict["clause"] is None and described_given and not product_ids:
+        # Words were given and none named a class/product_type/brand, and there
+        # is no id set either: the described set is undefined. Answering the
+        # predicate over the WHOLE catalogue would be an answer to a question
+        # nobody asked.
         return {
             "candidates": [],
             "qualifying_total": 0,
@@ -222,10 +240,21 @@ def resolve_product_set(
             .outerjoin(parent, parent.id == Product.variant_of_id)
             .filter(Product.is_active.is_(True), *legs)
         )
+        described: list[ColumnElement] = []
+        if product_ids:
+            described.append(Product.id.in_(list(product_ids)))
         if verdict["clause"] is not None:
-            query = query.join(
-                ProductSpecifications, ProductSpecifications.product_id == Product.id
-            ).filter(verdict["clause"])
+            described.append(
+                exists().where(
+                    ProductSpecifications.product_id == Product.id, verdict["clause"]
+                )
+            )
+        if described:
+            query = query.filter(described[0] if len(described) == 1 else or_(*described))
+        if brand:
+            query = query.join(Brand, Brand.id == Product.brand_id).filter(
+                func.lower(Brand.brand_name) == brand.strip().lower()
+            )
         return query
 
     qualifying_total = _base(db.query(func.count(func.distinct(family)))).scalar() or 0
@@ -233,7 +262,7 @@ def resolve_product_set(
     candidates: list[dict] = []
     if qualifying_total:
         qualifying_ids = [row[0] for row in _base(db.query(Product.id)).all()]
-        if terms_given:
+        if rank_by_words:
             # Stage 2: rank INSIDE the qualifying set. Floor 0 on purpose — the
             # floor exists to stop confident nonsense, and membership has
             # already established these products answer the question. Dropped
