@@ -66,7 +66,7 @@ Baseline (main, detached checkout of d6cb5b624 with the lane venv, 11 Sep 2026):
 | 1344 | PASS | dash scan of every lane file empty; pre-push guard |
 | 1345 | PASS | pytest, seven inflections incl. "sijil" and "PPS certification" |
 | 1346 | PASS | pytest; console pass 7 bathroom accessory "Showing 5." for five ids (pass 6 showed 4: ACC-SRT9012's only stock was in inactive warehouse SPARE/P) |
-| 1347 | see pass 7 note | R23, pending the rerun |
+| 1347 | PASS | pytest, four paging terms; console pass 8 sequence 2: the carry-less "more" answers "2,704 products have certificates. Showing 5." (the reused certificate question, unscoped) instead of "I don't know 'more'" |
 
 ## Console pass 7 (AC-1325, FINAL after fix round 3), lane backend WITHOUT reload, commit d331bec78
 
@@ -88,10 +88,10 @@ Multi-turn sequences (`pass6-sequences.yaml` in the session scratchpad, three ca
 | Sequence | Result |
 |----------|--------|
 | which tap has cert / more / more | Showing 5. / Showing 6 to 10. / Showing 11 to 15. (AC-1317) |
-| which tap has cert / which water tap has cert / more | set answer / clarify / NOT paged (AC-1343). The third reply on d331bec78 read "I don't know 'more' as a product type": the head's entity reuse re-asked the certificate question with "more" as the only remainder word (R23, fixed after this pass; rerun recorded below) |
+| which tap has cert / which water tap has cert / more | set answer / clarify / NOT paged (AC-1343). The third reply on d331bec78 read "I don't know 'more' as a product type": the head's entity reuse re-asked the certificate question with "more" as the only remainder word (R23). Rerun on 242af5589 (console pass 8, all three sequences PASS): "2,704 products have certificates. Showing 5." |
 | any shower set on promo / 1 / more | tier ask / "I found 4 promotions for shower set." on the check_promotion lane with `access_levels: ["Dealer"]` / page with the recomposed tiers in the tool args (AC-1333). Promotion sets page by product, so a promotion file attached to several products appears on both pages; accepted |
 
-Transcripts: `console-run-7.txt`, `console-run-7-sequences.txt` in the session scratchpad.
+Transcripts: `console-run-7.txt`, `console-run-7-sequences.txt`, `console-run-8-sequences.txt` in the session scratchpad.
 
 ## Console pass 4 (AC-1325, FINAL), lane backend started WITHOUT reload, commit 677d240b1
 
