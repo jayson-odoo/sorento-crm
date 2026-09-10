@@ -169,3 +169,46 @@ change).
 | AC-3.2 | PASS |
 | AC-3.3 | PASS (decision-trail read via the cell breakdown dialog's Suggestion/Decision pair, not the divergence-only `BoardTrailPopover`) |
 | AC-3.4 | PASS (`This line` ledger badge not observed on this donor's real data - noted, not a defect claim) |
+
+## Re-run after fix round (10 Sep, tester)
+
+The fix round changed the Borrow modal's row keys (a donor is now keyed by candidate, not
+by warehouse code, so two donors sharing one bin no longer collide), added a donor label
+under the location code, and reverted an out-of-plan change to the Grid Location table.
+Re-verified the Borrow modal only (AC-1.4 - AC-1.7, AC-3.4) at this HEAD
+(`150c17dfd`) - agent-browser, session `lsor-p3b`, headless, sidebar navigation from `/`
+(Project Sales -> Supply Chain -> Project Demand -> Fulfilment Planning), login via
+E2E_EMAIL/E2E_PASSWORD from `.env.local`.
+
+Same order as the original run, **SO369758** Line 5 (`B2154-NL`, "BRW 40 (BRW)" suggested,
+undecided). List view, expanded the row, clicked **Add a borrow**.
+
+- **AC-1.4**: Source table renders the Grid Location table's own columns - Location, Where,
+  On hand, SO qty, SPO qty, Available, Available for Project, PO qty, Taken - a radio in the
+  Location cell, `Recommended` on the first row (`BRW-NTC`, pre-selected, radio checked), no
+  Free/Committed/After borrow columns. Two rows this time: `BRW-NTC` (recommended,
+  `-234` available, `-234` available for project, `234` PO qty) and `BRW-IR`
+  (`-2217`/`-2217`/`397`).
+- **AC-1.5**: Expanded `BRW-NTC`'s chevron -> `StockDocumentsPanel` ledger renders (Type,
+  Document, Customer/supplier, Agent, Doc date, Delivery/expected, Quantity), 3 S/O rows
+  against `SO365271` (OTM GROUP SDN BHD, 117 each, total 351). At 1280px the modal fits the
+  whole table with no horizontal page scroll (`borrow-modal-1280.png`); at 375px the table
+  scrolls inside its own container while Quantity, the After-borrowing sentence, Reason and
+  the action buttons stay reachable by page scroll (`borrow-modal-375.png`).
+- **AC-1.6**: Typed Quantity `50` - the sentence updated live to **"After borrowing 50:
+  BRW-NTC goes short by 284 - an Order Inquiry will be raised for BRW-NTC on confirm."**
+  (read via `get text [data-testid=borrow-impact]`, since the accessibility-tree snapshot in
+  `-i` mode does not surface plain paragraph text).
+- **AC-3.4 / AC-1.7**: `Add the borrow` stayed disabled until a Reason was typed (`BRW-NTC
+  has no delivery booked before October.`), then enabled - confirming the row-key change did
+  not disturb the validation gate. Cancelled rather than confirmed, so no write was left on
+  this real order.
+- No console errors or page errors at any point (`console` / `errors` checked after every
+  interaction); only routine `i18next`/Fast Refresh log lines.
+
+This run did not exercise the "two donors sharing one bin" case directly (SO369758's own
+book did not offer two candidates at one bin today) - that shape is covered by
+`BorrowAddDialog.test.tsx`'s new vitest cases instead, which construct it explicitly and
+assert the row-key/label/expansion behaviour a live order cannot be guaranteed to reproduce.
+
+Session `lsor-p3b` closed (not `close --all`) after this run.
