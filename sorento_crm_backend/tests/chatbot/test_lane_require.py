@@ -531,6 +531,32 @@ def _tap_product(db, *, category_id: str, uom_id: str, code: str | None = None):
     return row
 
 
+def _basin_product(db, *, category_id: str, uom_id: str, code: str | None = None):
+    """A class-Wash-Basin contrast product - the class word must be the description's
+    TRAILING noun (`product_spec_derivation._class_from_description` only matches the
+    tail: "500MM" after "WASH BASIN" would break the match), so this carries no
+    dimension suffix, unlike `_tap_product`'s own description."""
+    from app.models.product import Product
+    from app.services.product_spec_derivation import derive_for_code
+    from tests._pg_fixture import unique_code
+
+    code = code or unique_code("ZZBSN")[:50]
+    row = Product(
+        id=str(uuid.uuid4()),
+        product_code=code,
+        product_name=code,
+        description=f"{code} WHITE WASH BASIN",
+        category_id=category_id,
+        base_uom_id=uom_id,
+        list_price=10,
+        is_active=True,
+    )
+    db.add(row)
+    db.flush()
+    derive_for_code(db, code)
+    return row
+
+
 def _certificate_for(db, *, product_id: str, valid_until=None, scheme: str = "ZZT-CERT"):
     from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
     from tests._pg_fixture import unique_code
@@ -830,6 +856,47 @@ def test_set_answer_carries_the_header_and_shows_five():
     lines = reply.splitlines()
     assert lines and lines[0] == "7 taps have certificates. Showing 5.", reply
     assert reply.count("*Product Code:*") == 5, reply
+
+
+def test_set_answer_is_scoped_to_the_class_word():
+    """AC-1306 + AC-1316 (captain follow-up, after the S3 red-test report): a HAS turn's
+    described set must be scoped to the class word in the message, not to "every
+    certified product regardless of class" - the gap
+    `tests/test_resolve_predicate.py::test_class_word_in_query_scopes_the_described_set`
+    pins directly against the resolver. World: two certified class-Tap products AND one
+    certified class-Wash-Basin product, so a reply naming "2 taps" and omitting the
+    basin code is proof of real scoping, not an all-Tap world's coincidence (the
+    accidental-pass the S3 tester's own module-section banner comment flags for the
+    siblings of this test).
+
+    RED: the header line does not exist yet (same E2 gap as every other test in this
+    module), so `lines[0]` fails first; AND even once a header renders, today's
+    `qualifying_total` would be 3 (every certified product, unscoped - see the
+    resolver-level test above for the root cause), not 2, and the basin code would
+    appear in the reply's product list rather than being correctly excluded.
+    """
+    with blank_session() as db:
+        _seed_registry(db)
+        category_id, uom_id = _seed_category_and_uom(db)
+        tap1 = _tap_product(db, category_id=category_id, uom_id=uom_id)
+        tap2 = _tap_product(db, category_id=category_id, uom_id=uom_id)
+        basin = _basin_product(db, category_id=category_id, uom_id=uom_id)
+        for product in (tap1, tap2, basin):
+            _certificate_for(db, product_id=product.id)
+        db.commit()
+
+        ctx = _cert_ctx(
+            "which tap has cert", [{"raw": "cert", "hint": "attachment_type"}]
+        )
+        out, fragment = _run_has_lane(db, ctx, fake_call_tool=_cert_fake_call_tool(db))
+
+        assert out.get("_exit_kind") == "continue", out.get("gate_reason")
+        reply = (fragment.get("fetch") or {}).get("response") or ""
+        basin_code = basin.product_code
+
+    lines = reply.splitlines()
+    assert lines and lines[0] == "2 taps have certificates.", reply
+    assert basin_code not in reply, reply
 
 
 def test_set_answer_header_omits_showing_when_all_fit():

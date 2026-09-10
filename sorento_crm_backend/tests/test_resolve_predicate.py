@@ -414,3 +414,112 @@ def test_predicate_words_is_accepted_on_the_request(client):
     without_body.pop("elapsed_ms", None)
     with_words_body.pop("elapsed_ms", None)
     assert without_body == with_words_body
+
+
+# --------------------------------------------------------------------------- #
+# S3 follow-up (captain, after the S3 red-test report): AC-1306, guard the       #
+# described set's class-word scoping when the caller sends NO product token at   #
+# all (`tokens: []`) - the chatbot lane's own shape for "which tap has cert".     #
+# --------------------------------------------------------------------------- #
+
+
+def test_class_word_in_query_scopes_the_described_set(client, db):
+    """AC-1306: with `tokens: []` (no product entity resolved, exactly the chatbot
+    lane's own HAS-turn shape - see `tests/chatbot/test_lane_require.py`'s
+    `test_set_answer_carries_the_header_and_shows_five` and siblings) the described set
+    must still be scoped to the class word IN THE QUERY TEXT, not fall through to
+    "nothing describes the set, count everything satisfying the require leg".
+
+    World: one certified class-Tap product (ZZTTAP01) and one certified class-Wash-Basin
+    product (ZZTBASIN01) - two DIFFERENT classes on purpose, so a test asserting "1
+    qualifies" cannot pass by coincidence the way an all-Tap world would (the S3 tester's
+    own finding, `test_lane_require.py`'s module-section banner comment).
+
+    Contract for the coder: the resolver's HAS branch builds `free_terms` from (1) the
+    raw of every product entity token that did NOT resolve, else (2) the remainder of
+    `query` after removing `predicate_words` and the phrase stopwords, as ONE term; that
+    term goes through `filter_specs` (measured directly: `filter_specs(db,
+    free_terms=["tap"])` already resolves `class_labels=["Tap"]` today -
+    `product_spec_search.py`'s own `resolve_classes_for_term`), so a class word scopes
+    the set and an unknown phrase (`filter_specs(db, free_terms=["item"])` ->
+    `unrecognized_terms=["item"]`) lands there instead.
+
+    RED: today `app/api/v1/system/references.py`'s require branch reads
+    `derive_search_inputs(db, query_text, specs=[], free_terms=[], ...)` and DISCARDS its
+    own returned free terms (by design - merging the whole raw phrase back in would flag
+    "which kitchen sinks have stock" itself as unrecognized, per that file's own comment),
+    then calls `resolve_product_set(..., free_terms=payload.free_terms)` - and nothing on
+    this request path ever populates `payload.free_terms` from `query`. So
+    `filter_specs` never sees "tap" (or "item") as a free term either way, `specs=[]`
+    stays empty (`derive_search_inputs`'s own deterministic pass does not bind a BARE
+    class word to `specs` - only `filter_specs`'s `free_terms` argument resolves classes,
+    per the measurement above), `described_given` is False, and BOTH the "which tap"
+    and the "which item" call fall to the "nothing describes the set" branch, which
+    counts every certified product with NO class restriction - so the FIRST assertion
+    below (expects 1, tap-scoped) is what fails, against an actual `qualifying_total`
+    of 2.
+    """
+    from app.models.certificate import Certificate, CertificateProduct
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+
+    def _certified_product(code: str, description: str) -> Product:
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            description=description,
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        cert = Certificate(
+            id=str(uuid.uuid4()),
+            scheme="ZZT-SIRIM",
+            certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+            status="active",
+        )
+        db.add(cert)
+        db.flush()
+        db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+        db.flush()
+        return product
+
+    tap = _certified_product("ZZTTAP01", "ZZT CHROME TAP")
+    _certified_product("ZZTBASIN01", "ZZT WHITE WASH BASIN")
+
+    scoped = client.post(
+        ENDPOINT,
+        json={
+            "query": "which tap has cert",
+            "tokens": [],
+            "require": {"certificate": True},
+            "predicate_words": ["cert"],
+        },
+    )
+    assert scoped.status_code == 200
+    scoped_payload = scoped.json()
+    assert scoped_payload["predicate"]["qualifying_total"] == 1, scoped_payload["predicate"]
+    scoped_matches = [
+        m
+        for resolution in scoped_payload["resolutions"]
+        for m in resolution["matches"]
+        if m.get("match_tier") == "spec_search"
+    ]
+    assert [m["canonical_code"] for m in scoped_matches] == [tap.product_code]
+
+    unscoped = client.post(
+        ENDPOINT,
+        json={
+            "query": "which item has cert",
+            "tokens": [],
+            "require": {"certificate": True},
+            "predicate_words": ["cert"],
+        },
+    )
+    assert unscoped.status_code == 200
+    assert unscoped.json()["predicate"]["qualifying_total"] == 2, unscoped.json()["predicate"]
