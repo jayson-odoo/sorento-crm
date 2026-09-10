@@ -119,6 +119,19 @@ tool. No new reply format.
   invoked while `require` is present, and predicate_words are stripped word by word ("PPS cert"
   removes both words). Evidence: pytest with the model reader patched to fail if called, plus the
   phrase-stripping case.
+- AC-1333 [security] A "more" page carries the contact's recomposed `access_levels` into the tool
+  args (never the parser's empty list), and the set_page carry is armed only after a set answer
+  actually rendered; a tier-ask turn arms nothing. Evidence: pytest, two-turn promotion set with a
+  contact holding one tier, asserting the page turn's `access_levels` equal the fresh turn's; a
+  tier-ask turn followed by "more" is not paged.
+- AC-1334 [security] The promotion leg respects `access_levels`: a promotion the contact's tier
+  cannot see never counts toward `qualifying_total` nor names its product. Evidence: pytest, two
+  promotions on two products, one tier-restricted.
+- AC-1335 [security] `_common_class_labels` and the nearest-label suggestions are company-scoped:
+  a class label that exists only in company B never reaches a company A reply. Evidence: pytest on
+  a two-company scratch schema.
+- AC-1336 The set_page carry clears on any business answer that is not a page; a fresh set answer
+  re-arms it. Evidence: pytest, three turns.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`

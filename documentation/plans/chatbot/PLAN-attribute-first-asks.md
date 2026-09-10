@@ -130,6 +130,15 @@ Measured with the stored `chatbot.turns` parser output replayed through `resolve
 | R13 | "which item has PPS cert" (parser variant: attachment_type raw "PPS cert") answered "I don't know 'item pps' as a product type" live, while the deterministic replay of the same stored parser output returned a clean predicate (940, no unrecognised terms) | the live resolve body carries `understand_phrase: true`, so the HAS branch let the MODEL phrase reader (`derive_search_inputs(allow_model=True)`) contribute free terms, and it produced "item pps"; the replay had no model key and read deterministically | the HAS branch reads bindings with `allow_model=False` only (the model read stays on the spec_fallback path where it was built); and predicate_words are stripped word by word, so a phrase such as "PPS cert" removes both words from the remainder |
 | R11 | "any shower set on promo" → "You have no access levels configured to get promotions." | console contact 482766833 has no access levels; a data prerequisite of the promotion domain | verification uses a contact with access levels for the promotion case; not a lane change |
 
+## Security review findings (11 Sep 2026), rules adopted
+
+| # | Finding | Rule |
+|---|---------|------|
+| SEC-B1 | A "more" page runs before the access_check entry, stamps `tier_gate: None`, and the fetch copies the parser's empty `access_levels` into the tool args; on a promotion set that removes the tier filter entirely (empty list → no filter in `marketing_service`). The carry is armed off `gate.predicate` alone, so a tier-ask turn also arms it | the set_page carry is armed ONLY when the fetch rendered a set answer (result-bearing arm), never off the gate; the carry stores the recomposed `access_levels` and the page turn re-injects them into the fetch args; a page turn on a promotion carry still runs the tier gate |
+| SEC-S1 | `_leg_promotion` ignores the caller's `access_levels`, so `qualifying_total` and the named products can disclose tier-restricted promotions | `resolve_product_set` accepts `access_levels`; `_leg_promotion` intersects `Promotion.access_levels` with the same name → code translation `_apply_promotion_access_levels_filter` uses; the resolver threads `payload.access_levels` |
+| SEC-S2 | `_common_class_labels` reads `ProductSpecifications` (not company-scoped) and `_nearest_class_labels` uses `stored_class_labels` (raw text() SQL), both customer-visible, both cross-company | both join `Product` (scoped) so the labels come from the caller's own catalogue; no raw SQL |
+| SEC-N1 | carry has no lifetime beyond a domain change; `carry["tool"]` is dead state | the carry clears on any business answer that is not a page (a new set answer re-arms fresh); `tool` removed |
+
 ## Leg semantics
 
 | key | payload | predicate (EXISTS on Product.id) |
