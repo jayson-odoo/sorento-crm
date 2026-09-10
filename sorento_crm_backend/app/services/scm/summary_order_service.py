@@ -64,7 +64,7 @@ from app.models.scm import (
 )
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
-from app.services.scm import plan_grain
+from app.services.scm import cover_service, plan_grain, po_book_service
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.demand import (
     ACTIVE_DECISION_STATE,
@@ -72,6 +72,7 @@ from app.services.scm.demand import (
     UNPLACED_INQUIRY_STATE,
 )
 from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL, active_site_pool_sql
+from app.services.scm.reorder_policy import resolve_global_cover_scope
 from app.services.scm.spo_supply import open_incoming_clauses
 from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.scm.reorder_engine import round_order_qty as eng_round_order_qty
@@ -204,6 +205,7 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
             ReorderRecommendation.warehouse_id,
             ReorderRecommendation.rec_type,
             ReorderRecommendation.rounded_qty,
+            ReorderRecommendation.pool_warehouse_id,
             ReorderRecommendation.inputs,
             ReorderRecommendation.triggered_reason,
         )
@@ -230,9 +232,23 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         for p in db.query(Product).filter(Product.id.in_(product_ids)).all()
     }
     decimals = {} if is_legacy else _uom_decimal_places(db, product_ids)
-    constraints = {} if is_legacy else _supplier_constraints(db, product_ids)
+    # Read on every run, legacy included (owner ruling, 10 Sep): `_suggestion_text`'s
+    # mixture applies the supplier's MOQ/order multiple the same way the grid's own
+    # Decision label does, and a legacy run's suggestion should round the same way.
+    constraints = _supplier_constraints(db, product_ids)
     need_dates = {} if is_legacy else _earliest_project_need_dates(db, product_ids)
     wh_meta = _warehouse_meta(db, [r.warehouse_id for r in rec_rows])
+    # S16 (owner ruling, 10 Sep): the Suggestion column reads EXACTLY like the plan grid's
+    # Decision label - "Stock 1 + Buy 486" - rather than the engine's own reason sentence.
+    # Both reads are batched once for the whole run, mirroring `cover_service`'s own
+    # "no production caller, allocation happens client-side" shape: the FREE POOL here is
+    # read fresh (no `already_taken`) because `write_rows` runs on a freshly-planned run
+    # with no buyer decisions recorded yet - the same state the grid's OWN "Suggested" pill
+    # (before any decision) reads, per `usePlanLines.coverFor`'s `takenByProduct`, which is
+    # built from PERSISTED decisions and is empty until the buyer records one.
+    cover_scope = resolve_global_cover_scope(db)
+    free_by_product = cover_service.free_stock_by_product(db, run_id, product_ids)
+    po_book = po_book_service.po_book_for_run(db, run_id).get("po_book") or {}
     # S9/S14 (PLAN-reorder-feedback-9sep.md): the sheet's own columns, read once for the
     # whole batch and frozen with everything else above - not gated on `is_legacy`, since
     # the buyer's own book (deliveries, project customers, supply, receipts, MOQ) exists
@@ -335,9 +351,13 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
              if (r.inputs or {}).get("reorder_level") is not None),
             None,
         )
-        # issue #795: the engine's own one-line reason, so a covered/needs_level row -
-        # now on the book beside a buy - still states WHY it suggests 0 (AC-8, AC-9).
-        row.suggestion = _suggestion_text(recs)
+        # issue #795 (owner ruling 10 Sep): the SAME words the plan grid's Decision label
+        # uses, not the engine's reason sentence - "Stock 1 + Buy 486", "Nothing".
+        row.suggestion = _suggestion_text(
+            recs, pid,
+            free_by_product=free_by_product, po_book=po_book,
+            cover_scope=cover_scope, constraints=constraints,
+        )
         row.computed_at = computed_at
         row.source_system = "scm"
         row.source_ref = _SEED
@@ -362,36 +382,85 @@ def _quantize_up(qty: float, decimal_places: int) -> float:
     return math.ceil(round(float(qty) * scale, 6)) / scale
 
 
-#: When a recommendation carries no `triggered_reason` of its own (a hand-built test row,
-#: or a run frozen before the reason label existed), a short label by rec_type stands in.
-_SUGGESTION_FALLBACK = {
-    "covered": "covered by stock",
-    "needs_level": "no reorder level set",
-    "exception": "no linked supplier",
-}
+def _fmt_int(value: float) -> str:
+    """"1,486" - the grid's own `fmtInt` (`Intl.NumberFormat('en-MY', {maximumFractionDigits:
+    0})`): rounded to the nearest whole unit, grouped by thousand. The sheet's Suggestion
+    column reads exactly like the plan grid's Decision label (owner, 10 Sep - "too
+    complicated"), so the number has to be formatted the same way too."""
+    return f"{round(value):,}"
 
 
-def _suggestion_text(recs: list) -> Optional[str]:
-    """The engine's own one-line reason for this row, product-wide (issue #795).
+def _suggestion_text(
+    recs: list, pid: str, *,
+    free_by_product: dict[str, list],
+    po_book: dict[str, list],
+    cover_scope: str,
+    constraints: dict[str, dict],
+) -> str:
+    """The row's Suggestion, worded EXACTLY like the plan grid's own Decision label (owner,
+    10 Sep ruling): "Stock 1 + Buy 486", "Buy 95", "Stock 10 + PO 20 + Buy 90", "Nothing".
+    Replaces the earlier reason-text derivation (issue #795) wholesale - no engine reason
+    sentence is printed on the sheet any more.
 
-    `recs` carries no ORDER BY from the query that built it, so picking `recs[0]` picked
-    whichever row Postgres happened to return first - fine on the product-grain engine's
-    normal shape (`_sizing_row` in `test_reorder_per_product.py` pins ONE planning row per
-    product), but a location-grain pool or network run can still emit several KINDS of row
-    for one product (a `buy` at location A beside a `needs_level` at location B), and an
-    arbitrary pick could state the wrong one (review fix round). Preference order: a `buy`
-    is the actionable row and its reason is the one a buyer needs; failing that an
-    `exception` (still a firm need, just unsourced); failing that whichever row came back
-    first - `covered` and `needs_level` both describe the same "nothing to buy" product,
-    so which one speaks is arbitrary by construction, the same reasoning `reorder_level`
-    above already relies on.
+    Mirrors `summaryOrderService`'s client-side chain byte for byte:
+    `suggestedDecisionFor` (`lib/planEdits.ts`) -> stock via `coverForLine`/`proposeCover`
+    (`lib/coverPlan.ts`, server mirror `cover_service.propose_cover`) -> PO offset via
+    `poOffset` (`lib/poCover.ts`) -> MOQ/multiple rounding via `roundBuyQty`
+    (`lib/orderQtyLedger.ts`, server mirror `reorder_engine.round_order_qty`) ->
+    `summariseMix`. `needed` reads `rounded_qty`, the SAME column the wire's own
+    `order_qty` field is sourced from (`reorder_runs.py`'s `"order_qty": "rr.rounded_qty"`
+    field map) - `recommended_qty` is the PRE-rounding gap and is a different field the
+    grid never reads here. A covered/needs_level product carries no `buy`/`exception`
+    recommendation, and an `exception` row itself freezes no `rounded_qty` at all
+    (nothing was sized, so nothing was rounded) - both read as `needed = 0`, the same
+    "Nothing" the grid prints for a line with nothing to buy, with no branch needed for
+    either case specifically.
+
+    `recs` carries no ORDER BY from the query that built it (review fix round): prefer a
+    `buy` rec (the actionable row, and the only one the grid's own derivation ever reads),
+    then an `exception` (still a firm need, just unsourced) - both are read the SAME way,
+    since the mixture is about the QUANTITY, not the reason it could not be bought.
     """
     chosen = (
         next((r for r in recs if r.rec_type == "buy"), None)
         or next((r for r in recs if r.rec_type == "exception"), None)
-        or recs[0]
     )
-    return chosen.triggered_reason or _SUGGESTION_FALLBACK.get(chosen.rec_type)
+    if chosen is None:
+        return "Nothing"
+    needed = math.ceil(float(chosen.rounded_qty or 0.0))
+    if needed <= 0:
+        return "Nothing"
+
+    pool_warehouse_id = str(chosen.pool_warehouse_id) if chosen.pool_warehouse_id else None
+    cover = cover_service.propose_cover(
+        needed, None, free_by_product.get(pid) or [],
+        cover_scope=cover_scope, line_pool_warehouse_id=pool_warehouse_id,
+    )
+    stock_qty = cover.cover_qty
+    after_stock = cover.buy_qty if stock_qty > 0 else float(needed)
+
+    # `poFor`'s own key: `levelKey(line.product_id, line.warehouse_id)` -
+    # `"{product_id}:{warehouse_id}"`, `""` when the row names none (a genuine
+    # product-grain buy names no warehouse; a network buy carries one).
+    po_receipts = po_book.get(f"{pid}:{chosen.warehouse_id or ''}") or []
+    po_qty = sum(float(r.get("remaining") or 0.0) for r in po_receipts)
+    use_po = min(max(after_stock, 0.0), max(po_qty, 0.0))
+    buy = max(after_stock - use_po, 0.0)
+
+    con = constraints.get(pid) or {}
+    buy_qty = (
+        eng_round_order_qty(buy, con.get("moq"), con.get("order_multiple"))
+        if buy > 0 else 0.0
+    )
+
+    parts = []
+    if stock_qty > 0:
+        parts.append(f"Stock {_fmt_int(stock_qty)}")
+    if use_po > 0:
+        parts.append(f"PO {_fmt_int(use_po)}")
+    if buy_qty > 0:
+        parts.append(f"Buy {_fmt_int(buy_qty)}")
+    return " + ".join(parts) if parts else "Nothing"
 
 
 def _belongs_on_the_book(recs: list, decision_grain: Optional[str]) -> bool:

@@ -355,11 +355,19 @@ def test_a_supplier_named_as_a_formula_exports_as_a_string_cell(db, chain):
 # =====================================================================================
 
 def test_export_xlsx_prints_suggested_and_suggestion_next_to_order_qty(db):
-    """Plan Slice 2 test 7. The new columns sit between Dealer o/s and Order qty, in that
-    order; Suggested qty is the engine figure printed as a NUMBER (0 stays 0, unlike the
-    blank rule for Order qty); Suggestion is the engine's own reason text; Order qty stays
-    the pen column, blank until chosen. A covered product with nothing to order still
-    prints, with Suggested qty 0 and its own suggestion (AC-9)."""
+    """Plan Slice 2 test 7, extended (review round, owner ruling ~11 Sep): the new
+    columns sit between Dealer o/s and Order qty, in that order; Suggested qty is the
+    engine figure printed as a NUMBER (0 stays 0, unlike the blank rule for Order qty);
+    Order qty stays the pen column, blank until chosen. A covered product with nothing
+    to order still prints, with Suggested qty 0 (AC-9).
+
+    Suggestion reads like the plan grid's Decision label now, never the engine's own
+    triggered_reason prose ("reorder_level: net -1 <= level 50" was the owner's own
+    complaint) - `"Stock N + PO N + Buy N"` joined by " + ", or "Nothing". Neither
+    seeded product here has any free pool stock or an open PO, so the buy row's label
+    is the bare "Buy 12" and the covered row's is "Nothing" - do the arithmetic from
+    the seed, `triggered_reason` no longer drives the cell at all.
+    """
     from io import BytesIO
 
     from openpyxl import load_workbook
@@ -406,7 +414,9 @@ def test_export_xlsx_prints_suggested_and_suggestion_next_to_order_qty(db):
 
     buy_row = rows_by_code[buy_p.product_code]
     assert buy_row[5] == 12.0, "Suggested qty is a number, left of Suggestion"
-    assert buy_row[6] == buy_reason
+    assert buy_row[6] == "Buy 12", (
+        "no free pool stock and no open PO were seeded, so the label is a bare Buy"
+    )
     # A blank cell round-trips as None through openpyxl load_workbook - it writes ""
     # and None identically, so this reload can never observe "" (the tuple-level ""
     # contract is pinned directly by the sibling `_export_xlsx_rows` test instead).
@@ -414,7 +424,9 @@ def test_export_xlsx_prints_suggested_and_suggestion_next_to_order_qty(db):
 
     covered_row = rows_by_code[covered_p.product_code]
     assert covered_row[5] == 0.0, "Suggested qty prints 0, not blank"
-    assert covered_row[6] == covered_reason
+    assert covered_row[6] == "Nothing", (
+        "nothing to buy, no stock offered, no open PO - the label is Nothing"
+    )
 
 
 def test_export_pdf_html_header_cells_are_the_16_columns_in_order():

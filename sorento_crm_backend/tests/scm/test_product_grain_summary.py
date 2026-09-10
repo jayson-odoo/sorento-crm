@@ -41,9 +41,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from app.models.inventory import Warehouse
+from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import ProductSupplier, Supplier
+from app.models.procurement import ProductSupplier, PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import OrderSummaryRow, ReorderRecommendation, ReorderRun
 from app.services.error_handler import AppException
@@ -1017,9 +1017,15 @@ def test_a_legacy_run_rejects_every_decision(db):
 def test_write_rows_admits_buy_covered_and_needs_level_products_with_a_suggestion(db):
     """AC-9: `_belongs_on_the_book` becomes "has any product-grain rec" - buy, covered and
     needs_level products are ALL on the book now, not only a buy or firm project need.
-    `suggested_qty` stays 0 for covered/needs_level, and every row carries the engine's own
-    one-line reason on a NEW `suggestion` column - the buy row's is its own
-    `triggered_reason` (plan Slice 2 test 6).
+    `suggested_qty` stays 0 for covered/needs_level.
+
+    Suggestion (owner ruling, review round ~11 Sep, superseding plan Slice 2 test 6):
+    reads like the plan grid's Decision label - "Stock N + PO N + Buy N" / "Nothing" -
+    never the engine's own `triggered_reason` prose. No free pool stock and no open PO
+    are seeded for any of the three products here, so the buy row's label is the bare
+    "Buy 12" (its own `rounded_qty`) and the covered/needs_level rows, with nothing to
+    buy, both read "Nothing" - still a non-empty string, so a covered/needs_level row
+    keeps SOME answer rather than a blank cell.
     """
     run = _run(db, decision_grain="product", contract_version=1)
     wh = _warehouse(db)
@@ -1054,13 +1060,19 @@ def test_write_rows_admits_buy_covered_and_needs_level_products_with_a_suggestio
     needs_row = _row(db, run, needs_p)
 
     assert float(buy_row.suggested_qty) == 12.0
-    assert buy_row.suggestion == buy_reason
+    assert buy_row.suggestion == "Buy 12", (
+        "no free pool stock and no open PO were seeded, so the label is a bare Buy"
+    )
 
     assert float(covered_row.suggested_qty) == 0.0
-    assert covered_row.suggestion, "a covered row still states why it suggests 0"
+    assert covered_row.suggestion == "Nothing", (
+        "nothing to buy, no stock offered, no open PO - still a non-empty answer"
+    )
 
     assert float(needs_row.suggested_qty) == 0.0
-    assert needs_row.suggestion, "a needs_level row still states why it suggests 0"
+    assert needs_row.suggestion == "Nothing", (
+        "nothing to buy, no stock offered, no open PO - still a non-empty answer"
+    )
 
 
 def test_record_decision_accepts_a_row_whose_suggested_qty_is_zero(db):
@@ -1126,3 +1138,126 @@ def test_record_decision_accepts_a_row_whose_suggested_qty_is_zero(db):
     wl_row = next(r for r in worklist["rows"] if r["product_code"] == product.product_code)
     codes = {a["warehouse_code"] for a in wl_row["location_allocations"]}
     assert wh.warehouse_code in codes, "the worklist row must still name the real location"
+
+
+# =========================================================================== #
+# owner ruling (review round, ~11 Sep): Suggestion reads like the plan grid's
+# Decision label - "Stock N + PO N + Buy N" / "Nothing" - never the engine's own
+# triggered_reason prose ("reorder_level: net -1 <= level 50" was the complaint).
+# Mirrors `planEdits.suggestedDecisionFor` / `summariseMix` and `poCover.poOffset`
+# on the frontend byte for byte: stock first (free SITE POOL stock
+# `cover_service.propose_cover` would offer), then the open PO remainder
+# (`po_open_qty`, already frozen by issue #796), then Buy for the rest.
+# =========================================================================== #
+
+def _pool_sibling(db, pool_wh, *, stem="SIB") -> Warehouse:
+    """A SITE POOL member of `pool_wh` - stock here is FREE to offer against a shortage at
+    `pool_wh` itself (`cover_service.propose_cover` never offers a location's own stock
+    back to itself, since that is already inside its net)."""
+    wh = Warehouse(
+        id=_u(), warehouse_code=_code(stem)[:30], warehouse_name=f"{MARKER} {stem}",
+        is_active=True, counts_as_available=True, pool_warehouse_id=pool_wh.id,
+    )
+    db.add(wh)
+    db.flush()
+    return wh
+
+
+def _stock(db, product, wh, qty) -> None:
+    db.add(Stock(id=_u(), product_id=product.id, warehouse_id=wh.id, quantity_on_hand=qty))
+    db.flush()
+
+
+def _open_po_line(db, product, wh, *, po_number, qty_ordered, qty_received=0) -> None:
+    po = PurchaseOrder(id=_u(), po_number=po_number, status="active")
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(
+        id=_u(), purchase_order_id=po.id, product_id=product.id, warehouse_id=wh.id,
+        qty_ordered=qty_ordered, qty_received=qty_received, line_status="open",
+    ))
+    db.flush()
+
+
+def test_suggestion_offers_free_pool_stock_before_the_rest_of_the_buy(db):
+    """Test 1: a buy of 487 with 1 unit of free stock at a SIBLING site-pool warehouse
+    (not the buy rec's own warehouse - that stock is already inside its net) covers 1 of
+    it: "Stock 1 + Buy 486". `_open_po_line`/`_stock` are new local helpers so the
+    seeding needs no cover_scope setting - `sources_in_scope` treats a row whose own pool
+    is unknown, or every plausible reading of a product-grain "line", as unfiltered so
+    long as the sibling shares the SAME pool (`pool_warehouse_id`), which this seed
+    always satisfies regardless of which single warehouse the coder treats as the row's
+    own for scope purposes.
+    """
+    run = _run(db, decision_grain="product", contract_version=1)
+    root = _warehouse(db, stem="ROOT")
+    sibling = _pool_sibling(db, root)
+    product = _product(db, stem="S797STK")
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
+        warehouse_id=root.id, rounded_qty=487, status="proposed",
+    ))
+    _stock(db, product, sibling, 1)
+    db.flush()
+
+    assert svc.write_rows(db, run.id) == 1
+    row = _row(db, run, product)
+    assert row.suggestion == "Stock 1 + Buy 486"
+
+
+def test_suggestion_is_buy_only_with_no_stock_and_no_open_po(db):
+    """Test 2: no free stock offered anywhere, no open PO - the whole 95 is a Buy."""
+    run = _run(db, decision_grain="product", contract_version=1)
+    wh = _warehouse(db)
+    product = _product(db, stem="S797BUY")
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
+        warehouse_id=wh.id, rounded_qty=95, status="proposed",
+    ))
+    db.flush()
+
+    assert svc.write_rows(db, run.id) == 1
+    row = _row(db, run, product)
+    assert row.suggestion == "Buy 95"
+
+
+def test_suggestion_offsets_the_open_po_book_before_buying_the_rest(db):
+    """Test 3: `poCover.poOffset` - `usePo = min(buy, poQty)`, `buy = max(buy - usePo, 0)`.
+    90 needed, 20 owed on an open PO (already frozen as `po_open_qty` by issue #796), no
+    stock -> "PO 20 + Buy 70"."""
+    run = _run(db, decision_grain="product", contract_version=1)
+    wh = _warehouse(db)
+    product = _product(db, stem="S797PO")
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
+        warehouse_id=wh.id, rounded_qty=90, status="proposed",
+    ))
+    _open_po_line(db, product, wh, po_number="S797-PO-A", qty_ordered=20)
+    db.flush()
+
+    assert svc.write_rows(db, run.id) == 1
+    row = _row(db, run, product)
+    assert row.suggestion == "PO 20 + Buy 70"
+
+
+def test_suggestion_is_nothing_for_a_covered_or_needs_level_product(db):
+    """Test 4: nothing to buy, no stock offered, no open PO - the label is "Nothing" for
+    a covered product AND for a needs_level one, the same "engine suggests 0" answer
+    `summariseMix` gives for an undefined/empty mixture."""
+    run = _run(db, decision_grain="product", contract_version=1)
+    wh = _warehouse(db)
+    covered_p = _product(db, stem="S797COV")
+    needs_p = _product(db, stem="S797NDL")
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="covered", product_id=covered_p.id,
+        warehouse_id=wh.id, rounded_qty=0, status="proposed",
+    ))
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=run.id, rec_type="needs_level", product_id=needs_p.id,
+        warehouse_id=None, rounded_qty=None, status="proposed",
+    ))
+    db.flush()
+
+    assert svc.write_rows(db, run.id) == 2
+    assert _row(db, run, covered_p).suggestion == "Nothing"
+    assert _row(db, run, needs_p).suggestion == "Nothing"
