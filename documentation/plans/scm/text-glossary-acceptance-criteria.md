@@ -1,50 +1,51 @@
 # UAC: Text glossary
 
-Plan: `PLAN-text-glossary.md`. Locale is `en` throughout slice 1. The migration seeds NOTHING
-(R6): every test inserts the glossary rows it needs (`连体马桶 -> One-piece toilet`, `盆 -> Basin`)
-through `text_glossary_service.upsert` or a direct model insert in its own setup.
+Plan: `PLAN-text-glossary.md`. Reuses `translation_memory` + `translation_service` (R11).
+Nothing is seeded (R6): every test inserts the memory rows it needs through
+`translation_service.remember` (or a direct `TranslationMemory` insert) in its own setup,
+`source_lang='zh'`, `target_lang='en'`. Tests that must not hit the model patch
+`translation_service._ai_fill` to return `{}` (the existing
+`tests/scm/test_supplier_document_translations.py` shows the pattern).
 
-## A. Glossary service (pytest, `tests/scm/test_text_glossary.py`)
+## A. Fill and re-bind (pytest, `tests/scm/test_description_translation.py`)
 
-- **A1** `normalize("  连体  马桶 ")` returns `"连体 马桶"`; `normalize("")` and `normalize(None)`
-  return `""`.
-- **A2** `lookup` with `{"连体马桶", "盆", "BASIN"}` after the test inserts the two rows returns
-  `{"连体马桶": "One-piece toilet", "盆": "Basin"}`; `"BASIN"` absent (no row). One SQL
-  statement (assert with the statement counter fixture or `db.execute` spy).
-- **A3** `lookup` is case-insensitive on Latin text: a row `("Basin tap", en, "...")` is
-  found by `"BASIN TAP"` and the result is keyed by the caller's spelling `"BASIN TAP"`.
-- **A4** `upsert(source_text="盆", translation="Wash basin")` overwrites the existing row (same
-  id, `translation='Wash basin'`); no second row for `盆`.
-- **A5** `upsert` with blank `source_text` or blank `translation` raises `AppException(422)`
-  naming the field; nothing written.
-- **A6** `upsert` re-binds: two PIs (same company) each with a line `description='盆'` and
-  one packing row `description='盆'`, plus one line `description='连体马桶'`. After
-  `upsert("盆", "Basin")` every `盆` line and row has `description_en='Basin'`; the
-  `连体马桶` line is untouched; return value is `{"rebound": {"lines": 2, "packing_rows": 2}}`.
-- **A7** `forget(id)` deletes the row and sets `description_en` NULL on every line/row whose
-  `description` matches, leaving other translations alone. Non-uuid id and unknown id raise
-  `AppException(404)`.
-- **A8** `upsert` with `locale='ms'` writes the glossary row and re-binds NOTHING
-  (`description_en` unchanged); `lookup(..., locale='ms')` finds it.
-- **A9** The migration creates `text_glossary` EMPTY (R6); `alembic downgrade -1` then
-  `upgrade head` leaves the table, both `description_en` columns and the two permissions in
-  place and the table still empty.
+- **A1** `description_translation.fill(db, rows)` over three fresh `ProformaInvoicePackingLine`
+  objects (`description` = `盆`, `连体马桶`, `BASIN`) with memory rows for the first two sets
+  `description_en` = `Basin`, `One-piece toilet`, `None`. `BASIN` never reaches `_ai_fill`
+  (R7). One `translate` call for the batch (spy on `translation_service.translate`).
+- **A2** `fill` with `_ai_fill` patched to answer `{"连体马桶": "One-piece toilet"}` for a
+  miss sets `description_en` from the AI answer AND the memory now holds an `ai` row for it.
+- **A3** `rebind(db, "盆", "Basin")`: two PIs each with a line `description='盆'` and one
+  packing row `description=' 盆 '` (padded), plus one line `description='连体马桶'`. Every
+  `盆` line and row has `description_en='Basin'`; the `连体马桶` line is untouched; returns
+  `{"lines": 2, "packing_rows": 2}`.
+- **A4** `rebind(db, "盆", None)` sets `description_en` NULL on the same rows only.
+- **A5** `translation_service.remember(db, [{"source_text": "盆", "target_text": "Basin"}])`
+  re-binds (rows from A3's shape carry `Basin` afterwards) and returns
+  `{"written": 1, "rebound": {"lines": 2, "packing_rows": 2}}`.
+- **A6** `translation_service.update_target_text(db, id, "Wash basin")` re-binds every row
+  to `Wash basin`; `delete_memory(db, id)` re-binds them to NULL.
+- **A7** A memory row for `盆` with `target_lang='ms'` never touches `description_en` on
+  `remember` / `update_target_text` / `delete_memory` (R5).
 
 ## B. Fill on write (pytest, same file)
 
-- **B1** With the two rows inserted, `replace_packing_rows` with three `PackingLine`s
-  (`product_name` = `盆`, `连体马桶`, `Unknown thing`) writes rows with `description_en` =
-  `Basin`, `One-piece toilet`, `NULL`. A plain-English `product_name` (`BASIN`) with no row
-  also lands NULL (R7: no auto-mirror).
-- **B2** PI apply (Jiexia fixture with one line's description patched to `盆` in the parsed
-  payload, or a synthetic apply through the same service function) writes
-  `ProformaInvoiceLine.description_en='Basin'`.
+- **B1** `replace_packing_rows` with `PackingLine`s (`product_name` = `盆`, `连体马桶`,
+  `Unknown thing`, `BASIN`), memory holding the first two, `_ai_fill` -> `{}`: rows land
+  `Basin`, `One-piece toilet`, `NULL`, `NULL`.
+- **B2** PI apply through the real service function (Jiexia fixture, or a synthetic parsed
+  payload) with a memory row for one line's description writes
+  `ProformaInvoiceLine.description_en` for that line and NULL for the rest.
 - **B3** Line update (`:2779` path) that changes `description` from `盆` to `连体马桶`
-  re-looks-up and stores `One-piece toilet`; a change to an unknown text stores NULL.
+  re-fills and stores `One-piece toilet`; a change to an unknown text stores NULL.
 - **B4** `serialize` output: each line dict and each packing row dict carries
   `description_en` (present even when NULL).
 - **B5** A translation added AFTER upload does not create a revision entry: the revision diff
   for a PI whose lines gained `description_en` reports no `changed` lines.
+- **B6** Migration 510 backfill: a line and a packing row with `description='盆'` written
+  BEFORE the migration, and a memory row for `盆`, carry `description_en='Basin'` after
+  `alembic upgrade head`; `downgrade -1` drops both columns and leaves `translation_memory`
+  alone.
 
 ## C. Downstream (pytest, same file)
 
@@ -56,37 +57,34 @@ through `text_glossary_service.upsert` or a direct model insert in its own setup
 - **C4** An unmatched/dismissed packing row with `description='盆'`, `description_en='Basin'`
   and no code lands `Basin` in the shipment's unplaced-rows note, not `盆`.
 
-## D. Routes (pytest, `tests/system/test_text_glossary_api.py` + scm route in the same file)
+## D. Routes (pytest, same file)
 
-- **D1** `GET /system/text-glossary` needs `system.text_glossary.view`: 403 without, list
-  with; `?q=basin` matches on translation, `?q=盆` on source text.
-- **D2** `PUT /system/text-glossary` needs `.edit`; body `{source_text, translation}` ->
-  200 with the row and `rebound`; a second PUT for the same text overwrites (200, same id).
-- **D3** `PUT` with blank translation -> 422 naming `translation`; over-long locale (9 chars)
-  -> 422.
-- **D4** `DELETE /system/text-glossary/{id}` -> 204; non-uuid -> 404; deferred action
-  `text_glossary.forget` is registered in `record_actions` and commits the delete when its
-  window lapses (test through the existing deferred-action harness the
-  `import_field_alias.forget` test uses).
-- **D5** `PUT /scm/proforma-invoices/{id}/translations` needs `scm.proforma_invoice.upload`;
-  unknown invoice id -> 404; success returns the row + `rebound` and the invoice detail read
-  back afterwards shows `description_en` on every affected line and packing row.
-- **D6** `system.text_glossary.view/.edit` exist in `permission_registry` and the migration
-  grants both to `admin` and `superadmin`.
+- **D1** `PUT /scm/proforma-invoices/{id}/translations` needs `scm.proforma_invoice.upload`
+  (403 without); unknown or non-uuid invoice id -> 404.
+- **D2** Success body `{source_text: "盆", target_text: "Basin"}` -> 200 with
+  `{source_text, target_text, source: "manual", rebound: {lines, packing_rows}}`; the
+  invoice detail read back afterwards shows `description_en='Basin'` on every affected line
+  and packing row of THIS and of another PI with the same text.
+- **D3** Blank `target_text` or blank `source_text` -> 422 naming the field; nothing written.
+- **D4** A second PUT for the same text overwrites (memory row count unchanged, `manual`),
+  including over an existing `ai` row.
+- **D5** `PUT /system/translations/{id}` (existing route) and the deferred
+  `translation_memory.delete` action, when they lapse, re-bind the rows (A6 through the
+  routes; the delete test runs through the existing deferred-action harness).
 
 ## E. Frontend (vitest + agent-browser, sidebar clicks from `/`)
 
-- **E1** Packing tab shows `Description (EN)` beside `Description`; rows whose word is in the
-  glossary show the English, others a dash (including an already-English description, R7). Vitest: column present, values rendered, dash for null.
+- **E1** Packing tab shows `Description (EN)` beside `Description`; rows whose word is in
+  the memory show the English, others a dash (including an already-English description,
+  R7). Vitest: column present, values rendered, dash for null.
 - **E2** Click the dash on an unmatched row whose description is `连体马桶`, type
   `One-piece toilet`, Enter: cell shows the English, toast names the count, the OTHER row
   with the same description on the same tab updates without reload. Escape cancels with no
-  request. Vitest covers Enter/Escape/blur.
+  request. Vitest covers Enter/Escape/blur and the `extractApiError` path.
 - **E3** Lines tab shows the same column in view mode and in edit mode, in the same position;
   editing it does not dirty the line form.
-- **E4** System Management > Text Glossary, beside Import Column Mappings (menu entry
-  visible with `.view`): list shows Source text / Translation / Added by / Added, NO locale
-  column (R9); Add writes a row (no locale field); editing an existing row's translation overwrites
-  it; Delete starts the reversible countdown, Cancel restores, lapse removes the row.
-- **E5** Usable and non-clipped at 375 and 1280 on both the Packing tab and the System page.
-- **E6** No UUID visible anywhere on either surface; no on-screen explanation text.
+- **E4** System Management > Translations (existing page) lists the word typed in E2 with
+  source `manual`; editing its English there changes the PI's cell on next load; NO
+  "Text Glossary" entry exists in the sidebar (R8/R11).
+- **E5** Usable and non-clipped at 375 and 1280 on the Packing tab and the Lines tab.
+- **E6** No UUID visible anywhere; no on-screen explanation text.
