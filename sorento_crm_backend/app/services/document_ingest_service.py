@@ -89,6 +89,11 @@ from app.services.master_ref_resolver import (
     MasterRefResolver,
     dedupe_warnings,
 )
+from app.services.project_label_rules import (
+    apply_project_label,
+    label_from_note,
+    label_from_ref,
+)
 from app.services.master_ingest_service import (
     INTERNAL_ERROR_MESSAGE,
     IngestOutcome,
@@ -602,6 +607,8 @@ class DocumentIngestService(MasterRefResolver):
         self.db.add(header)
         for column, value in header_values.items():
             setattr(header, column, value)
+        if spec.entity_type == "sales_orders":
+            self._apply_project_label(header, payload)
         self.db.flush()
 
         line_counts = self._sync_lines(spec, header, line_values, dropped_refs=dropped_refs)
@@ -946,6 +953,24 @@ class DocumentIngestService(MasterRefResolver):
         if spec.doc_no_column:
             values[spec.doc_no_column] = getattr(payload, spec.number_field)
         return values
+
+    def _apply_project_label(self, header: Any, payload: Any) -> None:
+        """PLAN-so-project-label.md: the note beats the AutoCount `Ref`.
+
+        Runs on both create and update, after `internal_note` has already landed on
+        `header` from the setattr loop above - a re-push with a corrected note has to
+        move the label the same way a first push sets it. `apply_project_label`'s own
+        precedence gate is what keeps an `inquiry`-sourced label (raised higher than
+        either of these) from ever being overwritten here, and what keeps a no-note,
+        no-`ref` re-push from touching `updated_at` at all (AC-I5): neither candidate
+        below writes anything when both resolve to `None`.
+        """
+        note_label, note_source = label_from_note(getattr(header, "internal_note", None))
+        if note_label:
+            apply_project_label(header, note_label, note_source)
+            return
+        ref_label = label_from_ref(getattr(payload, "ref", None))
+        apply_project_label(header, ref_label, "ref" if ref_label else None)
 
     def _apply_customer_segment_and_region(
         self, customer_id: Optional[str], payload: Any, warnings: list[str]
