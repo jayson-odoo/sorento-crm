@@ -1445,12 +1445,19 @@ def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
     Resolves `run_id` the SAME way `report()`/`export_report()` do (`_run_for` - a named
     run or the newest completed one), so the row count, the `as_of` stamp and the resolved
     id this returns describe the identical run the synchronous render would have used.
+
+    Company-scoped by hand (security S2/S3, UAC amended d7491d6fc): raw SQL never sees the
+    ORM isolation filter, and `OrderSummaryRow` is company-scoped - the same pattern every
+    other raw read this lane touches (`_PO_BOOK_SQL`, `explain_net`, `site_pool_supply`,
+    `purchase_trend`) already carries.
     """
     run = _run_for(db, run_id)
-    row = db.execute(text(
-        "SELECT COUNT(*) AS n, MAX(as_of) AS as_of "
-        "FROM scm.order_summary_row WHERE run_id = :rid"
-    ), {"rid": str(run.id)}).mappings().first()
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="egs")
+    co_clause = f"AND {co}" if co else ""
+    row = db.execute(text(f"""
+        SELECT COUNT(*) AS n, MAX(as_of) AS as_of
+        FROM scm.order_summary_row WHERE run_id = :rid {co_clause}
+    """), {"rid": str(run.id), **co_params}).mappings().first()
     return {
         "run_id": str(run.id),
         "row_count": int(row["n"] or 0),

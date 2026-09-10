@@ -53,20 +53,24 @@ class DownloadService:
         )
 
     def has_in_flight(
-        self, *, user_id: str, kind_prefix: str, source_entity_type: str, source_entity_id: str
+        self, *, user_id: str, kind: str, source_entity_type: str, source_entity_id: str
     ) -> bool:
-        """One in-flight export per user, per kind, per source entity (security S5, AC-16b).
+        """One in-flight export per user, per EXACT kind, per source entity (security S5,
+        AC-16b, amended - reviewer R1). The kind is matched exactly, never a prefix: two
+        different formats of the same export (`order_sheet_pdf` / `order_sheet_xlsx`) are
+        two different in-flight slots, so a pending PDF never blocks an Excel request for
+        the same run.
 
-        No queue machinery: a second request for the same thing this user already has
-        `pending`/`processing` is simply refused, and `fail_stale` (already run on every
-        drawer poll) is what clears a row a dead worker left stuck - after 20 minutes it
-        reads `failed` and this check stops seeing it.
+        Sweeps this user's stale rows first (`fail_stale`) - a `pending` row a dead worker
+        left behind must not lock the buyer out for the rest of the 20-minute window; once
+        swept to `failed` it no longer matches the `pending`/`processing` filter below.
         """
+        self.fail_stale(str(user_id))
         return (
             self.db.query(UserDownload.id)
             .filter(
                 UserDownload.user_id == str(user_id),
-                UserDownload.kind.like(f"{kind_prefix}%"),
+                UserDownload.kind == kind,
                 UserDownload.source_entity_type == source_entity_type,
                 UserDownload.source_entity_id == str(source_entity_id),
                 UserDownload.status.in_(

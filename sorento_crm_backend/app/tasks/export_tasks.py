@@ -520,9 +520,16 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
     # then its OWN company is adopted before anything company-scoped is touched -
     # `reorder_run_service._adopt_run_company_scope`, the same shape
     # `generate_promotions_pdf` above uses via its own snapshotted `company_id` param.
+    from app.models.base import get_company_scope
     from app.models.scm import ReorderRun
     from app.services.scm.reorder_run_service import _adopt_run_company_scope
 
+    # C3 (review fix round C): restored in `finally`, the same shape `_execute_run` uses
+    # for `run_reorder` (reorder_run_service.py ~L548-560) - a caller whose session this
+    # task reuses (a synchronous test, `_NoCloseSession`) did not ask to have its scope
+    # changed underneath it, and leaving the run's company adopted after return would
+    # silently re-scope whatever that caller reads next.
+    caller_scope = get_company_scope(db)
     set_company_scope(db, None)
     run = db.get(ReorderRun, run_id)
     if run is not None:
@@ -568,4 +575,5 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
         _record_failure(db, svc, download_id, e, "generate_order_sheet")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
+        set_company_scope(db, caller_scope)
         db.close()
