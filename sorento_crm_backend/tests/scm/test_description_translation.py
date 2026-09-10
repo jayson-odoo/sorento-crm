@@ -194,19 +194,43 @@ def test_a1_fill_reads_memory_and_never_asks_the_model_for_plain_english(db, mon
 
 
 def test_a2_fill_writes_an_ai_row_for_a_miss_the_ai_answers(db, monkeypatch):
-    """A2 - `_ai_fill` answers a miss; `fill` sets `description_en` from the AI answer AND
-    the memory now holds an `ai` row for it."""
+    """A2 (review round) - the PROVIDER is stubbed, not `_ai_fill`, so `translate`'s real
+    `_ai_fill` -> `_ai_fill_chunk` path runs for real and is what writes the `ai` row -
+    `description_translation` carries no `_persist_ai_hits`-style helper of its own to
+    duplicate that write (review-round finding, commit `523499686` deleted it: "the
+    simplest thing" is `fill` leaning on `translate`'s own persistence, not re-doing it).
+    Same provider-stub shape `tests/scm/test_supplier_document_translations.py` uses."""
+    import json
+    from types import SimpleNamespace
+
+    from app.models.ai_assistant import AIAssistantConfig
     from app.models.translation_memory import SOURCE_AI, TranslationMemory
+
+    assert not hasattr(dtsvc, "_persist_ai_hits"), (
+        "description_translation must not carry its own AI-persistence helper - "
+        "translate()'s own _ai_fill_chunk already writes the ai row"
+    )
 
     w = World(db)
     supplier = w.supplier()
     invoice = _seed_pi(db, str(supplier.id))
     row = _seed_packing_row(db, invoice, item_code="C1", description="连体马桶", row_no=1)
 
-    monkeypatch.setattr(
-        tsvc, "_ai_fill",
-        lambda db_, misses, **kw: {"连体马桶": "One-piece toilet"},
+    cfg = AIAssistantConfig(
+        id=str(uuid.uuid4()), provider="openai", model="gpt-4o-mini", temperature=0,
+        system_prompt="", api_key_ciphertext="fake-key", enabled_tools=[],
+        rag_enabled=True, is_enabled=True,
     )
+    db.add(cfg)
+    db.flush()
+
+    class _FakeProvider:
+        def chat(self, messages, **_kwargs):
+            return SimpleNamespace(content=json.dumps(
+                {"translations": [{"source": "连体马桶", "target": "One-piece toilet"}]}
+            ))
+
+    monkeypatch.setattr(tsvc, "get_provider", lambda *a, **kw: _FakeProvider())
 
     dtsvc.fill(db, [row])
 
@@ -444,7 +468,10 @@ def test_b2_pi_apply_fills_description_en_for_the_line_the_memory_knows(db, monk
 def test_b3_line_update_refills_description_en_on_a_changed_description(db, monkeypatch):
     """B3 - the line-update write path (`update_invoice` -> `_write_lines`) that changes a
     line's `description` from `盆` to `连体马桶` re-fills and stores the new English; a
-    change to an unknown text stores NULL."""
+    change to an unknown text stores NULL; a save that leaves `description` UNCHANGED does
+    not call `translate` for that line at all (review round, commit `523499686`: an
+    untouched line in a whole-document save no longer waits on a memory lookup it did not
+    cause - spy on `translation_service.translate`)."""
     from app.services.scm import proforma_invoice_service as pi_svc
 
     monkeypatch.setattr(tsvc, "_ai_fill", lambda *a, **kw: {})
@@ -469,6 +496,27 @@ def test_b3_line_update_refills_description_en_on_a_changed_description(db, monk
     db.commit()
     db.refresh(line)
     assert line.description_en is None
+
+    calls: list[list[str]] = []
+    real_translate = tsvc.translate
+
+    def _spy(db_, texts, **kw):
+        calls.append(list(texts))
+        return real_translate(db_, texts, **kw)
+
+    monkeypatch.setattr(tsvc, "translate", _spy)
+
+    pi_svc.update_invoice(
+        db, str(invoice.id),
+        lines=[{"id": str(line.id), "item_code": "C1", "description": "未知文字", "qty": 1}],
+    )
+    db.commit()
+    db.refresh(line)
+    assert line.description_en is None
+    assert all("未知文字" not in c for c in calls), (
+        "a save that leaves this line's description unchanged must not pass it to "
+        f"translate() at all, got {calls!r}"
+    )
 
 
 def test_b4_serialize_carries_description_en_on_every_line_and_packing_row(db):
@@ -920,6 +968,37 @@ def test_d3_blank_source_or_target_text_is_422_and_writes_nothing(scm_app):
     assert blank_source.status_code == 422
     assert "source_text" in str(blank_source.json())
 
+    # Whitespace-only fails the same way as empty (review round) - a caller cannot dodge
+    # the blank guard by padding it with spaces.
+    ws_target = client.put(
+        f"/api/v1/scm/proforma-invoices/{invoice1.id}/translations",
+        json={"source_text": "盆", "target_text": "   "},
+    )
+    assert ws_target.status_code == 422
+    assert "target_text" in str(ws_target.json())
+
+    ws_source = client.put(
+        f"/api/v1/scm/proforma-invoices/{invoice1.id}/translations",
+        json={"source_text": "   ", "target_text": "Basin"},
+    )
+    assert ws_source.status_code == 422
+    assert "source_text" in str(ws_source.json())
+
+    # Length caps (review round): source_text over 500 chars, target_text over 1000.
+    too_long_source = client.put(
+        f"/api/v1/scm/proforma-invoices/{invoice1.id}/translations",
+        json={"source_text": "盆" * 501, "target_text": "Basin"},
+    )
+    assert too_long_source.status_code == 422
+    assert "source_text" in str(too_long_source.json())
+
+    too_long_target = client.put(
+        f"/api/v1/scm/proforma-invoices/{invoice1.id}/translations",
+        json={"source_text": "盆", "target_text": "B" * 1001},
+    )
+    assert too_long_target.status_code == 422
+    assert "target_text" in str(too_long_target.json())
+
     from app.models.translation_memory import TranslationMemory
 
     assert (
@@ -1115,3 +1194,185 @@ def test_d5b_the_deferred_delete_action_rebinds_the_rows_to_none(db, monkeypatch
 
     db.refresh(line)
     assert line.description_en is None
+
+
+# ============================================================================= D6-D9 (review round)
+
+
+def test_d6_a_source_text_not_on_the_invoice_is_422_and_writes_nothing(scm_app):
+    """D6 (review round) - `source_text` that matches no `description` on THIS invoice's
+    own lines or packing rows is refused, naming `source_text`; nothing reaches the
+    memory. An upload-permission holder can only teach the memory a word actually on a
+    document they hold (commit `523499686`)."""
+    from tests.scm.test_outstanding_import_routes import as_company_user
+    from app.models.translation_memory import TranslationMemory
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk, role=None)
+    uid = app.dependency_overrides[gcu]()["id"]
+    _grant(db, uid, UPLOAD_PERMISSION)
+    client = TestClient(app)
+
+    invoice1, _invoice2, _l1, _l2 = _seed_route_pi(db)
+
+    r = client.put(
+        f"/api/v1/scm/proforma-invoices/{invoice1.id}/translations",
+        json={"source_text": "从未出现过的文字", "target_text": "Never on this invoice"},
+    )
+    assert r.status_code == 422, r.text
+    assert "source_text" in str(r.json())
+
+    assert (
+        db.query(TranslationMemory)
+        .filter(TranslationMemory.source_text == "从未出现过的文字")
+        .count()
+        == 0
+    )
+
+
+def test_d7_company_scoping_rebinds_only_the_calling_companys_rows(scm_app):
+    """D7 (review round) - `rebind`'s ORM queries carry the same company-scope filter every
+    other owned-table read does (`ProformaInvoiceLine`/`ProformaInvoicePackingLine` are both
+    `CompanyScopedMixin`): company A's PUT re-binds A's own row and leaves company B's row,
+    which happens to share the identical description, untouched."""
+    from tests.scm.test_outstanding_import_routes import as_company_user
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+    from app.models.procurement import Supplier as _Supplier
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk, role=None)  # scopes db to company A from here on
+    uid = app.dependency_overrides[gcu]()["id"]
+    _grant(db, uid, UPLOAD_PERMISSION)
+    client = TestClient(app)
+
+    invoice_a, _invoice_a2, line_a, _line_a2 = _seed_route_pi(db)
+
+    # Company B's own row, seeded under B's OWN scope so it is stamped company_id = B, not
+    # A - the auto-stamp listener reads the ambient scope at insert time.
+    company_b_id = str(uuid.uuid4())
+    tag = _tag()
+    db.add(Company(
+        id=company_b_id, name=f"{MARKER} company B {tag}",
+        code=f"{MARKER}-B-{tag}"[:50], is_active=True,
+    ))
+    db.flush()
+    set_company_scope(db, frozenset({company_b_id}))
+    supplier_b = _Supplier(
+        id=str(uuid.uuid4()), supplier_code=f"{MARKER}-B-{tag}", supplier_name="B supplier",
+        is_active=True,
+    )
+    db.add(supplier_b)
+    db.flush()
+    invoice_b = _seed_pi(db, str(supplier_b.id))
+    line_b = _seed_pi_line(db, invoice_b, item_code="C1", description="盆")
+    db.commit()
+
+    # The route call itself re-applies company A's scope (the `as_company_user` dependency
+    # override re-sets it on every request), so nothing further is needed before this call.
+    r = client.put(
+        f"/api/v1/scm/proforma-invoices/{invoice_a.id}/translations",
+        json={"source_text": "盆", "target_text": "Basin"},
+    )
+    assert r.status_code == 200, r.text
+
+    db.expire_all()
+    db.refresh(line_a)
+    assert line_a.description_en == "Basin"
+
+    # Read B's row back under B's OWN scope - the client call above left the session's
+    # ambient scope on A, and an owned row is invisible (not merely "unchanged") to a
+    # refresh under the wrong company.
+    set_company_scope(db, frozenset({company_b_id}))
+    db.refresh(line_b)
+    assert line_b.description_en is None, "company A's write must not reach company B's row"
+
+
+def test_d8_to_xlsx_writes_a_formula_looking_description_as_a_string_cell(db):
+    """D8 (review round) - a description (or its English) that STARTS with `=` reads as a
+    formula to Excel/openpyxl unless the cell is written as an explicit string
+    (`to_xlsx`'s own belt-and-braces fix, commit `523499686`): a leading apostrophe plus
+    `data_type='s'`, so a supplier's or an operator's text is never executed as a
+    formula."""
+    from io import BytesIO
+
+    import openpyxl
+
+    from app.services.scm import proforma_invoice_service as pi_svc
+
+    w = World(db)
+    supplier = w.supplier()
+    invoice = _seed_pi(db, str(supplier.id))
+    line1 = _seed_pi_line(db, invoice, item_code="C1", description="盆", qty=1)
+    line1.description_en = "=1+1"
+    _seed_pi_line(
+        db, invoice, item_code="C2", description="=SUM(A1)", qty=1, line_no=2,
+    )
+    db.commit()
+
+    payload = pi_svc.serialize(db, invoice)
+    xlsx_bytes = pi_svc.to_xlsx(payload)
+
+    wb = openpyxl.load_workbook(BytesIO(xlsx_bytes))
+    ws = wb.active
+    description_cells = {
+        row[1].value: row[2]
+        for row in ws.iter_rows(min_row=1, max_col=3, values_only=False)
+        if row[1].value in ("C1", "C2")
+    }
+    c1_cell = description_cells["C1"]
+    c2_cell = description_cells["C2"]
+
+    assert c1_cell.data_type == "s", "a description_en starting with '=' must be a string cell"
+    assert str(c1_cell.value).lstrip("'") == "=1+1"
+    assert c2_cell.data_type == "s", "a description starting with '=' must be a string cell"
+    assert str(c2_cell.value).lstrip("'") == "=SUM(A1)"
+
+
+def test_d9_apply_caps_translations_at_200_pairs(db):
+    """D9 (review round) - `supplier_document_service.apply`'s `translations` array is
+    capped at 200 pairs, 422 over that, checked BEFORE any file is parsed (commit
+    `523499686`: "a preview cannot legitimately produce more edits than this"); 200 pairs
+    is accepted (does not trip the cap)."""
+    from app.services.error_handler import AppException
+    from app.services.scm import supplier_document_service as doc_svc
+
+    w = World(db)
+    supplier = w.supplier()
+
+    too_many = [
+        {"source_text": f"{MARKER}-word-{i}", "target_text": f"Word {i}"} for i in range(201)
+    ]
+    with pytest.raises(AppException) as exc:
+        doc_svc.apply(
+            db, [("garbage.xlsx", b"not a real workbook, never parsed", None)],
+            supplier_id=str(supplier.id), translations=too_many,
+        )
+    assert exc.value.status_code == 422
+    assert "200" in (exc.value.detail.get("message") or ""), (
+        "the refusal must be the translations cap, proving it fired before the garbage "
+        "file was ever opened"
+    )
+
+    lane_fixtures = (
+        Path(__file__).resolve().parents[3] / "documentation" / "plans" / "scm" / "fixtures"
+    )
+    jbc_bytes = (lane_fixtures / "Jinbaichuan_Invoice.xlsx").read_bytes()
+    codes = [
+        "SRTWC8366-RL-300", "SRTWC8366-RL-250", "CWB242", "CWB242海关样品",
+        "SRTWC8152-SH-250-UF", "MWB243", "MWB243海关样品", "SRTWC286-SH-250-NEW",
+    ]
+    for code in codes:
+        w.product(code)
+    _seed_aliases(db)
+    exactly_200 = [
+        {"source_text": f"{MARKER}-word-{i}", "target_text": f"Word {i}"} for i in range(200)
+    ]
+
+    # Not 422 for the CAP - a real, parseable file, so the call runs to completion and any
+    # failure left standing would be unrelated to the translations array's size.
+    out = doc_svc.apply(
+        db, [("Jinbaichuan_Invoice.xlsx", jbc_bytes, None)],
+        supplier_id=str(supplier.id), currency="RMB", translations=exactly_200,
+    )
+    assert out["proforma_invoice_ids"]
