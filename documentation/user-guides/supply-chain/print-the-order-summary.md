@@ -25,7 +25,10 @@ hand**, **Reorder level**, **Project qty**, **Dealer o/s**, **Order qty**, **Del
 * **Supplier** is the chosen supplier, or the suggested one if none has been chosen yet.
 * **Remarks** shows the MOQ (for example "MOQ 1000") only when there is one.
 
-Every figure on the sheet is the plan's own - nothing is typed twice.
+Every figure on the sheet is the plan's own - nothing is typed twice. The sheet prints exactly
+the rows the list shows (see [Run a reorder plan](run-a-reorder-plan.md#filters) for the
+covered-by-stock rows left off by default), so the Excel row count equals the plan's
+**Decisions** tile total.
 
 ## Getting the file
 

@@ -49,6 +49,11 @@ for status, decided, price answer, suggested action or level answer. Add conditi
 field, including **Rec type** and **Decision state** ("Already decided" / "Still to decide"),
 to slice the grid.
 
+By default the list, the **Decisions** tile and the exported order sheet all count the same
+rows: a covered product on the manual reorder-level basis whose net sits above its level is
+left off all three (not your business until it breaches, the 12 Aug rule). Filter **Rec type**
+to **Covered by stock** to bring every such row back into the list.
+
 ### Money and prices
 
 Every money figure on the grid and in the row panel renders with exactly two decimals, for
