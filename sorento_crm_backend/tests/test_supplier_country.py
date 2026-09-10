@@ -289,7 +289,14 @@ def test_advanced_search_country_contains_matches_by_joined_name(api):
     """(a) `POST /api/v1/list-query/search`, resource `suppliers`, a `contains` filter on
     `field_key: "country"` matches the JOINED `countries.name`, not `suppliers.country_id`
     (`_compile_supplier_country_predicate`). `FilterGroup.op` is required by the schema
-    (`Literal["and", "or"]`) even for a single child, so it is stated explicitly here."""
+    (`Literal["and", "or"]`) even for a single child, so it is stated explicitly here.
+
+    A SECOND child, ANDed, on `supplier_name contains MARKER`: the live database is a prod
+    copy carrying hundreds of real Malaysia-based suppliers after the backfill script ran,
+    so a bare `country contains Malay` match returns many more rows than the default page
+    size and the seeded `my_supplier` is not guaranteed to be on it (the same "never assume
+    a real table is small" lesson `test_suppliers_list_sorts_by_joined_country_name`
+    already applies via its own `query=MARKER` scoping)."""
     client, db = api
     my_supplier, cn_supplier = _two_countried_suppliers(db)
 
@@ -299,7 +306,10 @@ def test_advanced_search_country_contains_matches_by_joined_name(api):
             "resource": "suppliers",
             "filter": {
                 "op": "and",
-                "children": [{"field_key": "country", "op": "contains", "value": "Malay"}],
+                "children": [
+                    {"field_key": "country", "op": "contains", "value": "Malay"},
+                    {"field_key": "supplier_name", "op": "contains", "value": MARKER},
+                ],
             },
         },
     )
