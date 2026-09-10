@@ -31,7 +31,15 @@ _BARE_LEG_BY_INTENT: dict[str, str] = {
 # Stripping this set off the raw is what is left over is a SCHEME word (S2, AC-1303):
 # "pps cert" -> scheme "pps", "watermark certificate" -> scheme "watermark", while
 # "cert" alone strips to nothing and stays the bare leg.
-_BARE_CERT_WORDS: frozenset[str] = frozenset({"cert", "certificate", "sijil"})
+#
+# R21/AC-1345 (console pass 6): every INFLECTION of the word, not only "cert"/
+# "certificate" - the head's `entity_op: reuse` hands `derive_require` the
+# AttachmentType's own NAME ("Certification"), not the customer's original
+# word, so "certs", "certification(s)" and any case must all read as the bare
+# leg too, the same as "cert" always has.
+_BARE_CERT_WORDS: frozenset[str] = frozenset(
+    {"cert", "certs", "certificate", "certificates", "certification", "certifications", "sijil"}
+)
 
 
 def _cert_scheme_from_raw(raw: str) -> str | None:
@@ -82,6 +90,18 @@ def derive_require(
     passes `_query_text(ctx)`, the same seam every other reader of the raw
     message uses). The raw itself becomes the scheme verbatim in that case - it
     named no cert word to strip.
+
+    R21/AC-1345 (console pass 6): the BARE-WORD check runs FIRST, before the
+    `_CERT_RE` test - every word of the raw (whitespace-split, lower-cased)
+    being in `_BARE_CERT_WORDS` is the bare `certificate` leg regardless of
+    what `_CERT_RE` itself matches. This is what catches "sijil": that word
+    names no cert BODY `_CERT_RE` recognises (it is Malay for "certificate",
+    not one of the scheme-name synonyms the regex also matches), so without
+    this it fell through past the cert branch entirely and reached the
+    generic `attachment_type` leg. "PPS certification" still splits: it is
+    not ALL bare-cert words, so it falls to the `_CERT_RE` branch below, which
+    strips "certification" (now in `_BARE_CERT_WORDS`) and returns scheme
+    "PPS".
     """
     intent = parser_output.get("intent_hint")
     if intent in _BARE_LEG_BY_INTENT:
@@ -92,6 +112,9 @@ def derive_require(
         if not raws:
             return None
         raw = raws[0]
+        raw_words = [w for w in re.split(r"\s+", raw.strip()) if w]
+        if raw_words and all(w.lower() in _BARE_CERT_WORDS for w in raw_words):
+            return {"certificate": True}
         if _CERT_RE.search(raw):
             scheme = _cert_scheme_from_raw(raw)
             return {"certificate": {"scheme": scheme}} if scheme else {"certificate": True}
