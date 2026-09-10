@@ -7,6 +7,10 @@
   e  `CanonicalSalesOrder.internal_note` is plain the moment the payload parses
   f  the real ingest entry point stores the plain text, not the RTF
   g  the backfill migration helper cleans a landed row and leaves a plain one alone
+  h  a control word `striprtf` cannot parse never raises - the raw value comes back
+  i  a leading space before the `{\\rtf` wrapper still gets recognised and stripped
+  j  3+ blank lines mid-note collapse to one blank line (AutoCount's trailing-`\\par` runs)
+  k  trailing spaces on a line are dropped even when the line is not the note's last one
 
 Substrate: (a)-(e) are pure functions/schemas, no DB. (f) reuses
 `tests.test_ingest_documents`'s Postgres-backed `env` fixture (a scratch schema) since
@@ -77,6 +81,26 @@ class TestStripRtf:
         sample = r"{\rtf1\ansi\ansicpg1252\deff0 Caf\'e9 \{brace\} back\\slash\par}"
         assert strip_rtf(sample) == "Café {brace} back\\slash"
 
+    def test_h_a_control_word_striprtf_cannot_parse_never_raises(self):
+        # striprtf 0.0.33 raises TypeError on a truncated \uc control word - a push
+        # or a migration row that hits this must not become a permanent failure.
+        sample = r"{\rtf1\ansi text \uc}"
+        assert strip_rtf(sample) == sample
+
+    def test_i_a_leading_space_before_the_wrapper_still_strips(self):
+        assert strip_rtf(" " + _SAMPLE_RTF) == _SAMPLE_PLAIN
+
+    def test_j_three_or_more_blank_lines_mid_note_collapse_to_one(self):
+        # Real data: the ASTER GREEN note ends in five \par in a row. Mid-note here
+        # (not at the very end) so the collapse, not the overall strip(), is what
+        # is under test.
+        sample = r"{\rtf1\ansi\ansicpg1252\deff0 LINE ONE\par\par\par\par LINE TWO\par}"
+        assert strip_rtf(sample) == "LINE ONE\n\nLINE TWO"
+
+    def test_k_trailing_spaces_on_a_non_last_line_are_dropped(self):
+        sample = r"{\rtf1\ansi\ansicpg1252\deff0 LINE ONE   \par LINE TWO\par}"
+        assert strip_rtf(sample) == "LINE ONE\nLINE TWO"
+
 
 class TestCanonicalSalesOrderNote:
     def test_e_the_schema_stores_plain_text(self):
@@ -137,7 +161,11 @@ class TestBackfillHelper:
         module = _migration_module()
         touched = module.strip_rtf_notes(db.connection())
 
-        assert touched == 1
+        # >=, not ==: this runs against the shared local database (rolled back at
+        # teardown), which can already hold other landed RTF-wrapped notes nobody
+        # has backfilled yet - a hard `== 1` couples the test to how clean that
+        # ambient data happens to be today.
+        assert touched >= 1
 
         rtf_row = db.execute(
             text("SELECT internal_note FROM sales_orders WHERE id = :id"), {"id": rtf_id}

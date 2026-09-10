@@ -1622,7 +1622,9 @@ export function SalesOrderDetail({ id }: { id: string }) {
             </CardHeader>
             <div className="p-4">
               {so.internal_note ? (
-                <p className="text-sm whitespace-pre-line">{so.internal_note}</p>
+                <p className="min-w-0 text-sm whitespace-pre-wrap break-words">
+                  {so.internal_note}
+                </p>
               ) : (
                 <p className="text-sm text-muted-foreground">
                   No note. Absorbed and imported orders keep the customer name and code here

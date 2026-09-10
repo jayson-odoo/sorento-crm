@@ -135,7 +135,7 @@ tables of the same name).
   "doc_date": "2026-08-30",
   "requested_delivery_date": "2026-09-15",
   "status": "open",                    // canonical: open | partial | fulfilled | closed | cancelled
-  "internal_note": "...",
+  "internal_note": "...",              // AutoCount pushes this as raw RTF; stripped to plain text at ingest (app/utils/rtf.py)
   "lines": [
     {
       "source_ref": "SO:1234:1",       // AutoCount DtlKey, per-line key
@@ -185,7 +185,9 @@ uses (`app/services/dependent_probe.py`, one copy, imported by both).
 **Read-back** returns the header fields in canonical names plus `lines[]` in the same shape, with
 `entity_id` per header and per line. A master the header points at that carries no integration
 reference reads back as `null` rather than as an invented ref, and a stored status outside the
-canonical five (a locally raised PO sits in `draft`) reads back as itself.
+canonical five (a locally raised PO sits in `draft`) reads back as itself. `internal_note` is
+stored and read back as plain text with the RTF stripped on ingest, so a read-back diff against
+the pushed RTF value is expected, not a bug.
 
 **As built.** `DocumentIngestService` is parameterised by two `DocumentSpec` instances and exposes
 the SAME constructor and `ingest()` signature as `MasterIngestService`, so the existing
