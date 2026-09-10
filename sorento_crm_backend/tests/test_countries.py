@@ -329,6 +329,11 @@ def _grant_count(bind, role_id: str, slug: str) -> int:
 
 
 def test_permissions_registered_and_granted_like_uom():
+    """AC-2.6 (as revised in the fix round, Decision 10): `.view` derives from EITHER
+    `master_data.units_of_measure.view` OR `procurement.suppliers.view` - not from the
+    write actions on either slug family - and `.add`/`.edit`/`.delete` derive from the
+    shared `user_management.reference_data.manage` authority, not from
+    `units_of_measure`'s own write slugs."""
     from app.rbac.permission_registry import PERMISSION_REGISTRY
 
     slugs = {f"master_data.countries.{action}" for action in ("view", "add", "edit", "delete")}
@@ -339,20 +344,50 @@ def test_permissions_registered_and_granted_like_uom():
     connection = engine.connect()
     transaction = connection.begin()
     try:
-        role_id = _seed_role_holding(
+        role_uom = _seed_role_holding(connection, "master_data.units_of_measure.view")
+        role_uom_write = _seed_role_holding(
             connection,
-            "master_data.units_of_measure.view",
             "master_data.units_of_measure.add",
             "master_data.units_of_measure.edit",
             "master_data.units_of_measure.delete",
         )
-        for action in ("view", "add", "edit", "delete"):
-            assert _grant_count(connection, role_id, f"master_data.countries.{action}") == 0
+        role_supplier = _seed_role_holding(connection, "procurement.suppliers.view")
+        role_ref = _seed_role_holding(connection, "user_management.reference_data.manage")
 
         module._grant_countries_permissions(connection)
 
-        for action in ("view", "add", "edit", "delete"):
-            assert _grant_count(connection, role_id, f"master_data.countries.{action}") == 1, action
+        assert _grant_count(connection, role_uom, "master_data.countries.view") == 1
+        assert _grant_count(connection, role_supplier, "master_data.countries.view") == 1
+        assert _grant_count(connection, role_ref, "master_data.countries.view") == 0
+        for action in ("add", "edit", "delete"):
+            assert _grant_count(connection, role_ref, f"master_data.countries.{action}") == 1
+            assert _grant_count(connection, role_uom_write, f"master_data.countries.{action}") == 0
+
+        # Downgrade guard (sec N3): the migration's downgrade() grant-removal body leaves
+        # no user_permissions row for the four slugs, and no dangling grant of them.
+        connection.execute(
+            text(
+                "DELETE FROM user_role_permissions WHERE permission_id IN ("
+                "SELECT id FROM user_permissions WHERE slug LIKE 'master_data.countries.%')"
+            )
+        )
+        connection.execute(
+            text("DELETE FROM user_permissions WHERE slug LIKE 'master_data.countries.%'")
+        )
+        remaining_permissions = connection.execute(
+            text(
+                "SELECT count(*) FROM user_permissions WHERE slug LIKE 'master_data.countries.%'"
+            )
+        ).scalar()
+        assert remaining_permissions == 0
+        dangling_grants = connection.execute(
+            text(
+                "SELECT count(*) FROM user_role_permissions rp "
+                "JOIN user_permissions p ON p.id = rp.permission_id "
+                "WHERE p.slug LIKE 'master_data.countries.%'"
+            )
+        ).scalar()
+        assert dangling_grants == 0
     finally:
         transaction.rollback()
         connection.close()

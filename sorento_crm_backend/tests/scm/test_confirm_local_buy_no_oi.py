@@ -173,29 +173,115 @@ def test_buy_origin_computed_once_per_board_build(monkeypatch):
 
 
 def test_local_buy_records_decision_no_oi_row():
+    """AC-2.15, strengthened (captain's fix-round adjudication, item 4): the ORIGINAL
+    shape of this test had no overseas line anywhere on the order, so `refresh_for_
+    decision` never reached the row-LOOP's own `origin == "local"` skip at all - it
+    returned at the header-mint guard (`will_raise` computed False) before the loop
+    ever ran. Disabling the loop's skip left this test green, which is the tester's own
+    kill test proving the gap.
+
+    Here an OVERSEAS line is raised FIRST (revision 1: mints the header, raises one
+    row), and only THEN is the LOCAL line added and confirmed (revision 2, the overseas
+    line CARRIED unchanged) - so `inquiry` is already non-None when the local entry
+    reaches the loop, and the assertion below is exercising the loop's skip, not the
+    early-return guard.
+    """
     with blank_session() as db:
-        company_id, owner, project, product = _world(db)
+        from tests.test_so_supply_confirmation import _core_line, _core_so, _product, _project_line
         from tests.scm.test_project_supply_service_ladder import _group_sites
 
+        company_id, owner, project, product_overseas = _world(db)
+        product_local = _product(db)
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
-        order, line, _core_so, _core_line = _seed_line(
-            db, company_id, project, product, own, qty_ordered="10",
-            required_date=date(2026, 9, 3),
+
+        order, overseas_line, _cso1, _cline1 = _seed_line(
+            db, company_id, project, product_overseas, own, qty_ordered="10",
+            required_date=date(2026, 9, 3), line_no=10,
         )
 
-        result = _confirm(db, order, actor_user_id=owner, origin_by_line={str(line.id): "local"})
-
-        assert result["created"] == 0
-        assert _raised_rows(db, line.id) == []
+        # Revision 1: the overseas line only. Mints the header, raises one row.
+        first = _confirm(
+            db, order, actor_user_id=owner, origin_by_line={str(overseas_line.id): "overseas"},
+        )
+        assert first["created"] == 1
+        overseas_row_id = _raised_rows(db, overseas_line.id)[0].id
 
         from app.models.project_so import OrderInquiry
 
+        inquiry = (
+            db.query(OrderInquiry).filter(OrderInquiry.project_sales_order_id == order.id).one()
+        )
+        assert inquiry is not None, "the overseas line must have minted the header"
+
+        # A second line, now added to the SAME order, whose product is local.
+        core_so2 = _core_so(db, company_id)
+        core_line2 = _core_line(
+            db, core_so2, product_local, own, qty_ordered="6", required_date=date(2026, 9, 3),
+        )
+        local_line = _project_line(db, order, line_no=20, product=product_local, core_line=core_line2)
+        db.commit()
+
+        # Revision 2, built BY HAND (like `test_carried_local_line_skipped`): the
+        # overseas line is CARRIED (its revision-1 row must stay exactly as it is), the
+        # local line is the only one actually being decided - so this confirmation's
+        # only real work is the local entry reaching the loop with `inquiry` already
+        # non-None.
+        service = ProjectOrderInquiryService(db)
+        revision = (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == order.id)
+            .count()
+            + 1
+        )
+        decision = SOSupplyDecision(
+            id=_u(), company_id=order.company_id, project_sales_order_id=order.id,
+            revision_no=revision, state="active" if revision == 1 else "superseded",
+            line_snapshots=[
+                {"line_no": overseas_line.line_no}, {"line_no": local_line.line_no},
+            ],
+            confirmed_by=owner, confirmed_at=datetime.utcnow(),
+        )
+        db.add(decision)
+        db.flush()
+        buy_lines = [
+            {
+                "line": overseas_line, "line_no": overseas_line.line_no,
+                "item_code": service._product_code(overseas_line.product_id),
+                "buy_qty": Decimal(str(overseas_line.qty)),
+                "required_date": overseas_line.delivery_date,
+                "stock_location": overseas_line.stock_location, "origin": "overseas",
+                "carried": True,
+            },
+            {
+                "line": local_line, "line_no": local_line.line_no,
+                "item_code": service._product_code(local_line.product_id),
+                "buy_qty": Decimal(str(local_line.qty)), "required_date": local_line.delivery_date,
+                "stock_location": local_line.stock_location, "origin": "local",
+            },
+        ]
+        second = service.refresh_for_decision(order, decision, buy_lines, actor_user_id=owner)
+
+        assert second["created"] == 0
+        assert _raised_rows(db, local_line.id) == []
+
+        # The overseas line is CARRIED (`created` does not count it): a still-open row
+        # is cancelled-and-re-raised under the new revision regardless of `carried`
+        # (the loop's own rule, unconditional on any still-RAISED row) - so identity is
+        # not what "carried" preserves here, one still-open row is. `overseas_row_id`
+        # is asserted CANCELLED, not still open, which is what tells the two apart.
+        overseas_rows = _raised_rows(db, overseas_line.id)
+        still_open = [row for row in overseas_rows if row.state != INQUIRY_CANCELLED]
+        assert len(still_open) == 1
+        assert next(r for r in overseas_rows if r.id == overseas_row_id).state == INQUIRY_CANCELLED
+
+        # No SECOND header minted for the local-only confirmation - still the one from
+        # revision 1.
         assert (
             db.query(OrderInquiry)
             .filter(OrderInquiry.project_sales_order_id == order.id)
             .count()
-            == 0
+            == 1
         )
 
 

@@ -227,3 +227,163 @@ def test_ingest_resolves_name_or_code():
 
         unresolved_record = next(r for r in result.records if r.source_ref == f"DK-{unresolved}")
         assert "country" in " ".join(unresolved_record.warnings).lower()
+
+
+# --------------------------------------------------------------------------- #
+# Captain's fix-round adjudication (item 3): the supplier list/search/export surfaces
+# reading the joined country name, plus a non-UUID-shaped `country_id` at the schema
+# boundary. `list_query_resources`/`list_query_fields`/`countries` are migration-seeded
+# data a blank scratch schema never sees (same gap AC-2.1/AC-2.6 hit) - a real
+# connection/session, rolled back, same substrate `test_list_query_metadata_field_
+# points_at_joined_name` above already uses.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def api(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+    from app.services.company_scope_resolver import apply_company_scope
+    from app.services.user_service import UserPermissionService
+    from tests._pg_fixture import pg_session
+
+    with pg_session() as db:
+        actor = {"id": "zzt-supcty-user", "email": "zzt-supcty@zzt.test", "role": "user"}
+        monkeypatch.setattr(
+            UserPermissionService, "check_user_has_permission", lambda self, uid, slug: True
+        )
+        app.dependency_overrides[get_db] = lambda: db
+        app.dependency_overrides[get_current_user] = lambda: dict(actor)
+        app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+        app.dependency_overrides[apply_company_scope] = lambda: None
+        client = TestClient(app)
+        try:
+            yield client, db
+        finally:
+            app.dependency_overrides.clear()
+
+
+def _two_countried_suppliers(db):
+    from app.models.country import Country
+    from app.models.procurement import Supplier
+
+    my = db.query(Country).filter(Country.code == "MY").one()
+    cn = db.query(Country).filter(Country.code == "CN").one()
+    my_supplier = Supplier(
+        id=_u(), supplier_code=unique_code(MARKER)[:30],
+        supplier_name=f"{MARKER} Malaysia Sdn Bhd", country_id=my.id,
+    )
+    cn_supplier = Supplier(
+        id=_u(), supplier_code=unique_code(MARKER)[:30],
+        supplier_name=f"{MARKER} China Co", country_id=cn.id,
+    )
+    db.add_all([my_supplier, cn_supplier])
+    db.commit()
+    return my_supplier, cn_supplier
+
+
+def test_advanced_search_country_contains_matches_by_joined_name(api):
+    """(a) `POST /api/v1/list-query/search`, resource `suppliers`, a `contains` filter on
+    `field_key: "country"` matches the JOINED `countries.name`, not `suppliers.country_id`
+    (`_compile_supplier_country_predicate`). `FilterGroup.op` is required by the schema
+    (`Literal["and", "or"]`) even for a single child, so it is stated explicitly here."""
+    client, db = api
+    my_supplier, cn_supplier = _two_countried_suppliers(db)
+
+    resp = client.post(
+        "/api/v1/list-query/search",
+        json={
+            "resource": "suppliers",
+            "filter": {
+                "op": "and",
+                "children": [{"field_key": "country", "op": "contains", "value": "Malay"}],
+            },
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {row["id"] for row in resp.json()["data"]}
+    assert my_supplier.id in ids
+    assert cn_supplier.id not in ids
+
+
+def test_suppliers_list_sorts_by_joined_country_name(api):
+    """(b) `GET /api/v1/procurement/suppliers?sort=country_name&dir=asc|desc` orders by
+    the joined `countries.name` (`SupplierService._build_list_query`'s `country_name` ->
+    `Country.name` sort map entry), never by the FK id or nothing at all."""
+    client, db = api
+    my_supplier, cn_supplier = _two_countried_suppliers(db)
+
+    # `query=MARKER` scopes the page to these two rows: the live database is a prod
+    # copy carrying hundreds of Malaysia-based suppliers already, so an unscoped
+    # `limit` could paginate either of ours out before an ORDER BY tie-breaker ever
+    # gets a say (`LESSONS-LEARNT.md`: never assume a real table is small).
+    asc = client.get(
+        "/api/v1/procurement/suppliers",
+        params={"sort": "country_name", "dir": "asc", "limit": 200, "query": MARKER},
+    )
+    assert asc.status_code == 200, asc.text
+    asc_ids = [row["id"] for row in asc.json()["data"]]
+    assert asc_ids.index(cn_supplier.id) < asc_ids.index(my_supplier.id), (
+        "China before Malaysia, ascending by country name"
+    )
+
+    desc = client.get(
+        "/api/v1/procurement/suppliers",
+        params={"sort": "country_name", "dir": "desc", "limit": 200, "query": MARKER},
+    )
+    assert desc.status_code == 200, desc.text
+    desc_ids = [row["id"] for row in desc.json()["data"]]
+    assert desc_ids.index(my_supplier.id) < desc_ids.index(cn_supplier.id), (
+        "descending reverses the order"
+    )
+
+
+def test_export_suppliers_emits_country_name_under_country_column():
+    """(c) `ListQueryExportService._export_suppliers` (`_value_from_supplier`, compile_key
+    `country.name`) emits the country NAME - never the id, never the raw FK column - under
+    the `country` export column."""
+    from app.models.list_query_metadata import ListQueryField
+    from app.schemas.list_query import ListExportRequest
+    from app.services.list_query_export_service import ListQueryExportService
+    from tests._pg_fixture import pg_session
+
+    with pg_session() as db:
+        my_supplier, cn_supplier = _two_countried_suppliers(db)
+
+        field = (
+            db.query(ListQueryField)
+            .join(ListQueryField.resource)
+            .filter_by(resource_key="suppliers")
+            .filter(ListQueryField.field_key == "country")
+            .one()
+        )
+        assert field.compile_key == "country.name"
+
+        rows = ListQueryExportService(db)._export_suppliers(
+            [field], None,
+            ListExportRequest(
+                resource="suppliers", fields=[{"field_key": "country"}],
+                record_ids=[my_supplier.id, cn_supplier.id],
+            ),
+        )
+        values = {row["country"] for row in rows}
+        assert values == {"Malaysia", "China"}
+
+
+def test_create_supplier_with_non_uuid_country_id_is_422(api):
+    """(d) A `country_id` that is not even UUID-shaped ("abc") is a 422 at the schema
+    boundary (`_validate_uuid_format`, N2), never a 500 from a query that could not cast
+    it to `uuid`."""
+    client, _db = api
+    resp = client.post(
+        "/api/v1/procurement/suppliers",
+        json={
+            "supplier_code": unique_code(MARKER)[:30],
+            "supplier_name": f"{MARKER} bad country",
+            "country_id": "abc",
+        },
+    )
+    assert resp.status_code == 422, resp.text

@@ -259,6 +259,69 @@ describe('BorrowAddDialog', () => {
     expect(within(donorRow('JB')).getByRole('radio')).not.toBeChecked();
   });
 
+  // -------------------------------------------------------------- fix round: two
+  // donors sharing ONE bin (`cell-location-HQ` is not unique between them, so every
+  // assertion below addresses a row by POSITION, never by `data-testid`).
+  describe('two donors at one bin, told apart by which donor line each rides on', () => {
+    const A: BorrowCandidate = {
+      ...OTHER_LOCATION,
+      warehouse_code: 'HQ',
+      warehouse_id: 'wh-1',
+      rung: 'group_borrow',
+      donor_core_line_id: 'core-1',
+      donor_so_number: 'SO371334',
+      donor_line_no: 2,
+    };
+    const B: BorrowCandidate = {
+      ...A,
+      donor_core_line_id: 'core-2',
+      donor_so_number: 'SO371335',
+      donor_line_no: 7,
+      recommended: false,
+    };
+
+    it('lists both rows, each naming its own donor line, and selects positionally', () => {
+      renderDialog([A, B]);
+
+      const rows = within(screen.getByTestId('borrow-donor-table')).getAllByRole('row').slice(1);
+      expect(rows).toHaveLength(2);
+      expect(within(rows[0]).getByText('SO371334 line 2')).toBeInTheDocument();
+      expect(within(rows[1]).getByText('SO371335 line 7')).toBeInTheDocument();
+
+      fireEvent.click(within(rows[1]).getByRole('radio'));
+      expect(within(rows[1]).getByRole('radio')).toBeChecked();
+      expect(within(rows[0]).getByRole('radio')).not.toBeChecked();
+    });
+
+    it("expands one row's chevron into exactly one ledger, the other row staying collapsed", () => {
+      renderDialog([A, B]);
+
+      const rows = within(screen.getByTestId('borrow-donor-table')).getAllByRole('row').slice(1);
+      fireEvent.click(within(rows[1]).getByLabelText(/Show documents behind/));
+
+      expect(screen.getAllByTestId('stock-documents-panel')).toHaveLength(1);
+      expect(within(rows[0]).getByLabelText(/Show documents behind/)).toHaveAttribute(
+        'aria-expanded',
+        'false',
+      );
+      expect(within(rows[1]).getByLabelText(/Hide documents behind/)).toHaveAttribute(
+        'aria-expanded',
+        'true',
+      );
+    });
+  });
+
+  // -------------------------------------------------------------- AC-1.7 (fix round)
+  it('renders the empty state when every candidate lacks a location, never the table', () => {
+    renderDialog([{ ...OTHER_LOCATION, location: undefined }]);
+
+    expect(screen.getByTestId('borrow-donor-empty')).toHaveTextContent(
+      'No donor holds this item',
+    );
+    expect(screen.queryByTestId('borrow-donor-table')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeDisabled();
+  });
+
   it('offers a cross-group donor like any other, selectable and enabled', () => {
     renderDialog([CROSS_GROUP, OTHER_LOCATION]);
 
