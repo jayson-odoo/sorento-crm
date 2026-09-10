@@ -2249,16 +2249,33 @@ def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: 
     return header
 
 
+# REV-N2/AC-1337 (third console pass): the irregular endings a bare "+s" gets
+# wrong - tried on the label's LAST word before the default rule.
+_IRREGULAR_PLURAL_ENDINGS: dict[str, str] = {
+    "accessory": "accessories",
+    "jacuzzi": "jacuzzis",
+}
+
+
 def set_noun_for(class_labels: list[str] | None) -> str:
     """AC-1316 (work item E2): the header's noun, off the described set's class
     label(s). Exactly one class names a single noun ("Tap" -> "taps"); zero
     classes (no class bound the described set at all) or more than one (a blended
     set with no single noun) both fall back to the generic "products".
+
+    REV-N2/AC-1337: pluralised via `_IRREGULAR_PLURAL_ENDINGS` first ("Bathroom
+    Accessory" -> "bathroom accessories", never the bare "+s" rule's
+    "bathroom accessorys"), the default "+s" rule otherwise.
     """
     labels = [label for label in (class_labels or []) if label and label.strip()]
     if len(labels) != 1:
         return "products"
-    return f"{labels[0].strip().lower()}s"
+    words = labels[0].strip().split()
+    if not words:
+        return "products"
+    last = words[-1].lower()
+    words[-1] = _IRREGULAR_PLURAL_ENDINGS.get(last, f"{last}s")
+    return " ".join(w.lower() for w in words)
 
 
 # --------------------------------------------------------------------------- #
@@ -2271,20 +2288,29 @@ def set_noun_for(class_labels: list[str] | None) -> str:
 #: count.
 SET_PAGE_ID_CAP = 200
 
-_MORE_WORD_RE = re.compile(r"\b(more|next|lagi)\b", re.IGNORECASE)
-_MORE_MAX_WORDS = 4
+# REV-N1/AC-1337 (third console pass): the fixed set a paging reply must EQUAL,
+# lower-cased and stripped of punctuation - never a bare substring/word search,
+# which let "no more" and "next week?" wrongly page a carry that was never
+# asked to continue.
+_MORE_FIXED_PHRASES: frozenset[str] = frozenset(
+    {"more", "next", "lagi", "more please", "show more", "next 5", "next five", "lagi 5"}
+)
+_MORE_NUMBER_RE = re.compile(r"^more \d+$")
+_PUNCTUATION_RE = re.compile(r"[^\w\s]")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 def is_more_reply(text: Any) -> bool:
-    """AC-1317: a bare "more" / "next" / "lagi" reply, standalone or inside a
-    short (four words or fewer) courtesy phrase ("more please", "show more") -
-    never a longer message that merely CONTAINS one of those words as part of a
-    different, longer question ("more taps with stock please and thanks").
+    """AC-1317/AC-1337: a bare "more" / "next" / "lagi" reply, or one of the
+    fixed short courtesy/paging phrases, lower-cased and stripped of
+    punctuation - equality only, never a substring/word search over an
+    arbitrary short message: "no more", "next week?" and "more taps with
+    stock" must NOT page a carry that was never asked to continue.
     """
-    words = jsc.js_string(text).strip().split()
-    if not words or len(words) > _MORE_MAX_WORDS:
+    normalized = _WHITESPACE_RE.sub(" ", _PUNCTUATION_RE.sub("", jsc.js_string(text).lower())).strip()
+    if not normalized:
         return False
-    return bool(_MORE_WORD_RE.search(jsc.js_string(text)))
+    return normalized in _MORE_FIXED_PHRASES or bool(_MORE_NUMBER_RE.match(normalized))
 
 
 def build_set_page_header(

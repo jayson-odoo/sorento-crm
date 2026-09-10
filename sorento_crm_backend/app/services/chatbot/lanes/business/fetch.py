@@ -1762,13 +1762,22 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
 
             shown_codes = {c for c in (_product_code_of_row(it) for it in items0) if c}
             shown = len(shown_codes) if shown_codes else len(items0)
-            set_noun = set_noun_for(jsc.array(jsc.get(predicate, "class_labels")))
+            class_labels = jsc.array(jsc.get(predicate, "class_labels"))
+            set_noun = set_noun_for(class_labels)
             # `set_noun_for` is always plural (its own contract, AC-1316) - singular
             # only for the ONE-qualifying-product header ("1 tap has ...", never
-            # "1 taps has ..."), by dropping the trailing "s" our own pluralisation
-            # always adds.
-            if qualifying_total == 1 and set_noun.endswith("s"):
-                set_noun = set_noun[:-1]
+            # "1 taps has ...") is the class label ITSELF (REV-N2/AC-1337), never a
+            # naive "-1 char" strip of the pluralised noun: that guess turned
+            # "bathroom accessories" into "bathroom accessorie", not the real
+            # singular "bathroom accessory". Only the single-label case has one to
+            # use; the "products" fallback (zero or blended labels) has no
+            # singular of its own and keeps its old strip.
+            if qualifying_total == 1:
+                single_labels = [label for label in class_labels if label and label.strip()]
+                if len(single_labels) == 1:
+                    set_noun = single_labels[0].strip().lower()
+                elif set_noun.endswith("s"):
+                    set_noun = set_noun[:-1]
             header = build_set_header(qualifying_total, shown, set_noun, require)
         msg = f"{header}\n{msg}"
 
