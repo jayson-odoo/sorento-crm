@@ -51,8 +51,10 @@ to slice the grid.
 
 By default the list, the **Decisions** tile and the exported order sheet all count the same
 rows: a covered product on the manual reorder-level basis whose net sits above its level is
-left off all three (not your business until it breaches, the 12 Aug rule). Filter **Rec type**
-to **Covered by stock** to bring every such row back into the list.
+left off all three (not your business until it breaches, the 12 Aug rule). Open **Filters**
+and add a condition **Rec type is Covered by stock** to bring those rows back into the list;
+remove the condition and they're hidden again. The **Decisions** tile keeps counting the
+default list either way.
 
 ### Money and prices
 
