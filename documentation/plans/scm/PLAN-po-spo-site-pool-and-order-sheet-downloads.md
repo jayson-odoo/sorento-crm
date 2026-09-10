@@ -1,6 +1,6 @@
 # PLAN - PO / SPO read at the site pool everywhere, and the order sheet lands in My Downloads
 
-Status: building (owner go 10 Sep 2026 via lavish markup: assumptions 1, 2, 3 all confirmed, "good to go").
+Status: in review - PR #828 open (10 Sep 2026); owner go via lavish markup, assumptions 1, 2, 3 confirmed; Phase 3 reviewer verdict ready after two fix rounds.
 UAC: `po-spo-site-pool-and-order-sheet-downloads-acceptance-criteria.md` (same folder).
 Domain: scm. Lane branch: `feat/po-spo-site-pool-downloads`. One lane, one PR.
 
