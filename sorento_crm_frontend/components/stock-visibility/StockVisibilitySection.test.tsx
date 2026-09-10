@@ -218,10 +218,12 @@ function policy(
   source: StockVisibilityPolicy['source'],
   sourceLabel: string | null = null,
   hideZeroLocations = false,
+  excludedWarehouses: StockVisibilityWarehouse[] | null = null,
 ): StockVisibilityPolicy {
   return {
     mode,
     warehouses,
+    excluded_warehouses: excludedWarehouses,
     hide_zero_locations: hideZeroLocations,
     source,
     source_label: sourceLabel,
@@ -259,6 +261,19 @@ function modeSelect(): HTMLSelectElement {
 
 function chipLabels(): string[] {
   return screen.queryAllByTestId('location-chip').map((el) => el.textContent?.replace(/x$/, '') ?? '');
+}
+
+/**
+ * The Include/Exclude rule toggle (PLAN-stock-visibility-exclude-locations). It is a
+ * `ToggleGroup` (`components/ui/toggle-group.tsx`) with `type="single"` - Radix renders
+ * each item with `role="radio"` and `aria-checked` for that mode, not a plain toggle
+ * button, so the accessible query is a radio by name.
+ */
+function includeRadio(): HTMLElement {
+  return screen.getByRole('radio', { name: 'Include' });
+}
+function excludeRadio(): HTMLElement {
+  return screen.getByRole('radio', { name: 'Exclude' });
 }
 
 beforeEach(() => {
@@ -450,6 +465,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'compact',
         warehouse_ids: [BRW.id, BRW_BB.id],
+        excluded_warehouse_ids: null,
         hide_zero_locations: false,
       }),
     );
@@ -479,6 +495,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'availability',
         warehouse_ids: null,
+        excluded_warehouse_ids: null,
         hide_zero_locations: false,
       }),
     );
@@ -507,6 +524,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'availability',
         warehouse_ids: [],
+        excluded_warehouse_ids: null,
         hide_zero_locations: false,
       }),
     );
@@ -531,6 +549,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'compact',
         warehouse_ids: [],
+        excluded_warehouse_ids: null,
         hide_zero_locations: false,
       }),
     );
@@ -549,6 +568,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenLastCalledWith(CONTACT_SCOPE, {
         mode: 'compact',
         warehouse_ids: null,
+        excluded_warehouse_ids: null,
         hide_zero_locations: false,
       }),
     );
@@ -682,6 +702,7 @@ describe('Scope parity', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(ACCESS_TYPE_SCOPE, {
         mode: 'compact',
         warehouse_ids: [BRW.id, MWH.id, DC1.id],
+        excluded_warehouse_ids: null,
         hide_zero_locations: false,
       }),
     );
@@ -708,6 +729,7 @@ describe('Scope parity', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(DEFAULT_SCOPE, {
         mode: 'compact',
         warehouse_ids: null,
+        excluded_warehouse_ids: null,
         hide_zero_locations: false,
       }),
     );
@@ -771,6 +793,7 @@ describe('E9 - Hide zero-quantity locations', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'compact',
         warehouse_ids: [BRW.id],
+        excluded_warehouse_ids: null,
         hide_zero_locations: true,
       }),
     );
@@ -796,6 +819,7 @@ describe('E9 - Hide zero-quantity locations', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'compact',
         warehouse_ids: [BRW.id],
+        excluded_warehouse_ids: null,
         hide_zero_locations: false,
       }),
     );
@@ -818,8 +842,215 @@ describe('E9 - Hide zero-quantity locations', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(ACCESS_TYPE_SCOPE, {
         mode: 'availability',
         warehouse_ids: [BRW.id, MWH.id, DC1.id],
+        excluded_warehouse_ids: null,
         hide_zero_locations: true,
       }),
     );
+  });
+});
+
+describe('location rule', () => {
+  it('AC-15: a stored exclusion renders Exclude selected, "Excluded locations", and the excluded warehouses as chips - no UUID in the DOM', async () => {
+    pickers.real = true;
+    const own = policy('detailed', null, 'contact', null, false, [BRW, BRW_BB]);
+    respondWith(() => ({ effective: own, override: own }));
+
+    const { container } = renderSection(CONTACT_SCOPE);
+    await waitFor(() =>
+      expect(screen.getByText('BRW - Rawang Main Warehouse')).toBeInTheDocument(),
+    );
+
+    expect(excludeRadio()).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('Excluded locations')).toBeInTheDocument();
+    expect(screen.getByText('BRW-BB - Rawang Bulk Bay')).toBeInTheDocument();
+    expect(container.innerHTML).not.toContain(BRW.id);
+    expect(container.innerHTML).not.toContain(BRW_BB.id);
+  });
+
+  it('AC-16: pressing Exclude under Include keeps the same chips, and Save sends warehouse_ids: null with the chips as excluded_warehouse_ids', async () => {
+    const own = policy('detailed', [BRW, BRW_BB], 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+    const saved = policy('detailed', null, 'contact', null, false, [BRW, BRW_BB]);
+    service.saveStockVisibility.mockResolvedValue({ effective: saved, override: saved });
+
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+    expect(chipLabels()).toEqual(['BRW - Rawang Main Warehouse', 'BRW-BB - Rawang Bulk Bay']);
+
+    fireEvent.click(excludeRadio());
+    expect(chipLabels()).toEqual(['BRW - Rawang Main Warehouse', 'BRW-BB - Rawang Bulk Bay']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
+
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
+        mode: 'detailed',
+        warehouse_ids: null,
+        excluded_warehouse_ids: [BRW.id, BRW_BB.id],
+        hide_zero_locations: false,
+      }),
+    );
+  });
+
+  it('AC-17: Exclude with no chips reads "All locations", and Save sends excluded_warehouse_ids: [] with warehouse_ids: null', async () => {
+    const own = policy('detailed', null, 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+    const saved = policy('detailed', null, 'contact', null, false, []);
+    service.saveStockVisibility.mockResolvedValue({ effective: saved, override: saved });
+
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+
+    fireEvent.click(excludeRadio());
+    expect(screen.getByTestId('locations-picker').getAttribute('data-placeholder')).toBe(
+      'All locations',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
+
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
+        mode: 'detailed',
+        warehouse_ids: null,
+        excluded_warehouse_ids: [],
+        hide_zero_locations: false,
+      }),
+    );
+  });
+
+  it('AC-18: Exclude with no chips -> Include yields warehouse_ids: null (never []); Exclude with chips -> Include carries the chips', async () => {
+    const emptyExclude = policy('detailed', null, 'contact', null, false, []);
+    respondWith(() => ({ effective: emptyExclude, override: emptyExclude }));
+    service.saveStockVisibility.mockResolvedValue({
+      effective: emptyExclude,
+      override: emptyExclude,
+    });
+
+    const first = renderSection(CONTACT_SCOPE);
+    await waitForCard();
+    expect(excludeRadio()).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(includeRadio());
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
+        mode: 'detailed',
+        warehouse_ids: null,
+        excluded_warehouse_ids: null,
+        hide_zero_locations: false,
+      }),
+    );
+    first.unmount();
+    vi.clearAllMocks();
+    service.searchStockVisibilityWarehouses.mockResolvedValue([BRW, BRW_BB]);
+
+    const filledExclude = policy('compact', null, 'contact', null, false, [BRW, BRW_BB]);
+    respondWith(() => ({ effective: filledExclude, override: filledExclude }));
+    service.saveStockVisibility.mockResolvedValue({
+      effective: filledExclude,
+      override: filledExclude,
+    });
+
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+    expect(excludeRadio()).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(includeRadio());
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
+        mode: 'compact',
+        warehouse_ids: [BRW.id, BRW_BB.id],
+        excluded_warehouse_ids: null,
+        hide_zero_locations: false,
+      }),
+    );
+  });
+
+  it('AC-19: "All locations" resets to Include + null and disables once already all; "Dealer pool" sets Include + pool ids even under Exclude', async () => {
+    const own = policy('detailed', [BRW_BB], 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+
+    fireEvent.click(excludeRadio());
+    // Carries the one ticked id over as the excluded set - not "all" yet.
+    expect(screen.getByRole('button', { name: 'All locations' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'All locations' }));
+    await waitFor(() => expect(includeRadio()).toHaveAttribute('aria-checked', 'true'));
+    expect(screen.getByTestId('locations-picker').getAttribute('data-placeholder')).toBe(
+      'All locations',
+    );
+    expect(screen.getByRole('button', { name: 'All locations' })).toBeDisabled();
+
+    fireEvent.click(excludeRadio());
+    // Include + null -> Exclude carries as [] (never a named empty set), which is
+    // ALSO "all" under Exclude - so the preset stays disabled.
+    expect(screen.getByRole('button', { name: 'All locations' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dealer pool' }));
+    await waitFor(() => expect(service.getDealerPoolWarehouses).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(includeRadio()).toHaveAttribute('aria-checked', 'true'));
+    await waitFor(() =>
+      expect(chipLabels()).toEqual([
+        'BRW - Rawang Main Warehouse',
+        'MWH - Meru Warehouse',
+        'DC1 - Distribution Centre 1',
+      ]),
+    );
+  });
+
+  it('AC-20: flipping the rule alone makes the card dirty, flipping back restores clean, and an inherited exclusion carries the access-type badge', async () => {
+    const own = policy('detailed', [BRW], 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+    const first = renderSection(CONTACT_SCOPE);
+    await waitForCard();
+
+    expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeDisabled();
+    fireEvent.click(excludeRadio());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeEnabled(),
+    );
+    fireEvent.click(includeRadio());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeDisabled(),
+    );
+    first.unmount();
+
+    respondWith(() => ({
+      effective: policy('detailed', null, 'access_type', 'Dealer', false, [BRW, BRW_BB]),
+      override: null,
+    }));
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+    expect(screen.getByText('Access type: Dealer')).toBeInTheDocument();
+    expect(excludeRadio()).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('AC-21: the rule toggle offers exactly Include and Exclude, cannot be deselected, and is disabled while a save is pending', async () => {
+    const own = policy('detailed', [BRW], 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+
+    const radios = screen.getAllByRole('radio');
+    expect(radios.map((r) => r.textContent)).toEqual(['Include', 'Exclude']);
+    expect(includeRadio()).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(includeRadio());
+    expect(includeRadio()).toHaveAttribute('aria-checked', 'true');
+
+    let resolveSave: (value: unknown) => void = () => {};
+    service.saveStockVisibility.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve;
+      }),
+    );
+    fireEvent.click(excludeRadio());
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
+
+    await waitFor(() => expect(excludeRadio()).toBeDisabled());
+    resolveSave({ effective: own, override: own });
   });
 });

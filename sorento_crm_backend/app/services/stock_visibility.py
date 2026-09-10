@@ -57,6 +57,13 @@ class Policy:
     an empty frozenset = none at all. ``source_label`` carries the access type's
     NAME (not its code) so the admin badge can read "Access type: Dealer".
 
+    ``excluded_warehouse_ids`` is the include list's sibling (PLAN
+    stock-visibility-exclude-locations): None = no exclusion, a frozenset = every
+    active warehouse EXCEPT these - including one created after the policy was
+    saved. The two are never both non-None on a single row (the CHECK), but a
+    MERGED policy across access types can carry both at once (AC-5): an include
+    list from one type narrowed further by an exclusion from another.
+
     ``hide_zero_locations`` drops the locations holding NONE of the product:
     the row in ``detailed``, the location line in ``compact`` (the total is
     unchanged), and nothing at all in ``availability``, which has no line to
@@ -69,6 +76,7 @@ class Policy:
     source: str
     source_label: Optional[str] = None
     hide_zero_locations: bool = False
+    excluded_warehouse_ids: Optional[frozenset[str]] = None
 
 
 def _all_companies(db: Session):
@@ -93,6 +101,12 @@ def _row_warehouse_ids(row) -> Optional[frozenset[str]]:
     return frozenset(str(w) for w in row.warehouse_ids)
 
 
+def _row_excluded_ids(row) -> Optional[frozenset[str]]:
+    if row.excluded_warehouse_ids is None:
+        return None
+    return frozenset(str(w) for w in row.excluded_warehouse_ids)
+
+
 def _policy_from_row(row, source: str, source_label: Optional[str] = None) -> Policy:
     return Policy(
         mode=row.mode,
@@ -100,6 +114,7 @@ def _policy_from_row(row, source: str, source_label: Optional[str] = None) -> Po
         source=source,
         source_label=source_label,
         hide_zero_locations=bool(row.hide_zero_locations),
+        excluded_warehouse_ids=_row_excluded_ids(row),
     )
 
 
@@ -143,12 +158,14 @@ def access_type_override(db: Session, access_type_code: str):
 
 
 def _merge_access_type_rows(rows: list[tuple[Any, Optional[str]]]) -> Policy:
-    """Most restrictive mode, intersection of warehouses (NULL = all), and
-    hiding wins over showing.
+    """Most restrictive mode, intersection of includes (NULL = all), UNION of
+    exclusions, and hiding wins over showing.
 
     ``hide_zero_locations`` is OR-ed for the same reason the mode is ranked: a
     contact tagged both `dealer` (hide) and `end_user` (show) must not have the
-    stricter rule undone the day somebody adds the second tag.
+    stricter rule undone the day somebody adds the second tag. Exclusions merge
+    the same direction: two access types withholding different warehouses
+    withhold the UNION of both (AC-4), never just the overlap.
     """
     mode = max((row.mode for row, _ in rows), key=lambda m: _MODE_RANK.get(m, 0))
     hide_zero = any(bool(row.hide_zero_locations) for row, _ in rows)
@@ -159,6 +176,13 @@ def _merge_access_type_rows(rows: list[tuple[Any, Optional[str]]]) -> Policy:
         if ids is None:
             continue
         merged = ids if merged is None else (merged & ids)
+
+    merged_excluded: Optional[frozenset[str]] = None
+    for row, _ in rows:
+        ids = _row_excluded_ids(row)
+        if ids is None:
+            continue
+        merged_excluded = ids if merged_excluded is None else (merged_excluded | ids)
 
     # The label names the row that decided the MODE; with several at the same
     # rank the lowest code wins, so the badge is stable rather than order-dependent.
@@ -172,6 +196,7 @@ def _merge_access_type_rows(rows: list[tuple[Any, Optional[str]]]) -> Policy:
         source=SOURCE_ACCESS_TYPE,
         source_label=deciding[1],
         hide_zero_locations=hide_zero,
+        excluded_warehouse_ids=merged_excluded,
     )
 
 
@@ -322,19 +347,76 @@ def validated_warehouse_ids(db: Session, warehouse_ids) -> Optional[list[str]]:
     return sorted(found)
 
 
+def reject_both_location_rules(warehouse_ids, excluded_warehouse_ids) -> None:
+    """422 before either list is validated (or the DB touched), so the message
+    is deterministic rather than depending on which of the two happened to be
+    checked first. Same `handle_unprocessable` path as "Unknown warehouse" -
+    `extractApiError` reads both `detail` and `message`, so the toast is the
+    same either way."""
+    from app.services.error_handler import handle_unprocessable
+
+    if warehouse_ids is not None and excluded_warehouse_ids is not None:
+        raise handle_unprocessable(
+            "Pick locations to include or to exclude, not both."
+        )
+
+
+def warehouse_criterion(policy: Optional[Policy], column):
+    """The SQLAlchemy filter a policy's location rule reduces to.
+
+    `sa.true()` when the policy carries neither list (every active warehouse
+    the caller's company scope already allows), `sa.false()` for an empty
+    include list (AC-12's "no stock at all"), `column.in_(...)` for a named
+    include list, `column.notin_(...)` for an exclusion, and the two ANDed
+    together on a merged policy that carries both (AC-5: an access type's
+    include list narrowed further by another's exclusion).
+    """
+    import sqlalchemy as sa
+
+    if policy is None:
+        return sa.true()
+
+    clauses = []
+    if policy.warehouse_ids is not None:
+        if not policy.warehouse_ids:
+            return sa.false()
+        clauses.append(column.in_(list(policy.warehouse_ids)))
+    if policy.excluded_warehouse_ids is not None:
+        # `[]` excludes nothing (AC-12: it means "every active warehouse"), so
+        # `notin_([])` - always true - is exactly right without a special case.
+        clauses.append(column.notin_(list(policy.excluded_warehouse_ids)))
+
+    if not clauses:
+        return sa.true()
+    return sa.and_(*clauses)
+
+
 def upsert_policy(
     db: Session,
     *,
     mode: str,
     warehouse_ids,
+    excluded_warehouse_ids=None,
     hide_zero_locations: bool = False,
     contact_id: Optional[str] = None,
     access_type_code: Optional[str] = None,
 ):
-    """Create or replace the row AT one tier. `warehouse_ids` replaces wholesale."""
+    """Create or replace the row AT one tier. Both lists replace wholesale.
+
+    Validated HERE rather than at each of the three routes: `reject_both_location_rules`
+    runs first, before the DB is touched at all, then each raw list is resolved through
+    `validated_warehouse_ids` - one place for every writer instead of three copies of the
+    same two calls (and the one place where the deterministic-message check can run
+    before either list's own validation, regardless of which the route happened to build
+    first).
+    """
     import uuid as _uuid
 
     from app.models.access import StockVisibilityPolicy
+
+    reject_both_location_rules(warehouse_ids, excluded_warehouse_ids)
+    warehouse_ids = validated_warehouse_ids(db, warehouse_ids)
+    excluded_warehouse_ids = validated_warehouse_ids(db, excluded_warehouse_ids)
 
     if contact_id:
         row = contact_override(db, contact_id)
@@ -361,6 +443,7 @@ def upsert_policy(
     # `Column[...]` at rest, and pyright rejects the direct form.
     setattr(row, "mode", mode)
     setattr(row, "warehouse_ids", warehouse_ids)
+    setattr(row, "excluded_warehouse_ids", excluded_warehouse_ids)
     setattr(row, "hide_zero_locations", bool(hide_zero_locations))
     db.commit()
     db.refresh(row)
@@ -424,6 +507,7 @@ def policy_payload(db: Session, policy: Policy) -> dict:
     return {
         "mode": policy.mode,
         "warehouses": policy_warehouses(db, policy.warehouse_ids),
+        "excluded_warehouses": policy_warehouses(db, policy.excluded_warehouse_ids),
         "hide_zero_locations": policy.hide_zero_locations,
         "source": policy.source,
         "source_label": policy.source_label,

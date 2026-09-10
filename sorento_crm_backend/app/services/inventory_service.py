@@ -1,10 +1,13 @@
 """Inventory service for business logic."""
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_, tuple_
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import time
 import uuid
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from app.services.stock_visibility import Policy
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.product import Product
 from app.schemas.inventory import (
@@ -672,8 +675,8 @@ class StockService:
                 demand, and refusing the call would lose the question ("how many
                 units do you need?") along with the number.
         """
-        from sqlalchemy import false as sa_false, or_, func
-        from app.services.stock_visibility import resolve_policy
+        from sqlalchemy import or_, func
+        from app.services.stock_visibility import resolve_policy, warehouse_criterion
 
         if requested_qty is not None and requested_qty < 1:
             requested_qty = None
@@ -745,11 +748,11 @@ class StockService:
         # The policy narrows what company scope already allowed; it never widens.
         # An empty allow-list is a real configuration ("this contact is told about
         # no stock at all"), so it filters to nothing rather than being ignored.
-        if policy is not None and policy.warehouse_ids is not None:
-            if policy.warehouse_ids:
-                q = q.filter(Stock.warehouse_id.in_(list(policy.warehouse_ids)))
-            else:
-                q = q.filter(sa_false())
+        # `warehouse_criterion` also carries the "all except these" exclusion
+        # (PLAN stock-visibility-exclude-locations) - a no-op when the policy
+        # names neither list.
+        if policy is not None:
+            q = q.filter(warehouse_criterion(policy, Stock.warehouse_id))
 
         # `hide_zero_locations` on the DETAILED mode is a row filter: a location
         # holding none of the product is a line the reader has no use for. The two
@@ -999,7 +1002,7 @@ class StockService:
             try:
                 alternatives = self._stock_entity_alternatives(
                     resolved_input_product_ids,
-                    allowed_warehouse_ids=(policy.warehouse_ids if policy else None),
+                    policy=policy,
                 )
             except Exception:
                 import logging
@@ -1164,6 +1167,7 @@ class StockService:
         direct MCP caller, so empty is the only shape that cannot leak.
         """
         from sqlalchemy import func, or_ as sa_or
+        from app.services.stock_visibility import warehouse_criterion
 
         payload["stock_visibility"] = {
             "mode": policy.mode,
@@ -1173,26 +1177,31 @@ class StockService:
             "hide_zero_locations": policy.hide_zero_locations,
         }
         if policy.mode != "availability":
-            # NULL stays null on the wire: "every location" is a different answer
-            # from "these named ones", and collapsing it to a list would make the
-            # admin card show a snapshot that silently stops tracking new
-            # warehouses. Inactive locations are dropped: the listing never
-            # answers from one, so naming it promises a place no row can come from.
+            # NULL stays null on the wire ONLY when the policy names neither list -
+            # "every location" is a different answer from "these named ones", and
+            # collapsing it to a list would make the admin card show a snapshot
+            # that silently stops tracking new warehouses. An exclude-only policy
+            # is a NAMED set too (every active warehouse except these), so it
+            # echoes the same way an include list does - the same
+            # `warehouse_criterion` the balance itself filters with, so the
+            # echoed codes are exactly what the balance can cover. Inactive
+            # locations are dropped: the listing never answers from one, so
+            # naming it promises a place no row can come from.
             #
             # The dealer mode omits the key entirely. It is a list of the exact
             # locations that mode exists to keep out of the reply, and an echo is
             # still a disclosure.
             warehouse_codes = None
-            if policy.warehouse_ids is not None:
+            if policy.warehouse_ids is not None or policy.excluded_warehouse_ids is not None:
                 warehouse_codes = sorted(
                     code
                     for (code,) in self.db.query(Warehouse.warehouse_code)
                     .filter(
-                        Warehouse.id.in_(list(policy.warehouse_ids)),
                         Warehouse.is_active.is_(True),
+                        warehouse_criterion(policy, Warehouse.id),
                     )
                     .all()
-                ) if policy.warehouse_ids else []
+                )
             payload["stock_visibility"]["warehouse_codes"] = warehouse_codes
 
         # n8n's "_Data last updated_" footer reads the MCP envelope's
@@ -1331,7 +1340,7 @@ class StockService:
         self,
         product_ids: set[str],
         *,
-        allowed_warehouse_ids: Optional[frozenset[str]] = None,
+        policy: Optional["Policy"] = None,
     ) -> list[dict]:
         """Data-bearing variant/neighbour alternatives for an empty stock result.
 
@@ -1341,11 +1350,14 @@ class StockService:
         SYSTEM_ADJUSTMENT-zero exclusion the listing uses (a system-adjusted-to-0 row is
         qoh == 0, so excluded).
 
-        ``allowed_warehouse_ids`` narrows that gate to the locations the caller's
-        visibility policy allows (None = all of them, the staff/legacy case). A
-        suggestion judged on hidden stock is a promise the next question cannot
-        keep: the contact asks about the neighbour and is told there is none.
+        ``policy`` narrows that gate to the locations the caller's visibility policy
+        allows (None = all of them, the staff/legacy case), through the same
+        `warehouse_criterion` the main listing filters with - include list AND/OR
+        exclusion. A suggestion judged on hidden stock is a promise the next question
+        cannot keep: the contact asks about the neighbour and is told there is none.
         """
+        from app.services.stock_visibility import warehouse_criterion
+
         if len(product_ids) != 1:
             return []
         pid = next(iter(product_ids))
@@ -1365,10 +1377,8 @@ class StockService:
                 Stock.quantity_on_hand > 0,
                 Stock.warehouse.has(Warehouse.is_active.is_(True)),
             )
-            if allowed_warehouse_ids is not None:
-                if not allowed_warehouse_ids:
-                    return set()
-                q = q.filter(Stock.warehouse_id.in_(list(allowed_warehouse_ids)))
+            if policy is not None:
+                q = q.filter(warehouse_criterion(policy, Stock.warehouse_id))
             rows = q.distinct().all()
             return {str(row.product_id) for row in rows}
 

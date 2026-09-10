@@ -194,7 +194,10 @@ class StockVisibilityBlock(BaseModel):
     re-deriving it (same passthrough habit as `field_access` / `lookup_companies`)."""
 
     mode: str
-    #: null = every active warehouse; [] = none at all.
+    #: The active, company-scoped codes the balance can cover under this policy:
+    #: an include list resolved to codes, or every active warehouse minus an
+    #: exclusion, or [] when nothing is left. null means the policy names NEITHER
+    #: list at all (every active warehouse, no rule).
     warehouse_codes: Optional[List[str]] = None
     #: Whether the locations holding none of the product were withheld. Echoed so
     #: n8n can phrase the reply without re-deriving the policy.
