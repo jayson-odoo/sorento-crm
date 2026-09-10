@@ -96,6 +96,40 @@ not a regression this lane introduced - filed for the reviewer's attention, not 
 | `negative-spo-modal-nothing-on-the-water.png` | `SRT95SS-GM`, decision "Stock 49" (pure covered, 0 buy): SPO modal Open to BRW (0): **"Nothing on the water to BRW."**, Total 0. |
 | `negative-spo-cell-shows-zero.png` | Same row's grid SPO cell reads **`0`**, not a dash. |
 
+## Re-check after the engine gate + SPO modal fix rounds (AC-3b, AC-7 amended)
+
+Re-verified on the SAME plan (`4f72aefe-d927-4597-851e-baddb603fad6`), SRTWC8518-SH, after
+the engine's site-pool gate moved to `ACTIVE_SITE_POOL_SQL` and the SPO modal gained its
+per-row warehouse narrowing:
+
+| File | Observed |
+| --- | --- |
+| `recheck-AC-22-spo-modal-still-394.png` | SPO modal Open (5): still sums to 394, same 5 SPO documents, no bin rows - unchanged. |
+| `recheck-AC-22-po-modal-still-zero.png` | PO modal Open (0): still "Nothing on order.", Total 0 - unchanged. |
+
+### AC-16b (one in-flight sheet per user per run)
+
+Actions > Order sheet Excel clicked twice in quick succession. Both requests answered 200
+(`network requests --filter order-summary/export`), and `user_downloads` shows TWO
+`order_sheet_xlsx` rows for this run, both `ready`:
+
+```
+id       created_at              ready_at
+a73b2b9a 2026-09-10 12:30:07.23  2026-09-10 12:30:08.90
+e49e4ce1 2026-09-10 12:30:20.63  2026-09-10 12:30:21.92
+```
+
+The first row's `ready_at` (12:30:08.90) is **~11.7 seconds** before the second row's
+`created_at` (12:30:20.63) - the lane's RQ worker had long finished the first job (each
+`click` round-trips through a fresh `npx agent-browser` process, which costs seconds, not
+milliseconds, unlike a real double-click) before the second POST's in-flight guard ever
+ran, so the guard correctly saw no `pending`/`processing` row and created a second one -
+the documented "worker outpaces the click" case, not a guard defect. `AC-16b-recheck-
+worker-outpaced-second-click.png` shows the drawer with both rows Ready. The 409 path
+itself is covered at the pytest level (`test_export_post_answers_409_while_a_sheet_is_
+in_flight`, which mocks the enqueue to hold the row `pending` for the assertion window -
+not reproducible from a real browser against this fast a worker).
+
 ## Console / network
 
 `errors` and `console` showed no uncaught page errors across the whole run (one pre-existing
