@@ -1384,6 +1384,17 @@ class ResolveReferenceRequest(BaseModel):
             "today. When present it supersedes `spec_fallback`."
         ),
     )
+    predicate_words: list[str] | None = Field(
+        default=None,
+        description=(
+            "Words `require` already accounts for (a leg's own name - 'stock', "
+            "'incoming', 'promotion' - or an attachment_type entity's raw, "
+            "e.g. 'cert', 'photo') - stripped from `query` before the described "
+            "set is derived from it, so 'which sorento bidet has cert' does not "
+            "also ask the spec reader to bind the word 'cert'. Only used when "
+            "`require` is present."
+        ),
+    )
     understand_phrase: bool = Field(
         default=False,
         description=(
@@ -1454,6 +1465,79 @@ class ResolveReferenceRequest(BaseModel):
             "to pin)."
         ),
     )
+
+
+def _has_exact_product_match(result: dict[str, Any]) -> bool:
+    """AC-1305: did a caller token already resolve to a full product code?
+
+    `exact` is the probe's own default tier (`entity_resolver.py:506`); `head_code`
+    is the code-head retry. Either means the customer typed a complete code, and
+    `require`'s described-set machinery must not run over an answer that is already
+    a single record - the response stays byte-identical to the same request
+    without `require`.
+    """
+    tiers = ("exact", "head_code")
+    for resolution in result.get("resolutions") or []:
+        for match in (resolution or {}).get("matches") or []:
+            if (match or {}).get("entity_type") == "product" and (match or {}).get(
+                "match_tier"
+            ) in tiers:
+                return True
+    for match in result.get("intersection") or []:
+        if (match or {}).get("entity_type") == "product" and (match or {}).get(
+            "match_tier"
+        ) in tiers:
+            return True
+    return False
+
+
+def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
+    """Every product uuid LOOKUP already matched, in order, deduped.
+
+    Work item C2: the described set's other half besides the class/product_type/
+    brand bindings - a caller who typed "bidet" already has three name matches from
+    the ordinary product probes (the screenshot picker), and those ids are a
+    perfectly good described set on their own.
+    """
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def _take(match: Any) -> None:
+        if not isinstance(match, dict) or match.get("entity_type") != "product":
+            return
+        uid = match.get("uuid")
+        if uid and uid not in seen:
+            seen.add(uid)
+            ids.append(uid)
+
+    for resolution in result.get("resolutions") or []:
+        for match in (resolution or {}).get("matches") or []:
+            _take(match)
+    for match in result.get("intersection") or []:
+        _take(match)
+    return ids
+
+
+_PREDICATE_WORD_RE_CACHE: dict[str, "re.Pattern[str]"] = {}
+
+
+def _strip_predicate_words(text: str, words: list[str] | None) -> str:
+    """`query` with every `predicate_words` entry removed, whole-word, case-insensitive.
+
+    So "which sorento bidet has cert" does not also ask the described-set reader to
+    bind the word "cert" it was for the PREDICATE, not the description.
+    """
+    stripped = text or ""
+    for word in words or []:
+        cleaned = str(word or "").strip()
+        if not cleaned:
+            continue
+        pattern = _PREDICATE_WORD_RE_CACHE.get(cleaned)
+        if pattern is None:
+            pattern = re.compile(rf"(?<!\w){re.escape(cleaned)}(?!\w)", re.IGNORECASE)
+            _PREDICATE_WORD_RE_CACHE[cleaned] = pattern
+        stripped = pattern.sub(" ", stripped)
+    return re.sub(r"\s+", " ", stripped).strip()
 
 
 def _result_has_zero_matches(result: dict[str, Any]) -> bool:
@@ -2341,18 +2425,56 @@ def resolve_reference_post(
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
-    # and it runs whenever the parser asked it, whatever the normal probes found.
-    # The whole intersection + count happens in the service (zero SQL here); this
-    # veneer only maps the outcome onto the wire shape the spine already reads.
-    if payload.require:
+    # and it runs whenever the parser asked it, whatever the normal probes found -
+    # UNLESS a caller token already resolved to a full product code (AC-1305): the
+    # customer typed a complete code, so the response stays byte-identical to the
+    # same request without `require`.
+    if payload.require and not _has_exact_product_match(result):
         from app.services.product_predicate_service import resolve_product_set
+        from app.services.product_spec_understanding import derive_search_inputs
+
+        # C2: the described set's other half besides `product_ids` - class /
+        # product_type / brand bindings read off the query, `predicate_words`
+        # stripped first so the predicate's own word ("cert", "stock") is never
+        # also asked to bind a spec. `understand_phrase` gates the model call
+        # exactly as the spec-fallback branch below does; the deterministic
+        # reading (registry synonyms, brand names) always runs.
+        #
+        # `free_terms=[]` into the reader on purpose, and its OWN returned free
+        # terms are dropped, never merged into `payload.free_terms`:
+        # `derive_search_inputs` always echoes the whole phrase back as a free
+        # term (its fallback shape, for the ranker's free-text boost), and
+        # merging that in fed the raw sentence to `filter_specs`'s honesty
+        # check as if the caller had typed it as a described term - reporting
+        # "which kitchen sinks have stock" itself as unrecognized. Only the
+        # BINDINGS (`specs`) are wanted here; ranking still runs on exactly the
+        # free terms the caller sent, unchanged.
+        query_text = _strip_predicate_words(payload.query or "", payload.predicate_words)
+        specs, _derived_free_terms, _exclusions, _understanding = derive_search_inputs(
+            db,
+            query_text,
+            specs=list(payload.extracted_specs or []),
+            free_terms=[],
+            allow_model=payload.understand_phrase,
+            user_id=current_user.get("id"),
+            log_usage=not payload.dry_run,
+        )
+        # D3: a brand scopes the WHOLE set - kept OUT of `specs`' union-membership
+        # role (a brand binding there would union in every OTHER certified product
+        # of that brand, not just the described ones) and applied only as the
+        # service's own AND-scope.
+        brand_entry = next((e for e in specs if e.get("key") == "brand"), None)
+        brand = str(brand_entry["value"]) if brand_entry else None
+        specs = [e for e in specs if e.get("key") != "brand"]
 
         outcome = resolve_product_set(
             db,
             require=payload.require,
-            specs=payload.extracted_specs,
+            specs=specs,
             free_terms=payload.free_terms,
             limit=payload.limit,
+            product_ids=_collect_lookup_product_ids(result) or None,
+            brand=brand,
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
