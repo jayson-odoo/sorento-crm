@@ -1425,15 +1425,6 @@ export function SalesOrderDetail({ id }: { id: string }) {
                       <span className="inline-flex flex-wrap items-center gap-1.5">
                         <Badge variant={cls.variant} appearance="light" size="md">
                           {cls.label}
-                          {/* A zero-width joiner, invisible to a reader and to a screen
-                              reader alike. The Order card's own "Project" field (below)
-                              names its FIELD the same word this pill's project-class VALUE
-                              already prints, and a bare `getByText('Project')` cannot tell
-                              a value from a field name - only the field's own label carries
-                              the class an exact query can scope to (AC-F3). This keeps the
-                              pill's plain-text match unique to IT rather than forcing every
-                              existing caller of this badge to start scoping its query. */}
-                          {"⁠"}
                         </Badge>
                         {showHint ? (
                           // `text-2xs`, not `text-xs` - the view/edit parity test walks

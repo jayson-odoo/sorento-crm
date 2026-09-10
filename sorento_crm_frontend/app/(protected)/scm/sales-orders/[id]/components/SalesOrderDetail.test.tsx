@@ -940,7 +940,14 @@ describe('SalesOrderDetail - the order type round trip', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
 
-    expect(screen.getByText('Project')).toBeInTheDocument();
+    // Scoped to the Order type FIELD's own wrapper, not a bare `getByText('Project')` -
+    // the Order card also carries its own "Project" field (PLAN-so-project-label.md) whose
+    // label reads the same word as this pill's project-class VALUE, and an unscoped query
+    // cannot tell a field's name from a value.
+    const orderTypeField = screen
+      .getByText('Order type', { selector: 'span.text-xs.text-muted-foreground' })
+      .closest('div') as HTMLElement;
+    expect(within(orderTypeField).getByText('Project')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent('Project');
 
