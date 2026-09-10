@@ -37,7 +37,7 @@ Baseline (main, detached checkout of d6cb5b624 with the lane venv, 11 Sep 2026):
 | 1313 | PASS | pytest, register spelling then set; console "which item has PPS cert" → 940 |
 | 1314 | PASS | migration test, empty sets created on the prod copy |
 | 1315 | PASS | pytest, first five ids and no row limit; console pages show 5 distinct products |
-| 1316 | PASS | pytest; console "which tap has cert" → "908 taps have certificates. Showing 5.", "which basin got stock" → "427 wash basins have stock. Showing 5." Polish pending: scheme word in the header |
+| 1316 | PASS | pytest; console "which tap has cert" → "908 taps have certificates. Showing 5.", "which item has PPS cert" → "940 products have PPS certificates. Showing 5." |
 | 1317 | PASS | pytest (S4); console "which tap has cert" / "more" / "more" → Showing 5, 6 to 10, 11 to 15 |
 | 1318 | PASS | pytest, expired-only counted and flagged |
 | 1319 | PASS | pytest, miss names the set and the codes checked |
@@ -49,10 +49,27 @@ Baseline (main, detached checkout of d6cb5b624 with the lane venv, 11 Sep 2026):
 | 1325 | PASS with notes | console pass 2 below |
 | 1326, 1327 | PASS | pytest; console "which sorento bidet has cert" → "1 tap has certificates." plus the block for SRTWT5875 (a Sorento product whose product_type is bidet), no picker |
 | 1328 | PASS | pytest; console PPS case |
-| 1329 | PASS, polish pending | document-type clarify fires; the "Types I know" list must be product-facing types only |
+| 1329 | PASS | console "which basin has photo" → "Types I know: Certification, Product Photos, Product Videos, Technical Specifications." (product-facing only) |
 | 1330 | PASS | pytest; console sink case |
 | 1331 | PASS | pytest (green on arrival: the AC-1326 bypass already covers the folded token); the pass-3 console miss for this utterance was a reload race, see below |
-| 1332 | PASS pending coder | red test for the model reader on a HAS turn; phrase stripping already green |
+| 1332 | PASS | pytest, model reader never invoked on a HAS turn; phrase stripping green |
+
+## Console pass 4 (AC-1325, FINAL), lane backend started WITHOUT reload, commit 677d240b1
+
+| Utterance | Reply first line |
+|-----------|------------------|
+| check stock srtwc286 | Stock details found for the requested products. (forward path, no header) |
+| which water tap has cert | I don't know 'water tap' as a product type. Did you mean tap? |
+| which tap has cert | 908 taps have certificates. Showing 5. |
+| which sorento bidet has cert | 1 tap has certificates. (SRTWT5875, block with its WCM certificate file) |
+| which basin got stock | 427 wash basins have stock. Showing 5. |
+| which item has PPS cert | 940 products have PPS certificates. Showing 5. |
+| which basin has photo | I don't know 'photo' as a document type. Types I know: Certification, Product Photos, Product Videos, Technical Specifications. |
+| which sink has incoming | 47 kitchen sinks have incoming stock. Showing 5. |
+| any shower set on promo (contact 438930735) | Which access level do you need for shower set? (existing promotion flow) |
+| which tap has cert / more / more | Showing 5. / Showing 6 to 10. / Showing 11 to 15. |
+
+Every page rendered five distinct products. Full transcript in the session scratchpad `console-run-4.txt`.
 
 ## Console pass 2 (AC-1325), lane backend, dry-run turns
 
