@@ -50,10 +50,8 @@ In `_emit_product`, after `agg` and the level trigger:
   `recommended = pool_project_need`, `reason_label = "project buy: N confirmed unplaced Buy"`,
   `rounded = eng.round_order_qty(recommended, moq, order_multiple)`, `split` as usual.
   (Same shape as the existing bypass in `_emit_pool` lines ~1607-1612.)
-- If `level is not None` and NOT triggered but `pool_project_need > 0`: same bypass
-  (`recommended = pool_project_need`). Today the level path nets project demand inside `net`,
-  so a level-set product with stock above level plus project demand already triggers on the
-  net; the tester checks this stays byte-identical and the bypass is a no-op there.
+- A level-set product never takes the bypass: its `net` already subtracts the confirmed Buy,
+  so the level trigger is the only sizing (test 5 pins this).
 - Emit order: a triggered buy with a supplier emits `buy` (with the allocation) even when
   `level is None`; the `needs_level` row is emitted ONLY when `level is None` and nothing was
   bought. `exception` when triggered and no supplier, as today.
