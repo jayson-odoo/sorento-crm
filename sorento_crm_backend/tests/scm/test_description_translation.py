@@ -770,8 +770,13 @@ UPLOAD_PERMISSION = "scm.proforma_invoice.upload"
 
 def _grant(db, uid: str, slug: str) -> None:
     from app.models.user import UserPermission, UserRole, UserRolePermission, UserRoleAssignment
+    from app.services.user_service import invalidate_rbac_cache
 
-    role = UserRole(id=str(uuid.uuid4()), slug=f"{MARKER}-role-{_tag()}", name="role")
+    # `name` carries a UNIQUE constraint (`user_roles_name_key`), so two `_grant()` calls in
+    # one test (D2 grants both the write and the read permission) need distinct names, not
+    # just distinct slugs.
+    tag = _tag()
+    role = UserRole(id=str(uuid.uuid4()), slug=f"{MARKER}-role-{tag}", name=f"role-{tag}")
     db.add(role)
     db.flush()
     perm = db.query(UserPermission).filter(UserPermission.slug == slug).one_or_none()
@@ -782,6 +787,11 @@ def _grant(db, uid: str, slug: str) -> None:
     db.add(UserRolePermission(id=str(uuid.uuid4()), role_id=role.id, permission_id=perm.id))
     db.add(UserRoleAssignment(id=str(uuid.uuid4()), user_id=uid, role_id=role.id))
     db.flush()
+    # `check_user_has_permission` caches its answer for `_RBAC_CACHE_TTL` seconds
+    # (`app/services/user_service.py`); a test that already probed this user's grant (D1's
+    # own "denied without the permission" step) has that "no" cached, and this write would
+    # otherwise still read as denied for up to 30s.
+    invalidate_rbac_cache(uid)
 
 
 def _seed_route_pi(db, marker: str = MARKER):
@@ -855,6 +865,12 @@ def test_d2_success_body_and_every_matching_row_on_file_updates(scm_app):
     as_company_user(app, db, gcu, gcuk, role=None)
     uid = app.dependency_overrides[gcu]()["id"]
     _grant(db, uid, UPLOAD_PERMISSION)
+    # The read-back below goes through `GET /scm/proforma-invoices/{id}`, gated on
+    # `scm.dashboard.view` (`_READ` in `app/api/v1/scm/proforma_invoices.py`) - a
+    # DIFFERENT slug from the write route's `scm.proforma_invoice.upload`. D2 is proving
+    # the write's effect is visible on read, not proving the write route's own gate (that
+    # is D1) - the read side needs its own grant.
+    _grant(db, uid, "scm.dashboard.view")
     client = TestClient(app)
 
     invoice1, invoice2, line1, line2 = _seed_route_pi(db)
