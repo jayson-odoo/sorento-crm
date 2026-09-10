@@ -175,6 +175,105 @@ def test_export_post_guards_run_before_a_row_exists(scm_app):
     assert after == before, "a guard failure left a download row behind"
 
 
+def test_export_post_answers_409_while_a_sheet_is_in_flight(scm_app, monkeypatch):
+    """AC-16b (security S5, Phase 3 fix round): a second POST for the SAME run while the
+    caller already has an `order_sheet_*` download `pending`/`processing` for that run is
+    refused with 409 and creates no second row - one in-flight sheet per user per run, no
+    queue machinery needed to enforce it."""
+    from app.services import queue_service
+
+    app, db = _client(scm_app, "purchasing")
+    run_id = _seed_run(db)
+    db.flush()
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        first = c.post("/api/v1/scm/order-summary/export",
+                       json={"run_id": run_id, "format": "xlsx"})
+        assert first.status_code == 200, first.text
+
+        second = c.post("/api/v1/scm/order-summary/export",
+                        json={"run_id": run_id, "format": "pdf"})
+
+    assert second.status_code == 409, second.text
+    count = db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE source_entity_id = :r"
+    ), {"r": run_id}).scalar()
+    assert count == 1, f"the in-flight guard let a second row through: {count}"
+
+
+def test_export_post_rejects_api_key_only_principal(scm_app):
+    """AC-16c (security S4, `app/dependencies.py` rule): a write endpoint is never
+    reachable by `X-API-Key` alone - the route must gate on `require_permission`
+    (JWT-only `get_current_user`), not `require_permission_with_api_key`
+    (`get_current_user_or_api_key`, which the route still uses today). Builds a REAL,
+    resolvable integration key (not `as_user`, which overrides both current-user
+    dependencies unconditionally and would hide this) so the refusal is proven to be
+    about the AUTH METHOD, not a missing permission."""
+    from app.models.integration import Integration, IntegrationApiKey  # noqa: F401
+    from app.models.user import User, UserRoleAssignment
+    from app.services.integration_key_service import IntegrationKeyService
+
+    app, db, _gcu, _gcuak = scm_app
+    run_id = _seed_run(db)
+
+    user = User(email=f"{_u()}@integrations.local", name="ZZTOSD integration",
+               status="ACTIVE", is_integration=True)
+    db.add(user)
+    db.flush()
+    role_id = db.execute(text(
+        "SELECT id FROM user_roles WHERE slug = 'purchasing'"
+    )).scalar()
+    assert role_id, "role 'purchasing' not seeded"
+    db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+    integration = Integration(name=f"ZZTOSD-{_u()[:8]}", type="autocount_esb",
+                              act_as_user_id=user.id, is_active=True)
+    db.add(integration)
+    db.flush()
+    key = IntegrationKeyService(db).issue_key(integration)
+    db.flush()
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export",
+                      headers={"X-API-Key": key},
+                      json={"run_id": run_id, "format": "xlsx"})
+
+    assert resp.status_code in (401, 403), resp.text
+    count = db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE source_entity_id = :r"
+    ), {"r": run_id}).scalar()
+    assert count == 0, "an API-key-only caller was allowed to create a download row"
+
+
+def test_export_post_marks_failed_and_503_when_enqueue_raises(scm_app, monkeypatch):
+    """AC-16d (reviewer S4 / security N3): when `enqueue_job` raises, the already-created
+    row is marked failed and the route answers 503 - the buyer sees the sheet failed
+    rather than a row stuck in `pending` forever."""
+    from app.services import queue_service
+
+    app, db = _client(scm_app, "purchasing")
+    run_id = _seed_run(db)
+    db.flush()
+
+    def _boom(*a, **k):
+        raise RuntimeError("redis is away")
+
+    monkeypatch.setattr(queue_service, "enqueue_job", _boom)
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export",
+                      json={"run_id": run_id, "format": "xlsx"})
+
+    assert resp.status_code == 503, resp.text
+    row = db.execute(text(
+        "SELECT status, error FROM user_downloads WHERE source_entity_id = :r"
+    ), {"r": run_id}).mappings().first()
+    assert row is not None, "no download row was created before the enqueue attempt"
+    assert row["status"] == "failed", row["status"]
+    assert row["error"], "no error message was recorded"
+
+
 # =========================================================================== #
 # AC-17: the task
 # =========================================================================== #

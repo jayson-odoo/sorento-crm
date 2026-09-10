@@ -316,6 +316,11 @@ def test_location_grain_row_at_a_bin_reads_zero_supply(scm_app):
 # =========================================================================== #
 
 def test_explain_net_legs_sum_to_net_with_bin_spo_present(scm_app):
+    # Reviewer nit: this invariant holds on an UNHORIZONED run only - `net_breakdown`
+    # reads raw `np.committed` off `scm.net_position_v`, while `_planning_rows` reads the
+    # horizon-narrowed committed (`demand.horizon_committed_select_sql`); a horizoned run
+    # would make the drill's `committed` leg disagree with the rec's own frozen `net`. No
+    # `plan_horizon_date` is passed here, so that divergence does not apply to this test.
     _, db, _, _ = scm_app
     _use_level_basis(db)
     head, head_code, bin_, bin_code = _pool(db)
@@ -625,4 +630,127 @@ def test_sheet_supply_columns_equal_the_grid_cells(scm_app):
     )
     assert float(report_row["po_open_qty"]) == grid_po == 42.0, (
         report_row["po_open_qty"], grid_po,
+    )
+
+
+# =========================================================================== #
+# AC-3b (reviewer B1, Phase 3 fix round): the engine's gate is
+# `active_site_pool_sql` - active AND not project - not the segment-only
+# `site_pool_sql` every OTHER reader in this lane already uses. An INACTIVE,
+# non-project warehouse must count nowhere: not the engine's on_order/po_ordered,
+# not the sheet, not the PO book, not the SPO modal.
+# =========================================================================== #
+
+def _inactive_dealer_warehouse(db) -> tuple[str, str]:
+    """An INACTIVE, non-project warehouse (segment left unset, which the rule reads as
+    'dealer') - active_site_pool_sql must exclude it on the `is_active` leg alone, since
+    nothing about its segment marks it a project bin."""
+    code = _code("INACT")
+    wid = _mk_warehouse(db, code)
+    db.execute(text("UPDATE warehouses SET is_active = false WHERE id = :id"), {"id": wid})
+    return wid, code
+
+
+def test_inactive_site_pool_warehouse_counts_nowhere(scm_app):
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    head, head_code, bin_, bin_code = _pool(db)
+    inact, inact_code = _inactive_dealer_warehouse(db)
+    pid, code = _seed_product(db)
+    _set_level(db, pid, None, 100000)
+    _mk_stock(db, pid, head, 0)
+    _mk_stock(db, pid, inact, 0)
+    _spo(db, pid, head, 40)
+    _spo(db, pid, inact, 62)
+    _open_po(db, pid, head, 42)
+    _open_po(db, pid, inact, 176)
+
+    run_id = _plan(db, [head_code, inact_code], code)
+    row = _product_row(_recs(db, run_id, pid))
+
+    assert float(row["inputs"]["on_order"]) == 40.0, (
+        f"the inactive warehouse's SPO reached the engine's on_order: {row['inputs']}"
+    )
+    assert float(row["inputs"]["po_ordered"]) == 42.0, (
+        f"the inactive warehouse's PO reached the engine's po_ordered: {row['inputs']}"
+    )
+
+    from app.services.scm import summary_order_service as sos
+
+    assert sos.write_rows(db, run_id) == 1
+    report_row = sos.report(db, run_id=run_id)["rows"][0]
+    assert float(report_row["incoming_spo_qty"]) == 40.0, report_row["incoming_spo_qty"]
+    assert float(report_row["po_open_qty"]) == 42.0, report_row["po_open_qty"]
+
+    book = po_book_service.po_book_for_run(db, run_id)["po_book"]
+    key = f"{pid}:"
+    assert key in book, f"the product-grain key must still carry the active line: {book.keys()}"
+    remaining = sum(l["remaining"] for l in book[key])
+    assert remaining == 42.0, (
+        f"the inactive warehouse's PO reached the product-grain PO book: {book[key]}"
+    )
+
+    history = spo_supply.spo_history_for_product(db, run_id, pid)
+    open_total = sum(r["qty"] - r["received_qty"] for r in history["open"])
+    assert open_total == 40.0, (
+        f"the inactive warehouse's SPO reached the SPO modal's Open total: {history['open']}"
+    )
+
+
+# =========================================================================== #
+# AC-7 (amended): a LOCATION-grain row's SPO modal reads that row's OWN
+# warehouse only, not the product-wide site-pool sum a product-grain row reads -
+# the same grain rule the PO book already applies (`po_book_service._po_book_sql`'s
+# `pr.warehouse_id IS NOT NULL` branch). `spo_history_for_product` needs a
+# `warehouse_id` kwarg to tell the two grains apart, mirroring
+# `purchase_trend_service.purchase_trend_for_run`'s own `warehouse_id` param.
+# =========================================================================== #
+
+def test_spo_history_location_row_at_a_bin_lists_nothing(scm_app):
+    _, db, _, _ = scm_app
+    rrs.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET policy_type = 'reorder_point'"))
+    head, head_code, bin_, bin_code = _pool(db)
+    mwh_code = _code("MWH")
+    mwh = _mk_warehouse(db, mwh_code)
+    pid, code = _seed_product(db)
+    for wid in (head, bin_, mwh):
+        _mk_stock(db, pid, wid, 0)
+        _mk_demand(db, pid, wid, 1.0)
+        _retail_committed(db, pid, wid, 1)
+    _spo(db, pid, head, 40)
+    _spo(db, pid, bin_, 96)
+    _spo(db, pid, mwh, 30)
+
+    run_id = _plan(db, [head_code, bin_code, mwh_code], code)
+
+    result = spo_supply.spo_history_for_product(db, run_id, pid, warehouse_id=bin_)
+    assert result == {"open": [], "history": []}, (
+        f"a location-grain row at a project bin must list nothing: {result}"
+    )
+
+
+def test_spo_history_location_row_at_brw_lists_brw_only(scm_app):
+    _, db, _, _ = scm_app
+    rrs.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET policy_type = 'reorder_point'"))
+    head, head_code, bin_, bin_code = _pool(db)
+    mwh_code = _code("MWH")
+    mwh = _mk_warehouse(db, mwh_code)
+    pid, code = _seed_product(db)
+    for wid in (head, bin_, mwh):
+        _mk_stock(db, pid, wid, 0)
+        _mk_demand(db, pid, wid, 1.0)
+        _retail_committed(db, pid, wid, 1)
+    _spo(db, pid, head, 40)
+    _spo(db, pid, bin_, 96)
+    _spo(db, pid, mwh, 30)
+
+    run_id = _plan(db, [head_code, bin_code, mwh_code], code)
+
+    result = spo_supply.spo_history_for_product(db, run_id, pid, warehouse_id=head)
+    open_total = sum(r["qty"] - r["received_qty"] for r in result["open"])
+    assert open_total == 40.0, (
+        f"a location-grain row at BRW must read BRW's own 40, not the product-wide "
+        f"sum (which would fold in MWH's 30): {result['open']}"
     )
