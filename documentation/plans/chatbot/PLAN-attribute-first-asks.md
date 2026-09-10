@@ -1,6 +1,7 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: DRAFT, awaiting grill (10 Sep 2026). Lane `feat/chatbot-attribute-first-asks`.
+Status: IMPLEMENTED, Phase 3 review pending (11 Sep 2026). Lane `feat/chatbot-attribute-first-asks`.
+Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
 shipped as `product_predicate_service.py`; its n8n contract is obsolete, the Python lane owns
