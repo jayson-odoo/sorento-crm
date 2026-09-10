@@ -533,6 +533,13 @@ _PHRASE_STOPWORDS: frozenset[str] = NEGATOR_WORDS | frozenset(
         # not a description - "check stock srtwc286" is not naming a product
         # attribute called "check". Measured live: `unrecognized_terms: ["check"]`.
         "check", "checking", "list", "tell",
+        # R23 (console pass 6, AC-1347): the head's entity_op: reuse hands a
+        # carry-less "more" reply straight to the HAS branch once its own set
+        # is gone (R21/R19), and this word must never become a described-set
+        # term either. Measured live: "I don't know 'more' as a product type".
+        # "please" and "show" are already covered above; "show more" (the test's
+        # own two-word case) clears through the same per-word filter as both.
+        "more", "next", "lagi",
     }
 )
 
