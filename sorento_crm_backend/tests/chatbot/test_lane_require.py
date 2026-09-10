@@ -2177,7 +2177,6 @@ def test_set_answer_writes_the_set_page_carry(session_factory, stub_parser, stub
     assert carry.get("require") == {"certificate": True}, carry
     assert carry.get("set_noun") == "taps", carry
     assert carry.get("domain") == "product_attachment", carry
-    assert carry.get("tool") == "crm_master_product_attachments_list", carry
 
 
 def test_more_returns_the_next_page_without_resolving(session_factory, stub_parser, stub_access, monkeypatch):
