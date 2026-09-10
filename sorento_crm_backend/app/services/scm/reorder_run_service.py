@@ -3286,11 +3286,20 @@ def net_breakdown(db: Session, product_id: str,
     ``_planning_rows`` uses, so this drill's three legs foot to the SAME frozen ``net`` a
     product-grain row with a project-bin SPO/PO carries - a bin's supply must not explain
     a net the engine never counted it into. ``committed`` is untouched: the site-pool rule
-    is a SUPPLY rule, not a demand one."""
+    is a SUPPLY rule, not a demand one.
+
+    Company-scoped by hand on all three legs (security S3, review fix round A): raw SQL
+    never sees the ORM isolation filter, and `net_position_v`/`po_ordered_v` carry no
+    company column of their own to scope on - the predicate applies to the JOINed
+    `warehouses`/`sales_order_lines` instead, the same way `_planning_rows` scopes on
+    `w.company_id`/`p.company_id`.
+    """
     wh_pos = "AND np.warehouse_id = :wid" if warehouse_id else ""
     params: dict[str, Any] = {"pid": product_id}
     if warehouse_id:
         params["wid"] = warehouse_id
+    co_w, co_w_params = company_sql_predicate(db, "w.company_id", param_prefix="nbw")
+    co_w_clause = f"AND {co_w}" if co_w else ""
     pos = db.execute(text(f"""
         SELECT COALESCE(SUM(CASE WHEN {SITE_POOL_SQL} THEN np.quantity_on_hand ELSE 0 END), 0)
                  AS on_hand,
@@ -3299,8 +3308,8 @@ def net_breakdown(db: Session, product_id: str,
                COALESCE(SUM(np.committed), 0) AS committed
         FROM scm.net_position_v np
         JOIN warehouses w ON w.id = np.warehouse_id
-        WHERE np.product_id = :pid {wh_pos}
-    """), params).mappings().first()
+        WHERE np.product_id = :pid {wh_pos} {co_w_clause}
+    """), {**params, **co_w_params}).mappings().first()
 
     # Same view `_planning_rows` reads for the S10 checklist column - "still to come" on
     # an open, not-fully-received PO line. Summed the same way (product, optional
@@ -3312,10 +3321,12 @@ def net_breakdown(db: Session, product_id: str,
                  AS po_ordered
         FROM scm.po_ordered_v po
         JOIN warehouses w ON w.id = po.warehouse_id
-        WHERE po.product_id = :pid {wh_po}
-    """), params).scalar() or 0
+        WHERE po.product_id = :pid {wh_po} {co_w_clause}
+    """), {**params, **co_w_params}).scalar() or 0
 
     wh_sol = "AND sol.warehouse_id = :wid" if warehouse_id else ""
+    co_sol, co_sol_params = company_sql_predicate(db, "sol.company_id", param_prefix="nbs")
+    co_sol_clause = f"AND {co_sol}" if co_sol else ""
     sos = db.execute(text(f"""
         SELECT so.so_number,
                c.customer_name,
@@ -3327,9 +3338,10 @@ def net_breakdown(db: Session, product_id: str,
         WHERE sol.product_id = :pid
           AND so.status = 'open'
           AND sol.qty_ordered > sol.qty_delivered
+          {co_sol_clause}
           {wh_sol}
         ORDER BY so.order_date DESC NULLS LAST, so.so_number
-    """), params).mappings().all()
+    """), {**params, **co_sol_params}).mappings().all()
 
     on_hand = _fnum(pos["on_hand"]) or 0.0
     on_order = _fnum(pos["on_order"]) or 0.0

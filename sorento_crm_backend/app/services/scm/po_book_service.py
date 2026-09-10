@@ -34,6 +34,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 
 #: PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S2 (AC-9). `pairs` still keys off
@@ -47,7 +48,12 @@ from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 #: warehouse_id IS NOT DISTINCT FROM pol.warehouse_id` required a NULL pair to match a
 #: NULL line warehouse - which real PO lines essentially never carry - so the product-
 #: grain key never matched a receipt at all.
-_PO_BOOK_SQL = f"""
+#:
+#: Company-scoped by hand (security S2, review fix round A): `purchase_order_lines` is
+#: raw SQL here, so the ORM isolation filter never sees it - without `{co_clause}` another
+#: company's open PO line for the same product id would print as "Use PO" on this one.
+def _po_book_sql(co_clause: str) -> str:
+    return f"""
     WITH pairs AS (
         SELECT DISTINCT rr.product_id, rr.warehouse_id
         FROM scm.reorder_recommendation rr
@@ -71,6 +77,7 @@ _PO_BOOK_SQL = f"""
     WHERE po.status = ANY(ARRAY['active', 'received', 'partial', 'closed'])
       AND pol.line_status = 'open'
       AND pol.qty_ordered > pol.qty_received
+      {co_clause}
       AND (
             (pr.warehouse_id IS NULL AND {ACTIVE_SITE_POOL_SQL})
             OR (pr.warehouse_id IS NOT NULL AND pol.warehouse_id = pr.warehouse_id
@@ -84,8 +91,12 @@ def po_book_for_run(db: Session, run_id: str) -> dict[str, Any]:
     """Open PO lines for every RETAIL-facing pair the run planned, keyed
     ``product_id:warehouse_id``. A project-only cell is absent, which is what removes
     "Use PO" from a project row (P8)."""
+    co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="pbk")
+    co_clause = f"AND {co}" if co else ""
     out: dict[str, list[dict[str, Any]]] = {}
-    for r in db.execute(text(_PO_BOOK_SQL), {"run_id": run_id}).mappings().all():
+    for r in db.execute(
+        text(_po_book_sql(co_clause)), {"run_id": run_id, **co_params}
+    ).mappings().all():
         key = f"{r['product_id']}:{r['pair_warehouse_id'] or ''}"
         out.setdefault(key, []).append({
             "po_number": r["po_number"],
