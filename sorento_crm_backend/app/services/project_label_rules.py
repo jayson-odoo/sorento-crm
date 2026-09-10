@@ -58,12 +58,14 @@ _PROJECT_LINE_RE = re.compile(
 )
 
 #: A delivery-address block header: `DELIVERY ADDRESS`, `DELIVERY TO ADDRESS`,
-#: `DELIVER TO`, bare `DELIVERY`, or `SITE`. The value either rides on the same line after
-#: a colon, or - when the header has nothing after it (no colon, end of line) - is the next
-#: non-empty line. A header followed by text with NO colon (`DELIVERY 27/08/2026`, a date,
-#: not an address) matches neither branch and is correctly not a delivery block at all.
+#: `DELIVER TO`, bare `DELIVERY`, or `SITE` - the HEADER KEYWORD only, anchored, with no
+#: trailing `\s*` runs competing against each other (security review, SPL-B1: the old
+#: pattern's two adjacent `\s*` groups took 48s to reject a 100KB run of spaces after
+#: `DELIVERY`). What follows the header - a colon-led value, or nothing - is read in
+#: PYTHON, not the regex; see the loop below. The dead bare-`DELIVERY` alternative is
+#: gone too, since `DELIVERY(\s+TO)?(\s+ADDRESS)?` already matches bare `DELIVERY`.
 _DELIVERY_LINE_RE = re.compile(
-    r"^\W*(?:DELIVERY\s*(?:TO\s*)?(?:ADDRESS)?|DELIVER\s*TO|DELIVERY|SITE)\s*(?::\s*(.*)|)$",
+    r"^\W*(DELIVERY(\s+TO)?(\s+ADDRESS)?|DELIVER\s+TO|SITE)\b",
     re.IGNORECASE,
 )
 
@@ -71,14 +73,27 @@ _DELIVERY_LINE_RE = re.compile(
 #: `P-40-1`, `A1-13-09` - stripped so the label is the development's name, not its unit.
 _UNIT_TOKEN_RE = re.compile(r"^[A-Za-z]?-?\d{1,3}(?:-\d{1,3}){1,2}-?[A-Za-z]?,?\s+")
 
-#: Trailing punctuation/whitespace a value line is stripped of.
-_TRAILING_PUNCTUATION_RE = re.compile(r"[\s.,;:\-]+$")
+#: A value that is NOTHING but a date (`27/08/2026`, `27-08`, `27.08.2026`) - `DELIVERY:
+#: 27/08/2026` names when the goods arrive, not where, and a bare date is never a project
+#: (security review, SPL-S3).
+_DATE_ONLY_RE = re.compile(r"^\d{1,2}[/.-]\d{1,2}(?:[/.-]\d{2,4})?$")
+
+#: The longest line `label_from_note` will run a regex over, and the most lines it will
+#: look at (security review, SPL-B1). `internal_note` is capped to 8000 characters at the
+#: contract edge (`CanonicalSalesOrder`), but this function is also called directly by the
+#: Order Inquiry importer's own notes and migration 511's backfill over whatever a
+#: pre-existing row already holds - neither of which carries that cap, so the guard
+#: belongs here too.
+_MAX_NOTE_LINES = 200
+_MAX_LINE_LENGTH = 300
 
 
 def _clean_delivery_value(raw: str) -> Optional[str]:
     value = _UNIT_TOKEN_RE.sub("", raw.strip())
     value = value.rstrip(", ").strip()
-    return value or None
+    if not value or _DATE_ONLY_RE.match(value):
+        return None
+    return value
 
 
 def label_from_note(plain_text: Optional[str]) -> tuple[Optional[str], Optional[str]]:
@@ -96,15 +111,20 @@ def label_from_note(plain_text: Optional[str]) -> tuple[Optional[str], Optional[
     """
     if not plain_text:
         return (None, None)
-    lines = plain_text.splitlines()
+    lines = plain_text.splitlines()[:_MAX_NOTE_LINES]
 
     best: Optional[tuple[int, str]] = None
     for line in lines:
+        if len(line) > _MAX_LINE_LENGTH:
+            continue
         match = _PROJECT_LINE_RE.match(line)
         if not match:
             continue
         modifier = (match.group(1) or "").upper()
-        value = _TRAILING_PUNCTUATION_RE.sub("", match.group(2).strip())
+        # Plain `.rstrip` on a fixed, tiny set of characters - linear in the value's own
+        # length, not the regex substitution this replaced (security review, SPL-B1).
+        # `*` included: `*** PROJECT : PINE LEGACY ***` closes the same way it opens.
+        value = match.group(2).strip().rstrip(" \t.,;:-*")
         if not value:
             continue
         # A code alone is the label only when nothing better is on offer - a bare name
@@ -116,16 +136,24 @@ def label_from_note(plain_text: Optional[str]) -> tuple[Optional[str], Optional[
         return (best[1], "note")
 
     for index, line in enumerate(lines):
+        if len(line) > _MAX_LINE_LENGTH:
+            continue
         match = _DELIVERY_LINE_RE.match(line)
         if not match:
             continue
-        inline_value = (match.group(1) or "").strip()
+        # The header regex only ever matches the KEYWORD - what follows (a colon-led
+        # value, or nothing) is read here, not by the regex, so there is nothing left
+        # for two `\s*` runs to compete over.
+        remainder = line[match.end() :].lstrip()
+        inline_value = remainder[1:].strip() if remainder.startswith(":") else ""
         if inline_value:
             cleaned = _clean_delivery_value(inline_value)
             if cleaned:
                 return (cleaned, "delivery")
             continue
         for next_line in lines[index + 1 :]:
+            if len(next_line) > _MAX_LINE_LENGTH:
+                continue
             if next_line.strip():
                 cleaned = _clean_delivery_value(next_line)
                 if cleaned:
@@ -136,9 +164,11 @@ def label_from_note(plain_text: Optional[str]) -> tuple[Optional[str], Optional[
 
 
 #: An agent's own stamp on the order, not a project - `JF- 9/9 3.50`, `JH-21/08/2026 11.32
-#: AM`. Two shapes: initials-dash-date(/date), or initials-dash-digit generally.
+#: AM`: initials, a dash, and a date. The broader `^[A-Z]{2,8}-\d` this used to also carry
+#: killed real project names of the same shape (security review: `MRT-2 DEPOT`) - the
+#: date-bearing pattern alone is what actually distinguishes a stamp from a name.
 _AGENT_STAMP_RE = re.compile(
-    r"^[A-Z]{2,8}\s*-\s*\d{1,2}/\d{1,2}|^[A-Z]{2,8}-\d",
+    r"^[A-Z]{2,8}\s*-\s*\d{1,2}/\d{1,2}",
     re.IGNORECASE,
 )
 
@@ -165,6 +195,13 @@ def label_from_ref(ref: Optional[str]) -> Optional[str]:
     return trimmed
 
 
+#: The longest label ever written, and the single place that bound is enforced (security
+#: review, SPL-S2) - `apply_project_label` is the one choke point every writer (the
+#: AutoCount ingest, the Order Inquiry importer, migration 511's backfill) already goes
+#: through, so capping here bounds all three without a truncation of its own in each.
+_MAX_LABEL_LENGTH = 200
+
+
 def apply_project_label(order, label: Optional[str], source: Optional[str]) -> bool:
     """Writes `project_label`/`project_label_source` on `order` under the precedence gate.
 
@@ -174,6 +211,9 @@ def apply_project_label(order, label: Optional[str], source: Optional[str]) -> b
     Returns whether it wrote.
     """
     if not label or not source:
+        return False
+    label = label.strip()[:_MAX_LABEL_LENGTH] or None
+    if not label:
         return False
     new_rank = SOURCE_RANK.get(source, 0)
     if order.project_label:

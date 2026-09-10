@@ -230,7 +230,12 @@ class CanonicalSalesOrder(_CanonicalDocument):
     order_type: Optional[str] = Field(None, max_length=50)
     doc_date: Optional[date] = None
     requested_delivery_date: Optional[date] = None
-    internal_note: Optional[str] = None
+    # Capped so an unbounded note cannot reach `label_from_note` on every push (security
+    # review, SPL-B1) - AutoCount's own note control has never printed anything close to
+    # 8000 characters. The cap is enforced AFTER the validator below strips the RTF
+    # wrapper, not before it: a legitimately short note under RTF markup can easily run
+    # past 8000 raw characters and must not be rejected for it.
+    internal_note: Optional[str] = Field(None, max_length=8000)
     # AutoCount `SO.Ref` - PLAN-so-project-label.md. Free text, and read for a project
     # name (rule 3, `app.services.project_label_rules.label_from_ref`) only when the note
     # names none. Same precedent as `CanonicalShippingOrder.container_number` below,
@@ -239,16 +244,33 @@ class CanonicalSalesOrder(_CanonicalDocument):
     ref: Optional[str] = Field(None, max_length=255)
     lines: list[CanonicalSalesOrderLine] = Field(default_factory=list, max_length=2000)
 
-    @field_validator("internal_note")
+    @field_validator("internal_note", mode="before")
     @classmethod
-    def _plain_text_note(cls, value: Optional[str]) -> Optional[str]:
+    def _plain_text_note(cls, value: Any) -> Any:
         """AutoCount's note control pushes raw RTF - cleaned here, once, at the edge.
 
         Every reader (`SalesOrderDetail`, `project_fulfilment_board_service`, SCM, MCP)
         reads the stored column, so a validator here is what keeps them all plain rather
         than each one re-deriving it from `{\\rtf1...}`.
+
+        `mode="before"` - runs BEFORE the field's own `max_length=8000`, and truncates to
+        it here rather than letting that check reject the push: RTF markup routinely runs
+        several times longer than the plain text it wraps, so a legitimately short note is
+        rejected on its raw byte count if the cap is checked before stripping. Truncating
+        (not rejecting) the rare oversized PLAIN note is the same choice `label_from_ref`
+        and every other free-text field on this contract makes - cap the input, do not
+        fail the document over a note nobody reads past the first paragraph anyway.
+
+        A non-string value (an int, a list) is passed through unchanged so Pydantic's own
+        type check still raises its usual 422 on it - `mode="before"` sees the raw JSON
+        value, not the `Optional[str]` this field declares.
         """
-        return strip_rtf(value)
+        if not isinstance(value, str):
+            return value
+        plain = strip_rtf(value)
+        if plain and len(plain) > 8000:
+            plain = plain[:8000]
+        return plain
 
 
 class CanonicalPurchaseOrder(_CanonicalDocument):

@@ -119,6 +119,29 @@ def test_a2_the_list_returns_project_label_and_query_finds_it(scm_app):
     assert match["project_label"] == "BAMBOO RESIDENCE / KUALA LUMPUR"
 
 
+def test_a2b_sort_by_project_label_orders_the_list_by_it(scm_app):
+    """Security review, SPL-S2: the frontend grid's Project column advertises a sortable
+    header, but `sort_cols` in `sales_order_service.list` had no `project_label` entry -
+    clicking it silently sorted by `created_at` instead, the dict's fallback column.
+    """
+    app, db, so_a = _seed_order(scm_app, label="ZETA PROJECT", source="inquiry")
+    _, _, so_b = _seed_order(scm_app, label="ALPHA PROJECT", source="inquiry")
+
+    with TestClient(app) as c:
+        res = c.get(
+            "/api/v1/scm/sales-orders",
+            params={"sort": "project_label", "dir": "asc", "query": MARKER, "limit": 100},
+        )
+
+    assert res.status_code == 200, res.text
+    ids_in_label_order = [
+        r["id"] for r in res.json()["data"] if r["id"] in {str(so_a.id), str(so_b.id)}
+    ]
+    # ALPHA before ZETA - ascending by the label, not by insertion order (so_a was seeded
+    # first and would lead under the old `created_at` fallback).
+    assert ids_in_label_order == [str(so_b.id), str(so_a.id)]
+
+
 # ------------------------------------------------------------------ AC-A3, the board
 
 
@@ -172,3 +195,11 @@ def test_a3_the_board_row_reads_the_column_before_falling_back_to_the_note():
 
         cell = next(c for c in board["cells"] if c["item_code"] == product.product_code)
         assert cell["contributions"][0]["project_label"] == "COLUMN LABEL"
+
+        # SPL-S4 (security review): the SAME order, read through the cell drill-down's
+        # Documents list (`stock_detail`'s `_so_row`) rather than `build()`'s own
+        # `_project_label` - a DIFFERENT code path that selects `SalesOrder.project_label`
+        # by hand (project_fulfilment_board_service.py's raw-column query) and has its own
+        # note fallback. Reverting either path back to note-only must go red here.
+        detail = FulfilmentBoardService(db).stock_detail(str(product.id), str(warehouse.id))
+        assert detail["sales_orders"][0]["project_label"] == "COLUMN LABEL"

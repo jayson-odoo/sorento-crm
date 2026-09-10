@@ -8,8 +8,15 @@ since it only mutates two attributes and (when it writes) nothing else.
   AC-R5..R9   `label_from_note` - the AutoCount SO note, in its two shapes
   AC-R10      `label_from_ref` - the AutoCount SO `Ref`
   AC-R11      `apply_project_label` - the precedence gate
+
+Security review fix round (SPL-B1/S2/S3 and nits): `_DELIVERY_LINE_RE` and the trailing-
+punctuation strip in `label_from_note` used to backtrack quadratically on a long run of
+spaces; `apply_project_label` had no length cap; a bare date after a `DELIVERY:` colon
+read as a label; the old `_AGENT_STAMP_RE` killed real dash-numbered project names.
 """
 from __future__ import annotations
+
+import time
 
 from app.models.order import SalesOrder
 from app.services.project_label_rules import (
@@ -69,6 +76,9 @@ class TestLabelFromNoteProjectLine:
         assert source == "note"
         assert label.startswith("PROPOSED CONSTRUCTION OF 110 UNITS")
 
+    def test_trailing_asterisks_are_stripped_like_any_other_punctuation(self):
+        assert label_from_note("*** PROJECT : PINE LEGACY ***") == ("PINE LEGACY", "note")
+
 
 class TestLabelFromNoteDeliveryBlock:
     def test_r7_a_delivery_block_names_the_site_line_with_source_delivery(self):
@@ -93,6 +103,17 @@ class TestLabelFromNoteDeliveryBlock:
         assert label_from_note(
             "DELIVERY ADDRESS\nSOME SITE\nPROJECT: ZUS COFFEE @ KLANG VALLEY AREA"
         ) == ("ZUS COFFEE @ KLANG VALLEY AREA", "note")
+
+
+class TestLabelFromNoteDeliveryDateGuard:
+    """Security review, SPL-S3: `DELIVERY: 27/08/2026` names WHEN the goods arrive, not
+    where - a bare date is never a project."""
+
+    def test_a_bare_date_after_the_colon_is_no_label(self):
+        assert label_from_note("DELIVERY: 27/08/2026") == (None, None)
+
+    def test_delivery_date_header_is_still_no_label(self):
+        assert label_from_note("DELIVERY DATE : 27/08/2026") == (None, None)
 
 
 class TestLabelFromNoteNoMatch:
@@ -127,6 +148,13 @@ class TestLabelFromRef:
         assert label_from_ref("THE MET KL") == "THE MET KL"
         assert label_from_ref("PINNACLE SUBANG") == "PINNACLE SUBANG"
         assert label_from_ref("KSL BLOSSOM 733U @ SETIA ALAM") == "KSL BLOSSOM 733U @ SETIA ALAM"
+
+    def test_a_dash_numbered_project_name_is_not_mistaken_for_an_agent_stamp(self):
+        # Security review: the old `_AGENT_STAMP_RE` carried a second, broader
+        # alternative (`^[A-Z]{2,8}-\d`) that killed real project names of exactly this
+        # shape. Only the date-bearing stamp (`JH-21/08/2026 11.32 AM`, tested above)
+        # actually distinguishes an agent's own note from a project.
+        assert label_from_ref("MRT-2 DEPOT") == "MRT-2 DEPOT"
 
 
 class TestApplyProjectLabel:
@@ -172,3 +200,49 @@ class TestApplyProjectLabel:
 
     def test_source_rank_is_the_documented_ladder(self):
         assert SOURCE_RANK == {"inquiry": 4, "note": 3, "ref": 2, "delivery": 1}
+
+    def test_a_300kb_inquiry_cell_yields_a_200_char_label(self):
+        # Security review, SPL-S2: `apply_project_label` is the ONE choke point every
+        # writer (ingest, importer, migration 511's backfill) goes through, so the length
+        # cap belongs here rather than in each of the three callers.
+        huge_label = "BAMBOO RESIDENCE " * 17_647  # ~300 KB
+        order = SalesOrder()
+
+        assert apply_project_label(order, huge_label, "inquiry") is True
+        assert order.project_label == huge_label.strip()[:200]
+        assert len(order.project_label) == 200
+
+    def test_a_label_that_is_blank_after_stripping_does_not_write(self):
+        order = SalesOrder()
+        assert apply_project_label(order, "   ", "note") is False
+        assert order.project_label is None
+        assert order.project_label_source is None
+
+
+class TestLabelFromNotePerformance:
+    """Security review, SPL-B1: `_DELIVERY_LINE_RE`'s two adjacent `\\s*` runs and the
+    regex-based trailing-punctuation strip both backtracked quadratically - measured at
+    48s and 10.7s respectively on the payloads below, from a single call this module's
+    own callers cannot avoid (the AutoCount ingest route runs a batch of up to 1000 such
+    notes through `label_from_note` synchronously, once per push).
+    """
+
+    _BUDGET_SECONDS = 0.5
+
+    def test_a_long_run_of_spaces_after_delivery_resolves_quickly(self):
+        payload = "DELIVERY" + " " * 100_000 + "x"
+        start = time.perf_counter()
+        label_from_note(payload)
+        assert time.perf_counter() - start < self._BUDGET_SECONDS
+
+    def test_a_long_run_of_spaces_after_a_project_line_resolves_quickly(self):
+        payload = "PROJECT: A" + " " * 50_000 + "b"
+        start = time.perf_counter()
+        label_from_note(payload)
+        assert time.perf_counter() - start < self._BUDGET_SECONDS
+
+    def test_a_100kb_project_line_resolves_quickly(self):
+        payload = "PROJECT: " + "x" * 100_000
+        start = time.perf_counter()
+        label_from_note(payload)
+        assert time.perf_counter() - start < self._BUDGET_SECONDS

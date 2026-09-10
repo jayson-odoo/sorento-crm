@@ -1192,6 +1192,7 @@ class SalesOrderService:
             "status": SalesOrder.status,
             "priority": SalesOrder.priority,
             "created_at": SalesOrder.created_at,
+            "project_label": SalesOrder.project_label,
             # The START of the delivery span the list prints - "what is due first", which is
             # the question that column is scanned with. In SQL over the SAME
             # `min(required_date)` the serializer prints, so the header's order and the cell

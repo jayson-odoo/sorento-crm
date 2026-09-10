@@ -1,6 +1,6 @@
 # PLAN: project label on the sales order
 
-Status: planned (2026-09-10)
+Status: in review (2026-09-10)
 Owner call: 2026-09-10, "I am quite okay with your plan"; label = the part of the Order Inquiry cell AFTER the first slash, the part before is the customer.
 UAC: `so-project-label-acceptance-criteria.md`
 Lane: `feat/so-project-label`, stacked on `fix/so-note-rtf-plain-text` (needs plain-text notes; migration chains after `510_strip_rtf_so_notes`). PR base = that branch until it merges, then main.
