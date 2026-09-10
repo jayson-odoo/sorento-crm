@@ -641,3 +641,53 @@ describe('FulfilmentBoardListView: one-click save on the row (D15)', () => {
     ).not.toBeInTheDocument();
   });
 });
+
+/**
+ * S3 (`PLAN-local-supplier-oi-routing.md`, AC-1.1): a `local` Buy raises no Order Inquiry on
+ * confirm, marked with a `Local` pill on the Buy option row and in the Suggested / Decided
+ * cell. Overseas lines carry no pill.
+ */
+describe('FulfilmentBoardListView: the Local pill', () => {
+  it('renders Local pill in Suggested and Decided for local Buy only', async () => {
+    const local = contribution({
+      key: 'so-1:line-10',
+      so_number: 'SO397450',
+      line_no: 10,
+      buy_origin: 'local',
+    });
+    const overseas = contribution({
+      key: 'so-2:line-20',
+      sales_order_id: 'so-2',
+      line_id: 'core-line-20',
+      so_number: 'SO500001',
+      line_no: 20,
+      buy_origin: 'overseas',
+    });
+
+    renderView({ contributions: [local, overseas] });
+
+    await screen.findByText('SO397450');
+    // Exactly one Local badge, on the local row's Suggested cell.
+    expect(screen.getAllByText('Local')).toHaveLength(1);
+  });
+
+  it('carries the Local pill into the Decided cell once the row is decided', async () => {
+    const local = contribution({ key: 'so-1:line-10', buy_origin: 'local' });
+    renderView({
+      contributions: [local],
+      draft: { [local.key]: { verdict: 'approved' } },
+    });
+
+    await screen.findByText('SO397450');
+    // Suggested AND Decided both carry the pill now (AC-1.1 says both cells).
+    expect(screen.getAllByText('Local').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shows no Local pill for an overseas line', async () => {
+    const overseas = contribution({ key: 'so-1:line-10', buy_origin: 'overseas' });
+    renderView({ contributions: [overseas] });
+
+    await screen.findByText('SO397450');
+    expect(screen.queryByText('Local')).not.toBeInTheDocument();
+  });
+});

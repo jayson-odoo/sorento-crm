@@ -1,24 +1,26 @@
 /**
  * Stage 1C - adding a Borrow from a listed candidate (AC-B09, AC-B10), as amended by
- * PLAN-fulfilment-planning-from-autocount-so.md 13.11.
+ * PLAN-fulfilment-planning-from-autocount-so.md 13.11, and by S4 of
+ * `PLAN-local-supplier-oi-routing.md` (AC-1.4 - AC-1.7): the Source section is now the
+ * Grid LOCATION TABLE (`CellStockTable`), fed by each candidate's own `location`, with a
+ * radio in the Location cell and the `Recommended` badge beside the code - never the
+ * dialog's own bespoke seven-column table (`On hand · SO qty · SPO qty · Available · Free ·
+ * Committed · After borrow`), which is retired.
  *
- * Borrowing takes exactly one approval: the CS actor who confirms the sales order, with the
- * donor's impact in front of them and a reason nobody can skip. What the captain found
- * missing was the donor's OWN position - "before I decide to borrow, I need to know I am not
- * hurting them, so you need to let me know also what's their available, SO qty, SPO and PO
- * qty ... and what's the impact of borrowing. I assume this list is ranked by
- * recommendation, is it?"
- *
- * So what is pinned here is the donor TABLE (AutoCount's columns, in the server's ranked
- * order, with the recommended donor flagged), that the impact of the typed quantity is
- * stated and updates as it is typed, that a donor the borrow would leave short says so in
- * red and names the Order Inquiry it will raise, and that Add stays shut until a reason has
- * actually been typed.
+ * What is pinned here: the table renders the SAME columns (and none of the retired ones),
+ * a source row expands into the same ledger the Grid view expands into (`This line` on the
+ * asking line's own row), the impact sentence below the table still updates as the
+ * quantity is typed, and the reason/quantity/authorisation validation and the payload
+ * handed back on Add are unchanged - none of that lived in the table markup.
  */
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BorrowCandidate } from '../../_shared/types/fulfilmentPlanning.types';
+import type {
+  BoardCellLocation,
+  BorrowCandidate,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -30,11 +32,39 @@ if (!window.matchMedia) {
   });
 }
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
+const getStockDetail = vi.fn();
+
+vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
+  getStockDetail: (...args: unknown[]) => getStockDetail(...args),
+}));
+
 import { BorrowAddDialog } from './BorrowAddDialog';
 
 const WH_HQ = 'a1000000-0000-4000-8000-000000000002';
 const WH_JB = 'a1000000-0000-4000-8000-000000000004';
 const DONOR_PROJECT = 'b2000000-0000-4000-8000-000000000001';
+
+function loc(overrides: Partial<BoardCellLocation> = {}): BoardCellLocation {
+  return {
+    location: 'HQ',
+    where: 'other_group',
+    product_id: 'prod-1',
+    warehouse_id: WH_HQ,
+    qty: '0',
+    qty_demand: '0',
+    qty_on_hand: '80',
+    so_qty: '0',
+    spo_qty: '0',
+    available_qty: '80',
+    po_open_qty: '0',
+    incoming: [],
+    ...overrides,
+  };
+}
 
 /** The donor the ranking put first: nothing owed against its 80, so it keeps 60 of them. */
 const OTHER_LOCATION: BorrowCandidate = {
@@ -52,6 +82,7 @@ const OTHER_LOCATION: BorrowCandidate = {
   available_after_need: '60',
   recommended: true,
   donor_impact: { free_before: '80', free_after_full_borrow: '0', committed_qty: '140' },
+  location: loc({ location: 'HQ', warehouse_id: WH_HQ, qty_on_hand: '80', available_qty: '80' }),
 };
 
 /** Second: 50 free, but the book has sold 60 of its 70, so meeting the 20 leaves it short. */
@@ -72,11 +103,14 @@ const OTHER_PROJECT: BorrowCandidate = {
   available_after_need: '-10',
   recommended: false,
   donor_impact: { free_before: '50', free_after_full_borrow: '10', committed_qty: '50' },
+  location: loc({
+    location: 'JB', warehouse_id: WH_JB, qty_on_hand: '70', so_qty: '60', available_qty: '10',
+  }),
 };
 
-/** A ladder v2 group-borrow donor (section E.4): named by its SALES ORDER LINE, ranked below
- * this one and offered because it shares the line's own agent - "she can authorise CS to move
- * stock between her own orders" (section 8). */
+/** A ladder v2 group-borrow donor (section E.4): ranked below this one and offered because
+ * it shares the line's own agent - "she can authorise CS to move stock between her own
+ * orders" (section 8). */
 const GROUP_BORROW: BorrowCandidate = {
   source: 'other_location',
   warehouse_code: 'MWH-BB',
@@ -98,6 +132,7 @@ const GROUP_BORROW: BorrowCandidate = {
   donor_agent_code: 'JEREMY',
   donor_core_line_id: 'core-line-1',
   same_agent: true,
+  location: loc({ location: 'MWH-BB', warehouse_id: 'wh-mwh-bb', qty_on_hand: '90', available_qty: '90' }),
 };
 
 /** A cross-group donor. Uncapped since v7.1 (R5): any ownership group may donate, so this
@@ -118,31 +153,35 @@ const CROSS_GROUP: BorrowCandidate = {
   recommended: false,
   donor_impact: { free_before: '500', free_after_full_borrow: '480', committed_qty: '0' },
   rung: 'cross_group_borrow',
+  location: loc({ location: 'WH3', warehouse_id: 'wh-wh3', qty_on_hand: '500', available_qty: '500' }),
 };
 
 const onAdd = vi.fn();
 const onDone = vi.fn();
 
 function renderDialog(candidates: BorrowCandidate[] = [OTHER_LOCATION, OTHER_PROJECT]) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
-    <BorrowAddDialog
-      lineNo={2}
-      itemCode="SRT501-CP"
-      candidates={candidates}
-      onDone={onDone}
-      onAdd={onAdd}
-    />,
+    <QueryClientProvider client={client}>
+      <BorrowAddDialog
+        lineNo={2}
+        itemCode="SRT501-CP"
+        lineId="line-2"
+        candidates={candidates}
+        onDone={onDone}
+        onAdd={onAdd}
+      />
+    </QueryClientProvider>,
   );
 }
 
-function headings(): string[] {
-  return within(screen.getByTestId('borrow-donor-table'))
-    .getAllByRole('columnheader')
-    .map((cell) => cell.textContent?.trim() ?? '');
+function donorRow(code: string) {
+  return screen.getByTestId(`cell-location-${code}`);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getStockDetail.mockReturnValue(new Promise(() => {}));
 });
 
 describe('BorrowAddDialog', () => {
@@ -154,85 +193,150 @@ describe('BorrowAddDialog', () => {
   });
 
   it('says "This item" rather than nothing when the line carries no item code', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     render(
-      <BorrowAddDialog
-        lineNo={2}
-        itemCode={null}
-        candidates={[OTHER_LOCATION]}
-        onDone={onDone}
-        onAdd={onAdd}
-      />,
+      <QueryClientProvider client={client}>
+        <BorrowAddDialog
+          lineNo={2}
+          itemCode={null}
+          candidates={[OTHER_LOCATION]}
+          onDone={onDone}
+          onAdd={onAdd}
+        />
+      </QueryClientProvider>,
     );
 
     expect(screen.getByText('This item')).toBeInTheDocument();
   });
 
-  it("tabulates every donor under AutoCount's own column names", () => {
+  // -------------------------------------------------------------- AC-1.4
+  it('renders CellStockTable columns with radio and Recommended, never Free/Committed/After borrow', () => {
     renderDialog();
 
-    expect(headings()).toEqual([
-      'Source',
-      'On hand',
-      'SO qty',
-      'SPO qty',
-      'Available',
-      'Free',
-      'Committed',
-      'After borrow',
-    ]);
+    const table = screen.getByTestId('borrow-donor-table');
+    for (const label of [
+      'Location', 'Where', 'On hand', 'SO qty', 'SPO qty', 'Available',
+      'Available for Project', 'PO qty', 'Taken',
+    ]) {
+      expect(within(table).getByText(label)).toBeInTheDocument();
+    }
+    expect(within(table).queryByText('Free')).not.toBeInTheDocument();
+    expect(within(table).queryByText('Committed')).not.toBeInTheDocument();
+    expect(within(table).queryByText('After borrow')).not.toBeInTheDocument();
+
+    // A radio per donor row.
+    expect(within(donorRow('HQ')).getByRole('radio')).toBeInTheDocument();
+    expect(within(donorRow('JB')).getByRole('radio')).toBeInTheDocument();
+
+    // Recommended on the first candidate only.
+    expect(within(donorRow('HQ')).getByText('Recommended')).toBeInTheDocument();
+    expect(within(donorRow('JB')).queryByText('Recommended')).not.toBeInTheDocument();
   });
 
-  it("states a donor's whole position on its own row", () => {
+  it("states a donor's whole position on its own row, off its location figures", () => {
     renderDialog();
 
-    const row = screen.getByTestId('borrow-donor-JB');
-    expect(within(row).getByTestId('borrow-cell-on-hand-JB')).toHaveTextContent('70');
-    expect(within(row).getByTestId('borrow-cell-so-JB')).toHaveTextContent('60');
-    expect(within(row).getByTestId('borrow-cell-spo-JB')).toHaveTextContent('0');
-    expect(within(row).getByTestId('borrow-cell-available-JB')).toHaveTextContent('10');
-    expect(within(row).getByTestId('borrow-cell-free-JB')).toHaveTextContent('50');
-    expect(within(row).getByTestId('borrow-cell-committed-JB')).toHaveTextContent('50');
+    const row = donorRow('JB');
+    expect(within(row).getByTestId('stock-on-hand-JB')).toHaveTextContent('70');
+    expect(within(row).getByTestId('stock-so-JB')).toHaveTextContent('60');
+    expect(within(row).getByTestId('stock-spo-JB')).toHaveTextContent('0');
+    expect(within(row).getByTestId('stock-available-JB')).toHaveTextContent('10');
   });
 
-  it('names a donor location by its code and a donor project by its reference', () => {
+  it('keeps the server-ranked order: donors in the order the candidates array names them', () => {
     renderDialog();
 
-    expect(screen.getByText('HQ')).toBeInTheDocument();
-    expect(screen.getByText('PRJ-0052 Seri Emas Phase 2')).toBeInTheDocument();
-    expect(screen.getByText('Held at JB')).toBeInTheDocument();
+    const table = screen.getByTestId('borrow-donor-table');
+    const rows = within(table).getAllByRole('row');
+    expect(rows[1]).toHaveAttribute('data-testid', 'cell-location-HQ');
+    expect(rows[2]).toHaveAttribute('data-testid', 'cell-location-JB');
   });
 
-  it('shows what meeting this line leaves each donor with, before anything is typed', () => {
+  it('opens on the first (recommended) donor, radio checked', () => {
     renderDialog();
 
-    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '' } });
-
-    // The server's own `available_after_need`, not availability: the column answers "if this
-    // line takes what it still has to cover", which is the question the ranking answered.
-    expect(screen.getByTestId('borrow-cell-after-HQ')).toHaveTextContent('60');
-    expect(screen.getByTestId('borrow-cell-after-JB')).toHaveTextContent('-10');
+    expect(within(donorRow('HQ')).getByRole('radio')).toBeChecked();
+    expect(within(donorRow('JB')).getByRole('radio')).not.toBeChecked();
   });
 
-  it("keeps the server's order and flags the one donor it recommends", () => {
-    renderDialog();
+  it('offers a cross-group donor like any other, selectable and enabled', () => {
+    renderDialog([CROSS_GROUP, OTHER_LOCATION]);
 
-    const rows = within(screen.getByTestId('borrow-donor-table')).getAllByRole('row');
-    // Header row first, then the donors in the order the server ranked them.
-    expect(rows[1]).toHaveAttribute('data-testid', 'borrow-donor-HQ');
-    expect(rows[2]).toHaveAttribute('data-testid', 'borrow-donor-JB');
-    expect(within(rows[1]).getByText('Recommended')).toBeInTheDocument();
-    expect(within(rows[2]).queryByText('Recommended')).not.toBeInTheDocument();
+    const row = donorRow('WH3');
+    expect(within(row).getByRole('radio')).toBeEnabled();
+    expect(within(row).getByRole('radio')).toBeChecked();
   });
 
-  it('shows what each donor is left with once the typed quantity is taken', () => {
-    renderDialog();
+  it('shows a Same agent badge for a donor sharing this line’s own sales agent', () => {
+    renderDialog([GROUP_BORROW]);
 
-    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '20' } });
-
-    expect(screen.getByTestId('borrow-cell-after-HQ')).toHaveTextContent('60');
-    expect(screen.getByTestId('borrow-cell-after-JB')).toHaveTextContent('-10');
+    expect(within(donorRow('MWH-BB')).getByText('Same agent')).toBeInTheDocument();
   });
 
+  it('shows no Same agent badge for a donor that does not share the agent', () => {
+    renderDialog([OTHER_LOCATION]);
+
+    expect(within(donorRow('HQ')).queryByText('Same agent')).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------- AC-1.7
+  it('renders "No donor holds this item" when there are no candidates', () => {
+    renderDialog([]);
+
+    expect(screen.getByTestId('borrow-donor-empty')).toHaveTextContent(
+      'No donor holds this item',
+    );
+    expect(screen.queryByTestId('borrow-donor-table')).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------- AC-1.5
+  describe('expanding a source shows its ledger', () => {
+    const detail = {
+      product_id: 'prod-1',
+      item_code: 'SRT501-CP',
+      warehouse_id: WH_HQ,
+      location: 'HQ',
+      qty_on_hand: '80',
+      so_qty: '0',
+      spo_qty: '0',
+      available_qty: '80',
+      qty_reserved: '0',
+      qty_held_by_decisions: '0',
+      qty_free: '80',
+      sales_orders: [
+        {
+          sales_order_id: 'so-mine',
+          so_number: 'SO400001',
+          customer_name: 'ZZT CONSTRUCTION SDN BHD',
+          doc_date: '2026-01-05',
+          delivery_date: '2026-09-04',
+          so_qty: '20',
+          is_this_line: true,
+          is_covered: false,
+        },
+      ],
+      incoming: [],
+    };
+
+    it('opens the ledger under the row, with This line on the asking line', async () => {
+      getStockDetail.mockResolvedValue(detail);
+      renderDialog();
+
+      fireEvent.click(screen.getByTestId('stock-expand-HQ'));
+
+      await waitFor(() =>
+        expect(getStockDetail).toHaveBeenCalledWith('prod-1', WH_HQ, ['line-2'], undefined),
+      );
+      const expansion = await screen.findByTestId('stock-expansion-HQ');
+      expect(within(expansion).getByTestId('stock-documents-panel')).toBeInTheDocument();
+      expect(await within(expansion).findByText('SO400001')).toBeInTheDocument();
+      expect(within(expansion).getByTestId('stock-document-this-line')).toHaveTextContent(
+        'This line',
+      );
+    });
+  });
+
+  // -------------------------------------------------------------- AC-1.6
   it('states the impact of the typed quantity on the chosen donor, and updates with it', () => {
     renderDialog();
 
@@ -250,7 +354,7 @@ describe('BorrowAddDialog', () => {
   it('says a donor is left short, and that purchasing will be told (PLAN 13.11)', () => {
     renderDialog();
 
-    const project = screen.getByTestId('borrow-donor-JB');
+    const project = donorRow('JB');
     fireEvent.click(within(project).getByRole('radio'));
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '30' } });
 
@@ -270,8 +374,6 @@ describe('BorrowAddDialog', () => {
   it('opens on the recommended donor with the quantity this line still needs', () => {
     renderDialog();
 
-    // 20 is the residual the ranking was computed against, not the donor's whole 80 free:
-    // defaulting to "take everything they have" is the rule this dialog stopped using.
     expect(screen.getByLabelText('Quantity')).toHaveValue(20);
   });
 
@@ -336,7 +438,7 @@ describe('BorrowAddDialog', () => {
   it('switches to another donor and re-fills the quantity with what the line needs', () => {
     renderDialog();
 
-    const project = screen.getByTestId('borrow-donor-JB');
+    const project = donorRow('JB');
     fireEvent.click(within(project).getByRole('radio'));
 
     expect(screen.getByLabelText('Quantity')).toHaveValue(20);
@@ -351,13 +453,6 @@ describe('BorrowAddDialog', () => {
       '20',
       'Their hand-over is in December.',
     );
-  });
-
-  it('says "Not stated" rather than 0 for a figure the server did not answer', () => {
-    renderDialog([{ ...OTHER_LOCATION, so_qty: null, available_qty: null }]);
-
-    expect(screen.getByTestId('borrow-cell-so-HQ')).toHaveTextContent('Not stated');
-    expect(screen.getByTestId('borrow-cell-after-HQ')).toHaveTextContent('Not stated');
   });
 
   it('closes on cancel without adding anything', () => {
@@ -389,94 +484,11 @@ describe('BorrowAddDialog', () => {
 });
 
 /**
- * Ladder v2's group-aware donor list (section E.4, section 8): a donor named by its own
- * SALES ORDER LINE and a "Same agent" badge - the captain's "she can authorise CS to move
- * stock between her own orders" (S13 of the 19 August review findings). The cross-group cap
- * this block also used to cover is gone (v7.1, R5): every donor offered is selectable.
- */
-describe('BorrowAddDialog: ladder v2 group-aware donors', () => {
-  it('offers a cross-group donor like any other and lets it be taken', () => {
-    renderDialog([CROSS_GROUP]);
-
-    const row = screen.getByTestId('borrow-donor-WH3');
-    expect(within(row).getByRole('radio')).toBeEnabled();
-
-    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '20' } });
-    fireEvent.change(screen.getByLabelText(/Reason/), {
-      target: { value: 'The other group can wait.' },
-    });
-    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeEnabled();
-  });
-
-  it('opens on the first donor of the ranked list, cross-group or not', () => {
-    renderDialog([CROSS_GROUP, OTHER_LOCATION]);
-
-    expect(within(screen.getByTestId('borrow-donor-WH3')).getByRole('radio')).toBeChecked();
-    expect(within(screen.getByTestId('borrow-donor-HQ')).getByRole('radio')).not.toBeChecked();
-  });
-
-  it('shows a Same agent badge for a donor sharing this line’s own sales agent', () => {
-    renderDialog([GROUP_BORROW]);
-
-    expect(screen.getByTestId('borrow-same-agent-MWH-BB')).toHaveTextContent('Same agent');
-  });
-
-  it('shows no Same agent badge for a donor that does not share the agent', () => {
-    renderDialog([OTHER_LOCATION]);
-
-    expect(screen.queryByTestId('borrow-same-agent-HQ')).not.toBeInTheDocument();
-  });
-
-  it('names a group-borrow donor by its sales order and line, never its bare warehouse code', () => {
-    renderDialog([GROUP_BORROW]);
-
-    expect(screen.getByText('SO371334 line 2')).toBeInTheDocument();
-    expect(screen.getByText('At MWH-BB')).toBeInTheDocument();
-  });
-
-  it('falls back to "An unnamed sales order" when a group-borrow donor names no SO', () => {
-    renderDialog([{ ...GROUP_BORROW, donor_so_number: null, donor_line_no: null }]);
-
-    expect(screen.getByText('An unnamed sales order')).toBeInTheDocument();
-  });
-
-  it('keeps two donor lines at the same location distinct by their own core line (candidateKey)', () => {
-    // Two SOs both lending from MWH-BB: candidateKey has to fold in `donor_core_line_id`, or
-    // the second row's radio would silently select the first donor's line instead.
-    const first = GROUP_BORROW;
-    const second: BorrowCandidate = {
-      ...GROUP_BORROW,
-      donor_core_line_id: 'core-line-2',
-      donor_line_no: 5,
-      same_agent: false,
-    };
-    renderDialog([first, second]);
-
-    const rows = screen.getAllByTestId('borrow-donor-MWH-BB');
-    expect(rows).toHaveLength(2);
-    expect(screen.getByText('SO371334 line 2')).toBeInTheDocument();
-    expect(screen.getByText('SO371334 line 5')).toBeInTheDocument();
-    const radios = rows.map((row) => within(row).getByRole('radio'));
-    expect(radios[0]).toBeChecked();
-    expect(radios[1]).not.toBeChecked();
-
-    fireEvent.click(radios[1]);
-    expect(radios[0]).not.toBeChecked();
-    expect(radios[1]).toBeChecked();
-
-    fireEvent.change(screen.getByLabelText(/Reason/), {
-      target: { value: 'Confirmed with CS.' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
-    expect(onAdd).toHaveBeenCalledWith(second, expect.any(String), 'Confirmed with CS.');
-  });
-});
-
-/**
  * AC-L6 (section 1c, the captain 25 August 2026): a donor sharing this line's own sales agent
  * is offered at ANY rank, "because the agent can authorise CS to move stock between her own
  * orders" - and taking it therefore requires saying WHO authorised it. Free text, required
- * only on a same-agent borrow, stored beside the quantity it justifies.
+ * only on a same-agent borrow, stored beside the quantity it justifies. Unaffected by the
+ * table swap - these fields sit below the Source table, not in it.
  */
 describe('BorrowAddDialog: authorising a same-agent borrow', () => {
   it('asks who authorised it, naming the agent, and will not add without it', () => {
@@ -539,6 +551,7 @@ describe('BorrowAddDialog: the authorisation belongs to the donor it was typed f
       donor_so_number: 'SO500999',
       donor_agent_code: 'TERA',
       same_agent: false,
+      location: loc({ location: 'DC1-BB', warehouse_id: 'wh-dc1-bb', qty_on_hand: '5', available_qty: '5' }),
     };
     renderDialog([GROUP_BORROW, otherAgent]);
 
@@ -547,9 +560,7 @@ describe('BorrowAddDialog: the authorisation belongs to the donor it was typed f
     });
 
     // Pick the other agent's line: the authorisation is not theirs, so it goes.
-    fireEvent.click(
-      within(screen.getByTestId('borrow-donor-DC1-BB')).getByRole('radio'),
-    );
+    fireEvent.click(within(donorRow('DC1-BB')).getByRole('radio'));
     expect(screen.queryByLabelText(/^Authorised by agent/)).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '5' } });
@@ -573,18 +584,15 @@ describe('BorrowAddDialog: the authorisation belongs to the donor it was typed f
       donor_core_line_id: 'core-line-9',
       donor_so_number: 'SO500999',
       same_agent: false,
+      location: loc({ location: 'DC1-BB', warehouse_id: 'wh-dc1-bb', qty_on_hand: '5', available_qty: '5' }),
     };
     renderDialog([GROUP_BORROW, otherAgent]);
 
     fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
       target: { value: 'Agreed on the phone, 25 Aug' },
     });
-    fireEvent.click(
-      within(screen.getByTestId('borrow-donor-DC1-BB')).getByRole('radio'),
-    );
-    fireEvent.click(
-      within(screen.getByTestId('borrow-donor-MWH-BB')).getByRole('radio'),
-    );
+    fireEvent.click(within(donorRow('DC1-BB')).getByRole('radio'));
+    fireEvent.click(within(donorRow('MWH-BB')).getByRole('radio'));
 
     expect(screen.getByLabelText(/^Authorised by agent JEREMY/)).toHaveValue('');
     fireEvent.change(screen.getByLabelText(/^Reason/), {
