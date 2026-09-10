@@ -146,33 +146,54 @@ def _create_if_absent(bind, slug: str, name: str, description: str) -> None:
     )
 
 
+#: Owner ruling (S1/N5, Phase 3 fix round): `.view` is derived from BOTH readers who
+#: already reach a country today - whoever lists units of measure, and whoever lists
+#: suppliers (the FK this table exists for in the first place). `.add`/`.edit`/`.delete`
+#: are derived from `user_management.reference_data.manage` - the SAME shared
+#: reference-vocabulary write authority `s6b_reference_data_manage_perm` established,
+#: not from the (read-only-flavoured) UoM write slugs a role might hold for an unrelated
+#: reason.
+_VIEW_SOURCES = (
+    "master_data.units_of_measure.view",
+    "procurement.suppliers.view",
+)
+_MANAGE_SOURCE = "user_management.reference_data.manage"
+
+
+def _grant_from_sources(bind, target: str, sources: tuple[str, ...]) -> None:
+    """Grant `target` to every role holding ANY of `sources` - SELECT-driven, so a
+    database with none of them granted anywhere is a clean no-op."""
+    placeholders = ", ".join(f":s{i}" for i in range(len(sources)))
+    params = {f"s{i}": slug for i, slug in enumerate(sources)}
+    params["target"] = target
+    bind.execute(
+        sa.text(
+            f"""
+            INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
+            SELECT gen_random_uuid()::text, rp.role_id, tgt.id, now()
+            FROM user_role_permissions rp
+            JOIN user_permissions src ON src.id = rp.permission_id AND src.slug IN ({placeholders})
+            CROSS JOIN user_permissions tgt
+            WHERE tgt.slug = :target
+            ON CONFLICT (role_id, permission_id) DO NOTHING
+            """
+        ),
+        params,
+    )
+
+
 def _grant_countries_permissions(bind) -> None:
-    """Every `master_data.countries.<action>` slug, granted to whoever already holds
-    `master_data.units_of_measure.<action>` (AC-2.6) - the derived-set pattern
-    `445_autocount_grant_sweep.py` established, SELECT-driven so a database with no
-    matching source grant is a clean no-op."""
+    """The four `master_data.countries.*` slugs, granted from two DERIVED sets (AC-2.6):
+    `.view` from `_VIEW_SOURCES`, the three write actions from `_MANAGE_SOURCE`."""
     for action in _ACTIONS:
         target = f"master_data.countries.{action}"
-        source = f"master_data.units_of_measure.{action}"
         _create_if_absent(
             bind, target,
             f"{action.capitalize()} Countries",
             f"Permission to {action} Countries.",
         )
-        bind.execute(
-            sa.text(
-                """
-                INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
-                SELECT gen_random_uuid()::text, rp.role_id, tgt.id, now()
-                FROM user_role_permissions rp
-                JOIN user_permissions src ON src.id = rp.permission_id AND src.slug = :source
-                CROSS JOIN user_permissions tgt
-                WHERE tgt.slug = :target
-                ON CONFLICT (role_id, permission_id) DO NOTHING
-                """
-            ),
-            {"source": source, "target": target},
-        )
+        sources = _VIEW_SOURCES if action == "view" else (_MANAGE_SOURCE,)
+        _grant_from_sources(bind, target, sources)
 
 
 def upgrade() -> None:
@@ -198,4 +219,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # sec N3 (review nit): a downgrade that drops the table but leaves four permission
+    # slugs, and every grant of them, pointing at nothing is exactly the half-reverted
+    # state a downgrade exists to avoid.
+    bind = op.get_bind()
+    bind.execute(
+        sa.text(
+            """
+            DELETE FROM user_role_permissions WHERE permission_id IN (
+                SELECT id FROM user_permissions
+                WHERE slug LIKE 'master_data.countries.%'
+            )
+            """
+        )
+    )
+    bind.execute(
+        sa.text("DELETE FROM user_permissions WHERE slug LIKE 'master_data.countries.%'")
+    )
     op.drop_table("countries")

@@ -32,7 +32,7 @@ Countries master (S1)
 - AC-2.3 `[BE]` `GET /api/v1/master-data/countries` (page, limit, query on code or name, sort) requires `master_data.countries.view`; `GET .../countries/select` returns `{id, code, name}` for active rows; `POST` requires `.add`, `PUT /{id}` `.edit`, `DELETE /{id}` `.delete`. Denied role gets 403 on each.
 - AC-2.4 `[BE]` Given a country referenced by at least one supplier, when DELETE is called, then 409 with a message naming the count of suppliers, and the row stays.
 - AC-2.5 `[BE]` Given a duplicate code (any case), when POST or PUT is called, then 409 and no row is written.
-- AC-2.6 `[BE]` Given the permission registry, then the four `master_data.countries.*` slugs are registered and the migration grants them to every role that holds `master_data.units_of_measure.<same action>` today (derived, not typed).
+- AC-2.6 `[BE]` Given the permission registry, then the four `master_data.countries.*` slugs are registered and the migration grants `.view` to every role holding `master_data.units_of_measure.view` OR `procurement.suppliers.view`, and grants `.add`/`.edit`/`.delete` to every role holding `user_management.reference_data.manage` (derived, not typed).
 - AC-2.7 `[BE]` Given the deferred record-action registry, then `country.delete` is registered with the hard-delete window and the same 409 guard as AC-2.4.
 
 Supplier country (S2)

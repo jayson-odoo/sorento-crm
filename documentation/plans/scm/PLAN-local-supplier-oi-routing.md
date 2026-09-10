@@ -55,8 +55,11 @@ Owner decisions: 10 Sep 2026, four grill rounds. Branch `feat/local-supplier-oi-
 8. Backfill: name heuristic → `MY`, rest blank; owner runs on prod.
 9. A line raised on the OI before this lane whose product is now local is left alone on
    the next confirm (not re-raised, not cancelled). Purchasing closes it by hand.
-10. Countries permissions are granted to every role holding the matching Units of
-    Measure slug today (derived set), not admin-only.
+10. Countries permissions are derived, not admin-only (Phase 3 fix round ruling):
+    `.view` to every role holding `master_data.units_of_measure.view` OR
+    `procurement.suppliers.view`; `.add`/`.edit`/`.delete` to every role holding
+    `user_management.reference_data.manage` (the shared reference-vocabulary write
+    authority from `s6b_reference_data_manage_perm`), not the UoM write slugs.
 
 ## Design
 
