@@ -140,6 +140,38 @@ tool. No new reply format.
   a two-company scratch schema.
 - AC-1336 The set_page carry clears on any business answer that is not a page; a fresh set answer
   re-arms it. Evidence: pytest, three turns.
+- AC-1338 A bare `{"certificate": true}` require whose remainder holds a word equal
+  (case-insensitive) to a register scheme spelling or a `certificate_scheme` lookup keyword is
+  promoted to `{"certificate": {"scheme": <register spelling>}}`, the word never reaches
+  `unrecognized_terms`, and the header names the scheme ("N products have PPS certificates.").
+  Evidence: pytest on the resolver with query "which item has PPS cert", predicate_words
+  ["certificate"], a register cert with scheme "PPS"; a remainder word that is neither stays a set
+  word (regression on AC-1320).
+- AC-1339 `filter_specs` class membership includes rows whose class provenance is `category`: a
+  product filed under Bathroom Accessory by its category is a member of the described set for
+  "bathroom accessory". Evidence: pytest, one product with a category-sourced class row and one
+  with a derived one, both members; console "which bathroom accessory has stock" answers a count
+  and five products.
+- AC-1340 The zero-qualifying miss copy never reads "a a match": the subject is brand + product +
+  category / product_type raws, then the predicate's class labels, else the sentence is "Couldn't
+  find any product with <predicate>." Evidence: pytest on the rendered text for a category-only
+  entity turn.
+- AC-1341 [security] The certificate leg is company-scoped in both directions: a certificate
+  stamped to company B and linked to company A's product does not count under A's scope, and a
+  certificate with NULL company (shared) still counts. Evidence: pytest, both directions plus the
+  shared arm, mirroring the four REV-B1 tests.
+- AC-1342 [security] `_access_level_codes` accepts a `contact_access_types.code` and a bare tier
+  token: `["dealer"]` selects every code that is `dealer` or ends with `_dealer`; a name still
+  translates as before; an unknown value still yields the empty set. Evidence: pytest on the
+  helper and on `resolve_product_set` with a tier-restricted promotion and `access_levels=["dealer"]`.
+- AC-1343 The set_page carry survives only a page continuation: a same-domain non-page answer and
+  a same-domain zero-qualifying clarify both clear it, so a bare "more" afterwards is NOT routed
+  as a set page (`is_set_page_more_reply` is false and the turn takes the ordinary low-signal
+  route, exactly as a "more" with no prior set does today); a rendered set answer re-arms it.
+  Evidence: pytest, two three-turn sequences in the same domain, with the low_signal lane
+  registered in the harness so turn 3 completes.
+- AC-1344 No em-dash or en-dash in any file the lane adds or touches. Evidence:
+  `scripts/git-hooks/pre-push` dash guard green on the lane's added lines.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
