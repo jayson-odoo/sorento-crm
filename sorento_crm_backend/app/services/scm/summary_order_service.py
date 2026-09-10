@@ -472,7 +472,7 @@ def _belongs_on_the_book(recs: list, decision_grain: Optional[str]) -> bool:
     still has a `suggestion` explaining the 0, and the buyer can still choose to order
     over it (AC-9, AC-10). Measured on the local prod-copy database (10 Sep, product
     grain): buy 374 + covered 575 + needs_level 1 lands the sheet at under 1,000 rows,
-    well inside `_MAX_EXPORT_ROWS` 2000.
+    well inside `MAX_EXPORT_ROWS` 2000.
 
     On every OTHER grain (location-grain, or `None`/legacy): the OLD rule stands - a row
     only when the run SIZED a purchase for the product, or owes firm Project Buy the run
@@ -1207,8 +1207,10 @@ def _project_qty(row: dict) -> float:
 
 #: M1 (Phase 3 security review): the sheet only lists products to order - a run with
 #: thousands of covered/no-action rows must not turn "export the sheet" into a
-#: several-thousand-row document nobody asked to print.
-_MAX_EXPORT_ROWS = 2000
+#: several-thousand-row document nobody asked to print. PUBLIC (no leading underscore,
+#: review fix round A, A5): the async export route reads this beside `export_guard_stats`
+#: rather than a private module attribute.
+MAX_EXPORT_ROWS = 2000
 
 #: H1 (Phase 3 security review, L4): a text cell longer than this is truncated before it
 #: reaches the workbook - Excel's own per-cell character limit is 32,767; capped well short
@@ -1432,12 +1434,36 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
     return buf.getvalue()
 
 
+def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
+    """What the ASYNC export route (`POST /order-summary/export`, AC-15/AC-16) needs to
+    decide the row-count refusal and name the file, WITHOUT rendering the whole report on
+    the request thread (reviewer nit, review fix round A, A5) - a `COUNT(*)`/`MAX(as_of)`
+    over `scm.order_summary_row` for the run, the exact same population `export_report`'s
+    own `len(rep["rows"])` counts (every row `write_rows` froze for the run - AC-9, owner's
+    ruling 10 Sep: every book row, not narrowed to "something to order").
+
+    Resolves `run_id` the SAME way `report()`/`export_report()` do (`_run_for` - a named
+    run or the newest completed one), so the row count, the `as_of` stamp and the resolved
+    id this returns describe the identical run the synchronous render would have used.
+    """
+    run = _run_for(db, run_id)
+    row = db.execute(text(
+        "SELECT COUNT(*) AS n, MAX(as_of) AS as_of "
+        "FROM scm.order_summary_row WHERE run_id = :rid"
+    ), {"rid": str(run.id)}).mappings().first()
+    return {
+        "run_id": str(run.id),
+        "row_count": int(row["n"] or 0),
+        "as_of": row["as_of"].isoformat() if row["as_of"] else None,
+    }
+
+
 def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[bytes, str, str]:
     """The Order summary sheet as a document (AC-S9.3): landscape PDF or an Excel workbook,
     the same rows and figures the grid shows, so nothing on the export is typed twice.
     Returns ``(bytes, content_type, filename)``.
 
-    M1 (Phase 3 security review): refused above `_MAX_EXPORT_ROWS` - a document that size is
+    M1 (Phase 3 security review): refused above `MAX_EXPORT_ROWS` - a document that size is
     not a sheet the buyer can print, it is a database dump wearing a PDF's clothes. Every
     book row prints now (issue #795, AC-9, owner's ruling 10 Sep superseding the earlier
     "something to act on" scope, `_rows_to_order`): `_belongs_on_the_book` already narrows
@@ -1446,7 +1472,7 @@ def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[byte
     """
     rep = report(db, run_id=run_id)
     rows = rep["rows"]
-    if len(rows) > _MAX_EXPORT_ROWS:
+    if len(rows) > MAX_EXPORT_ROWS:
         raise AppException(422, "Narrow the plan first")
     stamp = rep.get("as_of") or _today().isoformat()
     if fmt == "pdf":

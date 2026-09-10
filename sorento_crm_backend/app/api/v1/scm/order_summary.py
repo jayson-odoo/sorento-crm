@@ -139,19 +139,20 @@ def export_order_summary(
         run_id = validate_uuid_path(run_id, resource="Reorder run")
         reorder_run_service.assert_run_visible(db, run_id)
 
-    # Reads the SAME frozen report `export_report` renders from, so the row-count guard
-    # (M1, Phase 3 security review) and the sheet's own `as_of` - which names the file -
-    # come off one query rather than two readings of the run that could disagree.
-    rep = svc.report(db, run_id=run_id)
-    if len(rep["rows"]) > svc._MAX_EXPORT_ROWS:
+    # A COUNT/MAX over `scm.order_summary_row`, not a full `report()` render on the
+    # request thread (reviewer nit, review fix round A, A5) - the row-count guard (M1,
+    # Phase 3 security review) and the sheet's own `as_of` - which names the file - come
+    # off one lightweight query rather than serialising every row just to maybe refuse.
+    stats = svc.export_guard_stats(db, run_id=run_id)
+    if stats["row_count"] > svc.MAX_EXPORT_ROWS:
         raise AppException(422, "Narrow the plan first")
 
-    filename = f"order-sheet-{_ddmmyyyy_compact(rep.get('as_of'))}.{fmt}"
+    filename = f"order-sheet-{_ddmmyyyy_compact(stats['as_of'])}.{fmt}"
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
         kind=f"order_sheet_{fmt}",
         source_entity_type="reorder_run",
-        source_entity_id=str(rep["run_id"]),
+        source_entity_id=stats["run_id"],
         filename=filename,
     )
     try:
@@ -161,7 +162,7 @@ def export_order_summary(
         enqueue_job(
             generate_order_sheet,
             str(download.id),
-            str(rep["run_id"]),
+            stats["run_id"],
             fmt,
             str(current_user["id"]),
             queue_name="imports",
