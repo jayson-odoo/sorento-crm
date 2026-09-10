@@ -145,16 +145,19 @@
  *    the accepted quantity back to the frozen location inputs, in the UOM's integer
  *    minor units, summing exactly to `chosen_qty` (AC-F12). No rescaling formula.
  *
- * 5) The sheet, as a file (S9, G6 ruling, 9 Sep 2026)
+ * 5) The sheet, through My Downloads (S4, PLAN-po-spo-site-pool-and-order-sheet-downloads)
  *
- *      GET /api/v1/scm/order-summary/export
- *          ?run_id=<opaque>          optional; same rule as (1) - omitted reads the
- *                                    newest completed run
- *          &format=pdf|xlsx          required
+ *      POST /api/v1/scm/order-summary/export
+ *          { run_id: <opaque>, format: 'pdf' | 'xlsx' }
  *
- *      -> 200  the file, `Content-Disposition: attachment; filename="..."`
- *              `application/pdf` or the xlsx content type
- *      -> 422  an unrecognised `format`
+ *      -> 200  DownloadResponse (`MyDownload`, `status: 'pending'`) - a `user_downloads`
+ *              row was created and `generate_order_sheet` enqueued on the `imports` queue.
+ *              The sheet itself never crosses this response; it lands in My Downloads
+ *              (AC-19) the same way a complaint PDF does.
+ *      -> 422  an unrecognised `format`, a malformed/invisible run, or too many rows to
+ *              order ("Narrow the plan first") - the SAME messages the old synchronous
+ *              export used, unchanged (AC-16, AC-20).
+ *      -> 404  the run does not exist / is not visible to this user.
  *      Auth: `scm.dashboard.view`, the same read-only permission as the report itself -
  *      exporting states nothing new, it only prints what (1) already answers.
  *
@@ -164,7 +167,6 @@
  *    exactly as the printed sheet leaves it. PDF is landscape A4 through
  *    `app.services.pdf_render`; xlsx is an openpyxl workbook built in
  *    `summary_order_service` (`xlsx_renderer`'s fixed table shape did not fit the sheet).
- *    The filename comes off the response's `Content-Disposition`, never rebuilt on this side.
  *
  * -- ERROR SHAPE -------------------------------------------------------------
  * Every failure is the standard `AppException` envelope the global handler in
@@ -175,10 +177,7 @@
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
-import {
-  filenameFromContentDisposition,
-  saveBlobAs,
-} from '@/app/(protected)/project-sales/_shared/services/fileDownload';
+import type { MyDownload } from '@/services/myDownloadsService';
 import {
   USE_SUMMARY_ORDER_MOCKS,
   mockOrderSummaryDemand,
@@ -191,10 +190,10 @@ import type {
 // Review fix round 3, finding 6: getOrderSummary / getOrderSummarySuppliers /
 // recordOrderDecision / getOrderSummaryLocations (and `OrderSummaryQuery`, which only
 // they used) are deleted - the Order summary report page they served is retired (S10,
-// round 2). `getOrderSummaryDemand` and `downloadOrderSummaryExport` survive:
-// `DemandDrillPopover` still opens the first, and the plan's Actions menu still calls
-// the second. `ReorderResultsGrid`/`ReorderExplanationDialog`'s own orphaned imports of
-// the removed shapes are a separate follow-up, filed by the reviewer - not touched here.
+// round 2). `getOrderSummaryDemand` and `exportOrderSheet` survive: `DemandDrillPopover`
+// still opens the first, and the plan's Actions menu still calls the second.
+// `ReorderResultsGrid`/`ReorderExplanationDialog`'s own orphaned imports of the removed
+// shapes are a separate follow-up, filed by the reviewer - not touched here.
 
 /** The contributing lines behind one aggregate (AC-C2.3 / AC-C2.4). */
 export async function getOrderSummaryDemand(
@@ -213,18 +212,20 @@ export async function getOrderSummaryDemand(
 }
 
 /**
- * The sheet as a file (AC-S9.3/AC-S9.4). No mock branch: the export always makes the
- * real call, PDF/xlsx generation being nothing a fixture can usefully stand in for.
+ * Starts the sheet export through My Downloads (AC-19/AC-20). No mock branch: the export
+ * always makes the real call, PDF/xlsx generation being nothing a fixture can usefully
+ * stand in for. Returns the created `MyDownload` row (`status: 'pending'`) - the sheet
+ * itself is fetched later, from the My Downloads drawer, once the worker marks it ready.
  */
-export async function downloadOrderSummaryExport(
+export async function exportOrderSheet(
   runId: string,
   format: 'pdf' | 'xlsx',
-): Promise<void> {
-  const params = new URLSearchParams({ run_id: runId, format });
-  const res = await apiFetch(`/api/v1/scm/order-summary/export?${params}`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to export the order summary'));
-  const filename =
-    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
-    `order-summary.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
-  saveBlobAs(await res.blob(), filename);
+): Promise<MyDownload> {
+  const res = await apiFetch('/api/v1/scm/order-summary/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ run_id: runId, format }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start the order sheet export'));
+  return (await res.json()) as MyDownload;
 }

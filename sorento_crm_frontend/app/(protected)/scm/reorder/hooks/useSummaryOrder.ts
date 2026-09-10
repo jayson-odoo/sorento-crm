@@ -1,7 +1,9 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
-import { getOrderSummaryDemand } from '../services/summaryOrderService';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from '@/lib/toast';
+import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
+import { exportOrderSheet, getOrderSummaryDemand } from '../services/summaryOrderService';
 import type { OrderSummaryDemandKind } from '../types/summaryOrder.types';
 
 /**
@@ -28,5 +30,27 @@ export function useOrderSummaryDemand(
     enabled: enabled && !!productCode,
     staleTime: 5 * 60_000,
     retry: 1,
+  });
+}
+
+/**
+ * The order sheet, through My Downloads (S4, AC-19/AC-20/AC-21). Starts the export and
+ * refreshes both surfaces that show it: the top-nav drawer's per-user feed and this run's
+ * own entity-downloads chip. The sheet itself is fetched later from My Downloads, once the
+ * worker marks the row ready - this mutation never returns or saves a file.
+ */
+export function useExportOrderSheet(runId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (format: 'pdf' | 'xlsx') => exportOrderSheet(runId as string, format),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'reorder_run', runId],
+      });
+      toast.success('Preparing the order sheet - it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start the order sheet export'),
   });
 }
