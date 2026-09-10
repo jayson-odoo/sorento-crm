@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.services.chatbot.head.output_exchange import _CERT_RE
+from app.services.chatbot.head.output_exchange import _CERT_RE, _CERTIFICATE_RE
 
 # Intents that need nothing beyond their own name to name a leg - the customer's own
 # word for each is also the leg's key, which is what `derive_predicate_words` below
@@ -56,7 +56,9 @@ def _attachment_type_raws(parser_output: dict[str, Any]) -> list[str]:
     return raws
 
 
-def derive_require(parser_output: dict[str, Any]) -> dict[str, Any] | None:
+def derive_require(
+    parser_output: dict[str, Any], *, message_text: str | None = None
+) -> dict[str, Any] | None:
     """`{leg: value}` for the turn's intent, or `None` when it carries no leg.
 
     `check_product_attachment` splits on the FIRST `attachment_type` entity's raw:
@@ -69,6 +71,17 @@ def derive_require(parser_output: dict[str, Any]) -> dict[str, Any] | None:
     passes through verbatim as the `attachment_type` leg, resolved server-side
     (`_leg_attachment_type` in `product_predicate_service.py`) so a new document
     class never needs a parser prompt change.
+
+    R4/AC-1328 (console fix round 2): a SCHEME-ONLY raw ("PPS") carries no
+    `_CERT_RE` word of its own - that regex names a cert BODY (cert/ikram/span/
+    sirim/bomba/ms####/halal), never a bare register spelling - so this mirrors
+    `derive_routing`'s `is_cert`: also certificate when the intent is
+    `check_product_attachment` and `_CERTIFICATE_RE` matches `user_goal` (the
+    parser's own field, read the same way `derive_routing` does) or, when that is
+    absent, `message_text` (the caller's own fallback - `resolve_entity_body`
+    passes `_query_text(ctx)`, the same seam every other reader of the raw
+    message uses). The raw itself becomes the scheme verbatim in that case - it
+    named no cert word to strip.
     """
     intent = parser_output.get("intent_hint")
     if intent in _BARE_LEG_BY_INTENT:
@@ -82,6 +95,9 @@ def derive_require(parser_output: dict[str, Any]) -> dict[str, Any] | None:
         if _CERT_RE.search(raw):
             scheme = _cert_scheme_from_raw(raw)
             return {"certificate": {"scheme": scheme}} if scheme else {"certificate": True}
+        goal_or_message = parser_output.get("user_goal") or message_text or ""
+        if _CERTIFICATE_RE.search(str(goal_or_message)):
+            return {"certificate": {"scheme": raw}}
         return {"attachment_type": raw}
 
     return None

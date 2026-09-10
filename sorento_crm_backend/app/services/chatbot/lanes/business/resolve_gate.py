@@ -589,7 +589,7 @@ def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[s
     # `REQUIRE_LEGS` entry does, with no change needed here.
     from app.services.product_predicate_service import REQUIRE_LEGS
 
-    require = derive_require(parse_output)
+    require = derive_require(parse_output, message_text=_query_text(ctx))
     if require is not None and not set(require) <= set(REQUIRE_LEGS):
         require = None
     if require is not None:
