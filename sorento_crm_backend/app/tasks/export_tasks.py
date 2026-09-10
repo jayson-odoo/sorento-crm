@@ -512,11 +512,25 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
     synchronous GET used, and passing it through would silently rename the row.
     """
     db = SessionLocal()
-    # Worker sessions default to the fail-closed UNSET scope; the run itself is
-    # company-scoped elsewhere (`assert_run_visible`, at request time), and this task
-    # only re-reads what that request already proved visible - same shape as the
-    # complaint/stock-inquiry PDF exports above.
+    # Security S1 (review fix round A, A2): the worker has NO request-scoped company - a
+    # bare `set_company_scope(db, None)` here would read every company's rows, which is
+    # exactly the isolation break `_adopt_run_company_scope` exists to close for
+    # `run_reorder` itself. The run row is the one thing that states which company this
+    # export belongs to, so it is read under NO scope (the row itself is what tells us),
+    # then its OWN company is adopted before anything company-scoped is touched -
+    # `reorder_run_service._adopt_run_company_scope`, the same shape
+    # `generate_promotions_pdf` above uses via its own snapshotted `company_id` param.
+    from app.models.scm import ReorderRun
+    from app.services.scm.reorder_run_service import _adopt_run_company_scope
+
     set_company_scope(db, None)
+    run = db.get(ReorderRun, run_id)
+    if run is not None:
+        _adopt_run_company_scope(db, run)
+    else:
+        logger.warning(
+            "generate_order_sheet: run %s not found; export runs under no company", run_id
+        )
     svc = DownloadService(db)
     try:
         svc.mark_processing(download_id)
