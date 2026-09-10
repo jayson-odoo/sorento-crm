@@ -25,8 +25,9 @@ One backend function, three callers. No column, no flag, no setting.
 - Recommendation serializer (`reorder_run_service`, the `recommendations` list route): add
   `hidden_by_default` to each row (`response_model` must declare it, or it is dropped
   silently - repo lesson). Inputs already on the rec: `rec_type`, `inputs.policy_type`,
-  `inputs.reorder_level`, `master_reorder_level`, `net_position` (+ `po_ordered`, the same
-  `net` the ledger shows - confirm which value the FE's `l.net` is and use that one).
+  `inputs.reorder_level`, `master_reorder_level`, `net_position` ALONE (confirmed: the FE's
+  `l.net` is `rec.net_position`, `lib/planRow.ts:172`; the engine's `net_position +
+  po_ordered` is a different, larger figure and would hide a different set of rows).
 - `plan-row-decisions` total: exclude rows where the function is true.
 - `summary_order_service.export_report` and `export_guard_stats`: skip the same rows. The
   frozen `order_summary_row` and the report endpoint are untouched (AC-4); the sheet stays

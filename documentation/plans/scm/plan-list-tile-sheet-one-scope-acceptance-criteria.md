@@ -21,7 +21,10 @@ sheet prints 950 rows.
 
 `hidden_by_default(rec)` is true when ALL hold: `rec_type == covered`, the basis is manual
 (`inputs.policy_type == 'reorder_level'`), the basis value exists (`inputs.reorder_level`, else
-the product's master level), the net exists, and `net > basis`. A missing basis or net means
+the product's master level), the net exists, and `net > basis`, where `net` is the rec's
+`net_position` ALONE (what the list's `l.net` is, `lib/planRow.ts`), never the engine's
+decision net `net_position + po_ordered`: the rule must hide exactly the rows the list hides
+today. A missing basis or net means
 shown (the frontend's `lineBreachStatus` treats it as breached). Today that rule is spelled
 once, in `PlanLinesSection.visibleLines` + `orderQtyLedger.lineBreachStatus` (frontend). It
 moves to ONE backend function and the three readers use it; the frontend stops recomputing.
@@ -30,7 +33,9 @@ moves to ONE backend function and the three readers use it; the frontend stops r
 
 - **AC-1 [BE]** `GET /reorder-runs/{run}/recommendations` rows carry `hidden_by_default:
   bool`. Given a covered manual-basis rec with net 1,447 and level 50, then true; the same
-  rec with net 40, then false; a covered rec on the auto basis (`reorder_point`), then false;
+  rec with net 40, then false; the same rec with net_position 40 and an open site-pool PO of
+  1,000 (engine net 1,040), then false (net_position alone decides); a covered rec on the
+  auto basis (`reorder_point`), then false;
   a Buy rec, then false; a covered manual rec with NO level anywhere, then false.
 - **AC-2 [BE]** `GET /reorder-runs/{run}/plan-row-decisions` `total_decidable` excludes
   hidden-by-default rows: on the seed above (1 Buy + 1 hidden covered + 1 shown covered),
