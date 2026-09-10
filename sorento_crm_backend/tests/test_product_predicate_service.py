@@ -198,6 +198,45 @@ def test_filter_specs_reports_nonsense_as_unrecognized(db):
 
 
 # --------------------------------------------------------------------------- #
+# Console pass 6 (R23, AC-1347): after R21's fix, the same carry-less "more"    #
+# turn reaches `filter_specs` with the reused certificate leg's remainder word  #
+# "more" - not a phrase stopword, so it answered "I don't know 'more' as a      #
+# product type" instead of the honest unscoped set answer.                     #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("word", ["more", "next", "lagi", "show more"])
+def test_filter_specs_treats_paging_words_as_phrase_stopwords(db, word):
+    """AC-1347/R23: measured live - once R21 stops "more" surviving as a bogus
+    certificate scheme, the SAME remainder word still reaches `filter_specs` as
+    a described-set term, which does not know it either: "which tap has cert"
+    -> "which water tap has cert" (clarify) -> "more" answered "I don't know
+    'more' as a product type. Try a product type such as ...", never the
+    unscoped set answer the reused question demands once its set is gone.
+
+    RED for "more", "next", "lagi": `_PHRASE_STOPWORDS` carries "please" and
+    "show" already (R9's own imperative-verb list) but not the paging words
+    themselves, so `filter_specs(db, free_terms=["more"])` reports "more"
+    unrecognized and its own `clause` is not None. "show more" is a control on
+    the ALREADY-covered half ("show") plus the still-missing half ("more") -
+    both words must clear before the phrase reports nothing.
+    """
+    verdict = filter_specs(db, free_terms=[word])
+    assert verdict["clause"] is None, verdict
+    assert verdict["class_labels"] == [], verdict
+    assert verdict["unrecognized_terms"] == [], verdict
+
+
+def test_filter_specs_still_reports_nonsense_once_paging_words_are_stopwords(db):
+    """AC-1347/R23 control: "zzqx" must stay unrecognized regardless of the
+    paging-word fix - the stopword list widens by exactly the named words,
+    never into a general amnesty for anything unrecognized."""
+    verdict = filter_specs(db, free_terms=["zzqx"])
+    assert verdict["unrecognized_terms"] == ["zzqx"], verdict
+    assert verdict["clause"] is None, verdict
+
+
+# --------------------------------------------------------------------------- #
 # the four legs                                                                 #
 # --------------------------------------------------------------------------- #
 def test_stock_leg_requires_on_hand_above_zero(db):
