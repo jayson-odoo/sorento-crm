@@ -62,6 +62,10 @@
  * and Confirm is disabled - a third place to type a currency was one more thing to get
  * wrong on a document that already carries the answer. The backend's `currency` form field
  * is still accepted; nothing in this app sends it.
+ *
+ * `description_en` on each line (S2, text glossary lane) travels here on the detail
+ * payload itself; `proforma-invoices/services/proformaInvoiceTranslationService.ts` owns
+ * the write path that fills it (`PUT .../{id}/translations`).
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -246,6 +250,9 @@ export interface ProformaInvoiceLine {
   row_number: number | null;
   item_code: string;
   description: string | null;
+  /** The translation_memory English for `description` (S2, text glossary lane) - `null`
+   *  for a word the memory has never seen, even an already-English one (R7). */
+  description_en?: string | null;
   qty: number | null;
   uom: string | null;
   unit_price: number | null;

@@ -1026,47 +1026,54 @@ def apply(
         db.flush()
 
         unmatched: list[str] = []
+        new_lines: list[ProformaInvoiceLine] = []
         for n, ln in enumerate(doc.lines, start=1):
             product = known.get(ln.item_code.upper())
             if product is None:
                 unmatched.append(ln.item_code)
-            db.add(
-                ProformaInvoiceLine(
-                    id=_uuid(),
-                    invoice_id=invoice.id,
-                    line_no=n,
-                    row_number=ln.row_number,
-                    item_code=ln.item_code[:100],
-                    description=ln.description,
-                    qty=ln.qty,
-                    uom=ln.uom[:20] if ln.uom else None,
-                    unit_price=ln.unit_price,
-                    amount=ln.amount,
-                    po_ref=ln.po_ref[:100] if ln.po_ref else None,
-                    remark=ln.remark,
-                    cartons=ln.cartons,
-                    cbm_per_unit=ln.cbm_per_unit,
-                    cbm_total=ln.cbm_total,
-                    net_weight=ln.net_weight,
-                    gross_weight=ln.gross_weight,
-                    # What it is made of and how it is boxed. The container workbook derives
-                    # its carton count and its volume from these, and the conversion carries
-                    # them onto the packing-list line so nobody re-types the supplier's own
-                    # measurements (AC-F3.5).
-                    material=ln.material[:255] if ln.material else None,
-                    pcs_per_carton=ln.pcs_per_carton,
-                    carton_length_cm=ln.carton_length_cm,
-                    carton_width_cm=ln.carton_width_cm,
-                    carton_height_cm=ln.carton_height_cm,
-                    # The supplier's own figures, frozen here and never written again: `qty`
-                    # and `unit_price` above are ours to trim to fit the container, and the
-                    # whole journey rests on the two never being confused (AC-E2).
-                    supplier_qty=ln.qty,
-                    supplier_unit_price=ln.unit_price,
-                    product_id=product["id"] if product else None,
-                    product_set_id=product.get("product_set_id") if product else None,
-                )
+            new_line = ProformaInvoiceLine(
+                id=_uuid(),
+                invoice_id=invoice.id,
+                line_no=n,
+                row_number=ln.row_number,
+                item_code=ln.item_code[:100],
+                description=ln.description,
+                qty=ln.qty,
+                uom=ln.uom[:20] if ln.uom else None,
+                unit_price=ln.unit_price,
+                amount=ln.amount,
+                po_ref=ln.po_ref[:100] if ln.po_ref else None,
+                remark=ln.remark,
+                cartons=ln.cartons,
+                cbm_per_unit=ln.cbm_per_unit,
+                cbm_total=ln.cbm_total,
+                net_weight=ln.net_weight,
+                gross_weight=ln.gross_weight,
+                # What it is made of and how it is boxed. The container workbook derives
+                # its carton count and its volume from these, and the conversion carries
+                # them onto the packing-list line so nobody re-types the supplier's own
+                # measurements (AC-F3.5).
+                material=ln.material[:255] if ln.material else None,
+                pcs_per_carton=ln.pcs_per_carton,
+                carton_length_cm=ln.carton_length_cm,
+                carton_width_cm=ln.carton_width_cm,
+                carton_height_cm=ln.carton_height_cm,
+                # The supplier's own figures, frozen here and never written again: `qty`
+                # and `unit_price` above are ours to trim to fit the container, and the
+                # whole journey rests on the two never being confused (AC-E2).
+                supplier_qty=ln.qty,
+                supplier_unit_price=ln.unit_price,
+                product_id=product["id"] if product else None,
+                product_set_id=product.get("product_set_id") if product else None,
             )
+            db.add(new_line)
+            new_lines.append(new_line)
+
+        # S2, text glossary lane (R3/R4): the English cache for `description` on every
+        # line just written, one batched memory lookup for the whole document.
+        from app.services.scm import description_translation
+
+        description_translation.fill(db, new_lines)
         db.flush()
 
         created += 0 if existed else 1
@@ -1726,7 +1733,11 @@ def convert_to_draft_shipment(
         if row.match_state == "matched" and row.proforma_invoice_line_id:
             packing_rows_by_line.setdefault(str(row.proforma_invoice_line_id), []).append(row)
         elif row.match_state in ("dismissed", "unmatched"):
-            unplaced_row_descriptions.append(row.item_code or row.description or "")
+            # `description_en` before `description` (S2, text glossary lane, R4) - the
+            # customs-facing note reads English wherever the glossary knows it.
+            unplaced_row_descriptions.append(
+                row.item_code or row.description_en or row.description or ""
+            )
     selected_row_ids = {str(i) for i in (packing_row_ids or [])} or None
     # Every packing row of these invoices that is ALREADY in a box (ruling 31). One query
     # for the whole convert: the link table records the row it placed, so "what is left" is
@@ -1787,7 +1798,8 @@ def convert_to_draft_shipment(
                         if v is not None
                     },
                     "remarks": [row.remark] if row.remark else [],
-                    "description": ln.description,
+                    # `description_en` before `description` (S2, text glossary lane, R4).
+                    "description": ln.description_en or ln.description,
                     "source_lines": [ln],
                     "placed": {str(ln.id): float(qty)},
                     # WHICH row this line is, so the link records it (ruling 31).
@@ -1903,8 +1915,10 @@ def convert_to_draft_shipment(
                     value = getattr(ln, source, None)
                     if value is not None and group["measurements"].get(target) is None:
                         group["measurements"][target] = value
-                if ln.description and group["description"] is None:
-                    group["description"] = ln.description
+                # `description_en` before `description` (S2, text glossary lane, R4).
+                line_description = ln.description_en or ln.description
+                if line_description and group["description"] is None:
+                    group["description"] = line_description
             group["placed"] = group.get("placed", {})
             if primary:
                 # HOW MUCH of the PI line came here, in the PI line's OWN units, recorded
@@ -2190,6 +2204,22 @@ def _num(value: Optional[float]) -> str:
     return text_value or "0"
 
 
+_XLSX_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _xlsx_safe_text(value):
+    """A leading apostrophe on anything Excel would otherwise read as a formula (review
+    round, 10 Sep): both `description` and `description_en` are free text off a supplier's
+    own document (or, for the English, whatever an operator typed), never something this
+    export should evaluate. The apostrophe is the standard "force text" convention every
+    spreadsheet reader honours - `openpyxl` writes the value as a plain string either way,
+    but Excel infers a formula from a leading `=`/`+`/`-`/`@` regardless of the cell's own
+    declared type once opened."""
+    if isinstance(value, str) and value[:1] in _XLSX_FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
+
 def to_xlsx(payload: dict) -> bytes:
     """The adjusted invoice in the supplier's own block layout (AC-E4).
 
@@ -2235,7 +2265,8 @@ def to_xlsx(payload: dict) -> bytes:
             [
                 i,
                 line.get("item_code"),
-                line.get("description"),
+                # `description_en` before `description` (S2, text glossary lane, R4).
+                _xlsx_safe_text(line.get("description_en") or line.get("description")),
                 qty,
                 line.get("cartons"),
                 line.get("cbm_per_unit"),
@@ -2245,6 +2276,10 @@ def to_xlsx(payload: dict) -> bytes:
                 "; ".join(remarks) or None,
             ]
         )
+        # `_xlsx_safe_text` keeps `openpyxl` from ever inferring a formula from the value
+        # (it auto-detects a leading `=` regardless of the cell's own type); belt and
+        # braces, the description cell's TYPE is also pinned to string explicitly.
+        ws.cell(row=ws.max_row, column=3).data_type = "s"
         qty_total += float(qty or 0)
         carton_total += float(line.get("cartons") or 0)
         cbm_total += float(line.get("cbm_total") or 0)
@@ -2713,6 +2748,7 @@ def _write_lines(
     }
     next_line_no = max((int(ln.line_no or 0) for ln in existing.values()), default=0) + 1
     kept: set[str] = set()
+    touched_lines: list[ProformaInvoiceLine] = []
 
     for row in rows:
         code = (row.get("item_code") or "").strip()
@@ -2752,6 +2788,7 @@ def _write_lines(
                 )
 
         line_id = row.get("id")
+        is_new_line = not line_id
         if line_id:
             line = existing.get(str(line_id))
             if line is None:
@@ -2776,7 +2813,14 @@ def _write_lines(
         cbm_per_unit = row.get("cbm_per_unit")
         uom = (row.get("uom") or "").strip()
         line.item_code = code[:100]
-        line.description = row.get("description")
+        # Re-fill only a NEW line or one whose description actually changed (review round,
+        # 10 Sep) - an untouched line saved alongside others (every save sends the WHOLE
+        # document) must not wait on a memory lookup, or a model call, it did not cause.
+        was_description = None if is_new_line else line.description
+        new_description = row.get("description")
+        line.description = new_description
+        if is_new_line or new_description != was_description:
+            touched_lines.append(line)
         line.qty = qty
         line.uom = uom[:20] or None
         line.cartons = None if row.get("cartons") is None else Decimal(str(row["cartons"]))
@@ -2820,6 +2864,13 @@ def _write_lines(
     for line_id, line in existing.items():
         if line_id not in kept:
             db.delete(line)
+
+    # S2, text glossary lane (R3/R4): re-fills `description_en` for every line this save
+    # touched - a changed `description` gets re-looked-up, an unchanged one lands the
+    # same answer it already held.
+    from app.services.scm import description_translation
+
+    description_translation.fill(db, touched_lines)
     db.flush()
 
 
@@ -3190,6 +3241,9 @@ def serialize(
             "row_number": ln.row_number,
             "item_code": ln.item_code,
             "description": ln.description,
+            # The translation_memory English for `description` (S2, text glossary
+            # lane) - null for a word the memory has never seen (R7).
+            "description_en": ln.description_en,
             "qty": _f(ln.qty),
             "uom": ln.uom,
             "unit_price": _f(ln.unit_price),
@@ -3293,6 +3347,9 @@ def serialize(
             "item_code": r.item_code,
             "supplier_code": r.supplier_code,
             "description": r.description,
+            # The translation_memory English for `description` (S2, text glossary
+            # lane) - null for a word the memory has never seen (R7).
+            "description_en": r.description_en,
             "product_id": str(r.product_id) if r.product_id else None,
             "product_set_id": str(r.product_set_id) if r.product_set_id else None,
             "qty": _f(r.qty),

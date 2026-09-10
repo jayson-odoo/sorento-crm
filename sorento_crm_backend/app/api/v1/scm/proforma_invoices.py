@@ -22,13 +22,17 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, File, Form, Query, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import exists, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
+from app.models.scm import ProformaInvoiceLine, ProformaInvoicePackingLine
 from app.services.error_handler import AppException
+from app.services import translation_service
 from app.services.scm import proforma_invoice_packing_service, proforma_invoice_service
+from app.services.scm.description_translation import normalized_description
 from app.services.scm.upload_intake import read_upload
 from app.utils.http import content_disposition
 
@@ -531,6 +535,70 @@ def undo_dismiss_packing_line(
     return proforma_invoice_service.serialize(
         db, proforma_invoice_service.get_or_404(db, invoice_id)
     )
+
+
+class ProformaInvoiceTranslationRequest(BaseModel):
+    """The supplier's own wording, and the English for it (S2, text glossary lane)."""
+
+    source_text: str = Field(min_length=1, max_length=500)
+    target_text: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("source_text", "target_text")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("This cannot be blank.")
+        return cleaned
+
+
+@router.put("/proforma-invoices/{invoice_id}/translations")
+def put_proforma_invoice_translation(
+    invoice_id: str,
+    payload: ProformaInvoiceTranslationRequest = Body(...),
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """One word, learnt from a Packing-tab or Lines-tab row (R2/R10): the person handling
+    the PI holds `scm.proforma_invoice.upload`, not the admin-only `system.translations.
+    edit`, so this is a thin, PI-scoped door onto `translation_service.remember` - the
+    SAME write path System Management > Translations' own inline edit uses (R11). Checking
+    the invoice exists first means the route is reachable only from a PI the caller can
+    already see; the second check below (review round, 10 Sep) makes it MEAN something -
+    an upload-permission holder can only teach the memory a word that is actually on a
+    document they hold, not an arbitrary phrase. The write itself (like `remember`'s own
+    re-bind) still reaches every PI on file sharing this text, not just this one.
+    """
+    invoice = proforma_invoice_service.get_or_404(db, invoice_id)
+    normalized = translation_service.normalize_source_text(payload.source_text)
+    on_this_invoice = db.query(
+        or_(
+            exists().where(
+                ProformaInvoiceLine.invoice_id == invoice.id,
+                normalized_description(ProformaInvoiceLine.description) == normalized,
+            ),
+            exists().where(
+                ProformaInvoicePackingLine.proforma_invoice_id == invoice.id,
+                normalized_description(ProformaInvoicePackingLine.description) == normalized,
+            ),
+        )
+    ).scalar()
+    if not on_this_invoice:
+        raise AppException(
+            422, "That text is not on this proforma invoice.", detail="source_text"
+        )
+    result = translation_service.remember(
+        db,
+        [{"source_text": payload.source_text, "target_text": payload.target_text}],
+        user_id=current_user.get("id"),
+    )
+    db.commit()
+    return {
+        "source_text": payload.source_text,
+        "target_text": payload.target_text,
+        "source": "manual",
+        "rebound": result["rebound"],
+    }
 
 
 @router.delete("/proforma-invoices/{invoice_id}", status_code=status.HTTP_204_NO_CONTENT)

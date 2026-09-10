@@ -89,6 +89,14 @@ A proforma invoice's **General** tab has a **Source files** section listing the 
 read from - the invoice workbook and, once attached, the packing-list workbook - each with its
 kind and the date it was uploaded.
 
+## Chinese wording and its English reading
+
+A supplier document written in Chinese shows a **Translations - English beside the Chinese**
+panel at Test time, and once an invoice is created, its **Lines** and **Packing** tabs carry a
+**Description (EN)** column beside **Description**. See [Translating supplier
+wording](translating-supplier-wording.md) for how to read, add or correct it, and where the
+English travels to from there.
+
 ## What's captured
 
 From the proforma invoice: our PI number, the supplier's reference, the supplier, currency, and
@@ -123,4 +131,5 @@ spreadsheet-of-many-invoices import; each supplier document is its own file.
 * [Upload packing list](upload-packing-list.md) - the Packing Lists page's own upload (files the
   workbook as an attachment, unread) and creating one by hand
 * [Upload SPO](upload-spo.md)
+* [Translating supplier wording](translating-supplier-wording.md)
 * [System Management - Import column mappings](../system-management/import-column-mappings.md)

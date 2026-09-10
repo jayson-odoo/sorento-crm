@@ -139,6 +139,11 @@ vi.mock('../../../hooks/useProformaInvoices', () => ({
     listQueryKey: () => ['scm-proforma-invoices'],
     fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
   },
+  // The real key-builder, not a stub: `useProformaInvoicePacking`'s queryFn reads the
+  // detail query's cache through this exact key (AC-E2 fix) - a mock that dropped it
+  // left the packing query's `queryFn` throwing on every fetch, silently emptying every
+  // dialog/tab that reads packing rows in this suite.
+  proformaInvoiceDetailQueryKey: (id: string | null) => ['scm', 'proforma-invoices', 'detail', id],
   useProformaInvoice: () => state,
   // The header's pager pulls the neighbour list through this hook - one row is not enough to
   // show a pager (RecordNavigation's `items.length < 2` guard), so it stays out of the way.
@@ -661,6 +666,37 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     expect(screen.getByText('Widget')).toBeInTheDocument();
     expect(screen.getByText('40')).toBeInTheDocument();
     expect(screen.getByText('50')).toBeInTheDocument();
+  });
+
+  it('S2: shows Description (EN) beside Description in view mode, dash for null (AC-E1/E3)', () => {
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          description: '连体马桶',
+          description_en: 'One-piece toilet',
+        },
+      ],
+    });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByText('连体马桶')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'One-piece toilet' })).toBeInTheDocument();
+  });
+
+  it('S2: renders the SAME Description (EN) cell in edit mode, and editing it does not dirty the line form (AC-E3)', () => {
+    state.data = detail({
+      lines: [{ ...detail().lines[0], description: '连体马桶', description_en: null }],
+    });
+    renderDetail();
+    openTab('Lines');
+    beginEdit();
+
+    // Still the dash-button cell, not folded into the line's own Description <Input>.
+    expect(screen.getByRole('button', { name: 'Add English for 连体马桶' })).toBeInTheDocument();
+    // The line's own Description field is untouched, still an editable input.
+    expect(screen.getByDisplayValue('连体马桶')).toBeInTheDocument();
   });
 
   it('marks the Packed cell destructive when the packed quantity disagrees with the invoiced one (AC-B11)', async () => {

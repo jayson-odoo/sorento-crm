@@ -41,6 +41,10 @@ from app.services.scm.supplier_scope import assert_supplier
 
 logger = logging.getLogger(__name__)
 
+#: `apply`'s own `translations` array is caller-supplied and otherwise unbounded (review
+#: round, 10 Sep) - a preview cannot legitimately produce more edits than this.
+_MAX_TRANSLATIONS_PER_APPLY = 200
+
 #: Title-cell markers that decide which reader a file is for (R12). Checked across the
 #: first few rows, upper-cased - both real files write the title on its own row, well above
 #: any labelled cell or table header. Bare "INVOICE" is deliberately NOT a marker: the
@@ -746,6 +750,14 @@ def apply(
     """
     assert_supplier(db, supplier_id)
     if translations:
+        # A preview cannot legitimately produce more edits than this (review round,
+        # 10 Sep) - a bound on the size of an unbounded caller-supplied array.
+        if len(translations) > _MAX_TRANSLATIONS_PER_APPLY:
+            raise AppException(
+                422,
+                f"No more than {_MAX_TRANSLATIONS_PER_APPLY} translations per upload.",
+                detail="translations",
+            )
         translation_service.remember(db, translations, user_id=actor_id)
 
     kinds = [(name, data, ctype, classify(data, db)) for name, data, ctype in files]
