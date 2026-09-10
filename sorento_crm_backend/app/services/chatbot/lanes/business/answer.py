@@ -2818,6 +2818,21 @@ def not_found_error_message(
             predicate = jsc.get(g, "predicate")
             if jsc.truthy(require_specific):
                 escalate_message = jsc.get(g, "gate_clarification")
+            elif isinstance(predicate, dict) and "schemes_on_file" in predicate:
+                # F3 (AC-1321): a certificate SCHEME word the register cannot read -
+                # names what IS on file instead of the generic "no {attach_noun}
+                # matched these" below, which would say nothing about schemes at all.
+                require_echo = jsc.get(predicate, "require") or {}
+                scheme_word = jsc.js_string(jsc.get(require_echo, "certificate")).strip()
+                schemes = jsc.array(jsc.get(predicate, "schemes_on_file"))
+                schemes_text = (
+                    ", ".join(jsc.js_string(s) for s in schemes) if schemes else "none on file yet"
+                )
+                escalate_message = (
+                    f"The register has no {scheme_word or 'that'} certificates. "
+                    f"Schemes on file: {schemes_text}. "
+                    f"Would you like me to escalate to {team} team?"
+                )
             elif (
                 isinstance(predicate, dict)
                 and jsc.get(predicate, "qualifying_total") == 0

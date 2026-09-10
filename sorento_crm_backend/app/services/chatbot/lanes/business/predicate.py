@@ -11,6 +11,7 @@ AC-1303, AC-1304.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.services.chatbot.head.output_exchange import _CERT_RE
@@ -23,6 +24,22 @@ _BARE_LEG_BY_INTENT: dict[str, str] = {
     "check_incoming": "incoming",
     "check_promotion": "promotion",
 }
+
+# The word ITSELF that names "a certificate", in English and Malay - distinct from
+# `_CERT_RE`, which also matches a SCHEME name (span, sirim, bomba, ms9001, halal,
+# ikram) so `derive_routing` can route a bare scheme word to the cert team too.
+# Stripping this set off the raw is what is left over is a SCHEME word (S2, AC-1303):
+# "pps cert" -> scheme "pps", "watermark certificate" -> scheme "watermark", while
+# "cert" alone strips to nothing and stays the bare leg.
+_BARE_CERT_WORDS: frozenset[str] = frozenset({"cert", "certificate", "sijil"})
+
+
+def _cert_scheme_from_raw(raw: str) -> str | None:
+    """What is left of `raw` once every bare cert word is removed, or None when
+    nothing is - the raw WAS only the cert word."""
+    words = [w for w in re.split(r"\s+", raw.strip()) if w]
+    remainder = [w for w in words if w.lower() not in _BARE_CERT_WORDS]
+    return " ".join(remainder).strip() or None
 
 
 def _attachment_type_raws(parser_output: dict[str, Any]) -> list[str]:
@@ -44,7 +61,11 @@ def derive_require(parser_output: dict[str, Any]) -> dict[str, Any] | None:
 
     `check_product_attachment` splits on the FIRST `attachment_type` entity's raw:
     a cert-shaped word (`_CERT_RE`, the same regex `derive_routing` already uses for
-    the cert-vs-photo team split) maps to the `certificate` leg; any other label
+    the cert-vs-photo team split) maps to the `certificate` leg - bare when the raw
+    is only the cert word ("cert", "certificate", "sijil"), else `{"scheme": ...}`
+    with the rest of the raw (S2, AC-1303: "pps cert" -> scheme "pps"). The
+    function stays pure - it never touches the `certificate_scheme` lookup set,
+    that normalisation happens server-side in `_leg_certificate`. Any other label
     passes through verbatim as the `attachment_type` leg, resolved server-side
     (`_leg_attachment_type` in `product_predicate_service.py`) so a new document
     class never needs a parser prompt change.
@@ -59,7 +80,8 @@ def derive_require(parser_output: dict[str, Any]) -> dict[str, Any] | None:
             return None
         raw = raws[0]
         if _CERT_RE.search(raw):
-            return {"certificate": True}
+            scheme = _cert_scheme_from_raw(raw)
+            return {"certificate": {"scheme": scheme}} if scheme else {"certificate": True}
         return {"attachment_type": raw}
 
     return None
