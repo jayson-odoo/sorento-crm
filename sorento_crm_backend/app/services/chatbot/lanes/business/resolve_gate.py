@@ -529,7 +529,9 @@ def _token_of(entity: Any) -> Any:
     return value
 
 
-def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
+def resolve_entity_body(
+    ctx: dict[str, Any], *, dry_run: bool = False, tier_gate: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The `resolve-entity` httpRequest jsonBody, key for key.
 
     `entity_pins` (H38) is OMITTED in AND mode and when nothing is pinned, which is what
@@ -541,6 +543,19 @@ def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[s
     write a D14 test turn could otherwise reach through this lane. The resolution is
     identical either way, so shadow parity is unaffected; it is omitted entirely on a live
     turn so the body stays byte-equal to n8n's there.
+
+    R25/AC-1349 (round 3 re-check, security count-level): `tier_gate` is `run()`'s own
+    `tier_gate_out` (the `entry == "access_check"` step's output) - when it carries a
+    NON-EMPTY `access_levels_recomposed`, the body's `access_levels` is that list, never
+    the parser's bare tokens. `needs_tier_ask` only fires for a contact entitled to MORE
+    than one tier, so a single-tier contact never gets asked and reaches here with the
+    tier gate having run and recomposed exactly one name - without this, the promotion
+    leg counted whatever `_access_level_codes` made of the parser's own RAW token
+    (which a brand-qualified code can translate wrong), running effectively unrestricted
+    rather than the contact's actual, single entitled tier. `tier_gate=None` (it never
+    ran) or an empty recomposed list (nothing to state) both fall back to today's
+    behaviour unchanged - the `set_page` reply path keeps its own carry-based tiers and
+    never reaches this function at all.
     """
     parse_output = _parser_output(ctx)
     entities = parse_output.get("entities")
@@ -555,14 +570,24 @@ def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[s
 
     match_mode = parse_output.get("match_mode")
     match_mode = match_mode if jsc.truthy(match_mode) else "and"
+    tier_gate_dict = tier_gate if isinstance(tier_gate, dict) else None
+    recomposed_access_levels = (
+        tier_gate_dict.get("access_levels_recomposed") if tier_gate_dict is not None else None
+    )
     body: dict[str, Any] = {
         "query": _query_text(ctx),
         "match_mode": match_mode,
         "tokens": [_token_of(x) for x in entities],
         "allowed_entity_types": [jsc.get(x, "hint") for x in entities],
-        "access_levels": parse_output.get("access_levels")
-        if jsc.truthy(parse_output.get("access_levels"))
-        else [],
+        "access_levels": (
+            recomposed_access_levels
+            if isinstance(recomposed_access_levels, list) and recomposed_access_levels
+            else (
+                parse_output.get("access_levels")
+                if jsc.truthy(parse_output.get("access_levels"))
+                else []
+            )
+        ),
         "domain": parse_output.get("domain_hint") if jsc.truthy(parse_output.get("domain_hint")) else "",
         "fallback_to_all_types": True,
         "limit": 15,
@@ -869,7 +894,11 @@ def run(
     resolve_bare_reply_under_member_offer(parser, ctx=ctx, services=services, dry_run=dry_run)
 
     # ── resolve-entity ──────────────────────────────────────────────────────
-    resolved = services.resolve_entity(resolve_entity_body(ctx, dry_run=dry_run))
+    # R25/AC-1349: the tier gate's own recomposed access_levels, when it ran
+    # and produced any - see `resolve_entity_body`'s own docstring.
+    resolved = services.resolve_entity(
+        resolve_entity_body(ctx, dry_run=dry_run, tier_gate=tier_gate_out)
+    )
 
     # ── a container-hinted token that is ONLY a product is a product (item F) ─
     # Placed HERE, between the resolver and the gate, because this is the first point in
