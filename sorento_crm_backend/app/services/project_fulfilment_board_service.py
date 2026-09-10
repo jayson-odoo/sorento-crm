@@ -4026,23 +4026,6 @@ class FulfilmentBoardService:
                         own_demand=own_demand,
                     )
                 )
-            # S4 (`PLAN-local-supplier-oi-routing.md`): every donor the Borrow modal OFFERS,
-            # not only the one a proposal took - "why is this not on the table" was
-            # unanswerable for a candidate the ladder never composed with. Reuses the exact
-            # dict `_donors_for` already built for `candidate["location"]`, so the row here
-            # and the figure the modal shows can never disagree.
-            for candidate in row.borrow_candidates or []:
-                code = candidate.get("warehouse_code")
-                warehouse_id = candidate.get("warehouse_id")
-                location = candidate.get("location")
-                if not code or not warehouse_id or location is None or code in seen:
-                    continue
-                seen.add(code)
-                is_pool = warehouse_id in self._pool_warehouses
-                group = None if is_pool else sales_agent_service.group_of_warehouse_code(code)
-                if group and group not in donor_groups and group not in self._group_warehouses:
-                    donor_groups.append(group)
-                out.append(location)
         # The cited donor's SIBLINGS. Resolved after the cited rows so the site the ladder
         # actually drew from keeps its place in the list, and its group fills in around it.
         for group, pairs in self._warehouses_for_groups(donor_groups).items():
