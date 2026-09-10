@@ -2855,18 +2855,15 @@ def not_found_error_message(
                         f" ({jsc.js_string(customer)})" if jsc.truthy(customer) else ""
                     )
                     if order_status == "delivered":
-                        eta = jsc.get(display, "estimated_delivery_date")
-                        eta_text = f" (estimated delivery {jsc.js_string(eta)})" if jsc.truthy(eta) else ""
                         status = jsc.get(display, "status")
                         status_text = f" - current status: {jsc.js_string(status)}" if jsc.truthy(status) else ""
-                        # The JS derives `eta` here and then never uses it. Owner ruling
-                        # (6 Sep 2026): the date is the one fact the customer asking "has it
-                        # been delivered" actually wants, so it is stated alongside the
-                        # status. The resolved order's OWN display carries it, so nothing is
-                        # re-read to say it.
+                        # Owner ruling (10 Sep 2026, reverses the 6 Sep 2026 ruling):
+                        # `orders.estimated_delivery_date` is not a real promise - the
+                        # import stamps it as order_date + 2 business days
+                        # (`order_service.py` ~2824). The CRM UI may keep showing it, but
+                        # the chatbot / turn output must not state it.
                         escalate_message = (
-                            f"Order {label} hasn't been delivered yet{status_text}"
-                            f"{eta_text}. "
+                            f"Order {label} hasn't been delivered yet{status_text}. "
                             f"Would you like me to escalate to {team} team?"
                         )
                     else:
