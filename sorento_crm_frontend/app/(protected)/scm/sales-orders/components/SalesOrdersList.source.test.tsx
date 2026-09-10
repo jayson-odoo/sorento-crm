@@ -390,7 +390,11 @@ describe('SalesOrdersList - the Type column reads the planning class', () => {
     stub([order({ demand_class: 'project', order_type_label: '' })]);
     renderList();
 
-    expect(await screen.findByText('Project')).toBeInTheDocument();
+    // Scoped to the chip, not a bare `findByText('Project')` - the grid also carries a
+    // "Project" COLUMN (PLAN-so-project-label.md) whose header reads the same word.
+    expect(
+      await screen.findByText('Project', { selector: '[data-slot="badge"]' }),
+    ).toBeInTheDocument();
   });
 
   it('shows a Retail chip for a retail-classified order', async () => {
@@ -411,7 +415,11 @@ describe('SalesOrdersList - the Type column reads the planning class', () => {
     stub([order({ demand_class: 'project', order_type_label: 'Contract Sale' })]);
     renderList();
 
-    expect(await screen.findByText('Project')).toBeInTheDocument();
+    // Scoped to the chip - the grid also carries a "Project" COLUMN
+    // (PLAN-so-project-label.md) whose header reads the same word.
+    expect(
+      await screen.findByText('Project', { selector: '[data-slot="badge"]' }),
+    ).toBeInTheDocument();
     expect(await screen.findByText('Contract Sale')).toBeInTheDocument();
   });
 
@@ -420,8 +428,12 @@ describe('SalesOrdersList - the Type column reads the planning class', () => {
     renderList();
 
     await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
-    // Exactly one "Project" - the chip - not a second copy as the subline.
-    expect(screen.getAllByText('Project')).toHaveLength(1);
+    // Exactly one "Project" CHIP - not a second copy as the subline. Scoped past the
+    // grid's own "Project" column header, which reads the same word for an unrelated
+    // reason (PLAN-so-project-label.md).
+    expect(
+      screen.getAllByText('Project', { selector: '[data-slot="badge"]' }),
+    ).toHaveLength(1);
   });
 });
 
