@@ -205,8 +205,18 @@ def _access_level_codes(db: Session, access_levels: list[str] | None) -> set[str
     names_lower = {str(n).strip().lower() for n in (access_levels or []) if n and str(n).strip()}
     if not names_lower:
         return None
+    # R24/AC-1348 (round 3 re-check, both reviewers): the token is interpolated
+    # straight into a SQL LIKE pattern below - `\`, `%` and `_` are all LIKE
+    # metacharacters, so a caller-supplied value containing one must be
+    # escaped to its LITERAL spelling first, or it silently widens the match
+    # (measured live: `["%"]` returned every code carrying an underscore
+    # instead of the empty set this AC demands). Backslash is escaped FIRST so
+    # the escaping added for `%`/`_` is not itself re-escaped.
+    def _escape_like(token: str) -> str:
+        return token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     token_suffix_matches = [
-        func.lower(ContactAccessType.code).like(f"%\\_{token}")
+        func.lower(ContactAccessType.code).like(f"%\\_{_escape_like(token)}", escape="\\")
         for token in names_lower
     ]
     rows = (
