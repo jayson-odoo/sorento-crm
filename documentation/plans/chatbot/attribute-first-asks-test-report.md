@@ -11,7 +11,8 @@ Branch `feat/chatbot-attribute-first-asks`. Lane backend on the restored prod co
 |-----|--------|
 | `tests/test_product_spec_search.py`, `tests/test_product_predicate_service.py`, `tests/test_resolve_predicate.py`, `tests/test_migration_511_attribute_first_lookup_sets.py` | 118 passed |
 | `tests/chatbot/test_lane_require.py` (S1 to S4 + two fix rounds) | 125 passed together with `test_product_spec_search.py` |
-| `tests/chatbot` full | 1623 passed, 72 skipped, 5 xfailed, 5 failed |
+| Fix round 3 (R14 to R22): the five lane files together | 228 passed, 0 failed (commit d331bec78) |
+| `tests/chatbot` full after fix round 3 | 1656 passed, 72 skipped, 5 xfailed, 5 failed (the same `test_s7_*` baseline) |
 
 The 5 failures are `test_s7_dispatch_edges.py` (3) and `test_s7_ordering_and_offload.py` (2): the
 Redis-outage turns die at `route.py:224` (`is_stock_check_denied`, a None settings row), a line
@@ -53,6 +54,44 @@ Baseline (main, detached checkout of d6cb5b624 with the lane venv, 11 Sep 2026):
 | 1330 | PASS | pytest; console sink case |
 | 1331 | PASS | pytest (green on arrival: the AC-1326 bypass already covers the folded token); the pass-3 console miss for this utterance was a reload race, see below |
 | 1332 | PASS | pytest, model reader never invoked on a HAS turn; phrase stripping green |
+| 1333 | PASS | pytest (parity probe); console pass 6 trace: the promotion pick armed the carry and the "more" page's tool args carried `access_levels: ["Sorento Dealer", "Mocha Dealer", "Cabana Dealer"]` |
+| 1334, 1342 | PASS | pytest; `_access_level_codes` accepts codes and bare tier tokens (the pick turn carried "Dealer") |
+| 1335 | PASS | pytest, two-company scratch schema; security re-check closed S2 |
+| 1336, 1343 | PASS | pytest, same-domain non-page answer and same-domain zero clarify both clear the carry; console pass 7 sequence 2: "more" after the clarify is not paged |
+| 1337 | PASS with note | fixed paging phrases; "no more" declines but leaves the carry until the next business turn clears it |
+| 1338 | PASS | pytest (register spelling, lookup keyword, regression); console "which item has PPS cert" -> "940 products have PPS certificates." on the head variant that drops PPS before the lane |
+| 1339 | PASS | pytest; console "which bathroom accessory has stock" -> 837 (was a silent 0: every one of the 2,040 rows is category-sourced) |
+| 1340 | PASS | pytest, category raw and "any product" fallbacks; no "a a match" |
+| 1341 | PASS | pytest both directions plus the NULL shared arm; security re-check kill test |
+| 1344 | PASS | dash scan of every lane file empty; pre-push guard |
+| 1345 | PASS | pytest, seven inflections incl. "sijil" and "PPS certification" |
+| 1346 | PASS | pytest; console pass 7 bathroom accessory "Showing 5." for five ids (pass 6 showed 4: ACC-SRT9012's only stock was in inactive warehouse SPARE/P) |
+| 1347 | see pass 7 note | R23, pending the rerun |
+
+## Console pass 7 (AC-1325, FINAL after fix round 3), lane backend WITHOUT reload, commit d331bec78
+
+| Utterance | Reply first line |
+|-----------|------------------|
+| check stock srtwc286 | Stock details found for the requested products. (forward path, no header) |
+| which water tap has cert | I don't know 'water tap' as a product type. Did you mean tap? |
+| which tap has cert | 1,256 taps have certificates. Showing 5. (908 before R15: category-filed taps now count) |
+| which sorento bidet has cert | 1 tap has certificates. (SRTWT5875) |
+| which basin got stock | 539 wash basins have stock. Showing 5. (active warehouses only, R22) |
+| which item has PPS cert | 940 products have PPS certificates. Showing 5. |
+| which basin has photo | I don't know 'photo' as a document type. Types I know: Certification, Product Photos, Product Videos, Technical Specifications. |
+| which sink has incoming | 52 kitchen sinks have incoming stock. Showing 5. |
+| which bathroom accessory has stock | 837 bathroom accessories have stock. Showing 5. (pass 5: "Couldn't find a a match with stock.") |
+| any shower set on promo (contact 438930735) | Which access level do you need for shower set? |
+
+Multi-turn sequences (`pass6-sequences.yaml` in the session scratchpad, three cases):
+
+| Sequence | Result |
+|----------|--------|
+| which tap has cert / more / more | Showing 5. / Showing 6 to 10. / Showing 11 to 15. (AC-1317) |
+| which tap has cert / which water tap has cert / more | set answer / clarify / NOT paged (AC-1343). The third reply on d331bec78 read "I don't know 'more' as a product type": the head's entity reuse re-asked the certificate question with "more" as the only remainder word (R23, fixed after this pass; rerun recorded below) |
+| any shower set on promo / 1 / more | tier ask / "I found 4 promotions for shower set." on the check_promotion lane with `access_levels: ["Dealer"]` / page with the recomposed tiers in the tool args (AC-1333). Promotion sets page by product, so a promotion file attached to several products appears on both pages; accepted |
+
+Transcripts: `console-run-7.txt`, `console-run-7-sequences.txt` in the session scratchpad.
 
 ## Console pass 4 (AC-1325, FINAL), lane backend started WITHOUT reload, commit 677d240b1
 
@@ -108,6 +147,8 @@ candidates emitted), three consecutive in-process calls: 203 ms, 91 ms, 133 ms. 
 reader is off on the set path, so the resolve is SQL only.
 
 ## Review rounds
+
+Fix round 3 re-check (11 Sep): security-reviewer closed B1 and S2, raised the certificate leg (R17, blocker) and the tier-token mismatch (R18); reviewer closed B1 and S4, found the same-domain carry gap (R19) and the certificate leg (N1). All adopted, red test first. Round 3 re-check verdicts are appended below when they land.
 
 Security review (11 Sep): one blocker (paging a promotion set dropped the tier filter), two
 should-fix (promotion leg blind to access levels; class-label helpers cross-company). Correctness
