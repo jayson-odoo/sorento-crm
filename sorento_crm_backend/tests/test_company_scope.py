@@ -376,6 +376,9 @@ def test_every_company_id_table_is_registered():
     # under every scope, while a company that adds a type of its own keeps it. Owned
     # without the shared flag would have hidden the seeds from every logged-in user
     # while an API-key caller still saw them.
+    # `countries` is owned but SHARED for the same reason: the 249-row ISO seed
+    # (`510_countries`) carries no company and has to stay visible to every scoped
+    # user, exactly like `promotion_types`'s migration-seeded kinds.
     # `product_spec_flyer_batches` is owned: a proposal batch is ONE company's pass over
     # its own flyer, and it copies the company off the reading it was started from. Its
     # proposal rows are not owned - they hang off the scoped batch, so scoping them too
@@ -520,7 +523,7 @@ def test_every_company_id_table_is_registered():
     # reaches rows across invoices by supplier and item code - three id-keyed paths that
     # never pass through a scoped parent query. The mixin also stamps the company at
     # insert, which is what keeps a row written under one scope unreadable under another.
-    expected_owned = 131
+    expected_owned = 132
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

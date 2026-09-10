@@ -35,6 +35,7 @@ is dropped) and needs updating alongside the S2 implementation, not left red.
 """
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -94,6 +95,8 @@ def test_list_query_metadata_field_points_at_joined_name():
     connection = engine.connect()
     transaction = connection.begin()
     try:
+        _ensure_suppliers_list_query_metadata(connection)
+
         before = connection.execute(
             text(
                 "SELECT compile_key FROM list_query_fields f "
@@ -266,12 +269,30 @@ def api(monkeypatch):
             app.dependency_overrides.clear()
 
 
-def _two_countried_suppliers(db):
+def _ensure_country(db, code: str, name: str):
+    """Get-or-create the ISO row this test needs, rather than assuming the `510_
+    countries` migration seed already ran: CI's database is `scripts/bootstrap_env.py`
+    (create_all from the ORM models), never `alembic upgrade head`, so it carries the
+    `countries` TABLE but none of the 249 seeded ROWS - the same "seeding migration's
+    own data is invisible to a from-zero database" gap `test_countries.py` and
+    `test_migration_445_grant_sweep.py` already work around. Locally (a real database,
+    migrated by hand) the row already exists and this is a plain lookup."""
     from app.models.country import Country
+
+    existing = db.query(Country).filter(Country.code == code).first()
+    if existing is not None:
+        return existing
+    row = Country(id=_u(), code=code, name=name)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _two_countried_suppliers(db):
     from app.models.procurement import Supplier
 
-    my = db.query(Country).filter(Country.code == "MY").one()
-    cn = db.query(Country).filter(Country.code == "CN").one()
+    my = _ensure_country(db, "MY", "Malaysia")
+    cn = _ensure_country(db, "CN", "China")
     my_supplier = Supplier(
         id=_u(), supplier_code=unique_code(MARKER)[:30],
         supplier_name=f"{MARKER} Malaysia Sdn Bhd", country_id=my.id,
@@ -283,6 +304,73 @@ def _two_countried_suppliers(db):
     db.add_all([my_supplier, cn_supplier])
     db.commit()
     return my_supplier, cn_supplier
+
+
+#: The six `suppliers` fields migration `101_list_query_metadata` seeds, `country`
+#: already carrying `511_supplier_country_id`'s `country.name` compile_key (the
+#: CURRENT real shape, not the pre-511 transient one) - `str_ops`/`bool_ops` copied
+#: verbatim from `101`'s own module-level lists.
+_STR_OPS = json.dumps(["eq", "ne", "contains", "starts_with", "in", "is_null"])
+_BOOL_OPS = json.dumps(["eq", "is_null"])
+_SUPPLIER_FIELDS = (
+    # (field_key, label, data_type, compile_key, allowed_operators_json, sort_order)
+    ("supplier_code", "Supplier code", "string", "supplier.supplier_code", _STR_OPS, 10),
+    ("supplier_name", "Supplier name", "string", "supplier.supplier_name", _STR_OPS, 20),
+    ("is_active", "Active", "boolean", "supplier.is_active", _BOOL_OPS, 30),
+    ("city", "City", "string", "supplier.city", _STR_OPS, 40),
+    ("country", "Country", "string", "country.name", _STR_OPS, 50),
+    ("email", "Email", "string", "supplier.email", _STR_OPS, 60),
+)
+
+
+def _ensure_suppliers_list_query_metadata(conn) -> None:
+    """Get-or-create the `suppliers` `list_query_resources`/`list_query_fields` rows
+    (migrations `101_list_query_metadata` + `511_supplier_country_id`'s compile_key
+    repoint), for the same `bootstrap_env` reason `_ensure_country` above states: CI's
+    database carries the two TABLES (`create_all`) but none of the seeded ROWS, so
+    `ListQueryMetadataService.fields_by_key("suppliers")` returns nothing there and
+    every advanced-search / export call over `country` (or any other supplier field)
+    raises before this test's own assertion gets a chance to run. `conn` may be either
+    a raw `Connection` (`test_list_query_metadata_field_points_at_joined_name`'s own
+    `engine.connect()`) or an ORM `Session` (`pg_session`) - both support `execute
+    (text(...))` identically, so one helper serves both call shapes. Idempotent
+    (`WHERE NOT EXISTS`), so a real, already-migrated database is a no-op.
+    """
+    conn.execute(
+        text(
+            """
+            INSERT INTO list_query_resources (id, resource_key, display_name, description, is_active)
+            SELECT gen_random_uuid(), 'suppliers', 'Suppliers',
+                   'Supplier list filter/export metadata', true
+            WHERE NOT EXISTS (
+                SELECT 1 FROM list_query_resources WHERE resource_key = 'suppliers'
+            )
+            """
+        )
+    )
+    for field_key, label, data_type, compile_key, ops_json, sort_order in _SUPPLIER_FIELDS:
+        conn.execute(
+            text(
+                """
+                INSERT INTO list_query_fields (
+                    id, resource_id, field_key, label, data_type, compile_key,
+                    allowed_operators, filterable, exportable, is_line_field, sort_order
+                )
+                SELECT gen_random_uuid(), r.id, :fk, :label, :dtype, :ckey,
+                       CAST(:ops AS jsonb), true, true, false, :so
+                FROM list_query_resources r
+                WHERE r.resource_key = 'suppliers'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM list_query_fields f
+                      WHERE f.resource_id = r.id AND f.field_key = :fk
+                  )
+                """
+            ),
+            {
+                "fk": field_key, "label": label, "dtype": data_type, "ckey": compile_key,
+                "ops": ops_json, "so": sort_order,
+            },
+        )
 
 
 def test_advanced_search_country_contains_matches_by_joined_name(api):
@@ -298,6 +386,7 @@ def test_advanced_search_country_contains_matches_by_joined_name(api):
     a real table is small" lesson `test_suppliers_list_sorts_by_joined_country_name`
     already applies via its own `query=MARKER` scoping)."""
     client, db = api
+    _ensure_suppliers_list_query_metadata(db)
     my_supplier, cn_supplier = _two_countried_suppliers(db)
 
     resp = client.post(
@@ -361,6 +450,7 @@ def test_export_suppliers_emits_country_name_under_country_column():
     from tests._pg_fixture import pg_session
 
     with pg_session() as db:
+        _ensure_suppliers_list_query_metadata(db)
         my_supplier, cn_supplier = _two_countried_suppliers(db)
 
         field = (

@@ -137,7 +137,7 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'NESTED GRID: the items popover opens from a CELL of this section\'s own grid. It names scrollerMaxHeight="16rem", so the nested default leaves it alone and it keeps its sticky header inside that window',
   ],
   [
-    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1166',
+    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1172',
     'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}',
   ],
   [
@@ -182,7 +182,7 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
 const CONTEXT_BLIND_SITES = new Map<string, string>([
   [
     'app/(protected)/project-sales/fulfilment-planning/components/CellStockTable.tsx',
-    'StockDocumentsPanel opens in a row of this hand-rolled <table> (the carve-out FulfilmentBoardMatrix documents), so there is no grid context. StockDocumentsPanel.tsx passes scrollerMaxHeight={false} itself',
+    'StockDocumentsPanel opens in a row of this hand-rolled <table> (the carve-out FulfilmentBoardMatrix documents), so there is no grid context. StockDocumentsPanel.tsx passes scrollerMaxHeight={false} itself. Also mounted from BorrowAddDialog (the Borrow modal\'s Source table) since local-supplier-oi-routing - same hand-rolled table, same StockDocumentsPanel expansion, no new site to add here',
   ],
 ]);
 
