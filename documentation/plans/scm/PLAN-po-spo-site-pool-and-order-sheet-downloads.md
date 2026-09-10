@@ -62,9 +62,11 @@ shared module and have the engine, the modals and the PO book call the same func
   site-pool warehouse; for a location rec the key is its own warehouse and the line must be
   to it AND that warehouse must be site pool. P8 exclusion untouched (AC-9). FE `poFor` needs
   no change - the `<pid>:` key now exists (AC-12).
-- **PO history (S2):** `purchase_trend_for_run(warehouse_id=None)` reads site-pool
-  warehouses instead of "any warehouse"; the route keeps `warehouse=` as an optional narrowing.
-  FE `getPoHistoryToPool` stops returning early on a null code (AC-10, AC-11).
+- **PO history (S2):** `purchase_trend_for_run(..., site_pool_only=True)` (route param
+  `scope=site_pool`) reads active site-pool warehouses product-wide; `warehouse_id=` keeps the
+  single-warehouse read; the bare default stays run-wide because the row's Last price / price
+  history read it. FE `getPoHistoryToPool` passes `scope=site_pool` on a null code instead of
+  returning early (AC-10, AC-11; amended 10 Sep after Phase 2).
 - **Sheet parity (S3):** one pytest seeding a product with SPO+PO at a bin and at BRW, planning
   a run, freezing the sheet, asserting cell == frozen == modal sums (AC-13).
 - **Export (S4):** copy the complaint-PDF chain exactly. `POST /order-summary/export`
@@ -106,7 +108,7 @@ Worker restart is required after S4-BE (`app/tasks/*` edit).
 - AC-7 `test_spo_history_open_rows_sum_to_the_cell` - modal Open rows == [BRW 40], BRW-BB absent.
 - AC-8 `test_spo_history_history_tab_is_site_pool_only`.
 - AC-9 `test_po_book_serves_the_product_grain_key_with_site_pool_lines` + `test_po_book_keeps_p8_project_only_exclusion` + `test_po_book_location_row_at_a_bin_serves_nothing`.
-- AC-10 `test_purchase_trend_without_warehouse_reads_site_pool` + `..._with_warehouse_keeps_single_read`.
+- AC-10 `test_purchase_trend_scope_site_pool_reads_site_pool` + `..._with_warehouse_keeps_single_read` + the existing `test_purchase_trend.py` (bare default unchanged).
 - AC-11 vitest `PlanRowDialogs.poTabs.test.tsx`: product-grain line → `getPoHistoryToPool` called with null code and the fetch fires; labels carry no "to".
 - AC-13 `test_sheet_supply_columns_equal_the_grid_cells` (parity).
 - AC-15 `test_export_post_creates_download_row_and_enqueues` (kind, source_entity, filename, queue `imports`, response pending).

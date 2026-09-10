@@ -71,12 +71,15 @@ line still counts. A location-grain row reads its own warehouse when it is site 
   own-warehouse pairing but only when that warehouse is site pool. The P8 project-only
   exclusion (a row with project committed and no retail committed serves no receipts) is
   unchanged - a test asserts it still holds.
-- **AC-10 [BE]** `GET /reorder-runs/{run}/purchase-trend` with no `warehouse` param returns
-  the product's purchase history to active site-pool warehouses (product-wide); with
-  `warehouse=<code>` it keeps today's single-warehouse read.
+- **AC-10 [BE]** `GET /reorder-runs/{run}/purchase-trend?scope=site_pool` returns the
+  product's purchase history to active site-pool warehouses (product-wide). `warehouse=<code>`
+  keeps today's single-warehouse read. With NEITHER param the read is UNCHANGED (run-wide,
+  every line): that default feeds the row's Last price / price history and must not move
+  (captain amendment 10 Sep after Phase 2: the first wording re-scoped the default and broke
+  the six run-wide purchase-trend tests for the right reason).
 - **AC-11 [FE]** `PoTabs` on a product-grain row (no pool code) calls the purchase-trend read
-  without a warehouse instead of skipping the call; the History tab is no longer 0 by
-  construction. `SpoTabs`/`PoTabs` tab labels drop the `to <pool>` suffix when the row has no
+  with `scope=site_pool` and no warehouse instead of skipping the call; the History tab is no
+  longer 0 by construction. `SpoTabs`/`PoTabs` tab labels drop the `to <pool>` suffix when the row has no
   pool code (nothing to name).
 - **AC-12 [FE]** Cover "From PO (open N)" on a product-grain row equals the row's PO cell
   (both read the same po-book key).
