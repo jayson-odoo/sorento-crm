@@ -189,19 +189,35 @@ def _attachment_type_names_on_file(db: Session) -> list[str]:
 
 
 def _access_level_codes(db: Session, access_levels: list[str] | None) -> set[str] | None:
-    """Caller-supplied access-level NAMES translated to canonical
+    """Caller-supplied access-level values translated to canonical
     `contact_access_types.code` values - the same case-insensitive name -> code
     translation `references._apply_promotion_access_levels_filter` already
-    uses. `None` when `access_levels` itself is empty/falsy (no restriction,
-    every tier counts); an EMPTY set when every name failed to translate to a
-    known code (a filter that matches nothing, never a silent no-op that lets
-    every promotion back in)."""
+    uses, PLUS two more (R18/AC-1342, SEC-S1 re-check): a value equal to a
+    `code` itself, and a bare TIER TOKEN (the parsed head's own recomposed
+    tier vocabulary - "dealer", "office", "end_user" - never a brand-qualified
+    code on its own) matched against every code that IS the token or ENDS
+    WITH `_<token>` ("dealer" -> dealer, cabana_dealer, mocha_dealer; "office"
+    -> sorento_office, cabana_office). Read off the table, no tier list in
+    code. `None` when `access_levels` itself is empty/falsy (no restriction,
+    every tier counts); an EMPTY set when nothing translated to a known code
+    (a filter that matches nothing, never a silent no-op that lets every
+    promotion back in)."""
     names_lower = {str(n).strip().lower() for n in (access_levels or []) if n and str(n).strip()}
     if not names_lower:
         return None
+    token_suffix_matches = [
+        func.lower(ContactAccessType.code).like(f"%\\_{token}")
+        for token in names_lower
+    ]
     rows = (
         db.query(ContactAccessType.code)
-        .filter(func.lower(ContactAccessType.name).in_(names_lower))
+        .filter(
+            or_(
+                func.lower(ContactAccessType.name).in_(names_lower),
+                func.lower(ContactAccessType.code).in_(names_lower),
+                *token_suffix_matches,
+            )
+        )
         .all()
     )
     return {r[0] for r in rows}
