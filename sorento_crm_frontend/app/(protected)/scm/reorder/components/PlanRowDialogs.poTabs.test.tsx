@@ -2,18 +2,22 @@
  * S2 (PLAN-po-spo-site-pool-and-order-sheet-downloads, AC-11): a PRODUCT-grain row
  * carries no pool code (`pool_warehouse_code: null`, ungrouped with `warehouse_code:
  * null`) - `poolLocationLabel` already returns `null` for it (`PlanRowDialogs.test.tsx`
- * pins that separately). Today `PoTabs` calls `getPoHistoryToPool(runId, productId,
- * null)` regardless, but the SERVICE function short-circuits on a falsy
- * `warehouseCode` (`if (!runId || !productId || !warehouseCode) return { history: [] }`)
- * and never calls `apiFetch` at all - so the History tab is 0 BY CONSTRUCTION, never by
- * an actual empty answer from the backend.
+ * pins that separately). `PoTabs` calls `getPoHistoryToPool(runId, productId, null)`
+ * regardless - it never skips the call, and its args are unaffected by the AC-10
+ * amendment (10 Sep): the service function itself decides `scope=site_pool` vs
+ * `warehouse=<code>` off the same third argument, so `PoTabs` needs no change and no
+ * `scope` awareness of its own.
  *
- * Two things pinned here:
- *  1. `PoTabs` itself never skips the call and never appends a "to <pool>" suffix when
- *     there is no pool to name (component level, `getPoHistoryToPool` mocked).
- *  2. `getPoHistoryToPool` itself must still reach the network on a null pool - the read
- *     without a `warehouse` param the backend's AC-10 promises (service level, `apiFetch`
- *     mocked instead, the real service function under test).
+ * Pinned here, component level only (`getPoHistoryToPool` mocked):
+ *  1. `PoTabs` never skips the call and never appends a "to <pool>" suffix when there is
+ *     no pool to name.
+ *  2. The History tab is no longer 0 by construction - a real answer reaches the table.
+ *
+ * The SERVICE function's own `scope=site_pool` / `warehouse=<code>` behaviour (the real
+ * defect this AC exists to fix) is covered beside the service itself, in
+ * `services/planEditsService.test.ts` - a `vi.mock` of a sibling module earlier in this
+ * file is hoisted file-wide and would silently keep testing the mock, not the real
+ * function, if attempted here instead.
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
@@ -120,35 +124,5 @@ describe('PoTabs on a product-grain line (AC-11, component level)', () => {
     getPoHistoryToPool.mockResolvedValue({ history: [] });
     renderPoDialog(line());
     expect(screen.getByText('PO - SKU-1')).toBeInTheDocument();
-  });
-});
-
-// =========================================================================== #
-// 2. getPoHistoryToPool (service) - the real defect: a null pool must still fetch
-// =========================================================================== #
-
-describe('getPoHistoryToPool on a null pool code (AC-11, service level)', () => {
-  it('still calls apiFetch, against purchase-trend with NO warehouse param', async () => {
-    vi.resetModules();
-    const apiFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      headers: { get: () => 'application/json' },
-      json: async () => ({ products: { p1: { lines: [] } } }),
-    });
-    vi.doMock('@/lib/api', () => ({ apiFetch }));
-
-    const { getPoHistoryToPool: realGetPoHistoryToPool } = await import(
-      '../services/planEditsService'
-    );
-
-    await realGetPoHistoryToPool('run-1', 'p1', null);
-
-    expect(apiFetch).toHaveBeenCalledTimes(1);
-    const [url] = apiFetch.mock.calls[0] as [string];
-    const parsed = new URL(url, 'http://x');
-    expect(parsed.pathname).toBe('/api/v1/scm/reorder-runs/run-1/purchase-trend');
-    expect(parsed.searchParams.has('warehouse')).toBe(false);
-
-    vi.doUnmock('@/lib/api');
   });
 });

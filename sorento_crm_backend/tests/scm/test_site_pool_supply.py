@@ -538,7 +538,11 @@ def test_po_book_location_row_at_a_bin_serves_nothing(db):
 
 # --- AC-10: purchase-trend -----------------------------------------------------------
 
-def test_purchase_trend_without_warehouse_reads_site_pool(db):
+def test_purchase_trend_scope_site_pool_reads_site_pool(db):
+    """AC-10 (amended 10 Sep): the site-pool read is the EXPLICIT `site_pool_only=True`
+    scope (route `?scope=site_pool`), never the bare default - the bare default (neither
+    `warehouse_id` nor `site_pool_only`) stays run-wide because it feeds the row's Last
+    price / price history and must not narrow silently."""
     cat, uom = _cat_uom(db)
     product = _product2(db, cat, uom)
     head, bin_ = _pool2(db)
@@ -551,10 +555,19 @@ def test_purchase_trend_without_warehouse_reads_site_pool(db):
     _po2(db, product, head, qty_ordered=42, qty_received=42, status="closed")
     _po2(db, product, bin_, qty_ordered=96, qty_received=96, status="closed")
 
-    result = purchase_trend_service.purchase_trend_for_run(db, run.id, warehouse_id=None)
-    entry = result["products"][str(product.id)]
+    scoped = purchase_trend_service.purchase_trend_for_run(
+        db, run.id, warehouse_id=None, site_pool_only=True)
+    entry = scoped["products"][str(product.id)]
     assert entry["recent_qty"] == 42.0, (
-        f"a bin purchase reached the product-wide (no-warehouse) trend: {entry}"
+        f"a bin purchase reached the site-pool-scoped trend: {entry}"
+    )
+
+    # The bare default (neither param) is UNCHANGED and stays run-wide: 42 (head) + 96
+    # (bin) = 138.
+    bare = purchase_trend_service.purchase_trend_for_run(db, run.id)
+    bare_entry = bare["products"][str(product.id)]
+    assert bare_entry["recent_qty"] == 138.0, (
+        f"the bare default moved off run-wide: {bare_entry}"
     )
 
 

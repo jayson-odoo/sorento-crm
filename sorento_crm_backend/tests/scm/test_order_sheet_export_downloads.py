@@ -15,10 +15,13 @@ Postgres only, marker-prefixed seeding, nothing borrowed with LIMIT 1.
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
+from app.database import engine
 from tests.scm.conftest import SORENTO_COMPANY_ID, as_user, requires_pg, seed_user
 from tests.scm.test_m3_run import _client
 
@@ -46,6 +49,36 @@ class _NoCloseSession:
         return getattr(self._inner, name)
 
 
+@contextmanager
+def _savepoint_session():
+    """A Postgres session whose OWN `.commit()`/`.rollback()` operate on a SAVEPOINT,
+    never on the outer connection-level transaction - unlike `tests._pg_fixture.
+    pg_session()`, which binds a plain `Session(bind=connection)` with no
+    `join_transaction_mode` and (proven below, not merely suspected) lets a mid-test
+    `.rollback()` cascade straight through to the connection, deassociating it from the
+    transaction `finally` tries to roll back (`SAWarning: transaction already
+    deassociated from connection`) and expiring every row the test created
+    (`ObjectDeletedError` on the very next read).
+
+    `_record_failure` (`app/tasks/export_tasks.py`) always calls `db.rollback()` first -
+    correct against a real session, where the query that failed may have left the
+    transaction aborted - so a task-failure test needs a session that survives one.
+    `join_transaction_mode="create_savepoint"` (the same explicit choice
+    `tests._pg_fixture.blank_session()` makes, for the identical reason) is what makes
+    that true: the Session's transaction is a SAVEPOINT inside the connection's, so its
+    commit/rollback releases or undoes that savepoint alone.
+    """
+    connection = engine.connect()
+    transaction = connection.begin()
+    session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    try:
+        yield session
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
+
+
 def _seed_run(db, *, status: str = "completed") -> str:
     """`scm.reorder_run.company_id` has NO column default (unlike `products` /
     `warehouses`) - it must be stamped explicitly or `assert_run_visible`'s company-scope
@@ -61,7 +94,16 @@ def _seed_run(db, *, status: str = "completed") -> str:
 # =========================================================================== #
 
 def test_export_post_creates_download_row_and_enqueues(scm_app, monkeypatch):
+    """`enqueue_job` is patched at its source (`app.services.queue_service`) BEFORE the
+    request fires - `app.api.v1.scm.order_summary.export_order_summary` imports it
+    function-locally (`from app.services.queue_service import enqueue_job`, resolved
+    fresh on every call), so patching the module attribute here is what the route
+    actually calls. This is load-bearing, not decorative: a real job reached the lane's
+    shared Redis `imports` queue and was picked up by the lane worker during an earlier
+    (unpatched) run - the full call-args assertion below is what would have caught that
+    the enqueue was in fact the REAL `enqueue_job`, not this fake."""
     from app.services import queue_service
+    from app.tasks.export_tasks import generate_order_sheet
 
     app, db = _client(scm_app, "purchasing")
     run_id = _seed_run(db)
@@ -90,7 +132,7 @@ def test_export_post_creates_download_row_and_enqueues(scm_app, monkeypatch):
 
     row = db.execute(text(
         "SELECT kind, source_entity_type, source_entity_id::text AS source_entity_id, "
-        "       filename, status "
+        "       filename, status, user_id "
         "FROM user_downloads WHERE id = :id"
     ), {"id": body["id"]}).mappings().first()
     assert row is not None, "no user_downloads row was created"
@@ -101,8 +143,14 @@ def test_export_post_creates_download_row_and_enqueues(scm_app, monkeypatch):
     assert row["filename"].startswith("order-sheet-"), row["filename"]
     assert row["filename"].endswith(".xlsx"), row["filename"]
 
+    # The FULL call, not just the queue name - the row's own id, the run id, the format
+    # and the actor all travel through to the task exactly as `generate_order_sheet`'s
+    # signature expects them.
     assert len(calls) == 1, f"expected exactly one enqueue, got {calls}"
-    assert calls[0]["kwargs"].get("queue_name") == "imports", calls[0]
+    call = calls[0]
+    assert call["func"] is generate_order_sheet, call["func"]
+    assert call["args"] == (body["id"], run_id, "xlsx", row["user_id"]), call["args"]
+    assert call["kwargs"] == {"queue_name": "imports", "job_timeout": 600}, call["kwargs"]
 
 
 def test_export_post_guards_run_before_a_row_exists(scm_app):
@@ -172,33 +220,47 @@ def test_generate_order_sheet_marks_ready(scm_app, monkeypatch):
     assert row.filename == "order-sheet-10092026.xlsx"
 
 
-def test_generate_order_sheet_marks_failed_when_render_raises(scm_app, monkeypatch):
+def test_generate_order_sheet_marks_failed_when_render_raises(monkeypatch):
+    """`_record_failure` always calls `db.rollback()` first - correct against a real
+    session, where the query that failed may have left the transaction aborted. Against
+    `scm_app`'s fixture, though, that same `.rollback()` cascades past every nested
+    savepoint its `after_transaction_end` listener auto-restarts, straight to the
+    fixture's own outer transaction - deassociating it and expiring the just-created
+    download row (`ObjectDeletedError` on the very next read, independent of this
+    slice's own code; reproduced and reported by the coder). `tests._pg_fixture.
+    pg_session()` reproduces the SAME failure (proven, not assumed - it binds a plain
+    `Session(bind=connection)` with no `join_transaction_mode`, so its OWN `.rollback()`
+    also lands on the connection rather than a savepoint of its own).
+    `_savepoint_session()` is the one shape that survives it: see its own docstring.
+    """
     from app.services.download_service import DownloadService
     from app.services.scm import summary_order_service
     from app.tasks import export_tasks
 
-    _, db, _, _ = scm_app
-    run_id = _seed_run(db)
-    user_id = seed_user(db, "purchasing")
-    db.flush()
+    with _savepoint_session() as db:
+        run_id = _seed_run(db)
+        user_id = seed_user(db, "purchasing")
+        db.flush()
 
-    dl = DownloadService(db).create(
-        user_id=user_id, kind="order_sheet_pdf", source_entity_type="reorder_run",
-        source_entity_id=run_id, filename="order-sheet-10092026.pdf",
-    )
+        dl = DownloadService(db).create(
+            user_id=user_id, kind="order_sheet_pdf", source_entity_type="reorder_run",
+            source_entity_id=run_id, filename="order-sheet-10092026.pdf",
+        )
 
-    def _boom(db_, *, run_id, fmt):
-        raise RuntimeError("render exploded")
+        def _boom(db_, *, run_id, fmt):
+            raise RuntimeError("render exploded")
 
-    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
-    monkeypatch.setattr(summary_order_service, "export_report", _boom)
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+        monkeypatch.setattr(summary_order_service, "export_report", _boom)
 
-    result = export_tasks.generate_order_sheet(str(dl.id), run_id, "pdf", user_id)
+        result = export_tasks.generate_order_sheet(str(dl.id), run_id, "pdf", user_id)
 
-    assert result["status"] == "failed", result
-    row = DownloadService(db).get(str(dl.id))
-    assert row.status == "failed", row.status
-    assert "render exploded" in (row.error or ""), row.error
+        assert result["status"] == "failed", result
+        # A FRESH read, off the same session but a new query - not the stale, possibly
+        # expired ORM instance `create()` returned.
+        row = DownloadService(db).get(str(dl.id))
+        assert row.status == "failed", row.status
+        assert "render exploded" in (row.error or ""), row.error
 
 
 # =========================================================================== #
