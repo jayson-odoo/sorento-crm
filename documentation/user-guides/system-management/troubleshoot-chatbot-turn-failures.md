@@ -153,3 +153,6 @@ previous version again, not by asking engineering to revert code.
 * [Troubleshoot a failed notification (email or WhatsApp)](troubleshoot-failed-notifications.md) -
   for a WhatsApp send that failed for reasons unrelated to the bot (e.g. a bad workspace key), not
   the bot's own decision-making.
+* [Chatbot - "which products have X" (asking for a set)](chatbot-attribute-set-answers.md) - what
+  a customer sees when they ask for a whole group of products at once, and the Lookup Sets an
+  admin fills in to teach the bot new words for it.
