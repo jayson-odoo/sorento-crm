@@ -581,6 +581,13 @@ def entity_ids_transformer(
         elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
             out["limit"] = top_n
 
+    # E1 (attribute-first asks): a HAS turn - the resolver's `predicate` block rode
+    # through the gate untouched - shows 5 qualifying products, same as any other
+    # domain tool's forward listing; "more" (E3, a later slice) pages by 5 from the
+    # carried offer rather than asking for a bigger page here.
+    if trig.get("predicate") is not None:
+        out["limit"] = 5
+
     # COERCE, THEN TRIM, and the ORDER is the whole point. `contact_id` arrives as BOTH an
     # int and a SPACE-PADDED string in production, in adjacent executions: five spine call
     # sites write `{{ ... .json.id }} ` with a trailing space inside the template. A number

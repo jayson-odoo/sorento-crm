@@ -2164,6 +2164,34 @@ def _fmt_date(value: Any) -> str:
     return f"{match.group(3)}/{match.group(2)}/{match.group(1)}" if match else jsc.nullish_str(value)
 
 
+# F1 (attribute-first asks, AC-1319): a HAS turn's noun per leg, for the miss sentence.
+# `attachment_type` has no fixed noun - its own value already IS the customer's label.
+_PREDICATE_NOUN: dict[str, str] = {
+    "certificate": "a certificate",
+    "stock": "stock",
+    "promotion": "a promotion",
+    "incoming": "incoming stock",
+}
+
+
+def _predicate_phrase(require: dict[str, Any]) -> str:
+    """"a certificate", "stock and a certificate" - the leg(s) a HAS turn asked for.
+
+    `require`'s keys are AND'd (`product_predicate_service.resolve_product_set`'s own
+    contract), so the phrase joins on "and", never "or".
+    """
+    parts: list[str] = []
+    for key, value in (require or {}).items():
+        if key == "attachment_type":
+            label = jsc.js_string(value).strip()
+            parts.append(f"a {label}" if label else "an attachment")
+            continue
+        noun = _PREDICATE_NOUN.get(key)
+        if noun:
+            parts.append(noun)
+    return _and_list(parts) if parts else "that"
+
+
 def not_found_error_message(
     item: dict[str, Any] | None,
     *,
@@ -2787,8 +2815,56 @@ def not_found_error_message(
                 )
         else:
             require_specific = jsc.get(g, "require_specific")
+            predicate = jsc.get(g, "predicate")
             if jsc.truthy(require_specific):
                 escalate_message = jsc.get(g, "gate_clarification")
+            elif (
+                isinstance(predicate, dict)
+                and jsc.get(predicate, "qualifying_total") == 0
+                and not jsc.array(jsc.get(predicate, "unrecognized_terms"))
+            ):
+                # AC-1319: a HAS turn's described set is honest (every content word
+                # bound to something, C4's gate bypass let the qualifying matches
+                # through), and NONE of them satisfy the predicate. Name the set and
+                # the predicate, and the codes actually checked - never the generic
+                # "no {attach_noun} matched these" below, which names only the
+                # predicate word and drops the set the customer actually asked about.
+                brand_raw = jsc.get(
+                    jsc.find(entities_list, lambda e: jsc.get(e, "hint") == "brand"), "raw"
+                )
+                product_raw_words = [
+                    jsc.js_string(jsc.get(e, "raw"))
+                    for e in entities_list
+                    if jsc.get(e, "hint") == "product" and jsc.truthy(jsc.get(e, "raw"))
+                ]
+                subject_words = (
+                    [jsc.js_string(brand_raw)] if jsc.truthy(brand_raw) else []
+                ) + product_raw_words
+                subject = " ".join(subject_words) if subject_words else "a match"
+                # Read straight off the RESOLVER's own resolutions, never off this
+                # gate's `compatible_entities` - the zero-qualifying carve-out
+                # (`gate.py`'s `_is_a_described_word` branch) deliberately keeps a
+                # described-set word's matches OUT of `compatible_entities` (so the
+                # miss gate still fires), which would otherwise empty this list too.
+                checked_codes: list[str] = []
+                for res in jsc.array(jsc.get(r, "resolutions")):
+                    for m in jsc.array(jsc.get(res, "matches")):
+                        if not jsc.truthy(m) or jsc.get(m, "entity_type") != "product":
+                            continue
+                        code = jsc.get(m, "canonical_code")
+                        if jsc.truthy(code) and code not in checked_codes:
+                            checked_codes.append(jsc.js_string(code))
+                checked_codes = checked_codes[:5]
+                checked = (
+                    f" (checked {', '.join(jsc.js_string(c) for c in checked_codes)})"
+                    if checked_codes
+                    else ""
+                )
+                escalate_message = (
+                    f"Couldn't find a {subject} with "
+                    f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}. "
+                    f"Would you like me to escalate to {team} team?"
+                )
             elif domain_hint == "product_attachment":
                 # FIX B: natural, parser-driven phrasing - never leak the internal literal.
                 product_raws = [
