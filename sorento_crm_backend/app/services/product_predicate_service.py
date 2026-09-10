@@ -142,6 +142,16 @@ def _attachment_type_row(db: Session, label: str) -> AttachmentType | None:
     )
 
 
+def _attachment_type_names_on_file(db: Session) -> list[str]:
+    """Every product-facing `AttachmentType.type_name` on file, sorted - a
+    GLOBAL reference table (no company scope on the model), so a plain query is
+    correct here. R6/AC-1329's clarify copy names these, never the class/
+    product-type vocabulary: an unrecognised attachment LABEL ("photo") is a
+    document-type miss, not a product-type one."""
+    rows = db.query(AttachmentType.type_name).distinct().all()
+    return sorted({str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()})
+
+
 def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
     """Has an attachment of the type the CUSTOMER NAMED - label in, not code.
 
@@ -151,6 +161,12 @@ def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
     "picture", "gambar" reach whatever type the owner has aliased them to.
     Resolving server-side is what keeps new document classes out of the parser
     prompt: the parser ships four key names, the labels live in this table.
+
+    R6/AC-1329 (console fix round 2): a miss here carries
+    `attachment_types_on_file` - the product-facing AttachmentType names - so
+    the reply can clarify the label as a DOCUMENT type ("I don't know 'photo'
+    as a document type. Types I know: ...") rather than the product-type
+    sentence, which answers the wrong question for a file label.
     """
     label = str(value or "").strip()
     row = _attachment_type_row(db, label)
@@ -159,7 +175,9 @@ def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
         if aliased_label:
             row = _attachment_type_row(db, aliased_label)
     if row is None:
-        raise _UnrecognizedLabel(label)
+        raise _UnrecognizedLabel(
+            label, extra={"attachment_types_on_file": _attachment_type_names_on_file(db)}
+        )
     clause = exists().where(
         ProductAttachment.product_id == Product.id,
         Attachment.id == ProductAttachment.attachment_id,
@@ -202,9 +220,21 @@ def _leg_certificate(db: Session, value: Any) -> ColumnElement:
     if isinstance(value, dict):
         scheme = str(value.get("scheme") or "").strip()
         if scheme:
-            resolved_scheme = _lookup_resolve(db, "certificate_scheme", scheme)
+            # R5/AC-1328 (console fix round 2): the register's OWN active
+            # spellings are tried FIRST, by case-insensitive equality - a
+            # scheme word that IS a real spelling ("pps" against a register
+            # carrying "PPS") must resolve even on a fresh install where the
+            # owner has not yet entered it into the `certificate_scheme`
+            # lookup set (D3's own empty-set default). The lookup set is the
+            # ALIAS mechanism for a word that is NOT itself a register
+            # spelling, not the only path to one that already is.
+            schemes_on_file = _schemes_on_file(db)
+            by_lower = {s.lower(): s for s in schemes_on_file}
+            resolved_scheme = by_lower.get(scheme.lower())
             if resolved_scheme is None:
-                raise _UnrecognizedLabel(scheme, extra={"schemes_on_file": _schemes_on_file(db)})
+                resolved_scheme = _lookup_resolve(db, "certificate_scheme", scheme)
+            if resolved_scheme is None:
+                raise _UnrecognizedLabel(scheme, extra={"schemes_on_file": schemes_on_file})
             conditions.append(func.lower(Certificate.scheme) == resolved_scheme.lower())
             resolved_value = {**value, "scheme": resolved_scheme}
         if str(value.get("validity_state") or "").strip().lower() == "valid":
@@ -503,6 +533,19 @@ def resolve_product_set(
         value = row.get("class")
         if value:
             class_labels.add(str(value))
+    if not class_labels:
+        # R3 (console fix round 2): a described set whose class derivation
+        # reads nothing (a bidet's own class comes from the description's
+        # TRAILING noun - "SPRAY", not "BIDET" - so it stays unmapped) still
+        # has a real noun to say: the candidates' own `product_type`
+        # ("bidet"), never the generic "products" this would otherwise fall
+        # back to. Only tried when class named NOTHING at all, so a real
+        # class always wins over this fallback.
+        for row in candidates:
+            specs = row.get("specifications") or {}
+            value = specs.get("product_type") if isinstance(specs, dict) else None
+            if value:
+                class_labels.add(str(value))
 
     return {
         "candidates": candidates,

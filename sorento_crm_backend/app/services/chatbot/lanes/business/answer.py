@@ -2947,6 +2947,26 @@ def not_found_error_message(
                     f"Schemes on file: {schemes_text}. "
                     f"Would you like me to escalate to {team} team?"
                 )
+            elif isinstance(predicate, dict) and "attachment_types_on_file" in predicate:
+                # R6/AC-1329 (console fix round 2): the unrecognised word is an
+                # ATTACHMENT LABEL ("photo"), not a class/product_type word - a
+                # document-type miss answers the wrong question with the
+                # product-type sentence below. `_leg_attachment_type`'s own
+                # `_UnrecognizedLabel` is the ONLY leg that carries this key, so
+                # it takes priority over the generic F2 branch beneath it.
+                term = jsc.js_string(
+                    jsc.get(jsc.get(predicate, "require") or {}, "attachment_type")
+                ).strip()
+                types_on_file = jsc.array(jsc.get(predicate, "attachment_types_on_file"))
+                types_text = (
+                    ", ".join(jsc.js_string(t) for t in types_on_file)
+                    if types_on_file
+                    else "none on file yet"
+                )
+                escalate_message = (
+                    f"I don't know '{term}' as a document type. Types I know: {types_text}."
+                )
+                is_clarification = True
             elif (
                 isinstance(predicate, dict)
                 and jsc.get(predicate, "qualifying_total") == 0
