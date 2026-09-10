@@ -12,10 +12,13 @@ straight into a field with no RTF control at all.
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Optional
 
 from striprtf.striprtf import rtf_to_text
+
+logger = logging.getLogger(__name__)
 
 _RTF_PREFIX = "{\\rtf"
 _RUN_OF_BLANK_LINES = re.compile(r"\n{3,}")
@@ -25,11 +28,22 @@ def strip_rtf(value: Optional[str]) -> Optional[str]:
     """`None`/blank in, `None` out. RTF in, its plain text out. Anything else, stripped."""
     if not value:
         return None
-    if not value.startswith(_RTF_PREFIX):
-        stripped = value.strip()
-        return stripped or None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    if not stripped.startswith(_RTF_PREFIX):
+        return stripped
 
-    text = rtf_to_text(value)
+    try:
+        text = rtf_to_text(stripped)
+    except Exception:
+        # striprtf 0.0.33 raises (e.g. TypeError on a truncated \uc control word)
+        # on malformed RTF that is real AutoCount data, not a bad payload someone
+        # can retry - the push must not fail the whole sales order over a note,
+        # and the backfill migration must not halt a deploy on one bad row.
+        logger.warning("strip_rtf: rtf_to_text failed on %r", value[:40])
+        return value
+
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = "\n".join(line.rstrip() for line in text.split("\n")).strip()
     text = _RUN_OF_BLANK_LINES.sub("\n\n", text)
