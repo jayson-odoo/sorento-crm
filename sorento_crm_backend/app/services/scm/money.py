@@ -27,6 +27,12 @@ from sqlalchemy.orm import Session
 #: base with no second reader is a knob that can only be turned wrong.
 BASE_CURRENCY = "MYR"
 
+#: The home country for supply-origin routing (S3, `PLAN-local-supplier-oi-routing.md`):
+#: a Buy whose supplier's `countries.code` matches this is `local` and raises no Order
+#: Inquiry row on confirm. Both companies are in Malaysia; a company outside it is the
+#: trigger to make this a per-company setting rather than a constant.
+HOME_COUNTRY_CODE = "MY"
+
 
 @dataclass(frozen=True)
 class Rate:

@@ -266,6 +266,12 @@ def _delete_uom(db: Session, payload: dict):
     return UnitOfMeasureService(db).delete_uom(_entity_id(payload))
 
 
+def _delete_country(db: Session, payload: dict):
+    from app.services.country_service import CountryService
+
+    return CountryService(db).delete_country(_entity_id(payload))
+
+
 def _delete_brand(db: Session, payload: dict):
     from app.services.product_service import BrandService
 
@@ -310,6 +316,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.units_of_measure.delete",
         label="Delete unit of measure",
+    )
+)
+
+register(
+    FormAction(
+        key="country.delete",
+        entity_types=("country",),
+        execute=_delete_country,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.countries.delete",
+        label="Delete country",
     )
 )
 

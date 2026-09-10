@@ -771,6 +771,12 @@ export function BoardCellBreakdownDialog({
                     )}
                   />
                 )}
+                {/* S3 (`PLAN-local-supplier-oi-routing.md`): mirrors the Suggested/Decided
+                    pill the list view carries - a local Buy raises no Order Inquiry. */}
+                {contribution.buy_origin === 'local' &&
+                  merged.some((m) => m.kind === 'buy') && (
+                    <Badge variant="secondary">Local</Badge>
+                  )}
                 {/* The two prose sentences behind the numbers above - why this rung fired,
                     and what was left for this line at its own pile - under one visible icon
                     rather than a silent `title` nobody hovers or two lines of wrapped text

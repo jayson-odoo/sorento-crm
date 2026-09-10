@@ -547,13 +547,17 @@ def test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count(
         seen_lines = sum(len(cell["contributions"]) for cell in board["cells"])
         assert seen_lines == line_count, "the seed actually reached the board"
         # MEASURED 37 on this fixture (27 August 2026), after `_warehouses_for_groups`
-        # stopped scanning the warehouse table once per CELL, and 43 on 30 August, after
+        # stopped scanning the warehouse table once per CELL, 43 on 30 August, after
         # ladder v7.1 added the ONE assignment both the board and the Stock Debt view read
         # (six batched reads for the whole board: stock, demand, SPO, PO, allocations,
-        # links). One statement of slack, and no more: the bound is here to catch a
-        # `for line in lines: db.query(...)`, and a generous one lets 76 lines' worth of
-        # per-line reads hide under it.
-        assert calls["n"] <= 44, calls["n"]
+        # links) - and 44 on main before this lane (an unrecorded drift from 43). Local-
+        # supplier-oi-routing adds ONE more, `buy_origin_by_product`, read once per BUILD
+        # (not per line, `test_buy_origin_computed_once_per_board_build` guards that): 45
+        # measured at 76 lines and 45 again at 152 lines - flat, which is the property this
+        # bound exists to guard, not the number itself. One statement of slack, and no
+        # more: the bound is here to catch a `for line in lines: db.query(...)`, and a
+        # generous one lets 76 lines' worth of per-line reads hide under it.
+        assert calls["n"] <= 45, calls["n"]
 
 
 # --------------------------------------------------------------------------- #

@@ -4,7 +4,7 @@ Create, edit, and delete the vendors you buy from. Use this when you need to add
 
 ## Where
 
-[**Procurement → Suppliers**](/procurement-management/suppliers). The list shows columns **Supplier Code**, **Supplier Name**, **Contact Person**, **Phone**, **Email**, and **Status** (**Active** / **Inactive**). Use the search box to find a supplier by code or name. Click any row to open its detail page.
+[**Procurement → Suppliers**](/procurement-management/suppliers). The list shows columns **Supplier Code**, **Supplier Name**, **Contact Person**, **Phone**, **Email**, **Country**, and **Status** (**Active** / **Inactive**). A supplier with no country set shows "-". Use the search box to find a supplier by code or name. Click any row to open its detail page.
 
 ## Add a supplier
 
@@ -15,6 +15,19 @@ Create, edit, and delete the vendors you buy from. Use this when you need to add
    * **Payment Terms** - **Payment Terms (Days)** * (defaults to 30) and **Active Status**.
    Fields marked * are required.
 3. Click **Create Supplier** to save. You'll return to the list with the new supplier added.
+
+### Country
+
+**Country** is a clearable, searchable dropdown - type to search, pick from
+**[Products → Reference Data → Countries](../product/countries.md)**, or clear it back to
+empty. It is not free text: a supplier can only carry a country that already exists on that
+list, so add the country there first if it is missing.
+
+Whether a supplier already has its country set depends on when it was created: a one-time
+script set **Country** to **Malaysia** for existing suppliers whose name already read as
+Malaysian (containing `SDN BHD`, `(KL)`, or `MALAYSIA`); every other existing supplier has no
+country until someone sets it here or the AutoCount integration sends one (see
+[System Management - Data analysis for the AI assistant](../system-management/data-analysis.md)).
 
 A **Supplier Code** that differs from one you already hold only by case or spacing (e.g. `abc`
 vs `ABC`) is refused with *"Supplier code already exists."* rather than silently creating a
@@ -39,7 +52,7 @@ This is a **hard delete** - the supplier row is removed. Its product-supplier li
 
 ## What's captured
 
-A supplier stores: code, name, contact person, email, phone, website, full address (lines 1 - 2, city, state, postal code, country), payment terms in days, and an active flag. The system also records when it was created and last updated.
+A supplier stores: code, name, contact person, email, phone, website, full address (lines 1 - 2, city, state, postal code), a linked **Country** (from the Countries reference list, not free text), payment terms in days, and an active flag. The system also records when it was created and last updated.
 
 ## Product-Supplier links (read-only here)
 
@@ -48,5 +61,7 @@ The [**Procurement → Product-Suppliers**](/procurement-management/product-supp
 ## See also
 
 * [Procurement - Data analysis for the AI assistant](data-analysis.md)
+* [Countries](../product/countries.md) (where **Country** is maintained)
 * [Upload product master](../purchasing/upload-product-master.md) (creates product-supplier links)
 * [Upload a packing list](../purchasing/upload-packing-list.md) (shipments reference a supplier)
+* [Buy and borrow decisions on Fulfilment Planning](../supply-chain/local-buy-and-borrow-source.md) (why a supplier's country matters on a Buy decision)

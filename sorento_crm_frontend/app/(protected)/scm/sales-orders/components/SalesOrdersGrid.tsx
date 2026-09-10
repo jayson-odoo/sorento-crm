@@ -541,6 +541,24 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         size: 200,
         meta: { headerTitle: 'Customer' },
       },
+      {
+        accessorKey: 'project_label',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        // Resolved from whichever source ranked highest (the Order Inquiry sheet, the
+        // AutoCount note, its `Ref`, or a delivery address) - the source word itself is a
+        // detail-page fact, not a list one, so the cell states only the name.
+        cell: ({ row }) => {
+          const label = row.original.project_label;
+          if (!label) return <span className="text-muted-foreground">-</span>;
+          return (
+            <span className="block truncate" title={label}>
+              {label}
+            </span>
+          );
+        },
+        size: 220,
+        meta: { headerTitle: 'Project' },
+      },
       // Off inside an agent's own record: a column whose every cell repeats the name at the
       // top of the page is a column that answers nothing.
       ...(pinnedToAgent

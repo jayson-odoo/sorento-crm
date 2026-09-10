@@ -24,6 +24,10 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+# S4 (`PLAN-local-supplier-oi-routing.md`): the Grid Location table's own row shape,
+# reused rather than duplicated for `BorrowCandidate.location`.
+from app.schemas.project_board import BoardCellLocation
+
 SupplyComponentKind = Literal["timely_spo", "reserve", "borrow", "buy"]
 BorrowSource = Literal["other_location", "other_project"]
 SupplyDecisionState = Literal["active", "superseded", "challenged"]
@@ -145,6 +149,9 @@ class BorrowCandidate(BaseModel):
     #: date"), for a `group_borrow` row - the confirm payload round-trips this into
     #: `ConfirmBorrowComponent.donor_required_date`. `None` on every other rung.
     donor_required_date: Optional[date] = None
+    #: S4: the SAME location facts the Grid Location table states for this warehouse.
+    #: `None` on a server build that has not wired this yet.
+    location: Optional[BoardCellLocation] = None
 
 
 class SupplyFrozenLine(BaseModel):
@@ -213,6 +220,10 @@ class SupplyLine(BaseModel):
     description: Optional[str] = None
     uom: Optional[str] = None
     open_qty: str
+    #: S3 (`PLAN-local-supplier-oi-routing.md`): whether the product's supplier sits in the
+    #: home country. A `local` Buy raises no Order Inquiry row on confirm. `None` on a
+    #: server build that skipped origin resolution.
+    buy_origin: Optional[Literal["local", "overseas"]] = None
     required_date: Optional[date] = None
     fulfilment_location: Optional[str] = None
     is_dealer_hot_selling: bool = False
