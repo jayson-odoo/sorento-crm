@@ -27,10 +27,14 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from sqlalchemy import String as _String
+from sqlalchemy import cast as _cast
 from sqlalchemy import exists, func, or_
+from sqlalchemy.dialects.postgresql import ARRAY as _ARRAY
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql import ColumnElement
 
+from app.models.access import ContactAccessType
 from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
 from app.models.inventory import Stock
 from app.models.marketing import Promotion, PromotionProduct
@@ -65,20 +69,40 @@ class _UnrecognizedLabel(Exception):
         self.extra = extra or {}
 
 
+def _company_scoped_class_labels(db: Session) -> list[str]:
+    """Every distinct class value a product IN THE CALLER'S OWN SCOPE carries
+    (SEC-S2/AC-1335). `ProductSpecifications` carries no `company_id` of its
+    own, so this joins `Product` (the scoped side) - the `do_orm_execute`
+    listener's `with_loader_criteria` scopes ORM entities like `Product`, not
+    a bare unjoined `ProductSpecifications` query, which would otherwise read
+    every company's class labels. ORM only, never the raw `text()` SQL
+    `product_class_signal.stored_class_labels` runs - that helper reads other,
+    non-customer-facing callers and is out of scope here."""
+    expr = ProductSpecifications.values["class"]["value"].astext
+    rows = (
+        db.query(expr)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(expr.isnot(None))
+        .distinct()
+        .all()
+    )
+    return sorted({row[0] for row in rows if row[0]})
+
+
 def _nearest_class_labels(db: Session, term: str, *, limit: int = 3) -> list[str]:
     """Nearest class-label suggestions for an unrecognized term (AC-1320): every
     content word in `term` against the class labels products actually carry
-    (`product_class_signal.stored_class_labels`) - an exact word match first
-    ("tap" out of "water tap" against the label "Tap"), then a fuzzy
-    nearest-neighbour for a near-miss spelling. Order-stable, deduped, capped at
-    `limit` - the reply names a few candidates, never the whole vocabulary.
+    IN THE CALLER'S OWN SCOPE (`_company_scoped_class_labels`) - an exact word
+    match first ("tap" out of "water tap" against the label "Tap"), then a
+    fuzzy nearest-neighbour for a near-miss spelling. Order-stable, deduped,
+    capped at `limit` - the reply names a few candidates, never the whole
+    vocabulary.
     """
     import difflib
 
-    from app.services.product_class_signal import stored_class_labels
     from app.services.product_spec_search import _content_words
 
-    labels = stored_class_labels(db)
+    labels = _company_scoped_class_labels(db)
     if not labels:
         return []
     lowered = {label.lower(): label for label in labels}
@@ -101,11 +125,13 @@ def _common_class_labels(db: Session, *, limit: int = 3) -> list[str]:
     can read at all - no exact word match, no fuzzy near-miss - the reply still
     has to offer SOMETHING real ("Try a product type such as tap, wash basin,
     water closet."), never the contentless "Did you mean the product types I
-    know?".
+    know?". SEC-S2/AC-1335: joins `Product` (the scoped side) so a company B
+    class label never reaches a company A reply.
     """
     expr = ProductSpecifications.values["class"]["value"].astext
     rows = (
         db.query(expr, func.count())
+        .join(Product, Product.id == ProductSpecifications.product_id)
         .filter(expr.isnot(None))
         .group_by(expr)
         .order_by(func.count().desc())
@@ -162,7 +188,26 @@ def _attachment_type_names_on_file(db: Session) -> list[str]:
     return sorted({str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()})
 
 
-def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
+def _access_level_codes(db: Session, access_levels: list[str] | None) -> set[str] | None:
+    """Caller-supplied access-level NAMES translated to canonical
+    `contact_access_types.code` values - the same case-insensitive name -> code
+    translation `references._apply_promotion_access_levels_filter` already
+    uses. `None` when `access_levels` itself is empty/falsy (no restriction,
+    every tier counts); an EMPTY set when every name failed to translate to a
+    known code (a filter that matches nothing, never a silent no-op that lets
+    every promotion back in)."""
+    names_lower = {str(n).strip().lower() for n in (access_levels or []) if n and str(n).strip()}
+    if not names_lower:
+        return None
+    rows = (
+        db.query(ContactAccessType.code)
+        .filter(func.lower(ContactAccessType.name).in_(names_lower))
+        .all()
+    )
+    return {r[0] for r in rows}
+
+
+def _leg_attachment_type(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
     """Has an attachment of the type the CUSTOMER NAMED - label in, not code.
 
     Resolution tries, in order: exact code / type_name (today, mirrors
@@ -190,6 +235,7 @@ def _leg_attachment_type(db: Session, value: Any) -> ColumnElement:
         )
     clause = exists().where(
         ProductAttachment.product_id == Product.id,
+        ProductAttachment.company_id == Product.company_id,
         Attachment.id == ProductAttachment.attachment_id,
         Attachment.attachment_type_id == row.id,
     )
@@ -208,7 +254,7 @@ def _schemes_on_file(db: Session) -> list[str]:
     return sorted({str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()})
 
 
-def _leg_certificate(db: Session, value: Any) -> ColumnElement:
+def _leg_certificate(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
     """In the certificate register. Bare ``true`` = any active-register cert
     (decided); the object form narrows: ``scheme`` through the
     `certificate_scheme` lookup set (D2, AC-1313) then equality on the resolved
@@ -263,34 +309,69 @@ def _leg_certificate(db: Session, value: Any) -> ColumnElement:
     return clause
 
 
-def _leg_promotion(db: Session, value: Any) -> ColumnElement:
-    """Member of an active promotion: switched on AND inside its date window."""
-    return exists().where(
+def _leg_promotion(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
+    """Member of an active promotion: switched on AND inside its date window.
+
+    REV-B1/AC-1310 (third console pass): `with_loader_criteria` (the
+    `do_orm_execute` listener's own scoping mechanism) filters ORM entities,
+    not a bare `exists().where(...)` subquery, so this EXISTS needs its own
+    explicit same-company predicate against `Promotion` - the parent side
+    `PromotionProduct` joins through - or a foreign-company promotion linked
+    to one of the caller's products still counts.
+
+    SEC-S1/AC-1334: also intersects `Promotion.access_levels` with the
+    caller's OWN tier(s) - unfiltered, `qualifying_total` and the named
+    products could disclose a tier-restricted promotion the contact cannot
+    actually see. `access_levels=None` (or empty) is no restriction; a name
+    that fails to translate to any known code is a filter that matches
+    nothing, never a silent no-op.
+    """
+    conditions = [
         PromotionProduct.product_id == Product.id,
         Promotion.id == PromotionProduct.promotion_id,
+        Promotion.company_id == Product.company_id,
         Promotion.is_active.is_(True),
         or_(Promotion.start_date.is_(None), Promotion.start_date <= func.current_date()),
         or_(Promotion.end_date.is_(None), Promotion.end_date >= func.current_date()),
-    )
+    ]
+    allowed_codes = _access_level_codes(db, access_levels)
+    if allowed_codes is not None:
+        conditions.append(
+            Promotion.access_levels.op("?|")(_cast(list(allowed_codes), _ARRAY(_String)))
+        )
+    return exists().where(*conditions)
 
 
-def _leg_stock(db: Session, value: Any) -> ColumnElement:
+def _leg_stock(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
     """Plain on-hand > 0. Deliberately NOT the MCP's
     ``exclude_zero_system_adjustment`` semantics — that filter answers a
     different question ("hide rows an adjustment zeroed"), this one answers
     "is there any stock at all".
+
+    REV-B1/AC-1310: an explicit `Stock.company_id == Product.company_id`
+    predicate - `with_loader_criteria` does not reach a bare `exists()`
+    subquery, so without this a `Stock` row stamped to another company still
+    counts once its `product_id` matches.
     """
-    return exists().where(Stock.product_id == Product.id, Stock.quantity_on_hand > 0)
+    return exists().where(
+        Stock.product_id == Product.id,
+        Stock.company_id == Product.company_id,
+        Stock.quantity_on_hand > 0,
+    )
 
 
-def _leg_incoming(db: Session, value: Any) -> ColumnElement:
+def _leg_incoming(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
     """An open shipment line: shipped minus received is still positive AND the
     shipment has not actually arrived yet (D1, AC-1311). Joins through
-    `InboundShipment` for the arrival check - the line's own company scope
-    already isolates it, but the shipment side needs the join regardless."""
+    `InboundShipment` for the arrival check AND for company scope (REV-B1/
+    AC-1310) - `with_loader_criteria` does not reach a bare `exists()`
+    subquery, so an explicit `InboundShipment.company_id == Product.company_id`
+    predicate is required; without it a foreign-stamped open shipment line
+    still counts (the reviewer's own kill test)."""
     return exists().where(
         InboundShipmentLine.product_id == Product.id,
         InboundShipment.id == InboundShipmentLine.shipment_id,
+        InboundShipment.company_id == Product.company_id,
         (
             func.coalesce(InboundShipmentLine.quantity_shipped, 0)
             - func.coalesce(InboundShipmentLine.quantity_received, 0)
@@ -302,7 +383,7 @@ def _leg_incoming(db: Session, value: Any) -> ColumnElement:
 
 # One entry per domain. A new domain lands as one function + one line here + one
 # noun in the n8n parser — never as another inline block in references.py.
-REQUIRE_LEGS: dict[str, Callable[[Session, Any], ColumnElement]] = {
+REQUIRE_LEGS: dict[str, Callable[..., ColumnElement]] = {
     "attachment_type": _leg_attachment_type,
     "certificate": _leg_certificate,
     "promotion": _leg_promotion,
@@ -321,6 +402,7 @@ def resolve_product_set(
     limit: int | None = None,
     product_ids: list[str] | None = None,
     brand: str | None = None,
+    access_levels: list[str] | None = None,
 ) -> dict:
     """(described set) ∩ (require legs), with an honest count.
 
@@ -353,6 +435,12 @@ def resolve_product_set(
     finishes of one sink are one product to the person asking, and that is also
     exactly what the ranker's display collapse shows. A row count would say "80
     faucets" where 40 models exist.
+
+    ``access_levels`` (SEC-S1/AC-1334): the caller's own tier NAMES, threaded
+    into every leg (only `_leg_promotion` reads them today) so a tier the
+    contact cannot see never counts toward `qualifying_total` nor names its
+    product. `None` is no restriction - the caller is the resolve endpoint
+    itself, which always passes its own `payload.access_levels`.
     """
     unknown = sorted(set(require) - set(REQUIRE_LEGS))
     if unknown:
@@ -372,7 +460,7 @@ def resolve_product_set(
         if value in (None, False):
             continue
         try:
-            clause = REQUIRE_LEGS[key](db, value)
+            clause = REQUIRE_LEGS[key](db, value, access_levels=access_levels)
         except _UnrecognizedLabel as miss:
             unrecognized.append(miss.label)
             require_echo[key] = miss.label
@@ -552,8 +640,10 @@ def resolve_product_set(
         # back to. Only tried when class named NOTHING at all, so a real
         # class always wins over this fallback.
         for row in candidates:
-            specs = row.get("specifications") or {}
-            value = specs.get("product_type") if isinstance(specs, dict) else None
+            # REV-S5: a local named `specs` here shadowed the function's own
+            # `specs: list[dict] | None` parameter for the rest of the loop body.
+            row_specs = row.get("specifications") or {}
+            value = row_specs.get("product_type") if isinstance(row_specs, dict) else None
             if value:
                 class_labels.add(str(value))
 
