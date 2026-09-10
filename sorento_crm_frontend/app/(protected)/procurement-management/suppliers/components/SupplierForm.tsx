@@ -18,6 +18,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useCountrySelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-country-select-query';
 import { useCreateSupplier, useUpdateSupplier, useSupplier } from '../hooks/useSuppliers';
 import { SupplierSchema, type SupplierSchemaType } from '../forms/supplier-schema';
 import type { SupplierFormData } from '../types/supplier.types';
@@ -33,6 +35,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
   const router = useRouter();
   const isEditMode = !!supplierId;
   const { data: supplier, isLoading: isLoadingSupplier } = useSupplier(supplierId || null);
+  const { data: countries } = useCountrySelectQuery();
   const createMutation = useCreateSupplier();
   const updateMutation = useUpdateSupplier();
 
@@ -50,7 +53,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
       city: '',
       state: '',
       postal_code: '',
-      country: '',
+      country_id: null,
       payment_terms_days: 30,
       is_active: true,
     },
@@ -75,7 +78,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
         city: supplier.city || '',
         state: supplier.state || '',
         postal_code: supplier.postal_code || '',
-        country: supplier.country || '',
+        country_id: supplier.country_id ?? null,
         payment_terms_days: supplier.payment_terms_days,
         is_active: supplier.is_active,
       });
@@ -103,7 +106,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
         city: data.city || undefined,
         state: data.state || undefined,
         postal_code: data.postal_code || undefined,
-        country: data.country || undefined,
+        country_id: data.country_id ?? null,
         payment_terms_days: data.payment_terms_days,
         is_active: data.is_active,
       };
@@ -333,12 +336,23 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
 
               <FormField
                 control={form.control}
-                name="country"
+                name="country_id"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Country</FormLabel>
                     <FormControl>
-                      <Input placeholder="Country" {...field} value={field.value || ''} />
+                      <SearchableSelect
+                        value={field.value ?? ''}
+                        onChange={(v) => field.onChange(v || null)}
+                        clearable
+                        placeholder="Search country..."
+                        emptyMessage="No country found."
+                        options={(countries ?? []).map((c) => ({
+                          value: c.id,
+                          label: c.name,
+                          searchText: `${c.code} ${c.name}`,
+                        }))}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

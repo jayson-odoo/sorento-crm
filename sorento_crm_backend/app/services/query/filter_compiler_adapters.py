@@ -6,6 +6,7 @@ from typing import Any, Dict, Union
 
 from sqlalchemy import ColumnElement, Numeric, and_, cast, exists, func, or_, select
 
+from app.models.country import Country
 from app.models.inventory import Warehouse
 from app.models.list_query_metadata import ListQueryField
 from app.models.marketing import Promotion
@@ -240,6 +241,22 @@ def _compile_products(node: Union[FilterGroup, FilterCondition], field_by_key: D
     )
 
 
+def _compile_supplier_country_predicate(compile_key: str, op: str, value: Any, data_type: str) -> ColumnElement:
+    """S2 (`PLAN-local-supplier-oi-routing.md`): `country.name`, joined - `suppliers.country`
+    is gone (S2), replaced by `country_id`. Same EXISTS-correlated-subquery shape
+    `_compile_order_line_joined_predicate` above uses for a nested relation, so a filter on
+    the joined column never depends on the base query already carrying the join.
+    """
+    _, attr = compile_key.split(".", 1)
+    pred = _apply_scalar(getattr(Country, attr), op, value, data_type)
+    subq = (
+        select(1)
+        .select_from(Country)
+        .where(and_(Country.id == Supplier.country_id, pred))
+    )
+    return exists(subq)
+
+
 def _compile_suppliers(node: Union[FilterGroup, FilterCondition], field_by_key: Dict[str, ListQueryField]) -> ColumnElement:
     if isinstance(node, FilterGroup):
         parts = [_compile_suppliers(c, field_by_key) for c in node.children]
@@ -249,12 +266,11 @@ def _compile_suppliers(node: Union[FilterGroup, FilterCondition], field_by_key: 
         raise ValueError(f"unknown or non-filterable field: {node.field_key}")
     if node.op not in _meta_allowed_ops(meta):
         raise ValueError(f"operator {node.op} not allowed for field {node.field_key}")
-    return _apply_scalar(
-        _supplier_column(_meta_str(meta, "compile_key")),
-        node.op,
-        node.value,
-        _meta_str(meta, "data_type", "string"),
-    )
+    compile_key = _meta_str(meta, "compile_key")
+    data_type = _meta_str(meta, "data_type", "string")
+    if compile_key.startswith("country."):
+        return _compile_supplier_country_predicate(compile_key, node.op, node.value, data_type)
+    return _apply_scalar(_supplier_column(compile_key), node.op, node.value, data_type)
 
 
 def _compile_promotions(node: Union[FilterGroup, FilterCondition], field_by_key: Dict[str, ListQueryField]) -> ColumnElement:

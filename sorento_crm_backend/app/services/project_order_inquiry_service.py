@@ -486,8 +486,12 @@ class ProjectOrderInquiryService:
             # rows. Minting the header anyway burns an OI number for nothing and leaves
             # a dangling "Order inquiries" link on the SO list that the (rows-based) OI
             # worklist never shows anything for (prod OI-000020, local OI-000007).
+            # S3: a local Buy raises nothing, so it never justifies minting a header on
+            # its own - only an OVERSEAS residual (or a donor hole) does.
             will_raise = any(
-                _dec(entry.get("buy_qty")) > _ZERO for entry in buy_lines
+                _dec(entry.get("buy_qty")) > _ZERO
+                for entry in buy_lines
+                if entry.get("origin") != "local"
             ) or bool(borrow_shortfalls)
             if not will_raise:
                 return {
@@ -516,6 +520,15 @@ class ProjectOrderInquiryService:
         # `_settle_row_in_place` declines a line whose rows it cannot read as one.
         settled_in_place: List[str] = []
         for entry in buy_lines:
+            # S3 (`PLAN-local-supplier-oi-routing.md`, AC-2.15/AC-2.17/AC-2.18): a Buy
+            # whose product is bought LOCALLY raises no Order Inquiry row and cancels
+            # none - it is neither raised nor treated as dropped. The entry STAYS in
+            # `buy_lines`, so `_retire_uncovered_rows`'s own `covered` set (built from the
+            # whole sequence, below) still names this line and an earlier raised row on
+            # it is left exactly as it is - skipping here, before that pass runs, is what
+            # keeps "local now" from reading as "line dropped from the revision".
+            if entry.get("origin") == "local":
+                continue
             line = entry["line"]
             need = _dec(entry.get("buy_qty"))
             carried = bool(entry.get("carried"))

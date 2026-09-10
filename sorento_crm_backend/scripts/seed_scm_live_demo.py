@@ -297,6 +297,15 @@ def seed(db) -> dict:
     uom_id = _uom_id(db)
 
     # --- suppliers ------------------------------------------------------------
+    # S2 (`PLAN-local-supplier-oi-routing.md`): `Supplier.country` is gone, replaced by
+    # `country_id` (FK `countries.id`) - resolved here by the same NAME the SUPPLIERS
+    # dict already carries, once per run.
+    from app.models.country import Country
+
+    country_ids = {
+        row.name: row.id
+        for row in db.query(Country).filter(Country.name.in_({sp["country"] for sp in SUPPLIERS}))
+    }
     sup_objs: list[Supplier] = []
     for sp in SUPPLIERS:
         obj = Supplier(
@@ -307,7 +316,7 @@ def seed(db) -> dict:
             phone_number=sp["phone"],
             city=sp["city"],
             state=sp["state"],
-            country=sp["country"],
+            country_id=country_ids.get(sp["country"]),
             payment_terms_days=sp["terms"],
             is_active=True,
         )

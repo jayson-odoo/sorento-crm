@@ -250,7 +250,10 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // Purchasing consolidation batch (lane C, R16): `system-management/translations`
     // is a new DataGrid list segment with its own `loading.tsx`, found by the walk
     // itself - no BODY_ONLY_SEGMENTS entry needed. Total: 140.
-    expect(requiredSegmentNames.length).toBe(140);
+    // Local-supplier-oi-routing lane: `master-data-management/countries` is a new
+    // DataGrid list segment with its own `loading.tsx`, found by the walk itself -
+    // no BODY_ONLY_SEGMENTS entry needed. Total: 141.
+    expect(requiredSegmentNames.length).toBe(141);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

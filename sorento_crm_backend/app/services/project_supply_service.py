@@ -98,6 +98,7 @@ from app.models.project_so import (
     DECISION_CHALLENGED,
     DECISION_SUPERSEDED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER_BACK,
     LIVE_SO_STATUSES,
@@ -114,6 +115,8 @@ from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm import priority, spo_supply
+from app.services.scm.history_sources import SPO_HISTORY_SOURCE
+from app.services.scm.supply_origin import buy_origin_by_product
 from app.services.scm.container_request_service import OPEN_PO_STATUSES
 #: `purchase_orders.source_system` for a CRM-minted SPO document. Imported under a
 #: name that says whose stamp it is, so `_po_rows`' exclusion reads as "not a shipping
@@ -876,6 +879,10 @@ class ProjectSupplyService:
         # Lazily filled, and only when somebody asks for borrow donors: a board that offers
         # no Borrow must not pay for three more reads. `None` means "not asked yet".
         self._pile_cache: Optional[Dict[Tuple[str, str], Dict[str, Decimal]]] = None
+        # The open PURCHASE-order balance per pile, for the donor rows' own `po_open_qty`
+        # (`po_open_facts`). Same lifetime as the pile it is read over. `None` means
+        # "not asked yet".
+        self._po_open_cache: Optional[Dict[Tuple[str, str], Decimal]] = None
         # The products the current read is about, stated by whichever fact builder ran.
         # The pile span is theirs, and not "whatever has a stock row" - see `_pile_facts`.
         self._request_product_ids: Set[str] = set()
@@ -1081,9 +1088,16 @@ class ProjectSupplyService:
         composed = self.compose_lines(entries)
         composed.update(covered_alone)
         units = self.unit_totals(entries)
+        # S3 (`PLAN-local-supplier-oi-routing.md`, AC-2.14): ONE call for the whole sheet,
+        # covering every line's product - never a per-line lookup.
+        origin_by_product = buy_origin_by_product(
+            self.db,
+            {str(facts[str(line.id)].product_id) for line in lines if facts[str(line.id)].product_id},
+        )
         payload_lines: List[Dict[str, Any]] = []
         for line in lines:
             fact = facts[str(line.id)]
+            buy_origin = origin_by_product.get(str(fact.product_id), "overseas")
             if str(line.id) in covered_ids:
                 # Composed above, on its own: it competes with nobody, having already won.
                 units[str(line.id)] = (max(_dec(fact.open_qty), _ZERO), 1)
@@ -1095,6 +1109,7 @@ class ProjectSupplyService:
                     self._serialize_line(
                         fact, (), None,
                         unit_qty=unit_qty, unit_line_count=unit_line_count,
+                        buy_origin=buy_origin,
                     )
                 )
                 continue
@@ -1104,6 +1119,7 @@ class ProjectSupplyService:
                     fact, components, frozen.get(str(line.id)),
                     unit_qty=unit_qty, unit_line_count=unit_line_count,
                     options=composed[str(line.id)][4],
+                    buy_origin=buy_origin,
                 )
             )
 
@@ -3349,6 +3365,7 @@ class ProjectSupplyService:
             product_ids, exclude_line_ids=exclude_line_ids
         )
         self._pile_cache = None
+        self._po_open_cache = None
         self._netting_cache = None
         self._spo_by_location_cache = None
         # Eager, not lazy: a project hot-selling line's pool draw is capped against the
@@ -3599,6 +3616,7 @@ class ProjectSupplyService:
         unit_qty: Optional[Decimal] = None,
         unit_line_count: int = 1,
         options: Sequence[Option] = (),
+        buy_origin: Optional[str] = None,
     ) -> Dict[str, Any]:
         line = fact.line
         return {
@@ -3643,6 +3661,10 @@ class ProjectSupplyService:
             "unit_line_count": unit_line_count,
             "item_code": fact.item_code,
             "product_id": fact.product_id,
+            # S3 (`PLAN-local-supplier-oi-routing.md`, AC-2.14): every line carries it,
+            # filled from the SAME `buy_origin_by_product` call `proposal_for` makes once
+            # for the whole sheet - never a second per-line lookup.
+            "buy_origin": buy_origin,
             "description": line.description,
             "uom": line.uom,
             "open_qty": qty_text(fact.open_qty),
@@ -5596,6 +5618,15 @@ class ProjectSupplyService:
         # have reported the donor's write as this order's conflict.
         self._supersede_borrowed_donors(order, checked)
 
+        # S3 (`PLAN-local-supplier-oi-routing.md`): ONE call for the whole confirm, covering
+        # every product this order's Buy lines - checked or carried - could name, so a local
+        # Buy raises no Order Inquiry row (AC-2.15/AC-2.18) below.
+        origin_by_product = buy_origin_by_product(
+            self.db,
+            {str(fact.product_id) for _line, _entry, fact in checked if fact.product_id}
+            | {str(entry.fact.product_id) for entry in carried if entry.fact.product_id},
+        )
+
         buy_lines: List[Dict[str, Any]] = []
         for line, entry, fact in checked:
             self._write_allocations(decision, line, entry, fact, actor_user_id=actor_user_id)
@@ -5614,6 +5645,7 @@ class ProjectSupplyService:
                     "cited_document": (
                         (getattr(entry, "cited_document", None) or "").strip() or None
                     ),
+                    "origin": origin_by_product.get(str(fact.product_id), "overseas"),
                 }
             )
         for entry in carried:
@@ -5640,6 +5672,7 @@ class ProjectSupplyService:
                     # Re-raised under this revision, but not NEW to purchasing: the
                     # confirm result counts only what this confirmation decided.
                     "carried": True,
+                    "origin": origin_by_product.get(str(entry.fact.product_id), "overseas"),
                 }
             )
         # THE SAVED DECISIONS THIS CONFIRMATION PROMOTES GO WITH IT (S4, AC-4.4), in the
@@ -7163,6 +7196,7 @@ class ProjectSupplyService:
         )
         self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=replaced)
         self._pile_cache = None
+        self._po_open_cache = None
         self._netting_cache = None
         self._spo_by_location_cache = None
         # Eager, not lazy: a project hot-selling line's pool draw is capped against the
@@ -8638,7 +8672,194 @@ class ProjectSupplyService:
         if step_two:
             for row in ranked:
                 row["recommended"] = False
-        return step_two + ranked
+        candidates = step_two + ranked
+        # S4 (`PLAN-local-supplier-oi-routing.md`, AC-2.20): the per-order sheet's own
+        # `BorrowCandidate.location`, the board's `_donors_for` wrapper is not on this call
+        # path at all - `SupplyLineCard`'s Borrow modal reads THIS list directly. Built by
+        # `donor_location`, the SAME method the board's own `_donors_for` calls, so a
+        # donor's figures here and on the Grid Location table can never come apart.
+        for candidate in candidates:
+            warehouse_id = candidate.get("warehouse_id")
+            if not warehouse_id:
+                continue
+            candidate["location"] = self.donor_location(
+                fact.product_id,
+                warehouse_id,
+                location_code=candidate.get("warehouse_code"),
+                rung=candidate.get("rung"),
+            )
+        return candidates
+
+    def open_po_balance(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """Open PURCHASE-order balance per (product, location), netted for what is linked
+        (S4, `PLAN-local-supplier-oi-routing.md`: moved here from the board's own
+        `_open_po_balance` so both surfaces read ONE implementation).
+
+        INFORMATION ONLY - `available_qty` stays `on hand - SO + SPO` - because a purchase
+        order reaches a project line only through a link (PLAN section I).
+
+        A line counts as ON ORDER on the same four tests every other on-order reader in this
+        codebase applies (`allocation_suggestion_service`, `loading_plan_service`,
+        `scm.on_order_v`, and `project_order_inquiry_service._candidates_for_row`, which is
+        the reader that decides what may be LINKED):
+
+          * `line_status = 'open'` and a balance still to come;
+          * `purchase_orders.status IN ('active', 'partial')` - a draft recommendation
+            nobody has confirmed is not on order;
+          * an SPO document is not a PO - it is already counted as `spo_qty`, so counting
+            it here would state one arrival twice.
+
+        What an order-inquiry row already claims (`INQUIRY_PLACED`) is netted OFF, per line
+        and floored at zero, so this figure and the quantity that dialog offers cannot
+        disagree.
+
+        Company-scoped through the ORM's own `do_orm_execute` listener - both
+        `PurchaseOrderLine` and `OrderInquiryRow` carry `CompanyScopedMixin`, so this needs
+        no explicit predicate of its own, unlike a raw `text()` query would.
+        """
+        products = list(product_ids)
+        warehouses = list(warehouse_ids)
+        if not products or not warehouses:
+            return {}
+        placed: Dict[str, Decimal] = {
+            str(po_line_id): _dec(qty)
+            for po_line_id, qty in (
+                self.db.query(OrderInquiryRow.po_line_id, func.sum(OrderInquiryRow.qty))
+                .filter(
+                    OrderInquiryRow.state == INQUIRY_PLACED,
+                    OrderInquiryRow.po_line_id.isnot(None),
+                )
+                .group_by(OrderInquiryRow.po_line_id)
+                .all()
+            )
+        }
+        rows = (
+            self.db.query(
+                PurchaseOrderLine.id,
+                PurchaseOrderLine.product_id,
+                PurchaseOrderLine.warehouse_id,
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(
+                PurchaseOrderLine.product_id.in_(products),
+                PurchaseOrderLine.warehouse_id.in_(warehouses),
+                PurchaseOrderLine.line_status == "open",
+                PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+                PurchaseOrder.status.in_(("active", "partial")),
+                func.coalesce(PurchaseOrder.source_system, "") != SPO_HISTORY_SOURCE,
+                PurchaseOrder.po_number.notlike("SPO-%"),
+            )
+            .all()
+        )
+        out: Dict[Tuple[str, str], Decimal] = defaultdict(lambda: _ZERO)
+        for line_id, product_id, warehouse_id, ordered, received in rows:
+            left = _dec(ordered) - _dec(received) - placed.get(str(line_id), _ZERO)
+            if left > _ZERO:
+                out[(str(product_id), str(warehouse_id))] += left
+        return dict(out)
+
+    def po_open_facts(
+        self,
+        *,
+        also_products: Iterable[str] = (),
+        also_warehouses: Iterable[str] = (),
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """`open_po_balance` for the whole request, read ONCE (CI fix round).
+
+        `donor_location` below is called per CANDIDATE, and the board calls it for every
+        donor of every cell, so reading per row would be two statements per row - one of
+        them an aggregate over every placed order-inquiry row in the book. The board's own
+        Location table needs the same figures over a slightly different span (its rows can
+        name an INACTIVE warehouse a frozen decision points at, which no pile covers), so
+        it names that span with `also_*` on the FIRST call and both readers then share the
+        one map. The per-key figure does not depend on how wide the `IN` was - the netting
+        is per PO line - so a wider span changes no number, it only saves a round trip.
+
+        Ordering matters and is not incidental: the board calls this AFTER `demand_facts`,
+        which is what fixes the pile span (and resets this cache with it). Called before
+        that, it would cache a map built over an empty request.
+        """
+        if self._po_open_cache is None:
+            pile = self._pile_facts()
+            self._po_open_cache = self.open_po_balance(
+                {product_id for product_id, _warehouse_id in pile} | {
+                    str(product_id) for product_id in also_products if product_id
+                },
+                {warehouse_id for _product_id, warehouse_id in pile} | {
+                    str(warehouse_id) for warehouse_id in also_warehouses if warehouse_id
+                },
+            )
+        return self._po_open_cache
+
+    def donor_location(
+        self,
+        product_id: str,
+        warehouse_id: str,
+        *,
+        location_code: Optional[str] = None,
+        rung: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """The Grid Location table's own row shape, for ONE donor (S4,
+        `PLAN-local-supplier-oi-routing.md`).
+
+        Shared by the board's own `_donors_for` (candidate decoration on the board) and by
+        `_borrow_candidates` above (the per-order sheet's own candidates), so a donor's
+        figures can never come apart between the two surfaces for the same warehouse in the
+        same request. `qty_on_hand`/`so_qty`/`spo_qty` are read off `_pile_facts` - the same
+        `is_open_demand()`-filtered query the board's own `_demand_pressure` and
+        `stock_levels_by_location`/`incoming_by_location` (both already a public seam the
+        board calls through `self.supply.`) apply - so those three needed no extraction of
+        their own. `po_open_qty` (`open_po_balance` above), the site-pool dealer-share
+        carve-out (`available_for_project`) and the `where` tag are the three this method
+        adds, and they are the three the two surfaces used to disagree about: the sheet
+        called every donor `other_group`, never applied a pool's dealer share, and read its
+        own un-netted open-PO figure off raw SQL.
+
+        `rung` is the candidate's own (`front_planning_engine`), and it is what classifies
+        `where` - the SAME rule the board applied at the call site before this was one
+        method, stated here once so neither caller can restate it differently. The values
+        are `project_fulfilment_board_service.WHERE_*`, named by literal here because that
+        module imports THIS one.
+        """
+        pile = self._pile_facts().get(
+            (product_id, warehouse_id),
+            {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO},
+        )
+        available = pile["on_hand"] - pile["so_qty"] + pile["spo_qty"]
+        po_open = self.po_open_facts().get((product_id, warehouse_id), _ZERO)
+        is_pool = warehouse_id in self.site_pool_warehouses()
+        if is_pool:
+            where = "site_pool"
+            pct = self.fulfilment_settings().get("pool_share_pct")
+            avail_for_project = available_for_project(
+                available, self.netting().pools_net(product_id).net, pct
+            )
+        else:
+            where = "other_group" if rung == RUNG_GROUP_TAKE else "group"
+            # No dealer share applies outside a site pool (D2, captain 3 Sep): the whole
+            # of `available_qty` is a project's to take.
+            avail_for_project = available
+        return {
+            "location": location_code,
+            "where": where,
+            "product_id": product_id,
+            "warehouse_id": warehouse_id,
+            # A donor has no demand OF ITS OWN in this shape - `qty`/`qty_demand` are
+            # required on `BoardCellLocation` and read 0 the same way the board's own
+            # `_location` reads them for a cited donor it was given no rows for.
+            "qty": "0",
+            "qty_demand": "0",
+            "qty_on_hand": qty_text(pile["on_hand"]),
+            "so_qty": qty_text(pile["so_qty"]),
+            "spo_qty": qty_text(pile["spo_qty"]),
+            "available_qty": qty_text(available),
+            "po_open_qty": qty_text(po_open),
+            "available_for_project": qty_text(avail_for_project),
+        }
 
     def _order_borrow_offer_rows(
         self, fact: _LineFacts, need: Decimal = _ZERO

@@ -347,6 +347,10 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
       donor_core_line_id: candidate.donor_core_line_id ?? null,
       lower_ranked: Boolean(candidate.lower_ranked),
       same_agent: Boolean(candidate.same_agent),
+      // S4 (`PLAN-local-supplier-oi-routing.md`): the Grid Location table's own facts for
+      // this warehouse, so `BorrowAddDialog` renders `CellStockTable` instead of a second,
+      // narrower table of its own. Absent on a server that has not wired this yet.
+      location: candidate.location,
     }));
 }
 

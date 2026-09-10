@@ -446,6 +446,7 @@ export function BoardLineDecisionPanel({
           <BoardLadderOptionsTable
             options={contribution.options ?? []}
             contributionKey={contribution.key}
+            buyOrigin={contribution.buy_origin}
           />
         </div>
       )}
@@ -860,6 +861,7 @@ export function BoardLineDecisionPanel({
         <BorrowAddDialog
           lineNo={contribution.line_no}
           itemCode={contribution.item_code}
+          lineId={contribution.project_line_id}
           candidates={candidates}
           onDone={() => setAdding(false)}
           onAdd={(candidate: BorrowCandidate, qty, borrowReason) =>

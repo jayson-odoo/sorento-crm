@@ -1,3 +1,19 @@
+/**
+ * Suppliers - feature service.
+ *
+ * -- PHASE-2 BACKEND CONTRACT, LIVE since S2 (`PLAN-local-supplier-oi-routing.md`) ----------
+ *
+ * The free-text `country` field is REPLACED by a country reference:
+ *
+ *   POST/PUT body        += country_id?: string | null   (a `countries.id`, 422 if unknown)
+ *   GET responses (list,
+ *   detail, select)       += country_id, country_code, country_name
+ *
+ * `country_code` / `country_name` are read-only, joined off `country_id` - the client never
+ * computes them and never sends them back. `country_id` is nullable: a supplier with no
+ * country stated is OVERSEAS for supply-origin routing (`app/services/scm/supply_origin.py`).
+ * A deviation from this shape updates this header and both sides in the same change.
+ */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { Supplier, SupplierFormData, SupplierDetail } from '../types/supplier.types';

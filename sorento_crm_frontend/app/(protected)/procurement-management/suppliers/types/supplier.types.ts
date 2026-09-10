@@ -11,7 +11,10 @@ export interface Supplier {
   city?: string | null;
   state?: string | null;
   postal_code?: string | null;
-  country?: string | null;
+  /** `countries.id`. Never rendered directly - `country_code` / `country_name` are. */
+  country_id?: string | null;
+  country_code?: string | null;
+  country_name?: string | null;
   payment_terms_days: number;
   is_active: boolean;
   created_at: Date;
@@ -32,7 +35,7 @@ export interface SupplierFormData {
   city?: string;
   state?: string;
   postal_code?: string;
-  country?: string;
+  country_id?: string | null;
   payment_terms_days: number;
   is_active: boolean;
 }
