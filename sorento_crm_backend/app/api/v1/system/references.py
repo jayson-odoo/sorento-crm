@@ -2566,9 +2566,14 @@ def resolve_reference_post(
         # C2: the described set's other half besides `product_ids` - class /
         # product_type / brand bindings read off the query, `predicate_words`
         # stripped first so the predicate's own word ("cert", "stock") is never
-        # also asked to bind a spec. `understand_phrase` gates the model call
-        # exactly as the spec-fallback branch below does; the deterministic
-        # reading (registry synonyms, brand names) always runs.
+        # also asked to bind a spec. R13/AC-1332 (third console pass):
+        # `allow_model` is always False here, never `payload.understand_phrase`
+        # - the MODEL phrase reader is a spec_fallback-only mechanism (2-3
+        # seconds, gated there by design); a HAS turn's bindings must be
+        # deterministic (registry synonyms, brand names) only. Measured live:
+        # "which item has PPS cert" answered "I don't know 'item pps' as a
+        # product type" - "item pps" is a model-derived free term the
+        # deterministic reader never produces.
         #
         # `free_terms=[]` into the reader on purpose, and its OWN returned free
         # terms are dropped, never merged into `payload.free_terms`:
@@ -2585,7 +2590,7 @@ def resolve_reference_post(
             query_text,
             specs=list(payload.extracted_specs or []),
             free_terms=[],
-            allow_model=payload.understand_phrase,
+            allow_model=False,
             user_id=current_user.get("id"),
             log_usage=not payload.dry_run,
         )
