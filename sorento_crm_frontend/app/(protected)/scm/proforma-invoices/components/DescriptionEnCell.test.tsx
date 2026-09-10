@@ -182,4 +182,34 @@ describe('DescriptionEnCell - a failed save toasts extractApiError\'s message', 
       expect(toast.error).toHaveBeenCalledWith('Enter the English wording before saving.'),
     );
   });
+
+  it('does not leave the cell dead: Enter again after a failure sends a second request (BLOCKER, review round)', async () => {
+    apiFetch.mockResolvedValueOnce(
+      jsonResponse({ detail: { message: 'Server error. Try again.', detail: null, code: null } }, false, 500),
+    );
+    renderCell({ descriptionEn: null });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add English for 连体马桶' }));
+    const input = screen.getByRole('textbox', { name: 'English for 连体马桶' });
+    fireEvent.change(input, { target: { value: 'One-piece toilet' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Server error. Try again.'));
+    // The cell must still be editable - a failed save leaves `editing` true - and focus
+    // stays on the input rather than wherever the blur that preceded onError sent it.
+    expect(input).toHaveFocus();
+
+    apiFetch.mockResolvedValue(
+      jsonResponse({
+        source_text: '连体马桶',
+        target_text: 'One-piece toilet',
+        source: 'manual',
+        rebound: { lines: 1, packing_rows: 0 },
+      }),
+    );
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+  });
 });

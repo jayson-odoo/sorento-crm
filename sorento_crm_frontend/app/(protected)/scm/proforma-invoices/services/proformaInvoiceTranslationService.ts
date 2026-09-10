@@ -31,12 +31,6 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 
-/** Trimmed, internal whitespace collapsed - the same string two differently spaced
- *  cells resolve to, matching `translation_service.normalize_source_text`. */
-export function normalizeDescription(text: string | null | undefined): string {
-  return (text ?? '').trim().replace(/\s+/g, ' ');
-}
-
 export interface ProformaInvoiceTranslationResult {
   source_text: string;
   target_text: string;
@@ -52,7 +46,7 @@ export async function upsertProformaInvoiceTranslation(
   invoiceId: string,
   body: { source_text: string; target_text: string },
 ): Promise<ProformaInvoiceTranslationResult> {
-  const res = await apiFetch(`/api/v1/scm/proforma-invoices/${invoiceId}/translations`, {
+  const res = await apiFetch(`/api/v1/scm/proforma-invoices/${encodeURIComponent(invoiceId)}/translations`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

@@ -35,7 +35,11 @@ export function DescriptionEnCell({
   // removes a still-focused element from the DOM and makes the browser fire a real `blur`
   // on it as part of that removal, replaying `onBlur={save}` a second time with the SAME
   // (already-saved) value before React finishes unmounting. Guards the one real request
-  // per edit session; reset the moment a NEW edit starts.
+  // per edit session - but ONLY until that request settles: reset on the editing effect
+  // alone left a FAILED save dead forever (`editing` never flips to unset it, so neither
+  // Enter nor blur could ever try again). Reset in `onSettled` below instead, which fires
+  // on both outcomes; the editing-start reset stays too, for the ordinary case of opening
+  // a fresh edit on a row that never failed.
   const savingRef = useRef(false);
 
   useEffect(() => {
@@ -62,7 +66,16 @@ export function DescriptionEnCell({
     savingRef.current = true;
     mutation.mutate(
       { source_text: description as string, target_text: trimmed },
-      { onSuccess: () => setEditing(false) },
+      {
+        onSuccess: () => setEditing(false),
+        // A failed save leaves the cell live (`editing` stays true) - the toast already
+        // names the error; keep the input focused rather than let whatever the blur
+        // moved focus to win instead.
+        onError: () => inputRef.current?.focus(),
+        onSettled: () => {
+          savingRef.current = false;
+        },
+      },
     );
   };
 
@@ -102,8 +115,12 @@ export function DescriptionEnCell({
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="text-muted-foreground hover:text-foreground hover:underline"
+        // A rest-state affordance, not just a hover one - a dash under a `Description`
+        // full of real text otherwise reads as "nothing here" rather than "click to add
+        // one" (review round, 10 Sep).
+        className="text-muted-foreground underline decoration-dashed underline-offset-2 hover:text-foreground"
         aria-label={`Add English for ${description}`}
+        title={`Add English for ${description}`}
       >
         {EM_DASH}
       </button>

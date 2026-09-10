@@ -251,7 +251,9 @@ export function ProformaInvoicePackingTab({
         meta: { headerTitle: 'Description' },
       },
       {
-        id: 'description_en',
+        // `accessorKey`, not a bare `id`, so sorting has a value to sort BY - matches its
+        // twin (`description` above), which sorts too (review round, 10 Sep).
+        accessorKey: 'description_en',
         header: ({ column }) => <DataGridColumnHeader title="Description (EN)" column={column} />,
         cell: ({ row }) => (
           <DescriptionEnCell
@@ -262,7 +264,6 @@ export function ProformaInvoicePackingTab({
           />
         ),
         size: 200,
-        enableSorting: false,
         meta: { headerTitle: 'Description (EN)' },
       },
       {

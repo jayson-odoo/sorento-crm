@@ -642,15 +642,27 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         header: ({ column }) => <DataGridColumnHeader title="Description (EN)" column={column} />,
         // Same cell in BOTH view and edit mode, same position: it is not part of the line
         // form, it writes the glossary directly (S2), so editing it never dirties the draft.
-        cell: ({ row }) => (
-          <DescriptionEnCell
-            invoiceId={id}
-            description={row.original.description}
-            descriptionEn={row.original.source?.description_en ?? null}
-            canAdjust={canAdjust}
-          />
-        ),
+        // Keys on the SAVED description (`source`), never the unsaved draft one (review
+        // round, 10 Sep) - a translation written against text that has not been Saved yet
+        // could teach the memory a phrase that never actually lands on this line, and the
+        // route's own "source_text must be on this invoice" check would 422 it anyway. A
+        // line whose draft description has diverged from what is on file is read-only
+        // here until Save reconciles the two.
+        cell: ({ row }) => {
+          const savedDescription = row.original.source?.description ?? null;
+          const isDirty = row.original.description !== (savedDescription ?? '');
+          return (
+            <DescriptionEnCell
+              invoiceId={id}
+              description={savedDescription}
+              descriptionEn={row.original.source?.description_en ?? null}
+              canAdjust={canAdjust && !isDirty}
+            />
+          );
+        },
         size: 200,
+        // Matches its twin (`description` above, also `enableSorting: false`): an
+        // editable inline cell is not something this grid sorts by (review round, 10 Sep).
         enableSorting: false,
         meta: { headerTitle: 'Description (EN)' },
       },

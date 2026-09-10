@@ -51,10 +51,7 @@ export function getProformaInvoicePacking(invoice: ProformaInvoiceDetail): Profo
     packing_lines?: ProformaInvoicePackingLine[];
     packing_file?: ProformaInvoicePackingFile | null;
   };
-  return {
-    rows: withPacking.packing_lines ?? [],
-    file: withPacking.packing_file ?? null,
-  };
+  return { rows: withPacking.packing_lines ?? [], file: withPacking.packing_file ?? null };
 }
 
 export async function dismissPackingLine(
