@@ -20,14 +20,22 @@ underlying socket, Postgres sees interleaved, invalid protocol traffic. This
 is SQLAlchemy's documented fork recipe: `engine.dispose(close=False)` drops
 the parent's pooled connections from the child's copy of the pool WITHOUT
 closing the parent's sockets (the parent is still using them), so each
-worker lazily opens its own fresh connections on first use. The RQ redis
-connection pool (app/services/queue_service.py, also module-level) is the
-same shape and gets the same treatment; it isn't tested here but the fix is
-identical in kind.
+worker lazily opens its own fresh connections on first use.
+
+Not needed for the RQ redis connection pool (app/services/queue_service.py,
+also module-level): redis-py's ConnectionPool tracks the PID that created it
+and resets itself (drops any inherited connections) the first time a forked
+child tries to use it (`ConnectionPool._checkpid`), and the pool is empty at
+import time regardless (redis-py connects lazily on first command, not at
+construction) - so there is nothing for post_fork to dispose here.
 
 Rollback without a rebuild: set GUNICORN_PRELOAD=0 in
 sorento_crm_backend/.env and recreate the colour - every worker goes back to
-importing the app independently, exactly as before this file existed.
+importing the app independently, exactly as before this file existed. Note
+this is a REBUILD-time toggle only: with preload_app on, a `kill -HUP` on the
+master respawns workers from the app already imported in the master's
+memory, so a code change needs the colour recreated (new container), not a
+SIGHUP.
 """
 import os
 
@@ -64,14 +72,3 @@ def post_fork(server, worker):
     from app.database import engine
 
     engine.dispose(close=False)
-
-    # Same fork hazard as the SQLAlchemy engine above, module-level in
-    # app/services/queue_service.py - see UAC-4 audit in the PR body for the
-    # full grep. Best-effort: a worker must still boot if this fails, and a
-    # fresh RQ enqueue lazily reconnects on first use regardless.
-    try:
-        from app.services.queue_service import redis_conn
-
-        redis_conn.connection_pool.disconnect()
-    except Exception:  # noqa: BLE001 - never block worker boot on this
-        server.log.warning("post_fork: redis_conn pool disconnect failed", exc_info=True)

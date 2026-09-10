@@ -629,14 +629,17 @@ jobs:
 
   # Type-checks application code on the runner, in parallel with the test
   # gates, instead of inside the Docker build (see next.config.mjs and the
-  # frontend Dockerfile's NEXT_SKIP_TYPECHECK). This job replaces the
-  # in-image `next build` check it took over from, and that check never
-  # walked *.test.ts(x) - Next's build-time type check only follows files
-  # reachable from a page/route, not orphan test files - so
-  # tsconfig.typecheck.json excludes them here too: parity with what always
-  # gated deploys, not a new gate. vitest owns test-file correctness. The
-  # excluded files carried 24 pre-existing type errors on the day this job
-  # was added; tracked as a follow-up issue, not fixed in this lane.
+  # frontend Dockerfile's NEXT_SKIP_TYPECHECK). This job replaces that
+  # in-image `next build` check with the same effective coverage: Next's own
+  # build-time type check runs `tsc` over the FULL tsconfig program
+  # (including test files), then discards diagnostics that match its own
+  # ignore regexes for `__tests__`/`__mocks__` directories and
+  # `*.spec.*`/`*.test.*` files (see
+  # node_modules/next/dist/lib/typescript/runTypeCheck.js upstream).
+  # tsconfig.typecheck.json excludes exactly that same set, so this job is
+  # parity with what always gated a deploy, not a new gate; vitest owns
+  # test-file correctness. Excluding those files still leaves 21 pre-existing
+  # type errors in 11 of them, tracked in issue #821, not fixed in this lane.
   typecheck-frontend:
     name: Type-check frontend
     needs: [changes]
@@ -656,6 +659,16 @@ jobs:
       - name: Install dependencies
         working-directory: sorento_crm_frontend
         run: npm ci --force
+
+      # tsconfig.json's `include` lists `.next/types/**/*.ts` (Next's
+      # generated route-param types), which does not exist on a bare
+      # checkout - only `next build`/`next dev` normally produce it. Without
+      # this, tsc silently type-checks nothing for those files rather than
+      # failing, so a broken route type would pass here and only surface in
+      # the (skipped) Docker build.
+      - name: Generate Next route types
+        working-directory: sorento_crm_frontend
+        run: npx next typegen
 
       - name: Run tsc --noEmit
         working-directory: sorento_crm_frontend
@@ -703,21 +716,25 @@ jobs:
         id: setup-buildx
         uses: docker/setup-buildx-action@v3
 
-      # Frontend only, UAC-19 (provisional): restores the `.next/cache` and
-      # npm caches the Dockerfile's `RUN --mount=type=cache` lines read from,
-      # across separate CI runs (a BuildKit cache mount otherwise lives only
-      # on the runner that created it, and GitHub-hosted runners are
-      # ephemeral). If this does not deliver a faster frontend build within
-      # two main deploys, drop this step and the next one and keep just the
-      # `cache-from`/`cache-to: type=gha` below - see UAC-19.
-      - name: Restore frontend buildkit cache directories
+      # Frontend only, UAC-19 (provisional): restores the `.next/cache`
+      # BuildKit mount across separate CI runs (a BuildKit cache mount
+      # otherwise lives only on the runner that created it, and GitHub-hosted
+      # runners are ephemeral). `.next/cache` ONLY, not npm: the whole repo
+      # shares a single 10 GB `actions/cache` quota, and an eviction there can
+      # push out the `type=gha` layer-cache scopes the frontend/backend/mcp
+      # builds all read via `cache-from` - a much bigger loss than the npm
+      # mount, whose `npm ci` layer is already a `type=gha` cache hit unless
+      # package-lock.json changed. Record the before/after cache size at
+      # UAC-19 (`gh api .../actions/caches`). If `.next/cache` alone does not
+      # deliver a faster frontend build within two main deploys, drop this
+      # step and the next one and keep just the `cache-from`/`cache-to:
+      # type=gha` below - see UAC-19.
+      - name: Restore frontend buildkit cache directory
         if: matrix.service == 'frontend'
         id: fe-cache
         uses: actions/cache@v4
         with:
-          path: |
-            ${{ github.workspace }}/.buildkit-cache/next
-            ${{ github.workspace }}/.buildkit-cache/npm
+          path: ${{ github.workspace }}/.buildkit-cache/next
           key: ${{ runner.os }}-fe-buildkit-${{ hashFiles('sorento_crm_frontend/package-lock.json') }}-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-fe-buildkit-${{ hashFiles('sorento_crm_frontend/package-lock.json') }}-
@@ -730,8 +747,7 @@ jobs:
           builder: ${{ steps.setup-buildx.outputs.name }}
           cache-map: |
             {
-              ".buildkit-cache/next": "/app/.next/cache",
-              ".buildkit-cache/npm": "/root/.npm"
+              ".buildkit-cache/next": "/app/.next/cache"
             }
           skip-extraction: ${{ steps.fe-cache.outputs.cache-hit }}
 
