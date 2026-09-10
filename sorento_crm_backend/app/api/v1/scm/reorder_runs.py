@@ -35,6 +35,7 @@ from app.services.dealer_kit import product_images
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.scm import cover_service
 from app.services.scm import plan_grain
+from app.services.scm import plan_scope
 from app.services.scm import price_history_service
 from app.services.scm import spo_supply
 from app.services.scm import (
@@ -1329,6 +1330,18 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "last_purchase_supplier_code": (inp.get("last_purchase") or {}).get("supplier_code"),
         "last_purchase_supplier_name": (inp.get("last_purchase") or {}).get("supplier_name"),
         "policy_type": inp.get("policy_type"),
+        # S6, PLAN-plan-list-tile-sheet-one-scope.md (AC-1): the ONE rule
+        # (`plan_scope.hidden_by_default`) the list, the Decisions tile total and the
+        # order sheet export all read, off the SAME stored fields this row already
+        # surfaces above (`policy_type`, `reorder_level`, `master_reorder_level`) plus the
+        # rec's own `net_position` column - never the engine's decision net.
+        "hidden_by_default": plan_scope.hidden_by_default(
+            rec_type=r["rec_type"],
+            policy_type=inp.get("policy_type"),
+            reorder_level=inp.get("reorder_level"),
+            master_reorder_level=inp.get("master_reorder_level"),
+            net_position=_f(r["net_position"]),
+        ),
         "supplier_selection": inp.get("selection"),
         # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---
         # `unit_cost` is what the SUPPLIER charges, in `currency`. `cash_impact` is what the

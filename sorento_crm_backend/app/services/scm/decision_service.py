@@ -59,6 +59,7 @@ from app.models.scm import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import plan_grain
+from app.services.scm import plan_scope
 from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.numbering_service import NumberingService
 
@@ -1387,15 +1388,32 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     one query apiece, keyed by what the row needs (supplier id, `(product_id,
     supplier_id)`, recommendation id) rather than re-run per row.
     """
-    total = (
-        db.query(ReorderRecommendation.product_id)
+    # S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-2): a hidden-by-default row (the SAME
+    # `plan_scope.hidden_by_default` rule the recommendations list serializer stamps) is
+    # not decidable BY DEFAULT, so it does not count toward the tile's total - "tile
+    # counts what the list show" (owner, 10 Sep). Read per-candidate rather than in the
+    # COUNT itself: the rule needs `inputs` (JSON) and `net_position` together, which SQL
+    # would have to re-derive twice (here and in `_row`) rather than share one function.
+    candidates = (
+        db.query(ReorderRecommendation.product_id, ReorderRecommendation.rec_type,
+                 ReorderRecommendation.inputs, ReorderRecommendation.net_position)
         .filter(
             ReorderRecommendation.run_id == run_id,
             ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
         )
-        .distinct()
-        .count()
+        .all()
     )
+    decidable_product_ids = {
+        pid for pid, rec_type, inputs, net_position in candidates
+        if not plan_scope.hidden_by_default(
+            rec_type=rec_type,
+            policy_type=(inputs or {}).get("policy_type"),
+            reorder_level=(inputs or {}).get("reorder_level"),
+            master_reorder_level=(inputs or {}).get("master_reorder_level"),
+            net_position=float(net_position) if net_position is not None else None,
+        )
+    }
+    total = len(decidable_product_ids)
     quads = (
         db.query(PlanRowDecision, ReorderRecommendation.id,
                  ReorderRecommendation.product_id, ReorderRecommendation.inputs)
