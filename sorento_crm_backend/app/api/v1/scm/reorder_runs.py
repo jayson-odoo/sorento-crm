@@ -781,6 +781,12 @@ def get_po_book(
 def get_purchase_trend(
     run_id: str,
     warehouse: Optional[str] = Query(None),
+    scope: Optional[str] = Query(
+        None,
+        description='Omitted = run-wide (unchanged). "site_pool" narrows to active '
+                    "site-pool warehouses, product-wide - the read a product-grain row "
+                    "(no pool code) asks for. Ignored when `warehouse` is also given.",
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -791,10 +797,22 @@ def get_purchase_trend(
     monthly trend (`recent_qty` vs `previous_qty`) plus the last few purchase lines
     (supplier, date, quantity, cost), newest first. A draft this run itself proposed is
     never read back as a purchase we made.
+
+    UAC AC-10 (amended, 10 Sep 2026): the bare default (no `warehouse`, no `scope`) is
+    run-wide and UNCHANGED - it feeds a row's Last price / price history and must not
+    narrow silently. `scope=site_pool` is the one recognised value that opts into the
+    site-pool-wide read; anything else is a 422 rather than a silently-ignored typo.
     """
     svc.assert_run_visible(db, run_id)
+    site_pool_only = False
+    if scope is not None:
+        if scope != "site_pool":
+            raise AppException(status_code=422, message='scope must be "site_pool".')
+        site_pool_only = True
     return purchase_trend_service.purchase_trend_for_run(
-        db, run_id, warehouse_id=_warehouse_id_for_code(db, warehouse))
+        db, run_id, warehouse_id=_warehouse_id_for_code(db, warehouse),
+        site_pool_only=site_pool_only,
+    )
 
 
 @router.get("/reorder-runs/{run_id}/product-economics")

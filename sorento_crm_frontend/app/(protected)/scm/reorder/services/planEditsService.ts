@@ -138,10 +138,14 @@ export async function getPoHistoryToPool(
   warehouseCode: string | null,
 ): Promise<PoHistoryResponse> {
   if (!runId || !productId) return { history: [] };
-  // S2 (AC-11): a product-grain row carries no pool code - that no longer skips the
-  // call, it reads the backend's own site-pool-wide default (AC-10) by omitting
-  // `warehouse` entirely, rather than short-circuiting to an always-empty History tab.
-  const qs = new URLSearchParams(warehouseCode ? { warehouse: warehouseCode } : {});
+  // S2 (AC-11, amended 10 Sep 2026): a product-grain row carries no pool code - that no
+  // longer skips the call. It reads `scope=site_pool` (AC-10's explicit site-pool scope),
+  // never the bare default - the bare default stays RUN-WIDE (every warehouse, undirected
+  // lines included) because it feeds a row's Last price / price history and must not
+  // narrow silently. A row WITH a pool code keeps `warehouse=<code>` exactly as before.
+  const qs = new URLSearchParams(
+    warehouseCode ? { warehouse: warehouseCode } : { scope: 'site_pool' },
+  );
   const res = await apiFetch(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/purchase-trend?${qs.toString()}`,
   );

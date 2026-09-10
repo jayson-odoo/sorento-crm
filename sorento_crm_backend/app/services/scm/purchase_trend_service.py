@@ -97,7 +97,7 @@ ORDER BY product_id, issue_date DESC NULLS LAST
 
 def purchase_trend_for_run(
     db: Session, run_id: str, *, as_of: Optional[date] = None,
-    warehouse_id: Optional[str] = None,
+    warehouse_id: Optional[str] = None, site_pool_only: bool = False,
 ) -> dict[str, Any]:
     """Purchase facts for every product the run planned, keyed by product id.
 
@@ -112,13 +112,19 @@ def purchase_trend_for_run(
     narrowed the same way. A line with no destination at all is excluded by the same test,
     which is deliberate: it cannot be shown to have been bought for this pool.
 
-    PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S2 (AC-10): omitting the argument
-    no longer reads "any warehouse" - a product-grain row has none of its own to name, and
-    the old unfiltered read let a project bin's purchase history stand in for the whole
-    product's. It now reads every ACTIVE SITE-POOL warehouse the product was bought to
-    (`pool_predicate.active_site_pool_sql`), product-wide - the same scope the cell and the
-    SPO/PO modals sum. Naming one warehouse keeps today's single-warehouse read exactly as
-    it was (a caller who named a location, pool or bin, gets that location alone).
+    With NEITHER `warehouse_id` NOR `site_pool_only`, the read is UNCHANGED run-wide: every
+    open/closed purchase line for the run's products, any warehouse, undirected lines
+    included. This is what feeds a row's Last price / price history and must not move -
+    captain amendment, 10 Sep 2026, after the first S2 pass re-scoped this default and broke
+    the six run-wide purchase-trend tests for the right reason (UAC AC-10, amended).
+
+    PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S2 (AC-10, amended): `site_pool_only`
+    is an EXPLICIT, separate scope - when True (and no `warehouse_id`) it reads every ACTIVE
+    SITE-POOL warehouse the product was bought to (`pool_predicate.active_site_pool_sql`),
+    product-wide - the same scope the cell and the SPO/PO modals sum. It is what the PO
+    dialog's History tab asks for on a product-grain row (no pool code to narrow to one
+    warehouse with). Naming a warehouse still wins over `site_pool_only` - a caller who named
+    a location, pool or bin, gets that location alone, exactly as before.
     """
     as_of = as_of or date.today()
     # The month the run sits in is excluded, same reasoning as the order trend: a window
@@ -132,11 +138,14 @@ def purchase_trend_for_run(
     if warehouse_id:
         wh_clause = "AND pol.warehouse_id = CAST(:warehouse_id AS uuid)"
         wh_params: dict[str, Any] = {"warehouse_id": warehouse_id}
-    else:
+    elif site_pool_only:
         wh_clause = (
             "AND EXISTS (SELECT 1 FROM warehouses w WHERE w.id = pol.warehouse_id "
             f"AND {ACTIVE_SITE_POOL_SQL})"
         )
+        wh_params = {}
+    else:
+        wh_clause = ""
         wh_params = {}
     trend_params = {
         "run_id": run_id, "since": prev_start, "until": until,
