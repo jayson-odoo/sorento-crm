@@ -2,6 +2,7 @@
 
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass } from '@/lib/status-pill';
+import { Badge } from '@/components/ui/badge';
 import type { BoardLadderOption } from '../../_shared/types/fulfilmentPlanning.types';
 
 /**
@@ -38,10 +39,18 @@ import type { BoardLadderOption } from '../../_shared/types/fulfilmentPlanning.t
 export function BoardLadderOptionsTable({
   options,
   contributionKey,
+  buyOrigin,
 }: {
   options: BoardLadderOption[];
   /** Test-id key. The two surfaces render the same table under the same line's key. */
   contributionKey: string;
+  /**
+   * S3 (`PLAN-local-supplier-oi-routing.md`): a `local` Buy raises no Order Inquiry on
+   * confirm, marked with a `Local` pill beside the Buy row's label. Overseas, or absent,
+   * carries no pill - only the list view and the decision panel pass this; the per-order
+   * sheet and the trail popover pass nothing (no pill there).
+   */
+  buyOrigin?: 'local' | 'overseas';
 }) {
   if (options.length === 0) return null;
   return (
@@ -74,22 +83,16 @@ export function BoardLadderOptionsTable({
               }`}
             >
               <td className="max-w-[220px] px-3 py-1.5">
-                <span className="block truncate" title={option.label}>
-                  {option.label}
-                </span>
-                {/* AC-2.4: the row that gives less than the whole line says WHY, in the
-                    server's own sentence ("600 is more than the 450 BRW can spare").
-                    Under the label rather than in a column of its own: it belongs to one
-                    step, and an empty column beside four blank cells reads as a defect. */}
-                {option.reason ? (
-                  <span
-                    data-testid={`ladder-option-reason-${contributionKey}-${option.step}`}
-                    className="mt-0.5 block truncate text-2xs font-normal text-muted-foreground"
-                    title={option.reason}
-                  >
-                    {option.reason}
+                <span className="flex items-center gap-1.5">
+                  <span className="truncate" title={option.label}>
+                    {option.label}
                   </span>
-                ) : null}
+                  {/* S3: a local Buy raises no Order Inquiry on confirm. Overseas, or a
+                      non-Buy row, carries no pill. */}
+                  {option.step === 'buy' && buyOrigin === 'local' && (
+                    <Badge variant="secondary">Local</Badge>
+                  )}
+                </span>
               </td>
               {/* R-B, S2: `pool_share` may cover PART of the unit rather than
                   whole-or-nothing, so it states the SHARE; every other row states what it

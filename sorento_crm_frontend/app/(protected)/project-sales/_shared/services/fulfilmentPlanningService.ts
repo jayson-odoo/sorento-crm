@@ -405,6 +405,27 @@ export async function confirmSupply(
  * this function reads them straight off the payload; `lib/ladderOptionsMock.ts` and the
  * `NEXT_PUBLIC_LADDER_OPTIONS_MOCK` flag it hung off are deleted, so the flag being set on a
  * running dev server does nothing at all.
+ *
+ * ── LOCAL SUPPLIER ROUTING (`PLAN-local-supplier-oi-routing.md`, PHASE 1 MOCK) ──────────────
+ *
+ * Not yet built on the server. Two additive fields, once S3/S4 land:
+ *
+ *   BoardContribution.buy_origin   'local' | 'overseas' | undefined
+ *   SupplyLine.buy_origin          same, on the per-order sheet
+ *
+ * Computed once per product for the whole board request, off the primary `product_suppliers`
+ * link, else the newest-PO supplier, else `overseas`. `local` iff that supplier's country
+ * equals the module's `HOME_COUNTRY_CODE` (`MY`). The client never derives this - it only
+ * reads it and shows a `Local` pill beside a Buy composition. A `local` Buy raises no Order
+ * Inquiry row on confirm (the server's own rule; nothing for the client to enforce).
+ *
+ *   BorrowCandidate.location       BoardCellLocation | undefined
+ *
+ * The SAME shape the Grid Location table's `locations[]` already carries, keyed to one
+ * donor, so the manual Borrow modal (`BorrowAddDialog`) can render `CellStockTable` fed by
+ * `candidates.map(c => c.location)` instead of a second, narrower table of its own. Absent
+ * candidates fall back to the plain `qty_on_hand` / `so_qty` / ... fields already on
+ * `BorrowCandidate`, which stay on the wire for exactly that reason.
  */
 export async function getPlanningBoard(
   soNumbers: string[],

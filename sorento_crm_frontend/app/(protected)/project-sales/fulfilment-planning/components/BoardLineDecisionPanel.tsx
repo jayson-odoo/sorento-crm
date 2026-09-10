@@ -446,6 +446,7 @@ export function BoardLineDecisionPanel({
           <BoardLadderOptionsTable
             options={contribution.options ?? []}
             contributionKey={contribution.key}
+            buyOrigin={contribution.buy_origin}
           />
         </div>
       )}

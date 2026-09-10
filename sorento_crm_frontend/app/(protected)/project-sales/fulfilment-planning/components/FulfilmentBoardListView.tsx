@@ -26,6 +26,7 @@ import {
   describe as describeSupply,
   segmentsOf,
 } from '../../_shared/lib/supplyVocabulary';
+import type { SupplyPart } from '../../_shared/lib/supplyVocabulary';
 import type {
   BoardContribution,
   BoardDecision,
@@ -268,11 +269,16 @@ export function FulfilmentBoardListView({
           const text = describeSupply(parts, contribution.fulfilment_location);
           return (
             <div className="min-w-0 space-y-1">
-              <span className="block truncate" title={text}>
-                {text || (
-                  <span className="text-muted-foreground">
-                    Nothing proposed
-                  </span>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="block truncate" title={text}>
+                  {text || (
+                    <span className="text-muted-foreground">
+                      Nothing proposed
+                    </span>
+                  )}
+                </span>
+                {contribution.buy_origin === 'local' && hasBuy(parts) && (
+                  <Badge variant="secondary">Local</Badge>
                 )}
               </span>
               {/* Faded: a suggestion is not a decision. */}
@@ -308,8 +314,13 @@ export function FulfilmentBoardListView({
           const text = describeSupply(parts, contribution.fulfilment_location);
           return (
             <div className="min-w-0 space-y-1">
-              <span className="block truncate" title={text}>
-                {text}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="block truncate" title={text}>
+                  {text}
+                </span>
+                {contribution.buy_origin === 'local' && hasBuy(parts) && (
+                  <Badge variant="secondary">Local</Badge>
+                )}
               </span>
               <SupplyBar
                 segments={supply.segments}
@@ -442,4 +453,9 @@ export function FulfilmentBoardListView({
     <UnsavedDecisionPrompt state={expansion} />
     </>
   );
+}
+
+/** Whether a Buy actually contributed to this composition (S3, R-Local). */
+function hasBuy(parts: SupplyPart[] | null): boolean {
+  return Boolean(parts?.some((part) => part.kind === 'buy' && Number(part.qty) > 0));
 }
