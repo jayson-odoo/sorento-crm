@@ -322,6 +322,84 @@ def test_predicate_matches_carry_the_shape_the_fetch_reads(client, db):
     }
 
 
+def test_predicate_block_carries_schemes_on_file_on_a_scheme_miss(client, db):
+    """AC-1313 (S2): a scheme raw with no matching `certificate_scheme` option
+    surfaces `predicate.schemes_on_file` on the wire, sorted; a resolvable scheme
+    carries NO `schemes_on_file` key at all. Today `_leg_certificate` neither
+    resolves the raw through a lookup set nor emits `schemes_on_file` anywhere in
+    `resolve_product_set`'s return, so the miss call KeyErrors on the missing key
+    before the resolvable call is even reached."""
+    from app.models.certificate import Certificate, CertificateProduct
+    from app.models.lookup import LookupOption, LookupOptionKeyword, LookupSet
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+
+    def _certified(code, scheme):
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            description="SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)",
+            category_id=cat.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        cert = Certificate(
+            id=str(uuid.uuid4()),
+            scheme=scheme,
+            certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+            status="active",
+        )
+        db.add(cert)
+        db.flush()
+        db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+        db.flush()
+        return product
+
+    _certified("ZZTCERT01", "PPS")
+    _certified("ZZTCERT02", "SPAN")
+
+    lookup_set = LookupSet(
+        id=str(uuid.uuid4()), tenant_id=None, set_key="certificate_scheme",
+        name="Certificate Scheme", is_active=True,
+    )
+    db.add(lookup_set)
+    db.flush()
+    option = LookupOption(id=str(uuid.uuid4()), set_id=lookup_set.id, value="PPS", label="PPS", is_active=True)
+    db.add(option)
+    db.flush()
+    db.add(LookupOptionKeyword(id=str(uuid.uuid4()), option_id=option.id, keyword="pps scheme", locale=None))
+    db.flush()
+
+    miss = client.post(
+        ENDPOINT,
+        json={
+            "query": "which kitchen sink has watermark cert",
+            "free_terms": ["kitchen sink"],
+            "require": {"certificate": {"scheme": "watermark"}},
+        },
+    )
+    assert miss.status_code == 200
+    miss_predicate = miss.json()["predicate"]
+    assert miss_predicate["schemes_on_file"] == ["PPS", "SPAN"]
+    assert "watermark" in miss_predicate["unrecognized_terms"]
+
+    hit = client.post(
+        ENDPOINT,
+        json={
+            "query": "which kitchen sink has pps cert",
+            "free_terms": ["kitchen sink"],
+            "require": {"certificate": {"scheme": "pps scheme"}},
+        },
+    )
+    assert hit.status_code == 200
+    assert "schemes_on_file" not in hit.json()["predicate"]
+
+
 def test_predicate_words_is_accepted_on_the_request(client):
     """AC-1304 (half): `predicate_words` is a documented field on the request body, not
     a value pydantic silently drops on the way in - a request with it and one without it

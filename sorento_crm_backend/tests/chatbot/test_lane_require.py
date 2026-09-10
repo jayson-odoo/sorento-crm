@@ -58,6 +58,35 @@ def test_derive_require_maps_intents_and_entity_hints(parser_output, expected):
 
 
 # --------------------------------------------------------------------------- #
+# B1/D2 - AC-1303 (S2 half): a scheme word is split off the SAME attachment_type   #
+# raw mechanically - no message-text matching beyond `_CERT_RE`, no DB lookup at   #
+# parse time (the `certificate_scheme` lookup set is read later, server-side, by   #
+# `_leg_certificate`).                                                             #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("pps cert", {"certificate": {"scheme": "pps"}}),
+        ("watermark certificate", {"certificate": {"scheme": "watermark"}}),
+        # Already asserted by S1 (kept here so the whole scheme-splitting contract
+        # lives in one parametrize): the raw IS the cert word alone, nothing left
+        # over to name a scheme.
+        ("cert", {"certificate": True}),
+    ],
+)
+def test_derive_require_extracts_a_scheme_word_from_the_cert_raw(raw, expected):
+    from app.services.chatbot.lanes.business.predicate import derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [{"hint": "attachment_type", "raw": raw}],
+    }
+    assert derive_require(parser_output) == expected
+
+
+# --------------------------------------------------------------------------- #
 # B2 - AC-1304 / AC-1322: resolve_entity_body gains require + predicate_words ONLY   #
 # when derive_require returns something, every other key stays byte-identical. #
 # --------------------------------------------------------------------------- #
@@ -282,3 +311,127 @@ def test_zero_qualifying_enters_the_existing_miss_flow_naming_the_set():
     for code in codes:
         assert code in text, text
     assert "did you mean" in text.lower() or "escalate" in text.lower(), text
+
+
+# --------------------------------------------------------------------------- #
+# F3 - AC-1321 (S2): a scheme miss names the schemes on file, not a generic "no  #
+# certificate matched these".                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_scheme_miss_reply_names_the_schemes_on_file():
+    """AC-1321: "which item has watermark cert" against a register that holds PPS
+    and SPAN (and an EMPTY `certificate_scheme` lookup set, so "watermark" resolves
+    to nothing) must answer "no watermark certificates" and name both schemes on
+    file, never the generic zero-qualifying miss.
+
+    Full-pipeline red, deliberately: TODAY `derive_require` has not learned to split
+    a scheme word off the SAME attachment_type raw (work item B1/D2 above) - "watermark
+    cert" maps to a bare `{"certificate": True}`, so the certificate leg runs
+    UNSCOPED, both seeded certified products qualify, and the reply this AC describes
+    never renders at all (neither "no watermark certificates" nor "PPS"/"SPAN" appear
+    anywhere in the text) - the correct red reason for a whole-pipeline gap spanning
+    B1, D2 and the scheme-miss copy, not a single missing function.
+    """
+    from app.models.base import set_company_scope
+    from app.models.certificate import Certificate, CertificateProduct
+    from app.models.company import Company
+    from app.models.lookup import LookupSet
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from app.services.chatbot.lanes.business import resolve_gate
+    from app.services.chatbot.lanes.business.answer import not_found_error_message
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+    from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
+    from app.config import settings
+    from tests._pg_fixture import blank_session, unique_code
+
+    with blank_session() as db:
+        company = Company(id=str(uuid.uuid4()), code=unique_code("ZZTSC")[:50], name=unique_code("ZZTSC"))
+        db.add(company)
+        db.flush()
+        category = ProductCategory(
+            id=str(uuid.uuid4()),
+            category_code=unique_code("CAT")[:50],
+            category_name="ZZT scheme category",
+            company_id=company.id,
+        )
+        uom = UnitOfMeasure(
+            id=str(uuid.uuid4()), uom_code=unique_code("UOM")[:20], uom_name="Each", company_id=company.id
+        )
+        db.add_all([category, uom])
+        db.flush()
+
+        # D3: the migration ships the set EMPTY - the owner enters options later.
+        db.add(
+            LookupSet(
+                id=str(uuid.uuid4()), tenant_id=None, set_key="certificate_scheme",
+                name="Certificate Scheme", is_active=True,
+            )
+        )
+        db.flush()
+
+        for code, scheme in (("ZZT-CERT-PPS", "PPS"), ("ZZT-CERT-SPAN", "SPAN")):
+            product = Product(
+                id=str(uuid.uuid4()),
+                product_code=code,
+                product_name=code,
+                description="ZZT CERTIFIED ITEM",
+                category_id=category.id,
+                base_uom_id=uom.id,
+                list_price=10,
+                is_active=True,
+                company_id=company.id,
+            )
+            db.add(product)
+            db.flush()
+            cert = Certificate(
+                id=str(uuid.uuid4()),
+                scheme=scheme,
+                certificate_number=unique_code("CERTNO")[:120],
+                status="active",
+                company_id=company.id,
+            )
+            db.add(cert)
+            db.flush()
+            db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+        db.commit()
+
+        set_company_scope(db, frozenset({company.id}))
+
+        def resolve_entity(body: dict) -> dict:
+            payload = {**body, "spec_fallback": False, "understand_phrase": False}
+            principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
+            return resolve_reference_post(
+                ResolveReferenceRequest(**payload), current_user=principal, db=db
+            )
+
+        services = ResolveGateServices(
+            access_types=lambda **_: [], resolve_entity=resolve_entity, probe=lambda **_: None
+        )
+
+        ctx = {
+            "text": {"message": {"message": {"text": "which item has watermark cert"}}},
+            "contact": {"id": "999"},
+            "parse": {
+                "output": {
+                    "message_type": "business_query",
+                    "intent_hint": "check_product_attachment",
+                    "domain_hint": "product_attachment",
+                    "match_mode": "or",
+                    "access_levels": [],
+                    "entities": [{"raw": "watermark cert", "hint": "attachment_type"}],
+                }
+            },
+        }
+
+        out = resolve_gate.run(ctx, "resolve", {}, services=services, space_id="364817")
+        parser = ctx["parse"]["output"]
+        resolved = out.get("resolved") or {}
+        gate = out.get("gate") or {}
+
+        msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        text = (msg.get("escalate_message") or "").strip()
+
+    assert "no watermark certificates" in text.lower(), text
+    assert "PPS" in text, text
+    assert "SPAN" in text, text

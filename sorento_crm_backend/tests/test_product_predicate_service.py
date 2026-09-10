@@ -20,7 +20,9 @@ import pytest
 from app.models.company import Company
 from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
 from app.models.inventory import Stock, Warehouse
+from app.models.lookup import LookupOption, LookupOptionKeyword, LookupSet
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+from app.models.procurement import InboundShipment, InboundShipmentLine
 from app.models.product import Product, ProductAttachment, ProductCategory, UnitOfMeasure
 from app.models.resources import Attachment, AttachmentType
 from app.services.company_scope import company_scope
@@ -516,3 +518,222 @@ def test_product_ids_path_does_not_bleed_across_companies(db):
     assert out["qualifying_total"] == 1
     codes = [cand["product_code"] for cand in out["candidates"]]
     assert codes == ["ZZT-DUP"]
+
+
+# --------------------------------------------------------------------------- #
+# Attribute-first asks S2 (PLAN-attribute-first-asks.md, D1/D2/D3)             #
+# --------------------------------------------------------------------------- #
+
+
+def _shipment(db, *, arrived: bool):
+    row = InboundShipment(
+        id=str(uuid.uuid4()),
+        shipment_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+        shipment_date=_utc_today(),
+        actual_arrival_date=_utc_today() if arrived else None,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _shipment_line(db, shipment, product, *, shipped, received):
+    row = InboundShipmentLine(
+        id=str(uuid.uuid4()),
+        shipment_id=shipment.id,
+        product_id=product.id,
+        quantity_shipped=shipped,
+        quantity_received=received,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_incoming_leg_counts_open_lines_on_unarrived_shipments(db):
+    """AC-1311: EXISTS inbound_shipment_lines JOIN inbound_shipments (scoped) WHERE
+    shipped minus received > 0 AND the shipment has not yet actually arrived. Today
+    `REQUIRE_LEGS` has no "incoming" entry at all, so this 422s ("Unknown require
+    key(s): incoming") rather than returning a dict - the right red reason for a leg
+    that does not exist yet.
+    """
+    p1 = _product(db, "ZZT-INC-P1", "SORENTO ITEM P1")
+    p2 = _product(db, "ZZT-INC-P2", "SORENTO ITEM P2")
+    p3 = _product(db, "ZZT-INC-P3", "SORENTO ITEM P3")
+
+    shipment_a = _shipment(db, arrived=False)
+    _shipment_line(db, shipment_a, p1, shipped=10, received=0)
+    _shipment_line(db, shipment_a, p2, shipped=5, received=5)
+
+    shipment_b = _shipment(db, arrived=True)
+    _shipment_line(db, shipment_b, p3, shipped=8, received=0)
+
+    out = resolve_product_set(db, require={"incoming": True})
+    assert out["qualifying_total"] == 1
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == ["ZZT-INC-P1"]
+
+
+def test_incoming_leg_does_not_bleed_across_companies(db):
+    """AC-1310: the new `incoming` leg is fail-closed per company exactly like the
+    other four (`test_no_leg_bleeds_across_companies`, extended per
+    PLAN-attribute-first-asks.md). `InboundShipment`/`InboundShipmentLine` are
+    ordinary `CompanyScopedMixin` models (not `__company_shared__`), so the
+    before_insert auto-stamp scopes them to `other.id` for free inside the context
+    manager."""
+    other = Company(id=str(uuid.uuid4()), code="ZZT-MC3", name="ZZT Mocha 3")
+    db.add(other)
+    db.flush()
+
+    with company_scope(db, frozenset({other.id})):
+        theirs = _product(db, "ZZT-SINK-INC", "MOCHA S/STEEL KITCHEN SINK (900X500X200MM)")
+        shipment = _shipment(db, arrived=False)
+        _shipment_line(db, shipment, theirs, shipped=10, received=0)
+
+    out = _totals(db, {"incoming": True}, ["kitchen sink"])
+    assert out["qualifying_total"] == 0
+    assert out["candidates"] == []
+
+
+def test_attachment_type_label_resolves_through_the_alias_lookup_set(db):
+    """AC-1312: `attachment_type` resolution falls through to the
+    `attachment_type_alias` lookup set (keyword "photo" -> option "Product Photos")
+    when the raw does not exact-match a code or type_name directly. Today
+    `_leg_attachment_type` never reads a lookup set at all, so "photo" is reported
+    unrecognized and qualifying_total is 0, not 1 - the wrong VALUE, the right red
+    reason."""
+    lookup_set = LookupSet(
+        id=str(uuid.uuid4()), tenant_id=None, set_key="attachment_type_alias",
+        name="Attachment Type Alias", is_active=True,
+    )
+    db.add(lookup_set)
+    db.flush()
+    option = LookupOption(
+        id=str(uuid.uuid4()), set_id=lookup_set.id, value="Product Photos",
+        label="Product Photos", is_active=True,
+    )
+    db.add(option)
+    db.flush()
+    db.add(LookupOptionKeyword(id=str(uuid.uuid4()), option_id=option.id, keyword="photo", locale=None))
+    db.flush()
+
+    at = _attachment_type(db, "Product Photos")
+    with_photo = _product(db, "ZZT-PHOTO-A", "SORENTO ITEM WITH PHOTO")
+    _product(db, "ZZT-PHOTO-B", "SORENTO ITEM WITHOUT PHOTO")
+    _attach(db, with_photo, at)
+
+    out = resolve_product_set(db, require={"attachment_type": "photo"})
+    assert out["qualifying_total"] == 1
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == ["ZZT-PHOTO-A"]
+    assert out["require"]["attachment_type"] == "Product Photos"
+
+
+def test_attachment_type_unknown_word_is_unrecognized_with_empty_or_missing_set(db):
+    """AC-1312 / AC-1314: an alias word that resolves through NEITHER an empty
+    `attachment_type_alias` set NOR a missing one is reported unrecognized, never a
+    500, in either state."""
+    lookup_set = LookupSet(
+        id=str(uuid.uuid4()), tenant_id=None, set_key="attachment_type_alias",
+        name="Attachment Type Alias", is_active=True,
+    )
+    db.add(lookup_set)
+    db.flush()
+
+    out_empty_set = resolve_product_set(db, require={"attachment_type": "gambar2"})
+    assert out_empty_set["qualifying_total"] == 0
+    assert out_empty_set["unrecognized_terms"] == ["gambar2"]
+
+    db.query(LookupSet).filter(LookupSet.set_key == "attachment_type_alias").delete()
+    db.flush()
+
+    out_missing_set = resolve_product_set(db, require={"attachment_type": "gambar2"})
+    assert out_missing_set["qualifying_total"] == 0
+    assert out_missing_set["unrecognized_terms"] == ["gambar2"]
+
+
+def _scheme_seed(db):
+    """Two certified products, schemes PPS and SPAN, plus a `certificate_scheme`
+    lookup set carrying only the PPS option/keyword - SPAN stays reachable only by
+    its own exact spelling, matching the register (owner enters options by hand)."""
+    pps_product = _product(db, "ZZT-SCHEME-PPS", "SORENTO CERTIFIED ITEM PPS")
+    span_product = _product(db, "ZZT-SCHEME-SPAN", "SORENTO CERTIFIED ITEM SPAN")
+    _certificate(db, pps_product, scheme="PPS")
+    _certificate(db, span_product, scheme="SPAN")
+
+    lookup_set = LookupSet(
+        id=str(uuid.uuid4()), tenant_id=None, set_key="certificate_scheme",
+        name="Certificate Scheme", is_active=True,
+    )
+    db.add(lookup_set)
+    db.flush()
+    option = LookupOption(
+        id=str(uuid.uuid4()), set_id=lookup_set.id, value="PPS", label="PPS", is_active=True,
+    )
+    db.add(option)
+    db.flush()
+    db.add(LookupOptionKeyword(id=str(uuid.uuid4()), option_id=option.id, keyword="pps scheme", locale=None))
+    db.flush()
+    return pps_product, span_product
+
+
+def test_certificate_scheme_normalises_through_the_lookup_set(db):
+    """AC-1313: "pps scheme" normalises through the `certificate_scheme` lookup set
+    to the register's own spelling "PPS" before equality. Today `_leg_certificate`
+    lower-cases and compares the RAW value verbatim against `Certificate.scheme`, so
+    "pps scheme" != "pps" and qualifying_total is 0, not 1 - the wrong value."""
+    _scheme_seed(db)
+
+    out = resolve_product_set(db, require={"certificate": {"scheme": "pps scheme"}})
+    assert out["qualifying_total"] == 1
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == ["ZZT-SCHEME-PPS"]
+    assert out["require"]["certificate"]["scheme"] == "PPS"
+
+
+def test_certificate_unknown_scheme_returns_schemes_on_file(db):
+    """AC-1313: a scheme word with no matching option (or keyword) qualifies
+    nothing, reports itself unrecognized, and lists the register's distinct
+    schemes so the reply can name them. Today `_leg_certificate` neither reports
+    "watermark" as unrecognized (it silently filters to zero via a plain SQL
+    comparison) nor emits a `schemes_on_file` key at all - both assertions below
+    fail on the un-implemented leg."""
+    _scheme_seed(db)
+
+    out = resolve_product_set(db, require={"certificate": {"scheme": "watermark"}})
+    assert out["qualifying_total"] == 0
+    assert "watermark" in out["unrecognized_terms"]
+    assert out["schemes_on_file"] == ["PPS", "SPAN"]
+
+
+def test_schemes_on_file_is_company_scoped(db):
+    """AC-1313 / AC-1310: a certificate scheme belonging to a DIFFERENT company must
+    never appear in `schemes_on_file`. `Certificate` is `__company_shared__` (a NULL
+    `company_id` is a deliberately SHARED row, visible under every scope, per the
+    model's own docstring) so the other company's WCM certificate is stamped with an
+    EXPLICIT `company_id` - leaving it unset would leak it into Sorento's list
+    regardless of `company_scope`."""
+    _scheme_seed(db)
+
+    other = Company(id=str(uuid.uuid4()), code="ZZT-SCHCO", name="ZZT Scheme Co")
+    db.add(other)
+    db.flush()
+
+    with company_scope(db, frozenset({other.id})):
+        theirs = _product(db, "ZZT-SCHEME-WCM", "MOCHA CERTIFIED ITEM WCM")
+        cert = Certificate(
+            id=str(uuid.uuid4()),
+            scheme="WCM",
+            certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}",
+            status="active",
+            company_id=other.id,
+        )
+        db.add(cert)
+        db.flush()
+        db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=theirs.id))
+        db.flush()
+
+    out = resolve_product_set(db, require={"certificate": {"scheme": "watermark"}})
+    assert out["qualifying_total"] == 0
+    assert "WCM" not in out["schemes_on_file"]
+    assert out["schemes_on_file"] == ["PPS", "SPAN"]
