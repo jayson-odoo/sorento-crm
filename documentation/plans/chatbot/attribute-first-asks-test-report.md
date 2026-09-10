@@ -101,6 +101,20 @@ variant seen; the variants are listed under R2, R3, R4, R7, R12, R13 in the plan
 Pass 1 (before fix round 2) had five wrong turns; all are recorded with cause and rule in the plan
 section "Console fix round 2".
 
+## Latency (REV-N3)
+
+`resolve_reference_post` for "which tap has cert" on the prod copy (908 qualifying families, 200
+candidates emitted), three consecutive in-process calls: 203 ms, 91 ms, 133 ms. The model phrase
+reader is off on the set path, so the resolve is SQL only.
+
+## Review rounds
+
+Security review (11 Sep): one blocker (paging a promotion set dropped the tier filter), two
+should-fix (promotion leg blind to access levels; class-label helpers cross-company). Correctness
+review (11 Sep): one blocker (the legs' EXISTS subqueries escape the company listener; the AC-1310
+tests could not see it), six should-fix. All adopted as rules in the plan (SEC-*, REV-*), each with a
+red test before the fix. Repo-wide audit of the EXISTS pattern filed as #832.
+
 ## Deviations
 
 - Phase 1 skipped by design: no UI surface. The lavish review page stands in for the mock.
