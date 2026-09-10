@@ -129,30 +129,53 @@ def overdue_days(arrival_date: Optional[date], as_of: Optional[date] = None) -> 
     return max((reference - arrival_date).days, 0)
 
 
-def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
+def spo_history_for_product(db, run_id: str, product_id: str,
+                            warehouse_id: Optional[str] = None) -> dict:
     """The SPO book behind a plan row's SPO cell: open first, then what has landed.
 
     PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S2 (AC-7, AC-8): scoped to the
-    ONE site-pool rule (`pool_predicate.active_site_pool_sql`), product-WIDE, not the
-    run's own pool resolution. The old pool-id resolution (`COALESCE(w.pool_warehouse_id,
-    w.id)` off the run's recommendation rows for this product) narrowed to whichever
-    locations happened to be in THIS run's plan basis - a warehouse that holds a shipment
-    but no committed demand of its own was invisible even though it is real site-pool
-    supply the product-grain cell must sum. `run_id` is kept on the signature (the route
-    validates the run is visible before calling this) but no longer drives the query: the
-    figure this modal opens off is product-wide and run-independent, same as the cell.
+    ONE site-pool rule (`pool_predicate.active_site_pool_sql`). The old pool-id resolution
+    (`COALESCE(w.pool_warehouse_id, w.id)` off the run's recommendation rows for this
+    product) narrowed to whichever locations happened to be in THIS run's plan basis - a
+    warehouse that holds a shipment but no committed demand of its own was invisible even
+    though it is real site-pool supply the product-grain cell must sum.
+
+    Review fix round B (reviewer S1, AC-7 amended): a LOCATION-grain row's modal must read
+    that row's OWN warehouse only - the same grain rule `po_book_service._po_book_sql`
+    already applies (its `pr.warehouse_id IS NOT NULL` branch). Resolution:
+
+    1. `warehouse_id` given (the caller already knows which row/location it is opening -
+       the route/FE passes the plan row's own `warehouse_id` for a location-grain line) -
+       that warehouse alone, and only when it passes `active_site_pool_sql` (a project bin
+       explicitly named answers empty, never falls back to a wider read).
+    2. Omitted - every active site-pool warehouse, product-wide (unchanged since S2).
+
+    A caller-supplied `warehouse_id` is what tells the two grains apart, mirroring
+    `purchase_trend_service.purchase_trend_for_run`'s own `warehouse_id` kwarg - the same
+    "the caller who already resolved the row's grain names its warehouse; the function
+    itself does not re-derive it from `scm.reorder_recommendation`" shape. An
+    auto-detecting third branch (infer location-grain from this run's OWN recommendation
+    rows when no `warehouse_id` is given) was tried and dropped: no red test exercises it,
+    and the one available signal - any rec for this run/product carrying a non-NULL
+    `warehouse_id` - misclassifies `tests/scm/test_spo_history_to_pool.py`'s fixture
+    (`_revamp_fixtures.recommendation()` always stamps a location, even on a run whose
+    `decision_grain` is `'product'`), breaking 4 of its 5 already-green tests. Flagged to
+    the captain rather than implemented against no evidence (PRINCIPLES.md, "simplest
+    thing that works").
 
     `open` uses the one rule in this module (`open_incoming_clauses` plus "something is
     still to come"); everything else the site pool has ever been promised is history.
     Both are newest-promise-first, so a buyer reads the next arrival at the top.
     """
+    wh_filter = [warehouse_id] if warehouse_id else None
+
     # ORM, not raw SQL, for two reasons. The company isolation filter runs on ORM
     # execution only, and this reads a company-owned table (`SPOAllocation` is
     # `CompanyScopedMixin`) - raw SQL here would have listed another company's shipping
     # orders. And the open/closed test is `open_incoming_clauses()` itself, evaluated in
     # SQL and returned per row, rather than a second Python copy of the same three
     # conditions that could drift from the module they are meant to share.
-    rows = (
+    query = (
         db.query(
             SPOAllocation.spo_number,
             Supplier.supplier_name,
@@ -175,10 +198,11 @@ def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
             # still land in "open" or "history".
             *visible_line_clauses(),
         )
-        .order_by(SPOAllocation.expected_date.desc().nullslast(),
-                  SPOAllocation.spo_number)
-        .all()
     )
+    if wh_filter is not None:
+        query = query.filter(SPOAllocation.warehouse_id.in_(wh_filter))
+    rows = query.order_by(SPOAllocation.expected_date.desc().nullslast(),
+                          SPOAllocation.spo_number).all()
 
     open_rows: list[dict] = []
     history: list[dict] = []

@@ -8,6 +8,7 @@ fields - SKU/warehouse/supplier resolve to human codes/names.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Response
@@ -626,6 +627,12 @@ def list_cover_sources(
 def get_spo_history(
     run_id: str,
     product_id: str = Query(...),
+    warehouse_id: Optional[uuid.UUID] = Query(
+        None,
+        description="The row's OWN warehouse, for a location-grain line - narrows the "
+                    "modal to that warehouse alone. Omitted (a product-grain line) reads "
+                    "every active site-pool warehouse, product-wide.",
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -634,9 +641,15 @@ def get_spo_history(
     Scoped to the row's SITE POOL and nothing else (R15) - a shipment bound for a project
     bin is already claimed by an Order Inquiry, and the cell this explains excludes it.
     The SPO is a FACT on the row, never an input (R2), so this endpoint only reads.
+
+    `warehouse_id` (review fix round B, reviewer S1, AC-7 amended): typed as a UUID so a
+    malformed value 422s via FastAPI's own validation rather than reaching the service as
+    a string that silently matches nothing.
     """
     svc.assert_run_visible(db, run_id)
-    return spo_supply.spo_history_for_product(db, run_id, product_id)
+    return spo_supply.spo_history_for_product(
+        db, run_id, product_id, warehouse_id=str(warehouse_id) if warehouse_id else None
+    )
 
 
 @router.get("/reorder-runs/{run_id}/price-history")
