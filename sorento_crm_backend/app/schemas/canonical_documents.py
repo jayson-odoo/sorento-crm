@@ -34,6 +34,7 @@ from typing import Annotated, Any, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.canonical_masters import _Canonical
+from app.utils.rtf import strip_rtf
 
 #: Each entry of `from_so_numbers` (V4) - length-capped like every other
 #: document number on this surface, never a full row on its own.
@@ -231,6 +232,17 @@ class CanonicalSalesOrder(_CanonicalDocument):
     requested_delivery_date: Optional[date] = None
     internal_note: Optional[str] = None
     lines: list[CanonicalSalesOrderLine] = Field(default_factory=list, max_length=2000)
+
+    @field_validator("internal_note")
+    @classmethod
+    def _plain_text_note(cls, value: Optional[str]) -> Optional[str]:
+        """AutoCount's note control pushes raw RTF - cleaned here, once, at the edge.
+
+        Every reader (`SalesOrderDetail`, `project_fulfilment_board_service`, SCM, MCP)
+        reads the stored column, so a validator here is what keeps them all plain rather
+        than each one re-deriving it from `{\\rtf1...}`.
+        """
+        return strip_rtf(value)
 
 
 class CanonicalPurchaseOrder(_CanonicalDocument):
