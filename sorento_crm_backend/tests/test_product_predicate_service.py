@@ -1342,7 +1342,7 @@ def test_access_level_codes_treats_wildcard_characters_literally(db):
 
     RED: measured live, `_access_level_codes(db, ["%"])` returns SEVEN of the
     eight seeded codes (every one carrying an underscore, since the
-    interpolated "%" makes the pattern `%\_%`, "any code with an underscore in
+    interpolated "%" makes the pattern `%\\_%`, "any code with an underscore in
     it") instead of the empty set this AC demands. `["%dealer"]` and
     `["d%r"]` must also select nothing - neither is any seeded code's literal
     spelling.

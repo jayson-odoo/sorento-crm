@@ -685,7 +685,7 @@ def test_scope_term_comes_from_the_entity_not_the_sentence(client, db):
     that list. Per the PLAN's own C2 contract, every word matching `_CERT_RE`
     (`app/services/chatbot/head/output_exchange.py`) must ALSO be stripped
     from the remainder, on top of `predicate_words` - "cert" itself matches
-    `_CERT_RE` (`r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal"`).
+    `_CERT_RE` (`r"cert|ikram|span|sirim|bomba|ms\\s?[0-9]|halal"`).
 
     RED: `_has_turn_free_terms` strips only `payload.predicate_words`'
     whole-word matches, never runs `_CERT_RE` over the remainder at all, so
