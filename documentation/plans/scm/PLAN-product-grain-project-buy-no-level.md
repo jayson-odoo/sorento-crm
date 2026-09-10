@@ -81,3 +81,68 @@ No FE change: the sheet reads `suggested_qty` / `project_buy_qty` off the summar
 5. Level 500, on hand 600, confirmed Buy 50 -> byte-identical to today. `net` already
    subtracts committed (project included): net 550 >= 500, no trigger, no buy, the bypass
    must NOT fire on a level-set product. Read the file's existing net arithmetic first.
+
+## Slice 2: order sheet shows the suggestion and prints every planned product (owner, 10 Sep)
+
+Owner, on the S14 Excel: "to the left of order qty, we need to put in our suggested quantity,
+and one more column for suggestion, otherwise what's the point" and "include the rows with
+suggested quantity = 0 also, otherwise the user might want to order even though we suggest 0".
+
+### Measured (0907 copy, latest completed run, 10 Sep)
+
+Two gates keep rows off the sheet today:
+
+1. `summary_order_service._belongs_on_the_book`: a product gets an `order_summary_row` only
+   when the run emitted a `buy` or a project need. `covered` / `needs_level` products get no
+   row at all (AC-C2.2a, written when that was ~2,400 rows pre-G1).
+2. `export_report` -> `_rows_to_order`: a book row prints only with chosen > 0, suggested > 0
+   or shortfall > 0. On the book every row already has suggested > 0, so this gate is a
+   near no-op; gate 1 is the one the owner is seeing.
+
+Latest run: buy 374 (all on the book), covered 575, needs_level 1 (prod will carry many more
+needs_level rows since the manual-50 rows were deleted). Sheet after this slice: ~950 rows,
+under `_MAX_EXPORT_ROWS` 2000. The owner's ruling supersedes AC-C2.2a's exclusion.
+
+### Change
+
+Backend:
+- Migration 508: `scm.order_summary_row.suggestion` TEXT NULL (the engine's reason for the
+  row, one sentence, as the plan line already shows it).
+- `write_rows`: every product with a product-grain recommendation in the run (`buy`,
+  `exception`, `covered`, `needs_level`) gets a book row. `suggested_qty` stays 0 for
+  `covered` / `needs_level`; `suggestion` = the first recommendation's `triggered_reason`
+  (buy: e.g. "below level ..." / "project buy: 914 confirmed unplaced Buy"; covered: "N
+  available ... covers ..."; needs_level: `_needs_level_label`; exception: "no linked
+  supplier - cannot source this reorder"). `_belongs_on_the_book` becomes "has any
+  product-grain rec"; keep the function, change the rule and the docstring.
+- `_serialise_row`: add `suggestion`. Schema `scm_order_summary.py` gains the field.
+- Export: `_EXPORT_COLUMNS` becomes `Item code, BRW on hand, Reorder level, Project qty,
+  Dealer o/s, Suggested qty, Suggestion, Order qty, Delivery, Project / customer, Supplier,
+  BRW PO qty, BRW incoming qty, Last in qty, Last in date, Remarks`. `_export_rows` /
+  `_export_xlsx_rows` add the two cells (Suggested qty as a number, 0 printed as 0 - it is
+  a measured figure here, unlike the blank rule for Order qty; Suggestion as text through
+  `_xlsx_safe_text`). `_PDF_LIST_COLUMNS` -> (8, 9); `_PDF_NUM_COLUMNS` -> (1, 2, 3, 4, 5,
+  7, 11, 12, 13). `_rows_to_order` is removed; `export_report` prints every book row.
+- Confirm / decision paths must accept a row whose suggested_qty is 0 (chosen_qty > 0 on
+  it is a valid decision). Check `record_decision` for any `suggested_qty > 0` guard.
+
+Frontend:
+- `summaryOrder.types.ts` gains `suggestion: string | null`; the mock store carries it.
+- Wherever the order summary rows render on screen (`ReorderPlanView` / its summary tab),
+  a `Suggestion` column beside Suggested qty, `truncate` + `title`. Rows with suggested 0
+  now appear there too; no filter added.
+
+### Tests (tester, `tests/scm/test_order_summary_sheet.py` + the book tests)
+
+6. A run with one `buy` (suggested 12), one `covered` and one `needs_level` product ->
+   `write_rows` writes THREE book rows; the covered and needs_level rows have
+   `suggested_qty` 0 and a non-empty `suggestion`; the buy row's `suggestion` is its
+   `triggered_reason`.
+7. `export_report(fmt="xlsx")` header row equals the new `_EXPORT_COLUMNS`; the buy row's
+   "Suggested qty" cell is 12.0 and sits immediately left of "Suggestion", which sits
+   immediately left of "Order qty" (blank until chosen); the covered row prints with
+   Suggested qty 0 and its suggestion text; no row is dropped for suggested 0.
+8. PDF export renders the same 16 columns (existing PDF test pattern) and wraps the two
+   list columns at their new indices.
+9. `record_decision` on a row with `suggested_qty` 0 and `chosen_qty` 5 succeeds.
+10. Existing S14 tests updated for the two new columns, nothing else changed.

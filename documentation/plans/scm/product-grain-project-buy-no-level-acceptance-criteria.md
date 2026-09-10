@@ -12,3 +12,18 @@
 - AC-5 Products WITH a level plan byte-identical to before (existing per-product tests green).
 - AC-6 No data change on prod is required; CSK2800-QT reads Suggested 914 on the next plan
   after deploy.
+
+## Slice 2: order sheet suggestion columns + every planned product (owner, 10 Sep)
+
+- AC-7 The order sheet Excel and PDF carry `Suggested qty` and `Suggestion` immediately left
+  of `Order qty`, in that order; the other columns keep their order.
+- AC-8 `Suggested qty` prints the engine figure (0 printed as 0); `Suggestion` prints the
+  engine's one-line reason (buy reason, "covers" for covered, "no reorder level set ..." for
+  needs_level, "no linked supplier" for exception). `Order qty` stays the pen column: blank
+  until chosen.
+- AC-9 Every product the run planned (buy, covered, needs_level, exception) is on the book
+  and on the sheet; a covered or needs-level product prints with Suggested qty 0. No row is
+  dropped for suggested 0.
+- AC-10 A buyer can choose an order quantity on a row whose suggestion is 0 and confirm it.
+- AC-11 The on-screen order summary shows the same Suggestion column and the same rows.
+- AC-12 Export still refuses above 2000 rows with "Narrow the plan first" (unchanged).
