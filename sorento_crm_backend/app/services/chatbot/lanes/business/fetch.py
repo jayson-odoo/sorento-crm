@@ -1743,7 +1743,25 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                 require,
             )
         else:
-            shown = len(e.get("items") or [])
+            # R8 (console fix round 2, AC-1330): `shown` is distinct PRODUCTS
+            # rendered, never tool rows - a stock/cert answer carries one row per
+            # warehouse/certificate, so five products across three warehouses is
+            # fifteen rows and would have overstated "Showing 15" for a five-page
+            # answer. Falls back to the row count when no row carries a product
+            # code at all (a result type this header never fires for today).
+            items0 = e.get("items") or []
+
+            def _product_code_of_row(it: Any) -> str:
+                fields = jsc.get(it, "fields")
+                if not isinstance(fields, list):
+                    return ""
+                for f in fields:
+                    if isinstance(f, dict) and f.get("label") == "Product Code":
+                        return jsc.nullish_str(f.get("value")).strip()
+                return ""
+
+            shown_codes = {c for c in (_product_code_of_row(it) for it in items0) if c}
+            shown = len(shown_codes) if shown_codes else len(items0)
             set_noun = set_noun_for(jsc.array(jsc.get(predicate, "class_labels")))
             # `set_noun_for` is always plural (its own contract, AC-1316) - singular
             # only for the ONE-qualifying-product header ("1 tap has ...", never
