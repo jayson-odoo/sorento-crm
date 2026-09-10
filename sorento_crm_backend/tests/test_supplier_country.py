@@ -212,14 +212,17 @@ def test_ingest_resolves_name_or_code():
             assert record.outcome != IngestOutcome.FAILED, record.errors
         assert result.created == 3
 
+        # ::text, the suite's idiom (test_plan_row_decision.py, test_m4_cash.py): psycopg2
+        # returns a raw uuid column as `uuid.UUID`, which never equals the ORM's `str` id.
         rows = {
             code: db.execute(
-                text("SELECT country_id FROM suppliers WHERE supplier_code = :c"), {"c": code}
+                text("SELECT country_id::text FROM suppliers WHERE supplier_code = :c"),
+                {"c": code},
             ).scalar()
             for code in (by_name, by_code, unresolved)
         }
-        assert rows[by_name] == country.id
-        assert rows[by_code] == country.id
+        assert rows[by_name] == str(country.id)
+        assert rows[by_code] == str(country.id)
         assert rows[unresolved] is None
 
         unresolved_record = next(r for r in result.records if r.source_ref == f"DK-{unresolved}")

@@ -506,10 +506,12 @@ class TestAcP04SupplierAddressBlockAndDeprecatedFields:
             ],
         )
         assert result.created == 1, result.records[0].errors
+        # ::text, the suite's idiom (test_plan_row_decision.py, test_m4_cash.py): psycopg2
+        # returns a raw uuid column as `uuid.UUID`, which never equals the ORM's `str` id.
         row = db.execute(
             text(
                 "SELECT contact_name, address_line1, address_line2, city, state, "
-                "postal_code, country_id FROM suppliers WHERE supplier_code = :c"
+                "postal_code, country_id::text FROM suppliers WHERE supplier_code = :c"
             ),
             {"c": code},
         ).first()
@@ -520,7 +522,7 @@ class TestAcP04SupplierAddressBlockAndDeprecatedFields:
             "Kuala Lumpur",
             "Selangor",
             "50000",
-            my.id,
+            str(my.id),
         )
 
     def test_customer_deprecated_fields_fail_validation_never_retryable(self, db):

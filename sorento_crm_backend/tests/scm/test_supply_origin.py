@@ -36,8 +36,22 @@ def _u() -> str:
 
 
 def _country(db, code, name):
+    """Get-or-create by code, case-insensitive.
+
+    `db` is `pg_session` - the real, rolled-back lane database - which now carries the
+    249-row ISO seed from `510_countries`, so `MY` and `CN` already exist and a plain
+    insert collides on `uq_countries_code_lower`. Looked up rather than a monkeypatched
+    `HOME_COUNTRY_CODE`, so this stays correct however the module names the home country.
+    """
+    from sqlalchemy import func
+
     from app.models.country import Country
 
+    existing = (
+        db.query(Country).filter(func.lower(Country.code) == code.lower()).first()
+    )
+    if existing is not None:
+        return existing
     country = Country(id=_u(), code=code, name=name)
     db.add(country)
     db.flush()

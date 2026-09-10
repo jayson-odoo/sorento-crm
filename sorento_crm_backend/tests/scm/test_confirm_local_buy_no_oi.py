@@ -25,9 +25,11 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import text
 
 from app.models.project_so import (
     INQUIRY_ACTIONED,
+    INQUIRY_CANCELLED,
     INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiryRow,
@@ -318,6 +320,14 @@ def test_carried_local_line_skipped():
 
         # Revision 2: only the OTHER line is re-decided; the local line is CARRIED
         # (present in buy_lines, `carried` semantics) and must still raise nothing.
+        #
+        # `uq_so_supply_decisions_active` allows only ONE active revision per order, and
+        # revision 1 (from `_confirm()`) is already it - so this decision follows this
+        # file's OWN `_confirm()` convention (`"active" if revision == 1 else
+        # "superseded"`) rather than hard-coding "active", the same as
+        # `test_project_order_inquiry.py`'s identical helper, whose own tests call it
+        # twice on one order (`test_a_later_confirmation_with_buy_raises_the_header_then`)
+        # without ever touching revision 1's state.
         service = ProjectOrderInquiryService(db)
         revision = (
             db.query(SOSupplyDecision)
@@ -327,7 +337,7 @@ def test_carried_local_line_skipped():
         )
         decision = SOSupplyDecision(
             id=_u(), company_id=order.company_id, project_sales_order_id=order.id,
-            revision_no=revision, state="active",
+            revision_no=revision, state="active" if revision == 1 else "superseded",
             line_snapshots=[{"line_no": local_line.line_no}, {"line_no": other_line.line_no}],
             confirmed_by=owner, confirmed_at=datetime.utcnow(),
         )
@@ -350,7 +360,15 @@ def test_carried_local_line_skipped():
         second = service.refresh_for_decision(order, decision, buy_lines, actor_user_id=owner)
 
         assert _raised_rows(db, local_line.id) == []
-        assert len(_raised_rows(db, other_line.id)) == 1
+        # The OTHER line is actively re-decided (not carried), so its revision-1 row is
+        # superseded (CANCELLED, never edited in place - the docstring's own rule) and a
+        # fresh row raised under revision 2: two PHYSICAL rows, exactly one of them still
+        # standing. `_raised_rows` matches on verb alone, so the still-open row is the one
+        # this assertion is about.
+        still_open = [
+            row for row in _raised_rows(db, other_line.id) if row.state != INQUIRY_CANCELLED
+        ]
+        assert len(still_open) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -375,11 +393,13 @@ def test_scm_demand_sees_no_local_buy():
         result = _confirm(db, order, actor_user_id=owner, origin_by_line={str(line.id): "local"})
         assert result["created"] == 0
 
-        project_qty = db.execute(
-            __import__("sqlalchemy").text(
-                "SELECT COALESCE(SUM(project_qty), 0) FROM scm.committed_v "
+        # `project_committed` is the view's own exposed column (498_committed_v_bundled_qty.py);
+        # `project_qty` is internal to the view's CTE and not selectable from the outside.
+        project_committed = db.execute(
+            text(
+                "SELECT COALESCE(SUM(project_committed), 0) FROM scm.committed_v "
                 "WHERE product_id = :p AND warehouse_id = :w"
             ),
             {"p": str(product.id), "w": str(own.id)},
         ).scalar()
-        assert float(project_qty or 0) == 0.0
+        assert float(project_committed or 0) == 0.0
