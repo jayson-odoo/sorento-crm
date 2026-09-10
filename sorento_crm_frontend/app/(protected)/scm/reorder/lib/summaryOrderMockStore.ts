@@ -120,6 +120,7 @@ const ROWS: OrderSummaryRow[] = [
     // 180 firm Project Buy + 80 netted Retail = 260 raw, rounded ONCE to the
     // supplier's multiple of 50 (AC-E06 / AC-F11). Not 4 separate roundings.
     suggested_qty: 300,
+    suggestion: 'below level: net -80 <= ROP 100',
     project_buy_qty: 180,
     retail_replenishment_qty: 80,
     earliest_project_need_date: '2026-09-15',
@@ -153,6 +154,7 @@ const ROWS: OrderSummaryRow[] = [
     qty_in_transit: 0,
     shortfall: 0,
     suggested_qty: 0,
+    suggestion: '4397 available across every location covers 307 committed',
     // Every project line is covered by a confirmed Reserve, so nothing is Buy.
     project_buy_qty: 0,
     retail_replenishment_qty: 0,
@@ -187,6 +189,7 @@ const ROWS: OrderSummaryRow[] = [
     // lands 25 Aug against an order due 3 Aug. The dated engine, not on-hand maths.
     shortfall: 67,
     suggested_qty: 100,
+    suggestion: 'project buy: 100 confirmed unplaced Buy',
     project_buy_qty: 100,
     retail_replenishment_qty: 0,
     earliest_project_need_date: '2026-08-03',
@@ -218,6 +221,7 @@ const ROWS: OrderSummaryRow[] = [
     shortfall: 8,
     // Rounded up to the supplier's minimum order of 50.
     suggested_qty: 50,
+    suggestion: 'reorder_point: net -8 <= ROP 20',
     project_buy_qty: 0,
     retail_replenishment_qty: 8,
     earliest_project_need_date: null,
@@ -248,6 +252,7 @@ const ROWS: OrderSummaryRow[] = [
     qty_in_transit: 60,
     shortfall: 25,
     suggested_qty: 40,
+    suggestion: 'project buy: 30 confirmed unplaced Buy',
     project_buy_qty: 30,
     retail_replenishment_qty: 10,
     earliest_project_need_date: '2026-08-19',
@@ -281,6 +286,7 @@ const ROWS: OrderSummaryRow[] = [
     qty_in_transit: 0,
     shortfall: 0,
     suggested_qty: 0,
+    suggestion: '1240 available across every location covers 0 committed',
     project_buy_qty: 0,
     retail_replenishment_qty: 0,
     earliest_project_need_date: null,
@@ -314,6 +320,7 @@ const ROWS: OrderSummaryRow[] = [
     qty_in_transit: 0,
     shortfall: 2,
     suggested_qty: 10,
+    suggestion: 'reorder_point: net -2 <= ROP 4',
     project_buy_qty: 1,
     retail_replenishment_qty: 1,
     earliest_project_need_date: '2026-09-02',
@@ -348,6 +355,7 @@ const ROWS: OrderSummaryRow[] = [
     qty_in_transit: 0,
     shortfall: 2.5,
     suggested_qty: 2.5,
+    suggestion: 'reorder_point: net -2.5 <= ROP 2',
     project_buy_qty: 1.25,
     retail_replenishment_qty: 1.25,
     earliest_project_need_date: '2026-08-28',

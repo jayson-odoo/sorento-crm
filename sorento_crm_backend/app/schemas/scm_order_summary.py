@@ -124,6 +124,22 @@ class OrderSummaryRowOut(BaseModel):
     pool_on_hand: Optional[float] = None
     reorder_level: Optional[float] = None
 
+    # --- issue #795 Slice 2: the engine's own one-line reason for the row. ---
+    suggestion: Optional[str] = None
+
+    # --- issue #795 Slice 3: the PO/SPO document breakdown under the two supply cells.
+    # Empty until that slice populates them. ---
+    po_open_docs: List["SupplyDocOut"] = Field(default_factory=list)
+    incoming_spo_docs: List["SupplyDocOut"] = Field(default_factory=list)
+
+
+class SupplyDocOut(BaseModel):
+    """One open document's remaining quantity for a product (issue #795 Slice 3) - a PO
+    number or an SPO number, never a UUID."""
+
+    number: Optional[str] = None
+    qty: float = 0.0
+
 
 class DeliveryByMonthOut(BaseModel):
     month: Optional[str] = None

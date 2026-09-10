@@ -1909,6 +1909,13 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                  for r, c in zip(prows, cells)]
     agg = eng.aggregate_product(wh_inputs, level=level, moq=moq,
                                 order_multiple=order_multiple)
+    # Confirmed unplaced Project Buy, summed BEFORE sizing - the same figure `_emit_pool`
+    # already bypasses the trigger with (AC-E05). A no-level product has no target to net
+    # against at all, so without this a product with firm demand and nothing else read
+    # "Nothing" (issue #794). A level-SET product never reaches the bypass below: its
+    # `net` (fed into `agg`) already has the confirmed Buy subtracted, so the trigger has
+    # already seen it - adding it again here would buy stock the level already covers.
+    pool_project_need = sum(float(c.get("project_need") or 0.0) for c in cells)
     if level is None:
         triggered, reason_label = False, None
     else:
@@ -1916,6 +1923,11 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                                               reorder_level=level)
     recommended = float(agg["recommended_qty"]) if triggered else 0.0
     rounded = float(agg["buy_qty"]) if triggered else 0.0
+    if level is None and pool_project_need > 0:
+        triggered = True
+        recommended = pool_project_need
+        reason_label = f"project buy: {_qty_label(pool_project_need)} confirmed unplaced Buy"
+        rounded = eng.round_order_qty(recommended, moq, order_multiple)
     split = eng.allocate(rounded, agg["warehouses"]) if rounded > 0 else {}
 
     # The row's identity comes from a real location - the one holding the most of the item,
@@ -1931,7 +1943,7 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # Firm project demand, capped by what is actually being bought: the two halves of the
     # basis have to sum to the sized quantity, or the Summary Order Report re-derives a
     # bigger number than the plan row it is reporting (AC-F03).
-    project_need = min(sum(float(c.get("project_need") or 0.0) for c in cells), recommended)
+    project_need = min(pool_project_need, recommended)
     retail_need = max(recommended - project_need, 0.0)
     cell = _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq,
                              order_multiple, prows, cells,
@@ -1956,15 +1968,13 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # AC-2.4 falls out of G1, not a separate gate here: an unscoped run's `_planning_rows`
     # has already excluded every uncommitted product (G1); a G10-named product with none
     # still wants "no level" told, which is why it entered the run.
-    if level is None:
-        # Nobody has set a level for this item anywhere. Proposing a quantity would be a
-        # guess and omitting the row would read as "nothing to do", so the product is named
-        # once - not once per bin, which said the same thing ten times and asked the buyer
-        # to set ten numbers that no longer exist.
-        recs.append(_build_rec(run_id, "needs_level", anchor, cell, warehouse_id=None,
-                               order_qty=None, rounded=None, reason_enum="needs_level",
-                               reason_label=_needs_level_label(cell), plan_basis=basis))
-    elif triggered and rounded > 0 and chosen:
+    #
+    # `triggered` is checked FIRST, ahead of `level is None`: the bypass above can trigger
+    # a no-level product on its confirmed Project Buy alone (issue #794), and that buy is
+    # bought - `needs_level` is reserved for a no-level product where NOTHING triggered, so
+    # a buy row is never accompanied by a `needs_level` row saying the same product has
+    # nothing to do (AC-2).
+    if triggered and rounded > 0 and chosen:
         recs.append(_build_rec(run_id, "buy", anchor, cell, warehouse_id=None,
                                order_qty=recommended, rounded=rounded,
                                allocation=_allocation_lines(split, wh_meta),
@@ -1975,6 +1985,15 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
             order_qty=None, rounded=None,
             reason_label="no linked supplier - cannot source this reorder",
             plan_basis=basis))
+    elif level is None:
+        # Nobody has set a level for this item anywhere, and nothing triggered a buy off
+        # the confirmed Project Buy either. Proposing a quantity would be a guess and
+        # omitting the row would read as "nothing to do", so the product is named once -
+        # not once per bin, which said the same thing ten times and asked the buyer to set
+        # ten numbers that no longer exist.
+        recs.append(_build_rec(run_id, "needs_level", anchor, cell, warehouse_id=None,
+                               order_qty=None, rounded=None, reason_enum="needs_level",
+                               reason_label=_needs_level_label(cell), plan_basis=basis))
     else:
         covered = _covered_rec(run_id, None, prows, anchor, cell, moq=moq,
                                order_multiple=order_multiple, plan_basis=basis,
@@ -2777,6 +2796,11 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "reorder_level_source": c.get("reorder_level_source"),
         "suggested_level": c.get("suggested_level"),
         "suggestion_basis": c.get("suggestion_basis"),
+        # Whether the level is still unset (issue #794): a no-level product can now
+        # trigger a `buy` off its confirmed Project Buy alone, and the panel still needs
+        # to offer "Set AutoCount level to N" on that row - the level did not stop being
+        # unset just because the confirmed Buy bypassed the trigger.
+        "needs_level": bool(c.get("needs_level")),
         # The weekly checklist, frozen with the row so it still reads true next month.
         "demand_window_days": c.get("demand_window_days"),
         "on_hand": c.get("on_hand"),
