@@ -170,6 +170,15 @@ Console pass 5 on the fixed code (no reload) left two wrong turns; the reviewer 
 
 REV-N2 (a red test committed in `2ceb76df4`, self-corrected in `7c4bdf40b`) is a process note: the coder runs the touched test file before every commit.
 
+Console pass 6 (after R14 to R20, backend without reload) added two more, both measured from the stored trace and `psql`:
+
+| # | Observed | Cause | Rule |
+|---|----------|-------|------|
+| R21 | "which tap has cert" -> "which water tap has cert" (clarify) -> "more" answered "The register has no Certification certificates. Schemes on file: ..." | the head's `entity_op: reuse` re-used the previous turn's attachment entity, canonicalised to the AttachmentType NAME (`raw: "Certification"`); `_cert_scheme_from_raw` knows only cert / certificate / sijil as bare words, so "Certification" survived as the scheme | `_BARE_CERT_WORDS` covers every inflection the head or the parser can hand over: cert, certs, certificate, certificates, certification, certifications, sijil. A raw made only of those words is the bare leg. The reuse itself (a carry-less "more" re-asking the previous certificate question) is the head's existing behaviour, outside this lane |
+| R22 | "which bathroom accessory has stock" answered "964 bathroom accessories have stock. Showing 4." with five ids sent | ACC-SRT9012's only stock row sits in warehouse SPARE/P, `is_active = false`; `_leg_stock` counts any on-hand row while the stock list tool filters `Stock.warehouse.has(Warehouse.is_active)` (inventory_service.py:743), so the header counted a product the answer could never show | `_leg_stock` mirrors the tool's visibility: the EXISTS joins `Warehouse` on `Stock.warehouse_id` with `Warehouse.is_active IS TRUE` (same company). The header then counts exactly the products the tool can render |
+
+Also verified live in pass 6: the promotion pick turn armed the set_page carry and the "more" page's tool args carried `access_levels: ["Sorento Dealer", "Mocha Dealer", "Cabana Dealer"]` (SEC-B1 / AC-1333). Promotion sets page by PRODUCT, so a promotion file attached to several products can appear on two pages; accepted, the promotion render is the existing one.
+
 ## Leg semantics
 
 | key | payload | predicate (EXISTS on Product.id) |

@@ -172,6 +172,14 @@ tool. No new reply format.
   registered in the harness so turn 3 completes.
 - AC-1344 No em-dash or en-dash in any file the lane adds or touches. Evidence:
   `scripts/git-hooks/pre-push` dash guard green on the lane's added lines.
+- AC-1345 `derive_require` treats every inflection of the cert word as the bare leg: an
+  attachment_type raw of "Certification", "certificates", "certs" or "certifications" (any case)
+  yields `{"certificate": true}`, never a scheme; "PPS certification" still yields scheme "PPS".
+  Evidence: pytest parametrize on `derive_require`.
+- AC-1346 The stock leg counts only stock in active warehouses: a product whose only on-hand row
+  is in a warehouse with `is_active = false` does not qualify; the same row in an active warehouse
+  does. Evidence: pytest on `resolve_product_set` with two warehouses; console "which bathroom
+  accessory has stock" shows five products for five ids.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
