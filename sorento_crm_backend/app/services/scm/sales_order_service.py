@@ -544,6 +544,11 @@ class SalesOrderService:
             # The project the sheet named when no customer of that name existed. Kept so the
             # order is not anonymous just because it could not be linked.
             "internal_note": so.internal_note or None,
+            # The human-readable project name (PLAN-so-project-label.md), resolved by
+            # whichever of the four rules ranked highest. Never a UUID; `None` when
+            # nothing has ever named one for this order.
+            "project_label": so.project_label or None,
+            "project_label_source": so.project_label_source or None,
             # Every distinct stock location its lines ship from. Plural because one order can
             # land in two, and collapsing that to the first would be a quiet lie.
             "stock_locations": sorted({
@@ -1176,6 +1181,10 @@ class SalesOrderService:
                 | (SalesOrder.customer.has(Customer.customer_name.ilike(like)))
                 | on_a_line
                 | sold_by
+                # The project a person came looking for, resolved from whichever source
+                # ranked highest - so "BAMBOO" finds an order the Order Inquiry sheet
+                # named, whether or not the customer half of that cell ever matched.
+                | (SalesOrder.project_label.ilike(like))
             )
         sort_cols = {
             "so_number": SalesOrder.so_number,

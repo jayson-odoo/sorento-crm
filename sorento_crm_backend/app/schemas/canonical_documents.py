@@ -231,6 +231,12 @@ class CanonicalSalesOrder(_CanonicalDocument):
     doc_date: Optional[date] = None
     requested_delivery_date: Optional[date] = None
     internal_note: Optional[str] = None
+    # AutoCount `SO.Ref` - PLAN-so-project-label.md. Free text, and read for a project
+    # name (rule 3, `app.services.project_label_rules.label_from_ref`) only when the note
+    # names none. Same precedent as `CanonicalShippingOrder.container_number` below,
+    # which carries `PO.Ref` for the same reason: a field AutoCount already prints that
+    # this contract had never accepted before.
+    ref: Optional[str] = Field(None, max_length=255)
     lines: list[CanonicalSalesOrderLine] = Field(default_factory=list, max_length=2000)
 
     @field_validator("internal_note")
