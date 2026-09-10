@@ -3465,16 +3465,21 @@ def test_carry_clears_on_a_same_domain_zero_qualifying_clarify(
     unrecognized_terms carrying "flurbish"), same domain (product_attachment),
     NOTHING rendered, no roster - `selection_context` must no longer be
     "set_page".
-    Turn 3: "more" - since the carry is gone, `resolve_gate._set_page_reply`
-    must not intercept it (its own guard is `prev.selection_context ==
-    "set_page"`), so the reply must carry NONE of turn 1's tap codes and must
-    not read the old page header ("7 taps have certificates. Showing 6 to 7.").
+    Turn 3: "more" - AC-1343 (amended): with the carry cleared, `head/route.py`'s
+    `is_set_page_more_reply` (gated on `prev.selection_context == "set_page"`)
+    is false, so the turn takes the SAME ordinary low-signal route a bare
+    "more" with no prior set takes today - never `resolve_gate._set_page_reply`
+    at all. The harness registers "low_signal" in `chatbot_completed_lanes` so
+    this turn completes in the CRM rather than hitting the S7 hard refusal for
+    an un-registered lane, and its clarifier call is stubbed so no live model
+    call runs.
 
     RED: `_offer_carry`'s set_page arm only clears on `answered or topic.
     changed(...)` - turn 2 is neither answered (nothing was ever rendered) nor
     a domain change (still product_attachment), so `variables["selection_
     context"]` is restored to "set_page" off `prev` and turn 3's bare "more"
-    pages the STALE tap set under the old header.
+    is wrongly routed as a page continuation, paging the STALE tap set under
+    the old header.
     """
     contact_id = _s4_contact_id("r19clear")
     db = session_factory()
@@ -3538,12 +3543,36 @@ def test_carry_clears_on_a_same_domain_zero_qualifying_clarify(
             probe=lambda **_: None,
         ),
     )
+    # Register "low_signal" so this turn's own lane completes in the CRM instead
+    # of hitting S7's hard refusal for a branch kind `chatbot_completed_lanes`
+    # does not name; the resolver-counting stub above stays wired regardless
+    # (a "more" with no carry never reaches `resolve_gate.run` either way).
+    from app.models.user import SystemSetting
+
+    settings_db = session_factory()
+    setting = settings_db.query(SystemSetting).first()
+    setting.chatbot_completed_lanes = ["business_query", "low_signal"]
+    settings_db.commit()
+
+    from app.services.chatbot.lanes import casual
+
+    monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
+    monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
+    monkeypatch.setattr(
+        casual, "call_clarifier", lambda config, prompt: '{"response": "Not paging anything right now."}'
+    )
+
     stub_parser(_s4_bare_parser_output())
     turn3 = engine_mod.run_turn(
         _s4_envelope(contact_id=contact_id, message_id="ZZT-r19-3", text="more"),
         session_factory=session_factory,
     )
     assert turn3.status == "done", turn3.error
+    assert turn3.branch_kind == "low_signal", turn3.branch_kind
+
+    variables_after_3 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
+    assert variables_after_3.get("selection_context") != "set_page", variables_after_3
+
     reply3 = (turn3.reply or {}).get("text") or ""
     assert "Showing 6 to 7" not in reply3, reply3
     assert not (_s4_codes_in(reply3) & set(codes)), (reply3, codes)

@@ -451,7 +451,10 @@ def test_resolve_product_set_unions_product_ids_with_bindings(db):
     intersected with the legs."""
     a = _product(db, "ZZT-UN-A", "SORENTO WIDGET A")
     b = _product(db, "ZZT-UN-B", "SORENTO S/STEEL KITCHEN SINK (900X500X200MM)")
-    c = _product(db, "ZZT-UN-C", "SORENTO WIDGET C")
+    # AC-1339/R15: a category-filed product IS a member of its class now, so C must
+    # sit under a DIFFERENT category (Water Closet, not the default Kitchen Sink) or
+    # its own category filing would legitimately join the "kitchen sink" set.
+    c = _product(db, "ZZT-UN-C", "SORENTO WIDGET C", category="wc")
     for p in (a, b, c):
         _certificate(db, p)
 
