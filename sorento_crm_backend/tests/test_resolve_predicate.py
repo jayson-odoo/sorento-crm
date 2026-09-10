@@ -661,9 +661,9 @@ def test_scope_term_comes_from_the_entity_not_the_sentence(client, db):
     []` (no product token sent at all - the plain chatbot-lane shape), query
     "which tap has certificate" instead - same result.
 
-    NOT RED as constructed - measured directly against this exact world and
-    these exact parameters (`git show`-able probe, dropped after confirming):
-    both cases already return `qualifying_total == 1` and
+    Cases 1 and 2 are NOT RED as constructed - measured directly against this
+    exact world and these exact parameters (`git show`-able probe, dropped
+    after confirming): both already return `qualifying_total == 1` and
     `unrecognized_terms == []` today. `_has_turn_free_terms`
     (`app/api/v1/system/references.py`) already strips `predicate_words` from
     `query_text` before calling `_content_words`, and `_PHRASE_STOPWORDS`
@@ -673,7 +673,41 @@ def test_scope_term_comes_from_the_entity_not_the_sentence(client, db):
     fixed by the C2 repair commit (`b7833f48c`, which landed before the console
     findings were measured), or it needs an input shape this construction does
     not reach. Kept as the regression guard AC-1306 asks for.
+
+    Case 3 (captain follow-up, 11 Sep 2026) is the input shape that DOES
+    reproduce it: the live console turn's parser normalised the attachment_type
+    entity's raw to "certificate" (canonical "Certification") while the
+    customer actually typed "cert" - so `predicate_words` never contains the
+    literal word the sentence carries, and stripping only whole-word entries
+    from that list leaves "cert" in the remainder. `query`: "which tap has
+    cert"; `tokens: []`; `predicate_words: ["certificate", "Certification",
+    "check_product_attachment"]` - deliberately no literal "cert" anywhere in
+    that list. Per the PLAN's own C2 contract, every word matching `_CERT_RE`
+    (`app/services/chatbot/head/output_exchange.py`) must ALSO be stripped
+    from the remainder, on top of `predicate_words` - "cert" itself matches
+    `_CERT_RE` (`r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal"`).
+
+    RED: `_has_turn_free_terms` strips only `payload.predicate_words`'
+    whole-word matches, never runs `_CERT_RE` over the remainder at all, so
+    "cert" survives into `_content_words("which tap has cert")` alongside
+    "tap", and the scope term becomes the joined "tap cert" - measured
+    directly: `filter_specs` cannot bind that compound to any class, so it
+    reports the whole term unrecognized (`unrecognized_terms == ["tap
+    cert"]`) and `qualifying_total` is 0 (the honest-zero path, AC-1301/1302 -
+    a described-but-unrecognised set qualifies nothing), never the 1 this
+    case demands.
     """
+    # Case 3's unstripped "tap cert" remainder reaches a last-resort trigram
+    # probe across every entity type, including transporters, whose
+    # `similarity()` needs `pg_trgm` - installed in `public`, which
+    # `blank_session()`'s own `search_path` deliberately excludes so raw SQL
+    # cannot leak onto the real tables. Widening it here is scoped to this
+    # test's `SET LOCAL` only.
+    from sqlalchemy import text as sa_text
+
+    current_search_path = db.execute(sa_text("SHOW search_path")).scalar()
+    db.execute(sa_text(f"SET LOCAL search_path TO {current_search_path}, public"))
+
     cat = db.query(ProductCategory).first()
     uom = db.query(UnitOfMeasure).first()
 
@@ -738,3 +772,19 @@ def test_scope_term_comes_from_the_entity_not_the_sentence(client, db):
     assert predicate2["unrecognized_terms"] == [], predicate2
     assert "tap cert" not in predicate2["unrecognized_terms"]
     assert "tap certificate" not in predicate2["unrecognized_terms"]
+
+    case3 = client.post(
+        ENDPOINT,
+        json={
+            "query": "which tap has cert",
+            "tokens": [],
+            "require": {"certificate": True},
+            "predicate_words": ["certificate", "Certification", "check_product_attachment"],
+        },
+    )
+    assert case3.status_code == 200
+    predicate3 = case3.json()["predicate"]
+    assert predicate3["qualifying_total"] == 1, predicate3
+    assert predicate3["unrecognized_terms"] == [], predicate3
+    assert "tap cert" not in predicate3["unrecognized_terms"]
+    assert "tap certificate" not in predicate3["unrecognized_terms"]
