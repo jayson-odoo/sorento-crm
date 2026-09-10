@@ -28,6 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
+from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 from app.services.scm.trajectory import month_shift as _month_shift
 
 #: The window the trend sentence compares: the last N months against the N before them.
@@ -105,12 +106,19 @@ def purchase_trend_for_run(
     supplier - the question the popup answers is "what have we been buying", not "is this
     one supplier's price still good".
 
-    `warehouse_id` (R15) narrows to ONE destination: the plan row's site pool. The PO cell
+    `warehouse_id` (R15) narrows to ONE destination: the plan row's own pool. The PO cell
     the dialog explains counts that location and nothing else - not its project bins, whose
     stock an Order Inquiry already claims - so the receipts behind the number have to be
     narrowed the same way. A line with no destination at all is excluded by the same test,
-    which is deliberate: it cannot be shown to have been bought for this pool. Omitting the
-    argument leaves the existing whole-product read byte-identical.
+    which is deliberate: it cannot be shown to have been bought for this pool.
+
+    PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S2 (AC-10): omitting the argument
+    no longer reads "any warehouse" - a product-grain row has none of its own to name, and
+    the old unfiltered read let a project bin's purchase history stand in for the whole
+    product's. It now reads every ACTIVE SITE-POOL warehouse the product was bought to
+    (`pool_predicate.active_site_pool_sql`), product-wide - the same scope the cell and the
+    SPO/PO modals sum. Naming one warehouse keeps today's single-warehouse read exactly as
+    it was (a caller who named a location, pool or bin, gets that location alone).
     """
     as_of = as_of or date.today()
     # The month the run sits in is excluded, same reasoning as the order trend: a window
@@ -121,8 +129,15 @@ def purchase_trend_for_run(
 
     co, co_params = company_sql_predicate(db, "po.company_id", param_prefix="pht")
     co_clause = f"AND {co}" if co else ""
-    wh_clause = "AND pol.warehouse_id = CAST(:warehouse_id AS uuid)" if warehouse_id else ""
-    wh_params = {"warehouse_id": warehouse_id} if warehouse_id else {}
+    if warehouse_id:
+        wh_clause = "AND pol.warehouse_id = CAST(:warehouse_id AS uuid)"
+        wh_params: dict[str, Any] = {"warehouse_id": warehouse_id}
+    else:
+        wh_clause = (
+            "AND EXISTS (SELECT 1 FROM warehouses w WHERE w.id = pol.warehouse_id "
+            f"AND {ACTIVE_SITE_POOL_SQL})"
+        )
+        wh_params = {}
     trend_params = {
         "run_id": run_id, "since": prev_start, "until": until,
         "not_a_purchase": _NOT_A_PURCHASE, **wh_params, **co_params,

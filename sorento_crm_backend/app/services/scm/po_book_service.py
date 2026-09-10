@@ -34,8 +34,20 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-#: Mirrors scm.po_ordered_v exactly - one definition of "still to come" per screen.
-_PO_BOOK_SQL = """
+from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
+
+#: PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S2 (AC-9). `pairs` still keys off
+#: the run's own recommendation rows (and still drops a project-only cell, P8), but a
+#: PAIR's own line-matching rule now differs by grain: a PRODUCT-grain pair
+#: (`warehouse_id IS NULL`) serves every open line to ANY active site-pool warehouse for
+#: the product - product-wide, the same rule the cell itself sums (`site_pool_supply.
+#: open_po_by_product`) - while a LOCATION-grain pair serves lines to its OWN warehouse,
+#: and only when that warehouse is itself an active site pool (a rec sitting at a project
+#: bin therefore serves nothing, same as the cell reads 0 there). Before this, `pr.
+#: warehouse_id IS NOT DISTINCT FROM pol.warehouse_id` required a NULL pair to match a
+#: NULL line warehouse - which real PO lines essentially never carry - so the product-
+#: grain key never matched a receipt at all.
+_PO_BOOK_SQL = f"""
     WITH pairs AS (
         SELECT DISTINCT rr.product_id, rr.warehouse_id
         FROM scm.reorder_recommendation rr
@@ -46,19 +58,24 @@ _PO_BOOK_SQL = """
           AND NOT (COALESCE((rr.inputs ->> 'project_committed')::numeric, 0) > 0
                    AND COALESCE((rr.inputs ->> 'retail_committed')::numeric, 0) = 0)
     )
-    SELECT pol.product_id::text AS product_id,
-           pol.warehouse_id::text AS warehouse_id,
+    SELECT pr.product_id::text AS product_id,
+           pr.warehouse_id::text AS pair_warehouse_id,
            po.po_number,
            po.status,
            po.expected_date,
            (pol.qty_ordered - pol.qty_received) AS remaining
-    FROM purchase_order_lines pol
+    FROM pairs pr
+    JOIN purchase_order_lines pol ON pol.product_id = pr.product_id
     JOIN purchase_orders po ON po.id = pol.purchase_order_id
-    JOIN pairs pr ON pr.product_id = pol.product_id
-              AND pr.warehouse_id IS NOT DISTINCT FROM pol.warehouse_id
+    JOIN warehouses w ON w.id = pol.warehouse_id
     WHERE po.status = ANY(ARRAY['active', 'received', 'partial', 'closed'])
       AND pol.line_status = 'open'
       AND pol.qty_ordered > pol.qty_received
+      AND (
+            (pr.warehouse_id IS NULL AND {ACTIVE_SITE_POOL_SQL})
+            OR (pr.warehouse_id IS NOT NULL AND pol.warehouse_id = pr.warehouse_id
+                AND {ACTIVE_SITE_POOL_SQL})
+          )
     ORDER BY po.expected_date NULLS LAST, po.po_number
 """
 
@@ -69,7 +86,7 @@ def po_book_for_run(db: Session, run_id: str) -> dict[str, Any]:
     "Use PO" from a project row (P8)."""
     out: dict[str, list[dict[str, Any]]] = {}
     for r in db.execute(text(_PO_BOOK_SQL), {"run_id": run_id}).mappings().all():
-        key = f"{r['product_id']}:{r['warehouse_id'] or ''}"
+        key = f"{r['product_id']}:{r['pair_warehouse_id'] or ''}"
         out.setdefault(key, []).append({
             "po_number": r["po_number"],
             "status": r["status"],

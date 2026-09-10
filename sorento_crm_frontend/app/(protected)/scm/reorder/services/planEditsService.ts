@@ -137,8 +137,11 @@ export async function getPoHistoryToPool(
   productId: string,
   warehouseCode: string | null,
 ): Promise<PoHistoryResponse> {
-  if (!runId || !productId || !warehouseCode) return { history: [] };
-  const qs = new URLSearchParams({ warehouse: warehouseCode });
+  if (!runId || !productId) return { history: [] };
+  // S2 (AC-11): a product-grain row carries no pool code - that no longer skips the
+  // call, it reads the backend's own site-pool-wide default (AC-10) by omitting
+  // `warehouse` entirely, rather than short-circuiting to an always-empty History tab.
+  const qs = new URLSearchParams(warehouseCode ? { warehouse: warehouseCode } : {});
   const res = await apiFetch(
     `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/purchase-trend?${qs.toString()}`,
   );
