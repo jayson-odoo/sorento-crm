@@ -63,6 +63,19 @@ panel shows "No MYR rate for CNY, set it under SCM policies" (a link) instead of
 Follow the link to **[Supply Chain → Policies](/scm/policies)**, **Exchange rates** tab, to add
 the missing rate.
 
+### SPO and PO
+
+The **SPO** and **PO** columns count only what is already on its way to a site-pool
+warehouse (BRW, MWH, WH3, DC1 and the like) - the stock you can sell from. Anything sitting
+in a project bin (BRW-BB, BRW-IR, ...) or at an inactive warehouse is never counted here; it
+belongs to that project's own Order Inquiry, not to this row.
+
+Click the SPO figure to open the shipments still to come, or the PO figure to open the open
+purchase order lines; the rows in the dialog sum to exactly the number you clicked, and its
+**History** tab lists what has already landed or been bought. The **Suggested qty** the
+engine proposes is sized against these same site-pool figures, so nothing waiting in a
+project bin quietly nets a Buy suggestion down.
+
 ## Deciding a row
 
 Expand a row's panel to decide it.
