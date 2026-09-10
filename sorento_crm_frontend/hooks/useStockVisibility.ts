@@ -45,7 +45,7 @@ export function useStockVisibilityMutations(scope: StockVisibilityScope) {
     onError: (error) => toast.error(error.message || 'Failed to save stock visibility'),
   });
 
-  // No toast here on purpose: Remove goes through ConfirmDeleteDialog, which owns the
+  // No toast here on purpose: Remove goes through `useDeferredAction`, which owns the
   // success and error toasts. Two toasts for one click is the bug this avoids.
   const remove = useMutation<StockVisibilityPolicyResponse, Error, void>({
     mutationFn: () => deleteStockVisibility(scope),

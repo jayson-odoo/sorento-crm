@@ -810,6 +810,12 @@ class StockVisibilityPolicy(Base):
     mode = Column(String(20), nullable=False)
     #: NULL = every active warehouse; [] = none.
     warehouse_ids = Column(ARRAY(UUID(as_uuid=False)), nullable=True)
+    #: The include list's sibling, never set alongside it (CHECK below). NULL = no
+    #: exclusion; a list = every active warehouse EXCEPT these, including one
+    #: created after the row was saved. `[]` is a real, storable value here too -
+    #: it means "every active warehouse", the opposite of what `[]` means on
+    #: `warehouse_ids`.
+    excluded_warehouse_ids = Column(ARRAY(UUID(as_uuid=False)), nullable=True)
     #: Drop the locations holding NONE of the product from the answer. `detailed`
     #: withholds the row, `compact` the location line (the total is unchanged),
     #: and `availability` has no line to withhold so it is unaffected. NEGATIVES
@@ -831,6 +837,12 @@ class StockVisibilityPolicy(Base):
         CheckConstraint(
             "contact_id IS NULL OR access_type_code IS NULL",
             name="ck_stock_visibility_policies_one_tier",
+        ),
+        # A row picks one location rule, never both: "only these" and "all but
+        # these" have no defined precedence between them.
+        CheckConstraint(
+            "warehouse_ids IS NULL OR excluded_warehouse_ids IS NULL",
+            name="ck_stock_visibility_policies_one_location_rule",
         ),
         # Three partial uniques, not one constraint: Postgres NULLs are distinct,
         # so a plain UNIQUE would let a SECOND default row in and the resolution

@@ -37,6 +37,7 @@ function jsonResponse(body: unknown, init: { ok?: boolean; status?: number } = {
 const POLICY = {
   mode: 'compact',
   warehouses: [{ id: 'wh-1', code: 'BRW', name: 'Rawang Main Warehouse' }],
+  excluded_warehouses: null,
   hide_zero_locations: true,
   source: 'contact',
   source_label: null,
@@ -79,7 +80,12 @@ describe('one path per tier', () => {
     apiFetch.mockResolvedValue(jsonResponse({ effective: POLICY, override: POLICY }));
     await saveStockVisibility(
       { kind: 'access_type', accessTypeCode: 'dealer' },
-      { mode: 'availability', warehouse_ids: ['wh-1', 'wh-2'], hide_zero_locations: false },
+      {
+        mode: 'availability',
+        warehouse_ids: ['wh-1', 'wh-2'],
+        excluded_warehouse_ids: null,
+        hide_zero_locations: false,
+      },
     );
     const [url, init] = lastCall();
     expect(url).toBe('/api/v1/inventory/stock-visibility/access-types/dealer');
@@ -87,6 +93,7 @@ describe('one path per tier', () => {
     expect(JSON.parse(String(init?.body))).toEqual({
       mode: 'availability',
       warehouse_ids: ['wh-1', 'wh-2'],
+      excluded_warehouse_ids: null,
       hide_zero_locations: false,
     });
   });
@@ -97,12 +104,18 @@ describe('one path per tier', () => {
     apiFetch.mockResolvedValue(jsonResponse({ effective: POLICY, override: POLICY }));
     const res = await saveStockVisibility(
       { kind: 'contact', contactId: 'c-1' },
-      { mode: 'compact', warehouse_ids: ['wh-1'], hide_zero_locations: true },
+      {
+        mode: 'compact',
+        warehouse_ids: ['wh-1'],
+        excluded_warehouse_ids: null,
+        hide_zero_locations: true,
+      },
     );
 
     expect(JSON.parse(String(lastCall()[1]?.body))).toEqual({
       mode: 'compact',
       warehouse_ids: ['wh-1'],
+      excluded_warehouse_ids: null,
       hide_zero_locations: true,
     });
     expect(res.override?.hide_zero_locations).toBe(true);
@@ -113,13 +126,55 @@ describe('one path per tier', () => {
     apiFetch.mockResolvedValue(jsonResponse({ effective: POLICY, override: POLICY }));
     await saveStockVisibility(
       { kind: 'default' },
-      { mode: 'detailed', warehouse_ids: null, hide_zero_locations: false },
+      {
+        mode: 'detailed',
+        warehouse_ids: null,
+        excluded_warehouse_ids: null,
+        hide_zero_locations: false,
+      },
     );
     expect(JSON.parse(String(lastCall()[1]?.body))).toEqual({
       mode: 'detailed',
       warehouse_ids: null,
+      excluded_warehouse_ids: null,
       hide_zero_locations: false,
     });
+  });
+
+  it('PUTs excluded_warehouse_ids exactly as given: a real list under the Exclude rule (AC-13)', async () => {
+    apiFetch.mockResolvedValue(jsonResponse({ effective: POLICY, override: POLICY }));
+    await saveStockVisibility(
+      { kind: 'contact', contactId: 'c-1' },
+      {
+        mode: 'detailed',
+        warehouse_ids: null,
+        excluded_warehouse_ids: ['wh-9'],
+        hide_zero_locations: false,
+      },
+    );
+    expect(JSON.parse(String(lastCall()[1]?.body))).toEqual({
+      mode: 'detailed',
+      warehouse_ids: null,
+      excluded_warehouse_ids: ['wh-9'],
+      hide_zero_locations: false,
+    });
+  });
+
+  it('carries excluded_warehouses through on the policy the API returns (AC-13)', async () => {
+    const excluded = {
+      mode: 'detailed',
+      warehouses: null,
+      excluded_warehouses: [{ id: 'wh-9', code: 'DC1', name: 'Distribution Centre 1' }],
+      hide_zero_locations: false,
+      source: 'contact',
+      source_label: null,
+    };
+    apiFetch.mockResolvedValue(jsonResponse({ effective: excluded, override: excluded }));
+    const res = await getStockVisibility({ kind: 'contact', contactId: 'c-1' });
+    expect(res.override?.excluded_warehouses).toEqual([
+      { id: 'wh-9', code: 'DC1', name: 'Distribution Centre 1' },
+    ]);
+    expect(res.override?.warehouses).toBeNull();
   });
 
   it('hard-deletes an override', async () => {
@@ -155,7 +210,8 @@ describe('the warehouse pickers', () => {
     expect(q.get('query')).toBe('brw');
     expect(q.get('is_active')).toBe('true');
     expect(q.get('page')).toBe('1');
-    expect(q.get('limit')).toBe('50');
+    // AC-14. 77 active warehouses on the 0907 copy overflowed the old 50-row page.
+    expect(q.get('limit')).toBe('200');
     expect(q.get('segment')).toBeNull();
     expect(rows).toEqual([
       { id: 'wh-1', code: 'BRW', name: 'Rawang Main Warehouse' },
@@ -190,7 +246,12 @@ describe('errors reach the caller as the API worded them', () => {
     await expect(
       saveStockVisibility(
         { kind: 'default' },
-        { mode: 'detailed', warehouse_ids: ['wh-nope'], hide_zero_locations: false },
+        {
+          mode: 'detailed',
+          warehouse_ids: ['wh-nope'],
+          excluded_warehouse_ids: null,
+          hide_zero_locations: false,
+        },
       ),
     ).rejects.toThrow('Unknown warehouse: wh-nope');
   });

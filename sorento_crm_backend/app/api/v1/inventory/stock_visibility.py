@@ -36,7 +36,6 @@ from app.services.stock_visibility import (
     require_access_type,
     resolve_policy,
     upsert_policy,
-    validated_warehouse_ids,
 )
 
 router = APIRouter()
@@ -139,7 +138,8 @@ def put_contact_policy(
     upsert_policy(
         db,
         mode=body.mode,
-        warehouse_ids=validated_warehouse_ids(db, body.warehouse_ids),
+        warehouse_ids=body.warehouse_ids,
+        excluded_warehouse_ids=body.excluded_warehouse_ids,
         hide_zero_locations=body.hide_zero_locations,
         contact_id=resolved,
     )
@@ -196,7 +196,8 @@ def put_access_type_policy(
     upsert_policy(
         db,
         mode=body.mode,
-        warehouse_ids=validated_warehouse_ids(db, body.warehouse_ids),
+        warehouse_ids=body.warehouse_ids,
+        excluded_warehouse_ids=body.excluded_warehouse_ids,
         hide_zero_locations=body.hide_zero_locations,
         access_type_code=code,
     )
@@ -246,7 +247,8 @@ def put_default_policy(
     upsert_policy(
         db,
         mode=body.mode,
-        warehouse_ids=validated_warehouse_ids(db, body.warehouse_ids),
+        warehouse_ids=body.warehouse_ids,
+        excluded_warehouse_ids=body.excluded_warehouse_ids,
         hide_zero_locations=body.hide_zero_locations,
     )
     payload = policy_payload(db, default_policy(db))

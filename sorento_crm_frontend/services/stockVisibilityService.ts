@@ -22,6 +22,10 @@
  *          // null  = every active warehouse (the stored `warehouse_ids` is NULL)
  *          // []    = no warehouse at all, so the contact is told about no stock
  *          // Resolved rows, not bare ids: the UI renders `CODE - name` and never a UUID.
+ *     "excluded_warehouses": [{ "id": "<uuid>", "code": "BRW", "name": "Main Warehouse" }] | null,
+ *          // `warehouses`'s sibling (PLAN-stock-visibility-exclude-locations): null = no
+ *          // exclusion, [] = every active warehouse (the OPPOSITE reading of [] above), a
+ *          // list = every active warehouse except these - one created later stays visible.
  *     "hide_zero_locations": false,
  *          // Withhold the locations holding NONE of the product: the row under
  *          // `detailed`, the location line under `compact` (the total is unchanged),
@@ -49,10 +53,14 @@
  *   GET    /api/v1/inventory/stock-visibility/contacts/{contact_id}    -> PolicyResponse
  *   PUT    /api/v1/inventory/stock-visibility/contacts/{contact_id}    -> PolicyResponse
  *            body: { "mode": "compact", "warehouse_ids": ["<uuid>", ...] | null,
+ *                     "excluded_warehouse_ids": ["<uuid>", ...] | null,
  *                     "hide_zero_locations": false }
- *            Upsert. `warehouse_ids` is REQUIRED (nullable, not defaulted) and is
- *            replaced wholesale, never merged: a PUT replaces the whole row, so an
- *            omitted key would silently widen the policy to every location.
+ *            Upsert. `warehouse_ids` (the include list) and `excluded_warehouse_ids`
+ *            (its sibling: "every active warehouse except these") are BOTH REQUIRED
+ *            (nullable, not defaulted) and replaced wholesale, never merged: a PUT
+ *            replaces the whole row, so an omitted key would silently widen the
+ *            policy. The two are never both non-null on one Save - 422 "Pick
+ *            locations to include or to exclude, not both."
  *            `hide_zero_locations` defaults to false server-side; this app always
  *            sends it, because a PUT replaces the row and the card holds its value.
  *   DELETE /api/v1/inventory/stock-visibility/contacts/{contact_id}    -> PolicyResponse
@@ -76,9 +84,10 @@
  *
  * --- Warehouse pickers (existing route, one new filter) ------------------------------
  *
- *   GET /api/v1/inventory/warehouses?page=1&limit=50&query=&is_active=true
+ *   GET /api/v1/inventory/warehouses?page=1&limit=200&query=&is_active=true
  *            Already exists. Server search, which is what the Locations picker uses -
- *            a client-side capped list is not allowed for a master this size.
+ *            a client-side capped list is not allowed for a master this size. 200, not
+ *            the earlier 50: 77 active warehouses overflowed the old page.
  *
  *   GET /api/v1/inventory/warehouses?page=1&limit=200&segment=dealer&is_active=true
  *            The "Dealer pool" preset. `segment` is a query filter S2 added to the
@@ -118,6 +127,12 @@ export interface StockVisibilityPolicy {
   mode: StockVisibilityMode;
   /** null = every active warehouse; [] = none at all. */
   warehouses: StockVisibilityWarehouse[] | null;
+  /**
+   * `warehouses`'s sibling: null = no exclusion, [] = every active warehouse
+   * (the opposite of what [] means on `warehouses`), a list = every active
+   * warehouse except these.
+   */
+  excluded_warehouses: StockVisibilityWarehouse[] | null;
   /** Withhold the locations holding none of the product. Negatives stay visible. */
   hide_zero_locations: boolean;
   source: StockVisibilitySource;
@@ -135,6 +150,12 @@ export interface StockVisibilityInput {
   mode: StockVisibilityMode;
   /** null = every active warehouse; [] = none. Replaces the stored list wholesale. */
   warehouse_ids: string[] | null;
+  /**
+   * `warehouse_ids`'s sibling: null = no exclusion, [] = every active warehouse,
+   * a list = every active warehouse except these. REQUIRED, same reasoning as
+   * `warehouse_ids` - the two are never both non-null on one Save.
+   */
+  excluded_warehouse_ids: string[] | null;
   /**
    * Withhold the locations holding none of the product. Optional on the wire (the
    * backend defaults it to false), required here: a PUT replaces the whole row, so
@@ -249,7 +270,7 @@ export async function searchStockVisibilityWarehouses(
 ): Promise<StockVisibilityWarehouse[]> {
   return fetchWarehouses(
     buildDataGridParams(
-      { pageIndex: 0, pageSize: 50, searchQuery: query, sorting: [{ id: 'warehouse_code', desc: false }] },
+      { pageIndex: 0, pageSize: 200, searchQuery: query, sorting: [{ id: 'warehouse_code', desc: false }] },
       { is_active: true },
     ),
     'Failed to load locations',

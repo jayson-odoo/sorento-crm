@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
   SearchableSelect,
@@ -46,12 +47,18 @@ import {
  * values. On a tier that inherits, pressing Save turns those values into a row of its
  * own; Remove deletes that row and the card falls back to what it inherits.
  *
- * Locations has THREE readings, and they are not interchangeable: a list of locations,
- * `null` = every active warehouse, and `[]` = no stock at all. The picker itself can
- * only ever hand back a list, so removing the last chip means `[]` and the "All
- * locations" button is the way back to `null`. The placeholder names which of the two
- * empty readings is in force, because a card that draws them the same way shows the
- * strictest policy as the loosest one - and Save writes what it drew.
+ * Locations has FOUR readings, and they are not interchangeable: under the Include
+ * rule, a list of locations, `null` = every active warehouse, `[]` = no stock at
+ * all; under the Exclude rule (PLAN-stock-visibility-exclude-locations), a list =
+ * every active warehouse EXCEPT these - including one created after the Save - and
+ * `[]` under THIS rule is the opposite of what it means under Include: "every active
+ * warehouse", not "none". The picker itself can only ever hand back a list, so
+ * removing the last chip under Include means `[]` and the "All locations" button is
+ * the way back to `null`. The placeholder names which reading is in force, because a
+ * card that draws two of them the same way shows the strictest policy as the loosest
+ * one - and Save writes what it drew. Flipping the rule carries the ticked ids over
+ * to the other list rather than clearing the picker, so trying Exclude does not throw
+ * away the Include selection the admin already made.
  *
  * "Hide zero-quantity locations" sits with Locations because that is what it edits:
  * the locations holding none of the product drop out of the answer. It is part of
@@ -66,9 +73,20 @@ export interface StockVisibilitySectionProps {
   className?: string;
 }
 
+/** Which location list the card is editing (PLAN-stock-visibility-exclude-locations). */
+type LocationRule = 'include' | 'exclude';
+
 type Draft = {
   mode: StockVisibilityMode;
+  rule: LocationRule;
+  /** Meaningful under `include`: null = every active warehouse, [] = none. */
   warehouseIds: string[] | null;
+  /**
+   * Meaningful under `exclude`: never null while drafted here - `[]` IS the
+   * value that means "every active warehouse" under this rule (the opposite
+   * of what `[]` means on `warehouseIds`).
+   */
+  excludedWarehouseIds: string[];
   hideZeroLocations: boolean;
 };
 
@@ -115,7 +133,9 @@ export function StockVisibilitySection({
 
   const [draft, setDraft] = useState<Draft>({
     mode: 'detailed',
+    rule: 'include',
     warehouseIds: null,
+    excludedWarehouseIds: [],
     hideZeroLocations: false,
   });
   const [warehouseCache, setWarehouseCache] = useState<
@@ -164,17 +184,28 @@ export function StockVisibilitySection({
     if (!data) return;
     const effective = data.effective;
     const warehouseIds = effective.warehouses ? effective.warehouses.map((w) => w.id) : null;
+    // A stored exclusion (even `[]`, "every active warehouse") is what puts the card
+    // in the Exclude rule; `warehouses` and `excluded_warehouses` are never both
+    // non-null on the SAME row, so this reading is unambiguous.
+    const excludedWarehouseIds = effective.excluded_warehouses
+      ? effective.excluded_warehouses.map((w) => w.id)
+      : null;
+    const rule: LocationRule = excludedWarehouseIds !== null ? 'exclude' : 'include';
     const signature = JSON.stringify([
       effective.mode,
       warehouseIds === null ? null : [...warehouseIds].sort(),
+      excludedWarehouseIds === null ? null : [...excludedWarehouseIds].sort(),
       effective.hide_zero_locations,
     ]);
     if (syncedRef.current === signature) return;
     syncedRef.current = signature;
     cacheWarehouses(effective.warehouses ?? []);
+    cacheWarehouses(effective.excluded_warehouses ?? []);
     setDraft({
       mode: effective.mode,
-      warehouseIds,
+      rule,
+      warehouseIds: rule === 'include' ? warehouseIds : null,
+      excludedWarehouseIds: rule === 'exclude' ? (excludedWarehouseIds ?? []) : [],
       hideZeroLocations: !!effective.hide_zero_locations,
     });
   }, [data, cacheWarehouses]);
@@ -188,24 +219,40 @@ export function StockVisibilitySection({
     [searchWarehouses, cacheWarehouses],
   );
 
+  /** The ids the picker is CURRENTLY drafting - the include list under Include,
+   * the withheld list under Exclude. Never both at once. */
+  const activeIds = useMemo(
+    () => (draft.rule === 'include' ? (draft.warehouseIds ?? []) : draft.excludedWarehouseIds),
+    [draft.rule, draft.warehouseIds, draft.excludedWarehouseIds],
+  );
+
   const selectedOptions = useMemo(
     () =>
-      (draft.warehouseIds ?? []).map((id) => {
+      activeIds.map((id) => {
         const warehouse = warehouseCache[id];
         return warehouse ? toOption(warehouse) : { value: id, label: 'Unknown location' };
       }),
-    [draft.warehouseIds, warehouseCache],
+    [activeIds, warehouseCache],
   );
 
   const baseline = data?.effective;
+  const baselineRule: LocationRule = baseline?.excluded_warehouses != null ? 'exclude' : 'include';
+  const baselineWarehouseIds = baseline?.warehouses ? baseline.warehouses.map((w) => w.id) : null;
+  const baselineExcludedWarehouseIds = baseline?.excluded_warehouses
+    ? baseline.excluded_warehouses.map((w) => w.id)
+    : [];
   const isDirty =
     !!baseline &&
     (baseline.mode !== draft.mode ||
       !!baseline.hide_zero_locations !== draft.hideZeroLocations ||
-      !sameIds(
-        baseline.warehouses ? baseline.warehouses.map((w) => w.id) : null,
-        draft.warehouseIds,
-      ));
+      baselineRule !== draft.rule ||
+      (draft.rule === 'include'
+        ? !sameIds(baselineWarehouseIds, draft.warehouseIds)
+        : !sameIds(baselineExcludedWarehouseIds, draft.excludedWarehouseIds)));
+
+  // "All locations" under either rule: Include + null, or Exclude + [] (AC-19).
+  const isAlreadyAllLocations =
+    draft.rule === 'include' ? draft.warehouseIds === null : draft.excludedWarehouseIds.length === 0;
 
   const hasOwnRow = !!data?.override;
   const canRemove = hasOwnRow && scope.kind !== 'default';
@@ -244,8 +291,37 @@ export function StockVisibilitySection({
           return;
         }
         cacheWarehouses(rows);
-        setDraft((prev) => ({ ...prev, warehouseIds: rows.map((row) => row.id) }));
+        // Always Include, even pressed under Exclude (AC-19): a dealer pool is a
+        // set of places to SHOW, and there is no "exclude the pool" reading of it.
+        setDraft((prev) => ({
+          ...prev,
+          rule: 'include',
+          warehouseIds: rows.map((row) => row.id),
+        }));
       },
+    });
+  }
+
+  /** Flips the rule, carrying the ticked ids over rather than clearing the
+   * picker (PLAN decision "Rule flips"). Radix reports the deselect of an
+   * already-pressed item as `''`, which is ignored - the toggle is not
+   * deselectable (AC-21). */
+  function handleRuleChange(next: string) {
+    if (next !== 'include' && next !== 'exclude') return;
+    setDraft((prev) => {
+      if (prev.rule === next) return prev;
+      if (next === 'exclude') {
+        return {
+          ...prev,
+          rule: 'exclude',
+          excludedWarehouseIds: prev.warehouseIds ?? [],
+        };
+      }
+      return {
+        ...prev,
+        rule: 'include',
+        warehouseIds: prev.excludedWarehouseIds.length === 0 ? null : prev.excludedWarehouseIds,
+      };
     });
   }
 
@@ -280,18 +356,44 @@ export function StockVisibilitySection({
         </div>
 
         <div className="grid gap-2">
-          <Label htmlFor="stock-visibility-warehouses">Locations</Label>
+          <Label htmlFor="stock-visibility-warehouses">
+            {draft.rule === 'include' ? 'Locations' : 'Excluded locations'}
+          </Label>
           <SearchableMultiSelect
             id="stock-visibility-warehouses"
-            value={draft.warehouseIds ?? []}
-            onChange={(value) => setDraft((prev) => ({ ...prev, warehouseIds: value }))}
+            value={activeIds}
+            onChange={(value) =>
+              setDraft((prev) =>
+                prev.rule === 'include'
+                  ? { ...prev, warehouseIds: value }
+                  : { ...prev, excludedWarehouseIds: value },
+              )
+            }
             fetchOptions={fetchOptions}
             selectedOptions={selectedOptions}
-            placeholder={draft.warehouseIds === null ? 'All locations' : 'No locations'}
+            placeholder={
+              draft.rule === 'include'
+                ? draft.warehouseIds === null
+                  ? 'All locations'
+                  : 'No locations'
+                : 'All locations'
+            }
             emptyMessage="No locations found"
             disabled={isBusy}
           />
           <div className="flex flex-wrap gap-2">
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              value={draft.rule}
+              onValueChange={handleRuleChange}
+              disabled={isBusy}
+              aria-label="Location rule"
+            >
+              <ToggleGroupItem value="include">Include</ToggleGroupItem>
+              <ToggleGroupItem value="exclude">Exclude</ToggleGroupItem>
+            </ToggleGroup>
             <Button
               type="button"
               variant="outline"
@@ -305,8 +407,8 @@ export function StockVisibilitySection({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setDraft((prev) => ({ ...prev, warehouseIds: null }))}
-              disabled={isBusy || draft.warehouseIds === null}
+              onClick={() => setDraft((prev) => ({ ...prev, rule: 'include', warehouseIds: null }))}
+              disabled={isBusy || isAlreadyAllLocations}
             >
               All locations
             </Button>
@@ -334,9 +436,12 @@ export function StockVisibilitySection({
             save.mutate({
               // Sent as drafted: null stays null (every active warehouse), [] stays
               // [] (none at all). Collapsing one into the other here is what made
-              // the two policies unreachable from this card.
+              // the two policies unreachable from this card. Exactly one of the two
+              // lists is non-null, matching which rule is selected - the backend
+              // 422s on both non-null.
               mode: draft.mode,
-              warehouse_ids: draft.warehouseIds,
+              warehouse_ids: draft.rule === 'include' ? draft.warehouseIds : null,
+              excluded_warehouse_ids: draft.rule === 'exclude' ? draft.excludedWarehouseIds : null,
               hide_zero_locations: draft.hideZeroLocations,
             })
           }
