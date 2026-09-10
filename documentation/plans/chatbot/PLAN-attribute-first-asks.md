@@ -99,6 +99,16 @@ binding is applied as a filter on the whole set.
 | G | Invariant tests: byte-identical body without a leg intent; byte-identical resolver response with an exact code; field-reveal unchanged | `tests/test_resolve_predicate.py`, `tests/chatbot/`, new `tests/test_chatbot_lane_require.py` | 1322 to 1324 |
 | H | Console verification on the prod copy, nine utterances, traces recorded in the test report | `attribute-first-asks-test-report.md` | 1325 |
 
+## Slices (tracer bullets, in order; one branch, one PR)
+
+| Slice | Delivers | Work items | ACs |
+|-------|----------|------------|-----|
+| S1 | The predicate reaches the resolver and a set answer renders through the existing block. Both screenshot utterances change. | A, A2, B1, B2, C1, C2, C3, C4, E1, F1 (zero → existing miss, set named) | 1301 to 1310, 1315, 1319, 1322 to 1324, 1326 |
+| S2 | Incoming leg; scheme and label aliases through lookup sets; the two sets created empty | D1, D2, D3 | 1311 to 1314, 1321 |
+| S3 | Count header, validity default, clarify copy for unknown terms | E2, F2, F3 | 1316, 1318, 1320 |
+| S4 | "more" paging by 5 through the offer carry | E3 | 1317 |
+| H | Console verification on the prod copy, test report | H | 1325 |
+
 ## Leg semantics
 
 | key | payload | predicate (EXISTS on Product.id) |
