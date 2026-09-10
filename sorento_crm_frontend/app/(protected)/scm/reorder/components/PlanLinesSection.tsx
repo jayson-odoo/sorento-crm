@@ -14,7 +14,6 @@ import type { PlanRowEdit } from '../lib/planEdits';
 import type { PlanLine, PlanLineStatus } from '../lib/planLine';
 import { planTotals, type PlanTotals } from '../lib/planDecisions';
 import { groupPlanLinesByChannel } from '../lib/planLineGrouping';
-import { lineBreachStatus } from '../lib/orderQtyLedger';
 import { fmtInt, fmtMoney } from '../../lib/format';
 import { LevelChangesPanel } from './LevelChangesPanel';
 import { PlanBudgetReview } from './PlanBudgetReview';
@@ -93,25 +92,20 @@ export function PlanLinesSection({
    * "if net is not below my reorder level, it is not my business, I don't need to see
    * this in reorder planning").
    *
-   * Scoped narrowly: a manual-basis (`reorder_level`) row whose own status is
-   * `covered_by_stock` (the informational rec_type - `covered`, per `planLine.ts`) AND
-   * whose net sits ABOVE its level. Reuses `lineBreachStatus` (the same breach math the
-   * order-qty ledger's own "Line not breached" sentence uses) rather than re-deriving it -
-   * a breached row, an auto-mode row, or any other rec_type is untouched. Hidden from the
-   * DEFAULT list only: an explicit "Covered by stock" status filter still shows every one
-   * of them, so nothing is unreachable, just no longer the default.
+   * PLAN-plan-list-tile-sheet-one-scope.md, S6 (AC-5): reads the server's own
+   * `rec.hidden_by_default` flag instead of recomputing the rule here - the list, the
+   * Decisions tile total (`GET .../plan-row-decisions`) and the order sheet export all
+   * have to agree on which rows are hidden, and three independent re-derivations could
+   * drift. `lineBreachStatus` (`lib/orderQtyLedger.ts`) is unchanged and still drives the
+   * order-qty ledger's own "Line not breached" sentence elsewhere - only THIS path stops
+   * calling it. Hidden from the DEFAULT list only: an explicit "Covered by stock" status
+   * filter still shows every one of them, so nothing is unreachable, just no longer the
+   * default.
    */
   const visibleLines = useMemo(() => {
     if (statusFilter === 'covered_by_stock') return planLines.lines;
     const hidden = new Set(
-      planLines.lines
-        .filter(
-          (l) =>
-            l.rec.policy_type === 'reorder_level' &&
-            l.status === 'covered_by_stock' &&
-            !lineBreachStatus(l.rec, l.net).breached,
-        )
-        .map((l) => l.id),
+      planLines.lines.filter((l) => l.rec.hidden_by_default === true).map((l) => l.id),
     );
     if (hidden.size === 0) return planLines.lines;
     // ONE exception: the product's OWN row, while the product is still on the plan for
