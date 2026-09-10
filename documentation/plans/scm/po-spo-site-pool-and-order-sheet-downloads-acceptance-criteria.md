@@ -31,7 +31,8 @@ Decisions the buyer makes: none new. Everything is derived from the run.
 
 Every raw-SQL read this lane adds or rewrites over a company-scoped table carries
 `company_sql_predicate` (`_PO_BOOK_SQL`, `explain_net`'s three legs, `site_pool_supply`,
-`purchase_trend`): security S2/S3. Products being company-scoped is not the gate.
+`purchase_trend`, `export_guard_stats`): security S2/S3. Products being company-scoped is not
+the gate.
 
 ## Site pool - the one rule
 
@@ -125,9 +126,12 @@ line still counts. A location-grain row reads its own warehouse when it is site 
   malformed / invisible run 404, more than `_MAX_EXPORT_ROWS` rows to order 422 "Narrow the
   plan first" - the existing messages, unchanged. The row-count guard is a COUNT over
   `scm.order_summary_row`, not a full `report()` render on the request thread (reviewer nit).
-- **AC-16b [BE]** A second POST for the same run while the caller already has an
-  `order_sheet_*` download in `pending` / `processing` for that run answers 409 and creates
-  no row (security S5: one in-flight sheet per user per run; no queue machinery).
+- **AC-16b [BE]** A second POST for the same run AND the same format while the caller already
+  has that exact `order_sheet_<fmt>` download in `pending` / `processing` for that run answers
+  409 and creates no row (security S5: one in-flight sheet per user per run per format; no
+  queue machinery). The OTHER format is never blocked: PDF then Excel back to back both
+  succeed (reviewer R1, matches the AC-23 evidence). The guard sweeps stale rows first
+  (`fail_stale`) so a dead worker cannot lock the buyer out for 20 minutes.
 - **AC-16c [BE]** The route requires a real signed-in user (`require_permission`, not the
   API-key-tolerant dependency): a write endpoint is never reachable by `X-API-Key` alone
   (security S4, `app/dependencies.py` rule).
@@ -161,6 +165,11 @@ line still counts. A location-grain row reads its own warehouse when it is site 
   product equals the grid's PO cell.
 
 ## Out of scope (backlog)
+
+- `user_downloads.error` carries `str(e)` from the task (`_record_failure`), the same as every
+  existing export task; the retired sync GET curated a 503 for `PDFRenderingUnavailable`.
+  A curated message for that one class is a My Downloads-wide change, not this lane's
+  (reviewer R2 / security N1).
 
 - "Dealer o/s" vs grid "Retail" on the sheet - separate ruling pending
   (`documentation/backlogs/backlog.md`).
