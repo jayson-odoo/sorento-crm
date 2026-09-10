@@ -50,7 +50,7 @@ export function DescriptionEnCell({
       return;
     }
     mutation.mutate(
-      { source_text: description as string, translation: trimmed },
+      { source_text: description as string, target_text: trimmed },
       { onSuccess: () => setEditing(false) },
     );
   };

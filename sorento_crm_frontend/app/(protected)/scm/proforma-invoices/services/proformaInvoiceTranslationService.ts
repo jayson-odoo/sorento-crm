@@ -5,23 +5,23 @@
  * Layering: DescriptionEnCell -> useProformaInvoiceTranslation -> THIS service
  * -> lib/api-client -> backend.
  *
- * ── BACKEND CONTRACT (PLAN-text-glossary.md "Routes", S1 - not built yet) ──────────────
+ * ── BACKEND CONTRACT (PLAN-text-glossary.md "Route", S1 - not built yet) ───────────────
  *
  *  PUT /api/v1/scm/proforma-invoices/{invoiceId}/translations
  *    Perm: `scm.proforma_invoice.upload` (the same permission that gates Match/Dismiss
  *    on the Packing tab - the person handling the PI names the word).
- *    Body: { source_text: string, translation: string }
- *    -> 200 { id, source_text, locale: 'en', translation, source: 'manual',
- *             created_by, created_at, updated_at, rebound: { lines: number,
+ *    Body: { source_text: string, target_text: string }
+ *    -> 200 { source_text, target_text, source: 'manual', rebound: { lines: number,
  *             packing_rows: number } }
  *    404 when `invoiceId` names no invoice (the route is reachable only from a PI the
- *    caller can already see). 422 on a blank `source_text` or `translation`.
+ *    caller can already see). 422 on a blank `source_text` or `target_text`.
  *
- *  This is a thin, PI-scoped door onto `text_glossary_service.upsert` (same write as
- *  System Management > Text Glossary's PUT) - `locale` is always `'en'` from here.
- *  The write is NOT scoped to this invoice: every `proforma_invoice_line` and
- *  `proforma_invoice_packing_line` on file whose `description` matches gets
- *  `description_en` re-bound, this PI's rows included (R4 in the plan).
+ *  This is a thin, PI-scoped door onto `translation_service.remember` (R11 - the SAME
+ *  write path System Management > Translations' inline edit already uses; there is no
+ *  separate glossary table). The write is NOT scoped to this invoice:
+ *  `description_translation.rebind` (called from `remember` after its own write) updates
+ *  `description_en` on every `proforma_invoice_line` and `proforma_invoice_packing_line`
+ *  on file whose `description` matches, this PI's rows included (R4 in the plan).
  *
  * ── PHASE 1 MOCK ─────────────────────────────────────────────────────────────────────
  * S1 (BE) has not landed, so there is no route to call yet. `upsert` below writes into
@@ -30,14 +30,14 @@
  * / Lines tab already fetched from the REAL backend (which has no `description_en`
  * column yet) so both screens show real dash / English / edit behaviour. The mock only
  * ever sees rows already loaded on THIS invoice's detail payload - it cannot reach
- * every other PI on file the way the real `_rebind` will, so the "N rows updated" count
+ * every other PI on file the way the real `rebind` will, so the "N rows updated" count
  * this phase reports is scoped to the current invoice + its packing rows, not every PI
  * on file. DoD gate item 1 swaps this for the real PUT once S1 lands.
  * ============================================================================
  */
 
 /** Trimmed, internal whitespace collapsed - the same string two differently spaced
- *  cells resolve to, matching `text_glossary_service.normalize` (PLAN-text-glossary.md). */
+ *  cells resolve to, matching `translation_service.normalize_source_text`. */
 export function normalizeDescription(text: string | null | undefined): string {
   return (text ?? '').trim().replace(/\s+/g, ' ');
 }
@@ -73,8 +73,8 @@ export function getMockGlossaryVersion(): number {
 
 export interface ProformaInvoiceTranslationResult {
   source_text: string;
-  translation: string;
-  locale: 'en';
+  target_text: string;
+  source: 'manual';
   /** How many rows on THIS invoice's already-loaded lines + packing rows now read the
    *  new English - the caller (the mutation hook) counts these from its own cache,
    *  since the phase-1 mock has no other PI to reach. */
@@ -82,21 +82,21 @@ export interface ProformaInvoiceTranslationResult {
 }
 
 /**
- * Learn one word (R2: inline edit on a row, or the System Management page). 422-shaped
- * `Error` on a blank `source_text` or `translation`, matching the real route's contract.
+ * Learn one word (R2: inline edit on a row, or System Management > Translations). 422-
+ * shaped `Error` on a blank `source_text` or `target_text`, matching the real route.
  */
 export async function upsertProformaInvoiceTranslation(
   _invoiceId: string,
-  body: { source_text: string; translation: string },
+  body: { source_text: string; target_text: string },
   rebound: { lines: number; packing_rows: number } = { lines: 0, packing_rows: 0 },
 ): Promise<ProformaInvoiceTranslationResult> {
   const key = normalizeDescription(body.source_text);
-  const translation = body.translation.trim();
+  const targetText = body.target_text.trim();
   if (!key) throw new Error('Nothing to translate for this row.');
-  if (!translation) throw new Error('Enter the English wording before saving.');
-  mockGlossary.set(key, translation);
+  if (!targetText) throw new Error('Enter the English wording before saving.');
+  mockGlossary.set(key, targetText);
   bump();
-  return { source_text: body.source_text, translation, locale: 'en', rebound };
+  return { source_text: body.source_text, target_text: targetText, source: 'manual', rebound };
 }
 
 /** `null` for a description the glossary has never seen (R7: an already-English

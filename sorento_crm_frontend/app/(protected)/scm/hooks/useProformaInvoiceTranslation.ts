@@ -25,7 +25,7 @@ import type { ProformaInvoicePackingState } from '../proforma-invoices/services/
 export function useProformaInvoiceTranslationMutation(invoiceId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { source_text: string; translation: string }) => {
+    mutationFn: async (body: { source_text: string; target_text: string }) => {
       const key = normalizeDescription(body.source_text);
       const invoice = qc.getQueryData<ProformaInvoiceDetail>(
         proformaInvoiceDetailQueryKey(invoiceId),

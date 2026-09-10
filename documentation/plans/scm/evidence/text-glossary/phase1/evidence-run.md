@@ -53,6 +53,23 @@ title "Text Glossary | Sorento" and the correct AccessDenied screen, no console 
 the component itself mounts cleanly. Full sidebar-click + populated-grid verification is
 deferred to Phase 3 once S1 grants the permission for real.
 
+## R11 cleanup re-check (same day, after the plan revision)
+
+After deleting `app/(protected)/system-management/text-glossary/**` and both menu
+entries, and retargeting `proformaInvoiceTranslationService.ts`'s contract doc + mock
+body/response shape to `{source_text, target_text}` / `{source_text, target_text,
+source, rebound}`:
+
+- Sidebar: Dashboards -> System -> Configuration now lists Automation, Work Calendar,
+  Running Numbers, Import Column Mappings, Status Graphs, **Translations**, Lookup Sets -
+  no "Text Glossary" entry, in either nav config.
+- Re-opened `PI-2609-005` Lines tab (fresh page load, mock reset as expected): four
+  `连体马桶` rows still show "Add English for 连体马桶", column still in the same
+  position after Description. Packing tab still renders its empty state
+  ("Attach packing list"), no console errors.
+- `npx eslint` and `npx tsc --noEmit` on every touched file: 0 new errors/warnings (same
+  21 pre-existing, unrelated `tsc` errors as before the refactor).
+
 ## Bug found and fixed during this run
 
 React Query's default structural sharing returns the SAME `data` reference from
