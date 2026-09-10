@@ -25,7 +25,7 @@ import json
 import re
 from decimal import Decimal
 
-from sqlalchemy import and_, cast, func, literal, or_
+from sqlalchemy import cast, func, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -793,18 +793,16 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
             for value in sorted(values)
         ]
         key_clause = or_(scalar, *contained)
-        if key == "class":
-            # `class` alone falls back to the CATEGORY's filing code when the
-            # description names nothing ("the weakest class signal there is",
-            # `product_spec_derivation.py`). That fallback is real evidence for
-            # ranking, but not for a hard membership filter: a generic-named
-            # product filed under Kitchen Sink is not the same claim as one
-            # whose own words say so, and a described set built to intersect
-            # against a domain predicate must not seat it on a filing code.
-            named_by_content = ProductSpecifications.provenance[key]["source"].astext.is_distinct_from(
-                "category"
-            )
-            key_clause = and_(key_clause, named_by_content)
+        # R15/AC-1339 (third console pass): a category-sourced class row IS
+        # real membership, not excluded from it - a product filed under
+        # Bathroom Accessory by its own category is a member of the described
+        # set for "bathroom accessory" exactly as one whose description named
+        # it. Measured on the prod copy: two class labels exist ONLY through
+        # category filing (Bathroom Accessory 2,040 products, Bathtub and
+        # Jacuzzi 93) - excluding provenance.class.source == "category"
+        # reported "which bathroom accessory has stock" as zero qualifying
+        # against a real 999. The company's own filing is the strongest
+        # statement of what the product is.
         key_clauses.append(key_clause)
     if key_clauses:
         clause = key_clauses[0] if len(key_clauses) == 1 else or_(*key_clauses)
