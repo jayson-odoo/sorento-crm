@@ -2204,8 +2204,16 @@ _HEADER_PREDICATE_NOUN: dict[str, str] = {
 
 
 def _header_predicate_phrase(require: dict[str, Any]) -> str:
-    """"certificates", "certificates and stock" - the header's own predicate noun,
-    joined the same way `_predicate_phrase` joins the miss sentence's.
+    """"certificates", "PPS certificates", "certificates and stock" - the
+    header's own predicate noun, joined the same way `_predicate_phrase` joins
+    the miss sentence's.
+
+    Second console pass, AC-1316: a scheme-narrowed certificate leg
+    (`{"certificate": {"scheme": "PPS"}}`) names the SCHEME - "940 products
+    have PPS certificates." - never the bare "certificates" a `_HEADER_
+    PREDICATE_NOUN` lookup alone would give every certificate leg regardless
+    of scheme (measured live on "which item has PPS cert"). A bare
+    `{"certificate": True}` require is untouched.
     """
     parts: list[str] = []
     for key, value in (require or {}).items():
@@ -2213,6 +2221,11 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
             label = jsc.js_string(value).strip().lower()
             parts.append(label if label else "an attachment")
             continue
+        if key == "certificate" and isinstance(value, dict):
+            scheme = jsc.js_string(jsc.get(value, "scheme")).strip()
+            if scheme:
+                parts.append(f"{scheme} certificates")
+                continue
         noun = _HEADER_PREDICATE_NOUN.get(key)
         if noun:
             parts.append(noun)

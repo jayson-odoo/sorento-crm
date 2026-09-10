@@ -143,12 +143,22 @@ def _attachment_type_row(db: Session, label: str) -> AttachmentType | None:
 
 
 def _attachment_type_names_on_file(db: Session) -> list[str]:
-    """Every product-facing `AttachmentType.type_name` on file, sorted - a
-    GLOBAL reference table (no company scope on the model), so a plain query is
-    correct here. R6/AC-1329's clarify copy names these, never the class/
-    product-type vocabulary: an unrecognised attachment LABEL ("photo") is a
-    document-type miss, not a product-type one."""
-    rows = db.query(AttachmentType.type_name).distinct().all()
+    """Every PRODUCT-FACING `AttachmentType.type_name` on file, sorted (second
+    console pass, AC-1329): only types that actually appear in
+    `product_attachments` - never the whole `AttachmentType` table, which also
+    carries internal document classes (Container Status, Complaint Document, a
+    company's GRN/portal-submission attachments, ...) a customer never asks
+    about. `AttachmentType` itself carries no company scope, but the join
+    through `ProductAttachment`/`Attachment` (both `CompanyScopedMixin`) is
+    itself company-scoped by the existing `do_orm_execute` listener, so this
+    plain join is correct with no manual filter."""
+    rows = (
+        db.query(AttachmentType.type_name)
+        .join(Attachment, Attachment.attachment_type_id == AttachmentType.id)
+        .join(ProductAttachment, ProductAttachment.attachment_id == Attachment.id)
+        .distinct()
+        .all()
+    )
     return sorted({str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()})
 
 
