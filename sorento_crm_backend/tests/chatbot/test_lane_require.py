@@ -97,6 +97,76 @@ def test_derive_require_extracts_a_scheme_word_from_the_cert_raw(raw, expected):
 
 
 # --------------------------------------------------------------------------- #
+# Console pass 6 (R21, AC-1345): the head's entity reuse hands over an          #
+# attachment_type raw already canonicalised to the AttachmentType NAME          #
+# ("Certification"), not the customer's own word - every inflection of the     #
+# cert word must still be read as the bare leg, never survive as a "scheme".   #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("Certification", {"certificate": True}),
+        ("certification", {"certificate": True}),
+        ("certificates", {"certificate": True}),
+        ("certs", {"certificate": True}),
+        ("CERTIFICATIONS", {"certificate": True}),
+        ("PPS certification", {"certificate": {"scheme": "PPS"}}),
+        # Regression: "sijil" (the Malay word) is already one of the covered
+        # inflections (R21's own rule names it explicitly) - a raw made only of
+        # it must stay the bare leg too, not fall through to the generic
+        # attachment_type branch the way an unrelated document label would.
+        ("sijil", {"certificate": True}),
+    ],
+)
+def test_derive_require_treats_every_cert_inflection_as_the_bare_leg(raw, expected):
+    """AC-1345/R21: measured live - the head's `entity_op: reuse` re-used the
+    previous turn's attachment_type entity, canonicalised to the AttachmentType
+    NAME ("Certification"), and `_cert_scheme_from_raw` only strips "cert",
+    "certificate" and "sijil" verbatim - every OTHER inflection (certs,
+    certificate-s, certification(s), any case) survives as a bogus "scheme",
+    so "which tap has cert" -> "which water tap has cert" (clarify) -> "more"
+    (which re-asks the previous certificate question) answered "The register
+    has no Certification certificates."
+
+    RED for "Certification"/"certification"/"certificates"/"certs"/
+    "CERTIFICATIONS": `derive_require` returns `{"certificate": {"scheme":
+    <the raw itself>}}`, not the bare `{"certificate": True}` this AC demands.
+    "PPS certification" must still split "PPS" out as the scheme once
+    "certification" itself is recognised as a bare cert word.
+    """
+    from app.services.chatbot.lanes.business.predicate import derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [{"hint": "attachment_type", "raw": raw}],
+    }
+    assert derive_require(parser_output) == expected
+
+
+def test_derive_predicate_words_still_strips_a_reused_certification_raw():
+    """AC-1345/R21: whatever `derive_require` decides the leg is, the reused
+    "Certification" raw must still leave `derive_predicate_words`' own list -
+    the described-set remainder must never be asked to bind an AttachmentType
+    NAME as a class/product_type word.
+
+    Green today - `derive_predicate_words` collects every attachment_type raw
+    unconditionally (`_attachment_type_raws`), so this half of the contract was
+    never broken; kept alongside the red cases above so the fix's own test
+    file proves the whole turn, not only the leg shape.
+    """
+    from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [{"hint": "attachment_type", "raw": "Certification"}],
+    }
+    require = derive_require(parser_output)
+    assert "Certification" in derive_predicate_words(parser_output, require)
+
+
+# --------------------------------------------------------------------------- #
 # R4 (fix round 2, AC-1328): a scheme-only attachment_type raw ("PPS") carries  #
 # no `_CERT_RE` word of its own (that regex names a BODY - cert/ikram/span/     #
 # sirim/bomba/ms####/halal - never the bare register spelling), so             #

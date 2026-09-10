@@ -78,7 +78,13 @@ def _product(db, code, description, *, category="ks", variant_of=None):
 
 
 def _warehouse(db):
-    wh = Warehouse(id=str(uuid.uuid4()), warehouse_code=f"ZZT-{uuid.uuid4().hex[:6]}", warehouse_name="ZZT WH")
+    # AC-1346/R22: `is_active` explicit rather than relying on the model's
+    # Python-side default - the stock leg now filters on it, so a fixture that
+    # left this to chance would silently break the moment that default ever
+    # changed.
+    wh = Warehouse(
+        id=str(uuid.uuid4()), warehouse_code=f"ZZT-{uuid.uuid4().hex[:6]}", warehouse_name="ZZT WH", is_active=True
+    )
     db.add(wh)
     db.flush()
     return wh
@@ -203,6 +209,54 @@ def test_stock_leg_requires_on_hand_above_zero(db):
     codes = [c["product_code"] for c in out["candidates"]]
     assert codes == ["ZZT-SINK-A"]
     assert out["qualifying_total"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Console pass 6 (R22, AC-1346): the stock leg must mirror the stock list      #
+# tool's own visibility - a Stock row in an INACTIVE warehouse is a real       #
+# on-hand row the tool itself never renders (inventory_service.py:743 filters  #
+# `Stock.warehouse.has(Warehouse.is_active.is_(True))`), so a set-answer       #
+# header counting it is a count the customer's own reply can never back up.    #
+# --------------------------------------------------------------------------- #
+
+
+def test_stock_leg_only_counts_stock_in_an_active_warehouse(db):
+    """AC-1346/R22: measured live - ACC-SRT9012's only stock row sits in
+    warehouse SPARE/P, `is_active = false`; the stock list tool filters it out,
+    but `_leg_stock` counted it anyway, so "which bathroom accessory has
+    stock" answered "964 ... Showing 4." with five ids sent for four rendered.
+
+    RED: `_leg_stock`'s `exists()` has no `Warehouse` join at all - any Stock
+    row with `quantity_on_hand > 0` counts regardless of its warehouse's own
+    `is_active` flag, so product A (stock only in the inactive warehouse)
+    qualifies with `qualifying_total` 1, not the 0 this AC demands.
+    """
+    from app.models.inventory import Warehouse
+
+    inactive_wh = Warehouse(
+        id=str(uuid.uuid4()), warehouse_code=f"ZZT-{uuid.uuid4().hex[:6]}", warehouse_name="ZZT Inactive WH",
+        is_active=False,
+    )
+    active_wh = Warehouse(
+        id=str(uuid.uuid4()), warehouse_code=f"ZZT-{uuid.uuid4().hex[:6]}", warehouse_name="ZZT Active WH",
+        is_active=True,
+    )
+    db.add_all([inactive_wh, active_wh])
+    db.flush()
+
+    product_a = _product(db, "ZZT-STK-INACTIVE", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+    _stock(db, product_a, 5, warehouse=inactive_wh)
+    out_a = _totals(db, {"stock": True}, ["kitchen sink"])
+    assert out_a["qualifying_total"] == 0, out_a
+    codes_a = [c["product_code"] for c in out_a["candidates"]]
+    assert "ZZT-STK-INACTIVE" not in codes_a, codes_a
+
+    product_b = _product(db, "ZZT-STK-ACTIVE", "SORENTO S/STEEL KITCHEN SINK (900X500X200MM)")
+    _stock(db, product_b, 5, warehouse=active_wh)
+    out_b = _totals(db, {"stock": True}, ["kitchen sink"])
+    assert out_b["qualifying_total"] == 1, out_b
+    codes_b = [c["product_code"] for c in out_b["candidates"]]
+    assert codes_b == ["ZZT-STK-ACTIVE"], codes_b
 
 
 def test_certificate_leg_bare_true_means_any_active_register_cert(db):
