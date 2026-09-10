@@ -11,7 +11,6 @@ knows nothing about PI rows; this module is the two things a PI row needs on top
 """
 from __future__ import annotations
 
-import uuid
 from typing import Iterable, Optional
 
 from sqlalchemy import func
@@ -39,53 +38,13 @@ def fill(
     for row, text in zip(rows, texts):
         hit = hits.get(text) if text else None
         setattr(row, target, hit.text if hit else None)
-    _persist_ai_hits(db, hits)
 
 
-def _persist_ai_hits(db: Session, hits: dict) -> None:
-    """`translate()` normally writes an AI answer back itself (`_ai_fill_chunk`) - this
-    is the safety net for whatever reached `translate()`'s answer WITHOUT going through
-    that chunk writer (a caller stubbing `_ai_fill` itself rather than the provider it
-    calls). Upsert-if-absent, so the normal path - where the row already exists by the
-    time this runs - is one extra SELECT and nothing else."""
-    from app.models.translation_memory import SOURCE_AI, TranslationMemory
-
-    seen: set[str] = set()
-    for original, hit in hits.items():
-        if hit is None or hit.source != SOURCE_AI or not hit.text:
-            continue
-        normalized = translation_service.normalize_source_text(original)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        existing = (
-            db.query(TranslationMemory)
-            .filter(
-                TranslationMemory.source_text == normalized,
-                TranslationMemory.source_lang == "zh",
-                TranslationMemory.target_lang == "en",
-            )
-            .first()
-        )
-        if existing is not None:
-            continue
-        db.add(
-            TranslationMemory(
-                id=str(uuid.uuid4()),
-                source_text=normalized,
-                source_lang="zh",
-                target_lang="en",
-                target_text=hit.text,
-                source=SOURCE_AI,
-            )
-        )
-    db.flush()
-
-
-def _normalized_description(column):
+def normalized_description(column):
     """The same normalisation `translation_service.normalize_source_text` applies in
     Python, done in SQL so it can sit in a `WHERE` clause: trim, then collapse internal
-    whitespace to one space."""
+    whitespace to one space. Public - the PUT route (`proforma_invoices.py`) reuses this
+    to check a `source_text` is actually on the invoice before `rebind` ever runs."""
     return func.regexp_replace(func.btrim(column), r"\s+", " ", "g")
 
 
@@ -100,7 +59,7 @@ def rebind(db: Session, source_text: str, target_text: Optional[str]) -> dict:
 
     lines = (
         db.query(ProformaInvoiceLine)
-        .filter(_normalized_description(ProformaInvoiceLine.description) == normalized)
+        .filter(normalized_description(ProformaInvoiceLine.description) == normalized)
         .all()
     )
     for line in lines:
@@ -108,7 +67,7 @@ def rebind(db: Session, source_text: str, target_text: Optional[str]) -> dict:
 
     packing_rows = (
         db.query(ProformaInvoicePackingLine)
-        .filter(_normalized_description(ProformaInvoicePackingLine.description) == normalized)
+        .filter(normalized_description(ProformaInvoicePackingLine.description) == normalized)
         .all()
     )
     for row in packing_rows:

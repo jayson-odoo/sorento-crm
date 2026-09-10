@@ -12,6 +12,12 @@ before matching it against the memory's own normalised `source_text`.
 No seed rows (R6): a row with nothing in `translation_memory` for its description stays
 NULL, same as before this migration ran.
 
+Also adds an expression index on `regexp_replace(btrim(description), '\\s+', ' ', 'g')` on
+both tables (review round, 10 Sep) - `description_translation.rebind` filters on exactly
+this expression, and without an index backing it every PUT to `.../translations` (or edit
+on System Management > Translations) walks the whole table.
+
+
 Revision ID: 510_pi_description_en
 Revises: 509_merge_508_summary_exclwh
 Create Date: 2026-09-10
@@ -44,6 +50,22 @@ def _has_column(table: str, column: str, schema: str | None = None) -> bool:
     return column in {col["name"] for col in _inspector().get_columns(table, schema=schema)}
 
 
+def _normalized_description_index(table: str) -> str:
+    return f"ix_{table}_description_norm"
+
+
+def _create_normalized_index(table: str) -> None:
+    index = _normalized_description_index(table)
+    op.execute(
+        sa.text(
+            f"""
+            CREATE INDEX IF NOT EXISTS {index}
+            ON {_SCHEMA}.{table} (regexp_replace(btrim(description), '\\s+', ' ', 'g'))
+            """
+        )
+    )
+
+
 def _backfill(table: str) -> None:
     op.execute(
         sa.text(
@@ -67,6 +89,11 @@ def upgrade() -> None:
             _PACKING_LINE, sa.Column("description_en", sa.Text(), nullable=True), schema=_SCHEMA
         )
 
+    if _has_table(_LINE, schema=_SCHEMA):
+        _create_normalized_index(_LINE)
+    if _has_table(_PACKING_LINE, schema=_SCHEMA):
+        _create_normalized_index(_PACKING_LINE)
+
     if _has_table(_MEMORY):
         if _has_table(_LINE, schema=_SCHEMA):
             _backfill(_LINE)
@@ -75,6 +102,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(sa.text(f"DROP INDEX IF EXISTS {_SCHEMA}.{_normalized_description_index(_LINE)}"))
+    op.execute(
+        sa.text(f"DROP INDEX IF EXISTS {_SCHEMA}.{_normalized_description_index(_PACKING_LINE)}")
+    )
     if _has_column(_LINE, "description_en", schema=_SCHEMA):
         op.drop_column(_LINE, "description_en", schema=_SCHEMA)
     if _has_column(_PACKING_LINE, "description_en", schema=_SCHEMA):

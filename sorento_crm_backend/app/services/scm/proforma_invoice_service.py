@@ -2204,6 +2204,22 @@ def _num(value: Optional[float]) -> str:
     return text_value or "0"
 
 
+_XLSX_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _xlsx_safe_text(value):
+    """A leading apostrophe on anything Excel would otherwise read as a formula (review
+    round, 10 Sep): both `description` and `description_en` are free text off a supplier's
+    own document (or, for the English, whatever an operator typed), never something this
+    export should evaluate. The apostrophe is the standard "force text" convention every
+    spreadsheet reader honours - `openpyxl` writes the value as a plain string either way,
+    but Excel infers a formula from a leading `=`/`+`/`-`/`@` regardless of the cell's own
+    declared type once opened."""
+    if isinstance(value, str) and value[:1] in _XLSX_FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
+
 def to_xlsx(payload: dict) -> bytes:
     """The adjusted invoice in the supplier's own block layout (AC-E4).
 
@@ -2250,7 +2266,7 @@ def to_xlsx(payload: dict) -> bytes:
                 i,
                 line.get("item_code"),
                 # `description_en` before `description` (S2, text glossary lane, R4).
-                line.get("description_en") or line.get("description"),
+                _xlsx_safe_text(line.get("description_en") or line.get("description")),
                 qty,
                 line.get("cartons"),
                 line.get("cbm_per_unit"),
@@ -2260,6 +2276,10 @@ def to_xlsx(payload: dict) -> bytes:
                 "; ".join(remarks) or None,
             ]
         )
+        # `_xlsx_safe_text` keeps `openpyxl` from ever inferring a formula from the value
+        # (it auto-detects a leading `=` regardless of the cell's own type); belt and
+        # braces, the description cell's TYPE is also pinned to string explicitly.
+        ws.cell(row=ws.max_row, column=3).data_type = "s"
         qty_total += float(qty or 0)
         carton_total += float(line.get("cartons") or 0)
         cbm_total += float(line.get("cbm_total") or 0)
@@ -2768,6 +2788,7 @@ def _write_lines(
                 )
 
         line_id = row.get("id")
+        is_new_line = not line_id
         if line_id:
             line = existing.get(str(line_id))
             if line is None:
@@ -2792,8 +2813,14 @@ def _write_lines(
         cbm_per_unit = row.get("cbm_per_unit")
         uom = (row.get("uom") or "").strip()
         line.item_code = code[:100]
-        line.description = row.get("description")
-        touched_lines.append(line)
+        # Re-fill only a NEW line or one whose description actually changed (review round,
+        # 10 Sep) - an untouched line saved alongside others (every save sends the WHOLE
+        # document) must not wait on a memory lookup, or a model call, it did not cause.
+        was_description = None if is_new_line else line.description
+        new_description = row.get("description")
+        line.description = new_description
+        if is_new_line or new_description != was_description:
+            touched_lines.append(line)
         line.qty = qty
         line.uom = uom[:20] or None
         line.cartons = None if row.get("cartons") is None else Decimal(str(row["cartons"]))
