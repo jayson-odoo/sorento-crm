@@ -860,10 +860,18 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
     `product_suppliers` link that already agrees with its own last PO.
 
     The newest PO line for the product (`purchase_orders.issue_date` desc, NULLs last,
-    then `created_at` desc as the tiebreak) names who it was actually bought from last,
-    which is the buyer's own reading of "Supplier". A product with NO PO history gets no
-    entry here at all - `write_rows` then leaves `supplier_name`/`moq` NULL, printing
-    BLANK on the sheet, never DEFAULT and never a link-table fallback.
+    then `created_at` desc, then `supplier_id` desc as the FINAL deterministic tiebreak -
+    two different suppliers can tie on both `issue_date` and `created_at` from a
+    same-transaction import, e.g. two products imported in one batch; without this last
+    key this query and `backfill_product_supplier_from_last_po.py`'s own primary-pick
+    could disagree on the tied row) names who it was actually bought from last, which is
+    the buyer's own reading of "Supplier". A cancelled PO does not exist for this lookup
+    (PLAN-product-supplier-all-po.md ruling 3, 10 Sep 2026) - it can never be the
+    "newest" PO that names the Supplier column, so this stays in agreement with
+    `backfill_product_supplier_from_last_po.py --all-suppliers`, which excludes cancelled
+    POs the same way. A product with NO PO history gets no entry here at all -
+    `write_rows` then leaves `supplier_name`/`moq` NULL, printing BLANK on the sheet,
+    never DEFAULT and never a link-table fallback.
 
     `moq`/`order_multiple` are read from THAT SAME last-PO supplier's `product_suppliers`
     link when one exists, else null - never another supplier's terms, so the Remarks
@@ -884,8 +892,10 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         JOIN suppliers s ON s.id = po.supplier_id
         WHERE pol.product_id::text = ANY(:pids)
+          AND po.status <> 'cancelled'
           {("AND " + co) if co else ""}
-        ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC
+        ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC,
+                 po.supplier_id DESC
     """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
     if not po_rows:
         return {}
