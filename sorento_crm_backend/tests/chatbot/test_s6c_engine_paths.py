@@ -529,7 +529,18 @@ class TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine:
     `block` is where everything these captures exist to grade lives (the ETA sort of
     exec-14126915, the multi-company silent note, the discontinued flag). A strip would
     quietly make all of that ungraded, so every one of the six is compared here EXACTLY,
-    with the one known sentence removed (review of #706, S3)."""
+    with the one known sentence removed (review of #706, S3).
+
+    Owner ruling 11 Sep 2026, second ruling (R2, `divergences.
+    CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS`): three of the six captures are, in real data,
+    exactly R2(b)'s target shape - a returned code whose cross-probed rows are ALL 0 - so
+    the block now carries a SECOND CRM-only sentence (the zero climb) the n8n block never
+    had either. Fix round (nit 14): a zero-flagged code no longer earns the AC-820 line at
+    all (the zero sentence two paragraphs later already says the same thing), so THAT
+    line is now present if and only if `_xdBlock.zero_codes` is empty for this capture -
+    itself derived from the capture's own probed rows via `answer._rows_all_zero`, never
+    from a hard-coded exec id list, so a fourth zero capture added to the corpus later is
+    graded the same way with no test change."""
 
     @pytest.mark.parametrize(
         "stem", ONE_SIDED_LINE_FIXTURES, ids=lambda v: v
@@ -548,15 +559,50 @@ class TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine:
 
         actual = _corpus.json_round_trip(_run_crossdomain_render(fixture))
         expected = _corpus.json_round_trip(fixture.expected)
-        got = ((actual[0].get("json") or {}).get("_xdBlock") or {}).get("block") or ""
+        xdblock = (actual[0].get("json") or {}).get("_xdBlock") or {}
+        xdblock = xdblock if isinstance(xdblock, dict) else {}
+        got = xdblock.get("block") or ""
         want = ((expected[0].get("json") or {}).get("_xdBlock") or {}).get("block") or ""
-        head, sep, rest = got.partition("\n\n")
-        assert sep and (head.startswith("No stock for ") or head.startswith("No incoming for ")), (
-            f"the AC-820 line is the ONLY expected difference; got {head!r}"
+
+        head, sep, rest_minus_head = got.partition("\n\n")
+        is_ac820_line = bool(
+            sep
+            and (head.startswith("No stock for ") or head.startswith("No incoming for "))
+            and head.endswith(".")
         )
-        assert head.endswith("."), head
+        zero_codes = xdblock.get("zero_codes") or []
+
+        # Nit 14: present iff this capture's code did NOT climb for reading 0 everywhere.
+        if zero_codes:
+            assert not is_ac820_line, (
+                f"a zero-flagged capture must not ALSO carry the AC-820 line; got {head!r}"
+            )
+            rest = got
+        else:
+            assert is_ac820_line, (
+                f"the AC-820 line is the ONLY expected difference; got {head!r}"
+            )
+            rest = rest_minus_head
+
+        # R2: `_xdBlock.zero_codes` names which of this capture's codes climbed for
+        # reading 0 everywhere - the very list `crossdomain_render` derived via
+        # `answer._rows_all_zero`, never re-derived or hard-coded here.
+        for code in zero_codes:
+            zero_sentence = (
+                f"No incoming and stock is 0 at every location for {code}."
+                if xdblock.get("origin") == "incoming"
+                else f"Stock is 0 at every location and no incoming for {code}."
+            )
+            assert rest.endswith(zero_sentence), (
+                "a capture whose probed rows are all 0 must also carry the zero-climb "
+                f"sentence (divergences.CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS); got {rest!r}"
+            )
+            rest = rest[: -len(zero_sentence)]
+            if rest.endswith("\n\n"):
+                rest = rest[:-2]
+
         assert rest == want, (
-            "with that one sentence removed the block must still be byte-equal to the "
+            "with the known sentence(s) removed the block must still be byte-equal to the "
             f"capture:\n{rest!r}\n{want!r}"
         )
 

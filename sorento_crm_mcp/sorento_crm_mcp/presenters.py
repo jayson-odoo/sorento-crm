@@ -434,27 +434,34 @@ def _orders_so_outstanding(rows: list[dict], b: _Builder) -> None:
 
 
 def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
-    """A5 (AC-907): PO placed, never netted against incoming. `supplier` is
+    """Owner ruling (11 Sep 2026): Company, PO Number, Product Code, Ordered Qty,
+    Outstanding Qty, PO Date, Location, Supplier - Source (`kind`) and Expected Date
+    never render, even though the backend still carries both on the raw row for its
+    own filtering/sorting. `kind`, when the row has one, is stamped onto the ITEM as a
+    top-level key instead (sibling of `title`/`fields`/`flags`) so the chatbot rung can
+    still tell a PO row from an SPO row with no rendered Source field. `supplier` is
     RESTRICTED - a dealer never sees it, only a contact holding
     `purchase_orders.supplier` (the actual gate is `output_structurer`, not
     here - the MCP stays unfiltered)."""
     for r in rows:
+        n_before = len(b.items)
         b.item(
             r.get("po_number"),
             [
                 ("company_name", "Company", r.get("company_name")),
                 ("po_number", "PO Number", r.get("po_number")),
-                # item 5 (8 Sep 2026): "po" = a PO line, "spo" = an unshipped SPO
-                # allocation; absent on an older row -> no field
-                ("kind", "Source", {"po": "PO", "spo": "SPO"}.get(r.get("kind"))),
                 ("product_code", "Product Code", r.get("product_code")),
+                ("ordered_qty", "Ordered Qty", _qty(r.get("ordered_qty"))),
                 ("outstanding_qty", "Outstanding Qty", _qty(r.get("outstanding_qty"))),
-                # the PO document date (8 Sep 2026); absent on an older row -> no field
                 ("po_date", "PO Date", r.get("po_date")),
-                ("expected_date", "Expected Date", r.get("expected_date")),
+                ("location", "Location", r.get("location")),
                 ("supplier", "Supplier", r.get("supplier")),
             ],
         )
+        # `b.item` returns early (appends nothing) when every pair was empty; only
+        # stamp `kind` onto an item that actually exists.
+        if len(b.items) > n_before and r.get("kind") is not None:
+            b.items[-1]["kind"] = r["kind"]
     b.restrict("supplier", "purchase_orders.supplier")
 
 

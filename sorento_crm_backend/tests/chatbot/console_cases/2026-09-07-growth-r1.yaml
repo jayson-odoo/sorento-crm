@@ -181,15 +181,15 @@ cases:
       - text: "check stock BRC22802W-MY"
         expect:
           branch_kind: business_query
-          # D14 (owner ruling, 8 Sep 2026): "Qty N placed on DATE" per line.
-          reply_contains: ["BRC22802W-MY", "but PO is placed", "Qty", "placed on"]
+          # Owner ruling, 11 Sep 2026: the structured field block per row.
+          reply_contains: ["BRC22802W-MY", "but PO is placed", "Product Code:", "Ordered:", "Outstanding:", "PO date:"]
           reply_not_contains: ["pcs", "expected"]  # D11
           no_uuid: true
       - text: "hav incoming?"
         expect:
           branch_kind: business_query
-          reply_contains: ["No incoming and no stock for BRC22802W-MY, but PO is placed:", "Qty", "placed on"]
-          # D11/D14 (owner ruling, 8 Sep 2026): "Qty N placed on DATE" only, no heading,
+          reply_contains: ["No incoming and no stock for BRC22802W-MY, but PO is placed:", "Product Code:", "Ordered:", "Outstanding:", "PO date:"]
+          # Owner ruling, 11 Sep 2026: the structured field block only, no heading,
           # no "pcs", no expected date.
           reply_not_contains: ["No incoming and no stock for BRC22802W-MY.", "pcs", "expected"]
           no_uuid: true
@@ -446,8 +446,8 @@ cases:
     cold: true
     expect:
       branch_kind: business_query
-      # D14 (owner ruling, 8 Sep 2026): "Qty N placed on DATE" per line.
-      reply_contains: ["BRC22802W-MY", "but PO is placed", "Qty", "placed on"]
+      # Owner ruling, 11 Sep 2026: the structured field block per row.
+      reply_contains: ["BRC22802W-MY", "but PO is placed", "Product Code:", "Ordered:", "Outstanding:", "PO date:"]
       reply_not_contains: ["Supplier", "pcs", "expected"]
       no_uuid: true
 
