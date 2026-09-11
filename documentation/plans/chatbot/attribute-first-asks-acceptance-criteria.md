@@ -238,6 +238,11 @@ tool. No new reply format.
   message is the bare word ("cert", not "cert,"). A negated cert word ("no cert needed, just the
   photo") is out of scope here (still the bare leg; the parser normally carries the photo entity on
   such a turn). Evidence: pytest parametrize.
+- AC-1359 A turn whose predicate require carries the certificate leg never answers the
+  attachment-type ask ("Please provide the attachment type ..."), whatever entities survived the
+  head: qualifying above zero renders the set answer, zero takes the AC-1319 miss copy. Evidence:
+  pytest on the lane with derived entities [] and a scheme-narrowed predicate qualifying 1; console
+  "any tap has PPS cert".
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
