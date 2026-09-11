@@ -2611,7 +2611,7 @@ def resolve_reference_post(
         if consumed_scheme_words:
             query_text = _strip_predicate_words(query_text, consumed_scheme_words)
 
-        specs, _derived_free_terms, _exclusions, _understanding = derive_search_inputs(
+        specs, _derived_free_terms, _exclusions, understanding = derive_search_inputs(
             db,
             query_text,
             specs=list(payload.extracted_specs or []),
@@ -2627,6 +2627,20 @@ def resolve_reference_post(
         brand_entry = next((e for e in specs if e.get("key") == "brand"), None)
         brand = str(brand_entry["value"]) if brand_entry else None
         specs = [e for e in specs if e.get("key") != "brand"]
+
+        # R27/AC-1351: a phrase the deterministic reader BOUND to a spec key
+        # ("s trap" -> trap_type, off "with s trap") is already answered by
+        # `specs` - left in `query_text` it reaches `_has_turn_free_terms`
+        # below as an extra word ("s trap") that names no class, so the set
+        # scope term would carry it and `filter_specs`' honesty check would
+        # report it unrecognized even though the request WAS understood.
+        # Same pattern as the R14 consumed certificate-scheme word: strip
+        # every bound phrase out of the remainder before anything reads it
+        # again. Digits are already dropped by `_content_words` downstream,
+        # so "250mm" needs no handling here.
+        bound_words = [phrase for phrases in understanding.bound_phrases.values() for phrase in phrases]
+        if bound_words:
+            query_text = _strip_predicate_words(query_text, bound_words)
 
         # C2 repair: a caller that sent its own `free_terms` keeps them untouched
         # (test_require_returns_the_predicate_block_and_ordinary_matches's own

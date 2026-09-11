@@ -25,7 +25,7 @@ import json
 import re
 from decimal import Decimal
 
-from sqlalchemy import cast, func, literal, or_
+from sqlalchemy import and_, cast, func, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -714,24 +714,30 @@ def is_generic_free_term(term: str) -> bool:
     return bool(content) and all(word in _GENERIC_DESCRIPTION_WORDS for word in content)
 
 
-# Spec keys that define SET MEMBERSHIP, beside `class` - broad, catalogue-wide
-# vocabularies where "names this key" is an unambiguous yes/no (attribute-first
-# asks, work item C3). `product_type` is the noun a customer says inside a
-# class ("bidet", "shower set"); `brand` is the catalogue's own name column. A
-# narrower or numeric key stays boost-only for the reason the docstring below
-# gives.
-_MEMBERSHIP_KEYS: tuple[str, ...] = ("class", "product_type", "brand")
+# R27/AC-1352 (owner test on the local stack): a spec entry with a STRING
+# value is a membership filter WHATEVER its key - `class` and `product_type`
+# (the noun a customer says inside a class, "bidet", "shower set") and `brand`
+# (the catalogue's own name column) exactly as before, but also a narrower
+# registry key like `trap_type`, `finish`, `colour` - "s trap" or "matte
+# black" is as unambiguous a described-set word as a class name. A NUMERIC
+# value stays out of membership and boost-only: it carries ops (at_least,
+# tolerance windows) that have no boolean meaning, so a filter on it would
+# silently undercount ("250mm" excluding every close-but-not-exact match).
 
 
 def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: list[str] | None = None) -> dict:
     """The described set as a MEMBERSHIP clause - shape B's filter leg.
 
-    `class` / `product_type` / `brand` only, by decision: their coverage is
-    broad, so a filter on any of them is safe; other spec-VALUE derivation is
-    partial, so a value filter silently undercounts, and numeric entries carry
-    ops (at_least, tolerance windows) that have no boolean meaning. Non-member
-    entries are dropped here and still reach the ranker as boosts, so the
-    customer's number is heard, just not membership-defining.
+    Any spec entry whose value is a non-empty STRING is membership-defining,
+    whatever its key: their coverage is unambiguous yes/no, so a filter on any
+    of them is safe. A numeric entry is dropped here and still reaches the
+    ranker as a boost, so the customer's number is heard, just not
+    membership-defining (R27/AC-1352).
+
+    Different KEYS are ANDed together (a water closet AND an s_trap is a
+    narrower set than either alone); repeated VALUES on the SAME key stay
+    unioned (two finishes named for one key is either, not both, since one
+    product carries exactly one value per key).
 
     Three verdicts per free-text word, because n8n renders them differently:
     - names a class / product_type / brand -> membership
@@ -756,8 +762,9 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
     membership: dict[str, set[str]] = {}
     for entry in specs or []:
         key = entry.get("key")
-        if key in _MEMBERSHIP_KEYS and entry.get("value"):
-            membership.setdefault(key, set()).add(str(entry["value"]))
+        value = entry.get("value")
+        if key and isinstance(value, str) and value.strip():
+            membership.setdefault(key, set()).add(value)
 
     vocabulary = _search_vocabulary(db) if free_terms else frozenset()
     unrecognized: list[str] = []
@@ -812,7 +819,10 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
         # statement of what the product is.
         key_clauses.append(key_clause)
     if key_clauses:
-        clause = key_clauses[0] if len(key_clauses) == 1 else or_(*key_clauses)
+        # R27/AC-1352: DIFFERENT keys AND together (a water closet AND an
+        # s_trap is narrower than either alone) - repeated values WITHIN one
+        # key stayed unioned above, unchanged.
+        clause = key_clauses[0] if len(key_clauses) == 1 else and_(*key_clauses)
 
     return {
         "clause": clause,
