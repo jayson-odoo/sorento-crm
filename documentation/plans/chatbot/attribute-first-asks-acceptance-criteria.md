@@ -222,6 +222,14 @@ tool. No new reply format.
   trap length: 250 mm, class: Water Closet" or the renderer's existing format), when every shown
   product matches the bindings; a set answer with no spec words carries no Match line. Evidence:
   pytest on the rendered text for "check stock water closet with s trap 250mm"; console case.
+- AC-1356 The Match line's whole-answer check counts product rows only: a set answer whose word
+  tokens also matched promotions (or customers) on the forward pass still carries the Match line
+  when every shown PRODUCT matched the bindings. Evidence: pytest with 15 promotion matches on the
+  category token; console "check stock sorento water closet with s trap 250mm" shows the line.
+- AC-1357 The require-only arm orders candidates by the number of matched bindings, descending,
+  then code: with string binding s_trap and numeric binding 250, the products matching both come
+  before those matching s_trap only. Evidence: pytest on `resolve_product_set`; console turn shows
+  a 250 mm S-trap product first.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
