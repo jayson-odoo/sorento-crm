@@ -57,3 +57,16 @@ Plan: `PLAN-po-placed-fields-and-rung-wording.md`.
 - AC-12 No false climb. A requested code with at least one row reading a non-zero quantity
   is genuinely "found" - unchanged from today: no `zero` flag, no cross-domain probe, no
   wording change, `only_other`/`nothing` behave exactly as before this ruling.
+- AC-13 First-probe zero note, and stock-visibility parity. Before any further rung runs
+  (no ladder configured, or the rung's grant is missing), the FIRST probe's own
+  `nothing_note` already carries the zero wording for a zero-flagged code: stock-origin
+  `Stock is 0 at every location and no incoming for X.`; incoming-origin `No incoming and
+  stock is 0 at every location for X.` A plain code keeps today's `No {primary} and no
+  {other} for X.` This same code never earns the AC-820 "no {primary} for X" only-other
+  line either, at this stage or after a rung runs - the zero sentence already says it.
+  Availability-mode (no quantity field ever emitted) and `hide_zero_locations=true`
+  (locations suppressed once nothing is left) contacts never reach a zero classification
+  at all - a code with no rows at all still reaches the PO rung through the EXISTING
+  no-rows path, with the SAME plain PO block wording, so the customer-visible outcome is
+  consistent across all three stock-visibility configurations (full detail, compact,
+  availability/hidden-zero).

@@ -879,9 +879,13 @@ CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD = Divergence(
 # treated as absent for the cross-domain ladder, so it climbs and the block says so - the
 # n8n block never drew this distinction at all. Fixture-visible: three of the six item-G
 # captures (`exec-14119800`, `exec-14120400`, `exec-14122546`, registered above) are, in
-# real data, exactly this shape - a returned code whose cross-probed rows are all 0 - so
-# `TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine`
-# (test_s6c_engine_paths.py) subtracts this sentence too, DERIVED per capture via
+# real data, exactly this shape - a returned code whose cross-probed rows are all 0. Fix
+# round (nit 14): a zero-flagged code no longer earns item-G's own AC-820 line at ALL (the
+# zero sentence two paragraphs later already says the same thing, so printing both would
+# be a duplicate) - for these three the item-G line is GONE, replaced by the zero
+# sentence, not kept alongside it.
+# `TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine` (test_s6c_engine_paths.py)
+# reads which is which off `_xdBlock.zero_codes`, itself derived per capture via
 # `answer._rows_all_zero` on the code's own probed rows rather than a hard-coded fixture
 # list, so a fourth zero capture added later gets the same treatment with no test change.
 CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS = Divergence(

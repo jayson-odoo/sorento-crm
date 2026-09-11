@@ -387,15 +387,27 @@ def _field_pref(it: Any, k: str, *labels: str) -> Any:
 
 
 def _row_qty(it: Any) -> float:
-    """`Number(fieldPref(it, 'quantity_on_hand', 'quantity on hand') ?? NaN)`.
+    """A row's own quantity, `NaN` when it carries none at all.
 
-    Extracted from `crossdomain_render`'s own local `qty(it)` (owner ruling 11 Sep 2026,
-    second ruling, R2) so `crossdomain_zeroset` can apply the SAME "all zero" test to a
-    stock reply's own rows, not only to a probed one. The `?? NaN` is the whole branch
-    test - see the original docstring this replaced for why `Number(None)` (0) is wrong
-    here.
+    Reads `quantity_on_hand` / "quantity on hand" (the DETAILED stock row's own field)
+    first, then `total_on_hand` / "Total" (the COMPACT presenter's per-product total,
+    owner ruling 11 Sep 2026, second ruling, R2 fix round) - a compact reply's own
+    "Total: 0" is exactly as zero as a detailed row reading 0 at every location. AVAILABLE
+    mode carries no quantity field at all, by design (the point of that mode is never
+    stating one), so it stays unreachable here on purpose - `value` there is always the
+    plain number even under `include_sellable`; only the COMPACT presenter's own
+    `granted_value` ever carries the "(O/S: n)" suffix (`_stock_compact`,
+    sorento_crm_mcp/presenters.py), and this function never reads that key.
+
+    `?? NaN`, not `?? 0`: `fieldPref` returns `None` when every key/label tried is
+    ABSENT, and `Number(None)` is 0 in JS - which would make "some row has a quantity"
+    true for a row that carries none, sorting an incoming-only reply (ETA rows, no
+    quantity field at all) by a phantom zero instead of by ETA. `jsc.js_number` reads the
+    same `UNDEFINED` sentinel as `NaN`, matching that JS behaviour exactly.
     """
     value = _field_pref(it, "quantity_on_hand", "quantity on hand")
+    if value is None:
+        value = _field_pref(it, "total_on_hand", "Total")
     n = jsc.js_number(jsc.UNDEFINED if value is None else value)
     return float("nan") if jsc.is_nan(n) else float(n)
 
@@ -748,6 +760,23 @@ def _fmt_xd_value(v: Any) -> str:
     return jsc.js_string(v)
 
 
+def _field_render_value(f: Any) -> Any:
+    """`granted_value` when a field carries one, else `value` - owner ruling 11 Sep 2026,
+    second ruling (R1 fix round). The compact stock presenter puts a contact's "(O/S: n)"
+    Outstanding suffix on `granted_value`, never on `value` (`_stock_compact`,
+    sorento_crm_mcp/presenters.py), because that field is normally RESTRICTED and an
+    ungranted caller of the tool directly is meant to read the plain `value` instead.
+    This render has no field drop of its own to apply that restriction selectively, so it
+    is safe here ONLY because `granted_value` never reaches a row unless the SAME probe
+    already asked `include_sellable` - which `crossdomain_probe_args` (R1) only ever does
+    for a contact that holds the grant. Any future `include_*` added to
+    `crossdomain_probe_args` must gate on the grant the same way, or a value meant for one
+    contact could render here for another through this otherwise-ungated path.
+    """
+    v = jsc.get(f, "granted_value")
+    return v if v is not None else jsc.get(f, "value")
+
+
 def crossdomain_render(
     probe_result: dict[str, Any] | None,
     *,
@@ -813,35 +842,45 @@ def crossdomain_render(
     # the code and that the other domain was actually probed for it.
     only_other: list[str] = []
     for m in jsc.array(zs.get("missing")):
-        rows = list(by_code.get(jsc.get(m, "_n"), []))
+        n = jsc.get(m, "_n")
+        zero = jsc.truthy(jsc.get(m, "zero"))
+        # Finding 7 (11 Sep 2026, second ruling fix round): a ZERO-flagged entry's rows
+        # are looked up the SAME way `crossdomain_zeroset` matched it in the first place -
+        # every `by_code` key equal to OR prefixed by `_n`, not the exact key alone (a
+        # typed prefix code, e.g. "SRTWC8517" flagged zero from its own "-PJ" sibling's
+        # rows, must find that SAME sibling's rows on the OTHER side too). A plain entry
+        # keeps the exact lookup - pre-existing, untouched.
+        if zero:
+            rows = [it for code_key, its in by_code.items() if code_key == n or code_key.startswith(n) for it in its]
+        else:
+            rows = list(by_code.get(n, []))
         if not rows:
             code = jsc.get(m, "code") or jsc.get(m, "_n")
             if jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(code) and not _ms_is_uuid(code):
                 label = jsc.js_string(code)
                 if label not in nothing:
                     nothing.append(label)
-                    nothing_missing.append(m)
+                    # Nit 11: copy, same as the R2(b) branch below - `m` is still `zs`'s
+                    # own entry, and a caller here must not mutate it by aliasing.
+                    nothing_missing.append(dict(m))
             continue
         code = jsc.get(m, "code") or jsc.get(m, "_n")
-        # R2(a) is about a code `crossdomain_zeroset` ALREADY flagged zero (stock-origin
-        # only, checked BEFORE the fresh incoming-origin detection below): that code was
-        # never really "found" on the primary side either, so it does not earn the
-        # "no {primary} for X" only-other line (AC-820's own "the other side has real
-        # rows" case, `test_stock_origin_zero_but_incoming_answers_no_po_probe`).
-        pre_flagged_zero = jsc.truthy(jsc.get(m, "zero"))
-        # Owner ruling 11 Sep 2026, second ruling, R2(b): incoming-origin only - the OTHER
-        # domain (stock) DID answer, but every row reads 0 on hand, which is not really
-        # "found" either. The rows still render below AND keep AC-820's own only-other
-        # line (that line names "something answered, not this code" and stays true - what
-        # answered simply reads 0); the code ALSO climbs, same as a genuine miss, stamped
-        # on a COPY so the original `missing` entry (still `zs`'s own) is untouched.
-        if origin_incoming and not pre_flagged_zero and _rows_all_zero(rows):
+        # Owner ruling 11 Sep 2026, second ruling, R2(b)/nit 14 (fix round): incoming-
+        # origin only - the OTHER domain (stock) DID answer, but every row reads 0 on
+        # hand, which is not really "found" either. The rows still render below; the code
+        # ALSO climbs, same as a genuine miss, stamped on a COPY so the original `missing`
+        # entry (still `zs`'s own) is untouched. A zero code (either kind) never earns
+        # AC-820's own "no {primary} for X" only-other line either way - the zero sentence
+        # two paragraphs later already says the same thing, so printing both would be a
+        # duplicate.
+        if origin_incoming and not zero and _rows_all_zero(rows):
+            zero = True
             if jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(code) and not _ms_is_uuid(code):
                 label = jsc.js_string(code)
                 if label not in nothing:
                     nothing.append(label)
                     nothing_missing.append({**m, "zero": True})
-        if not pre_flagged_zero and jsc.truthy(code) and not _ms_is_uuid(code):
+        if not zero and jsc.truthy(code) and not _ms_is_uuid(code):
             label = jsc.js_string(code)
             if label not in only_other:
                 only_other.append(label)
@@ -857,7 +896,7 @@ def crossdomain_render(
             rows.sort(key=eta)
         for it in rows:
             field_lines = "\n".join(
-                f"*{jsc.get(f, 'label')}:* {_fmt_xd_value(jsc.get(f, 'value'))}"
+                f"*{jsc.get(f, 'label')}:* {_fmt_xd_value(_field_render_value(f))}"
                 for f in (jsc.get(it, "fields") or [])
             )
             if not field_lines:

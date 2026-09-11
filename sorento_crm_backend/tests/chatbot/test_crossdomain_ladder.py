@@ -742,6 +742,9 @@ class TestOwner11SepR1AccessAttributesOnTheFirstProbe:
         first_args = calls[0][1]
         access = first_args.get("access") or {}
         assert "inventory.sellable" not in (access.get("attributes") or [])
+        # Finding 5 (fix round): `granted=[]` omits the key entirely, so today's args
+        # stay byte-identical - not merely an empty `attributes` list.
+        assert "access" not in first_args
 
     def test_crossdomain_probe_args_with_grant_sets_access_attributes(self) -> None:
         """Direct unit test of the function itself, not through `run_crossdomain`."""
@@ -925,6 +928,9 @@ class TestOwner11SepZeroEverywhereClimbs:
         assert plain_part in block
         assert zero_part in block
         assert block.index(plain_part) < block.index(zero_part)
+        # Finding 4 (fix round): the exact paragraph separator between the two groups -
+        # one blank line, not zero, not two.
+        assert f"{plain_part}\n\n{zero_part}" in block
 
     # ------------------------------------------------------------------ stock-origin
 
@@ -986,6 +992,22 @@ class TestOwner11SepZeroEverywhereClimbs:
         assert "No stock for SRTWC8517." not in block
         assert result["render"]["_xdBlock"]["zero_codes"] == ["SRTWC8517"]
 
+    def test_stock_origin_zero_stock_rung_answers_nothing(self) -> None:
+        """Finding 6 (fix round): the stock-origin twin of
+        `test_incoming_origin_zero_stock_rung_answers_nothing` - word order flips with
+        the origin, exactly like the plain "no X, no Y" sentence already does."""
+        result, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            validator=_stock_envelope(
+                [_stock_row(0, warehouse="KL-WH"), _stock_row(0, warehouse="BRW")]
+            ),
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [], "has_result": False},
+        )
+        assert [name for name, _ in calls] == [_INCOMING_TOOL, _PO_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert "Stock is 0 at every location, no incoming and nothing on order for SRTWC8517." in block
+
     def test_stock_origin_zero_but_incoming_answers_no_po_probe(self) -> None:
         """The other side has real rows (an ETA) - render them as today, no zero sentence,
         no rung probe (the code is not left with nothing on either side)."""
@@ -1006,4 +1028,125 @@ class TestOwner11SepZeroEverywhereClimbs:
         block = result["render"]["_xdBlock"]["block"]
         assert "But there is INCOMING stock (ETA) for the requested products:" in block
         assert "2026-09-15" in block
+
+
+class TestOwner11SepFixRoundGrantedValueRendersOverValue:
+    """Fix round, finding 1 (R1): the compact presenter's "(O/S: n)" Outstanding suffix
+    lives on `granted_value`, never on `value` (`_stock_compact`,
+    sorento_crm_mcp/presenters.py). `crossdomain_render` has no field drop of its own, so
+    it renders `granted_value` when a probed field carries one, `value` otherwise."""
+
+    def test_a_row_with_granted_value_renders_it(self) -> None:
+        row = {
+            "fields": [
+                {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                {"key": "total_on_hand", "label": "Total", "value": 12, "granted_value": "12 (O/S: 3)"},
+            ]
+        }
+        result, _ = _run(
+            ladder=_LADDER_NO_PO,
+            incoming_response={"answers": [row], "has_result": True},
+            parser=_INCOMING_PARSER,
+        )
+        block = result["render"]["_xdBlock"]["block"]
+        assert "*Total:* 12 (O/S: 3)" in block
+
+    def test_a_row_with_no_granted_value_renders_the_plain_value(self) -> None:
+        row = {
+            "fields": [
+                {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                {"key": "total_on_hand", "label": "Total", "value": 12},
+            ]
+        }
+        result, _ = _run(
+            ladder=_LADDER_NO_PO,
+            incoming_response={"answers": [row], "has_result": True},
+            parser=_INCOMING_PARSER,
+        )
+        block = result["render"]["_xdBlock"]["block"]
+        assert "*Total:* 12" in block
+        assert "O/S" not in block
+
+
+class TestOwner11SepFixRoundCompactZeroDetection:
+    """Fix round, finding 2 (R2): `_row_qty` also reads the COMPACT row's own total (key
+    `total_on_hand`, label "Total"), so a compact "Total: 0" reply is exactly as zero as
+    a detailed row reading 0 at every location."""
+
+    def test_compact_total_zero_counts_as_zero(self) -> None:
+        from app.services.chatbot.lanes.business.answer import _rows_all_zero
+
+        compact_item = {
+            "fields": [
+                {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                {"key": "total_on_hand", "label": "Total", "value": 0},
+            ]
+        }
+        assert _rows_all_zero([compact_item]) is True
+
+    def test_compact_total_nonzero_is_not_zero(self) -> None:
+        from app.services.chatbot.lanes.business.answer import _rows_all_zero
+
+        compact_item = {
+            "fields": [
+                {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                {"key": "total_on_hand", "label": "Total", "value": 5},
+            ]
+        }
+        assert _rows_all_zero([compact_item]) is False
+
+    def test_compact_total_zero_climbs_to_po_like_a_detailed_zero_reply(self) -> None:
+        compact_row = {
+            "fields": [
+                {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                {"key": "total_on_hand", "label": "Total", "value": 0},
+            ]
+        }
+        result, calls = _run(
+            ladder=_LADDER_491,
+            incoming_response={"answers": [compact_row], "has_result": True},
+            po_response={"answers": [_po_row(50, "2026-07-01")], "has_result": True},
+            parser=_INCOMING_PARSER,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL, _PO_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert "No incoming and stock is 0 at every location for SRTWC8517, but PO is placed:" in block
+
+
+class TestOwner11SepFixRoundZeroEntryPrefixFamilyLookup:
+    """Fix round, finding 7: a ZERO-flagged entry's cross-probed rows are looked up under
+    every `by_code` key equal to OR prefixed by the entry's `_n` - the SAME rule
+    `crossdomain_zeroset` used to flag it from a typed code's family in the first place -
+    not the exact key alone. A plain (non-zero) entry keeps the exact lookup, untouched."""
+
+    def test_zero_flagged_family_code_finds_the_sibling_incoming_rows(self) -> None:
+        family_zero_validator = _stock_envelope(
+            [
+                _stock_row(0, code="SRTWC8517-PJ", warehouse="KL-WH"),
+                _stock_row(0, code="SRTWC8517-PJ", warehouse="BRW"),
+            ]
+        )
+        incoming_response = {
+            "answers": [
+                {
+                    "fields": [
+                        {"key": "product_code", "label": "Product Code", "value": "SRTWC8517-PJ"},
+                        {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-09-15"},
+                    ]
+                }
+            ],
+            "has_result": True,
+        }
+        result, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            validator=family_zero_validator,
+            incoming_response=incoming_response,
+            po_response={"answers": [], "has_result": False},
+        )
+        # Found under the family - no further rung needed at all.
+        assert [name for name, _ in calls] == [_INCOMING_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert "2026-09-15" in block
+        assert "stock is 0" not in block.lower()
+        assert "but PO is placed" not in block
         assert "No stock for SRTWC8517." not in block

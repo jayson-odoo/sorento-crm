@@ -72,13 +72,34 @@ turn.
   | incoming-origin, rung answers | `No incoming and no stock for X, {header}:` | `No incoming and stock is 0 at every location for X, {header}:` |
   | incoming-origin, rung answers nothing | `No incoming, no stock and nothing on order for X.` | `No incoming, stock is 0 at every location and nothing on order for X.` |
 
-- A zero-flagged code ALREADY known before the cross probe (stock-origin) does not earn
-  AC-820's "no {primary} for X" only-other line (it was never really found); a code
-  discovered zero DURING the cross probe (incoming-origin, the OTHER side's rows are all
-  zero) keeps that line - something did answer, it just reads 0 - and additionally climbs.
+- A zero-flagged code, either kind (already known before the cross probe on the
+  stock-origin side, or discovered fresh during it on the incoming-origin side), never
+  earns AC-820's "no {primary} for X" only-other line (fix round, nit 14) - the zero
+  sentence two paragraphs later already says the same thing, so printing both would be a
+  duplicate.
 - A code with any non-zero row anywhere never climbs; `zero_codes` on `_xdBlock` names
   which of `nothing_codes` were zero rather than genuinely absent (registered as an
   additive-key divergence in `tests/chatbot/divergences.py`, same class as A7's own three).
+- Before any further rung runs at all (no ladder configured, or the rung's grant is
+  missing), the FIRST probe's own `nothing_note` already carries this same zero wording
+  for a zero-flagged code - it is not something only the rung's own sentence adds.
+
+### Fix round, 11 Sep 2026 (delta review of `44834b60f`)
+
+- R1: a probed field's `granted_value` (the compact presenter's "(O/S: n)" suffix) renders
+  over `value` when present - this render has no field drop of its own, and is safe only
+  because `granted_value` never reaches a row unless the SAME contact's own grant already
+  asked `include_sellable`.
+- R2: `_row_qty` also reads the COMPACT row's own total (`total_on_hand` / "Total"), so a
+  compact "Total: 0" climbs exactly like a detailed reply reading 0 everywhere.
+  Availability mode stays unreachable by design (no quantity field at all).
+- A zero-flagged entry's cross-probed rows are looked up under every `by_code` key equal
+  to or prefixed by its `_n` - the same rule that flagged it from a typed code's family in
+  the first place - not the exact key alone (finding 7).
+- Nits 10/11: dropped a clause that was always vacuously true (pre-flagged zero only ever
+  exists on the stock-origin side, which the incoming-origin-only check already excludes);
+  the "no rows at all" branch now copies the zeroset entry into `nothing_missing`, matching
+  the R2(b) branch, so neither path can alias `zs`'s own list.
 
 ### Parity test conflict, reported and resolved (owner ruling)
 
