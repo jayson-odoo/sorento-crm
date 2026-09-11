@@ -230,6 +230,11 @@ tool. No new reply format.
   then code: with string binding s_trap and numeric binding 250, the products matching both come
   before those matching s_trap only. Evidence: pytest on `resolve_product_set`; console turn shows
   a 250 mm S-trap product first.
+- AC-1358 The R28 fallback matches whole cert words only: with no attachment raw, "certainly, send
+  me the drawing for the basin", "concert hall basin photo" and "no cert needed, just the photo of the
+  basin" stay forward (None) while "is this certified?" and "which item has PPS cert" yield the bare
+  leg; the predicate word taken from the message is the bare word ("cert", not "cert,"). Evidence:
+  pytest parametrize.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
