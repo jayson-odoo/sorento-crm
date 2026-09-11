@@ -222,10 +222,12 @@ tool. No new reply format.
   trap length: 250 mm, class: Water Closet" or the renderer's existing format), when every shown
   product matches the bindings; a set answer with no spec words carries no Match line. Evidence:
   pytest on the rendered text for "check stock water closet with s trap 250mm"; console case.
-- AC-1356 The Match line's whole-answer check counts product rows only: a set answer whose word
-  tokens also matched promotions (or customers) on the forward pass still carries the Match line
-  when every shown PRODUCT matched the bindings. Evidence: pytest with 15 promotion matches on the
-  category token; console "check stock sorento water closet with s trap 250mm" shows the line.
+- AC-1356 The Match line renders on a set answer: the renderer accepts the set_page carry dict
+  (the tail's `last_result_set` on a set answer) as an answered set, and its whole-answer check
+  counts product rows only, so a set answer whose word tokens also matched promotions still carries
+  the line when every shown PRODUCT matched the bindings. Evidence: pytest with the carry-shaped
+  `last_result_set` and with 15 promotion matches on the category token; console "check stock
+  sorento water closet with s trap 250mm" shows "_Matched on: Water Closet, trap type: ..._".
 - AC-1357 The require-only arm orders candidates by the number of matched bindings, descending,
   then code: with string binding s_trap and numeric binding 250, the products matching both come
   before those matching s_trap only. Evidence: pytest on `resolve_product_set`; console turn shows
