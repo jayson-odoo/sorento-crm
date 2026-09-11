@@ -11,8 +11,8 @@ Branch `feat/chatbot-attribute-first-asks`. Lane backend on the restored prod co
 |-----|--------|
 | `tests/test_product_spec_search.py`, `tests/test_product_predicate_service.py`, `tests/test_resolve_predicate.py`, `tests/test_migration_511_attribute_first_lookup_sets.py` | 118 passed |
 | `tests/chatbot/test_lane_require.py` (S1 to S4 + two fix rounds) | 125 passed together with `test_product_spec_search.py` |
-| Fix round 3 (R14 to R28): the five lane files + migration test together | 246 passed, 0 failed (commit 238adb4df, origin/main merged, 511 reparented) |
-| `tests/chatbot` full after fix round 3 | 1663 passed, 72 skipped, 5 xfailed, 5 failed (the same `test_s7_*` baseline) |
+| Fix round 3 + owner test round (R14 to R34): the five lane files + migration test together | 263 passed, 0 failed (commit b71209bf4, origin/main merged, 511 reparented) |
+| `tests/chatbot` full after R34 | 1677 passed, 72 skipped, 5 xfailed, 5 failed (the same `test_s7_*` baseline) |
 
 The 5 failures are `test_s7_dispatch_edges.py` (3) and `test_s7_ordering_and_offload.py` (2): the
 Redis-outage turns die at `route.py:224` (`is_stock_check_denied`, a None settings row), a line
@@ -71,6 +71,11 @@ Baseline (main, detached checkout of d6cb5b624 with the lane venv, 11 Sep 2026):
 | 1350 | PASS | pytest, page-arm guard kill-tested by the tester; migration test asserts the chain, green after the reparent |
 | 1351, 1352 | PASS | pytest (bound words leave the scope term; string bindings filter, numeric stay boosts); console "check stock water closet with s trap 250mm" -> "165 water closets have stock. Showing 5." and "any incoming for water closet with p trap" -> "13 water closets have incoming stock." (both clarified "water closet trap" before R27: a regression of the forward spec path found by the owner) |
 | 1353 | PASS | pytest; console run 11 "which item has PPS cert" on the variant where the head drops the raw-"PPS" entity -> "940 products have PPS certificates." (run 10 answered the forward "Please provide the attachment type") |
+| 1354 | PASS | pytest (resolver block, fetch args on turn 1 and the "more" page); console "any tap has PPS cert" -> "1 tap has PPS certificates." with the two PPS files only (was seven files across WCM, SPAN, WEPLS, IKRAM) |
+| 1355, 1356 | PASS | pytest (matched_specs on the require-only arm, carry-shaped last_result_set, promotion rows ignored, no line without spec words); console "check stock sorento water closet with s trap 250mm" ends "_Matched on: Water Closet, trap length: 250 and trap type: S Trap._" |
+| 1357 | PASS | pytest; console: SRTWC286-SH (trap length 250) renders first, was seventh by code |
+| 1358 | PASS | pytest, "certainly" / "concert" stay forward, "sijil" and "certified?" are the leg, bare word without punctuation |
+| 1359 | PASS | pytest (gate + answer); console "any tap has PPS cert" on the variant where the head drops both entities answers the set, not the attachment-type ask |
 | 1347 | PASS | pytest, four paging terms; console pass 8 sequence 2: the carry-less "more" answers "2,704 products have certificates. Showing 5." (the reused certificate question, unscoped) instead of "I don't know 'more'" |
 
 ## Console pass 7 (AC-1325, FINAL after fix round 3), lane backend WITHOUT reload, commit d331bec78
@@ -103,6 +108,8 @@ Transcripts: `console-run-7.txt`, `console-run-7-sequences.txt`, `console-run-8-
 ## Console runs 10 and 11: the committed case file (owner test round, R27 and R28)
 
 `tests/chatbot/console_cases/2026-09-11-attribute-first-asks.yaml` (14 cases: the ten utterances, the two spec-word turns, the three sequences) run with `scripts/chatbot_console_check.py` against the lane backend on the prod copy. Run 10 (commit e678723fb, R27 in): 13 passed, 1 failed: "which item has PPS cert" answered the forward attachment-type ask on a parser variant the head empties (R28). Run 11 (commit 238adb4df): 14 passed, 0 failed. Transcripts `console-run-10.txt`, `console-run-11.txt` in the session scratchpad.
+
+Console runs 12 to 14 (owner round continued, commits 4d7717422 -> b71209bf4): run 12 = 14 passed (R29/R30 in, Match line still absent live: the live cause was the carry-shaped `last_result_set`, R31); run 13 = 13 passed, 1 failed on an OpenAI 429 parser rate limit (turn status `failed`, not code); run 14 on b71209bf4 = 14 passed, plus "any tap has PPS cert" twice with PPS files only. Transcripts `console-run-12.txt` to `console-run-14.txt`, `console-strap-13.txt`, `console-pps-14-*.txt` in the session scratchpad.
 
 Owner observations on the local stack that are DATA or configuration, not lane defects (plan row above the R27 table): "sorento bidet" is filed under category Tap (header noun), "water tap" and "valve" are missing category search synonyms, certificate PC 000373 (WCM Cold Tap) is linked to three Mocha kitchen sinks. Follow-up slice candidates: header echoes the customer's product_type word; the attachments listing filters by the recovered scheme.
 
