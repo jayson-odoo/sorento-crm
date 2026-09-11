@@ -4231,6 +4231,96 @@ def test_set_answer_carries_the_match_line_when_every_shown_product_matches(
     assert "250" in text, text
 
 
+def test_matched_on_line_renders_when_last_result_set_is_the_set_page_carry_dict():
+    """AC-1356/R31 (amended, plan R31 row rewritten): the LIVE cause of the
+    missing Match line on a genuine multi-page set answer, measured on the
+    stored turn - not the promotion-noise shape below (kept as the secondary
+    case).
+
+    On a fresh set answer whose `qualifying_total` exceeds one page,
+    `_set_page_carry` (`compile_state.py`) writes `variables["last_result_set"]`
+    as the DICT-shaped "more" carry (`{kind: "set_page", qualifying_ids,
+    qualifying_total, offset, set_noun, require, domain, access_levels}`) -
+    documented in its own docstring as "a DICT-shaped kind, never the array
+    roster every OTHER `selection_context` carries". `_matched_on_line`'s own
+    `answered` gate requires `jsc.is_array(last_result_set) and
+    len(last_result_set) > 0` - `jsc.is_array` on a dict is False outright, so
+    `answered` is False and the function returns the reply UNCHANGED before it
+    ever reaches the `compatible_entities`/`spec_asked` logic - no Match line,
+    regardless of every shown row genuinely matching.
+
+    RED: calls the real `_set_page_carry` to produce the exact live carry
+    shape (qualifying_total=106, six product `compatible_entities`, so the
+    fresh arm fires), then feeds that DICT straight into `_matched_on_line` as
+    `last_result_set`, with `resolver_json` carrying `spec_search` matches for
+    every one of those products (class Water Closet, trap_type s_trap) - the
+    same shape a genuinely fully-matched shown set has. Today's function still
+    returns the user_response unchanged.
+    """
+    from app.services.chatbot.tail.compile_state import _matched_on_line, _set_page_carry
+
+    compatible_entities = [
+        {"uuid": f"ZZT-uuid-{i}", "entity_type": "product", "code": f"ZZT-WC-{i}"} for i in range(6)
+    ]
+    gate_json = {
+        "predicate": {
+            "qualifying_total": 106,
+            "class_labels": ["Water Closet"],
+            "require": {"stock": True},
+        },
+        "compatible_entities": compatible_entities,
+    }
+    variables: dict[str, Any] = {}
+    touched = _set_page_carry(
+        variables,
+        gate_json=gate_json,
+        gate_ran=True,
+        prev={},
+        qf={"domain_hint": "inventory"},
+        fetch_rendered_result=True,
+        access_levels_used=[],
+    )
+    assert touched is True
+    last_result_set = variables["last_result_set"]
+    assert isinstance(last_result_set, dict), last_result_set
+
+    resolver_json = {
+        "resolutions": [
+            {
+                "token": "water closet",
+                "matches": [
+                    {
+                        "uuid": e["uuid"],
+                        "canonical_code": e["code"],
+                        "match_tier": "spec_search",
+                        "display": {
+                            "matched_specs": ["class", "trap_type"],
+                            "specifications": {"class": "Water Closet", "trap_type": "s_trap"},
+                        },
+                    }
+                    for e in compatible_entities
+                ],
+            }
+        ],
+        "spec_asked": [{"key": "trap_type"}],
+    }
+
+    user_response = _matched_on_line(
+        "6 water closets have stock.",
+        qf={"message_type": "business_query"},
+        resolver_json=resolver_json,
+        gate_ran=True,
+        gate_json=gate_json,
+        is_escalate_branch=False,
+        include_response=True,
+        manual_response=False,
+        last_result_set=last_result_set,
+    )
+    assert "_Matched on:" in user_response, user_response
+    assert "Water Closet" in user_response, user_response
+    assert "S Trap" in user_response, user_response
+
+
 def test_set_answer_carries_the_match_line_when_shown_entities_include_promotions(
     session_factory, stub_parser, stub_access, monkeypatch
 ):
