@@ -1049,7 +1049,21 @@ def _matched_on_line(
     matched this". And the sentence is WHOLE-ANSWER scoped, so it is emitted only when
     EVERY row shown is a spec row: a partial attribution is not a weaker claim, it is a
     false one.
+
+    R31/AC-1356 (measured live): on a SET answer `last_result_set` is the
+    set_page carry DICT (`kind, domain, require, qualifying_ids, ...`), never
+    the array roster every OTHER `selection_context` carries - this arm's own
+    `answered` check demanded a non-empty ARRAY, so it returned before it
+    ever read `gate_json`, whatever the resolver/candidates carried. A dict
+    carrying a non-empty `qualifying_ids` is answered too (the rendered
+    products are its first page); the product-only shown-set filter above is
+    the SECONDARY honesty check, for the case this one lets through.
     """
+    carry_ids = jsc.get(last_result_set, "qualifying_ids") if isinstance(last_result_set, dict) else None
+
+    has_result_set = (jsc.is_array(last_result_set) and len(last_result_set) > 0) or (
+        isinstance(carry_ids, list) and len(carry_ids) > 0
+    )
     answered = (
         not is_escalate_branch
         and jsc.truthy(include_response)
@@ -1057,8 +1071,7 @@ def _matched_on_line(
         and jsc.get(qf, "message_type") == "business_query"
         and isinstance(user_response, str)
         and user_response.strip() != ""
-        and jsc.is_array(last_result_set)
-        and len(last_result_set) > 0
+        and has_result_set
     )
     if not answered:
         return user_response
@@ -1068,7 +1081,17 @@ def _matched_on_line(
     # uuid/code. A gate that did not run means no answer set, so no line.
     if not gate_ran:
         return user_response
-    shown_ents = list(jsc.array(jsc.get(gate_json, "compatible_entities")))
+    # R31/AC-1356: PRODUCT rows only - `compatible_entities` is every entity
+    # TYPE the gate let through (a promotion or customer row rides along on a
+    # turn whose OTHER tokens matched them), and a promotion is never a spec
+    # row. Type-agnostic, this arm's own honesty check (`all_shown_are_spec`)
+    # failed on the noise alone, silencing the Match line even when every
+    # PRODUCT shown had matched.
+    shown_ents = [
+        e
+        for e in jsc.array(jsc.get(gate_json, "compatible_entities"))
+        if jsc.get(e, "entity_type") == "product"
+    ]
     shown_set: set[str] = set()
     for e in shown_ents:
         for v in (jsc.get(e, "uuid"), jsc.get(e, "code")):
@@ -1136,7 +1159,22 @@ def _matched_on_line(
             asked.add(normalised)
     # If `spec_asked` is ABSENT the endpoint predates CRM #142: nothing is asked-for, so
     # only `class` survives and the line degrades to the description form. That
-    # degradation IS the deployment tell, and it is asserted rather than papered over.
+    # degradation IS the deployment tell on the FORWARD path, and it is asserted
+    # rather than papered over - unchanged here.
+    #
+    # R31/AC-1356 (a set/require answer only - `gate_json.predicate` present):
+    # a bare require leg ("which tap has cert") asks NOTHING about the
+    # product's attributes - `class` reaching `spec_asked` is
+    # `resolve_product_set`'s own class LABEL for the header noun (R30),
+    # never a customer-stated binding - so a set answer with no REAL spec
+    # word must carry no line at all, never the forward path's class-only
+    # degradation form (AC-1355's own "a set answer with no spec words
+    # carries no Match line"). `predicate`, never `last_result_set`'s shape,
+    # is the reliable "this is a set/require answer" signal - both a bare
+    # and a described require turn build the SAME array-shaped business
+    # summary `last_result_set` this function reads.
+    if isinstance(jsc.get(gate_json, "predicate"), dict) and not any(k != "class" for k in asked):
+        return user_response
     selected = [k for k in keys if k.lower() == "class" or k.lower() in asked]
     # Class leads: it is the noun the customer typed and the qualifiers modify it.
     ordered = [k for k in selected if k.lower() == "class"] + [k for k in selected if k.lower() != "class"]

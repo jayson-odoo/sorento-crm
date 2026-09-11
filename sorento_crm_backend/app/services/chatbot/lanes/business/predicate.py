@@ -41,6 +41,17 @@ _BARE_CERT_WORDS: frozenset[str] = frozenset(
     {"cert", "certs", "certificate", "certificates", "certification", "certifications", "sijil"}
 )
 
+# R33/AC-1358 (reviewer round 4, should-fix): word-anchored over the bare
+# cert word FAMILY - `cert`/`certs` exactly, `certif`-prefixed for every
+# certify/certificate/certification INFLECTION (certified, certifying,
+# certificate(s), certification(s), ...), and the Malay `sijil` - never a
+# bare substring search. `_CERTIFICATE_RE`/`_CERT_RE` have no word boundary
+# at all, so "certainly" and "concert" (both merely CONTAIN "cert") false-
+# positived as a certificate question in the no-raw fallback below, and
+# `sijil` was never tried there at all (only ever checked against an
+# attachment_type RAW, which this fallback by definition has none of).
+_BARE_CERT_WORD_RE = re.compile(r"\b(?:certs?|certif\w*|sijil)\b", re.IGNORECASE)
+
 
 def _cert_scheme_from_raw(raw: str) -> str | None:
     """What is left of `raw` once every bare cert word is removed, or None when
@@ -110,6 +121,13 @@ def derive_require(
     survives only in `user_goal` / `message_text` - the same fallback R4
     already reads for a scheme-only raw, tried here BEFORE giving up, never
     after: there is no raw left to fall through past.
+
+    R33/AC-1358 (reviewer round 4, should-fix): this no-raw fallback matches
+    `_BARE_CERT_WORD_RE`, word-anchored, never `_CERTIFICATE_RE` as a bare
+    substring - "certainly, send me the drawing" and "concert hall basin
+    photo" both merely CONTAIN "cert" and must not read as a certificate
+    question, while "is this certified?" and the Malay "ada sijil untuk
+    basin?" genuinely are one.
     """
     intent = parser_output.get("intent_hint")
     if intent in _BARE_LEG_BY_INTENT:
@@ -119,7 +137,7 @@ def derive_require(
         raws = _attachment_type_raws(parser_output)
         if not raws:
             goal_or_message = parser_output.get("user_goal") or message_text or ""
-            if _CERTIFICATE_RE.search(str(goal_or_message)):
+            if _BARE_CERT_WORD_RE.search(str(goal_or_message)):
                 return {"certificate": True}
             return None
         raw = raws[0]
@@ -151,9 +169,11 @@ def derive_predicate_words(
     True}`) and no attachment_type raw contributed a word (there was none to
     read - `derive_require` recovered it off `message_text` instead), the word
     that actually earned the leg never left the remainder on its own. Pull the
-    cert word(s) `message_text` itself carries (matching `_CERTIFICATE_RE`, the
-    same regex `derive_require` used) so the described-set reader strips
-    "cert" rather than reading "item pps cert" as an unrecognized phrase.
+    cert word(s) `message_text` itself carries (matching `_BARE_CERT_WORD_RE`,
+    the same word-anchored pattern `derive_require` used - R33/AC-1358) so the
+    described-set reader strips the bare word ITSELF, with no trailing
+    punctuation glued on ("certified", never "certified?"), rather than
+    reading "item pps cert" as an unrecognized phrase.
     """
     if not require:
         return []
@@ -164,8 +184,8 @@ def derive_predicate_words(
         if leg not in words:
             words.append(leg)
     if not words and require.get("certificate") is True and message_text:
-        for word in re.split(r"\s+", message_text.strip()):
-            cleaned = word.strip()
-            if cleaned and _CERTIFICATE_RE.search(cleaned) and cleaned not in words:
-                words.append(cleaned)
+        for match in _BARE_CERT_WORD_RE.finditer(message_text):
+            word = match.group()
+            if word and word not in words:
+                words.append(word)
     return words

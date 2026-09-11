@@ -691,8 +691,14 @@ def resolve_product_set(
             )
             candidates = found["candidates"]
         else:
-            # require-only ("what products have certs"): nothing to rank BY, so
-            # the shortlist is deterministic - one row per family, by code.
+            # require-only ("what products have certs"): nothing to rank BY,
+            # so the shortlist orders by HOW MANY stated bindings a candidate
+            # matched (R32/AC-1357) - `order_by`/`distinct(family)` here is
+            # ONLY what postgres's `DISTINCT ON` needs to pick one row per
+            # family, not the final display order, which is computed below
+            # once `matched_specs` is known. No SQL `.limit()`: the cap is
+            # applied AFTER sorting by match count, or a product that matched
+            # every binding could be cut before it was ever compared.
             rows = (
                 _base(
                     db.query(
@@ -704,7 +710,6 @@ def resolve_product_set(
                 )
                 .order_by(family, Product.product_code)
                 .distinct(family)
-                .limit(limit or 15)
                 .all()
             )
             # The spec block for the rows actually shown, in ONE query. A row that
@@ -759,6 +764,11 @@ def resolve_product_set(
                         "is_discontinued": False,
                     }
                 )
+            # R32/AC-1357: more-matched first, product_code the tiebreak among
+            # equal counts - `matched_specs` was only just computed above, so
+            # this is the earliest point the true display order is knowable.
+            candidates.sort(key=lambda c: (-len(c["matched_specs"]), c["product_code"]))
+            candidates = candidates[: (limit or 15)]
 
     # E2/AC-1316: the described set's own class label(s), for the header's noun
     # (`answer.set_noun_for`). Unioned with what the qualifying candidates
