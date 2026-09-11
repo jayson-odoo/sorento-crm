@@ -122,6 +122,26 @@ _CODE_SHAPED = re.compile(
 # --------------------------------------------------------------------------- #
 
 
+def _is_a_described_word(token: Any) -> bool:
+    """Not a code the customer typed - the SAME rule the dropped-filter gate below
+    already uses (`_df_not_code_shaped`, inlined there), promoted here for C4's own
+    need: a token with no digit at all, or one that is not code-shaped, is a
+    DESCRIPTION word ("bidet", "tap") rather than a real product code ("srtwc286").
+
+    C4 (attribute-first asks, AC-1326/AC-1319) needs exactly this distinction for
+    its zero-qualifying carve-out: "which sorento bidet has cert" naming zero
+    qualifying products must reach the miss flow, never the picker, but "cert for
+    srtwc286" - a real, still-ambiguous product CODE - must keep going through the
+    existing disambiguation picker (issue #750) even when none of its candidates
+    happen to qualify. The predicate mechanism cannot tell the two apart from
+    match_tier alone once neither produced a `spec_search` match; this is the same
+    ordinary-language distinction `_df_not_code_shaped` already draws for the same
+    reason on a different gate.
+    """
+    v = jsc.nullish_str(token).strip()
+    return len(v) > 0 and not (bool(_HAS_DIGIT.search(v)) and bool(_CODE_SHAPED.match(v)))
+
+
 def _norm(value: Any) -> str:
     """`s => String(s || '').toLowerCase().trim()`."""
     return jsc.lower_or_empty(value).strip()
@@ -228,6 +248,18 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     domain: Any = parser.get("domain_hint")  # `parser.domain_hint ?? null`
     resolver = resolver if isinstance(resolver, dict) else item
     resolver = resolver if isinstance(resolver, dict) else {}
+    # C4 (attribute-first asks, AC-1326): a resolver result carrying a `predicate`
+    # block AT ALL - any `qualifying_total`, zero included - already answered the
+    # gate's own question ("does this turn scope to real records"): the described
+    # set is exactly the qualifying matches the resolver put in `resolutions[]`.
+    # Nothing here needs to disambiguate a spec-search match against a sibling one
+    # (they are not a customer's ambiguous typing, they are the honest count), and
+    # nothing needs to refuse an unresolved product raw as a missed subject - the
+    # predicate already carries that outcome. Bypasses the ambiguity picker
+    # (REQUIRE_SPECIFIC_DOMAINS) and the product_attachment "subject did not
+    # resolve" block below; a zero-qualifying predicate falls through unblocked
+    # into `if3_miss`, which is the existing miss flow (AC-1319).
+    predicate_bypass = isinstance(resolver.get("predicate"), dict)
 
     # ── Flatten + de-dupe resolver matches ──────────────────────────────────
     flat: list[Any] = []
@@ -307,6 +339,22 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     if gate_passed and isinstance(REQUIRED_TYPES.get(domain), list):  # `Array.isArray(...)`
         have_types = {e["entity_type"] for e in entities}
         have_types |= {jsc.get(e, "hint") for e in jsc.array(parser.get("entities"))}
+        # R34/AC-1359: a `certificate` (or `attachment_type`) LEG in the
+        # resolver's own predicate IS the document-type answer - the same
+        # principle as the AC-1326 `predicate_bypass` above, narrowed to just
+        # this requirement. "any tap has PPS cert" drops BOTH the category
+        # and the attachment_type entity (the head normalises an entity with
+        # no `canonical_code` away entirely), yet `derive_require`/
+        # `recover_certificate_scheme` still recovered `{"certificate":
+        # {"scheme": "PPS"}}` off the message text and the resolver genuinely
+        # qualified a row - the gate must not then ask again for what the
+        # predicate already answered.
+        predicate_require = jsc.get(resolver.get("predicate"), "require") if predicate_bypass else None
+        if isinstance(predicate_require, dict) and (
+            jsc.truthy(predicate_require.get("certificate"))
+            or jsc.truthy(predicate_require.get("attachment_type"))
+        ):
+            have_types.add("attachment_type")
         missing = [t for t in REQUIRED_TYPES[domain] if t not in have_types]
         if len(missing) > 0:
             gate_passed = False
@@ -339,7 +387,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     # entities` is non-empty and the blanket incompatible-types branch above never runs),
     # so this is the one place that catches it before the fetch scopes on the certificate
     # alone and answers about products that were never the one asked about.
-    if gate_passed and domain == "product_attachment":
+    if gate_passed and domain == "product_attachment" and not predicate_bypass:
         unresolved = [_lower_trim_nullish(t) for t in jsc.array(resolver.get("unresolved_tokens"))]
         unresolved += [_lower_trim_nullish(t) for t in incompatible_only]
         product_raws = {
@@ -483,6 +531,38 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                                 "code": jsc.get(m, "canonical_code"),
                             }
                         )
+                    elif predicate_bypass and all(
+                        jsc.get(m, "match_tier") == "spec_search" for m in products
+                    ):
+                        # C4 (AC-1326): a `spec_search`-tier group is the described set
+                        # HAS already qualified, not a customer's ambiguous typing - the
+                        # answer to "which products have X" IS several products. Every
+                        # OTHER token's ordinary ambiguity (issue #750: "srtwc286" prefix-
+                        # matching ten variants) is untouched - only a group whose matches
+                        # are ALL `spec_search` skips the picker.
+                        for m in products:
+                            exact_entities.append(
+                                {
+                                    "uuid": jsc.get(m, "uuid"),
+                                    "entity_type": jsc.get(m, "entity_type"),
+                                    "code": jsc.get(m, "canonical_code"),
+                                }
+                            )
+                    elif (
+                        predicate_bypass
+                        and jsc.get(resolver.get("predicate"), "qualifying_total") == 0
+                        and _is_a_described_word(jsc.get(r, "token"))
+                    ):
+                        # C4 / AC-1319 (zero-qualifying HAS ask): nothing satisfies the
+                        # predicate, so these ordinary LOOKUP-tier matches for a
+                        # DESCRIBED-SET word never earned a `spec_search` replacement
+                        # (`_emit_spec_matches` only fires on a non-empty outcome) - but
+                        # they still must not become a disambiguation picker over a class
+                        # word nobody could ever "pick one of". Contributes nothing, same
+                        # as an empty match list; `not_found_error_message` reads the
+                        # checked codes straight off `resolved.resolutions`, not off this
+                        # gate's own compatible-entities.
+                        pass
                     else:
                         still_ambiguous.append({"token": jsc.get(r, "token"), "products": products})
 

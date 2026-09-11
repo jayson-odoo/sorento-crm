@@ -334,6 +334,15 @@ def run_fetch(
         # `check_access` to fill it from `contact_field_reveals`; until then it is
         # always None, so every restricted field stays hidden by construction.
         "access": ctx.get("access"),
+        # E2 (attribute-first asks): the resolver's `predicate` block, carried
+        # through the gate untouched (`resolved`/`gate` are the same mutated dict,
+        # `gate.py`'s own C4 bypass reads it off `resolver.get("predicate")` the
+        # same way) - the ONLY place a HAS turn's `require`/`qualifying_total`
+        # reach the fetch step at all. Absent on an ordinary turn, so
+        # `fetch.entity_ids_transformer`'s own `trig.get("predicate") is not None`
+        # check (limit=5, S1's E1) and `output_structurer`'s header (below) both
+        # stay byte-inert for every non-HAS turn.
+        "predicate": gate.get("predicate"),
     }
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
     if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(
@@ -411,6 +420,12 @@ def run_fetch(
                 },
             )
     item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
+    # SEC-B1/AC-1333: the RECOMPOSED access_levels this turn's tool call actually
+    # carried (`semantic_input`'s own, built above from `tier_gate.access_levels_
+    # recomposed` when a tier gate ran) - `_set_page_carry` stores this in the
+    # set_page carry so a later "more" page can re-inject the SAME tier, rather
+    # than falling to the bare parser's own (empty, on a "more" turn) list.
+    item["access_levels"] = semantic_input.get("access_levels")
     return {
         "kind": "result",
         "_fetch_arm": item["_fetch_arm"],
@@ -512,7 +527,17 @@ def complete_answer(
     aggregate = payload.get("aggregate") if isinstance(payload.get("aggregate"), dict) else None
     entities_names = aggregate.get("name") if aggregate is not None else None
 
-    fragments: dict[str, Any] = {"ctx": ctx, "resolved": resolved, "gate": gate}
+    fragments: dict[str, Any] = {
+        "ctx": ctx,
+        "resolved": resolved,
+        "gate": gate,
+        # SEC-B1/AC-1333: the recomposed access_levels THIS fetch actually used
+        # (None on any arm that never called the tool - tier_ask, error, offer)
+        # - `compile_state._set_page_carry` reads it off `values["access_levels_
+        # used"]` for the set_page carry, and it is what tells that function
+        # whether a set answer actually rendered this turn at all.
+        "access_levels_used": fetch.get("access_levels"),
+    }
     lane_item: dict[str, Any]
 
     # `fetch-result`'s own arm names, spelled the way IT spells them: `tier-ask` with a

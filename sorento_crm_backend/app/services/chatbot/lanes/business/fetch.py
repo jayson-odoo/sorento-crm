@@ -581,6 +581,31 @@ def entity_ids_transformer(
         elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
             out["limit"] = top_n
 
+    # E1 (attribute-first asks, fix round 11 Sep): a HAS turn - the resolver's
+    # `predicate` block rode through the gate untouched - shows the first FIVE
+    # qualifying PRODUCTS, never five ROWS: `limit` is the tool's own ROW cap
+    # (a stock answer can carry several warehouse rows per product, a cert
+    # answer several files per product), so setting `limit=5` there cut a
+    # 7-product answer down to 5 rows spanning 4 products under a header that
+    # said "Showing 5" - `limit` is left at the tool's own default entirely,
+    # and the PAGE is built by slicing `product_ids` itself. "more" (E3) pages
+    # the next five ids from the carried offer the same way.
+    if trig.get("predicate") is not None and isinstance(out.get("product_ids"), list):
+        out["product_ids"] = out["product_ids"][:5]
+
+    # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids
+    # ride the SAME predicate block, straight through under the SAME arg
+    # name `TYPE_TO_PARAM["certificate"]` already maps to (`certificate_ids`)
+    # - so `crm_master_product_attachments_list` narrows to those files
+    # alone (a product certified under both PPS and WCM must not have its
+    # WCM file rendered for a PPS question). Absent on a bare certificate
+    # leg - `predicate.certificate_ids` itself is present only on the scheme
+    # form, so nothing extra is sent and every certificate file still
+    # renders, exactly as it does today.
+    predicate = trig.get("predicate")
+    if isinstance(predicate, dict) and predicate.get("certificate_ids"):
+        out["certificate_ids"] = predicate["certificate_ids"]
+
     # COERCE, THEN TRIM, and the ORDER is the whole point. `contact_id` arrives as BOTH an
     # int and a SPACE-PADDED string in production, in adjacent executions: five spine call
     # sites write `{{ ... .json.id }} ` with a trailing space inside the template. A number
@@ -1702,6 +1727,72 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     ts = _fmt_ts(e.get("last_updated_at"))
     if ts:
         msg += f"_Data last updated: {ts}_"
+
+    # E2 (attribute-first asks, AC-1316): a HAS turn's set-answer header, PREPENDED
+    # as its own line ahead of everything above - the block itself (intro, items,
+    # summaries, ...) is untouched. Deferred-import: `answer.py` imports FROM this
+    # module (`DATE_PARAMS`, `space_id_or_default`), so a module-level import here
+    # would be circular.
+    predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
+    if predicate is not None:
+        from app.services.chatbot.lanes.business.answer import (
+            build_set_header,
+            build_set_page_header,
+            set_noun_for,
+        )
+
+        qualifying_total = jsc.get(predicate, "qualifying_total") or 0
+        require = jsc.get(predicate, "require") or {}
+        # E3/AC-1317: a "more" continuation page carries its OWN pre-known
+        # `set_noun` and page bounds (`page`) - a "more" turn runs no resolver
+        # call, so there are no fresh `class_labels` to re-derive one from.
+        page = jsc.get(predicate, "page")
+        if isinstance(page, dict):
+            header = build_set_page_header(
+                qualifying_total,
+                jsc.get(page, "start"),
+                jsc.get(page, "end"),
+                jsc.js_string(jsc.get(page, "set_noun")) or "products",
+                require,
+            )
+        else:
+            # R8 (console fix round 2, AC-1330): `shown` is distinct PRODUCTS
+            # rendered, never tool rows - a stock/cert answer carries one row per
+            # warehouse/certificate, so five products across three warehouses is
+            # fifteen rows and would have overstated "Showing 15" for a five-page
+            # answer. Falls back to the row count when no row carries a product
+            # code at all (a result type this header never fires for today).
+            items0 = e.get("items") or []
+
+            def _product_code_of_row(it: Any) -> str:
+                fields = jsc.get(it, "fields")
+                if not isinstance(fields, list):
+                    return ""
+                for f in fields:
+                    if isinstance(f, dict) and f.get("label") == "Product Code":
+                        return jsc.nullish_str(f.get("value")).strip()
+                return ""
+
+            shown_codes = {c for c in (_product_code_of_row(it) for it in items0) if c}
+            shown = len(shown_codes) if shown_codes else len(items0)
+            class_labels = jsc.array(jsc.get(predicate, "class_labels"))
+            set_noun = set_noun_for(class_labels)
+            # `set_noun_for` is always plural (its own contract, AC-1316) - singular
+            # only for the ONE-qualifying-product header ("1 tap has ...", never
+            # "1 taps has ...") is the class label ITSELF (REV-N2/AC-1337), never a
+            # naive "-1 char" strip of the pluralised noun: that guess turned
+            # "bathroom accessories" into "bathroom accessorie", not the real
+            # singular "bathroom accessory". Only the single-label case has one to
+            # use; the "products" fallback (zero or blended labels) has no
+            # singular of its own and keeps its old strip.
+            if qualifying_total == 1:
+                single_labels = [label for label in class_labels if label and label.strip()]
+                if len(single_labels) == 1:
+                    set_noun = single_labels[0].strip().lower()
+                elif set_noun.endswith("s"):
+                    set_noun = set_noun[:-1]
+            header = build_set_header(qualifying_total, shown, set_noun, require)
+        msg = f"{header}\n{msg}"
 
     out: dict[str, Any] = {
         "response": msg.strip(),

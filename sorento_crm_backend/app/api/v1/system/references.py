@@ -1384,6 +1384,17 @@ class ResolveReferenceRequest(BaseModel):
             "today. When present it supersedes `spec_fallback`."
         ),
     )
+    predicate_words: list[str] | None = Field(
+        default=None,
+        description=(
+            "Words `require` already accounts for (a leg's own name - 'stock', "
+            "'incoming', 'promotion' - or an attachment_type entity's raw, "
+            "e.g. 'cert', 'photo') - stripped from `query` before the described "
+            "set is derived from it, so 'which sorento bidet has cert' does not "
+            "also ask the spec reader to bind the word 'cert'. Only used when "
+            "`require` is present."
+        ),
+    )
     understand_phrase: bool = Field(
         default=False,
         description=(
@@ -1454,6 +1465,184 @@ class ResolveReferenceRequest(BaseModel):
             "to pin)."
         ),
     )
+
+
+def _has_exact_product_match(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
+    """AC-1305/R1 (console fix round 2, 11 Sep): did a CODE-SHAPED caller token
+    already resolve to a product match, at ANY tier?
+
+    The shape test is the TOKEN's own (this file's own `_is_code_shaped`, the
+    "mixed letters and digits" `_CODE_RE` test - NOT `answer.py`'s
+    same-named function, which exists for a different job: filtering a
+    did-you-mean candidate LIST of already-known codes, and is deliberately
+    loose there). A code-shaped token ("zztwc286") that resolves only by
+    PREFIX still means the customer typed a complete-enough code, so
+    `require`'s described-set machinery must not run over it - `tier` no
+    longer gates this at all (`exact`/`head_code` used to be the only tiers
+    checked, which let a PREFIX-tier code slip through and wrongly grow a
+    `predicate` block). A WORD token ("bidet", "sorento") never blocks HAS,
+    even when it happens to resolve at the "exact" tier (a product literally
+    coded "SORENTO") - the customer's own word is not thereby a code.
+
+    R1: the lane ALWAYS sends `match_mode: "and"`, and AND mode's own product
+    probe stamps EVERY row `match_tier="and"` - it never produces "exact" or
+    "head_code" - so the OLD tier-based `intersection` check could never fire
+    on the lane's real request shape (measured: `scripts/chatbot_replay_
+    resolve.py` on "check stock srtwc286"). `intersection` carries no per-row
+    token (AND mode blends every token into one list), so the shape test runs
+    against the CALLER's own `tokens` instead: a code-shaped token sent AT ALL,
+    with `intersection` carrying any product match, is the same "typed a
+    complete code" signal the OR-mode branch above reads per-resolution.
+    """
+    for resolution in result.get("resolutions") or []:
+        token = (resolution or {}).get("token")
+        if not _is_code_shaped(str(token or "")):
+            continue
+        for match in (resolution or {}).get("matches") or []:
+            if (match or {}).get("entity_type") == "product":
+                return True
+    intersection = result.get("intersection") or []
+    if intersection and any(_is_code_shaped(str(t or "")) for t in (tokens or [])):
+        for match in intersection:
+            if (match or {}).get("entity_type") == "product":
+                return True
+    return False
+
+
+def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
+    """Every product uuid LOOKUP already matched, in order, deduped.
+
+    Work item C2: the described set's other half besides the class/product_type/
+    brand bindings - a caller who typed "bidet" already has three name matches from
+    the ordinary product probes (the screenshot picker), and those ids are a
+    perfectly good described set on their own.
+    """
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def _take(match: Any) -> None:
+        if not isinstance(match, dict) or match.get("entity_type") != "product":
+            return
+        uid = match.get("uuid")
+        if uid and uid not in seen:
+            seen.add(uid)
+            ids.append(uid)
+
+    for resolution in result.get("resolutions") or []:
+        for match in (resolution or {}).get("matches") or []:
+            _take(match)
+    for match in result.get("intersection") or []:
+        _take(match)
+    return ids
+
+
+# A COPY of `app.services.chatbot.head.output_exchange._CERT_RE`, never an import of it:
+# this file sits outside the chatbot module boundary (`tests/chatbot/test_import_boundary
+# .py`'s AC-002), so the same cert-word test is duplicated here rather than reached across
+# it. Keep the two in lockstep by hand if the word list ever changes.
+_CERT_WORD_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal", re.IGNORECASE)
+
+# A COPY of `app.services.chatbot.lanes.business.answer.SET_PAGE_ID_CAP`, for the same
+# module-boundary reason `_CERT_WORD_RE` above is a copy: the "more" carry (E3, AC-1317)
+# pages off however many qualifying ids `resolve_product_set` is asked for, so this file
+# has to ask for at least this many rather than the ordinary LOOKUP page size.
+_SET_PAGE_ID_CAP = 200
+
+
+def _strip_predicate_words(text: str, words: list[str] | None) -> str:
+    """`query` with every `predicate_words` entry removed, whole-word, case-insensitive.
+
+    So "which sorento bidet has cert" does not also ask the described-set reader to
+    bind the word "cert" it was for the PREDICATE, not the description.
+
+    REV-S4/AC-1332 (third console pass): each entry is split on whitespace and
+    stripped WORD BY WORD, never matched as one contiguous phrase - the parser's
+    own normalisation can widen a word ("cert" to "certificate") so the phrase
+    "PPS cert" is no longer contiguous in "which item has PPS certificate", and a
+    single whole-phrase regex (with its own trailing word-boundary assertion)
+    then fails to match at all, leaving "PPS" in the remainder as an
+    unrecognized leftover. Compiled inline (REV-S2): the pattern is built from a
+    customer-controlled string, so caching it by that string is an unbounded,
+    caller-fed dict.
+    """
+    stripped = text or ""
+    for phrase in words or []:
+        for word in re.split(r"\s+", str(phrase or "").strip()):
+            cleaned = word.strip()
+            if not cleaned:
+                continue
+            pattern = re.compile(rf"(?<!\w){re.escape(cleaned)}(?!\w)", re.IGNORECASE)
+            stripped = pattern.sub(" ", stripped)
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _has_turn_free_terms(
+    payload: "ResolveReferenceRequest", result: dict[str, Any], query_text: str
+) -> list[str]:
+    """C2 repair: the described set's free-text half, for a HAS turn that sent NO
+    explicit `free_terms` of its own (an ordinary caller that DID supply
+    `free_terms` keeps using exactly what it sent - see the caller).
+
+    When every product-entity token DID resolve to an actual PRODUCT match
+    ("which sorento bidet has cert" - "bidet" matched three real products), the
+    set is already described through those matches' own ids - nothing here
+    scopes it a second time, so this returns `[]`. Otherwise (no product-entity
+    token at all - a bare class word turn - OR at least one that resolved to
+    NO product, whatever else it may have matched) the remainder of
+    `query_text` (predicate_words already stripped) becomes ONE term, off its own
+    WORDS rather than `payload.tokens` - `_token_of` FOLDS a product token's
+    separators out ("water tap" -> "watertap"), which is right for code matching
+    and wrong for a phrase a human is meant to read back. Reusing
+    `_content_words`'s own stopword/short-word/digit filter is what makes "which
+    tap has cert" scope to class Tap and "which item has cert" (no class word at
+    all) leave the set unscoped rather than reporting "item" as unrecognized.
+
+    R7/AC-1330 (console fix round 2): "resolved" here means resolved to a
+    PRODUCT, specifically - a word token that resolved to some OTHER entity type
+    only ("sink" hitting nothing but a customer whose code happens to start
+    with "SINK") is NOT thereby "already described"; its raw still has to reach
+    `filter_specs` or the set goes unscoped ("count every open-incoming
+    product", not "count only Kitchen Sinks"). Measured live: "which sink has
+    incoming" counted all 620 products across nine classes instead of the one
+    that is actually a sink.
+
+    Before this, nothing on the require branch ever populated a HAS turn's
+    `free_terms` at all, so `filter_specs` never saw the class word either way and
+    "which tap has cert" counted every certified product, unscoped.
+    """
+    tokens = payload.tokens or []
+    allowed = payload.allowed_entity_types or []
+    resolved_product_tokens = {
+        str((resolution or {}).get("token") or "").strip().lower()
+        for resolution in result.get("resolutions") or []
+        if isinstance(resolution, dict)
+        and any(
+            (match or {}).get("entity_type") == "product"
+            for match in resolution.get("matches") or []
+        )
+    }
+    product_indices = [
+        i for i, a in enumerate(allowed) if str(a or "").strip().lower() == "product"
+    ]
+    if product_indices and all(
+        str(tokens[i] if i < len(tokens) else "").strip().lower() in resolved_product_tokens
+        for i in product_indices
+    ):
+        return []
+
+    from app.services.product_spec_search import _content_words
+
+    # Fix round, 11 Sep: `predicate_words` only strips its OWN entries whole-word,
+    # and the parser sometimes normalises the attachment_type entity's raw to a
+    # canonical word ("certificate"/"Certification") that never matches the
+    # literal word the customer typed ("cert") - so `predicate_words` alone can
+    # leave "cert" sitting in the remainder ("which tap has cert" -> "tap cert").
+    # `_CERT_WORD_RE` is the SAME cert-word test `derive_require`/`derive_routing`
+    # already use (a local copy, see its own docstring), so every cert-shaped
+    # word (and a bare scheme word like "span") is dropped here too, not just
+    # the ones the parser happened to echo back.
+    words = [w for w in _content_words(query_text) if not _CERT_WORD_RE.search(w)]
+    return [" ".join(words)] if words else []
 
 
 def _result_has_zero_matches(result: dict[str, Any]) -> bool:
@@ -2138,6 +2327,37 @@ def _spec_attach_token(result: dict[str, Any], tokens: list[str] | None) -> str 
     return None
 
 
+def _strip_word_token_product_matches(result: dict[str, Any]) -> None:
+    """AC-1327/R2 (console fix round 2): once HAS ran, a WORD token's own
+    forward product match - a plain substring/prefix/exact/"and"-tier hit on
+    the product CODE, unrelated to the described set - must not survive
+    alongside the spec_search resolution: only a `match_tier="spec_search"`
+    product match may reach the customer. Console finding, 11 Sep: "which tap
+    has cert" answered "Found: <200 codes>" plus a picker of two products named
+    "...COLD TAP" - the forward substring hit for "tap" sat right beside the
+    real 908-qualifying spec_search resolution, and the GATE's own ambiguity
+    block (`still_ambiguous`) fires on any token group whose matches are not
+    ALL `spec_search` tier.
+
+    Mutates `result["resolutions"]` and `result["intersection"]` in place;
+    every NON-product match (attachment_type, brand, customer, ...) is
+    untouched - this is a product-only rule.
+    """
+
+    def _keep(match: Any) -> bool:
+        if not isinstance(match, dict):
+            return True
+        if match.get("entity_type") != "product":
+            return True
+        return match.get("match_tier") == "spec_search"
+
+    for resolution in result.get("resolutions") or []:
+        if isinstance(resolution, dict) and isinstance(resolution.get("matches"), list):
+            resolution["matches"] = [m for m in resolution["matches"] if _keep(m)]
+    if isinstance(result.get("intersection"), list):
+        result["intersection"] = [m for m in result["intersection"] if _keep(m)]
+
+
 def _emit_spec_matches(
     result: dict[str, Any],
     candidates: list[dict],
@@ -2341,18 +2561,120 @@ def resolve_reference_post(
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
-    # and it runs whenever the parser asked it, whatever the normal probes found.
-    # The whole intersection + count happens in the service (zero SQL here); this
-    # veneer only maps the outcome onto the wire shape the spine already reads.
-    if payload.require:
-        from app.services.product_predicate_service import resolve_product_set
+    # and it runs whenever the parser asked it, whatever the normal probes found -
+    # UNLESS a caller token already resolved to a full product code (AC-1305): the
+    # customer typed a complete code, so the response stays byte-identical to the
+    # same request without `require`.
+    if payload.require and not _has_exact_product_match(result, payload.tokens):
+        from app.services.product_predicate_service import (
+            recover_certificate_scheme,
+            resolve_product_set,
+        )
+        from app.services.product_spec_search import _content_words
+        from app.services.product_spec_understanding import derive_search_inputs
 
+        # C2: the described set's other half besides `product_ids` - class /
+        # product_type / brand bindings read off the query, `predicate_words`
+        # stripped first so the predicate's own word ("cert", "stock") is never
+        # also asked to bind a spec. R13/AC-1332 (third console pass):
+        # `allow_model` is always False here, never `payload.understand_phrase`
+        # - the MODEL phrase reader is a spec_fallback-only mechanism (2-3
+        # seconds, gated there by design); a HAS turn's bindings must be
+        # deterministic (registry synonyms, brand names) only. Measured live:
+        # "which item has PPS cert" answered "I don't know 'item pps' as a
+        # product type" - "item pps" is a model-derived free term the
+        # deterministic reader never produces.
+        #
+        # `free_terms=[]` into the reader on purpose, and its OWN returned free
+        # terms are dropped, never merged into `payload.free_terms`:
+        # `derive_search_inputs` always echoes the whole phrase back as a free
+        # term (its fallback shape, for the ranker's free-text boost), and
+        # merging that in fed the raw sentence to `filter_specs`'s honesty
+        # check as if the caller had typed it as a described term - reporting
+        # "which kitchen sinks have stock" itself as unrecognized. Only the
+        # BINDINGS (`specs`) are wanted here; ranking still runs on exactly the
+        # free terms the caller sent, unchanged.
+        query_text = _strip_predicate_words(payload.query or "", payload.predicate_words)
+
+        # R14/AC-1338 (third console pass): a bare `{"certificate": True}`
+        # require whose remainder still holds the scheme word (never split
+        # off the attachment_type raw upstream - "which item has PPS cert"
+        # never separated "PPS" from "cert") is promoted here, off the SAME
+        # remainder `derive_search_inputs` is about to read. The consumed
+        # word is dropped from `query_text` BEFORE it reaches either
+        # `derive_search_inputs` or `_has_turn_free_terms` (both read this
+        # one shared variable), so it never lands in `filter_specs` as an
+        # unrecognized set word.
+        require, consumed_scheme_words = recover_certificate_scheme(
+            db, payload.require, _content_words(query_text)
+        )
+        if consumed_scheme_words:
+            query_text = _strip_predicate_words(query_text, consumed_scheme_words)
+
+        specs, _derived_free_terms, _exclusions, understanding = derive_search_inputs(
+            db,
+            query_text,
+            specs=list(payload.extracted_specs or []),
+            free_terms=[],
+            allow_model=False,
+            user_id=current_user.get("id"),
+            log_usage=not payload.dry_run,
+        )
+        # D3: a brand scopes the WHOLE set - kept OUT of `specs`' union-membership
+        # role (a brand binding there would union in every OTHER certified product
+        # of that brand, not just the described ones) and applied only as the
+        # service's own AND-scope.
+        brand_entry = next((e for e in specs if e.get("key") == "brand"), None)
+        brand = str(brand_entry["value"]) if brand_entry else None
+        specs = [e for e in specs if e.get("key") != "brand"]
+
+        # R27/AC-1351: a phrase the deterministic reader BOUND to a spec key
+        # ("s trap" -> trap_type, off "with s trap") is already answered by
+        # `specs` - left in `query_text` it reaches `_has_turn_free_terms`
+        # below as an extra word ("s trap") that names no class, so the set
+        # scope term would carry it and `filter_specs`' honesty check would
+        # report it unrecognized even though the request WAS understood.
+        # Same pattern as the R14 consumed certificate-scheme word: strip
+        # every bound phrase out of the remainder before anything reads it
+        # again. Digits are already dropped by `_content_words` downstream,
+        # so "250mm" needs no handling here.
+        bound_words = [phrase for phrases in understanding.bound_phrases.values() for phrase in phrases]
+        if bound_words:
+            query_text = _strip_predicate_words(query_text, bound_words)
+
+        # C2 repair: a caller that sent its own `free_terms` keeps them untouched
+        # (test_require_returns_the_predicate_block_and_ordinary_matches's own
+        # ["kitchen sink"]); the ordinary chatbot lane never sends this key at
+        # all, so THIS is the one place a bare class word ("tap", "basin")
+        # reaches `filter_specs` for a HAS turn. Passed as `scope_terms`, never
+        # merged into `free_terms`: a derived class word scopes the set but must
+        # never also drive `search_specs` ranking, which would silently evict a
+        # `product_ids`-only match that carries no spec row at all.
+        scope_terms = None if payload.free_terms else _has_turn_free_terms(payload, result, query_text)
+
+        # E3/AC-1317: the "more" carry pages by 5 off the QUALIFYING ids
+        # themselves, capped at `_SET_PAGE_ID_CAP` (200) - never the ordinary
+        # LOOKUP page size (`payload.limit`, 15), which would leave a
+        # 7-qualifying answer with only the first 5 to page through.
         outcome = resolve_product_set(
             db,
-            require=payload.require,
-            specs=payload.extracted_specs,
+            # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
+            # scheme from the remainder above), never `payload.require`
+            # unconditionally - `require` is that same dict unchanged when
+            # nothing was recovered.
+            require=require,
+            specs=specs,
             free_terms=payload.free_terms,
-            limit=payload.limit,
+            scope_terms=scope_terms,
+            limit=max(payload.limit or 0, _SET_PAGE_ID_CAP),
+            product_ids=_collect_lookup_product_ids(result) or None,
+            brand=brand,
+            # SEC-S1/AC-1334: the promotion leg must see the caller's OWN tier,
+            # not only the ordinary entity-resolution filter
+            # (`_apply_promotion_access_levels_filter`) further down - a HAS
+            # turn's qualifying_total must never count a tier-restricted
+            # promotion the contact cannot see.
+            access_levels=payload.access_levels,
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
@@ -2363,7 +2685,56 @@ def resolve_reference_post(
             "truncated": outcome["truncated"],
             "unrecognized_terms": outcome["unrecognized_terms"],
         }
+        # D2/AC-1313: present ONLY on a scheme miss - a resolvable scheme carries
+        # no such key at all, so a caller reading it never has to tell "no schemes"
+        # from "not a scheme question".
+        if "schemes_on_file" in outcome:
+            result["predicate"]["schemes_on_file"] = outcome["schemes_on_file"]
+        # R6/AC-1329: present ONLY on an attachment-LABEL miss ("photo", not a
+        # class/product_type word) - the reply clarifies it as a document type,
+        # never the product-type sentence below.
+        if "attachment_types_on_file" in outcome:
+            result["predicate"]["attachment_types_on_file"] = outcome["attachment_types_on_file"]
+        # F2/AC-1320: nearest class-label suggestions on an unrecognized-term
+        # zero - absent whenever the resolver found none to offer, same
+        # present-only-on-the-relevant-miss convention as `schemes_on_file`.
+        if outcome.get("suggestions"):
+            result["predicate"]["suggestions"] = outcome["suggestions"]
+        # F2/AC-1320 fix round: the last-resort fallback (the catalogue's own
+        # most common class labels) when NOTHING was near enough to offer as a
+        # `suggestions` entry - a distinct key because it carries different
+        # copy ("Try a product type such as ...", never "Did you mean ...?").
+        if outcome.get("common_class_labels"):
+            result["predicate"]["common_class_labels"] = outcome["common_class_labels"]
+        # E2/AC-1316: the described set's class label(s), for the set-answer
+        # header's noun (`answer.set_noun_for`) - present only when non-empty
+        # (AC-1309's own shape-lock test asserts `predicate` carries EXACTLY its
+        # four documented keys on a turn with no class to name).
+        if outcome.get("class_labels"):
+            result["predicate"]["class_labels"] = outcome["class_labels"]
+        # R29/AC-1354: present ONLY on a scheme-narrowed certificate leg - a
+        # bare leg has no scheme to narrow the files by, same present-only
+        # convention as `schemes_on_file`.
+        if outcome.get("certificate_ids"):
+            result["predicate"]["certificate_ids"] = outcome["certificate_ids"]
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
+        # R30/AC-1355: what this HAS turn's own bindings asked for (`specs`,
+        # class included) - the spec_fallback branch below already stamps
+        # this off `search_specs`' own `asked_for`; a HAS/require turn never
+        # runs that ranker call at all (`filter_specs` reads `specs` and
+        # `scope_terms` directly), so without this the Match line's own
+        # `spec_asked` intersection had nothing to read and stayed silent for
+        # every set answer, whatever its candidates matched.
+        result["spec_asked"] = [{"key": e.get("key"), "value": e.get("value")} for e in specs] + [
+            {"key": "class", "value": label} for label in (outcome.get("class_labels") or [])
+        ]
+        # R2 only fires on a genuine HAS answer (qualifying_total > 0): the
+        # existing zero-qualifying miss flow names its own candidate codes off
+        # these SAME forward matches (F1's pre-existing "Couldn't find a bidet
+        # with a certificate. ACC-BIDET, CAB-BIDET, SRT-BIDET" copy) - stripping
+        # them there would silence the very codes that message names.
+        if outcome["qualifying_total"]:
+            _strip_word_token_product_matches(result)
         return _stamp_brand_on_products(db, result)
 
     # Spec search is a FALLBACK, never a parallel path. It runs only when the caller

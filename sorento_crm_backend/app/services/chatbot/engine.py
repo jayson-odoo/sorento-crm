@@ -2745,6 +2745,9 @@ FRAGMENT_FIELDS: tuple[str, ...] = (
     "crossdomain_render",
     "answer",
     "clarify",
+    # SEC-B1/AC-1333: the recomposed access_levels the fetch step actually used,
+    # None on any arm that never called the tool - see `business.complete_answer`.
+    "access_levels_used",
 )
 
 
@@ -2998,11 +3001,26 @@ def run_tail(
     outcome_items = outcome_mod.build_outcome([{"json": outcome_input}], producers)
 
     # -- what to say, and what to remember ------------------------------ #
+    # SEC-B1/AC-1333: two facts folded into a COPY of `gate` rather than new
+    # `compile_current_state` keyword params - several existing tests stub that
+    # function with a fixed `(item, ctx, *, resolved=None, gate=None,
+    # execution_id="")` signature (`test_dry_run_isolation.py`'s own stated
+    # convention), and a new required-by-name kwarg at this, its one call site,
+    # broke every one of them. `gate` is already the vehicle `_set_page_carry`
+    # reads gate-shaped facts off (`gate_json`), so this is the same seam, not
+    # a new one: `values["result"]` is None on every arm that never rendered a
+    # set answer (tier_ask, error, offer, not_found) - the carry must arm off
+    # THIS, never off `gate.predicate` alone, which is present the moment the
+    # resolver ran regardless of whether the fetch step ever reached the tool
+    # call.
+    gate_for_tail = {**(values["gate"] or {})}
+    gate_for_tail["_fetch_rendered_result"] = values.get("result") is not None
+    gate_for_tail["_access_levels_used"] = values.get("access_levels_used")
     compiled = compile_current_state(
         outcome_items[0]["json"],
         ctx,
         resolved=values["resolved"],
-        gate=values["gate"],
+        gate=gate_for_tail,
         execution_id=turn_id,
     )
     composed = compose_mod.crossdomain_compose(

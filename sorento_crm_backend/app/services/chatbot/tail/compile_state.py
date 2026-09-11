@@ -281,6 +281,16 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     `resolved` and `gate` are `sub-output`'s `resolve-entity` / `disallowed-entity-gate`
     carriers, i.e. the trigger's own nullable fields. `execution_id` stands in for
     `$execution.id`, which the dym offer stamps as its identity - the CRM's turn id.
+
+    SEC-B1/AC-1333: `gate` also carries two engine-injected facts under
+    `_fetch_rendered_result` / `_access_levels_used` - whether THIS turn's
+    fetch step actually reached the tool call and rendered a result (never
+    true on the tier_ask / error / offer arms, which `gate.predicate` alone
+    cannot tell apart from a genuine set answer) and the recomposed
+    access_levels that call used, both read by `_set_page_carry` below. Folded
+    into `gate` rather than added as their own keyword params so a caller
+    stubbing this function with the ORIGINAL four-parameter signature (several
+    do, across `test_dry_run_isolation.py`) is unaffected.
     """
     qf = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     outcome = jsc.get(item, "outcome") or {}
@@ -288,6 +298,8 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     gate_json = gate if isinstance(gate, dict) else {}
     resolver_json = resolved if isinstance(resolved, dict) else {}
     prev = _prev_variables(ctx)
+    fetch_rendered_result = jsc.truthy(jsc.get(gate_json, "_fetch_rendered_result"))
+    access_levels_used = jsc.get(gate_json, "_access_levels_used")
 
     # ---- the reply ladder ------------------------------------------------- #
     response: Any = UNDEFINED
@@ -895,6 +907,22 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         turn_state=turn_state,
     )
 
+    # ---- E3 (attribute-first asks, AC-1317): the set-answer "more" carry ---- #
+    # BEFORE `_offer_carry`: a HAS turn's answer arms its OWN memory here (a set
+    # of qualifying ids, never a customer/order roster), and `_offer_carry`'s own
+    # very first line - "this turn owns the roster" - reads `variables.
+    # selection_context`, so writing it here is what stops the OLD carry from
+    # also being re-armed underneath the new one.
+    set_page_handled = _set_page_carry(
+        variables,
+        gate_json=gate_json,
+        gate_ran=gate_ran,
+        prev=prev,
+        qf=qf,
+        fetch_rendered_result=fetch_rendered_result,
+        access_levels_used=access_levels_used,
+    )
+
     # ---- the offer survives until the topic changes (owner ruling K1) ----- #
     # AFTER miss-company-routing, so a clarify arm that armed its own context this turn
     # still wins, and BEFORE the `pending` marker below, which describes what the
@@ -907,6 +935,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         escalated=escalated,
         selection_context=selection_context,
         answered=answered,
+        set_page_handled=set_page_handled,
     )
 
     # ---- search-scope disclosure (delivery orders only) ------------------- #
@@ -1020,7 +1049,21 @@ def _matched_on_line(
     matched this". And the sentence is WHOLE-ANSWER scoped, so it is emitted only when
     EVERY row shown is a spec row: a partial attribution is not a weaker claim, it is a
     false one.
+
+    R31/AC-1356 (measured live): on a SET answer `last_result_set` is the
+    set_page carry DICT (`kind, domain, require, qualifying_ids, ...`), never
+    the array roster every OTHER `selection_context` carries - this arm's own
+    `answered` check demanded a non-empty ARRAY, so it returned before it
+    ever read `gate_json`, whatever the resolver/candidates carried. A dict
+    carrying a non-empty `qualifying_ids` is answered too (the rendered
+    products are its first page); the product-only shown-set filter above is
+    the SECONDARY honesty check, for the case this one lets through.
     """
+    carry_ids = jsc.get(last_result_set, "qualifying_ids") if isinstance(last_result_set, dict) else None
+
+    has_result_set = (jsc.is_array(last_result_set) and len(last_result_set) > 0) or (
+        isinstance(carry_ids, list) and len(carry_ids) > 0
+    )
     answered = (
         not is_escalate_branch
         and jsc.truthy(include_response)
@@ -1028,8 +1071,7 @@ def _matched_on_line(
         and jsc.get(qf, "message_type") == "business_query"
         and isinstance(user_response, str)
         and user_response.strip() != ""
-        and jsc.is_array(last_result_set)
-        and len(last_result_set) > 0
+        and has_result_set
     )
     if not answered:
         return user_response
@@ -1039,7 +1081,17 @@ def _matched_on_line(
     # uuid/code. A gate that did not run means no answer set, so no line.
     if not gate_ran:
         return user_response
-    shown_ents = list(jsc.array(jsc.get(gate_json, "compatible_entities")))
+    # R31/AC-1356: PRODUCT rows only - `compatible_entities` is every entity
+    # TYPE the gate let through (a promotion or customer row rides along on a
+    # turn whose OTHER tokens matched them), and a promotion is never a spec
+    # row. Type-agnostic, this arm's own honesty check (`all_shown_are_spec`)
+    # failed on the noise alone, silencing the Match line even when every
+    # PRODUCT shown had matched.
+    shown_ents = [
+        e
+        for e in jsc.array(jsc.get(gate_json, "compatible_entities"))
+        if jsc.get(e, "entity_type") == "product"
+    ]
     shown_set: set[str] = set()
     for e in shown_ents:
         for v in (jsc.get(e, "uuid"), jsc.get(e, "code")):
@@ -1107,7 +1159,22 @@ def _matched_on_line(
             asked.add(normalised)
     # If `spec_asked` is ABSENT the endpoint predates CRM #142: nothing is asked-for, so
     # only `class` survives and the line degrades to the description form. That
-    # degradation IS the deployment tell, and it is asserted rather than papered over.
+    # degradation IS the deployment tell on the FORWARD path, and it is asserted
+    # rather than papered over - unchanged here.
+    #
+    # R31/AC-1356 (a set/require answer only - `gate_json.predicate` present):
+    # a bare require leg ("which tap has cert") asks NOTHING about the
+    # product's attributes - `class` reaching `spec_asked` is
+    # `resolve_product_set`'s own class LABEL for the header noun (R30),
+    # never a customer-stated binding - so a set answer with no REAL spec
+    # word must carry no line at all, never the forward path's class-only
+    # degradation form (AC-1355's own "a set answer with no spec words
+    # carries no Match line"). `predicate`, never `last_result_set`'s shape,
+    # is the reliable "this is a set/require answer" signal - both a bare
+    # and a described require turn build the SAME array-shaped business
+    # summary `last_result_set` this function reads.
+    if isinstance(jsc.get(gate_json, "predicate"), dict) and not any(k != "class" for k in asked):
+        return user_response
     selected = [k for k in keys if k.lower() == "class" or k.lower() in asked]
     # Class leads: it is the noun the customer typed and the qualifiers modify it.
     ordered = [k for k in selected if k.lower() == "class"] + [k for k in selected if k.lower() != "class"]
@@ -1855,6 +1922,136 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
             variables["picker_families_carried"] = True  # diagnostic
 
 
+def _set_page_carry(
+    variables: dict[str, Any],
+    *,
+    gate_json: Mapping[str, Any],
+    gate_ran: bool,
+    prev: Mapping[str, Any],
+    qf: Mapping[str, Any],
+    fetch_rendered_result: bool = False,
+    access_levels_used: Any = None,
+) -> bool:
+    """AC-1317 (work item E3): a set-answer's "more" carry - a DICT-shaped kind,
+    never the array roster every OTHER `selection_context` above carries.
+
+    Returns whether THIS turn touched a set_page interaction at all (fresh,
+    continued or terminated) - the caller passes it to `_offer_carry` so a
+    turn that just CONSUMED the carry (the "that was all" / "narrow" terminal
+    replies, `resolve_gate.run`'s own short-circuit) is not immediately
+    re-armed underneath by `_offer_carry`'s own dict-shaped arm, which reads
+    `prev` with no way to tell "still open" from "just closed".
+
+    Three arms, in order:
+
+    * **a TERMINAL reply** (`resolve_gate.run`'s short-circuit stamps
+      `gate.set_page_terminal`) already composed "that was all" / "narrow" as
+      its OWN `escalate_message` - nothing to carry, ever.
+    * **a PAGE-CONTINUATION turn** (the same short-circuit stamps
+      `gate.predicate.page`) ADVANCES the SAME carry read straight off `prev` -
+      no id list is ever recomputed, because the whole point of the carry is
+      that a "more" turn runs no resolver call at all.
+    * **a FRESH set answer** (`gate.predicate` with no `page` marker and
+      `qualifying_total > 5`) arms a NEW carry, offset 5 - the header already
+      showed 5 (`fetch.entity_ids_transformer`'s own slicing, E1). A set
+      answer that already fit on one page (`qualifying_total <= 5`) arms
+      nothing: there is no second page to carry.
+
+    SEC-B1/AC-1333 (third console pass): the FRESH arm additionally requires
+    `fetch_rendered_result` - `gate_json.predicate` is present the moment the
+    RESOLVER ran, whatever the fetch step did with it afterwards, so a turn
+    the tier-ask / error / offer arm intercepted BEFORE the tool call still
+    carried a predicate and wrongly armed the carry off it alone. The carry
+    also stores `access_levels_used` (the SAME recomposed tier this render
+    actually used), so a later "more" page can re-inject it rather than
+    falling to the bare "more" parser's own empty list.
+    """
+    if not gate_ran:
+        return False
+    if jsc.truthy(jsc.get(gate_json, "set_page_terminal")):
+        return True
+
+    predicate = jsc.get(gate_json, "predicate")
+    if not isinstance(predicate, dict):
+        return False
+    qualifying_total = jsc.js_number(jsc.get(predicate, "qualifying_total"))
+    qualifying_total = 0 if jsc.is_nan(qualifying_total) else int(qualifying_total)
+    page = jsc.get(predicate, "page")
+
+    if isinstance(page, dict):
+        prev_carry = jsc.get(prev, "last_result_set")
+        if not isinstance(prev_carry, dict) or not prev_carry:
+            return True
+        if not fetch_rendered_result:
+            # R19 (third console pass): a page turn whose OWN fetch never
+            # reached the tool call (tier-ask, infrastructure error, the
+            # gate's own picker) must not advance the offset - nothing new
+            # was shown, so a retried "more" has to start from the SAME
+            # position, not skip past rows the customer never actually saw.
+            # The carry is kept exactly as `prev` left it.
+            variables["selection_context"] = "set_page"
+            variables["last_result_set"] = prev_carry
+            return True
+        new_offset = jsc.js_number(jsc.get(page, "new_offset"))
+        new_offset = 0 if jsc.is_nan(new_offset) else int(new_offset)
+        ids = prev_carry.get("qualifying_ids") or []
+        if new_offset >= len(ids) or new_offset >= qualifying_total:
+            return True  # exhausted - nothing left to carry into a further "more"
+        variables["selection_context"] = "set_page"
+        variables["last_result_set"] = {
+            **prev_carry,
+            "offset": new_offset,
+            "qualifying_total": qualifying_total,
+        }
+        return True
+
+    if not fetch_rendered_result:
+        # SEC-B1: the resolver ran and produced a predicate, but the fetch step
+        # never reached the tool call (a tier-ask, an infrastructure error, the
+        # gate's own picker) - nothing was ever SHOWN, so there is nothing to
+        # page through. Falling through to `gate_ran` alone would arm a carry
+        # for a set answer the customer never saw.
+        return False
+
+    if qualifying_total <= 5:
+        return False
+    from app.services.chatbot.lanes.business.answer import SET_PAGE_ID_CAP, set_noun_for
+
+    ids = [
+        jsc.get(e, "uuid")
+        for e in jsc.array(jsc.get(gate_json, "compatible_entities"))
+        if jsc.truthy(e) and jsc.get(e, "entity_type") == "product" and jsc.truthy(jsc.get(e, "uuid"))
+    ]
+    ids = ids[:SET_PAGE_ID_CAP]
+    if not ids:
+        return False
+    domain = jsc.get(qf, "domain_hint")
+    variables["selection_context"] = "set_page"
+    last_result_set: dict[str, Any] = {
+        "kind": "set_page",
+        "qualifying_ids": ids,
+        "offset": min(5, len(ids)),
+        "qualifying_total": qualifying_total,
+        "require": jsc.get(predicate, "require") or {},
+        "set_noun": set_noun_for(jsc.array(jsc.get(predicate, "class_labels"))),
+        "domain": domain,
+        # SEC-B1/AC-1333: the tier this render actually used, re-injected by
+        # `resolve_gate._set_page_reply` on the next "more" page - never the
+        # bare parser's own (empty) list a page turn carries.
+        "access_levels": access_levels_used if isinstance(access_levels_used, list) else [],
+    }
+    # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids,
+    # beside `access_levels` - present only when the FIRST page's own
+    # `predicate` carried them (a bare leg never does), so `resolve_gate.
+    # _set_page_reply` can re-inject the SAME list on every later "more" page
+    # without re-running the resolver.
+    cert_ids = jsc.get(predicate, "certificate_ids")
+    if isinstance(cert_ids, list) and cert_ids:
+        last_result_set["certificate_ids"] = cert_ids
+    variables["last_result_set"] = last_result_set
+    return True
+
+
 def _offer_carry(
     variables: dict[str, Any],
     *,
@@ -1864,6 +2061,7 @@ def _offer_carry(
     escalated: bool,
     selection_context: Any,
     answered: bool,
+    set_page_handled: bool = False,
 ) -> int | None:
     """"Choosing 1, 2, 3 works sequentially until I change domain or ask for another
     promotion." (owner, 2026-09-06)
@@ -1915,10 +2113,32 @@ def _offer_carry(
 
     Returns the carried `ttl` for `pending.derive`, or `None` when nothing was carried.
     """
+    if set_page_handled:
+        # `_set_page_carry` already decided this turn's set_page state (armed,
+        # advanced, or - the reason this guard exists - just TERMINATED by the
+        # "that was all" / "narrow" reply, which leaves `variables.
+        # selection_context` at its ladder default of `None` rather than a
+        # truthy value). Without this, `prev`'s STILL-"set_page" state below
+        # would be re-armed underneath the very reply that just closed it.
+        return None
     if jsc.truthy(selection_context) or jsc.truthy(variables.get("selection_context")):
         return None  # this turn owns the roster
     prev_ctx = jsc.get(prev, "selection_context")
     prev_set = jsc.get(prev, "last_result_set")
+    if prev_ctx == "set_page" and isinstance(prev_set, dict) and prev_set:
+        # R19/AC-1343 (third console pass, REV-S1 re-check): the carry survives
+        # ONLY `_set_page_carry`'s own page-continuation arm, which returns
+        # `set_page_handled=True` and short-circuits this whole function above
+        # - reaching HERE at all already means this turn did not continue an
+        # existing page (a fresh RENDER, whether it re-armed or not, also
+        # short-circuits above via that same flag). So every OTHER business-
+        # lane turn clears the carry unconditionally: same domain or not,
+        # answered or not - a same-domain clarify that rendered NOTHING
+        # (AC-1320's own zero-qualifying-with-unrecognized-terms shape) is not
+        # "the customer still looking at this set" either, and the earlier
+        # `answered or topic.changed` condition left it armed for exactly that
+        # gap.
+        return None
     if not jsc.truthy(prev_ctx) or not jsc.is_array(prev_set) or len(prev_set) == 0:
         return None
     if prev_ctx == "team_clarify":

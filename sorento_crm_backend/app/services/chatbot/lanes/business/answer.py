@@ -2326,6 +2326,187 @@ def _fmt_date(value: Any) -> str:
     return f"{match.group(3)}/{match.group(2)}/{match.group(1)}" if match else jsc.nullish_str(value)
 
 
+# F1 (attribute-first asks, AC-1319): a HAS turn's noun per leg, for the miss sentence.
+# `attachment_type` has no fixed noun - its own value already IS the customer's label.
+_PREDICATE_NOUN: dict[str, str] = {
+    "certificate": "a certificate",
+    "stock": "stock",
+    "promotion": "a promotion",
+    "incoming": "incoming stock",
+}
+
+
+def _predicate_phrase(require: dict[str, Any]) -> str:
+    """"a certificate", "stock and a certificate" - the leg(s) a HAS turn asked for.
+
+    `require`'s keys are AND'd (`product_predicate_service.resolve_product_set`'s own
+    contract), so the phrase joins on "and", never "or".
+    """
+    parts: list[str] = []
+    for key, value in (require or {}).items():
+        if key == "attachment_type":
+            label = jsc.js_string(value).strip()
+            parts.append(f"a {label}" if label else "an attachment")
+            continue
+        noun = _PREDICATE_NOUN.get(key)
+        if noun:
+            parts.append(noun)
+    return _and_list(parts) if parts else "that"
+
+
+# E2 (attribute-first asks, AC-1316): the SET-ANSWER header's noun per leg - plural,
+# said of the WHOLE qualifying set ("X taps HAVE certificates"), never the miss
+# sentence's singular "a certificate" `_PREDICATE_NOUN` carries above.
+_HEADER_PREDICATE_NOUN: dict[str, str] = {
+    "certificate": "certificates",
+    "stock": "stock",
+    "promotion": "a promotion",
+    "incoming": "incoming stock",
+}
+
+
+def _header_predicate_phrase(require: dict[str, Any]) -> str:
+    """"certificates", "PPS certificates", "certificates and stock" - the
+    header's own predicate noun, joined the same way `_predicate_phrase` joins
+    the miss sentence's.
+
+    Second console pass, AC-1316: a scheme-narrowed certificate leg
+    (`{"certificate": {"scheme": "PPS"}}`) names the SCHEME - "940 products
+    have PPS certificates." - never the bare "certificates" a `_HEADER_
+    PREDICATE_NOUN` lookup alone would give every certificate leg regardless
+    of scheme (measured live on "which item has PPS cert"). A bare
+    `{"certificate": True}` require is untouched.
+    """
+    parts: list[str] = []
+    for key, value in (require or {}).items():
+        if key == "attachment_type":
+            label = jsc.js_string(value).strip().lower()
+            parts.append(label if label else "an attachment")
+            continue
+        if key == "certificate" and isinstance(value, dict):
+            scheme = jsc.js_string(jsc.get(value, "scheme")).strip()
+            if scheme:
+                parts.append(f"{scheme} certificates")
+                continue
+        noun = _HEADER_PREDICATE_NOUN.get(key)
+        if noun:
+            parts.append(noun)
+    return _and_list(parts) if parts else "that"
+
+
+def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
+    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate noun>.
+    Showing <n>." - prepended, as its OWN line, ahead of the existing render (the
+    block below it is untouched). "Showing <n>" is dropped when every qualifying
+    product already fits on the page (`qualifying_total <= shown`).
+
+    A pure string function: `qualifying_total` and `shown` are counts the caller
+    already has (the resolver's own `qualifying_total`, and the page the domain
+    tool actually rendered), never re-derived here.
+    """
+    verb = "has" if qualifying_total == 1 else "have"
+    header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
+    if qualifying_total > shown:
+        header += f" Showing {shown}."
+    return header
+
+
+# REV-N2/AC-1337 (third console pass): the irregular endings a bare "+s" gets
+# wrong - tried on the label's LAST word before the default rule.
+_IRREGULAR_PLURAL_ENDINGS: dict[str, str] = {
+    "accessory": "accessories",
+    "jacuzzi": "jacuzzis",
+}
+
+
+def set_noun_for(class_labels: list[str] | None) -> str:
+    """AC-1316 (work item E2): the header's noun, off the described set's class
+    label(s). Exactly one class names a single noun ("Tap" -> "taps"); zero
+    classes (no class bound the described set at all) or more than one (a blended
+    set with no single noun) both fall back to the generic "products".
+
+    REV-N2/AC-1337: pluralised via `_IRREGULAR_PLURAL_ENDINGS` first ("Bathroom
+    Accessory" -> "bathroom accessories", never the bare "+s" rule's
+    "bathroom accessorys"), the default "+s" rule otherwise.
+    """
+    labels = [label for label in (class_labels or []) if label and label.strip()]
+    if len(labels) != 1:
+        return "products"
+    words = labels[0].strip().split()
+    if not words:
+        return "products"
+    last = words[-1].lower()
+    words[-1] = _IRREGULAR_PLURAL_ENDINGS.get(last, f"{last}s")
+    return " ".join(w.lower() for w in words)
+
+
+# --------------------------------------------------------------------------- #
+# E3 (attribute-first asks, AC-1317): "more" paging through the set_page carry.
+# --------------------------------------------------------------------------- #
+
+#: The carried id list's own cap - a 2,704-long qualifying set is carried as ids,
+#: not re-queried, so it has to stop somewhere short of the whole catalogue.
+#: Named so a test can monkeypatch it (`raising=False`) rather than seed the real
+#: count.
+SET_PAGE_ID_CAP = 200
+
+# REV-N1/AC-1337 (third console pass): the fixed set a paging reply must EQUAL,
+# lower-cased and stripped of punctuation - never a bare substring/word search,
+# which let "no more" and "next week?" wrongly page a carry that was never
+# asked to continue.
+_MORE_FIXED_PHRASES: frozenset[str] = frozenset(
+    {"more", "next", "lagi", "more please", "show more", "next 5", "next five", "lagi 5"}
+)
+_MORE_NUMBER_RE = re.compile(r"^more \d+$")
+_PUNCTUATION_RE = re.compile(r"[^\w\s]")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def is_more_reply(text: Any) -> bool:
+    """AC-1317/AC-1337: a bare "more" / "next" / "lagi" reply, or one of the
+    fixed short courtesy/paging phrases, lower-cased and stripped of
+    punctuation - equality only, never a substring/word search over an
+    arbitrary short message: "no more", "next week?" and "more taps with
+    stock" must NOT page a carry that was never asked to continue.
+    """
+    normalized = _WHITESPACE_RE.sub(" ", _PUNCTUATION_RE.sub("", jsc.js_string(text).lower())).strip()
+    if not normalized:
+        return False
+    return normalized in _MORE_FIXED_PHRASES or bool(_MORE_NUMBER_RE.match(normalized))
+
+
+def build_set_page_header(
+    qualifying_total: int, start: int, end: int, set_noun: str, require: dict[str, Any]
+) -> str:
+    """AC-1317: "<qualifying_total> <set noun> have <predicate noun>. Showing
+    <start> to <end>." - the CONTINUATION page's own header, off the SAME
+    predicate-noun phrase `build_set_header` uses, with a pre-known `set_noun`
+    (the carry's own, never re-derived from `class_labels` - a "more" turn runs
+    no resolver call and so never re-computes them).
+    """
+    verb = "has" if qualifying_total == 1 else "have"
+    return (
+        f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}. "
+        f"Showing {start} to {end}."
+    )
+
+
+def build_set_page_exhausted_message(qualifying_total: int, set_noun: str) -> str:
+    """AC-1317: "That was all <N> <noun>." - the fixed idiom, never conjugated
+    off `qualifying_total` ("was", not "were", even for a plural count)."""
+    return f"That was all {qualifying_total:,} {set_noun}."
+
+
+def build_set_page_narrow_message(set_noun: str) -> str:
+    """AC-1317: past the CARRIED id list's own cap (`SET_PAGE_ID_CAP`) - real
+    qualifying products remain, but the carry ran out before they did, so the
+    honest answer is to ask for a narrower question, never "that was all"."""
+    return (
+        f"That's as many {set_noun} as I can carry in one list - narrow the ask "
+        f"(a brand, or a more specific type) and I can show you the right ones."
+    )
+
+
 def not_found_error_message(
     item: dict[str, Any] | None,
     *,
@@ -2364,8 +2545,24 @@ def not_found_error_message(
     allowed_types = allowed_lookup if allowed_lookup is not None else []
 
     domain_hint = jsc.get(q, "domain_hint")
+    # R34/AC-1359: a resolver predicate whose `require` carries `certificate`
+    # or `attachment_type` already IS the document-type answer - the gate's
+    # own fix (R34, `gate.py`) means `gate_passed` is normally already True
+    # here too, but this stays a direct check of the SAME fact rather than
+    # relying on that alone: "any tap has PPS cert" recovers the leg off the
+    # message text server-side, and asking for the attachment type again
+    # would discard a predicate that already qualified (or honestly missed)
+    # a real row.
+    predicate = jsc.get(r, "predicate")
+    predicate_require = jsc.get(predicate, "require") if isinstance(predicate, dict) else None
+    has_document_leg = isinstance(predicate_require, dict) and (
+        jsc.truthy(predicate_require.get("certificate")) or jsc.truthy(predicate_require.get("attachment_type"))
+    )
     missing_attachment_type = (
-        domain_hint == "product_attachment" and not gate_passed and not have_attachment_type
+        domain_hint == "product_attachment"
+        and not gate_passed
+        and not have_attachment_type
+        and not has_document_leg
     )
     unresolved = jsc.array(jsc.get(r, "unresolved_tokens"))
     has_unresolved = len(unresolved) > 0
@@ -2949,8 +3146,154 @@ def not_found_error_message(
                 )
         else:
             require_specific = jsc.get(g, "require_specific")
+            predicate = jsc.get(g, "predicate")
             if jsc.truthy(require_specific):
                 escalate_message = jsc.get(g, "gate_clarification")
+            elif isinstance(predicate, dict) and "schemes_on_file" in predicate:
+                # F3 (AC-1321): a certificate SCHEME word the register cannot read -
+                # names what IS on file instead of the generic "no {attach_noun}
+                # matched these" below, which would say nothing about schemes at all.
+                require_echo = jsc.get(predicate, "require") or {}
+                scheme_word = jsc.js_string(jsc.get(require_echo, "certificate")).strip()
+                schemes = jsc.array(jsc.get(predicate, "schemes_on_file"))
+                schemes_text = (
+                    ", ".join(jsc.js_string(s) for s in schemes) if schemes else "none on file yet"
+                )
+                escalate_message = (
+                    f"The register has no {scheme_word or 'that'} certificates. "
+                    f"Schemes on file: {schemes_text}. "
+                    f"Would you like me to escalate to {team} team?"
+                )
+            elif isinstance(predicate, dict) and "attachment_types_on_file" in predicate:
+                # R6/AC-1329 (console fix round 2): the unrecognised word is an
+                # ATTACHMENT LABEL ("photo"), not a class/product_type word - a
+                # document-type miss answers the wrong question with the
+                # product-type sentence below. `_leg_attachment_type`'s own
+                # `_UnrecognizedLabel` is the ONLY leg that carries this key, so
+                # it takes priority over the generic F2 branch beneath it.
+                term = jsc.js_string(
+                    jsc.get(jsc.get(predicate, "require") or {}, "attachment_type")
+                ).strip()
+                types_on_file = jsc.array(jsc.get(predicate, "attachment_types_on_file"))
+                types_text = (
+                    ", ".join(jsc.js_string(t) for t in types_on_file)
+                    if types_on_file
+                    else "none on file yet"
+                )
+                escalate_message = (
+                    f"I don't know '{term}' as a document type. Types I know: {types_text}."
+                )
+                is_clarification = True
+            elif (
+                isinstance(predicate, dict)
+                and jsc.get(predicate, "qualifying_total") == 0
+                and jsc.array(jsc.get(predicate, "unrecognized_terms"))
+            ):
+                # AC-1320 (work item F2): the described set named NOTHING this
+                # catalogue can read - clarify the term, never answer the
+                # honest-zero copy below, which would falsely say "none of these
+                # qualify" for a set that was never actually described.
+                term = jsc.js_string(jsc.array(jsc.get(predicate, "unrecognized_terms"))[0])
+                suggestions = [
+                    jsc.js_string(s).strip().lower()
+                    for s in jsc.array(jsc.get(predicate, "suggestions"))
+                    if jsc.truthy(s)
+                ]
+                if suggestions:
+                    escalate_message = (
+                        f"I don't know '{term}' as a product type. "
+                        f"Did you mean {_human_list(suggestions)}?"
+                    )
+                else:
+                    # Fix round, F2: NOTHING was near enough to offer as a real
+                    # "did you mean" - the catalogue's own most common class
+                    # labels (`common_class_labels`) still give a real answer,
+                    # never the contentless "Did you mean the product types I
+                    # know?".
+                    common = [
+                        jsc.js_string(c).strip().lower()
+                        for c in jsc.array(jsc.get(predicate, "common_class_labels"))
+                        if jsc.truthy(c)
+                    ]
+                    common_text = ", ".join(common) if common else "a class or product type I know"
+                    escalate_message = (
+                        f"I don't know '{term}' as a product type. "
+                        f"Try a product type such as {common_text}."
+                    )
+                is_clarification = True
+            elif (
+                isinstance(predicate, dict)
+                and jsc.get(predicate, "qualifying_total") == 0
+                and not jsc.array(jsc.get(predicate, "unrecognized_terms"))
+            ):
+                # AC-1319: a HAS turn's described set is honest (every content word
+                # bound to something, C4's gate bypass let the qualifying matches
+                # through), and NONE of them satisfy the predicate. Name the set and
+                # the predicate, and the codes actually checked - never the generic
+                # "no {attach_noun} matched these" below, which names only the
+                # predicate word and drops the set the customer actually asked about.
+                # R16/AC-1340 (third console pass): a category / product_type raw
+                # names the subject too, not only brand + product - "which
+                # bathroom accessory has stock" carries no brand and no `hint:
+                # "product"` entity at all, so the old subject_words stayed
+                # empty and the literal fallback "a match" glued onto the
+                # sentence's own leading "a" read "Couldn't find a a match with
+                # stock.". When NO raw of any kind names it either, the
+                # predicate's OWN `class_labels` (real evidence: the described
+                # set's class) is the next fallback; only when THAT is also
+                # empty does the sentence drop the article entirely ("any
+                # product"), never "a" + a placeholder noun.
+                brand_raw = jsc.get(
+                    jsc.find(entities_list, lambda e: jsc.get(e, "hint") == "brand"), "raw"
+                )
+                product_raw_words = [
+                    jsc.js_string(jsc.get(e, "raw"))
+                    for e in entities_list
+                    if jsc.get(e, "hint") == "product" and jsc.truthy(jsc.get(e, "raw"))
+                ]
+                category_or_type_raw_words = [
+                    jsc.js_string(jsc.get(e, "raw"))
+                    for e in entities_list
+                    if jsc.get(e, "hint") in ("category", "product_type") and jsc.truthy(jsc.get(e, "raw"))
+                ]
+                subject_words = (
+                    ([jsc.js_string(brand_raw)] if jsc.truthy(brand_raw) else [])
+                    + product_raw_words
+                    + category_or_type_raw_words
+                )
+                if not subject_words:
+                    predicate_class_labels = [
+                        jsc.js_string(c).strip()
+                        for c in jsc.array(jsc.get(predicate, "class_labels"))
+                        if jsc.truthy(c)
+                    ]
+                    if predicate_class_labels:
+                        subject_words = [predicate_class_labels[0].lower()]
+                subject_phrase = f"a {' '.join(subject_words)}" if subject_words else "any product"
+                # Read straight off the RESOLVER's own resolutions, never off this
+                # gate's `compatible_entities` - the zero-qualifying carve-out
+                # (`gate.py`'s `_is_a_described_word` branch) deliberately keeps a
+                # described-set word's matches OUT of `compatible_entities` (so the
+                # miss gate still fires), which would otherwise empty this list too.
+                checked_codes: list[str] = []
+                for res in jsc.array(jsc.get(r, "resolutions")):
+                    for m in jsc.array(jsc.get(res, "matches")):
+                        if not jsc.truthy(m) or jsc.get(m, "entity_type") != "product":
+                            continue
+                        code = jsc.get(m, "canonical_code")
+                        if jsc.truthy(code) and code not in checked_codes:
+                            checked_codes.append(jsc.js_string(code))
+                checked_codes = checked_codes[:5]
+                checked = (
+                    f" (checked {', '.join(jsc.js_string(c) for c in checked_codes)})"
+                    if checked_codes
+                    else ""
+                )
+                escalate_message = (
+                    f"Couldn't find {subject_phrase} with "
+                    f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}. "
+                    f"Would you like me to escalate to {team} team?"
+                )
             elif domain_hint == "product_attachment":
                 # FIX B: natural, parser-driven phrasing - never leak the internal literal.
                 product_raws = [
