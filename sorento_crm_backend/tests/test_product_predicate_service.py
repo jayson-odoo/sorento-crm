@@ -414,6 +414,110 @@ def test_class_membership_is_a_filter_but_numbers_stay_boosts(db):
     assert out["qualifying_total"] == 2
 
 
+# --------------------------------------------------------------------------- #
+# Owner regression (PR #833, R27, AC-1352): a spec binding with a STRING       #
+# value is a membership filter of the described set, alongside class /        #
+# product_type / brand - a NUMERIC binding stays boost-only.                   #
+# --------------------------------------------------------------------------- #
+
+
+def _water_closet_with_trap(db, code, *, trap_type, trap_length, qty=5):
+    from app.models.product_spec import ProductSpecifications
+
+    product = _product(db, code, f"SORENTO CERAMIC {code} WATER CLOSET", category="wc")
+    spec_row = db.query(ProductSpecifications).filter(ProductSpecifications.product_id == product.id).one()
+    values = dict(spec_row.values or {})
+    values["trap_type"] = {"value": trap_type}
+    values["trap_length"] = {"value": trap_length}
+    spec_row.values = values
+    db.flush()
+    _stock(db, product, qty)
+    return product
+
+
+def test_filter_specs_treats_a_string_spec_binding_as_membership(db):
+    """AC-1352/R27: `filter_specs(db, specs=[class Water Closet, trap_type
+    s_trap])` must keep ONLY the s_trap product - a string-valued spec key
+    (trap_type, colour, finish, ...) is a membership filter of the described
+    set exactly like class / product_type / brand.
+
+    RED: `_MEMBERSHIP_KEYS` is `("class", "product_type", "brand")` only -
+    `trap_type` is silently dropped from `membership`, so the clause is class
+    Water Closet alone and BOTH products (s_trap and p_trap) pass it.
+    """
+    s_trap = _water_closet_with_trap(db, "ZZT-WC-STRAP", trap_type="s_trap", trap_length=250)
+    _water_closet_with_trap(db, "ZZT-WC-PTRAP", trap_type="p_trap", trap_length=180)
+
+    verdict = filter_specs(
+        db,
+        specs=[
+            {"key": "class", "value": "Water Closet"},
+            {"key": "trap_type", "value": "s_trap"},
+        ],
+    )
+    assert verdict["clause"] is not None, verdict
+
+    from app.models.product_spec import ProductSpecifications
+
+    rows = (
+        db.query(Product.product_code)
+        .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+        .filter(verdict["clause"])
+        .all()
+    )
+    codes = {row[0] for row in rows}
+    assert codes == {s_trap.product_code}, codes
+
+
+def test_resolve_product_set_filters_on_the_string_spec_binding(db):
+    """AC-1352/R27: the resolver-level contract - `resolve_product_set(require=
+    {"stock": True}, specs=[class Water Closet, trap_type s_trap])` must count
+    ONLY the s_trap product.
+
+    RED for the SAME reason as the sibling `filter_specs` test: `trap_type`
+    never reaches membership, so `qualifying_total` is 2, not 1.
+    """
+    s_trap = _water_closet_with_trap(db, "ZZT-WC-STRAP2", trap_type="s_trap", trap_length=250)
+    _water_closet_with_trap(db, "ZZT-WC-PTRAP2", trap_type="p_trap", trap_length=180)
+
+    out = resolve_product_set(
+        db,
+        require={"stock": True},
+        specs=[
+            {"key": "class", "value": "Water Closet"},
+            {"key": "trap_type", "value": "s_trap"},
+        ],
+    )
+    assert out["qualifying_total"] == 1, out
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == [s_trap.product_code], codes
+
+
+def test_resolve_product_set_keeps_a_numeric_spec_binding_as_a_ranking_boost(db):
+    """AC-1352/R27: a NUMERIC spec binding (trap_length) must NOT filter
+    membership - both water closets qualify regardless of their trap_length -
+    but the one matching the stated number ranks first, the same "filter vs
+    boost" split `test_class_membership_is_a_filter_but_numbers_stay_boosts`
+    already pins for `length`.
+    """
+    matching = _water_closet_with_trap(db, "ZZT-WC-250", trap_type="s_trap", trap_length=250)
+    other = _water_closet_with_trap(db, "ZZT-WC-180", trap_type="p_trap", trap_length=180)
+
+    out = resolve_product_set(
+        db,
+        require={"stock": True},
+        specs=[
+            {"key": "class", "value": "Water Closet"},
+            {"key": "trap_length", "value": 250},
+        ],
+        free_terms=["water closet"],
+    )
+    assert out["qualifying_total"] == 2, out
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert set(codes) == {matching.product_code, other.product_code}, codes
+    assert codes[0] == matching.product_code, codes
+
+
 def test_unrecognized_terms_do_not_silently_mean_none(db):
     p = _product(db, "ZZT-SINK-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
     _stock(db, p, 1)

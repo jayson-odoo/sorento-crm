@@ -526,6 +526,96 @@ def test_class_word_in_query_scopes_the_described_set(client, db):
 
 
 # --------------------------------------------------------------------------- #
+# Owner regression (PR #833, R27, AC-1351): a word the deterministic spec       #
+# reader already BOUND to a spec key ("s trap" -> trap_type=s_trap, "250mm" ->  #
+# trap_length=250) must never also survive into the described-set scope term - #
+# the remainder glues "trap" onto the class words, so "water closet trap"      #
+# clarifies as an unknown product type instead of scoping to Water Closet.      #
+# --------------------------------------------------------------------------- #
+
+
+def test_bound_spec_words_never_reach_the_described_sets_scope_term(client, db):
+    """AC-1351/R27: "check stock water closet with s trap 250mm" (worked before
+    this lane through the forward spec path) must scope to class Water Closet,
+    with `trap_type=s_trap` and `trap_length=250` both bound, and report
+    NOTHING unrecognized.
+
+    World: one Water Closet product (class derived from its own description,
+    same convention `test_class_word_in_query_scopes_the_described_set` uses)
+    whose `ProductSpecifications` carries `trap_type=s_trap` and
+    `trap_length=250` directly, plus a Stock row so the `stock` leg can find
+    it.
+
+    RED: measured live - `derive_search_inputs` correctly binds
+    `trap_type=s_trap` / `trap_length=250` and reports `Understanding.
+    bound_phrases == {"trap_type": ["s trap"]}`, but nothing on the resolver's
+    HAS branch removes the bound word "trap" from the remainder before it is
+    glued into one scope term - `_content_words` gives ['stock', 'water',
+    'closet', 'trap'], predicate words already stripped "stock", so the term
+    becomes "water closet trap", which `filter_specs` cannot resolve to any
+    class and reports unrecognized whole-cloth.
+    """
+    from app.models.inventory import Stock, Warehouse
+    from app.models.product_spec import ProductSpecifications
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+
+    product = Product(
+        id=str(uuid.uuid4()),
+        product_code="ZZTWC9012",
+        product_name="ZZTWC9012",
+        description="ZZT S/STEEL WATER CLOSET",
+        category_id=cat.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("1.00"),
+    )
+    db.add(product)
+    db.flush()
+    derive_for_code(db, product.product_code)
+
+    spec_row = (
+        db.query(ProductSpecifications).filter(ProductSpecifications.product_id == product.id).one()
+    )
+    values = dict(spec_row.values or {})
+    values["trap_type"] = {"value": "s_trap"}
+    values["trap_length"] = {"value": 250}
+    spec_row.values = values
+    db.flush()
+
+    warehouse = Warehouse(id=str(uuid.uuid4()), warehouse_code="ZZT-WC-WH", warehouse_name="ZZT WC WH")
+    db.add(warehouse)
+    db.flush()
+    db.add(
+        Stock(
+            id=str(uuid.uuid4()),
+            product_id=product.id,
+            warehouse_id=warehouse.id,
+            quantity_on_hand=5,
+            quantity_reserved=0,
+            quantity_damaged=0,
+        )
+    )
+    db.flush()
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "check stock water closet with s trap 250mm",
+            "tokens": ["water closet"],
+            "match_mode": "and",
+            "require": {"stock": True},
+            "predicate_words": ["stock"],
+        },
+    )
+    assert response.status_code == 200
+    predicate = response.json()["predicate"]
+    assert predicate["unrecognized_terms"] == [], predicate
+    assert predicate.get("class_labels") == ["Water Closet"], predicate
+    assert predicate["qualifying_total"] >= 1, predicate
+
+
+# --------------------------------------------------------------------------- #
 # Fix round (console findings, 11 Sep 2026, committed 3779b32d6) - AC-1305, C1:  #
 # the gate is a WORD/CODE shape test, never a match TIER. Today's                #
 # `_has_exact_product_match` (references.py ~line 1470) still gates on          #
