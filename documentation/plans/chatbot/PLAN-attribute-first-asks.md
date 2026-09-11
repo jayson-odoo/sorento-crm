@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: IMPLEMENTED, PR #833 open; R27 regression fix (owner test) landing on the PR before merge (11 Sep 2026). Lane `feat/chatbot-attribute-first-asks`.
+Status: IMPLEMENTED, PR #833 open and reviewed (rounds 1 to 5, verdict ready); owner test round R27 to R34 landed; merge pending owner go (11 Sep 2026). Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
