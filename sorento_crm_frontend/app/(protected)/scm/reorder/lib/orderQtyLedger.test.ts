@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clampForecastQty,
+  composeMixture,
   daysTerm,
   forecastAddOn,
   forecastQtyCap,
@@ -8,6 +9,7 @@ import {
   roundBuyQty,
   roundOrderQty,
 } from './orderQtyLedger';
+import type { CoverProposal } from './coverPlan';
 import type { TrajectoryEntry } from './trajectory';
 
 /**
@@ -276,5 +278,46 @@ describe('forecastQtyCap and clampForecastQty (Fix A, user feedback, 2026-08-12)
 
   it('rounds a fractional entry to the nearest integer', () => {
     expect(clampForecastQty(59.6, 600)).toBe(60);
+  });
+});
+
+describe('composeMixture (PLAN-reorder-one-formula.md, AC-6) - gap is the NEED, never the already-net order_qty', () => {
+  // B2155's own parts: need 663 = stock 128 + PO 339 + buy 196. Toggling a part off (or
+  // editing it down) must raise the buy by exactly the same amount it took away - never
+  // by re-netting the whole 663 against a SECOND stock/PO offer.
+  const b2155Cover: CoverProposal = {
+    coverQty: 128, buyQty: 535, sources: [], offered: [], isSplit: false,
+  };
+  const need = 663;
+  const poQty = 339;
+
+  it('both stock and PO on: Buy 196', () => {
+    const m = composeMixture(need, b2155Cover, poQty, { stockOn: true, poOn: true });
+    expect(m.buy).toBe(196);
+  });
+
+  it('turning stock off: Buy 324 (196 + the 128 that was covering it)', () => {
+    const m = composeMixture(need, b2155Cover, poQty, { stockOn: false, poOn: true });
+    expect(m.buy).toBe(324);
+  });
+
+  it('turning PO off: Buy 535 (196 + the 339 the PO was absorbing)', () => {
+    const m = composeMixture(need, b2155Cover, poQty, { stockOn: true, poOn: false });
+    expect(m.buy).toBe(535);
+  });
+
+  it('editing stock down to 100: Buy 224 (196 + the 28 taken back from stock)', () => {
+    const m = composeMixture(need, b2155Cover, poQty, {
+      stockOn: true, poOn: true, stockQty: 100,
+    });
+    expect(m.buy).toBe(224);
+  });
+
+  it('never goes negative, however much is toggled on', () => {
+    const generous: CoverProposal = {
+      coverQty: 10_000, buyQty: 0, sources: [], offered: [], isSplit: false,
+    };
+    const m = composeMixture(50, generous, 10_000, { stockOn: true, poOn: true });
+    expect(m.buy).toBeGreaterThanOrEqual(0);
   });
 });

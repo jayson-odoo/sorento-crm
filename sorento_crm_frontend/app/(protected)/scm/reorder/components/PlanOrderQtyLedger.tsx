@@ -533,8 +533,21 @@ export function OrderQtyLedger({
   const rec = line.rec;
   const q = line.order_qty_inputs;
   const manual = rec.policy_type === 'reorder_level';
-  const needed = Math.ceil(line.order_qty);
   const poQty = poReceipts.reduce((t, r) => t + r.remaining, 0);
+  // ONE FORMULA (PLAN-reorder-one-formula.md, AC-7): `recommended_qty` is the engine's
+  // raw buy gap, already net of on-hand AND the open PO book (since #828) - `line.
+  // order_qty` (the FINAL, rounded figure) is the same fact after MOQ rounding. Netting
+  // PO a SECOND time against that already-net figure is what read a genuine 196-unit
+  // gap as "Nothing to buy": PO is added BACK here, once, so the toggle nets it exactly
+  // once overall. On-hand is untouched - `cover` (cross-location stock this row's own
+  // net does NOT already contain) still applies on top exactly as it always has.
+  //
+  // Never gated on `rawBuy > 0`: a `recommended_qty` of 0 or less (a covered row) still
+  // has to reveal a real buy the moment the buyer toggles the PO OFF ("pretend that
+  // supply is not there") - that IS the question the toggle answers, and `poOffset`'s own
+  // `Math.max(..., 0)` already keeps the DEFAULT (everything on) reading at 0 or less.
+  const rawBuy = rec.recommended_qty ?? line.order_qty;
+  const needed = rawBuy + poQty;
 
   // The orders behind this row, one fetch per channel - the same endpoint and the same
   // per-channel narrowing the SO cell's own drill uses. Fired when the ledger mounts,

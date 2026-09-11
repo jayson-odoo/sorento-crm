@@ -88,8 +88,9 @@ def _world(db, company_id=None, inputs=None):
         + ", created_at) VALUES (:id, 'completed', false"
         + (", :co" if company_id else "")
         + ", now())"), {"id": run_id, **({"co": company_id} if company_id else {})})
-    # `inputs` carries the frozen channel split the P8 filter reads. None reproduces a run
-    # that states neither figure - a legacy one - which must keep its receipts.
+    # `inputs` carries the frozen channel split (P8 retired - no longer filtered on, but
+    # still frozen and worth exercising). None reproduces a run that states neither figure
+    # - a legacy one - which must keep its receipts.
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation "
         "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status, inputs"
@@ -146,25 +147,22 @@ def test_the_endpoint_serves_it_and_rbac_holds(scm_app):
 
 
 # --------------------------------------------------------------------------- #
-# P8: a project row's purchase order is consumed by the Order Inquiry, not here
+# P8 is retired (PLAN-reorder-one-formula.md, 11 Sep 2026)
 # --------------------------------------------------------------------------- #
 
-def test_a_project_only_cell_serves_no_receipts():
-    """`PLAN-scm-purchasing-uat-journey.md` P8, from the captain's own question: "why does
-    reorder planning consider outstanding PO again when the OI already links to it".
-
-    A raised inquiry row links to the PO line and the plan's Project figure drops by exactly
-    that much. Offering the same PO here as well is the same units twice, and the buyer
-    handles them twice - so a cell whose demand is ALL project is absent from the map, which
-    is what removes "Use PO" from the row.
-    """
+def test_a_project_only_cell_keeps_its_receipts_too():
+    """P8 is retired: the engine nets every row's open PO ONCE, project demand included
+    (since #828), so hiding a project-only row's own receipts broke the Suggestion's own
+    identity (Stock + PO + Buy = need) for exactly that row. A cell whose demand is ALL
+    project now serves its receipts the same as any other."""
     from tests._pg_fixture import pg_session
     with pg_session() as db:
         w = _world(db, inputs={"project_committed": 90, "retail_committed": 0})
 
         out = po_book_service.po_book_for_run(db, w["run_id"])
 
-        assert f"{w['product_id']}:{w['warehouse_id']}" not in out["po_book"]
+        assert sum(r["remaining"]
+                   for r in out["po_book"][f"{w['product_id']}:{w['warehouse_id']}"]) == 564.0
 
 
 def test_a_cell_carrying_BOTH_channels_keeps_its_receipts():

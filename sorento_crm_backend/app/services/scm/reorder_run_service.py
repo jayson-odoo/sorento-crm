@@ -1943,27 +1943,27 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                   # a gap nothing was covering: CB2907 read On hand 2 with every pool empty.
                   "net": float(c.get("net") or 0.0)}
                  for r, c in zip(prows, cells)]
-    agg = eng.aggregate_product(wh_inputs, level=level, moq=moq,
+    # PLAN-reorder-one-formula.md (owner ruling, 11 Sep 2026): "no level = 0" - a product
+    # nobody has set a level for is planned against a target of 0, the SAME trigger and
+    # sizing path a level-set product goes through, never a special case. Project demand
+    # is already inside `net` (folded in above, "AC-R2"), so level 0 alone is enough to
+    # buy it - the #794 bypass that bought the confirmed Project Buy IN FULL, with no
+    # netting against on-hand/SPO/PO at all, is retired: it is exactly the double-buy /
+    # under-buy bug this plan fixes (measured on B2155-NL-BLUE: bypass bought 493, the
+    # one formula buys 196). `level` itself (possibly None) is still what is FROZEN onto
+    # the row (`inputs.reorder_level`, `needs_level` below) - only the sizing target
+    # substitutes 0.
+    effective_level = level if level is not None else 0.0
+    agg = eng.aggregate_product(wh_inputs, level=effective_level, moq=moq,
                                 order_multiple=order_multiple)
-    # Confirmed unplaced Project Buy, summed BEFORE sizing - the same figure `_emit_pool`
-    # already bypasses the trigger with (AC-E05). A no-level product has no target to net
-    # against at all, so without this a product with firm demand and nothing else read
-    # "Nothing" (issue #794). A level-SET product never reaches the bypass below: its
-    # `net` (fed into `agg`) already has the confirmed Buy subtracted, so the trigger has
-    # already seen it - adding it again here would buy stock the level already covers.
+    # Confirmed unplaced Project Buy - demand only, folded into `net` above (never added a
+    # second time here). Still summed for the `project_need`/`retail_need` display split
+    # below (AC-F03: the two halves must sum to what was actually sized).
     pool_project_need = sum(float(c.get("project_need") or 0.0) for c in cells)
-    if level is None:
-        triggered, reason_label = False, None
-    else:
-        triggered, reason_label = eng.trigger("reorder_level", net=agg["agg_net"],
-                                              reorder_level=level)
+    triggered, reason_label = eng.trigger("reorder_level", net=agg["agg_net"],
+                                          reorder_level=effective_level)
     recommended = float(agg["recommended_qty"]) if triggered else 0.0
     rounded = float(agg["buy_qty"]) if triggered else 0.0
-    if level is None and pool_project_need > 0:
-        triggered = True
-        recommended = pool_project_need
-        reason_label = f"project buy: {_qty_label(pool_project_need)} confirmed unplaced Buy"
-        rounded = eng.round_order_qty(recommended, moq, order_multiple)
     split = eng.allocate(rounded, agg["warehouses"]) if rounded > 0 else {}
 
     # The row's identity comes from a real location - the one holding the most of the item,

@@ -800,3 +800,184 @@ def test_s14_export_pdf_html_renders_a_two_month_delivery_cell_with_a_line_break
     rows = svc._export_rows([_FULL_ROW])
     html = svc._export_pdf_html(rows, "2026-09-10")
     assert "Jul - 5\nAug - 3" in html or "Jul - 5<br>Aug - 3" in html
+
+
+# --- PLAN-reorder-one-formula.md, S4/AC-4: the Suggestion is a DISPLAY of the net -------
+#
+# Hand-built `ReorderRecommendation` rows, the idiom `test_product_grain_summary.py`
+# documents (`_rec`/`single_location_plan_basis`) for isolating `write_rows`/
+# `_suggestion_text` arithmetic from the engine's own trigger/sizing behaviour, which
+# `test_reorder_one_formula.py` covers with a real run. `decision_grain='product'` so
+# `_belongs_on_the_book` admits every case, including the covered ("Nothing") one, which
+# carries no `buy`/`exception` row at all.
+
+def test_suggestion_parts_are_display_of_the_net():
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from app.models.scm import ReorderRecommendation, ReorderRun
+    from tests.scm.conftest import single_location_plan_basis
+    from tests.scm.test_product_grain_summary import _product as _pgs_product
+    from tests.scm.test_product_grain_summary import _row as _pgs_row
+    from tests.scm.test_product_grain_summary import _run as _pgs_run
+    from tests.scm.test_product_grain_summary import _warehouse as _pgs_warehouse
+    from tests.scm.test_summary_order_service import pg_session as _pg_session
+
+    with _pg_session() as db:
+        run = _pgs_run(db, decision_grain="product", contract_version=1)
+
+        # Case 1: B2155-NL-BLUE's own figures. need = 493 + 170 - 0 = 663;
+        # buy = 663 - 128 (on hand) - 339 (open PO) = 196.
+        b2155 = _pgs_product(db, stem="B2155")
+        wh1 = _pgs_warehouse(db, stem="W1")
+        from app.models.inventory import Stock
+        db.add(Stock(id=str(uuid.uuid4()), product_id=b2155.id, warehouse_id=wh1.id,
+                     quantity_on_hand=128))
+        sup1 = Supplier(id=str(uuid.uuid4()), supplier_code=f"{MARKER}-S1"[:30],
+                        supplier_name=f"{MARKER} supplier 1")
+        db.add(sup1)
+        db.flush()
+        po1 = PurchaseOrder(id=str(uuid.uuid4()), po_number=f"{MARKER}-PO1"[:50],
+                           supplier_id=sup1.id, status="active",
+                           issue_date=date.today() - timedelta(days=10))
+        db.add(po1)
+        db.flush()
+        db.add(PurchaseOrderLine(
+            id=str(uuid.uuid4()), purchase_order_id=po1.id, product_id=b2155.id,
+            warehouse_id=wh1.id, qty_ordered=339, qty_received=0, line_status="open",
+        ))
+        b1_inputs = {"project_need": 493.0, "retail_need": 170.0,
+                    "on_hand": 128.0, "po_ordered": 339.0, "reorder_level": None}
+        b1_inputs["plan_basis"] = single_location_plan_basis(b1_inputs, wh1, rounded=196.0)
+        db.add(ReorderRecommendation(
+            id=str(uuid.uuid4()), run_id=run.id, rec_type="buy", product_id=b2155.id,
+            warehouse_id=wh1.id, rounded_qty=196, inputs=b1_inputs, status="proposed",
+        ))
+
+        # Case 2: CSK2800-QT-shaped - pure confirmed project demand, no stock, no PO.
+        csk = _pgs_product(db, stem="CSK")
+        wh2 = _pgs_warehouse(db, stem="W2")
+        c2_inputs = {"project_need": 914.0, "retail_need": 0.0,
+                    "on_hand": 0.0, "po_ordered": 0.0, "reorder_level": None}
+        c2_inputs["plan_basis"] = single_location_plan_basis(c2_inputs, wh2, rounded=914.0)
+        db.add(ReorderRecommendation(
+            id=str(uuid.uuid4()), run_id=run.id, rec_type="buy", product_id=csk.id,
+            warehouse_id=wh2.id, rounded_qty=914, inputs=c2_inputs, status="proposed",
+        ))
+
+        # Case 3: covered - stock already meets the level, nothing to buy at all.
+        cov = _pgs_product(db, stem="COV")
+        wh3 = _pgs_warehouse(db, stem="W3")
+        c3_inputs = {"project_need": 0.0, "retail_need": 0.0,
+                    "on_hand": 135.0, "po_ordered": 0.0, "reorder_level": 120.0}
+        c3_inputs["plan_basis"] = single_location_plan_basis(c3_inputs, wh3, rounded=0.0)
+        db.add(ReorderRecommendation(
+            id=str(uuid.uuid4()), run_id=run.id, rec_type="covered", product_id=cov.id,
+            warehouse_id=wh3.id, rounded_qty=0, inputs=c3_inputs, status="proposed",
+        ))
+        db.flush()
+
+        written = svc.write_rows(db, run.id)
+        assert written == 3
+
+        row1 = _pgs_row(db, run, b2155)
+        assert float(row1.suggested_qty) == 196.0, (
+            f"expected the rounded buy (196), got {row1.suggested_qty}"
+        )
+        assert row1.suggestion == "Stock 128 + PO 339 + Buy 196", row1.suggestion
+
+        row2 = _pgs_row(db, run, csk)
+        assert float(row2.suggested_qty) == 914.0
+        assert row2.suggestion == "Buy 914", row2.suggestion
+
+        row3 = _pgs_row(db, run, cov)
+        assert float(row3.suggested_qty) == 0.0
+        assert row3.suggestion == "Nothing", row3.suggestion
+
+
+def test_sheet_dealer_os_matches_grid_retail():
+    """AC-10: the exported sheet's "Dealer o/s" column prints the SAME figure AC-9 pins
+    on `OrderSummaryRow.dealer_outstanding` - the run's own horizoned retail, not the
+    unfiltered SO book. Red for the same reason AC-9 is: `write_rows` has not yet learned
+    to prefer the frozen `retail_committed` over `_demand_aggregates`'s SO-book read.
+    """
+    from app.models.inventory import Stock, Warehouse
+    from app.models.order import Customer, SalesOrder, SalesOrderLine
+    from app.models.procurement import ProductSupplier
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from app.services.scm import reorder_engine as eng
+    from app.services.scm import reorder_run_service as rrs
+    from tests.scm.test_summary_order_service import _supplier as _sos_supplier
+    from tests.scm.test_summary_order_service import pg_session as _pg_session
+
+    with _pg_session() as db:
+        eng.ensure_reorder_policy_defaults(db)
+        db.execute(text("UPDATE scm.reorder_policy SET policy_type = 'reorder_point'"))
+        db.flush()
+
+        cat = ProductCategory(id=_u(), category_code=f"{MARKER}-CAT"[:40],
+                              category_name=f"{MARKER} cat")
+        uom = UnitOfMeasure(id=_u(), uom_name=f"{MARKER} uom", uom_code=f"{MARKER}-U"[:20])
+        db.add_all([cat, uom])
+        db.flush()
+        product = Product(
+            id=_u(), product_code=f"{MARKER}-SHEET-{_u()[:8]}",
+            product_name="ZZTOSHEET AC-10 product", category_id=cat.id, base_uom_id=uom.id,
+            list_price=0, is_active=True, is_discontinued=False,
+        )
+        wh = Warehouse(
+            id=_u(), warehouse_code=f"{MARKER}-SHW"[:30], warehouse_name="w",
+            is_active=True, counts_as_available=True,
+        )
+        db.add_all([product, wh])
+        db.flush()
+        db.add(Stock(id=_u(), product_id=product.id, warehouse_id=wh.id, quantity_on_hand=0))
+        sup = _sos_supplier(db, f"{MARKER} sheet supplier")
+        db.add(ProductSupplier(
+            id=_u(), product_id=product.id, supplier_id=sup.id,
+            standard_lead_time_days=30, unit_cost=10, currency="MYR", is_primary_supplier=True,
+        ))
+        db.flush()
+
+        def _line(qty, required_date):
+            cust = Customer(id=_u(), customer_code=f"{MARKER}-C-{_u()[:8]}", customer_name="Dealer")
+            db.add(cust)
+            db.flush()
+            so = SalesOrder(id=_u(), so_number=f"{MARKER}-SO-{_u()[:8]}", customer_id=cust.id,
+                            status="open", order_type="dealer", demand_class="retail")
+            db.add(so)
+            db.flush()
+            db.add(SalesOrderLine(
+                id=_u(), sales_order_id=so.id, product_id=product.id, warehouse_id=wh.id,
+                qty_ordered=qty, qty_delivered=0, required_date=required_date,
+                line_status="open",
+            ))
+            db.flush()
+
+        _line(170, date(2026, 6, 1))
+        _line(1211, date(2027, 3, 1))
+
+        created = rrs.create_run(
+            db, [wh.warehouse_code], product_codes=[product.product_code], enqueue=False,
+            plan_horizon_start=date(2026, 1, 1), plan_horizon_date=date(2026, 12, 31),
+        )
+        rrs.run_reorder(created["run_id"], db=db)
+        svc.write_rows(db, created["run_id"])
+
+        row = svc.report(db, run_id=created["run_id"])["rows"][0]
+        assert row["dealer_outstanding"] == 170.0, (
+            f"expected the run's horizoned retail (170), got {row['dealer_outstanding']}"
+        )
+
+        data, _content_type, _filename = svc.export_report(
+            db, run_id=created["run_id"], fmt="xlsx"
+        )
+        import openpyxl
+        from io import BytesIO
+        wb = openpyxl.load_workbook(BytesIO(data))
+        ws = wb.active
+        header = [c.value for c in ws[1]]
+        col = header.index("Dealer o/s") + 1
+        assert ws.cell(row=2, column=col).value == 170.0, (
+            f"the exported sheet's Dealer o/s must match the grid's 170: "
+            f"{ws.cell(row=2, column=col).value}"
+        )

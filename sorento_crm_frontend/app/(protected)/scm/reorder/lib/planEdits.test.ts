@@ -56,8 +56,51 @@ describe('suggestedDecisionFor', () => {
     expect(suggestedDecisionFor(l).buy).toBe(100);
   });
 
-  it('rounds a fractional demand UP - down would be a deliberate under-buy', () => {
-    expect(suggestedDecisionFor(line({ order_qty: 23.2 })).buy).toBe(24);
+  it('reads recommended_qty, not order_qty, for the raw buy (ONE FORMULA, AC-5)', () => {
+    // `order_qty` (the frozen, rounded `rounded_qty`) is no longer what the buy is read
+    // off - only `recommended_qty` is (the raw, pre-round gap). Overriding `order_qty`
+    // alone, with `recommended_qty` left at the fixture's own default (23), leaves the
+    // buy unchanged at 23: this pins that `order_qty` itself is not read directly.
+    expect(suggestedDecisionFor(line({ order_qty: 23.2 })).buy).toBe(23);
+  });
+});
+
+describe('one formula (PLAN-reorder-one-formula.md, AC-5)', () => {
+  // B2155-NL-BLUE's own figures: on hand 128, PO 339, need 663 (project 493 + retail
+  // 170 + level 0), so the engine's own `order_qty` (196) is ALREADY net of both -
+  // `suggestedDecisionFor` must read the parts off the line's own frozen fields
+  // (`on_hand` / `outstanding_po` / `recommended_qty`), never re-net them through a
+  // `cover`/`poReceipts` pair passed in from outside. Called with ONE argument on
+  // purpose: the whole point of the fix is that nothing else is needed.
+  it('reads Stock/PO/Buy off the line itself, never a second netting', () => {
+    const l = line({
+      order_qty: 196, recommended_qty: 196, on_hand: 128, outstanding_po: 339,
+    });
+    expect(suggestedDecisionFor(l)).toEqual({
+      stock: { qty: 128, sources: [] },
+      po: 339,
+      buy: 196,
+    });
+  });
+
+  // CBMC5570's own figures: level 100, retail 2, PO 1, no stock, no project ->
+  // need 102, buy 101. No stock part at all (on_hand 0 is omitted, not `stock: {qty:0}`).
+  it('omits a zero stock part and still states PO + Buy', () => {
+    const l = line({
+      order_qty: 101, recommended_qty: 101, on_hand: 0, outstanding_po: 1,
+    });
+    const suggested = suggestedDecisionFor(l);
+    expect(suggested.stock).toBeUndefined();
+    expect(suggested.po).toBe(1);
+    expect(suggested.buy).toBe(101);
+  });
+});
+
+describe('summariseMix (AC-5)', () => {
+  it('prints the B2155 mixture "Stock 128 + PO 339 + Buy 196"', () => {
+    expect(summariseMix({ stock: { qty: 128, sources: [] }, po: 339, buy: 196 })).toBe(
+      'Stock 128 + PO 339 + Buy 196',
+    );
   });
 });
 

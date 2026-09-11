@@ -510,13 +510,13 @@ export function PlanLinesGrid({
    */
   const readingFor = useCallback(
     (line: PlanLine) => {
-      const suggested = suggestedDecisionFor(line, coverFor?.(line) ?? NO_COVER, poFor?.(line) ?? []);
+      const suggested = suggestedDecisionFor(line);
       const { decision } = isGroupedLine(line)
         ? groupDecisionState(line.__group.members.map((m) => m.id), decisions)
         : { decision: decisions[line.id] };
       return planPillReading(edits[line.id], decision, suggested);
     },
-    [coverFor, poFor, decisions, edits],
+    [decisions, edits],
   );
 
   /** Open one of the six lightboxes on a row (plan 4.6). */

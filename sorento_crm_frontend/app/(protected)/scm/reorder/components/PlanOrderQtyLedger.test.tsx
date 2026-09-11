@@ -184,7 +184,11 @@ describe('order-qty ledger - THE LINE varies by mode', () => {
     expect(screen.getByText('+ SPO (arriving)')).toBeInTheDocument();
     expect(screen.getByText('- SO (outstanding)')).toBeInTheDocument();
     expect(screen.getByText('Gap to line')).toBeInTheDocument();
-    expect(screen.getByText('16')).toBeInTheDocument();
+    // ONE FORMULA (PLAN-reorder-one-formula.md): with no PO and no stock to net further,
+    // "Buy before rounding" now ALSO reads 16 - both are correct, so this scopes to the
+    // Gap-to-line row specifically rather than assume the figure is unique on the page.
+    const gapRow = screen.getByText('Gap to line').closest('div');
+    expect(gapRow?.textContent).toContain('16');
   });
 
   it('Net now counts the outstanding PO leg (21 Aug fix)', () => {
@@ -303,7 +307,12 @@ describe('order-qty ledger - cover before buying', () => {
   });
 
   it('the PO toggle recomputes the buy the same way', () => {
-    const l = line({ order_qty: 30, recommended_qty: 30 });
+    // ONE FORMULA (PLAN-reorder-one-formula.md): `recommended_qty` is ALREADY net of the
+    // open PO, so a fully-covered row (0) with a 30-unit PO behind it means the buyer's
+    // true need, PO aside, is 30 - toggling the PO OFF ("pretend that supply is not
+    // there") is what reveals it, not a `recommended_qty` that coincidentally equals the
+    // PO figure (that framing was the double-netting bug this fix retires).
+    const l = line({ order_qty: 0, recommended_qty: 0 });
     const receipts: PoReceipt[] = [
       { po_number: 'PO-2026/07-0002', status: 'active', expected_date: '2026-08-10', remaining: 30 },
     ];
@@ -979,5 +988,46 @@ describe('order-qty ledger - on hand, expandable per location (AC-R8)', () => {
     // Nor is a project bin, however much it holds: this aside breaks down the pool-only
     // figure above it, so a bin under it would not add up (R16).
     expect(screen.queryByText('BRW-IB')).not.toBeInTheDocument();
+  });
+});
+
+describe('order-qty ledger - PLAN-reorder-one-formula.md, AC-7', () => {
+  // B2155's own figures, post-fix: `recommended_qty` (the level-net gap) is ALREADY
+  // 196 - on hand 128 and open PO 339 are display parts of that same figure, never a
+  // second netting against it. The ledger's `needed` today is `Math.ceil(line.order_qty)`
+  // (196, already net), so toggling ANY cover part on top of it double-subtracts and
+  // reads "nothing to buy" for a product that genuinely needs 196 more.
+  it('Buy before rounding reads the level-net gap, not a second netting of stock + PO', () => {
+    const l = line({
+      policy_type: 'reorder_level', reorder_level: null, master_reorder_level: null,
+      order_qty: 196, recommended_qty: 196, net_position: -196,
+      on_hand: 128, outstanding_po: 0, moq: null, order_multiple: null,
+    });
+    const cover = coverForLine(l, []);
+    const receipts: PoReceipt[] = [
+      { po_number: 'PO-B2155', status: 'active', expected_date: null, remaining: 339 },
+    ];
+    renderLedger({ line: l, cover, poReceipts: receipts });
+
+    expect(screen.getByText('Gap to line')).toBeInTheDocument();
+    expect(screen.getAllByText('196').length).toBeGreaterThan(0);
+    // Today: stock (offered back even though it is already inside the net) and the open
+    // PO together absorb the whole already-net 196, so the row collapses to "Nothing to
+    // buy" - which is exactly the double-netting bug this pins. The fixed ledger must
+    // still show "Buy before rounding" 196.
+    expect(screen.queryByText(/Nothing to buy/)).not.toBeInTheDocument();
+    expect(screen.getByText('Buy before rounding')).toBeInTheDocument();
+    const buyBeforeRoundingRow = screen.getByText('Buy before rounding').closest('div');
+    expect(buyBeforeRoundingRow?.textContent).toContain('196');
+  });
+
+  it('a covered row above its own line still prints "Line not breached"', () => {
+    const l = line({
+      type: 'covered', policy_type: 'reorder_level', reorder_level: 120,
+      net_position: 135, covered_committed: 15, covered_available: 150,
+    });
+    renderLedger({ line: l });
+    expect(screen.getByText('Line not breached - net 135 above level 120')).toBeInTheDocument();
+    expect(screen.queryByText('Gap to line')).not.toBeInTheDocument();
   });
 });

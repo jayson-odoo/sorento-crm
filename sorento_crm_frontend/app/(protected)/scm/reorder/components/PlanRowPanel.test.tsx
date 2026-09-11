@@ -147,7 +147,10 @@ describe('PlanRowPanel - four zones render (D1)', () => {
 describe('PlanRowPanel - Cover zone (D2)', () => {
   it('shows the stock cap, PO cap and SPO fact, and the MOQ master figure beside the input', () => {
     renderPanel({ cover, poReceipts });
-    expect((screen.getByLabelText('BRW') as HTMLInputElement).max).toBe('5');
+    // ONE FORMULA (PLAN-reorder-one-formula.md): the stock cap is the line's own on hand
+    // (the fixture's default, 1) PLUS whatever cross-location cover it may ALSO draw on
+    // (this `cover` fixture, 5) - 6, not the cross-location cover alone.
+    expect((screen.getByLabelText('BRW') as HTMLInputElement).max).toBe('6');
     expect((screen.getByLabelText('PO') as HTMLInputElement).max).toBe('12');
     // SPO is a FACT (R2) - text, not an input.
     expect(screen.getByText('SPO')).toBeInTheDocument();
@@ -216,7 +219,9 @@ describe('PlanRowPanel - Cover zone (D2)', () => {
     const { onEdit } = renderPanel({ cover });
     fireEvent.change(screen.getByLabelText('BRW'), { target: { value: '999' } });
     const [[patch]] = onEdit.mock.calls;
-    expect((patch as { decision: { stock?: { qty: number } } }).decision.stock?.qty).toBeLessThanOrEqual(5);
+    // ONE FORMULA: the cap is on hand (1, the fixture's default) plus this cross-location
+    // cover (5) - 6.
+    expect((patch as { decision: { stock?: { qty: number } } }).decision.stock?.qty).toBeLessThanOrEqual(6);
   });
 });
 
@@ -547,5 +552,37 @@ describe('PlanRowPanel - no stock-as-of line, no location table (D9)', () => {
   it('explains no rules on screen - the staleness rule is not a sentence here', () => {
     renderPanel({ price: undefined });
     expect(screen.queryByText(/treated as stale/)).not.toBeInTheDocument();
+  });
+});
+
+describe('PlanRowPanel - PLAN-reorder-one-formula.md, AC-8', () => {
+  it('prefills BRW 128 / PO 339 / Buy 196 for the B2155 line', () => {
+    const b2155 = line({
+      policy_type: 'reorder_level', reorder_level: null, master_reorder_level: null,
+      order_qty: 196, recommended_qty: 196, net_position: -196,
+      on_hand: 128, outstanding_po: 0, moq: null, order_multiple: null,
+    });
+    const receipts: PoReceipt[] = [
+      { po_number: 'PO-B2155', status: 'active', expected_date: null, remaining: 339 },
+    ];
+    renderPanel({ line: b2155, cover: NO_COVER, poReceipts: receipts });
+
+    expect((screen.getByLabelText('BRW') as HTMLInputElement).value).toBe('128');
+    expect((screen.getByLabelText('PO') as HTMLInputElement).value).toBe('339');
+    expect((screen.getByLabelText('Units to buy') as HTMLInputElement).value).toBe('196');
+  });
+
+  it('a project-only line with an open PO still shows the PO part (P8 retired)', () => {
+    const projectOnly = line({
+      order_qty: 50, recommended_qty: 50, project_committed: 50, retail_committed: 0,
+      on_hand: 0, outstanding_po: 0, moq: null, order_multiple: null,
+    });
+    const receipts: PoReceipt[] = [
+      { po_number: 'PO-PROJ', status: 'active', expected_date: null, remaining: 20 },
+    ];
+    renderPanel({ line: projectOnly, cover: NO_COVER, poReceipts: receipts });
+
+    const poInput = screen.getByLabelText('PO') as HTMLInputElement;
+    expect(Number(poInput.value)).toBeGreaterThan(0);
   });
 });

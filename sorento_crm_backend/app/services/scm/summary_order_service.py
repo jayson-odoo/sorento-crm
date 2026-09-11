@@ -238,13 +238,13 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     need_dates = {} if is_legacy else _earliest_project_need_dates(db, product_ids)
     wh_meta = _warehouse_meta(db, [r.warehouse_id for r in rec_rows])
     # S16 (owner ruling, 10 Sep): the Suggestion column reads EXACTLY like the plan grid's
-    # Decision label - "Stock 1 + Buy 486" - rather than the engine's own reason sentence.
-    # Both reads are batched once for the whole run, mirroring `cover_service`'s own
-    # "no production caller, allocation happens client-side" shape: the FREE POOL here is
-    # read fresh (no `already_taken`) because `write_rows` runs on a freshly-planned run
-    # with no buyer decisions recorded yet - the same state the grid's OWN "Suggested" pill
-    # (before any decision) reads, per `usePlanLines.coverFor`'s `takenByProduct`, which is
-    # built from PERSISTED decisions and is empty until the buyer records one.
+    # Decision label - "Stock 1 + Buy 486". PLAN-reorder-one-formula.md S4/AC-4: on a run
+    # carrying the channel snapshot, it reads the row's OWN frozen `pool_on_hand` /
+    # `po_open_qty` (below) rather than re-deriving a cross-location cover proposal from
+    # scratch - that re-derivation was a SECOND netting of figures the engine's
+    # `rounded_qty` already nets once. A run with NO channel snapshot predates that
+    # guarantee - `rounded_qty` there is gross, never netted against cross-location stock
+    # or the PO book at all - so it keeps the ORIGINAL re-derivation.
     cover_scope = resolve_global_cover_scope(db)
     free_by_product = cover_service.free_stock_by_product(db, run_id, product_ids)
     po_book = po_book_service.po_book_for_run(db, run_id).get("po_book") or {}
@@ -279,7 +279,22 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         row.as_of = stamp_date
         row.on_hand = pos.on_hand if pos else 0
         row.project_demand = agg.get("project_qty", 0.0)
-        row.dealer_outstanding = agg.get("dealer_qty", 0.0)
+        # A run only states a breakdown its recommendations actually froze. That is not
+        # the same question as "is the run legacy": a run stamped under the contract but
+        # planned by an engine that predates the channel snapshot (the window between two
+        # deploys) has a contract version and no `project_need` anywhere, and reading its
+        # absent breakdown as zero would suggest ordering nothing for a product the plan
+        # said to buy.
+        has_channel = any("project_need" in (r.inputs or {}) for r in recs)
+        # PLAN-reorder-one-formula.md S2/AC-9: a run carrying the channel snapshot froze
+        # its OWN horizoned `retail_committed` on every recommendation - the same figure
+        # the grid's Retail column reads - so Dealer o/s prints THAT, not the unfiltered
+        # SO-book aggregate `_demand_aggregates` has no horizon on at all. A legacy run
+        # (no snapshot) has no such figure to read, so it keeps today's SO-book read.
+        row.dealer_outstanding = (
+            sum(float((r.inputs or {}).get("retail_committed") or 0.0) for r in recs)
+            if has_channel else agg.get("dealer_qty", 0.0)
+        )
         row.qty_on_order = pos.qty_on_order if pos else 0
         row.qty_in_transit = pos.qty_in_transit if pos else 0
         row.shortfall = pos.shortfall if pos else 0
@@ -291,13 +306,6 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         row.dealer_outstanding_line_count = agg.get("dealer_lines", 0)
         row.unclassified_line_count = agg.get("unclassified_lines", 0)
         row.max_days_outstanding = agg.get("max_days_outstanding")
-        # A run only states a breakdown its recommendations actually froze. That is not
-        # the same question as "is the run legacy": a run stamped under the contract but
-        # planned by an engine that predates the channel snapshot (the window between two
-        # deploys) has a contract version and no `project_need` anywhere, and reading its
-        # absent breakdown as zero would suggest ordering nothing for a product the plan
-        # said to buy.
-        has_channel = any("project_need" in (r.inputs or {}) for r in recs)
         if is_legacy or not has_channel:
             # Rounded UP to a whole unit, which is the conservative direction. Kept
             # verbatim - the BUY rows only, exactly as before channels existed - so
@@ -353,7 +361,7 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         # issue #795 (owner ruling 10 Sep): the SAME words the plan grid's Decision label
         # uses, not the engine's reason sentence - "Stock 1 + Buy 486", "Nothing".
         row.suggestion = _suggestion_text(
-            recs, pid,
+            recs, row.pool_on_hand, row.po_open_qty, has_channel=has_channel, pid=pid,
             free_by_product=free_by_product, po_book=po_book,
             cover_scope=cover_scope, constraints=constraints,
         )
@@ -390,35 +398,34 @@ def _fmt_int(value: float) -> str:
 
 
 def _suggestion_text(
-    recs: list, pid: str, *,
-    free_by_product: dict[str, list],
-    po_book: dict[str, list],
-    cover_scope: str,
-    constraints: dict[str, dict],
+    recs: list, on_hand: float, po_qty: float, *, has_channel: bool, pid: str,
+    free_by_product: dict[str, list], po_book: dict[str, list],
+    cover_scope: str, constraints: dict[str, dict],
 ) -> str:
     """The row's Suggestion, worded EXACTLY like the plan grid's own Decision label (owner,
     10 Sep ruling): "Stock 1 + Buy 486", "Buy 95", "Stock 10 + PO 20 + Buy 90", "Nothing".
-    Replaces the earlier reason-text derivation (issue #795) wholesale - no engine reason
-    sentence is printed on the sheet any more.
-
-    Mirrors `summaryOrderService`'s client-side chain byte for byte:
-    `suggestedDecisionFor` (`lib/planEdits.ts`) -> stock via `coverForLine`/`proposeCover`
-    (`lib/coverPlan.ts`, server mirror `cover_service.propose_cover`) -> PO offset via
-    `poOffset` (`lib/poCover.ts`) -> MOQ/multiple rounding via `roundBuyQty`
-    (`lib/orderQtyLedger.ts`, server mirror `reorder_engine.round_order_qty`) ->
-    `summariseMix`. `needed` reads `rounded_qty`, the SAME column the wire's own
-    `order_qty` field is sourced from (`reorder_runs.py`'s `"order_qty": "rr.rounded_qty"`
-    field map) - `recommended_qty` is the PRE-rounding gap and is a different field the
-    grid never reads here. A covered/needs_level product carries no `buy`/`exception`
-    recommendation, and an `exception` row itself freezes no `rounded_qty` at all
-    (nothing was sized, so nothing was rounded) - both read as `needed = 0`, the same
-    "Nothing" the grid prints for a line with nothing to buy, with no branch needed for
-    either case specifically.
 
     `recs` carries no ORDER BY from the query that built it (review fix round): prefer a
     `buy` rec (the actionable row, and the only one the grid's own derivation ever reads),
     then an `exception` (still a firm need, just unsourced) - both are read the SAME way,
-    since the mixture is about the QUANTITY, not the reason it could not be bought.
+    since the mixture is about the QUANTITY, not the reason it could not be bought. A
+    covered/needs_level product carries neither, and reads "Nothing".
+
+    Two DIFFERENT mixtures, chosen by `has_channel` (the SAME signal `write_rows` already
+    branches `suggested_qty` on):
+
+    - PLAN-reorder-one-formula.md S4/AC-4 (a run carrying the channel snapshot): the parts
+      are a DISPLAY of what the engine's ONE formula already netted - `rounded_qty` is
+      ALREADY net of on-hand and the open PO book (since #828), so `Buy` is `rounded_qty`
+      verbatim and `Stock`/`PO` are `min(...)` clips of the SAME `on_hand`/`po_qty` the
+      row itself prints (`pool_on_hand`, `po_open_qty`) - never a second netting through a
+      fresh cover/PO-book proposal, which is exactly the double-netting bug the plan's
+      "Why" section names.
+    - A run with NO channel snapshot predates that guarantee: `rounded_qty` there is
+      GROSS, never netted against cross-location stock or the PO book at all, so this
+      keeps the ORIGINAL re-derivation (`cover_service.propose_cover` against the row's
+      OWN warehouse-scoped free pool, then `poOffset` against the PO book) - unaffected by
+      this fix, since a legacy run predates the one formula too.
     """
     chosen = (
         next((r for r in recs if r.rec_type == "buy"), None)
@@ -426,31 +433,36 @@ def _suggestion_text(
     )
     if chosen is None:
         return "Nothing"
-    needed = math.ceil(float(chosen.rounded_qty or 0.0))
-    if needed <= 0:
+    buy_qty = float(chosen.rounded_qty or 0.0)
+    if buy_qty <= 0:
         return "Nothing"
 
-    pool_warehouse_id = str(chosen.pool_warehouse_id) if chosen.pool_warehouse_id else None
-    cover = cover_service.propose_cover(
-        needed, None, free_by_product.get(pid) or [],
-        cover_scope=cover_scope, line_pool_warehouse_id=pool_warehouse_id,
-    )
-    stock_qty = cover.cover_qty
-    after_stock = cover.buy_qty if stock_qty > 0 else float(needed)
-
-    # `poFor`'s own key: `levelKey(line.product_id, line.warehouse_id)` -
-    # `"{product_id}:{warehouse_id}"`, `""` when the row names none (a genuine
-    # product-grain buy names no warehouse; a network buy carries one).
-    po_receipts = po_book.get(f"{pid}:{chosen.warehouse_id or ''}") or []
-    po_qty = sum(float(r.get("remaining") or 0.0) for r in po_receipts)
-    use_po = min(max(after_stock, 0.0), max(po_qty, 0.0))
-    buy = max(after_stock - use_po, 0.0)
-
-    con = constraints.get(pid) or {}
-    buy_qty = (
-        eng_round_order_qty(buy, con.get("moq"), con.get("order_multiple"))
-        if buy > 0 else 0.0
-    )
+    if has_channel:
+        on_hand = max(float(on_hand or 0.0), 0.0)
+        po_qty = max(float(po_qty or 0.0), 0.0)
+        need = buy_qty + on_hand + po_qty
+        stock_qty = min(on_hand, need)
+        use_po = min(po_qty, need - stock_qty)
+    else:
+        needed = math.ceil(buy_qty)
+        pool_warehouse_id = str(chosen.pool_warehouse_id) if chosen.pool_warehouse_id else None
+        cover = cover_service.propose_cover(
+            needed, None, free_by_product.get(pid) or [],
+            cover_scope=cover_scope, line_pool_warehouse_id=pool_warehouse_id,
+        )
+        stock_qty = cover.cover_qty
+        after_stock = cover.buy_qty if stock_qty > 0 else float(needed)
+        # `poFor`'s own key: `levelKey(line.product_id, line.warehouse_id)` -
+        # `"{product_id}:{warehouse_id}"`, `""` when the row names none (a genuine
+        # product-grain buy names no warehouse; a network buy carries one).
+        po_receipts = po_book.get(f"{pid}:{chosen.warehouse_id or ''}") or []
+        legacy_po_qty = sum(float(r.get("remaining") or 0.0) for r in po_receipts)
+        use_po = min(max(after_stock, 0.0), max(legacy_po_qty, 0.0))
+        con = constraints.get(pid) or {}
+        buy_qty = (
+            eng_round_order_qty(max(after_stock - use_po, 0.0), con.get("moq"), con.get("order_multiple"))
+            if after_stock - use_po > 0 else 0.0
+        )
 
     parts = []
     if stock_qty > 0:
@@ -609,13 +621,34 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     raw_need = project + retail
     moq = constraints.get("moq")
     multiple = constraints.get("order_multiple")
-    # ONCE: the supplier's terms apply to the product total, never per location and never
-    # per channel, and the quantize is the same step's last half rather than a second
-    # rounding policy.
-    suggested = _quantize_up(
-        eng_round_order_qty(raw_need, moq, multiple) if raw_need > 0 else 0.0,
-        decimal_places,
-    )
+    if groups:
+        # PLAN-reorder-one-formula.md S4/AC-4: each group's OWN `rounded` is the rounded
+        # BUY the one formula already computed - `level - net`, MOQ/multiple rounded ONCE
+        # by the engine - not `project + retail` re-derived here, which ignores on-hand,
+        # open PO and the level entirely. Summed across EVERY group the product sized
+        # (`sources`, not `retail_sources`: an unsourced firm need - `exception`, no
+        # linked supplier - still owes its own figure here, the same as `project` above
+        # reads it; AC-F11: a pool and a second, unrelated pool of the SAME product are
+        # two INDEPENDENT sizing decisions, not one), then run through the supplier's
+        # terms ONE more time: a no-op on a single already-clean group total (matching
+        # AC-4's own worked examples, moq/multiple both unset there), and the ONE
+        # application AC-F11 requires when summing several groups each rounded on its own.
+        suggested_raw = sum(float(s.get("rounded") or 0.0) for s in sources)
+        suggested = _quantize_up(
+            eng_round_order_qty(suggested_raw, moq, multiple) if suggested_raw > 0 else 0.0,
+            decimal_places,
+        )
+    else:
+        # A TRUE legacy run (no `plan_basis` at all): each row's own `rounded_qty` was
+        # independently rounded per LOCATION by the pre-channel engine, so summing them
+        # verbatim (AC-F11's own bug) would apply the supplier's terms never, or once per
+        # location instead of once for the product. Recomputed from the raw need and
+        # rounded ONCE, exactly as before this fix - unaffected by it, since a true
+        # legacy run predates the one formula too.
+        suggested = _quantize_up(
+            eng_round_order_qty(raw_need, moq, multiple) if raw_need > 0 else 0.0,
+            decimal_places,
+        )
     locations.sort(key=lambda x: (x["warehouse_code"] or ""))
     return {
         "project_buy_qty": project,

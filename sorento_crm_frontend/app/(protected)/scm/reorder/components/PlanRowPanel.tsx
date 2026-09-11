@@ -24,7 +24,7 @@ import { lineCost, type LineCostMoney } from '../lib/lineCost';
 import { roundBuyQty } from '../lib/orderQtyLedger';
 import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision } from '../lib/planDecisions';
-import { suggestedDecisionFor, type PlanRowEdit } from '../lib/planEdits';
+import type { PlanRowEdit } from '../lib/planEdits';
 import {
   describeCheaper,
   describeLastPurchase,
@@ -109,12 +109,44 @@ export function PlanRowPanel({
 }) {
   const [chartOpen, setChartOpen] = useState(false);
 
-  const suggested = suggestedDecisionFor(line, cover, poReceipts);
+  // ONE FORMULA (PLAN-reorder-one-formula.md, AC-8): the panel's own prefill reads the
+  // line's own on-hand PLUS whatever cross-location cover the row may ALSO draw on
+  // (`cover`, still cross-location-only - a product-grain row's own on-hand already sums
+  // every in-scope pool, so `cover` is empty for it and this is just `onHand`), and the
+  // panel's own LIVE po receipts fetch rather than the frozen `outstanding_po` snapshot -
+  // the receipts drill this same panel opens from is the fresher figure. `need` is
+  // reconstructed the same way `suggestedDecisionFor` does (S+P+B sum to it by
+  // construction); a `rawBuy` of 0 or less (a covered row) reads no mixture at all,
+  // matching "Nothing" everywhere else this line's suggestion is shown.
+  const onHand = line.rec.on_hand ?? 0;
+  const poReceiptsQty = poReceipts.reduce((t, r) => t + r.remaining, 0);
+  const rawBuy = line.rec.recommended_qty ?? line.order_qty;
+  const stockCap = onHand + cover.coverQty;
+  const need = rawBuy > 0 ? rawBuy + onHand + poReceiptsQty : 0;
+  const stockPart = Math.min(stockCap, need);
+  const poPart = Math.min(poReceiptsQty, need - stockPart);
+  const buyPart = roundBuyQty(rawBuy, line.order_qty_inputs);
+  const suggested: PlanDecision = {
+    ...(buyPart > 0 ? { buy: buyPart } : {}),
+    ...(stockPart > 0
+      ? {
+          stock: {
+            qty: stockPart,
+            sources: cover.sources.map((s) => ({
+              warehouse_id: s.warehouse_id,
+              warehouse_code: s.warehouse_code,
+              qty: s.qty,
+            })),
+          },
+        }
+      : {}),
+    ...(poPart > 0 ? { po: poPart } : {}),
+  };
   // What the inputs READ: the draft first, then what is persisted, then the engine.
   const current: PlanDecision = edit?.decision ?? decision ?? suggested;
-  const stockMax = cover.coverQty;
-  const poMax = poReceipts.reduce((t, r) => t + r.remaining, 0);
-  const needed = Math.ceil(line.order_qty);
+  const stockMax = stockCap;
+  const poMax = poReceiptsQty;
+  const needed = need;
   const skipped = Boolean(current.skip);
 
   const stockQty = current.stock?.qty ?? 0;

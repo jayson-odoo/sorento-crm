@@ -272,7 +272,9 @@ describe('PlanLinesGrid - the Decision cell is a pill (C6)', () => {
   const pill = (state: string) => screen.getByTestId(`decision-pill-${state}`);
 
   it('reads Suggested with the engine mixture when nobody has touched the row', () => {
-    renderGrid([line({ order_qty: 31 })]);
+    // `recommended_qty` is what the ONE FORMULA reads for the raw buy (PLAN-reorder-one-
+    // formula.md) - carried alongside `order_qty` here for realism.
+    renderGrid([line({ order_qty: 31, recommended_qty: 31 })]);
     expect(pill('suggested')).toHaveTextContent('Suggested');
     expect(pill('suggested')).toHaveTextContent('Buy 31');
   });
@@ -422,7 +424,9 @@ describe('PlanLinesGrid - the panel edits a draft, never the backend (D2-D9)', (
   it('states the caps beside the two capped inputs (D2)', () => {
     renderGrid([line()], { poFor: () => [{ po_number: 'PO-1', status: 'open', expected_date: null, remaining: 40 }] });
     fireEvent.click(screen.getByText('SKU-1'));
-    expect((screen.getByLabelText('BRW') as HTMLInputElement).max).toBe('0');
+    // ONE FORMULA: the stock cap is the line's own on hand (the fixture's default, 1)
+    // plus whatever cross-location cover it may ALSO draw on (none configured here, 0).
+    expect((screen.getByLabelText('BRW') as HTMLInputElement).max).toBe('1');
     expect((screen.getByLabelText('PO') as HTMLInputElement).max).toBe('40');
   });
 
