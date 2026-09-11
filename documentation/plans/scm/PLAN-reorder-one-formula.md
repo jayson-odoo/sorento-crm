@@ -64,6 +64,34 @@ Consequences, stated so nobody is surprised:
 
 Tester writes the red tests from the UAC first; the lane coder makes them green; reviewer + browser once at lane end.
 
+## Evidence run - review fix round 2 (11 Sep 2026, lane stack :3083 / :8083, DB `sorento_reorder_tidy_runtime`)
+
+Sidebar: Procurement > Supply Chain > Reorder Planning > the 11/09/2026 14:09 plan
+(`d9790035-7ea7-4517-b64f-627b05d0647d`, window 01/01/2026 to 31/12/2026).
+
+- **AC-14 / AC-15, one scope.** Plans list Lines 359, Decided `0 / 359`; the plan's Decisions
+  tile "0 of 359 made"; the grid footer "0 of 359"; the list "1 - 25 of 359". Four readers,
+  one number.
+- **CBMC5570** (level 50, retail 2, on hand 0, PO 1, `recommended_qty` 51). Pill
+  "PO 1 + Buy 51". Panel: BRW 0 as READ-ONLY text (no input), PO input 1, Buy input 51, SPO 0,
+  MOQ; no Borrow row (product grain gets no cover offer) and no over/short hint.
+  Screenshot `evidence/reorder-plan-tidy/fixround-before.png`.
+- Lowering PO to 0 moved Buy to 52 and the pill to "Unsaved Buy 52" - the "do not trust that
+  PO" case. Save: `PUT .../plan-edits` 200 (no 422), pill "Saved Buy 52". Persisted:
+  `{kind: 'buy', buy_qty: 52, po_qty: null, stock_takes: null}` - a legal single-part buy,
+  with no display-only stock leaking into the decision. Reload: the row still reads
+  "Saved / Buy 52".
+- Its ledger then reads Gap to line 51, Buy before rounding 52, MoQ 52
+  (`evidence/reorder-plan-tidy/fixround-after.png`). The 1 IS the PO the buyer refused; the
+  two figures are equal only while the row is undecided, which is what AC-7 states.
+- **AC-7 on an undecided row: CB600** (on hand 132, PO 2, `recommended_qty` 465). Pill
+  "Stock 132 + PO 2 + Buy 465"; ledger Gap to line 465 = Buy before rounding 465 = MoQ 465 =
+  Suggested qty 465. `Stock + PO + Buy = 599 = need`, and the Buy part is the engine's own
+  gap verbatim - no second netting anywhere on the row.
+- 375px: the same panel reads "BRW 132 / PO 2 / Buy 465 / SPO 0 / MOQ", unclipped.
+- Console: only the two pre-existing shell warnings (`DialogContent` missing
+  `aria-describedby`, and a `Demo1Layout` list-key warning). No page errors.
+
 ## Out of scope
 
 Level suggestions (`suggested_level`, "+ Add" horizon), the Order Inquiry link rules, warehouse-grain cover scope policy.
