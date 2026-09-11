@@ -264,6 +264,79 @@ def test_derive_predicate_words_strips_the_cert_word_found_in_the_message():
 
 
 # --------------------------------------------------------------------------- #
+# Reviewer round 4, should-fix (R33, AC-1358): with NO attachment_type raw at   #
+# all, the R28 fallback tests `_CERTIFICATE_RE` against `user_goal`/            #
+# `message_text` VERBATIM - `_CERTIFICATE_RE = re.compile(r"cert|certificate")` #
+# is a bare substring match, so "certainly" and "concert" false-positive as a  #
+# certificate question. And "sijil" (already a recognised bare-cert word       #
+# everywhere a raw exists) is never tried at all in this no-raw branch, only   #
+# `_CERTIFICATE_RE` is.                                                        #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "message_text, expected",
+    [
+        # RED: "certainly" contains the substring "cert" - `_CERTIFICATE_RE`
+        # has no word boundary, so this false-positives as a certificate ask.
+        ("certainly, send me the drawing for the basin", None),
+        # RED for the same reason: "concert" contains "cert".
+        ("concert hall basin photo", None),
+        # Green control: a genuine cert word, no false-positive substring risk.
+        ("is this certified?", {"certificate": True}),
+        ("which item has PPS cert", {"certificate": True}),
+        # RED: "sijil" (Malay for "certificate") is a recognised bare-cert word
+        # everywhere an attachment_type raw exists (`_BARE_CERT_WORDS`), but the
+        # no-raw fallback branch only tests `_CERTIFICATE_RE` (English "cert"/
+        # "certificate" only) against `user_goal`/`message_text` - "ada sijil
+        # untuk basin?" matches neither, so `derive_require` returns `None`
+        # instead of the bare certificate leg.
+        ("ada sijil untuk basin?", {"certificate": True}),
+    ],
+)
+def test_derive_require_does_not_false_positive_on_a_cert_shaped_substring(message_text, expected):
+    """AC-1358/R33 (reviewer round 4, should-fix): `derive_require` with
+    `entities: []`, `user_goal: None`, and `message_text` as the ONLY source -
+    the no-attachment-raw fallback (R28) must recognise a genuine cert
+    question ("is this certified?", "which item has PPS cert", the Malay
+    "ada sijil untuk basin?") and must NOT fire on a word that merely
+    contains the substring "cert" inside an unrelated word ("certainly",
+    "concert").
+    """
+    from app.services.chatbot.lanes.business.predicate import derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [],
+        "user_goal": None,
+    }
+    assert derive_require(parser_output, message_text=message_text) == expected
+
+
+def test_derive_predicate_words_strips_the_bare_cert_word_without_punctuation():
+    """AC-1358/R33: `derive_predicate_words(..., message_text="is this
+    certified?")` must strip the bare word "certified" - WITHOUT the question
+    mark - so the described-set reader never sees a stray "?" glued onto a
+    class/spec word.
+
+    RED: the no-raw branch splits `message_text` on whitespace and keeps
+    whatever `_CERTIFICATE_RE` matched verbatim (`cleaned = word.strip()`,
+    which strips surrounding WHITESPACE only, never punctuation) - the word
+    survives as "certified?", not "certified".
+    """
+    from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [],
+        "user_goal": None,
+    }
+    require = derive_require(parser_output, message_text="is this certified?")
+    words = derive_predicate_words(parser_output, require, message_text="is this certified?")
+    assert "certified" in words, words
+
+
+# --------------------------------------------------------------------------- #
 # R4 (fix round 2, AC-1328): a scheme-only attachment_type raw ("PPS") carries  #
 # no `_CERT_RE` word of its own (that regex names a BODY - cert/ikram/span/     #
 # sirim/bomba/ms####/halal - never the bare register spelling), so             #
@@ -4146,6 +4219,157 @@ def test_set_answer_carries_the_match_line_when_every_shown_product_matches(
         _s4_envelope(
             contact_id=contact_id,
             message_id="ZZT-matchline-1",
+            text="check stock water closet with s trap 250mm",
+        ),
+        session_factory=session_factory,
+    )
+    assert turn.status == "done", turn.error
+    text = (turn.reply or {}).get("text") or ""
+    assert "_Matched on:" in text, text
+    assert "Water Closet" in text, text
+    assert "S Trap" in text, text
+    assert "250" in text, text
+
+
+def test_set_answer_carries_the_match_line_when_shown_entities_include_promotions(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1356/R31: the SAME world as
+    `test_set_answer_carries_the_match_line_when_every_shown_product_matches`
+    (five Water Closet products, all trap_type=s_trap/trap_length=250, all in
+    stock), but `compatible_entities` is augmented exactly as replayed on the
+    owner's local stack: alongside the five real product entities, 30 extra
+    `entity_type="promotion"` rows ride along (uuid-only, no canonical_code,
+    tier "substring") - noise from OTHER tokens ("water closet" as a category
+    word, "Sorento" as a brand word) that reached `compatible_entities` via
+    `gate.py`'s type-agnostic flattening of every `resolutions[].matches`
+    entry, not just the product ones the require leg itself qualified.
+
+    Patches `resolve_gate.run_gate` (not the resolver) to inject this shape
+    directly onto its returned `compatible_entities`, since `gate.py`'s own
+    `ALLOWED` matrix filters by domain BEFORE this bug's own code runs - a
+    live turn's domain is whatever the parser gave it (unrelated to this
+    bug), and this test's job is the renderer's handling of the noise once it
+    IS present, not re-deriving which domain lets it through.
+
+    The Match line must still render for the product rows shown; it must
+    count PRODUCTS only, not every entity type the resolver happened to
+    surface.
+
+    RED: `_matched_on_line` (`compile_state.py` ~line 1071) builds `shown_set`
+    from every `compatible_entities` row with no entity-type filter, then
+    requires ALL of them to be spec rows (`all_shown_are_spec`). The 30
+    injected promotion uuids are never in `spec_keys` (built only from
+    `match_tier == "spec_search"` matches), so `all_shown_are_spec` is False
+    and the whole line is skipped ("if not all_shown_are_spec: return
+    user_response") even though every PRODUCT shown matched.
+    """
+    contact_id = _s4_contact_id("matchlinepromo")
+    db = session_factory()
+
+    from app.models.inventory import Stock, Warehouse
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from app.models.product_spec import ProductSpecifications
+    from app.services.product_spec_derivation import derive_for_code
+    from tests._pg_fixture import unique_code
+
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    warehouse = Warehouse(id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:50], warehouse_name="ZZT WH")
+    db.add(warehouse)
+    db.flush()
+
+    for _ in range(5):
+        code = unique_code("ZZTWC")[:50]
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            description=f"{code} SORENTO CERAMIC WATER CLOSET",
+            category_id=category_id,
+            base_uom_id=uom_id,
+            list_price=10,
+            is_active=True,
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        spec_row = (
+            db.query(ProductSpecifications).filter(ProductSpecifications.product_id == product.id).one()
+        )
+        values = dict(spec_row.values or {})
+        values["trap_type"] = {"value": "s_trap"}
+        values["trap_length"] = {"value": 250}
+        spec_row.values = values
+        db.add(
+            Stock(
+                id=str(uuid.uuid4()),
+                product_id=product.id,
+                warehouse_id=warehouse.id,
+                quantity_on_hand=5,
+                quantity_reserved=0,
+                quantity_damaged=0,
+            )
+        )
+    db.commit()
+
+    def _promotion_noise_entities() -> list[dict[str, Any]]:
+        return [
+            {
+                "uuid": str(uuid.uuid4()),
+                "entity_type": "promotion",
+                "code": None,
+            }
+            for _ in range(30)
+        ]
+
+    def _wrap_run_gate(real_run_gate: Any) -> Any:
+        def run_gate(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            item = real_run_gate(*args, **kwargs)
+            if isinstance(item, dict):
+                item = dict(item)
+                item["compatible_entities"] = list(
+                    jsc.array(item.get("compatible_entities"))
+                ) + _promotion_noise_entities()
+            return item
+
+        return run_gate
+
+    from app.services.chatbot import jsc
+    from app.services.chatbot.lanes.business import resolve_gate as resolve_gate_mod
+
+    monkeypatch.setattr(resolve_gate_mod, "run_gate", _wrap_run_gate(resolve_gate_mod.run_gate))
+
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_stock_fake_call_tool(db),
+    )
+    stub_parser(
+        _s4_bare_parser_output(
+            message_type="business_query",
+            intent_hint="check_stock",
+            domain_hint="inventory",
+            match_mode="and",
+            entities=[
+                {
+                    "raw": "water closet",
+                    "hint": "product",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        )
+    )
+    stub_access()
+
+    turn = engine_mod.run_turn(
+        _s4_envelope(
+            contact_id=contact_id,
+            message_id="ZZT-matchlinepromo-1",
             text="check stock water closet with s trap 250mm",
         ),
         session_factory=session_factory,

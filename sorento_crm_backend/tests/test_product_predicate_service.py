@@ -572,6 +572,59 @@ def test_resolve_product_set_carries_matched_specs_on_the_require_only_arm(db):
     ]
 
 
+# --------------------------------------------------------------------------- #
+# Owner regression (PR #833, R32, AC-1357): the require-only arm's listing     #
+# order is alphabetical-by-code today - it must instead order by HOW MANY     #
+# spec bindings each candidate matched (more first), code only as the         #
+# tiebreak among equal counts.                                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_product_set_orders_the_require_only_arm_by_matched_binding_count(db):
+    """AC-1357/R32: three Water Closet products, codes chosen so alphabetical
+    order is the WRONG order - "ZZT-WC-A" (s_trap, trap_length=180) matches
+    only two of the three stated bindings (class, trap_type), while
+    "ZZT-WC-B" and "ZZT-WC-C" (both s_trap, trap_length=250) match all three.
+    `resolve_product_set(require={"stock": True}, specs=[class Water Closet,
+    trap_type s_trap, trap_length 250])` with NO `free_terms` (the
+    require-only arm) must list B and C first (both matched three bindings),
+    A last (matched two) - and within the equal-count pair, by code: B before
+    C.
+
+    RED today: the require-only arm's listing query is `.order_by(family,
+    Product.product_code).distinct(family)` (measured in
+    `product_predicate_service.py`) - pure code order, ignorant of
+    `matched_specs` - so it returns A, B, C, not B, C, A.
+    """
+    a = _water_closet_with_trap(db, "ZZT-WC-A", trap_type="s_trap", trap_length=180)
+    b = _water_closet_with_trap(db, "ZZT-WC-B", trap_type="s_trap", trap_length=250)
+    c = _water_closet_with_trap(db, "ZZT-WC-C", trap_type="s_trap", trap_length=250)
+
+    specs = [
+        {"key": "class", "value": "Water Closet"},
+        {"key": "trap_type", "value": "s_trap"},
+        {"key": "trap_length", "value": 250},
+    ]
+
+    out = resolve_product_set(db, require={"stock": True}, specs=specs)
+    assert out["qualifying_total"] == 3, out
+    codes = [cand["product_code"] for cand in out["candidates"]]
+    assert codes == [b.product_code, c.product_code, a.product_code], codes
+
+    # The ranked arm (free_terms present, `rank_by_words` True) is untouched by
+    # this fix - it ranks through `search_specs`, not the require-only listing
+    # query, and `test_resolve_product_set_keeps_a_numeric_spec_binding_as_a_
+    # ranking_boost` already pins that a matching numeric boost ranks first.
+    # Here the only pinned claim is the SAME one that test makes for its own
+    # pair: the product that also matches the stated trap_length boost (B or
+    # C) outranks the one that does not (A) - not a specific order between the
+    # two 3-binding matches, which this fix does not touch.
+    ranked = resolve_product_set(db, require={"stock": True}, specs=specs, free_terms=["water closet"])
+    ranked_codes = [cand["product_code"] for cand in ranked["candidates"]]
+    assert ranked_codes[-1] == a.product_code, ranked_codes
+    assert set(ranked_codes[:2]) == {b.product_code, c.product_code}, ranked_codes
+
+
 def test_unrecognized_terms_do_not_silently_mean_none(db):
     p = _product(db, "ZZT-SINK-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
     _stock(db, p, 1)
