@@ -1,6 +1,6 @@
 # PLAN: SPO Allocations list shows and searches the inbound shipment's container number
 
-Status: PLANNED 11 Sep 2026 (owner ask, screenshot of Procurement > SPO Allocations)
+Status: PR #835 OPEN 11 Sep 2026, reviewed + browser verified, never merge without owner go
 Branch: `feat/spo-list-container-number` (worktree `.claude/worktrees/spo-list-container`, base `origin/main`)
 UAC: `spo-list-container-number-acceptance-criteria.md`
 Domain: purchasing (SPO Allocations document list)
