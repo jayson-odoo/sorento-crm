@@ -211,6 +211,17 @@ tool. No new reply format.
   recovers the scheme from the remainder (AC-1338), so "which item has PPS cert" answers "N
   products have PPS certificates" on every parser variant seen. Evidence: pytest parametrize;
   console case.
+- AC-1354 A scheme-narrowed certificate leg lists only that scheme's files: the predicate block
+  carries `certificate_ids` (active certificates of the scheme linked to the qualifying products),
+  the fetch passes them with the page's product ids on the first answer and on "more", and a
+  product holding a PPS and a WCM certificate renders its PPS file only. A bare certificate leg
+  passes no certificate ids. Evidence: pytest on the resolver block and on the fetch args (two
+  turns); console "any tap has PPS cert" shows PPS files only.
+- AC-1355 A set answer whose products were described with spec words carries the forward path's
+  Match line, rendered by the same renderer with the same wording ("Match: trap type: S-trap,
+  trap length: 250 mm, class: Water Closet" or the renderer's existing format), when every shown
+  product matches the bindings; a set answer with no spec words carries no Match line. Evidence:
+  pytest on the rendered text for "check stock water closet with s trap 250mm"; console case.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
