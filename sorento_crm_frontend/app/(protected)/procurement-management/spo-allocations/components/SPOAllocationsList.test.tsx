@@ -247,7 +247,16 @@ describe('SPOAllocationsList - status pill + overdue formatting (AC-2)', () => {
     const onTimeRow = screen.getByText('SPO-ONTIME').closest('tr') as HTMLElement;
     const lateOverdue = within(lateRow).getByText('31d');
     expect(lateOverdue.className).toMatch(/amber/);
-    expect(within(onTimeRow).getByText('-')).toBeInTheDocument();
+
+    // Scoped to the Overdue column specifically (not just any "-" in the row) - the
+    // Container No column (AC-6) also reads "-" when a document has no container,
+    // so an unscoped `getByText('-')` on the row is now ambiguous.
+    const overdueColIndex = screen
+      .getAllByRole('columnheader')
+      .findIndex((header) => header.textContent?.includes('Overdue'));
+    expect(overdueColIndex).toBeGreaterThan(-1);
+    const onTimeOverdueCell = within(onTimeRow).getAllByRole('cell')[overdueColIndex];
+    expect(within(onTimeOverdueCell).getByText('-')).toBeInTheDocument();
   });
 });
 
