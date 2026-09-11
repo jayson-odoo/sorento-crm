@@ -14,6 +14,11 @@ false-positive pass.
 """
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
@@ -28,6 +33,19 @@ from tests.scm.test_reorder_per_product import _set_level
 pytestmark = requires_pg
 
 MARKER = "ZZTHIDCOL"
+
+_VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
+
+
+def _load_migration():
+    """The 512 migration module, loaded off disk the way `test_demand_class_backfill_
+    migration.py` loads 425 - alembic revisions are not an importable package."""
+    spec = importlib.util.spec_from_file_location(
+        "512_hidden_by_default_col", _VERSIONS / "512_hidden_by_default_col.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # --- AC-11: the column exists, is backfilled, and matches the Python rule -------------
@@ -196,3 +214,92 @@ def test_run_counts_read_the_column(scm_app):
     assert by_pid[hid_pid]["hidden_by_default"] is True
     assert by_pid[buy_pid]["hidden_by_default"] is False
     assert by_pid[shown_pid]["hidden_by_default"] is False
+
+
+# --- AC-14 gap: a run that already existed when 512 first ran kept its unscoped counts -
+
+def test_backfill_recomputes_run_counts(scm_app):
+    """The column landed on the recs, but a run's own `planned_count` / `run_log.
+    recommendation_count` are stamped once, at write time (`reorder_run_service`) - a run
+    written BEFORE this migration first shipped never had that write happen against the
+    column, so it kept reading its old, unscoped numbers forever (826 on the owner's own
+    11 Sep 07:30 run). This pins the migration's OWN backfill of those two counters,
+    run directly rather than re-derived by `_refresh_run_counts` (which only a decision
+    triggers) or `_summarise` (which only a fresh run's own write path calls).
+
+    3 recs on one run, one covered row sitting well above its level (hidden) - the same
+    "1 buy + 1 shown covered = 2" shape `test_run_counts_read_the_column` uses. Both
+    counters are stamped `3` "the old way" first (what a pre-migration run's stored numbers
+    actually looked like), so the assertion is red until the migration's backfill runs.
+    """
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+
+    buy_wid, buy_code = _wh(db, "BUFBC")
+    buy_pid, buy_pcode = _product(db)
+    _set_level(db, buy_pid, None, 100)
+    _mk_stock(db, buy_pid, buy_wid, 10)
+    _mk_demand(db, buy_pid, buy_wid, 0.0)
+    _link(db, buy_pid, _mk_supplier(db, f"{MARKER} bufbc"), moq=None, mult=None)
+
+    hid_wid, hid_code = _wh(db, "HIFBC")
+    hid_pid, hid_pcode = _product(db)
+    _set_level(db, hid_pid, None, 100)
+    _mk_stock(db, hid_pid, hid_wid, 200)
+    _mk_demand(db, hid_pid, hid_wid, 0.0)
+    _link(db, hid_pid, _mk_supplier(db, f"{MARKER} hifbc"), moq=None, mult=None)
+    _core_line_for_run(db, hid_pid, hid_wid, qty=10, demand_class="retail")
+
+    shown_wid, shown_code = _wh(db, "SHFBC")
+    shown_pid, shown_pcode = _product(db)
+    _set_level(db, shown_pid, None, 50)
+    _mk_stock(db, shown_pid, shown_wid, 5)
+    _mk_demand(db, shown_pid, shown_wid, 0.0)
+    _link(db, shown_pid, _mk_supplier(db, f"{MARKER} shfbc"), moq=None, mult=None)
+    db.flush()
+
+    r1 = _run(db, [buy_code], buy_pcode)
+    r2 = _run(db, [hid_code], hid_pcode)
+    r3 = _run(db, [shown_code], shown_pcode)
+
+    folded = r1
+    db.execute(text(
+        "UPDATE scm.reorder_recommendation SET run_id = :folded "
+        "WHERE run_id IN (:r2, :r3)"
+    ), {"folded": folded, "r2": r2, "r3": r3})
+    # Stamp the run "completed" with the OLD, unscoped numbers - what a run written before
+    # this migration first ran actually has stored today.
+    db.execute(text(
+        "UPDATE scm.reorder_run "
+        "SET status = 'completed', planned_count = 3, "
+        "    run_log = jsonb_set(COALESCE(run_log, '{}'::jsonb), '{recommendation_count}', '3'::jsonb) "
+        "WHERE id = :r"
+    ), {"r": folded})
+    db.flush()
+
+    conn = db.connection()
+    ops = Operations(MigrationContext.configure(conn))
+    import alembic.op as op_module
+    op_module._proxy = ops
+    _load_migration()._backfill_run_counts()
+
+    row = db.execute(text(
+        "SELECT planned_count, run_log ->> 'recommendation_count' AS rec_count "
+        "FROM scm.reorder_run WHERE id = :r"
+    ), {"r": folded}).mappings().one()
+    assert row["planned_count"] == 2, (
+        f"1 buy + 1 shown covered = 2; the hidden covered row must not inflate the "
+        f"already-existing run's planned_count: {row}"
+    )
+    assert row["rec_count"] == "2", (
+        f"run_log.recommendation_count must be recomputed the same way: {row}"
+    )
+
+    # Idempotent: running it again gives the same result, never a second decrement.
+    _load_migration()._backfill_run_counts()
+    row2 = db.execute(text(
+        "SELECT planned_count, run_log ->> 'recommendation_count' AS rec_count "
+        "FROM scm.reorder_run WHERE id = :r"
+    ), {"r": folded}).mappings().one()
+    assert row2["planned_count"] == 2
+    assert row2["rec_count"] == "2"
