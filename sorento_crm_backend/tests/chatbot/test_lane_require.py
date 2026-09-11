@@ -2436,6 +2436,162 @@ def _s4_seed_seven_taps(db) -> list[str]:
     return codes
 
 
+def _s4_seed_seven_taps_pps(db) -> tuple[list[str], list[str]]:
+    """Same world as `_s4_seed_seven_taps`, but every tap's certificate carries
+    scheme "PPS" - a scheme-narrowed require then qualifies all seven,
+    letting a "more" page test reuse this world unchanged. Returns (product
+    codes, certificate ids), both order-parallel."""
+    codes: list[str] = []
+    cert_ids: list[str] = []
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    for _ in range(7):
+        product = _tap_product(db, category_id=category_id, uom_id=uom_id)
+        cert = _certificate_for(db, product_id=product.id, scheme="PPS")
+        codes.append(product.product_code)
+        cert_ids.append(cert.id)
+    db.commit()
+    return codes, cert_ids
+
+
+def _cert_capturing_fake_call_tool(db, calls: list[dict[str, Any]]):
+    """Wraps `_cert_fake_call_tool` to also record every MCP call (name, args)
+    so a test can inspect the `certificate_ids` argument the fetch step
+    actually sent, without duplicating its rendering logic."""
+
+    inner = _cert_fake_call_tool(db)
+
+    def fake_call_tool(name: str, args: dict[str, Any]) -> Any:
+        calls.append({"name": name, "args": dict(args)})
+        return inner(name, args)
+
+    return fake_call_tool
+
+
+# --------------------------------------------------------------------------- #
+# Owner regression (PR #833, R29, AC-1354): a scheme-narrowed certificate      #
+# leg must pass the qualifying certificates' OWN ids to the tool, alongside    #
+# the page's product_ids, on the first answer and on every "more" page (the   #
+# carry stores them) - a bare certificate leg passes nothing extra.            #
+# --------------------------------------------------------------------------- #
+
+
+def test_scheme_narrowed_certificate_predicate_passes_certificate_ids_to_the_tool(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1354/R29: "which tap has PPS cert" must call
+    `crm_master_product_attachments_list` with `certificate_ids` alongside
+    the first-five `product_ids` - only the PPS files should ever render, not
+    every certificate file the qualifying products hold. The following
+    "more" page must carry the SAME `certificate_ids` (the carry stores
+    them).
+
+    RED: `entity_ids_transformer` never reads `predicate.certificate_ids` -
+    it only ever slices `product_ids` for a HAS turn - so the tool args carry
+    no `certificate_ids` key at all on either turn.
+    """
+    contact_id = _s4_contact_id("certids")
+    db = session_factory()
+    codes, cert_ids = _s4_seed_seven_taps_pps(db)
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+
+    calls: list[dict[str, Any]] = []
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_cert_capturing_fake_call_tool(db, calls),
+    )
+    stub_parser(
+        _s4_cert_parser_output(
+            entities=[
+                {
+                    "raw": "PPS cert",
+                    "hint": "attachment_type",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ]
+        )
+    )
+    stub_access()
+
+    turn1 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-certids-1", text="which tap has PPS cert"),
+        session_factory=session_factory,
+    )
+    assert turn1.status == "done", turn1.error
+    assert len(calls) == 1, calls
+    turn1_args = calls[0]["args"]
+    assert set(turn1_args.get("certificate_ids") or []) == set(cert_ids), turn1_args
+    assert turn1_args.get("product_ids"), turn1_args
+
+    stub_parser(_s4_bare_parser_output())
+    turn2 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-certids-2", text="more"),
+        session_factory=session_factory,
+    )
+    assert turn2.status == "done", turn2.error
+    assert len(calls) == 2, calls
+    turn2_args = calls[1]["args"]
+    assert set(turn2_args.get("certificate_ids") or []) == set(cert_ids), turn2_args
+
+
+def test_bare_certificate_predicate_passes_no_certificate_ids(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1354/R29 control: a BARE certificate leg (no scheme) must pass
+    nothing extra - the tool renders every certificate file the qualifying
+    products hold, exactly as it does today. Guards the fix against adding
+    `certificate_ids` unconditionally.
+
+    Green today (nothing computes this key either way, scheme or bare) -
+    kept as the regression guard alongside the scheme-narrowed red case.
+    """
+    from app.models.certificate import Certificate, CertificateProduct
+
+    contact_id = _s4_contact_id("nocertids")
+    db = session_factory()
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    for i in range(7):
+        product = _tap_product(db, category_id=category_id, uom_id=uom_id)
+        # A certificate_number built WITHOUT the substring "cert" - the shared
+        # `_certificate_for` helper's own `unique_code("CERTNO")` collides
+        # with the bare word "cert" through an UNRELATED general entity-
+        # resolution probe (the register's `certificate_number` column, not
+        # this AC's predicate/require mechanism), which would make this
+        # control world carry a stray `certificate_ids` entry for a reason
+        # that has nothing to do with R29.
+        cert = Certificate(
+            id=str(uuid.uuid4()), scheme="ZZT-SIRIM", certificate_number=f"ZZT-{i:06d}", status="active"
+        )
+        db.add(cert)
+        db.flush()
+        db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+    db.commit()
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+
+    calls: list[dict[str, Any]] = []
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_cert_capturing_fake_call_tool(db, calls),
+    )
+    stub_parser(_s4_cert_parser_output())
+    stub_access()
+
+    turn1 = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-nocertids-1", text="which tap has cert"),
+        session_factory=session_factory,
+    )
+    assert turn1.status == "done", turn1.error
+    assert len(calls) == 1, calls
+    assert "certificate_ids" not in calls[0]["args"], calls[0]["args"]
+
+
 def test_set_answer_writes_the_set_page_carry(session_factory, stub_parser, stub_access, monkeypatch):
     """AC-1317: a set answer's tail stamps `selection_context = "set_page"` and a
     `last_result_set` carrying the described set, the offset already advanced past the
@@ -3880,3 +4036,159 @@ def test_set_page_carry_page_arm_keeps_the_offset_when_the_fetch_never_rendered(
     carry = variables.get("last_result_set")
     assert carry == prev_carry, carry
     assert carry["offset"] == 5, carry
+
+
+# --------------------------------------------------------------------------- #
+# Owner regression (PR #833, R30, AC-1355): a set answer whose products were  #
+# described with spec words must carry the forward path's Match line          #
+# ("_Matched on: ..."), rendered by the SAME `_matched_on_line` (compile_     #
+# state.py) the forward path already uses - the set path's candidates carry   #
+# `matched_specs: []` on the require-only arm and the HAS turn never          #
+# populates `result["spec_asked"]` at all, so the line is skipped entirely.   #
+# --------------------------------------------------------------------------- #
+
+
+def test_set_answer_carries_the_match_line_when_every_shown_product_matches(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1355/R30: "check stock water closet with s trap 250mm" against five
+    Water Closet products, all `trap_type=s_trap` / `trap_length=250`, all in
+    stock - the reply must carry the SAME "_Matched on: ..." line the forward
+    path renders for a spec-described product, naming trap type S Trap, trap
+    length 250 and class Water Closet (the renderer's own wording - class
+    verbatim with no key prefix, every other key as "<pretty key>: <value>",
+    `class` first).
+
+    RED: `resolve_product_set`'s require-only arm hardcodes `matched_specs:
+    []` on every candidate (measured in `product_predicate_service.py`), and
+    the resolver's HAS/require branch never sets `result["spec_asked"]` at
+    all (only the `spec_fallback` branch does, `references.py` ~line 2856) -
+    so `_matched_on_line`'s own `keys` list is empty for every shown row and
+    the whole line is skipped ("if not keys: return user_response"). The
+    reply text carries no "_Matched on:" substring at all.
+    """
+    contact_id = _s4_contact_id("matchline")
+    db = session_factory()
+
+    from app.models.inventory import Stock, Warehouse
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from app.models.product_spec import ProductSpecifications
+    from app.services.product_spec_derivation import derive_for_code
+    from tests._pg_fixture import unique_code
+
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    warehouse = Warehouse(id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:50], warehouse_name="ZZT WH")
+    db.add(warehouse)
+    db.flush()
+
+    for _ in range(5):
+        code = unique_code("ZZTWC")[:50]
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            description=f"{code} SORENTO CERAMIC WATER CLOSET",
+            category_id=category_id,
+            base_uom_id=uom_id,
+            list_price=10,
+            is_active=True,
+        )
+        db.add(product)
+        db.flush()
+        derive_for_code(db, code)
+        spec_row = (
+            db.query(ProductSpecifications).filter(ProductSpecifications.product_id == product.id).one()
+        )
+        values = dict(spec_row.values or {})
+        values["trap_type"] = {"value": "s_trap"}
+        values["trap_length"] = {"value": 250}
+        spec_row.values = values
+        db.add(
+            Stock(
+                id=str(uuid.uuid4()),
+                product_id=product.id,
+                warehouse_id=warehouse.id,
+                quantity_on_hand=5,
+                quantity_reserved=0,
+                quantity_damaged=0,
+            )
+        )
+    db.commit()
+
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_stock_fake_call_tool(db),
+    )
+    stub_parser(
+        _s4_bare_parser_output(
+            message_type="business_query",
+            intent_hint="check_stock",
+            domain_hint="inventory",
+            match_mode="and",
+            entities=[
+                {
+                    "raw": "water closet",
+                    "hint": "product",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        )
+    )
+    stub_access()
+
+    turn = engine_mod.run_turn(
+        _s4_envelope(
+            contact_id=contact_id,
+            message_id="ZZT-matchline-1",
+            text="check stock water closet with s trap 250mm",
+        ),
+        session_factory=session_factory,
+    )
+    assert turn.status == "done", turn.error
+    text = (turn.reply or {}).get("text") or ""
+    assert "_Matched on:" in text, text
+    assert "Water Closet" in text, text
+    assert "S Trap" in text, text
+    assert "250" in text, text
+
+
+def test_set_answer_with_no_spec_words_carries_no_match_line(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1355/R30 control: "which tap has cert" (no spec bindings at all)
+    must carry NO "_Matched on:" line - the certificate leg names no spec
+    key for `_matched_on_line` to intersect against.
+
+    Green today - `_matched_on_line` already returns the response unchanged
+    when `matched_specs` is empty for every shown row, which is already true
+    for a certificate-only HAS turn regardless of the R30 fix; kept as the
+    regression guard against the fix adding a Match line to every set answer
+    unconditionally.
+    """
+    contact_id = _s4_contact_id("nomatchline")
+    db = session_factory()
+    _s4_seed_seven_taps(db)
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_cert_fake_call_tool(db),
+    )
+    stub_parser(_s4_cert_parser_output())
+    stub_access()
+
+    turn = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-nomatchline-1", text="which tap has cert"),
+        session_factory=session_factory,
+    )
+    assert turn.status == "done", turn.error
+    text = (turn.reply or {}).get("text") or ""
+    assert "_Matched on:" not in text, text

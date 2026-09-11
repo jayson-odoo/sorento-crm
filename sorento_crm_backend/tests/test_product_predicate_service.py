@@ -518,6 +518,60 @@ def test_resolve_product_set_keeps_a_numeric_spec_binding_as_a_ranking_boost(db)
     assert codes[0] == matching.product_code, codes
 
 
+# --------------------------------------------------------------------------- #
+# Owner regression (PR #833, R30, AC-1355): the require-only arm (no          #
+# `free_terms`, so `search_specs` never runs) must ALSO carry real            #
+# `matched_specs` on its candidates, not the hardcoded `[]` it returns today   #
+# - the Match line (compile_state.py's `_matched_on_line`) reads this off     #
+# every shown row, and a "which tap has cert"-style bare require turn never   #
+# supplies free_terms at all.                                                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_product_set_carries_matched_specs_on_the_require_only_arm(db):
+    """AC-1355/R30: `resolve_product_set(require={"stock": True}, specs=[class
+    Water Closet, trap_type s_trap, trap_length 250])` with NO `free_terms` -
+    the require-only/deterministic-listing arm (`rank_by_words` is False) -
+    must still stamp every candidate's `matched_specs` with the keys that
+    bound it: "trap_type" and "class" on both qualifying products (both are
+    s_trap, both are Water Closet - that IS how they qualified), and
+    "trap_length" only on the one whose own value is 250.
+
+    RED: the require-only arm builds each candidate with `"matched_specs":
+    []` unconditionally (measured in `product_predicate_service.py`'s own
+    listing branch) - `search_specs` (the only code that ever populates this
+    key) never runs when `rank_by_words` is False, which is exactly this
+    call's shape (no `free_terms`).
+    """
+    matching = _water_closet_with_trap(db, "ZZT-WC-RO-250", trap_type="s_trap", trap_length=250)
+    other = _water_closet_with_trap(db, "ZZT-WC-RO-300", trap_type="s_trap", trap_length=300)
+
+    out = resolve_product_set(
+        db,
+        require={"stock": True},
+        specs=[
+            {"key": "class", "value": "Water Closet"},
+            {"key": "trap_type", "value": "s_trap"},
+            {"key": "trap_length", "value": 250},
+        ],
+    )
+    assert out["qualifying_total"] == 2, out
+    by_code = {cand["product_code"]: cand for cand in out["candidates"]}
+    assert set(by_code) == {matching.product_code, other.product_code}, by_code
+
+    for code, cand in by_code.items():
+        matched = set(cand.get("matched_specs") or [])
+        assert "class" in matched, (code, cand)
+        assert "trap_type" in matched, (code, cand)
+
+    assert "trap_length" in set(by_code[matching.product_code].get("matched_specs") or []), by_code[
+        matching.product_code
+    ]
+    assert "trap_length" not in set(by_code[other.product_code].get("matched_specs") or []), by_code[
+        other.product_code
+    ]
+
+
 def test_unrecognized_terms_do_not_silently_mean_none(db):
     p = _product(db, "ZZT-SINK-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
     _stock(db, p, 1)

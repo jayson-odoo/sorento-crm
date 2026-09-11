@@ -1228,6 +1228,91 @@ def test_scheme_word_matches_the_register_spelling_without_a_lookup_option(clien
 
 
 # --------------------------------------------------------------------------- #
+# Owner regression (PR #833, R29, AC-1354): a scheme-narrowed certificate      #
+# leg must surface ONLY that scheme's own certificate ids in the predicate     #
+# block, so the fetch step can narrow the tool call to those files alone -    #
+# a product holding both a PPS and a WCM certificate must never have its WCM   #
+# file rendered for a PPS question. A bare certificate leg passes no ids at    #
+# all (present only on the scheme form, same convention as `schemes_on_file`).#
+# --------------------------------------------------------------------------- #
+
+
+def test_scheme_narrowed_certificate_predicate_carries_only_that_schemes_ids(client, db):
+    """AC-1354/R29: a product certified under BOTH "PPS" and "WCM" - a
+    scheme-narrowed require (`{"certificate": {"scheme": "PPS"}}`) must
+    surface `predicate.certificate_ids` as exactly the PPS certificate's own
+    id, never the WCM one. A BARE require (`{"certificate": true}`) must
+    carry no `certificate_ids` key at all - present only on the scheme form,
+    the same convention `schemes_on_file` already follows.
+
+    RED: `predicate` carries no `certificate_ids` key today under either
+    shape - `_leg_certificate` only ever returns an EXISTS clause, it never
+    surfaces the qualifying certificates' own ids back to the caller, so
+    `resolve_product_set`'s return dict never gains this key regardless of
+    scheme.
+    """
+    from app.models.certificate import Certificate, CertificateProduct
+
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+
+    product = Product(
+        id=str(uuid.uuid4()),
+        product_code="ZZTSCH99",
+        product_name="ZZTSCH99",
+        description="SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)",
+        category_id=cat.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("1.00"),
+    )
+    db.add(product)
+    db.flush()
+    derive_for_code(db, "ZZTSCH99")
+
+    pps_cert = Certificate(
+        id=str(uuid.uuid4()), scheme="PPS", certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}", status="active"
+    )
+    db.add(pps_cert)
+    db.flush()
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=pps_cert.id, product_id=product.id))
+
+    wcm_cert = Certificate(
+        id=str(uuid.uuid4()), scheme="WCM", certificate_number=f"ZZT-{uuid.uuid4().hex[:8]}", status="active"
+    )
+    db.add(wcm_cert)
+    db.flush()
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=wcm_cert.id, product_id=product.id))
+    db.flush()
+
+    scheme_response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which kitchen sink has PPS cert",
+            "free_terms": ["kitchen sink"],
+            "require": {"certificate": {"scheme": "PPS"}},
+            "predicate_words": ["cert"],
+        },
+    )
+    assert scheme_response.status_code == 200
+    scheme_predicate = scheme_response.json()["predicate"]
+    assert scheme_predicate["qualifying_total"] == 1, scheme_predicate
+    assert scheme_predicate.get("certificate_ids") == [pps_cert.id], scheme_predicate
+
+    bare_response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which kitchen sink has cert",
+            "free_terms": ["kitchen sink"],
+            "require": {"certificate": True},
+            "predicate_words": ["cert"],
+        },
+    )
+    assert bare_response.status_code == 200
+    bare_predicate = bare_response.json()["predicate"]
+    assert "certificate_ids" not in bare_predicate, bare_predicate
+
+
+# --------------------------------------------------------------------------- #
 # Third console pass (11 Sep 2026, PLAN-attribute-first-asks.md R13,           #
 # AC-1332) - the LLM parser variant that put `understand_phrase: true` on the  #
 # wire tripped a MODEL read the HAS branch was never meant to run: the         #
