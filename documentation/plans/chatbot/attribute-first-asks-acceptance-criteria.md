@@ -205,6 +205,12 @@ tool. No new reply format.
   matching product first. Evidence: pytest on `filter_specs` and `resolve_product_set`; console
   "check stock water closet with s trap 250mm" answers a count and five S-trap products, and
   "any incoming for water closet with p trap" answers a count, never the clarify.
+- AC-1353 `derive_require` with intent `check_product_attachment` and no attachment_type entity
+  yields `{"certificate": true}` when the user_goal or the message text carries a cert word
+  ("trying to find which item has PPS cert"), and None when neither does; the resolver then
+  recovers the scheme from the remainder (AC-1338), so "which item has PPS cert" answers "N
+  products have PPS certificates" on every parser variant seen. Evidence: pytest parametrize;
+  console case.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
