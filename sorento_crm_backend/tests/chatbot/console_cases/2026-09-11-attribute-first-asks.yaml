@@ -1,0 +1,122 @@
+# Console cases for the attribute-first asks lane (PLAN-attribute-first-asks.md, AC-1325,
+# AC-1317, AC-1333, AC-1343, AC-1351, AC-1352). Counts are the prod copy of 2026-09-10 and
+# move with the data, so the expectations pin the SHAPE of the reply (the set header, the
+# clarify, the forward path), never a number.
+#
+# The contact has access levels (the promotion case needs one). Override with --contact.
+# Needs the parser's LLM key (read from ai_assistant_configs) and the MCP server on 8765.
+contact: "438930735"
+
+cases:
+  - name: a full code stays on the forward path (AC-1305)
+    text: "check stock srtwc286"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["Stock details found"]
+      reply_not_contains: ["have stock. Showing"]
+
+  - name: an unknown class word clarifies with the nearest label (AC-1320)
+    text: "which water tap has cert"
+    cold: true
+    expect:
+      reply_contains: ["I don't know 'water tap'", "Did you mean"]
+
+  - name: a class word scopes the set and the header counts it (AC-1306, AC-1316)
+    text: "which tap has cert"
+    cold: true
+    expect:
+      reply_contains: ["taps have certificates", "Showing 5"]
+      no_uuid: true
+
+  - name: brand plus product_type describes a one-product set (AC-1327)
+    text: "which sorento bidet has cert"
+    cold: true
+    expect:
+      reply_contains: ["has certificates", "SRTWT5875"]
+      reply_not_contains: ["needs to be more specific"]
+
+  - name: stock leg with a class synonym (AC-1310)
+    text: "which basin got stock"
+    cold: true
+    expect:
+      reply_contains: ["wash basins have stock", "Showing 5"]
+
+  - name: a register scheme word narrows the certificate leg (AC-1313, AC-1338)
+    text: "which item has PPS cert"
+    cold: true
+    expect:
+      reply_contains: ["have PPS certificates"]
+      reply_not_contains: ["I don't know"]
+
+  - name: an unknown document label clarifies as a document type (AC-1329)
+    text: "which basin has photo"
+    cold: true
+    expect:
+      reply_contains: ["as a document type", "Types I know"]
+
+  - name: the incoming leg (AC-1311)
+    text: "which sink has incoming"
+    cold: true
+    expect:
+      reply_contains: ["kitchen sinks have incoming stock"]
+
+  - name: a category-filed class counts and renders five (AC-1339, AC-1346)
+    text: "which bathroom accessory has stock"
+    cold: true
+    expect:
+      reply_contains: ["bathroom accessories have stock", "Showing 5"]
+      reply_not_contains: ["a a match", "Couldn't find"]
+
+  - name: a stock ask with spec words keeps working (R27, AC-1351, AC-1352)
+    text: "check stock water closet with s trap 250mm"
+    cold: true
+    expect:
+      reply_contains: ["water closets have stock"]
+      reply_not_contains: ["I don't know 'water closet trap'"]
+
+  - name: an incoming ask with spec words keeps working (R27, AC-1351)
+    text: "any incoming for water closet with p trap"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know 'water closet trap'"]
+
+  - name: paging a set answer (AC-1317)
+    cold: true
+    turns:
+      - text: "which tap has cert"
+        expect:
+          reply_contains: ["Showing 5"]
+      - text: "more"
+        expect:
+          reply_contains: ["Showing 6 to 10"]
+      - text: "more"
+        expect:
+          reply_contains: ["Showing 11 to 15"]
+
+  - name: a same-domain clarify clears the carry so more does not page (AC-1343)
+    cold: true
+    turns:
+      - text: "which tap has cert"
+        expect:
+          reply_contains: ["Showing 5"]
+      - text: "which water tap has cert"
+        expect:
+          reply_contains: ["I don't know 'water tap'"]
+      - text: "more"
+        expect:
+          reply_not_contains: ["Showing 6 to 10"]
+
+  - name: tiered promotion set, tier ask then page (AC-1333)
+    cold: true
+    turns:
+      - text: "any shower set on promo"
+        expect:
+          reply_contains: ["Which access level"]
+      - text: "1"
+        expect:
+          branch_kind: check_promotion
+          reply_contains: ["promotions for shower set"]
+      - text: "more"
+        expect:
+          no_uuid: true
