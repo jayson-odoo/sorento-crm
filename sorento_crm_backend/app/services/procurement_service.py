@@ -53,7 +53,7 @@ from app.schemas.procurement import (
     StockInquiryCreate, StockInquiryUpdate,
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
     ProductSimple, WarehouseSimple, InboundShipmentSimple,
-    SPODocument, SPODocumentLine, SPODocumentRow,
+    SPODocument, SPODocumentLine, SPODocumentRow, SPODocumentContainer,
 )
 from app.services.error_handler import (
     AppException,
@@ -2319,6 +2319,14 @@ class SPOAllocationService:
         balance_sum_expr = func.coalesce(func.sum(case((is_outstanding, balance_expr), else_=0)), 0)
         worst_overdue_expr = func.coalesce(func.max(case((is_outstanding, overdue_expr), else_=0)), 0)
         earliest_eta_expr = func.min(case((is_outstanding, arrival_expr), else_=None))
+        # PLAN-spo-list-container-number.md AC-5: the Container No column sorts by the
+        # document's first container over its VISIBLE lines - MIN, so a raw or linked
+        # container both count and a hidden line never votes; `nullslast()` below is
+        # what puts a document with no container last in EITHER direction.
+        container_value_expr = func.coalesce(
+            SPOAllocation.container_number, InboundShipment.shipping_container_number
+        )
+        containers_sort_expr = func.min(case((is_visible, container_value_expr), else_=None))
         # COALESCE(min(issue_date), min(created_at)) (review S4): `issue_date` is the
         # document's own date; `created_at` is the import timestamp, a fallback for
         # rows a bare shipment-allocation import never set `issue_date` on. Cast the
@@ -2388,6 +2396,11 @@ class SPOAllocationService:
                         MatchLine.product_id.in_(matching_product_ids),
                         MatchLine.warehouse_id.in_(matching_warehouse_ids),
                         MatchLine.inbound_shipment_id.in_(matching_shipment_ids),
+                        # AC-4 (PLAN-spo-list-container-number.md): the raw, unlinked
+                        # `spo_allocations.container_number` - the shipment's own
+                        # `shipping_container_number` is already covered above via
+                        # `matching_shipment_ids`.
+                        MatchLine.container_number.ilike(f"%{q_str}%"),
                     )
                 )
             match_filter = select(MatchLine.id).where(*match_conditions).exists()
@@ -2451,6 +2464,7 @@ class SPOAllocationService:
             "balance": balance_sum_expr,
             "worst_overdue_days": worst_overdue_expr,
             "earliest_eta": earliest_eta_expr,
+            "containers": containers_sort_expr,
         }
         sort_dir_norm = (sort_dir or "desc").strip().lower()
         order_col = sort_map.get((sort_field or "spo_number").strip().lower(), SPOAllocation.spo_number)
@@ -2470,6 +2484,7 @@ class SPOAllocationService:
             }
 
         supplier_map = self._document_supplier_rollup(spo_numbers_page)
+        container_map = self._document_container_rollup(spo_numbers_page)
 
         rows = []
         for r in page_rows:
@@ -2488,6 +2503,7 @@ class SPOAllocationService:
                     balance=int(r.balance or 0),
                     line_count=int(r.line_count or 0),
                     worst_overdue_days=int(r.worst_overdue_days or 0),
+                    containers=container_map.get(r.spo_number, []),
                 )
             )
         return {
@@ -2543,6 +2559,58 @@ class SPOAllocationService:
             majority_name = entries[0][0]
             extra = max(len(entries) - 1, 0)
             result[spo_number] = (majority_name, extra)
+        return result
+
+    def _document_container_rollup(self, spo_numbers: List[str]) -> Dict[str, List[SPODocumentContainer]]:
+        """One `{container_number, shipment_id}` entry per distinct container over each
+        document's VISIBLE lines, sorted by container number (PLAN-spo-list-container-
+        number.md AC-1/AC-2/AC-3).
+
+        Same two-phase shape as `_document_supplier_rollup` above: reads only the
+        page's own documents. Dedup happens in Python because the winner between a
+        linked and a raw duplicate (AC-3) is "carries a shipment id", not a SQL
+        aggregate a GROUP BY can express in one pass.
+        """
+        if not spo_numbers:
+            return {}
+        from app.services.scm import spo_supply
+
+        container_expr = func.coalesce(
+            SPOAllocation.container_number, InboundShipment.shipping_container_number
+        )
+        rows = (
+            self.db.query(
+                SPOAllocation.spo_number,
+                container_expr.label("container_number"),
+                SPOAllocation.inbound_shipment_id,
+            )
+            .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .filter(
+                SPOAllocation.spo_number.in_(spo_numbers),
+                container_expr.isnot(None),
+                *spo_supply.visible_line_clauses(),
+            )
+            .distinct()
+            .all()
+        )
+        by_doc: Dict[str, Dict[str, Optional[str]]] = {}
+        for spo_number, container_number, shipment_id in rows:
+            entries = by_doc.setdefault(spo_number, {})
+            # The entry carrying a shipment id always wins; a raw-only duplicate only
+            # ever fills a slot that has not been claimed yet.
+            if shipment_id is not None:
+                entries[container_number] = shipment_id
+            else:
+                entries.setdefault(container_number, None)
+        result: Dict[str, List[SPODocumentContainer]] = {}
+        for spo_number, entries in by_doc.items():
+            result[spo_number] = [
+                SPODocumentContainer(
+                    container_number=container_number,
+                    shipment_id=str(shipment_id) if shipment_id is not None else None,
+                )
+                for container_number, shipment_id in sorted(entries.items(), key=lambda kv: kv[0])
+            ]
         return result
 
     def _planning_span_map(self, warehouse_ids: List[str]) -> Dict[str, str]:
