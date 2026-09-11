@@ -2713,6 +2713,16 @@ def resolve_reference_post(
         if outcome.get("class_labels"):
             result["predicate"]["class_labels"] = outcome["class_labels"]
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
+        # R30/AC-1355: what this HAS turn's own bindings asked for (`specs`,
+        # class included) - the spec_fallback branch below already stamps
+        # this off `search_specs`' own `asked_for`; a HAS/require turn never
+        # runs that ranker call at all (`filter_specs` reads `specs` and
+        # `scope_terms` directly), so without this the Match line's own
+        # `spec_asked` intersection had nothing to read and stayed silent for
+        # every set answer, whatever its candidates matched.
+        result["spec_asked"] = [{"key": e.get("key"), "value": e.get("value")} for e in specs] + [
+            {"key": "class", "value": label} for label in (outcome.get("class_labels") or [])
+        ]
         # R2 only fires on a genuine HAS answer (qualifying_total > 0): the
         # existing zero-qualifying miss flow names its own candidate codes off
         # these SAME forward matches (F1's pre-existing "Couldn't find a bidet

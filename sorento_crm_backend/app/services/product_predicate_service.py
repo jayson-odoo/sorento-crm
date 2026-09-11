@@ -45,6 +45,7 @@ from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import AppException
 from app.services.lookup_resolver import LookupResolverService
 from app.services.product_spec_search import (
+    _states,
     filter_specs,
     is_generic_free_term,
     search_specs,
@@ -139,6 +140,44 @@ def _common_class_labels(db: Session, *, limit: int = 3) -> list[str]:
         .all()
     )
     return [row[0] for row in rows if row[0]]
+
+
+def _bound_spec_matches(values: dict | None, specs: list[dict] | None) -> set[str]:
+    """R30/AC-1355: which of `specs`' own keys (bindings - class included) the
+    product's OWN spec row satisfies - the require-only arm's answer to what
+    `search_specs` computes for the ranked arm, since that function never
+    runs without `free_terms`.
+
+    String values compare through `_states` (case-insensitive, list-aware -
+    the same equality the ranker itself uses). A numeric value compares by
+    exact equality - the ranker's own tolerance window is a per-key registry
+    lookup this arm has no reason to repeat; a require-only turn asks whether
+    the described set has stock/certs/etc, not to rank by closeness, so exact
+    is the honest answer here (the customer's binding either matches the
+    stored value or it does not).
+    """
+    matched: set[str] = set()
+    for entry in specs or []:
+        key, target = entry.get("key"), entry.get("value")
+        if key is None or target is None:
+            continue
+        stored = (values or {}).get(key)
+        if not isinstance(stored, dict):
+            continue
+        actual = stored.get("value")
+        if actual is None:
+            continue
+        if (
+            isinstance(actual, (int, float))
+            and not isinstance(actual, bool)
+            and isinstance(target, (int, float))
+            and not isinstance(target, bool)
+        ):
+            if float(actual) == float(target):
+                matched.add(key)
+        elif _states(actual, target):
+            matched.add(key)
+    return matched
 
 
 def _lookup_resolve(db: Session, set_key: str, raw: str) -> str | None:
@@ -688,7 +727,25 @@ def resolve_product_set(
                         # None, never {}: nothing was recorded for this product, and
                         # an empty block would read as "recorded, and empty".
                         "specifications": values_only(values) if values is not None else None,
-                        "matched_specs": [],
+                        # R30/AC-1355: this arm never runs `search_specs` (nothing
+                        # to rank BY), so it is the only source of `matched_specs`
+                        # for its own rows - a bare `[]` here is what silenced the
+                        # Match line ("_Matched on: ...") for every require-only
+                        # answer. Every BINDING whose value the product's own spec
+                        # row satisfies - `specs` itself PLUS `verdict["class_labels"]`
+                        # (a scope-term-derived class, "water closet", never
+                        # reaches `specs` at all - `filter_specs` binds it straight
+                        # into `membership["class"]` off `scope_terms`/`free_terms`,
+                        # the same class-implication `search_specs` computes for its
+                        # OWN `implied_classes`, mirrored here for the arm that never
+                        # calls it).
+                        "matched_specs": sorted(
+                            _bound_spec_matches(
+                                values,
+                                list(specs or [])
+                                + [{"key": "class", "value": label} for label in verdict["class_labels"]],
+                            )
+                        ),
                         # No customer words were scored here, so nothing was
                         # preferred either. Present so the shape matches a ranked row.
                         "preferred_specs": [],
