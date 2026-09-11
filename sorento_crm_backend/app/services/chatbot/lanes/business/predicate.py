@@ -102,6 +102,14 @@ def derive_require(
     not ALL bare-cert words, so it falls to the `_CERT_RE` branch below, which
     strips "certification" (now in `_BARE_CERT_WORDS`) and returns scheme
     "PPS".
+
+    R28/AC-1353 (owner console run 10): the head can drop the attachment_type
+    entity ENTIRELY - an entity whose raw resolved no `canonical_code`
+    ("PPS", measured null) is normalised away before this function ever sees
+    it, leaving `entities: []`. With no raw to split on, the cert question
+    survives only in `user_goal` / `message_text` - the same fallback R4
+    already reads for a scheme-only raw, tried here BEFORE giving up, never
+    after: there is no raw left to fall through past.
     """
     intent = parser_output.get("intent_hint")
     if intent in _BARE_LEG_BY_INTENT:
@@ -110,6 +118,9 @@ def derive_require(
     if intent == "check_product_attachment":
         raws = _attachment_type_raws(parser_output)
         if not raws:
+            goal_or_message = parser_output.get("user_goal") or message_text or ""
+            if _CERTIFICATE_RE.search(str(goal_or_message)):
+                return {"certificate": True}
             return None
         raw = raws[0]
         raw_words = [w for w in re.split(r"\s+", raw.strip()) if w]
@@ -126,13 +137,23 @@ def derive_require(
     return None
 
 
-def derive_predicate_words(parser_output: dict[str, Any], require: dict[str, Any] | None) -> list[str]:
+def derive_predicate_words(
+    parser_output: dict[str, Any], require: dict[str, Any] | None, *, message_text: str | None = None
+) -> list[str]:
     """Every word the described set must strip from the customer's own query.
 
     Every `attachment_type` entity's raw, plus the intent's own word for a bare leg
     (`stock`, `incoming`, `promotion` - the leg key IS the word, since nothing else
     named it). `check_product_attachment` needs no extra word: the attachment_type
     raw already covers it.
+
+    R28/AC-1353: when `require` is the BARE `certificate` leg (`{"certificate":
+    True}`) and no attachment_type raw contributed a word (there was none to
+    read - `derive_require` recovered it off `message_text` instead), the word
+    that actually earned the leg never left the remainder on its own. Pull the
+    cert word(s) `message_text` itself carries (matching `_CERTIFICATE_RE`, the
+    same regex `derive_require` used) so the described-set reader strips
+    "cert" rather than reading "item pps cert" as an unrecognized phrase.
     """
     if not require:
         return []
@@ -142,4 +163,9 @@ def derive_predicate_words(parser_output: dict[str, Any], require: dict[str, Any
         leg = _BARE_LEG_BY_INTENT[intent]
         if leg not in words:
             words.append(leg)
+    if not words and require.get("certificate") is True and message_text:
+        for word in re.split(r"\s+", message_text.strip()):
+            cleaned = word.strip()
+            if cleaned and _CERTIFICATE_RE.search(cleaned) and cleaned not in words:
+                words.append(cleaned)
     return words

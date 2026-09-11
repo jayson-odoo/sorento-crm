@@ -625,7 +625,7 @@ def resolve_entity_body(
         require = None
     if require is not None:
         body["require"] = require
-        body["predicate_words"] = derive_predicate_words(parse_output, require)
+        body["predicate_words"] = derive_predicate_words(parse_output, require, message_text=_query_text(ctx))
     return body
 
 
