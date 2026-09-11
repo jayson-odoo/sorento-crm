@@ -469,24 +469,33 @@ def _set_page_reply(ctx: dict[str, Any], parser: dict[str, Any]) -> dict[str, An
 
     next_ids = ids[offset : offset + 5]
     new_offset = offset + len(next_ids)
+    page_predicate: dict[str, Any] = {
+        "require": require,
+        "qualifying_total": qualifying_total,
+        "truncated": False,
+        "unrecognized_terms": [],
+        "class_labels": [],
+        "page": {
+            "start": offset + 1,
+            "end": new_offset,
+            "new_offset": new_offset,
+            "set_noun": set_noun,
+        },
+    }
+    # R29/AC-1354: the FIRST page's own scheme-narrowed certificate ids,
+    # carried straight through - `fetch.entity_ids_transformer` reads
+    # `predicate.certificate_ids` off THIS block exactly as it does off a
+    # real resolver call, so every later "more" page keeps narrowing to the
+    # same files. Absent when the carry never had them (a bare leg).
+    carried_certificate_ids = carry.get("certificate_ids")
+    if isinstance(carried_certificate_ids, list) and carried_certificate_ids:
+        page_predicate["certificate_ids"] = list(carried_certificate_ids)
     gate_item: dict[str, Any] = {
         "compatible_entities": [
             {"uuid": pid, "entity_type": "product", "canonical_code": None} for pid in next_ids
         ],
         "gate_passed": True,
-        "predicate": {
-            "require": require,
-            "qualifying_total": qualifying_total,
-            "truncated": False,
-            "unrecognized_terms": [],
-            "class_labels": [],
-            "page": {
-                "start": offset + 1,
-                "end": new_offset,
-                "new_offset": new_offset,
-                "set_noun": set_noun,
-            },
-        },
+        "predicate": page_predicate,
     }
     mutated_parser = {**parser, "domain_hint": domain}
     mutated_ctx = {**ctx, "parse": {**(ctx.get("parse") or {}), "output": mutated_parser}}

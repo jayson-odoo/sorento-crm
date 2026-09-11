@@ -2712,6 +2712,11 @@ def resolve_reference_post(
         # four documented keys on a turn with no class to name).
         if outcome.get("class_labels"):
             result["predicate"]["class_labels"] = outcome["class_labels"]
+        # R29/AC-1354: present ONLY on a scheme-narrowed certificate leg - a
+        # bare leg has no scheme to narrow the files by, same present-only
+        # convention as `schemes_on_file`.
+        if outcome.get("certificate_ids"):
+            result["predicate"]["certificate_ids"] = outcome["certificate_ids"]
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
         # R30/AC-1355: what this HAS turn's own bindings asked for (`specs`,
         # class included) - the spec_fallback branch below already stamps

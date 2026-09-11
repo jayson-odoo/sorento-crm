@@ -593,6 +593,19 @@ def entity_ids_transformer(
     if trig.get("predicate") is not None and isinstance(out.get("product_ids"), list):
         out["product_ids"] = out["product_ids"][:5]
 
+    # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids
+    # ride the SAME predicate block, straight through under the SAME arg
+    # name `TYPE_TO_PARAM["certificate"]` already maps to (`certificate_ids`)
+    # - so `crm_master_product_attachments_list` narrows to those files
+    # alone (a product certified under both PPS and WCM must not have its
+    # WCM file rendered for a PPS question). Absent on a bare certificate
+    # leg - `predicate.certificate_ids` itself is present only on the scheme
+    # form, so nothing extra is sent and every certificate file still
+    # renders, exactly as it does today.
+    predicate = trig.get("predicate")
+    if isinstance(predicate, dict) and predicate.get("certificate_ids"):
+        out["certificate_ids"] = predicate["certificate_ids"]
+
     # COERCE, THEN TRIM, and the ORDER is the whole point. `contact_id` arrives as BOTH an
     # int and a SPACE-PADDED string in production, in adjacent executions: five spine call
     # sites write `{{ ... .json.id }} ` with a trailing space inside the template. A number

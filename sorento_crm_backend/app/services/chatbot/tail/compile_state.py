@@ -1989,7 +1989,7 @@ def _set_page_carry(
         return False
     domain = jsc.get(qf, "domain_hint")
     variables["selection_context"] = "set_page"
-    variables["last_result_set"] = {
+    last_result_set: dict[str, Any] = {
         "kind": "set_page",
         "qualifying_ids": ids,
         "offset": min(5, len(ids)),
@@ -2002,6 +2002,15 @@ def _set_page_carry(
         # bare parser's own (empty) list a page turn carries.
         "access_levels": access_levels_used if isinstance(access_levels_used, list) else [],
     }
+    # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids,
+    # beside `access_levels` - present only when the FIRST page's own
+    # `predicate` carried them (a bare leg never does), so `resolve_gate.
+    # _set_page_reply` can re-inject the SAME list on every later "more" page
+    # without re-running the resolver.
+    cert_ids = jsc.get(predicate, "certificate_ids")
+    if isinstance(cert_ids, list) and cert_ids:
+        last_result_set["certificate_ids"] = cert_ids
+    variables["last_result_set"] = last_result_set
     return True
 
 

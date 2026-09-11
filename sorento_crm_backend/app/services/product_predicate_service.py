@@ -497,6 +497,12 @@ def _leg_incoming(db: Session, value: Any, access_levels: list[str] | None = Non
     )
 
 
+# R29/AC-1354: the `certificate_ids` cap - the same shape as `references.
+# _SET_PAGE_ID_CAP` / `answer.SET_PAGE_ID_CAP` (200), reused here rather than
+# imported to keep this module's only import of `references.py` at zero (the
+# dependency runs the other way).
+_CERTIFICATE_ID_CAP = 200
+
 # One entry per domain. A new domain lands as one function + one line here + one
 # noun in the n8n parser - never as another inline block in references.py.
 REQUIRE_LEGS: dict[str, Callable[..., ColumnElement]] = {
@@ -781,7 +787,37 @@ def resolve_product_set(
             if value:
                 class_labels.add(str(value))
 
-    return {
+    # R29/AC-1354: a SCHEME-narrowed certificate leg surfaces only THAT
+    # scheme's own certificate ids - present only on the scheme form, the
+    # same convention `schemes_on_file` follows, since a bare leg has no
+    # scheme to narrow by (a product certified under both PPS and WCM must
+    # never have its WCM file rendered for a PPS question). Scoped to the
+    # CANDIDATES actually shown (the same page-id list the "more" carry
+    # stores), never the whole qualifying family - a certificate the caller
+    # never sees a product for is not one it needs to fetch either. Same
+    # explicit same-company predicate as `_leg_certificate` itself (the
+    # `do_orm_execute` listener's `with_loader_criteria` does not reliably
+    # reach every join shape here either), NULL-shared arm included.
+    certificate_ids: list[str] | None = None
+    cert_require = require_echo.get("certificate")
+    if isinstance(cert_require, dict) and cert_require.get("scheme") and candidates:
+        candidate_ids = [row["product_id"] for row in candidates]
+        cert_rows = (
+            db.query(Certificate.id)
+            .join(CertificateProduct, CertificateProduct.certificate_id == Certificate.id)
+            .join(Product, Product.id == CertificateProduct.product_id)
+            .filter(
+                CertificateProduct.product_id.in_(candidate_ids),
+                or_(Certificate.company_id.is_(None), Certificate.company_id == Product.company_id),
+                Certificate.status == "active",
+                func.lower(Certificate.scheme) == str(cert_require["scheme"]).lower(),
+            )
+            .distinct()
+            .all()
+        )
+        certificate_ids = sorted({str(row[0]) for row in cert_rows})[:_CERTIFICATE_ID_CAP]
+
+    outcome: dict[str, Any] = {
         "candidates": candidates,
         "qualifying_total": int(qualifying_total),
         "truncated": int(qualifying_total) > len(candidates),
@@ -789,3 +825,6 @@ def resolve_product_set(
         "require": require_echo,
         "class_labels": sorted(class_labels),
     }
+    if certificate_ids is not None:
+        outcome["certificate_ids"] = certificate_ids
+    return outcome
