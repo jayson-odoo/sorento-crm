@@ -167,6 +167,103 @@ def test_derive_predicate_words_still_strips_a_reused_certification_raw():
 
 
 # --------------------------------------------------------------------------- #
+# Owner regression (PR #833, R28, AC-1353): the head can drop the             #
+# attachment_type entity entirely (console run 10 - one entity, raw "PPS",     #
+# canonical_code null, normalised away to `entities: []`) - `derive_require`   #
+# must still read the bare certificate leg off `user_goal` / the message text  #
+# alone when there is NO attachment raw at all, the same fallback R4 already   #
+# uses for a scheme-only raw.                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_derive_require_reads_a_bare_certificate_leg_with_no_attachment_raw_at_all():
+    """AC-1353/R28(1): intent `check_product_attachment`, `entities: []` (the
+    head dropped the attachment_type entity entirely), `user_goal: "trying to
+    find which item has PPS cert"` - must still yield the bare `{"certificate":
+    True}` leg (the resolver then recovers "PPS" from the remainder, AC-1338).
+
+    RED: `derive_require`'s `check_product_attachment` branch returns `None`
+    immediately when `_attachment_type_raws` is empty (`if not raws: return
+    None`) - it never reads `user_goal` at all when there is no raw, so the
+    turn stays forward and the gate asks for an attachment type. Measured
+    live: "which item has PPS cert" (console run 10) answered "Please provide
+    the attachment type for the requested product".
+    """
+    from app.services.chatbot.lanes.business.predicate import derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [],
+        "user_goal": "trying to find which item has PPS cert",
+    }
+    assert derive_require(parser_output) == {"certificate": True}
+
+
+def test_derive_require_reads_a_bare_certificate_leg_off_the_message_text_fallback():
+    """AC-1353/R28(2): the same no-attachment-raw shape, but `user_goal` is
+    None - the fallback reads `message_text` instead (the same `message_text`
+    keyword R4/AC-1328 already added for the scheme-only-raw case).
+
+    RED for the SAME reason as the sibling test: `derive_require` returns
+    `None` before it ever reaches the `user_goal or message_text` read, since
+    that read sits inside the `if not raws:` early-return's dead code.
+    """
+    from app.services.chatbot.lanes.business.predicate import derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [],
+        "user_goal": None,
+    }
+    assert derive_require(parser_output, message_text="which item has PPS cert") == {"certificate": True}
+
+
+def test_derive_require_stays_forward_with_no_attachment_raw_and_no_cert_word():
+    """AC-1353/R28(3) control: `entities: []` and neither `user_goal` nor the
+    message text carries a cert word ("send me the photo of item") - the turn
+    must stay `None` (forward, unchanged) exactly as it does today. Guards
+    the R28 fix against reading EVERY no-attachment-raw check_product_
+    attachment turn as a certificate question.
+
+    Green today (and must stay green) - `derive_require` already returns
+    `None` here, for the (currently) right structural reason; kept so the
+    fix's own test file proves the negative case alongside the two positive
+    ones above.
+    """
+    from app.services.chatbot.lanes.business.predicate import derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [],
+        "user_goal": "trying to find the photo of item",
+    }
+    assert derive_require(parser_output, message_text="send me the photo of item") is None
+
+
+def test_derive_predicate_words_strips_the_cert_word_found_in_the_message():
+    """AC-1353/R28(4): with no attachment_type raw at all, `derive_predicate_
+    words` has nothing of its own to strip (`_attachment_type_raws` is empty)
+    - it must instead find and strip the cert word the MESSAGE TEXT itself
+    carried ("cert" in "which item has PPS cert"), or the described-set reader
+    sees "item pps cert" and reports it unrecognized.
+
+    RED: `derive_predicate_words` takes no `message_text` keyword today -
+    calling it with one raises `TypeError`, the accepted red shape for this
+    AC (measured, no such parameter exists in the current signature).
+    """
+    from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
+
+    parser_output = {
+        "intent_hint": "check_product_attachment",
+        "entities": [],
+        "user_goal": None,
+    }
+    require = derive_require(parser_output, message_text="which item has PPS cert")
+    words = derive_predicate_words(parser_output, require, message_text="which item has PPS cert")
+    assert "cert" in words, words
+
+
+# --------------------------------------------------------------------------- #
 # R4 (fix round 2, AC-1328): a scheme-only attachment_type raw ("PPS") carries  #
 # no `_CERT_RE` word of its own (that regex names a BODY - cert/ikram/span/     #
 # sirim/bomba/ms####/halal - never the bare register spelling), so             #
