@@ -195,6 +195,16 @@ tool. No new reply format.
 - AC-1350 A page turn whose fetch never reached the tool leaves the carry's offset unchanged, and
   the migration test asserts the lane migration is the single head whose parent exists in the
   versions directory, not a spelled parent id. Evidence: pytest.
+- AC-1351 Words the spec reader bound (`Understanding.bound_phrases`) never reach the described
+  set's scope term: "check stock water closet with s trap 250mm" scopes to class Water Closet with
+  `trap_type = s_trap` and `trap_length = 250` bound, and `unrecognized_terms` is empty. Evidence:
+  pytest on the resolver; console turn.
+- AC-1352 A spec binding with a string value is a membership filter of the described set: with
+  two water closets in stock, one `trap_type = s_trap` and one `p_trap`, "which water closet with
+  s trap has stock" counts 1; a numeric binding (trap_length) does not filter but ranks the
+  matching product first. Evidence: pytest on `filter_specs` and `resolve_product_set`; console
+  "check stock water closet with s trap 250mm" answers a count and five S-trap products, and
+  "any incoming for water closet with p trap" answers a count, never the clarify.
 - AC-1326 A resolver result carrying a `predicate` block (any `qualifying_total`, zero included)
   never enters the gate's `REQUIRE_SPECIFIC_DOMAINS` ambiguity block nor the product_attachment "subject
   product did not resolve" block: the qualifying matches pass on as entities, `gate_passed`
