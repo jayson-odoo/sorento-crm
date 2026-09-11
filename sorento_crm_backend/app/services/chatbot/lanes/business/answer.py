@@ -2383,8 +2383,24 @@ def not_found_error_message(
     allowed_types = allowed_lookup if allowed_lookup is not None else []
 
     domain_hint = jsc.get(q, "domain_hint")
+    # R34/AC-1359: a resolver predicate whose `require` carries `certificate`
+    # or `attachment_type` already IS the document-type answer - the gate's
+    # own fix (R34, `gate.py`) means `gate_passed` is normally already True
+    # here too, but this stays a direct check of the SAME fact rather than
+    # relying on that alone: "any tap has PPS cert" recovers the leg off the
+    # message text server-side, and asking for the attachment type again
+    # would discard a predicate that already qualified (or honestly missed)
+    # a real row.
+    predicate = jsc.get(r, "predicate")
+    predicate_require = jsc.get(predicate, "require") if isinstance(predicate, dict) else None
+    has_document_leg = isinstance(predicate_require, dict) and (
+        jsc.truthy(predicate_require.get("certificate")) or jsc.truthy(predicate_require.get("attachment_type"))
+    )
     missing_attachment_type = (
-        domain_hint == "product_attachment" and not gate_passed and not have_attachment_type
+        domain_hint == "product_attachment"
+        and not gate_passed
+        and not have_attachment_type
+        and not has_document_leg
     )
     unresolved = jsc.array(jsc.get(r, "unresolved_tokens"))
     has_unresolved = len(unresolved) > 0

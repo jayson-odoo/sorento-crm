@@ -339,6 +339,22 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     if gate_passed and isinstance(REQUIRED_TYPES.get(domain), list):  # `Array.isArray(...)`
         have_types = {e["entity_type"] for e in entities}
         have_types |= {jsc.get(e, "hint") for e in jsc.array(parser.get("entities"))}
+        # R34/AC-1359: a `certificate` (or `attachment_type`) LEG in the
+        # resolver's own predicate IS the document-type answer - the same
+        # principle as the AC-1326 `predicate_bypass` above, narrowed to just
+        # this requirement. "any tap has PPS cert" drops BOTH the category
+        # and the attachment_type entity (the head normalises an entity with
+        # no `canonical_code` away entirely), yet `derive_require`/
+        # `recover_certificate_scheme` still recovered `{"certificate":
+        # {"scheme": "PPS"}}` off the message text and the resolver genuinely
+        # qualified a row - the gate must not then ask again for what the
+        # predicate already answered.
+        predicate_require = jsc.get(resolver.get("predicate"), "require") if predicate_bypass else None
+        if isinstance(predicate_require, dict) and (
+            jsc.truthy(predicate_require.get("certificate"))
+            or jsc.truthy(predicate_require.get("attachment_type"))
+        ):
+            have_types.add("attachment_type")
         missing = [t for t in REQUIRED_TYPES[domain] if t not in have_types]
         if len(missing) > 0:
             gate_passed = False
