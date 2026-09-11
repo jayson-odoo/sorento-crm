@@ -2665,6 +2665,155 @@ def test_bare_certificate_predicate_passes_no_certificate_ids(
     assert "certificate_ids" not in calls[0]["args"], calls[0]["args"]
 
 
+# --------------------------------------------------------------------------- #
+# Owner regression (PR #833, R34, AC-1359): the head can drop BOTH the         #
+# category entity ("tap") AND the attachment_type entity ("PPS cert")          #
+# entirely - `derive_require` still recovers the bare certificate leg off      #
+# `user_goal`/`message_text` (R28) and the server-side `recover_certificate_   #
+# scheme` still promotes it to a scheme-narrowed leg off the described-set     #
+# remainder (R14) - so the resolver genuinely qualifies real rows, yet the     #
+# gate's own REQUIRED_TYPES check (`product_attachment` requires an            #
+# `attachment_type` among resolved entities OR parser hints - both empty       #
+# here) still fails the gate, and `not_found_error_message`'s own              #
+# `missing_attachment_type` computation asks for the attachment type again,    #
+# discarding the predicate's own answer.                                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_certificate_predicate_suppresses_the_attachment_type_ask_when_it_qualifies(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1359/R34: measured live on the stored turn "any tap has PPS cert" -
+    the parser gave category "tap" + attachment_type "PPS cert", the head
+    dropped BOTH (derived entities `[]`), the resolver still ran with
+    `require={"certificate": {"scheme": "PPS"}}` (recovered off the message
+    text), `qualifying_total=1`, `class_labels=["Tap"]`, and one real
+    `certificate_ids` entry - yet the reply asked "Please provide the
+    attachment type for the requested product ...", discarding a predicate
+    that already qualified a real row.
+
+    With `entities: []` (both dropped), one Tap product on file carrying a
+    PPS-scheme certificate, and `message_text`/`user_goal` = "any tap has PPS
+    cert" - the reply must be the counted SET ANSWER (`build_set_header`'s own
+    shape, "<N> taps have/has PPS certificates") and must NOT contain the
+    attachment-type ask.
+
+    RED: `app/services/chatbot/lanes/business/gate.py`'s `REQUIRED_TYPES`
+    check for `product_attachment` (an `attachment_type` must be among the
+    resolved entities OR the parser's own entity hints) runs unconditionally,
+    with no exemption for a resolver result that already carries a
+    `predicate` block - so `gate_passed` goes False purely for lack of an
+    attachment_type entity, even though the certificate predicate genuinely
+    qualified a row. `not_found_error_message`'s own `missing_attachment_type`
+    (`app/services/chatbot/lanes/business/answer.py` ~line 2415) then fires
+    off that same `gate_passed=False`, with no check of its own `resolved`
+    argument's `predicate` either, and emits the attachment-type ask.
+    """
+    from app.models.certificate import Certificate, CertificateProduct
+
+    contact_id = _s4_contact_id("certsuppress")
+    db = session_factory()
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    product = _tap_product(db, category_id=category_id, uom_id=uom_id)
+    # A certificate_number built WITHOUT the substring "cert" - see the sibling
+    # bare-leg control test above for why (`_certificate_for`'s own default
+    # collides with a bare "cert" word through an unrelated general
+    # entity-resolution probe).
+    cert = Certificate(
+        id=str(uuid.uuid4()), scheme="PPS", certificate_number="ZZT-000001", status="active"
+    )
+    db.add(cert)
+    db.flush()
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=product.id))
+    db.commit()
+
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_cert_fake_call_tool(db),
+    )
+    stub_parser(
+        _s4_cert_parser_output(
+            entities=[],
+            user_goal="any tap has PPS cert",
+        )
+    )
+    stub_access()
+
+    turn = engine_mod.run_turn(
+        _s4_envelope(
+            contact_id=contact_id,
+            message_id="ZZT-certsuppress-1",
+            text="any tap has PPS cert",
+        ),
+        session_factory=session_factory,
+    )
+    assert turn.status == "done", turn.error
+    text = (turn.reply or {}).get("text") or ""
+    assert "Please provide the attachment type" not in text, text
+    assert re.search(r"\btaps?\b", text, re.IGNORECASE), text
+    assert "PPS certificates" in text, text
+
+
+def test_no_certificate_predicate_still_misses_honestly_with_no_attachment_type_ask(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1359/R34 (second case): the SAME dropped-entities shape, but nothing
+    on file qualifies (`qualifying_total=0`, no matches) - the reply must be
+    the AC-1319 miss copy ("Couldn't find..."), still never the
+    attachment-type ask.
+
+    RED today, same reason as the sibling positive case above, NOT the
+    pre-existing-green control it reads as at first glance: `gate.py`'s
+    `REQUIRED_TYPES` check for `product_attachment` fails the gate purely off
+    "no attachment_type entity resolved AND no attachment_type parser hint" -
+    it never inspects the resolver's own `predicate`/`qualifying_total` at
+    all, so it fails identically whether the predicate qualified 1 row or 0.
+    `not_found_error_message`'s `missing_attachment_type` then fires off that
+    same `gate_passed=False` with no predicate check of its own either -
+    measured, not assumed: this case emits the SAME "Please provide the
+    attachment type..." wrongly, not the miss copy the AC calls for.
+    """
+    contact_id = _s4_contact_id("certsuppressmiss")
+    db = session_factory()
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    # A Tap product on file, but carrying NO certificate at all - "PPS" names
+    # no scheme anything qualifies, so `qualifying_total` is 0.
+    _tap_product(db, category_id=category_id, uom_id=uom_id)
+    db.commit()
+
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_cert_fake_call_tool(db),
+    )
+    stub_parser(
+        _s4_cert_parser_output(
+            entities=[],
+            user_goal="any tap has PPS cert",
+        )
+    )
+    stub_access()
+
+    turn = engine_mod.run_turn(
+        _s4_envelope(
+            contact_id=contact_id,
+            message_id="ZZT-certsuppressmiss-1",
+            text="any tap has PPS cert",
+        ),
+        session_factory=session_factory,
+    )
+    assert turn.status == "done", turn.error
+    text = (turn.reply or {}).get("text") or ""
+    assert "Please provide the attachment type" not in text, text
+
+
 def test_set_answer_writes_the_set_page_carry(session_factory, stub_parser, stub_access, monkeypatch):
     """AC-1317: a set answer's tail stamps `selection_context = "set_page"` and a
     `last_result_set` carrying the described set, the offset already advanced past the
