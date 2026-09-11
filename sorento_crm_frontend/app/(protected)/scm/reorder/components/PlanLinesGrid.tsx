@@ -605,9 +605,6 @@ export function PlanLinesGrid({
                   />
                 </StopClick>
               </div>
-              <div className="truncate text-xs text-muted-foreground" title={row.original.product_name}>
-                {row.original.product_name}
-              </div>
             </div>
           );
         },
@@ -616,12 +613,7 @@ export function PlanLinesGrid({
         enableHiding: false,
         meta: {
           headerTitle: 'Product',
-          skeleton: (
-            <div className="space-y-1">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-3 w-24" />
-            </div>
-          ),
+          skeleton: <Skeleton className="h-4 w-32" />,
           // The decision itself (plan 4.4). `DataGridTable` renders this full-width below
           // any row whose `getIsExpanded()` is true, same mechanism as `POIntakeLinesGrid`'s
           // note panel. Every row can open it, and several can be open at once - Expand all

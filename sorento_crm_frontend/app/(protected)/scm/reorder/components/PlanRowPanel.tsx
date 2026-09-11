@@ -282,17 +282,15 @@ export function PlanRowPanel({
           <ZoneTitle>Cover</ZoneTitle>
 
           <NumberField
-            label="From stock"
-            hint={`pool available ${fmtInt(stockMax)}`}
+            label="BRW"
             value={stockQty}
             max={stockMax}
             disabled={disabled || stockMax <= 0}
             onChange={setStock}
           />
           {/* WHICH pools the units come out of, once there is more than one (R18). One
-              source needs no split: the hint already says how many and the panel's own
-              "pool available" is that location's. Only site pools reach here - a project
-              bin is never a source. */}
+              source needs no split: the input's own max already says how many. Only site
+              pools reach here - a project bin is never a source. */}
           {stockSources.length > 1 ? (
             <p className="text-2xs text-muted-foreground">
               {stockSources
@@ -301,8 +299,7 @@ export function PlanRowPanel({
             </p>
           ) : null}
           <NumberField
-            label="From PO"
-            hint={`open ${fmtInt(poMax)}`}
+            label="PO"
             value={poQty}
             max={poMax}
             disabled={disabled || poMax <= 0}
@@ -328,10 +325,7 @@ export function PlanRowPanel({
 
           {/* R2: a fact, never an input. It is already inside the net and Available. */}
           <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="min-w-0 truncate text-muted-foreground">
-              SPO arriving
-              <span className="ms-1 text-2xs">already in net</span>
-            </span>
+            <span className="min-w-0 truncate text-muted-foreground">SPO</span>
             <span className="tabular-nums">{fmtInt(line.rec.incoming_spo ?? 0)}</span>
           </div>
 
@@ -663,7 +657,7 @@ function NumberField({
   onChange,
 }: {
   label: string;
-  hint: string;
+  hint?: string;
   value: number;
   max: number;
   disabled?: boolean;
@@ -671,9 +665,12 @@ function NumberField({
 }) {
   return (
     <label className="flex items-center justify-between gap-2 text-xs">
-      <span className="min-w-0 truncate text-muted-foreground" title={`${label} (${hint})`}>
+      <span
+        className="min-w-0 truncate text-muted-foreground"
+        title={hint ? `${label} (${hint})` : label}
+      >
         {label}
-        <span className="ms-1 text-2xs">{`(${hint})`}</span>
+        {hint ? <span className="ms-1 text-2xs">{`(${hint})`}</span> : null}
       </span>
       <Input
         type="number"

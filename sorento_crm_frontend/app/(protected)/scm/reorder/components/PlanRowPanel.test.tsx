@@ -147,15 +147,15 @@ describe('PlanRowPanel - four zones render (D1)', () => {
 describe('PlanRowPanel - Cover zone (D2)', () => {
   it('shows the stock cap, PO cap and SPO fact, and the MOQ master figure beside the input', () => {
     renderPanel({ cover, poReceipts });
-    expect(screen.getByText(/pool available 5/)).toBeInTheDocument();
-    expect(screen.getByText(/open 12/)).toBeInTheDocument();
-    // SPO arriving is a FACT (R2) - text, not an input.
-    expect(screen.getByText('already in net')).toBeInTheDocument();
+    expect((screen.getByLabelText('BRW') as HTMLInputElement).max).toBe('5');
+    expect((screen.getByLabelText('PO') as HTMLInputElement).max).toBe('12');
+    // SPO is a FACT (R2) - text, not an input.
+    expect(screen.getByText('SPO')).toBeInTheDocument();
     expect(screen.getByLabelText('Units to buy')).toBeInTheDocument();
     expect(screen.getByText('master 10')).toBeInTheDocument();
   });
 
-  it('SPO arriving reads the recommendation\'s own incoming_spo, never zero by default', () => {
+  it('SPO reads the recommendation\'s own incoming_spo, never zero by default', () => {
     renderPanel({ line: line({ incoming_spo: 4 }) });
     expect(screen.getByText('4')).toBeInTheDocument();
   });
@@ -212,9 +212,9 @@ describe('PlanRowPanel - Cover zone (D2)', () => {
     expect(screen.queryByText(/DC1 5/)).not.toBeInTheDocument();
   });
 
-  it('From stock is capped at the pool available quantity, never past it', () => {
+  it('BRW is capped at the pool available quantity, never past it', () => {
     const { onEdit } = renderPanel({ cover });
-    fireEvent.change(screen.getByLabelText('From stock'), { target: { value: '999' } });
+    fireEvent.change(screen.getByLabelText('BRW'), { target: { value: '999' } });
     const [[patch]] = onEdit.mock.calls;
     expect((patch as { decision: { stock?: { qty: number } } }).decision.stock?.qty).toBeLessThanOrEqual(5);
   });

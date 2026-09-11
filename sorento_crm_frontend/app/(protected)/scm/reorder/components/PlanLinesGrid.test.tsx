@@ -422,15 +422,18 @@ describe('PlanLinesGrid - the panel edits a draft, never the backend (D2-D9)', (
   it('states the caps beside the two capped inputs (D2)', () => {
     renderGrid([line()], { poFor: () => [{ po_number: 'PO-1', status: 'open', expected_date: null, remaining: 40 }] });
     fireEvent.click(screen.getByText('SKU-1'));
-    expect(screen.getByText(/pool available/)).toBeInTheDocument();
-    expect(screen.getByText(/open 40/)).toBeInTheDocument();
+    expect((screen.getByLabelText('BRW') as HTMLInputElement).max).toBe('0');
+    expect((screen.getByLabelText('PO') as HTMLInputElement).max).toBe('40');
   });
 
-  it('SPO arriving is a read-only fact, never an input (R2, D2)', () => {
+  it('SPO is a read-only fact, never an input (R2, D2)', () => {
     renderGrid([line({ incoming_spo: 12 })]);
     fireEvent.click(screen.getByText('SKU-1'));
-    expect(screen.getByText(/SPO arriving/)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/SPO arriving/)).not.toBeInTheDocument();
+    // Scoped to the Cover zone - the collapsed row's own SPO column header reads the
+    // same three letters.
+    const cover = screen.getByText('Cover').closest('section') as HTMLElement;
+    expect(within(cover).getByText('SPO')).toBeInTheDocument();
+    expect(within(cover).queryByLabelText('SPO')).not.toBeInTheDocument();
   });
 
   it('hints only when the mixture differs from the suggestion (D2)', () => {
