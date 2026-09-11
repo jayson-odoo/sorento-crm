@@ -102,6 +102,22 @@ def _row_block(
     return "\n".join(lines)
 
 
+def _stock_row(qty: Any, *, code: str = "SRTWC8517", warehouse: str = "KL-WH") -> dict:
+    """A stock-balance row shaped like the real MCP presenter (`quantity_on_hand` key,
+    `Quantity On Hand` label - see `sorento_crm_mcp/presenters.py`)."""
+    return {
+        "fields": [
+            {"key": "product_code", "label": "Product Code", "value": code},
+            {"key": "quantity_on_hand", "label": "Quantity On Hand", "value": qty},
+            {"key": "warehouse", "label": "Warehouse", "value": warehouse},
+        ]
+    }
+
+
+def _stock_envelope(rows: list[dict], *, has_result: bool = True) -> dict:
+    return {"answers": rows, "has_result": has_result, "response": "stock details"}
+
+
 GRANTED = ["purchase_orders.placed"]
 
 
@@ -114,6 +130,7 @@ def _run(
     uuid: str = "prod-uuid-1",
     granted: list[str] | None = GRANTED,
     parser: dict | None = None,
+    validator: dict | None = None,
 ) -> tuple[dict, list[tuple[str, dict]]]:
     calls: list[tuple[str, dict]] = []
 
@@ -129,7 +146,7 @@ def _run(
 
     services = AnswerServices(mcp_probe=mcp_probe, family_fetch=lambda q: {"data": []})
     result = run_crossdomain(
-        _validator_result(),
+        validator if validator is not None else _validator_result(),
         parser=parser or _PARSER,
         resolved=_resolved_for(code, uuid),
         session_block={"session_vars": {"variables": {}}},
@@ -695,3 +712,298 @@ class TestD7AnIncomingAskClimbsToThePORung:
             po_response={"answers": [], "has_result": False},
         )
         assert "No stock, no incoming and nothing on order for SRTWC8517." in result["render"]["_xdBlock"]["block"]
+
+
+class TestOwner11SepR1AccessAttributesOnTheFirstProbe:
+    """Owner ruling (11 Sep 2026, second ruling), R1: the cross-domain STOCK block must
+    carry Outstanding exactly like a direct stock ask - `crossdomain_probe_args` gains a
+    `granted` keyword and stamps `"access": {"attributes": list(granted)}` on the args it
+    builds, so `entity_ids_transformer` can set `include_sellable` on the stock probe."""
+
+    def test_the_grant_reaches_the_first_probes_recorded_args(self) -> None:
+        _, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={"answers": [], "has_result": False},
+            parser=_INCOMING_PARSER,  # so the first probe is the STOCK tool
+            granted=["inventory.sellable", "purchase_orders.placed"],
+        )
+        first_tool, first_args = calls[0]
+        assert first_tool == _STOCK_TOOL
+        access = first_args.get("access") or {}
+        assert "inventory.sellable" in (access.get("attributes") or [])
+
+    def test_without_the_grant_the_first_probe_carries_no_access_attributes(self) -> None:
+        _, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={"answers": [], "has_result": False},
+            parser=_INCOMING_PARSER,
+            granted=[],
+        )
+        first_args = calls[0][1]
+        access = first_args.get("access") or {}
+        assert "inventory.sellable" not in (access.get("attributes") or [])
+
+    def test_crossdomain_probe_args_with_grant_sets_access_attributes(self) -> None:
+        """Direct unit test of the function itself, not through `run_crossdomain`."""
+        from app.services.chatbot.lanes.business.answer import crossdomain_probe_args
+
+        xd = {
+            "other_tool": _STOCK_TOOL,
+            "origin_domain": "incoming",
+            "team": "warehouse",
+            "probe_entities": [{"uuid": "u1", "entity_type": "product", "code": "SRTWC8517"}],
+        }
+        args = crossdomain_probe_args(
+            xd, parser=_INCOMING_PARSER, entities_names=None, contact_id="164838271",
+            granted=["inventory.sellable"],
+        )
+        assert args["access"]["attributes"] == ["inventory.sellable"]
+
+    def test_crossdomain_probe_args_with_no_grant_never_key_errors_and_omits_the_attribute(self) -> None:
+        """`granted=None` (a caller with no entitlement read) is the empty set - no
+        KeyError, no `inventory.sellable` on the args."""
+        from app.services.chatbot.lanes.business.answer import crossdomain_probe_args
+
+        xd = {
+            "other_tool": _STOCK_TOOL,
+            "origin_domain": "incoming",
+            "team": "warehouse",
+            "probe_entities": [{"uuid": "u1", "entity_type": "product", "code": "SRTWC8517"}],
+        }
+        args = crossdomain_probe_args(
+            xd, parser=_INCOMING_PARSER, entities_names=None, contact_id="164838271", granted=None,
+        )
+        access = args.get("access") or {}
+        assert "inventory.sellable" not in (access.get("attributes") or [])
+
+
+class TestOwner11SepZeroEverywhereClimbs:
+    """Owner ruling (11 Sep 2026, second ruling), R2: a code whose stock rows are ALL
+    `Quantity On Hand: 0` climbs the ladder like "no rows" - it is not "found" just
+    because a row exists. `zero_codes` is the new `_xdBlock` key naming which of
+    `nothing_codes` were zero rather than genuinely absent."""
+
+    # ---------------------------------------------------------------- incoming-origin
+
+    def test_incoming_origin_zero_stock_renders_rows_and_climbs_to_po(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_491,
+            incoming_response=_stock_envelope(
+                [_stock_row(0, warehouse="KL-WH"), _stock_row(0, warehouse="BRW")]
+            ),
+            po_response={"answers": [_po_row(50, "2026-07-01")], "has_result": True},
+            parser=_INCOMING_PARSER,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL, _PO_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert "But here are the stock details for the requested products:" in block
+        assert block.count("*Quantity On Hand:* 0") == 2
+        assert (
+            f"No incoming and stock is 0 at every location for SRTWC8517, but PO is placed:\n{_row_block(qty=50)}"
+        ) in block
+        assert result["render"]["_xdBlock"]["zero_codes"] == ["SRTWC8517"]
+        assert "SRTWC8517" in result["render"]["_xdBlock"]["nothing_codes"]
+        assert result["render"]["_xdBlock"]["rung"] == "purchase_order"
+        assert result["render"]["_xdBlock"]["team"] == "purchasing"
+
+    def test_incoming_origin_zero_stock_rung_answers_nothing(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_491,
+            incoming_response=_stock_envelope(
+                [_stock_row(0, warehouse="KL-WH"), _stock_row(0, warehouse="BRW")]
+            ),
+            po_response={"answers": [], "has_result": False},
+            parser=_INCOMING_PARSER,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL, _PO_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert "No incoming, stock is 0 at every location and nothing on order for SRTWC8517." in block
+
+    def test_incoming_origin_one_nonzero_row_is_not_zero_and_skips_the_rung(self) -> None:
+        """A code with at least one non-zero row is genuinely "found" - unchanged from
+        today: `only_other`, no zero sentence, no PO probe at all."""
+        result, calls = _run(
+            ladder=_LADDER_491,
+            incoming_response=_stock_envelope(
+                [_stock_row(0, warehouse="KL-WH"), _stock_row(5, warehouse="BRW")]
+            ),
+            po_response={"answers": [_po_row(50, "2026-07-01")], "has_result": True},
+            parser=_INCOMING_PARSER,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert "stock is 0" not in block.lower()
+        assert "but PO is placed" not in block
+        assert "But here are the stock details for the requested products:" in block
+
+    def test_incoming_origin_zero_stock_no_ladder_stays_at_first_probe_note(self) -> None:
+        result, calls = _run(
+            ladder=None,
+            incoming_response=_stock_envelope(
+                [_stock_row(0, warehouse="KL-WH"), _stock_row(0, warehouse="BRW")]
+            ),
+            parser=_INCOMING_PARSER,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert "No incoming and stock is 0 at every location for SRTWC8517." in block
+        assert "but PO is placed" not in block
+
+    def test_incoming_origin_zero_stock_grant_missing_stays_at_first_probe_note(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_491,
+            incoming_response=_stock_envelope(
+                [_stock_row(0, warehouse="KL-WH"), _stock_row(0, warehouse="BRW")]
+            ),
+            po_response={"answers": [_po_row(50, "2026-07-01")], "has_result": True},
+            parser=_INCOMING_PARSER,
+            granted=[],
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL]  # the rung is gated off
+        block = result["render"]["_xdBlock"]["block"]
+        assert "No incoming and stock is 0 at every location for SRTWC8517." in block
+        assert "but PO is placed" not in block
+
+    def test_incoming_origin_plain_nothing_and_zero_group_order(self) -> None:
+        """Two codes: CODE-A has no stock rows at all (plain nothing), CODE-B has two
+        all-zero rows. Both header sentences appear, plain group first, zero group after."""
+        resolved = {
+            "resolutions": [
+                {
+                    "token": "CODE-A",
+                    "matches": [
+                        {"entity_type": "product", "canonical_code": "CODE-A", "uuid": "uuid-a",
+                         "match_tier": "exact"}
+                    ],
+                },
+                {
+                    "token": "CODE-B",
+                    "matches": [
+                        {"entity_type": "product", "canonical_code": "CODE-B", "uuid": "uuid-b",
+                         "match_tier": "exact"}
+                    ],
+                },
+            ]
+        }
+
+        def mcp_probe(name: str, args: dict) -> dict:
+            if name == _STOCK_TOOL:
+                # CODE-A: no rows at all. CODE-B: two zero rows.
+                return _stock_envelope(
+                    [_stock_row(0, code="CODE-B", warehouse="KL-WH"),
+                     _stock_row(0, code="CODE-B", warehouse="BRW")]
+                )
+            if name == _PO_TOOL:
+                return {
+                    "answers": [
+                        _po_row(10, "2026-07-01", code="CODE-A", po_number="PO-A"),
+                        _po_row(20, "2026-07-01", code="CODE-B", po_number="PO-B"),
+                    ],
+                    "has_result": True,
+                }
+            raise AssertionError(f"unexpected probe tool: {name}")
+
+        services = AnswerServices(mcp_probe=mcp_probe, family_fetch=lambda q: {"data": []})
+        result = run_crossdomain(
+            _validator_result(other_code="SRTOTHER"),
+            parser=_INCOMING_PARSER,
+            resolved=resolved,
+            session_block={"session_vars": {"variables": {}}},
+            entities_names=None,
+            services=services,
+            contact_id="164838271",
+            space_id="900001",
+            crossdomain_ladder=_LADDER_491,
+            granted=GRANTED,
+        )
+        block = result["render"]["_xdBlock"]["block"]
+        plain_part = f"No incoming and no stock for CODE-A, but PO is placed:\n{_row_block(code='CODE-A', qty=10)}"
+        zero_part = (
+            f"No incoming and stock is 0 at every location for CODE-B, but PO is placed:\n"
+            f"{_row_block(code='CODE-B', qty=20)}"
+        )
+        assert plain_part in block
+        assert zero_part in block
+        assert block.index(plain_part) < block.index(zero_part)
+
+    # ------------------------------------------------------------------ stock-origin
+
+    def test_stock_origin_zeroset_flags_missing_with_zero_true(self) -> None:
+        """Direct unit test of `crossdomain_zeroset`: a RETURNED code whose rows are all
+        zero becomes a `missing` entry with `zero: True`, still listed in
+        `returned_codes`, and `active` stays True (it is now probeable)."""
+        from app.services.chatbot.lanes.business.answer import crossdomain_zeroset
+
+        item = _stock_envelope(
+            [_stock_row(0, warehouse="KL-WH"), _stock_row(0, warehouse="BRW")]
+        )
+        out = crossdomain_zeroset(
+            item, parser=_PARSER, resolved=_resolved_for("SRTWC8517", "prod-uuid-1"),
+            session_block={"session_vars": {"variables": {}}},
+        )
+        xd = out["_xd"]
+        assert xd["active"] is True
+        assert "SRTWC8517" in xd["returned_codes"]
+        zero_entries = [m for m in xd["missing"] if m["_n"] == "SRTWC8517"]
+        assert len(zero_entries) == 1
+        assert zero_entries[0].get("zero") is True
+
+    def test_stock_origin_no_quantity_field_at_all_is_not_flagged_zero(self) -> None:
+        """An availability-mode row prints no quantity field at all - `field_pref` returns
+        None, which must never be coerced to a parseable zero. Nothing else about the
+        turn is missing, so `active` stays False - the code is already fully answered."""
+        from app.services.chatbot.lanes.business.answer import crossdomain_zeroset
+
+        item = {
+            "answers": [
+                {"fields": [
+                    {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                    {"key": "warehouse", "label": "Warehouse", "value": "KL-WH"},
+                ]}
+            ],
+            "has_result": True,
+        }
+        out = crossdomain_zeroset(
+            item, parser=_PARSER, resolved=_resolved_for("SRTWC8517", "prod-uuid-1"),
+            session_block={"session_vars": {"variables": {}}},
+        )
+        assert out["_xd"]["active"] is False
+
+    def test_stock_origin_zero_at_every_location_climbs_with_po_rung(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            validator=_stock_envelope(
+                [_stock_row(0, warehouse="KL-WH"), _stock_row(0, warehouse="BRW")]
+            ),
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [_po_row(50, "2026-07-01")], "has_result": True},
+        )
+        assert [name for name, _ in calls] == [_INCOMING_TOOL, _PO_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert (
+            f"Stock is 0 at every location and no incoming for SRTWC8517, but PO is placed:\n{_row_block(qty=50)}"
+        ) in block
+        assert "No stock for SRTWC8517." not in block
+        assert result["render"]["_xdBlock"]["zero_codes"] == ["SRTWC8517"]
+
+    def test_stock_origin_zero_but_incoming_answers_no_po_probe(self) -> None:
+        """The other side has real rows (an ETA) - render them as today, no zero sentence,
+        no rung probe (the code is not left with nothing on either side)."""
+        result, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            validator=_stock_envelope(
+                [_stock_row(0, warehouse="KL-WH"), _stock_row(0, warehouse="BRW")]
+            ),
+            incoming_response={
+                "answers": [{"fields": [
+                    {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                    {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-09-15"},
+                ]}],
+                "has_result": True,
+            },
+        )
+        assert _PO_TOOL not in [name for name, _ in calls]
+        block = result["render"]["_xdBlock"]["block"]
+        assert "But there is INCOMING stock (ETA) for the requested products:" in block
+        assert "2026-09-15" in block
+        assert "No stock for SRTWC8517." not in block

@@ -197,6 +197,8 @@ DIVERGENCES: list[Divergence] = [
             ("_xdBlock", "nothing_codes"),
             ("_xdBlock", "nothing_note"),
             ("_xdBlock", "nothing_missing"),
+            # 11 Sep 2026, second ruling (R2): one more new diagnostic key, same class.
+            ("_xdBlock", "zero_codes"),
         ),
     ),
     # OWNER CONSOLE PASS 4, item G (6 Sep 2026): a requested code the PRIMARY domain
@@ -231,6 +233,8 @@ DIVERGENCES: list[Divergence] = [
                 ("_xdBlock", "nothing_codes"),
                 ("_xdBlock", "nothing_note"),
                 ("_xdBlock", "nothing_missing"),
+                # 11 Sep 2026, second ruling (R2): one more new diagnostic key, same class.
+                ("_xdBlock", "zero_codes"),
             ),
         )
         for name in (
@@ -690,12 +694,16 @@ DIVERGENCES: list[Divergence] = [
         reason=(
             "`nothing_codes` / `nothing_note` / `nothing_missing` are new keys the port "
             "adds to `_xdBlock` for the cross-domain ladder's next rung to read; n8n's "
-            "node has no ladder and no equivalent, so no capture can carry them."
+            "node has no ladder and no equivalent, so no capture can carry them. "
+            "`zero_codes` (11 Sep 2026, second ruling, R2) joined them the same way: which "
+            "of `nothing_codes` read 0 at every location rather than genuinely absent, a "
+            "distinction n8n's node never draws."
         ),
         strip_paths=(
             ("_xdBlock", "nothing_codes"),
             ("_xdBlock", "nothing_note"),
             ("_xdBlock", "nothing_missing"),
+            ("_xdBlock", "zero_codes"),
         ),
     ),
     # A6 (chatbot-growth-r1, AC-911): `spo_allocation` is no longer in
@@ -864,6 +872,23 @@ CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD = Divergence(
         "body (sha fb9d41cf64ea320b), absent from the ACTIVE spine's 143-line one "
         "(sha a880d01e3629538b). Not fixture-visible: the five captures predate it."
     ),
+)
+
+
+# Owner ruling 11 Sep 2026, second ruling (R2): a code whose stock rows are ALL 0 is now
+# treated as absent for the cross-domain ladder, so it climbs and the block says so - the
+# n8n block never drew this distinction at all. Fixture-visible: three of the six item-G
+# captures (`exec-14119800`, `exec-14120400`, `exec-14122546`, registered above) are, in
+# real data, exactly this shape - a returned code whose cross-probed rows are all 0 - so
+# `TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine`
+# (test_s6c_engine_paths.py) subtracts this sentence too, DERIVED per capture via
+# `answer._rows_all_zero` on the code's own probed rows rather than a hard-coded fixture
+# list, so a fourth zero capture added later gets the same treatment with no test change.
+CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS = Divergence(
+    node="crossdomain-render",
+    fixture=None,
+    hazard="R2 (11 Sep 2026, second ruling)",
+    reason="stock at 0 everywhere is treated as absent for the ladder; the n8n block never said so.",
 )
 
 

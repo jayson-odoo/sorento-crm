@@ -370,6 +370,45 @@ def _field_val(item: Any, label: str) -> Any:
     return jsc.get(field, "value") if jsc.truthy(field) else None
 
 
+def _field_by_key(it: Any, k: str) -> Any:
+    f = jsc.find(jsc.get(it, "fields") or [], lambda x: jsc.has(x, "key") and x["key"] == k)
+    return jsc.get(f, "value") if jsc.truthy(f) else None
+
+
+def _field_pref(it: Any, k: str, *labels: str) -> Any:
+    v = _field_by_key(it, k)
+    if v is not None:
+        return v
+    for label in labels:
+        lv = _field_val(it, label)
+        if lv is not None:
+            return lv
+    return None
+
+
+def _row_qty(it: Any) -> float:
+    """`Number(fieldPref(it, 'quantity_on_hand', 'quantity on hand') ?? NaN)`.
+
+    Extracted from `crossdomain_render`'s own local `qty(it)` (owner ruling 11 Sep 2026,
+    second ruling, R2) so `crossdomain_zeroset` can apply the SAME "all zero" test to a
+    stock reply's own rows, not only to a probed one. The `?? NaN` is the whole branch
+    test - see the original docstring this replaced for why `Number(None)` (0) is wrong
+    here.
+    """
+    value = _field_pref(it, "quantity_on_hand", "quantity on hand")
+    n = jsc.js_number(jsc.UNDEFINED if value is None else value)
+    return float("nan") if jsc.is_nan(n) else float(n)
+
+
+def _rows_all_zero(rows: list[Any]) -> bool:
+    """Owner ruling 11 Sep 2026, second ruling, R2: at least one row carries a parseable
+    quantity, and every parseable quantity reads exactly 0. A row set with no parseable
+    quantity at all (an availability-mode row, or an incoming row with no
+    `quantity_on_hand` field) is never "zero" - it simply says nothing about quantity."""
+    parseable = [q for q in (_row_qty(it) for it in (rows or [])) if not jsc.is_nan(q)]
+    return bool(parseable) and all(q == 0 for q in parseable)
+
+
 def crossdomain_zeroset(
     item: dict[str, Any] | None,
     *,
@@ -412,10 +451,16 @@ def crossdomain_zeroset(
         env = env["output"]
     items = _envelope_items(env)
     returned_codes: set[str] = set()
+    # Owner ruling 11 Sep 2026, second ruling, R2: the PRIMARY reply's own rows, grouped
+    # by code, so a stock-origin turn can tell "returned but every row reads 0 on hand"
+    # from "genuinely found" below.
+    by_code: dict[str, list[Any]] = {}
     for it in items:
         v = _field_val(it, "product code")
         if v is not None and jsc.js_string(v).strip() not in ("", _EMPTY_VALUE):
-            returned_codes.add(_norm_code(v))
+            code = _norm_code(v)
+            returned_codes.add(code)
+            by_code.setdefault(code, []).append(it)
 
     # The REQUESTED set: TYPED-exact UNION DYM-PICKED. Deliberately NOT
     # `compatible_entities`, which drops `match_tier` and carries resolver-expanded
@@ -579,10 +624,27 @@ def crossdomain_zeroset(
     missing: list[dict[str, Any]] = []
     for rq in requested:
         if rq["strict"]:
-            ok = rq["_n"] in returned_codes
+            matched_codes = [rq["_n"]] if rq["_n"] in returned_codes else []
         else:
-            ok = any(rc == rq["_n"] or rc.startswith(rq["_n"]) for rc in returned_codes)
+            matched_codes = [rc for rc in returned_codes if rc == rq["_n"] or rc.startswith(rq["_n"])]
+        ok = bool(matched_codes)
         if ok:
+            # Owner ruling 11 Sep 2026, second ruling, R2: stock-origin only (`dh ==
+            # "inventory"`) - a code the primary reply DID return, but whose own rows all
+            # read 0 on hand, is not genuinely "found"; it becomes a `missing` entry too
+            # (keys otherwise as a normal miss, `zero: True` added), so the ladder still
+            # probes for it while it stays in `returned_codes` (the primary render did
+            # echo it, and still does).
+            if dh == "inventory":
+                matched_rows = [it for rc in matched_codes for it in by_code.get(rc, [])]
+                if _rows_all_zero(matched_rows):
+                    miss = {
+                        "code": rq["code"], "uuid": rq["uuid"], "_n": rq["_n"],
+                        "entity_type": "product", "zero": True,
+                    }
+                    if len(rq["uuids"]) > 1:
+                        miss["uuids"] = list(rq["uuids"])
+                    missing.append(miss)
             continue
         miss = {"code": rq["code"], "uuid": rq["uuid"], "_n": rq["_n"], "entity_type": "product"}
         # Added ONLY when the code really spans companies, so a single-company turn's
@@ -619,6 +681,7 @@ def crossdomain_probe_args(
     entities_names: Any,
     contact_id: Any,
     space_id: Any = None,
+    granted: Any = None,
 ) -> dict[str, Any]:
     """`crossdomain-probe`'s `sub-get-results` inputs, key for key.
 
@@ -628,6 +691,14 @@ def crossdomain_probe_args(
     `space_id` goes through the SAME fallback the fetch and the did-you-mean probes use
     (`fetch.space_id_or_default`), so an install with no default respond workspace row
     cannot have this probe send `null` while the other three send n8n's literal.
+
+    `granted` (owner ruling 11 Sep 2026, second ruling, R1): the contact's granted
+    field-reveal keys, same set `_apply_crossdomain_rung` already reads. A non-empty
+    list/tuple/set stamps `"access": {"attributes": [...]}` on the args, which
+    `entity_ids_transformer` (`fetch.py`) reads to set `include_sellable` - so the FIRST
+    cross-domain probe's stock rows carry Outstanding exactly like a direct stock ask.
+    Omitted entirely when `granted` is empty or not one of those types, so every existing
+    call site's args stay byte-identical.
     """
     xd = zeroset if isinstance(zeroset, dict) else {}
     qf = parser if isinstance(parser, dict) else {}
@@ -638,7 +709,7 @@ def crossdomain_probe_args(
     else:
         access_levels = list(parser_levels)
     codes = ", ".join(jsc.js_string(jsc.get(e, "code")) for e in jsc.array(xd.get("probe_entities")))
-    return {
+    args: dict[str, Any] = {
         "tool": xd.get("other_tool"),
         "contact_id": contact_id,
         "entities": xd.get("probe_entities"),
@@ -657,6 +728,9 @@ def crossdomain_probe_args(
             f"{jsc.js_string(xd.get('other_tool'))}) for: {codes}"
         ),
     }
+    if isinstance(granted, (list, tuple, set, frozenset)) and len(granted) > 0:
+        args["access"] = {"attributes": list(granted)}
+    return args
 
 
 def _fmt_xd_value(v: Any) -> str:
@@ -708,26 +782,16 @@ def crossdomain_render(
 
     items = _envelope_items(env)
 
-    def field_by_key(it: Any, k: str) -> Any:
-        f = jsc.find(jsc.get(it, "fields") or [], lambda x: jsc.has(x, "key") and x["key"] == k)
-        return jsc.get(f, "value") if jsc.truthy(f) else None
-
-    def field_pref(it: Any, k: str, *labels: str) -> Any:
-        v = field_by_key(it, k)
-        if v is not None:
-            return v
-        for label in labels:
-            lv = _field_val(it, label)
-            if lv is not None:
-                return lv
-        return None
-
     by_code: dict[str, list[Any]] = {}
     for it in items:
         c = jsc.nullish_str(_field_val(it, "product code")).strip()
         if not c or c == _EMPTY_VALUE:
             continue
         by_code.setdefault(c.upper(), []).append(it)
+
+    # Owner ruling 11 Sep 2026, second ruling, R2: needed inside the missing-loop below,
+    # not only for the sentence built after it.
+    origin_incoming = zs.get("origin_domain") == "incoming"
 
     blocks: list[str] = []
     # Codes that came back empty on BOTH sides. Owner ruling (6 Sep 2026): name them and
@@ -759,33 +823,36 @@ def crossdomain_render(
                     nothing_missing.append(m)
             continue
         code = jsc.get(m, "code") or jsc.get(m, "_n")
-        if jsc.truthy(code) and not _ms_is_uuid(code):
+        # R2(a) is about a code `crossdomain_zeroset` ALREADY flagged zero (stock-origin
+        # only, checked BEFORE the fresh incoming-origin detection below): that code was
+        # never really "found" on the primary side either, so it does not earn the
+        # "no {primary} for X" only-other line (AC-820's own "the other side has real
+        # rows" case, `test_stock_origin_zero_but_incoming_answers_no_po_probe`).
+        pre_flagged_zero = jsc.truthy(jsc.get(m, "zero"))
+        # Owner ruling 11 Sep 2026, second ruling, R2(b): incoming-origin only - the OTHER
+        # domain (stock) DID answer, but every row reads 0 on hand, which is not really
+        # "found" either. The rows still render below AND keep AC-820's own only-other
+        # line (that line names "something answered, not this code" and stays true - what
+        # answered simply reads 0); the code ALSO climbs, same as a genuine miss, stamped
+        # on a COPY so the original `missing` entry (still `zs`'s own) is untouched.
+        if origin_incoming and not pre_flagged_zero and _rows_all_zero(rows):
+            if jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(code) and not _ms_is_uuid(code):
+                label = jsc.js_string(code)
+                if label not in nothing:
+                    nothing.append(label)
+                    nothing_missing.append({**m, "zero": True})
+        if not pre_flagged_zero and jsc.truthy(code) and not _ms_is_uuid(code):
             label = jsc.js_string(code)
             if label not in only_other:
                 only_other.append(label)
 
-        def qty(it: Any) -> float:
-            """`Number(fieldPref(it, 'quantity_on_hand', 'quantity on hand') ?? NaN)`.
-
-            The `?? NaN` is the whole branch test. `fieldPref` returns `null` when the key
-            and every label are ABSENT, and `Number(null)` is 0 - which would make "some
-            row has a quantity" true for a set that carries none, and the incoming
-            direction (`crm_incoming_stock_list` emits `estimated_arrival_date` and no
-            `quantity_on_hand` at all) would inherit the CRM's jittery row order instead
-            of sorting by soonest ETA. The miss is carried as `undefined`, which
-            `jsc.js_number` reads as NaN exactly as JS does.
-            """
-            value = field_pref(it, "quantity_on_hand", "quantity on hand")
-            n = jsc.js_number(jsc.UNDEFINED if value is None else value)
-            return float("nan") if jsc.is_nan(n) else float(n)
-
         def eta(it: Any) -> str:
             return jsc.nullish_str(
-                field_pref(it, "estimated_arrival_date", "eta", "estimated arrival date")
+                _field_pref(it, "estimated_arrival_date", "eta", "estimated arrival date")
             )
 
-        if any(not jsc.is_nan(qty(it)) for it in rows):
-            rows.sort(key=lambda it: -(0 if jsc.is_nan(qty(it)) else qty(it)))
+        if any(not jsc.is_nan(_row_qty(it)) for it in rows):
+            rows.sort(key=lambda it: -(0 if jsc.is_nan(_row_qty(it)) else _row_qty(it)))
         elif any(eta(it) for it in rows):
             rows.sort(key=eta)
         for it in rows:
@@ -856,7 +923,6 @@ def crossdomain_render(
     named_codes = [c for c in jsc.array(zs.get("returned_codes")) if jsc.truthy(c)]
     can_state_absence = bool(named_codes) or jsc.get(passthrough, "has_result") is not True
 
-    origin_incoming = zs.get("origin_domain") == "incoming"
     primary_word = "incoming" if origin_incoming else "stock"
     other_word = "stock" if origin_incoming else "incoming"
 
@@ -875,9 +941,26 @@ def crossdomain_render(
     # customer read the question twice. Compose is the one writer of the offer, on the
     # partial-answer branch from `team` below and on the total-miss branch from the miss
     # sentence it slots this block above; this render only states what is absent.
+    #
+    # Owner ruling 11 Sep 2026, second ruling, R2(d): `nothing` splits into a PLAIN group
+    # (genuinely absent on both sides) and a ZERO group (stock reads 0 everywhere) so each
+    # gets its own wording - "no stock" is not honest about a code that DOES have a row,
+    # just not one with anything on it. `zero_labels`/`plain_labels` are parallel to
+    # `nothing`/`nothing_missing` (same append order, same length), so a zip is enough.
+    zero_labels = [c for c, m in zip(nothing, nothing_missing) if jsc.truthy(jsc.get(m, "zero"))]
+    plain_labels = [c for c, m in zip(nothing, nothing_missing) if not jsc.truthy(jsc.get(m, "zero"))]
     nothing_note = ""
-    if nothing and can_state_absence:
-        nothing_note = f"No {primary_word} and no {other_word} for {', '.join(nothing)}."
+    if can_state_absence:
+        sentences: list[str] = []
+        if plain_labels:
+            sentences.append(f"No {primary_word} and no {other_word} for {', '.join(plain_labels)}.")
+        if zero_labels:
+            sentences.append(
+                f"No incoming and stock is 0 at every location for {', '.join(zero_labels)}."
+                if origin_incoming
+                else f"Stock is 0 at every location and no incoming for {', '.join(zero_labels)}."
+            )
+        nothing_note = " ".join(sentences)
 
     body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else ""
     if body and only_other_note:
@@ -915,6 +998,10 @@ def crossdomain_render(
         # leaving it populated while `nothing_codes` is empty would only invite the
         # next reader to make the mistake again.
         "nothing_missing": list(nothing_missing) if can_state_absence else [],
+        # Owner ruling 11 Sep 2026, second ruling, R2(c): which of `nothing_codes` were
+        # zero-at-every-location rather than genuinely absent - same gate, so a reader of
+        # `nothing_codes` that ignores this key still sees exactly today's list.
+        "zero_codes": list(zero_labels) if can_state_absence else [],
     }
     return out
 
@@ -1152,37 +1239,58 @@ def _apply_crossdomain_rung(
     # absence is "incoming", then "stock"; from a stock ask the reverse.
     origin_incoming = xd.get("origin_domain") == "incoming"
     first_word, second_word = ("incoming", "stock") if origin_incoming else ("stock", "incoming")
-    if not lines_by_code:
-        # The rung answered NOTHING either - AC-922's wording, one step further than the
-        # existing "no X and no Y".
-        # Item 5: "nothing on order" - PO lines and unshipped SPO allocations alike.
-        still_nothing_note = (
-            f"No {first_word}, no {second_word} and nothing on order for {', '.join(nothing_codes)}."
-        )
-        # No offer sentence: `crossdomain_compose` writes it once from `block["team"]`
-        # (set to the rung's team below) - see the first probe's `nothing_note`.
-        new_note = still_nothing_note
-    else:
-        found = [c for c in nothing_codes if c in lines_by_code]
-        still_nothing = [c for c in nothing_codes if c not in lines_by_code]
+
+    # Owner ruling 11 Sep 2026, second ruling, R2: `nothing_codes` splits by the SAME
+    # `zero` flag `crossdomain_render` stamped on the parallel `nothing_missing` list, so
+    # each group earns its own wording - a zero-everywhere code was never really "found",
+    # but "no stock" is not honest about a code that DOES have a row, just not one with
+    # anything on it.
+    zero_by_code = {
+        jsc.js_string(jsc.get(m, "code") or jsc.get(m, "_n")): jsc.truthy(jsc.get(m, "zero"))
+        for m in missing
+    }
+    plain_codes = [c for c in nothing_codes if not zero_by_code.get(c)]
+    zero_codes = [c for c in nothing_codes if zero_by_code.get(c)]
+
+    def _group_parts(codes: list[str], *, lead: str, trail: str) -> list[str]:
+        """One group's paragraph(s): a found sentence (`{lead} and {trail} for X,
+        {header}:` plus the rung's own block) when the rung answered any of `codes`, a
+        still-nothing sentence (`{lead}, {trail} and nothing on order for X.`) for the
+        rest - AC-922's wording, one step further than the first probe's "no X and no Y".
+        Item 5: "nothing on order" - PO lines and unshipped SPO allocations alike."""
+        if not codes:
+            return []
+        found = [c for c in codes if c in lines_by_code]
+        still_nothing = [c for c in codes if c not in lines_by_code]
         parts: list[str] = []
-        found_rows = [row for c in found for row in lines_by_code[c]]
-        po_lines = _crossdomain_rung_text(found_rows)
-        # The header names what the rows ARE: "PO is placed" (D2: no article, the owner's
-        # wording) when any row is a PO line, "stock is on order from the supplier" when
-        # every row is an unshipped SPO allocation (item 5). D7: the absence pair reads in
-        # the order the customer climbed - "No incoming and no stock" from an incoming ask.
-        header = (
-            "but stock is on order from the supplier"
-            if found_rows and all(r.get("kind") == "spo" for r in found_rows)
-            else "but PO is placed"
-        )
-        parts.append(f"No {first_word} and no {second_word} for {', '.join(found)}, {header}:\n{po_lines}")
-        if still_nothing:
-            parts.append(
-                f"No {first_word}, no {second_word} and nothing on order for {', '.join(still_nothing)}."
+        if found:
+            found_rows = [row for c in found for row in lines_by_code[c]]
+            po_lines = _crossdomain_rung_text(found_rows)
+            # The header names what the rows ARE: "PO is placed" (D2: no article, the
+            # owner's wording) when any row is a PO line, "stock is on order from the
+            # supplier" when every row is an unshipped SPO allocation (item 5).
+            header = (
+                "but stock is on order from the supplier"
+                if found_rows and all(r.get("kind") == "spo" for r in found_rows)
+                else "but PO is placed"
             )
-        new_note = "\n\n".join(parts)
+            parts.append(f"{lead} and {trail} for {', '.join(found)}, {header}:\n{po_lines}")
+        if still_nothing:
+            parts.append(f"{lead}, {trail} and nothing on order for {', '.join(still_nothing)}.")
+        return parts
+
+    # D7's own pair, for the plain group - "No incoming and no stock" from an incoming
+    # ask. The zero group always names "stock is 0 at every location" for the stock half
+    # and "no incoming"/"No incoming" for the other, in the SAME lead/trail order D7 gives
+    # the plain group.
+    zero_lead, zero_trail = (
+        ("No incoming", "stock is 0 at every location")
+        if origin_incoming
+        else ("Stock is 0 at every location", "no incoming")
+    )
+    parts = _group_parts(plain_codes, lead=f"No {first_word}", trail=f"no {second_word}")
+    parts += _group_parts(zero_codes, lead=zero_lead, trail=zero_trail)
+    new_note = "\n\n".join(parts)
 
     old_note = block.get("nothing_note") or ""
     old_block_text = block.get("block") or ""
@@ -1271,6 +1379,7 @@ def run_crossdomain(
         entities_names=entities_names,
         contact_id=contact_id,
         space_id=space_id,
+        granted=granted,
     )
     try:
         probe_result = services.mcp_probe(args["tool"], args)

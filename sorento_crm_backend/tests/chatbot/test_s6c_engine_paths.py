@@ -529,7 +529,16 @@ class TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine:
     `block` is where everything these captures exist to grade lives (the ETA sort of
     exec-14126915, the multi-company silent note, the discontinued flag). A strip would
     quietly make all of that ungraded, so every one of the six is compared here EXACTLY,
-    with the one known sentence removed (review of #706, S3)."""
+    with the one known sentence removed (review of #706, S3).
+
+    Owner ruling 11 Sep 2026, second ruling (R2, `divergences.
+    CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS`): three of the six captures are, in real data,
+    exactly R2(b)'s target shape - a returned code whose cross-probed rows are ALL 0 - so
+    the block now carries a SECOND CRM-only sentence (the zero climb) the n8n block never
+    had either. Whether a capture is one of those three is derived HERE from the capture's
+    own probed rows via `answer._rows_all_zero`, never from a hard-coded exec id list, so a
+    fourth zero capture added to the corpus later is graded the same way with no test
+    change."""
 
     @pytest.mark.parametrize(
         "stem", ONE_SIDED_LINE_FIXTURES, ids=lambda v: v
@@ -544,7 +553,8 @@ class TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine:
         fixture = matches[0]
         _replay(fixture)  # the registered field-scoped divergence still applies
 
-        from tests.chatbot.test_s6c_answer_lane import _run_crossdomain_render
+        from app.services.chatbot.lanes.business import answer as _answer
+        from tests.chatbot.test_s6c_answer_lane import _input_json, _rt, _run_crossdomain_render
 
         actual = _corpus.json_round_trip(_run_crossdomain_render(fixture))
         expected = _corpus.json_round_trip(fixture.expected)
@@ -555,8 +565,33 @@ class TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine:
             f"the AC-820 line is the ONLY expected difference; got {head!r}"
         )
         assert head.endswith("."), head
+
+        # R2: this capture's own code, and its own probed rows - the SAME `by_code`
+        # grouping `crossdomain_render` does internally, replicated here read-only.
+        code = head.rsplit(" for ", 1)[-1].rstrip(".")
+        env = _rt(_input_json(fixture))
+        rows = [
+            it
+            for it in _answer._envelope_items(env)
+            if _answer.jsc.js_string(_answer._field_val(it, "product code") or "").strip().upper()
+            == code.upper()
+        ]
+        if _answer._rows_all_zero(rows):
+            zero_sentence = (
+                f"No incoming and stock is 0 at every location for {code}."
+                if head.startswith("No incoming for ")
+                else f"Stock is 0 at every location and no incoming for {code}."
+            )
+            assert rest.endswith(zero_sentence), (
+                "a capture whose probed rows are all 0 must also carry the zero-climb "
+                f"sentence (divergences.CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS); got {rest!r}"
+            )
+            rest = rest[: -len(zero_sentence)]
+            if rest.endswith("\n\n"):
+                rest = rest[:-2]
+
         assert rest == want, (
-            "with that one sentence removed the block must still be byte-equal to the "
+            "with the known sentence(s) removed the block must still be byte-equal to the "
             f"capture:\n{rest!r}\n{want!r}"
         )
 

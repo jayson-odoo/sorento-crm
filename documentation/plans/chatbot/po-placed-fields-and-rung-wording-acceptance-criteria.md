@@ -29,3 +29,31 @@ Plan: `PLAN-po-placed-fields-and-rung-wording.md`.
   warehouse code, None when the line has no warehouse. SPO side: `ordered_qty` is the
   allocation's `allocated_quantity`; `location` is the allocation's warehouse code, else
   the book's raw `location_code`, else None. Every other existing row key is unchanged.
+- AC-9 Outstanding on the cross-domain stock block. `crossdomain_probe_args` stamps
+  `"access": {"attributes": [...]}` on the first probe's args when `granted` is a
+  non-empty list/tuple/set, omitted entirely otherwise; `run_crossdomain` passes its own
+  `granted` through unchanged. `entity_ids_transformer` already reads it, so a granted
+  contact's cross-domain stock block carries `open_so_qty`/Outstanding like a direct ask.
+- AC-10 Zero-everywhere climbs both directions. Stock-origin: a requested code whose
+  primary stock reply's own rows are all `Quantity On Hand: 0` is flagged `zero: True` in
+  `crossdomain_zeroset`'s `missing` and probes the next domain like a genuine miss.
+  Incoming-origin: a code whose cross-probed STOCK rows are all 0 renders those rows as
+  today AND climbs to the next rung with the same `zero: True` flag. Either direction, a
+  further ladder rung (e.g. `purchase_order`) still runs and its own answer or non-answer
+  is worded per AC-11.
+- AC-11 The zero wording set. `_xdBlock.zero_codes` names the zero-flagged subset of
+  `nothing_codes`. The rendered sentence set, exact:
+  - stock-origin, rung answers: `Stock is 0 at every location and no incoming for X,
+    {header}:` + the rung's block.
+  - stock-origin, rung answers nothing: `Stock is 0 at every location, no incoming and
+    nothing on order for X.`
+  - incoming-origin, rung answers: `No incoming and stock is 0 at every location for X,
+    {header}:` + the rung's block.
+  - incoming-origin, rung answers nothing: `No incoming, stock is 0 at every location and
+    nothing on order for X.`
+  A plain group and a zero group present together each render their own paragraph(s),
+  plain first, joined the same way the existing plain-only case already joins multiple
+  paragraphs.
+- AC-12 No false climb. A requested code with at least one row reading a non-zero quantity
+  is genuinely "found" - unchanged from today: no `zero` flag, no cross-domain probe, no
+  wording change, `only_other`/`nothing` behave exactly as before this ruling.
