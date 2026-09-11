@@ -59,7 +59,7 @@ def _run(db, warehouse_codes: list[str], product_code: str) -> str:
 def _recs(db, run_id: str, pid: str) -> list[dict]:
     return [dict(r) for r in db.execute(text(
         "SELECT rec_type, warehouse_id::text AS warehouse_id, recommended_qty, "
-        "       rounded_qty, triggered_reason, inputs "
+        "       rounded_qty, net_position, triggered_reason, inputs "
         "FROM scm.reorder_recommendation WHERE run_id = :r AND product_id = :p"
     ), {"r": run_id, "p": pid}).mappings().all()]
 
@@ -158,6 +158,15 @@ def test_location_row_project_inside_net(scm_app):
     (`_emit_cell`, reorder_point/periodic_review). If the coder's fix keeps the two
     channels split by design at this basis, escalate rather than silently reinterpreting
     this test.
+
+    Captain's AC-3 ruling (coder round 2): `_covered_rec`'s "Buy anyway" committed-demand
+    figure on `rounded_qty` (the quantity buying the WHOLE outstanding commitment would
+    cost, regardless of whether stock already covers it) is pre-existing and out of this
+    plan's scope, so a covered row's `rounded_qty` still carries it BY DESIGN - this test
+    does not assert `rounded_qty` at all. What it pins instead: the row reads `covered`
+    (not a bolted-on project buy), its reason label says so, and `net_position` shows the
+    project channel was subtracted from the position exactly once (never split out and
+    bolted back on).
     """
     _, db, _, _ = scm_app
     from app.services.scm import reorder_engine as eng
@@ -186,4 +195,9 @@ def test_location_row_project_inside_net(scm_app):
         f"10,000 on hand against 200 of confirmed project demand must read covered, "
         f"not a bolted-on project buy: {row}"
     )
-    assert float(row["rounded_qty"] or 0) == 0.0, row
+    assert "project buy" not in (row["triggered_reason"] or ""), (
+        f"a covered row must not carry the bolted-on project-buy reason label: {row}"
+    )
+    # on hand 10,000 + SPO 0 + PO 0 - project 200 - retail 0 = 9,800: the project channel
+    # is inside `net_position` exactly once, never split out and bolted back on top.
+    assert float(row["net_position"]) == 9_800.0, row
