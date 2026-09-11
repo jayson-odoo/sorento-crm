@@ -2591,17 +2591,20 @@ class SPOAllocationService:
                 *spo_supply.visible_line_clauses(),
             )
             .distinct()
+            # Deterministic tiebreak (review S2): one container number can name several
+            # DIFFERENT `inbound_shipment_id`s on the same document (39 on the prod
+            # copy) - ASC sorts NULLS LAST by default, so a linked row always sorts
+            # ahead of a raw duplicate for the same container ("linked wins over raw"
+            # falls out of the ordering, no separate branch needed), and among several
+            # shipments sharing one container the smallest id wins, every run.
+            .order_by(SPOAllocation.spo_number, container_expr, SPOAllocation.inbound_shipment_id)
             .all()
         )
         by_doc: Dict[str, Dict[str, Optional[str]]] = {}
         for spo_number, container_number, shipment_id in rows:
             entries = by_doc.setdefault(spo_number, {})
-            # The entry carrying a shipment id always wins; a raw-only duplicate only
-            # ever fills a slot that has not been claimed yet.
-            if shipment_id is not None:
-                entries[container_number] = shipment_id
-            else:
-                entries.setdefault(container_number, None)
+            # The first row per container already wins the ORDER BY above.
+            entries.setdefault(container_number, shipment_id)
         result: Dict[str, List[SPODocumentContainer]] = {}
         for spo_number, entries in by_doc.items():
             result[spo_number] = [

@@ -60,12 +60,14 @@ const packingListHref = (shipmentId: string) => `/procurement-management/packing
  *  clutters the cell with a comma list - one packing-list link for N=1, a popover
  *  listing every extra for N>=2. Every click stops propagation so the row's own
  *  `rowHref` navigation does not fire. */
-function ContainersCell({ containers }: { containers: SPODocumentContainer[] }) {
-  if (containers.length === 0) {
+function ContainersCell({ containers }: { containers: SPODocumentContainer[] | undefined }) {
+  const list = containers ?? [];
+  if (list.length === 0) {
     return <span className="text-muted-foreground">-</span>;
   }
-  const [first, ...rest] = containers;
-  const title = containers.map((c) => c.container_number).join(', ');
+  const [first, ...rest] = list;
+  const title = list.map((c) => c.container_number).join(', ');
+  const moreLabel = `${rest.length} more container${rest.length === 1 ? '' : 's'}`;
 
   return (
     <span className="truncate" title={title}>
@@ -74,6 +76,7 @@ function ContainersCell({ containers }: { containers: SPODocumentContainer[] }) 
           href={packingListHref(first.shipment_id)}
           onClick={(e) => e.stopPropagation()}
           className="text-primary hover:underline"
+          title={first.container_number}
         >
           {first.container_number}
         </Link>
@@ -82,9 +85,16 @@ function ContainersCell({ containers }: { containers: SPODocumentContainer[] }) 
       )}
       {rest.length === 1 ? (
         rest[0].shipment_id ? (
+          // No `aria-label` here (unlike the other two pill shapes below): this
+          // Link's accessible name is pinned to its own visible text, "+1"
+          // (SPOAllocationsList.test.tsx `getByRole('link', { name: '+1' })`) - an
+          // aria-label on the anchor itself replaces that computed name outright,
+          // it does not add to it. `title` still carries the container number as
+          // a hover tooltip without touching the accessible name.
           <Link
             href={packingListHref(rest[0].shipment_id)}
             onClick={(e) => e.stopPropagation()}
+            title={rest[0].container_number}
             className="ms-1 inline-flex align-middle"
           >
             <Badge variant="secondary" size="sm">
@@ -92,7 +102,13 @@ function ContainersCell({ containers }: { containers: SPODocumentContainer[] }) 
             </Badge>
           </Link>
         ) : (
-          <Badge variant="secondary" size="sm" className="ms-1 align-middle">
+          <Badge
+            variant="secondary"
+            size="sm"
+            aria-label={moreLabel}
+            title={rest[0].container_number}
+            className="ms-1 align-middle"
+          >
             +1
           </Badge>
         )
@@ -103,6 +119,7 @@ function ContainersCell({ containers }: { containers: SPODocumentContainer[] }) 
             <button
               type="button"
               onClick={(e) => e.stopPropagation()}
+              aria-label={moreLabel}
               className="ms-1 inline-flex align-middle"
             >
               <Badge variant="secondary" size="sm">
@@ -117,6 +134,7 @@ function ContainersCell({ containers }: { containers: SPODocumentContainer[] }) 
                   <Link
                     href={packingListHref(c.shipment_id)}
                     onClick={(e) => e.stopPropagation()}
+                    title={c.container_number}
                     className="text-primary hover:underline"
                   >
                     {c.container_number}
@@ -289,7 +307,7 @@ export default function SPOAllocationsList() {
       },
       {
         id: 'containers',
-        accessorFn: (row) => row.containers.map((c) => c.container_number).join(', '),
+        accessorFn: (row) => (row.containers ?? []).map((c) => c.container_number).join(', '),
         header: ({ column }) => <DataGridColumnHeader title="Container No" column={column} />,
         cell: ({ row }) => <ContainersCell containers={row.original.containers} />,
         size: 170,
