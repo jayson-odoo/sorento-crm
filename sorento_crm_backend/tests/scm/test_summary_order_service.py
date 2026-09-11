@@ -1310,6 +1310,14 @@ def test_dealer_outstanding_is_the_runs_horizoned_retail(db):
         f"expected the run's own horizoned retail (170), got {row.dealer_outstanding} - "
         "the unfiltered 1,381-unit SO book leaked through"
     )
+    # SF-2: the LINE COUNT and the ageing beside that quantity come from the same window.
+    # `dealer_outstanding` is the run's horizoned 170 across ONE line; reading the count
+    # off an unhorizoned SO book stated "170 units across 8 lines", which is not a fact
+    # about anything - the other 7 lines are the 1,211 units the window excluded.
+    assert row.dealer_outstanding_line_count == 1, (
+        f"expected the 1 in-window retail line, got {row.dealer_outstanding_line_count} - "
+        "the 7 out-of-window lines were counted beside an in-window quantity"
+    )
 
 
 def test_legacy_run_dealer_outstanding_keeps_the_so_book_read(db, chain):

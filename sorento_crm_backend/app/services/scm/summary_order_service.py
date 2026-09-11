@@ -39,7 +39,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
-from sqlalchemy import Numeric, cast, func, or_, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
@@ -70,7 +70,6 @@ from app.services.scm.demand import (
     UNPLACED_INQUIRY_STATE,
 )
 from app.services.scm.pool_predicate import active_site_pool_sql
-from app.services.scm import plan_scope
 from app.services.scm.reorder_policy import resolve_global_cover_scope
 from app.services.scm.site_pool_supply import open_po_by_product, open_spo_by_product
 from app.services.scm.reorder_engine import allocate as eng_allocate
@@ -223,7 +222,15 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         return 0
 
     positions = CoverageService(db).network_positions(product_ids)
-    demand = _demand_aggregates(db, product_ids)
+    # PLAN-reorder-one-formula.md S2/SF-2: on the RUN'S OWN WINDOW. `dealer_outstanding`
+    # itself reads the recs' frozen `retail_committed` below, which is horizoned; the line
+    # count and the ageing that sit beside it have to come from the same population or the
+    # sheet states "170 units across 8 lines" when only 1 of those lines is in the window
+    # (measured on the 0907 copy: 1381 open across 8 lines, 170 inside 01/01-31/12/2026).
+    demand = _demand_aggregates(
+        db, product_ids,
+        horizon_start=run.plan_horizon_start, horizon=run.plan_horizon_date,
+    )
     stats = _avg_daily_demand(db, product_ids)
     spare = _spare_pool(db, product_ids)
     products = {
@@ -364,6 +371,9 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
             recs, row.pool_on_hand, row.po_open_qty, has_channel=has_channel, pid=pid,
             free_by_product=free_by_product, po_book=po_book,
             cover_scope=cover_scope, constraints=constraints,
+            # SF-4: the Suggestion's Buy part IS the Suggested qty column beside it - one
+            # figure, set just above, never a second read of one group's `rounded_qty`.
+            suggested_qty=float(row.suggested_qty or 0.0),
         )
         row.computed_at = computed_at
         row.source_system = "scm"
@@ -400,7 +410,7 @@ def _fmt_int(value: float) -> str:
 def _suggestion_text(
     recs: list, on_hand: float, po_qty: float, *, has_channel: bool, pid: str,
     free_by_product: dict[str, list], po_book: dict[str, list],
-    cover_scope: str, constraints: dict[str, dict],
+    cover_scope: str, constraints: dict[str, dict], suggested_qty: float = 0.0,
 ) -> str:
     """The row's Suggestion, worded EXACTLY like the plan grid's own Decision label (owner,
     10 Sep ruling): "Stock 1 + Buy 486", "Buy 95", "Stock 10 + PO 20 + Buy 90", "Nothing".
@@ -415,12 +425,18 @@ def _suggestion_text(
     branches `suggested_qty` on):
 
     - PLAN-reorder-one-formula.md S4/AC-4 (a run carrying the channel snapshot): the parts
-      are a DISPLAY of what the engine's ONE formula already netted - `rounded_qty` is
-      ALREADY net of on-hand and the open PO book (since #828), so `Buy` is `rounded_qty`
-      verbatim and `Stock`/`PO` are `min(...)` clips of the SAME `on_hand`/`po_qty` the
-      row itself prints (`pool_on_hand`, `po_open_qty`) - never a second netting through a
-      fresh cover/PO-book proposal, which is exactly the double-netting bug the plan's
-      "Why" section names.
+      are a DISPLAY of what the engine's ONE formula already netted - the row's own
+      `suggested_qty` is ALREADY net of on-hand and the open PO book (since #828), so
+      `Buy` IS that figure and `Stock`/`PO` are `min(...)` clips of the SAME
+      `on_hand`/`po_qty` the row itself prints (`pool_on_hand`, `po_open_qty`) - never a
+      second netting through a fresh cover/PO-book proposal, which is exactly the
+      double-netting bug the plan's "Why" section names.
+
+      `suggested_qty` is passed IN, not re-read off one recommendation (SF-4). The column
+      is `_channel_freeze`'s sum of every sizing group's own `rounded`, rounded once more
+      against the supplier's terms; `chosen.rounded_qty` is ONE group's. A product sized
+      across two independent pools therefore printed "Buy 40" beside a Suggested qty of
+      95. One figure, read once, by both.
     - A run with NO channel snapshot predates that guarantee: `rounded_qty` there is
       GROSS, never netted against cross-location stock or the PO book at all, so this
       keeps the ORIGINAL re-derivation (`cover_service.propose_cover` against the row's
@@ -433,7 +449,12 @@ def _suggestion_text(
     )
     if chosen is None:
         return "Nothing"
-    buy_qty = float(chosen.rounded_qty or 0.0)
+    # The one figure the row's own Suggested qty column prints, on a channel run; one
+    # group's own rounded buy on a legacy one, which is what its own re-derivation below
+    # is built to start from.
+    buy_qty = (
+        float(suggested_qty or 0.0) if has_channel else float(chosen.rounded_qty or 0.0)
+    )
     if buy_qty <= 0:
         return "Nothing"
 
@@ -976,8 +997,26 @@ def _last_receipt_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
     return {pid: {"date": picking_date, "qty": _f(qty)} for pid, picking_date, qty in rows}
 
 
-def _demand_aggregates(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """Project and retail outstanding quantity, line counts, and the worst retail ageing.
+def _demand_aggregates(
+    db: Session,
+    product_ids: list[str],
+    *,
+    horizon_start=None,
+    horizon=None,
+) -> dict[str, dict]:
+    """Project and retail outstanding quantity, line counts, and the worst retail ageing,
+    inside the RUN'S OWN PLANNING WINDOW.
+
+    The window is the same rule `demand.horizon_committed_select_sql`'s book leg applies,
+    spelled here in the ORM: a line whose `required_date` falls outside the run's
+    `[plan_horizon_start, plan_horizon_date]` is not counted, and a line carrying NO date
+    at all is always counted (G2 ruling, 9 Sep - unscheduled demand is still demand). A
+    NULL bind on either side lets everything through, exactly as an unhorizoned run nets.
+
+    Why it matters here (SF-2): `write_rows` prints `dealer_outstanding` off the recs'
+    frozen `retail_committed`, which IS horizoned, while the line count and the ageing
+    beside it come from this function. Unhorizoned, the sheet read "170 units across 8
+    lines" for a product whose window held exactly one of them.
 
     One query for the whole batch, split on the PERSISTED `sales_orders.demand_class`
     (front planning 5.2 / AC-E01). The class is the semantic owner: it is stamped by the
@@ -994,7 +1033,7 @@ def _demand_aggregates(db: Session, product_ids: list[str]) -> dict[str, dict]:
     The stored columns keep their names (`dealer_*`); the API and the screens say retail,
     which is the user's word.
     """
-    rows = (
+    query = (
         db.query(
             SalesOrderLine.product_id,
             SalesOrder.demand_class,
@@ -1009,8 +1048,18 @@ def _demand_aggregates(db: Session, product_ids: list[str]) -> dict[str, dict]:
             SalesOrderLine.line_status == "open",
             SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
         )
-        .all()
     )
+    if horizon is not None:
+        query = query.filter(
+            or_(SalesOrderLine.required_date.is_(None),
+                SalesOrderLine.required_date <= horizon)
+        )
+    if horizon_start is not None:
+        query = query.filter(
+            or_(SalesOrderLine.required_date.is_(None),
+                SalesOrderLine.required_date >= horizon_start)
+        )
+    rows = query.all()
     today = _today()
     out: dict[str, dict] = {}
     for r in rows:
@@ -1479,51 +1528,35 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
 
 
 def _hidden_product_ids_for_run(db: Session, run_id: str) -> set[str]:
-    """PLAN-plan-list-tile-sheet-one-scope.md, S7 (AC-3): which products the SAME
-    `plan_scope.hidden_by_default` rule the recommendations list and the Decisions tile
-    already read also hides, for the run's own PRODUCT-GRAIN recommendation rows
-    (`warehouse_id IS NULL` - `order_summary_row` is one row per product per run, the
-    same cardinality). ORM, not raw SQL, so the company isolation filter on
-    `ReorderRecommendation` applies without a hand-written predicate.
+    """PLAN-plan-list-tile-sheet-one-scope.md, S7 (AC-3): which products the run hides by
+    default, for its own PRODUCT-GRAIN recommendation rows (`warehouse_id IS NULL` -
+    `order_summary_row` is one row per product per run, the same cardinality). ORM, not raw
+    SQL, so the company isolation filter on `ReorderRecommendation` applies without a
+    hand-written predicate.
+
+    Reads the STORED `hidden_by_default` column (PLAN-reorder-one-formula.md S3/AC-12,
+    migration 512), stamped once at write time by `reorder_run_service._build_rec` off
+    `plan_scope.hidden_by_default`. The re-derivation that used to live here - five scalars
+    pulled out of `inputs` and the Python rule replayed per row - is deleted: it was the
+    fourth independent copy of one rule, and four copies is precisely what drifted apart
+    per the owner's 10 Sep measurement (list 415, tile "0 of 950", sheet 950). It also
+    costs one boolean per row instead of a JSONB extract per row (D1: the full-blob shape
+    it replaced cost 29.3 MB / 356 ms on the 12,948-rec run).
 
     Keyed on `product_id`, not `product_code` (reviewer pass 3, round D, D2): a code
     repeats across companies, an id does not, and `order_summary_row` already carries
     `product_id` directly - no join to `products` is needed here at all.
-
-    Selects only the four scalars the rule needs - `rec_type`,
-    `inputs->>'policy_type'`, `(inputs->>'reorder_level')::numeric`,
-    `(inputs->>'master_reorder_level')::numeric` - plus `net_position`, never the whole
-    `inputs` JSONB (D1: measured on the 12,948-rec run, fetching the full blob cost
-    29.3 MB / 356 ms against 69 ms for this narrow shape).
     """
     rows = (
-        db.query(
-            ReorderRecommendation.product_id,
-            ReorderRecommendation.rec_type,
-            ReorderRecommendation.inputs["policy_type"].astext,
-            cast(ReorderRecommendation.inputs["reorder_level"].astext, Numeric),
-            cast(ReorderRecommendation.inputs["master_reorder_level"].astext, Numeric),
-            ReorderRecommendation.net_position,
-        )
+        db.query(ReorderRecommendation.product_id)
         .filter(
             ReorderRecommendation.run_id == run_id,
             ReorderRecommendation.warehouse_id.is_(None),
+            ReorderRecommendation.hidden_by_default.is_(True),
         )
         .all()
     )
-    hidden: set[str] = set()
-    for pid, rec_type, policy_type, reorder_level, master_reorder_level, net_position in rows:
-        if plan_scope.hidden_by_default(
-            rec_type=rec_type,
-            policy_type=policy_type,
-            reorder_level=float(reorder_level) if reorder_level is not None else None,
-            master_reorder_level=(
-                float(master_reorder_level) if master_reorder_level is not None else None
-            ),
-            net_position=float(net_position) if net_position is not None else None,
-        ):
-            hidden.add(str(pid))
-    return hidden
+    return {str(pid) for (pid,) in rows}
 
 
 def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:

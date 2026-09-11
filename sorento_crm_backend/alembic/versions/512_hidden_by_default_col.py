@@ -27,6 +27,13 @@ _SCHEMA = "scm"
 _TABLE = "reorder_recommendation"
 _COLUMN = "hidden_by_default"
 
+#: The rec types `planned_count` counts, spelled here rather than imported so the migration
+#: cannot start failing the day the service module moves. MUST stay the same set as
+#: `decision_service._PLAN_ROW_DECIDABLE_TYPES` and the write-time stamp in
+#: `reorder_run_service` - an `exception` row carries no quantity anybody can decide, so
+#: counting it here made the plans list's denominator bigger than the tile's.
+_DECIDABLE_TYPES = ("buy", "covered", "needs_level", "disposition")
+
 
 def _has_column() -> bool:
     inspector = sa.inspect(op.get_bind())
@@ -45,12 +52,16 @@ def _backfill_run_counts() -> None:
     run, which still reads 826.
 
     Same shape `decision_service._refresh_run_counts`'s SQL and `_summarise` use
-    (`FILTER (WHERE NOT hidden_by_default)`, DISTINCT product for `planned_count`, row count
-    for `recommendation_count`), just run once for every existing run instead of one at a
-    time. `FILTER` (not a `WHERE` ahead of the `GROUP BY`) so a run whose recs are ALL
-    hidden still gets an UPDATE row and lands on 0, not skipped and left at its old count.
-    `decided_count` / `confirmed_count` are untouched - they are not scoped by this column.
-    Idempotent: recomputes to the same numbers every run, never increments anything.
+    (`FILTER (WHERE NOT hidden_by_default)`, DISTINCT product over the DECIDABLE rec types
+    for `planned_count`, row count over every type for `recommendation_count`), just run
+    once for every existing run instead of one at a time. The two really do count different
+    populations: `planned_count` is a denominator for decisions, so it counts only rows a
+    decision can be recorded on, while `recommendation_count` is "lines on this plan" and
+    counts an `exception` row like any other (`_summarise`). `FILTER` (not a `WHERE` ahead
+    of the `GROUP BY`) so a run whose recs are ALL hidden still gets an UPDATE row and lands
+    on 0, not skipped and left at its old count. `decided_count` / `confirmed_count` are
+    untouched - they are not scoped by this column. Idempotent: recomputes to the same
+    numbers every run, never increments anything.
     """
     op.execute(sa.text(
         f"""
@@ -58,13 +69,15 @@ def _backfill_run_counts() -> None:
         SET planned_count = sub.planned
         FROM (
             SELECT run_id,
-                   count(DISTINCT product_id) FILTER (WHERE NOT {_COLUMN}) AS planned
+                   count(DISTINCT product_id) FILTER (
+                       WHERE NOT {_COLUMN} AND rec_type = ANY(:kinds)
+                   ) AS planned
             FROM {_SCHEMA}.{_TABLE}
             GROUP BY run_id
         ) sub
         WHERE rr.id = sub.run_id
         """
-    ))
+    ).bindparams(kinds=list(_DECIDABLE_TYPES)))
     op.execute(sa.text(
         f"""
         UPDATE scm.reorder_run rr

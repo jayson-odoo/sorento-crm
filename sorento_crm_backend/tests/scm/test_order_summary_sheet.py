@@ -874,10 +874,25 @@ def test_suggestion_parts_are_display_of_the_net():
             id=str(uuid.uuid4()), run_id=run.id, rec_type="covered", product_id=cov.id,
             warehouse_id=wh3.id, rounded_qty=0, inputs=c3_inputs, status="proposed",
         ))
+        # Case 4 (SF-4): ONE product, TWO independent sizing groups - two pools, sized
+        # separately, 40 + 55. `_channel_freeze` sums them into `suggested_qty` 95, while
+        # `_suggestion_text` used to read ONE recommendation's own `rounded_qty` - so the
+        # sheet printed "Buy 40" beside a Suggested qty of 95.
+        two = _pgs_product(db, stem="TWO")
+        wh4 = _pgs_warehouse(db, stem="W4")
+        wh5 = _pgs_warehouse(db, stem="W5")
+        for wh, rounded in ((wh4, 40.0), (wh5, 55.0)):
+            inp = {"project_need": 0.0, "retail_need": rounded,
+                   "on_hand": 0.0, "po_ordered": 0.0, "reorder_level": 0.0}
+            inp["plan_basis"] = single_location_plan_basis(inp, wh, rounded=rounded)
+            db.add(ReorderRecommendation(
+                id=str(uuid.uuid4()), run_id=run.id, rec_type="buy", product_id=two.id,
+                warehouse_id=wh.id, rounded_qty=rounded, inputs=inp, status="proposed",
+            ))
         db.flush()
 
         written = svc.write_rows(db, run.id)
-        assert written == 3
+        assert written == 4
 
         row1 = _pgs_row(db, run, b2155)
         assert float(row1.suggested_qty) == 196.0, (
@@ -892,6 +907,17 @@ def test_suggestion_parts_are_display_of_the_net():
         row3 = _pgs_row(db, run, cov)
         assert float(row3.suggested_qty) == 0.0
         assert row3.suggestion == "Nothing", row3.suggestion
+
+        # SF-4: one figure, printed twice - the Suggestion's Buy part IS the Suggested qty
+        # column beside it, whatever the product's sizing groups summed to.
+        row4 = _pgs_row(db, run, two)
+        assert float(row4.suggested_qty) == 95.0, (
+            f"two groups of 40 + 55 sum to 95, got {row4.suggested_qty}"
+        )
+        assert row4.suggestion == "Buy 95", (
+            f"the Suggestion's Buy part must equal the Suggested qty beside it, got "
+            f"{row4.suggestion!r} against {row4.suggested_qty}"
+        )
 
 
 def test_sheet_dealer_os_matches_grid_retail():

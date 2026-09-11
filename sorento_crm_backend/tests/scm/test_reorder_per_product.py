@@ -676,7 +676,7 @@ def test_a_confirmed_buy_is_bought_even_with_no_level_anywhere(scm_app):
     assert float(summary["retail_replenishment_qty"]) == 0.0
 
 
-def test_no_level_with_retail_only_demand_still_asks_for_a_level_and_buys_nothing(scm_app):
+def test_no_level_with_retail_only_demand_buys_the_shortage_and_still_asks_for_a_level(scm_app):
     """PLAN-reorder-one-formula.md (owner ruling, 11 Sep 2026): a no-level product with
     ONLY retail-open-SO demand (no confirmed project Buy) now BUYS too - "no level = 0"
     applies the same way regardless of which channel makes up the net. `needs_level`

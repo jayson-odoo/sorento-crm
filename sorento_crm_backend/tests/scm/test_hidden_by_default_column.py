@@ -175,6 +175,17 @@ def test_run_counts_read_the_column(scm_app):
         "UPDATE scm.reorder_recommendation SET run_id = :folded "
         "WHERE run_id IN (:r2, :r3)"
     ), {"folded": folded, "r2": r2, "r3": r3})
+    # A 4th row, on its own product, that no decision can ever be recorded on. It is a
+    # LINE of the plan (`recommendation_count` counts it) but not a decidable product
+    # (`planned_count` must not). Written straight in: how an exception comes to exist is
+    # `_emit_product`'s business, and this test is about the migration's own SQL.
+    exc_pid, _exc_pcode = _product(db)
+    db.execute(text(
+        "INSERT INTO scm.reorder_recommendation "
+        "(id, run_id, product_id, warehouse_id, rec_type, status, inputs, created_at) "
+        "VALUES (gen_random_uuid(), :run, :pid, NULL, 'exception', 'proposed', "
+        "        '{}'::jsonb, now())"
+    ), {"run": folded, "pid": exc_pid})
     db.flush()
 
     from app.models.scm import ReorderRecommendation
@@ -227,10 +238,15 @@ def test_backfill_recomputes_run_counts(scm_app):
     run directly rather than re-derived by `_refresh_run_counts` (which only a decision
     triggers) or `_summarise` (which only a fresh run's own write path calls).
 
-    3 recs on one run, one covered row sitting well above its level (hidden) - the same
-    "1 buy + 1 shown covered = 2" shape `test_run_counts_read_the_column` uses. Both
-    counters are stamped `3` "the old way" first (what a pre-migration run's stored numbers
-    actually looked like), so the assertion is red until the migration's backfill runs.
+    4 recs on one run: a buy, a covered row sitting well above its level (hidden), a shown
+    covered row, and an `exception`. The two counters count DIFFERENT populations and the
+    migration has to spell both - `planned_count` is a decision denominator, so it counts
+    only the rec types a decision can be recorded on (`decision_service.
+    _PLAN_ROW_DECIDABLE_TYPES`, which excludes `exception`), while
+    `run_log.recommendation_count` is "lines on this plan" and counts an exception like any
+    other (`_summarise`). Both counters are stamped "the old way" first (what a
+    pre-migration run's stored numbers actually looked like), so the assertions are red
+    until the migration's backfill runs.
     """
     _, db, _, _ = scm_app
     _use_level_basis(db)
@@ -267,12 +283,23 @@ def test_backfill_recomputes_run_counts(scm_app):
         "UPDATE scm.reorder_recommendation SET run_id = :folded "
         "WHERE run_id IN (:r2, :r3)"
     ), {"folded": folded, "r2": r2, "r3": r3})
+    # A 4th row, on its own product, that no decision can ever be recorded on. It is a
+    # LINE of the plan (`recommendation_count` counts it) but not a decidable product
+    # (`planned_count` must not). Written straight in: how an exception comes to exist is
+    # `_emit_product`'s business, and this test is about the migration's own SQL.
+    exc_pid, _exc_pcode = _product(db)
+    db.execute(text(
+        "INSERT INTO scm.reorder_recommendation "
+        "(id, run_id, product_id, warehouse_id, rec_type, status, inputs, created_at) "
+        "VALUES (gen_random_uuid(), :run, :pid, NULL, 'exception', 'proposed', "
+        "        '{}'::jsonb, now())"
+    ), {"run": folded, "pid": exc_pid})
     # Stamp the run "completed" with the OLD, unscoped numbers - what a run written before
     # this migration first ran actually has stored today.
     db.execute(text(
         "UPDATE scm.reorder_run "
-        "SET status = 'completed', planned_count = 3, "
-        "    run_log = jsonb_set(COALESCE(run_log, '{}'::jsonb), '{recommendation_count}', '3'::jsonb) "
+        "SET status = 'completed', planned_count = 4, "
+        "    run_log = jsonb_set(COALESCE(run_log, '{}'::jsonb), '{recommendation_count}', '4'::jsonb) "
         "WHERE id = :r"
     ), {"r": folded})
     db.flush()
@@ -288,11 +315,13 @@ def test_backfill_recomputes_run_counts(scm_app):
         "FROM scm.reorder_run WHERE id = :r"
     ), {"r": folded}).mappings().one()
     assert row["planned_count"] == 2, (
-        f"1 buy + 1 shown covered = 2; the hidden covered row must not inflate the "
-        f"already-existing run's planned_count: {row}"
+        f"1 buy + 1 shown covered = 2; neither the hidden covered row nor the exception "
+        f"(no quantity anybody can decide) may inflate the already-existing run's "
+        f"planned_count: {row}"
     )
-    assert row["rec_count"] == "2", (
-        f"run_log.recommendation_count must be recomputed the same way: {row}"
+    assert row["rec_count"] == "3", (
+        f"recommendation_count is LINES, not decidable products - the exception counts, "
+        f"only the hidden covered row drops out: {row}"
     )
 
     # Idempotent: running it again gives the same result, never a second decrement.
@@ -302,4 +331,4 @@ def test_backfill_recomputes_run_counts(scm_app):
         "FROM scm.reorder_run WHERE id = :r"
     ), {"r": folded}).mappings().one()
     assert row2["planned_count"] == 2
-    assert row2["rec_count"] == "2"
+    assert row2["rec_count"] == "3"

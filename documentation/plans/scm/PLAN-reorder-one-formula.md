@@ -1,6 +1,6 @@
 # PLAN: Reorder planning - one formula, one scope
 
-Status: building (lane `fix/reorder-plan-row-tidy`, 11 Sep 2026)
+Status: building (lane `fix/reorder-plan-row-tidy`, 11 Sep 2026) - S1-S4 built, review fix round 2 (BL-1/2/3, SF-1/2/3/4) applied
 UAC: `reorder-one-formula-acceptance-criteria.md`
 Owner rulings: 11 Sep 2026 (this session), on top of #829 (10 Sep, one scope) and #794 (no-level project buy, now superseded by the formula below).
 
@@ -51,6 +51,9 @@ Consequences, stated so nobody is surprised:
 - The #794 "project buy" bypass and the location-grain "project need added on top" are deleted: project demand is in `net`, so level 0 already triggers it. `needs_level` and the "Set AutoCount level" nudge stay.
 - Cross-location cover (`proposeCover`, warehouse grain) stays for locations NOT already inside the row's own net; a product-grain row's on hand already sums every in-scope pool, so it offers nothing extra. The coder verifies that claim against `inputs.plan_basis.locations` before deleting the product-grain call.
 - P8 (`isProjectOnlyLine` hides the PO part on project-only rows) is retired: the engine nets PO for every row since #828, so hiding the part breaks the identity. The reserve already reduces `project_need` (`project_supply_reduction`).
+- **AC-3, as ruled 11 Sep:** the `reorder_level` basis always routes a product to PRODUCT grain, so there is no location-grain row for AC-3's own worked case to land on. `_compute_cell`'s no-level path therefore stays as it is - `needs_level`, no buy - and only `_emit_product` substitutes level 0. The location-grain half of the one formula arrives the day a LOCATION-grain level basis exists; until then AC-3's test pins the covered/reason-label/net_position reading rather than a `rounded_qty` the grain never produces.
+- **Own-pool stock is a FACT, never a decision part (frontend, 11 Sep).** `S = min(on hand, need)` is read off the frozen line and shown read-only (the panel's BRW row, the pill/sheet's "Stock S" part); it is never persisted. `PlanDecision.stock` means CROSS-LOCATION borrowed stock only - `proposeCover` sources carrying real warehouse ids - which only a warehouse-grain row can have. `coverForLine` therefore offers a product-grain row NO cover: its `on_hand` is `_product_agg_cell`'s `_total("on_hand")` over the same cells `plan_basis.locations` lists. Measured on run d9790035 (11 Sep 14:09): of 226 cover offers made to product-grain buy rows, 148 were locations already inside that row's own on hand, and the other 78 were INACTIVE warehouses - which `_resolve_warehouse_ids` excludes from the run but `cover_service._POSITIONS_SQL` (no `w.is_active` predicate) still offers. That second group is a cover_service defect, not a reason to keep product-grain cover; it is named here as the trigger for a follow-up.
+- **PO is a display part AND an editable trust figure.** The panel's PO input is prefilled at `P = min(PO, need - S)` and capped at the open book; lowering it ("do not trust that PO") raises Buy by the same amount through `composeMixture`. `{buy: B, po: P}` with both positive is a `mixture`; `{po: P}` alone is a legal `use_po`; a `stock` part with no `stock_takes` to name it is not, which is the 422 the read-only BRW row retires.
 
 ## Slices (one lane, one PR)
 
