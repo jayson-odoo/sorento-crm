@@ -2235,29 +2235,48 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     project_committed = float(row.get("project_committed") or 0.0)
     project_need = float(row.get("project_confirmed_committed") or 0.0)
     project_supply_reduction = float(row.get("project_supply_reduction") or 0.0)
+    # RETAIL's own net, for the channel drill alone (AC-F07): the firm project channel
+    # taken back out (`net` already subtracted it as part of `committed`) and the stock a
+    # project has already claimed removed, so the drill can say what Retail on its own is
+    # short by. It is a DISPLAY figure and it no longer sizes anything - see below.
     retail_net = net + project_need - project_supply_reduction
+    # THE net the buy is sized against (ONE FORMULA, PLAN-reorder-one-formula.md AC-3):
+    # `net` with project demand INSIDE it, exactly as the product-grain path sizes
+    # (`_emit_product`: "the project channel is NETTED here rather than added on top of a
+    # retail-only sizing"). Only `project_supply_reduction` comes off it - units physically
+    # on hand, and therefore inside `net`, that CS has already promised to a project, so
+    # planning may not count them as supply twice.
+    #
+    # Sizing against `retail_net` instead is what silently DROPPED confirmed project
+    # demand from a location-grain buy: S4 retired the old "+ project_need" addition on the
+    # correct reasoning that project belongs inside the net, but `retail_net` is precisely
+    # the net with project taken OUT, so neither half counted it. Measured on the
+    # ZZTCHRM-DJ fixture (retail 30 + class-less 7 + firm project 12, on hand 0): the row
+    # sized 37 where the formula says 49, i.e. a customer's 12 confirmed units bought as 0.
+    sizing_net = net - project_supply_reduction
 
     # on_cadence=True: in M3 every run counts as a review cadence (periodic_review always
     # gets to fire when below order-up-to). Real cadence scheduling (only fire on the SKU's
     # due review date) is future work.
     triggered, reason_label = eng.trigger(
-        policy_type, net=retail_net, rop=rop, min_level=min_override, oup=oup,
+        policy_type, net=sizing_net, rop=rop, min_level=min_override, oup=oup,
         on_cadence=True, reorder_level=reorder_level)
     # On this basis the level IS the order-up-to: order the difference, nothing more.
     target = reorder_level if policy_type == "reorder_level" else oup
     # Unrounded on purpose: MOQ and the order multiple are applied ONCE, to the whole
-    # need, below. Rounding the Retail half and then adding the Project half would apply
-    # the supplier's terms to one channel and not the other.
-    retail_need, _unrounded = eng.order_qty(
+    # need, below. Rounding one channel's half and then adding the other's would apply the
+    # supplier's terms to one channel and not the other.
+    recommended, _unrounded = eng.order_qty(
+        triggered, net=sizing_net, oup=target, moq=None, order_multiple=None)
+    # RETAIL's own gap, beside its own net, for the drill - and the figure an AGGREGATE
+    # basis (`_emit_pool`, `_plan_network`, `_emit_product`) reads off this cell. Left
+    # UNCAPPED here, along with `project_need`: an aggregate sums the raw per-location
+    # figures and applies the AC-F03 cap once, against the quantity IT sized, so capping
+    # them per cell would zero a location that is individually untriggered inside a group
+    # that is genuinely short. The capped DISPLAY split of a location-grain row's own buy
+    # is applied where that row is emitted (`_emit_cell`).
+    retail_need, _unrounded_retail = eng.order_qty(
         triggered, net=retail_net, oup=target, moq=None, order_multiple=None)
-    # One formula (S4, PLAN-reorder-one-formula.md): project is already inside `retail_net`
-    # (above), and `triggered`/`retail_need` were computed against THAT net, so the gap they
-    # return already covers both channels. A separate "project buy" bypass that added
-    # `project_need` again on top, and force-triggered whenever any project demand existed
-    # even with the location massively overstocked, double-counted it - deleted, matching the
-    # product-grain no-level row's formula (`need - on_hand - PO`, clipped at 0, never a
-    # second netting).
-    recommended = retail_need
     rounded = (eng.round_order_qty(recommended, moq, order_multiple)
                if triggered and recommended > 0 else 0.0)
     if not triggered:
@@ -2385,6 +2404,21 @@ def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
         return out
 
     rounded = c["rounded"] or 0
+    # The DISPLAY split of THIS row's own buy (AC-F03), the same rule `_emit_product`
+    # applies at the other grain: firm project demand first, capped by what is actually
+    # being bought, and retail is the rest. The two halves then always sum to the sized
+    # quantity, so the Summary Order Report cannot re-derive a bigger number than the plan
+    # row it reports. `_compute_cell` leaves them raw for the aggregate paths to sum;
+    # this cell is its own group, so the cap belongs here.
+    #
+    # A row that sized nothing (covered / needs_level) therefore splits 0 / 0. The demand
+    # itself is not lost - `project_committed` / `retail_committed` carry the raw channel
+    # reading on every row, whatever was bought.
+    c = dict(c)
+    _sized = float(c.get("recommended") or 0.0)
+    _project_part = min(float(c.get("project_need") or 0.0), max(_sized, 0.0))
+    c["project_need"] = _project_part
+    c["retail_need"] = max(_sized - _project_part, 0.0)
     if disp:
         # #8 (unchanged): a cell classified for disposition (dead OR overstock) must NOT
         # also emit a buy - buying more of dead/overstocked stock is contradictory. G2
@@ -2432,11 +2466,21 @@ def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
             # location holding CONFIRMED unplaced Project Buy with no linked supplier
             # triggers and then cannot be sourced, so without this its firm demand
             # reaches no product row at all (AC-E04, AC-E06).
+            #
+            # The basis states the figure the cell SIZED, exactly as the product-grain
+            # twin does (`_emit_product`'s own exception branch), even though the REC
+            # itself carries no quantity - there is nobody to buy it from. Since S4 the
+            # summary freeze reads `suggested_qty` off the basis's `rounded`
+            # (`summary_order_service._channel_freeze`), so a basis that stated nothing
+            # reported "suggest 0" for a commitment CS has already promised a customer -
+            # the opposite of what this branch exists to prevent. `shares` stays empty:
+            # nothing was allocated anywhere, because nothing can be bought.
             out.append(_build_rec(run_id, "exception", row, c,
                                   warehouse_id=wid,
                                   order_qty=None, rounded=None,
                                   reason_label="no linked supplier - cannot source this reorder",
-                                  plan_basis=_basis()))
+                                  plan_basis=_basis(recommended=c["recommended"],
+                                                    rounded=c["rounded"])))
     else:
         # Stock covering the demand is a SUGGESTION, and writing nothing here would
         # silently decide "use stock" for the single-location case, which is most of the
