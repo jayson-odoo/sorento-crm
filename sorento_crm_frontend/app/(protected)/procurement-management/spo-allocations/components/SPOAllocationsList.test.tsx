@@ -131,15 +131,9 @@ function row(over: Partial<SPODocumentRow> = {}): SPODocumentRow {
     balance: 400,
     line_count: 2,
     worst_overdue_days: 0,
-    // PLAN-spo-list-container-number.md AC-1/AC-2: `containers` is not yet on the
-    // `SPODocumentRow` type (Phase 2 backend/frontend wiring), so this is spread onto
-    // the plain object literal below rather than typed into the `SPODocumentRow`
-    // return annotation - it does not fail the (type-check-free) vitest run, and it
-    // means every existing mock row already carries an (empty) `containers` array
-    // once the type gains the field.
     containers: [],
     ...over,
-  } as SPODocumentRow;
+  };
 }
 
 function mockList(rows: SPODocumentRow[], over: Record<string, unknown> = {}) {
@@ -301,7 +295,7 @@ describe('SPOAllocationsList - Container No column (AC-6)', () => {
           { container_number: 'ZZTU1111111', shipment_id: 'S1' },
           { container_number: 'ZZTU2222222', shipment_id: 'S2' },
         ],
-      } as Partial<SPODocumentRow>),
+      }),
     ]);
     renderList();
 
@@ -332,7 +326,7 @@ describe('SPOAllocationsList - Container No column (AC-6)', () => {
           { container_number: 'ZZTU2222222', shipment_id: 'S2' },
           { container_number: 'ZZTU3333333', shipment_id: 'S3' },
         ],
-      } as Partial<SPODocumentRow>),
+      }),
     ]);
     renderList();
 
@@ -362,7 +356,7 @@ describe('SPOAllocationsList - Container No column (AC-6)', () => {
         id: 'SPO-CONT-RAW',
         spo_number: 'SPO-CONT-RAW',
         containers: [{ container_number: 'ZZTU4444444', shipment_id: null }],
-      } as Partial<SPODocumentRow>),
+      }),
     ]);
     renderList();
 
@@ -381,12 +375,34 @@ describe('SPOAllocationsList - Container No column (AC-6)', () => {
         // would make the assertion below ambiguous about which cell it matched.
         worst_overdue_days: 5,
         containers: [],
-      } as Partial<SPODocumentRow>),
+      }),
     ]);
     renderList();
 
     const rowEl = screen.getByText('SPO-CONT-NONE').closest('tr') as HTMLElement;
     expect(within(rowEl).getByText('-')).toBeInTheDocument();
+  });
+
+  it('does not trigger the row navigation when the first container link or the "+1" pill is clicked (AC-6)', () => {
+    mockList([
+      row({
+        id: 'SPO-CONT-NAV',
+        spo_number: 'SPO-CONT-NAV',
+        containers: [
+          { container_number: 'ZZTU5555555', shipment_id: 'S5' },
+          { container_number: 'ZZTU6666666', shipment_id: 'S6' },
+        ],
+      }),
+    ]);
+    renderList();
+
+    const rowEl = screen.getByText('SPO-CONT-NAV').closest('tr') as HTMLElement;
+
+    fireEvent.click(within(rowEl).getByRole('link', { name: 'ZZTU5555555' }));
+    expect(routerPush).not.toHaveBeenCalledWith(expect.stringContaining('SPO-CONT-NAV'));
+
+    fireEvent.click(within(rowEl).getByRole('link', { name: '+1' }));
+    expect(routerPush).not.toHaveBeenCalledWith(expect.stringContaining('SPO-CONT-NAV'));
   });
 });
 
