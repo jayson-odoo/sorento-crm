@@ -2814,6 +2814,124 @@ def test_no_certificate_predicate_still_misses_honestly_with_no_attachment_type_
     assert "Please provide the attachment type" not in text, text
 
 
+# --------------------------------------------------------------------------- #
+# Reviewer round 5 (AC-1359): negative controls for R34's `has_document_leg`   #
+# guard - a genuinely gate_passed=False, no-attachment-type turn must still    #
+# ask, whether it carries NO predicate at all, or a predicate whose OWN        #
+# require names a non-document leg (`stock`). Pins the guard's own boundary    #
+# so a future over-broad `has_document_leg` (e.g. "any predicate at all"       #
+# rather than "a certificate/attachment_type leg specifically") fails here    #
+# instead of silently swallowing a genuine attachment-type ask.                #
+# --------------------------------------------------------------------------- #
+
+
+def test_no_document_leg_at_all_still_asks_for_the_attachment_type(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1359/R34 control (A): `entities: []`, no attachment-type entity, and
+    a message that carries no cert word at all - `derive_require` returns
+    `None` (no predicate whatsoever), so `gate.py`'s `REQUIRED_TYPES` check
+    fails the gate for the ORIGINAL, correct reason (no document type named,
+    nothing to recover) - the ask must still fire.
+
+    Green today, kept as the regression guard so R34's fix stays narrowed to
+    a genuine certificate/attachment_type leg, never "any predicate present".
+    """
+    contact_id = _s4_contact_id("nodocleg")
+    db = session_factory()
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    _tap_product(db, category_id=category_id, uom_id=uom_id)
+    db.commit()
+
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_cert_fake_call_tool(db),
+    )
+    stub_parser(
+        _s4_cert_parser_output(
+            entities=[],
+            user_goal="send me something for the tap",
+        )
+    )
+    stub_access()
+
+    turn = engine_mod.run_turn(
+        _s4_envelope(
+            contact_id=contact_id,
+            message_id="ZZT-nodocleg-1",
+            text="send me something for the tap",
+        ),
+        session_factory=session_factory,
+    )
+    assert turn.status == "done", turn.error
+    text = (turn.reply or {}).get("text") or ""
+    assert "Please provide the attachment type" in text, text
+
+
+def test_a_non_document_predicate_still_asks_for_the_attachment_type(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """AC-1359/R34 control (D): a resolver predicate IS present, but its own
+    `require` names only a non-document leg (`{"stock": True}`) - stock is not
+    an answer to "what document type", so the gate must still fail and the
+    ask must still fire. Pins `has_document_leg` to checking the require's
+    OWN keys (`certificate`/`attachment_type`), never "a predicate exists at
+    all".
+
+    Green today, kept as the regression guard alongside control (A).
+    """
+    contact_id = _s4_contact_id("nondocleg")
+    db = session_factory()
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    _tap_product(db, category_id=category_id, uom_id=uom_id)
+    db.commit()
+
+    def fake_resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tokens": [],
+            "resolutions": [],
+            "unresolved_tokens": [],
+            "predicate": {
+                "require": {"stock": True},
+                "qualifying_total": 3,
+                "class_labels": ["Tap"],
+                "candidates": [],
+            },
+        }
+
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=fake_resolve_entity,
+        fetch_mcp_call=_cert_fake_call_tool(db),
+    )
+    stub_parser(
+        _s4_cert_parser_output(
+            entities=[],
+            user_goal="any tap available",
+        )
+    )
+    stub_access()
+
+    turn = engine_mod.run_turn(
+        _s4_envelope(
+            contact_id=contact_id,
+            message_id="ZZT-nondocleg-1",
+            text="any tap available",
+        ),
+        session_factory=session_factory,
+    )
+    assert turn.status == "done", turn.error
+    text = (turn.reply or {}).get("text") or ""
+    assert "Please provide the attachment type" in text, text
+
+
 def test_set_answer_writes_the_set_page_carry(session_factory, stub_parser, stub_access, monkeypatch):
     """AC-1317: a set answer's tail stamps `selection_context = "set_page"` and a
     `last_result_set` carrying the described set, the offset already advanced past the
@@ -4456,6 +4574,79 @@ def test_matched_on_line_renders_when_last_result_set_is_the_set_page_carry_dict
 
     user_response = _matched_on_line(
         "6 water closets have stock.",
+        qf={"message_type": "business_query"},
+        resolver_json=resolver_json,
+        gate_ran=True,
+        gate_json=gate_json,
+        is_escalate_branch=False,
+        include_response=True,
+        manual_response=False,
+        last_result_set=last_result_set,
+    )
+    assert "_Matched on:" in user_response, user_response
+    assert "Water Closet" in user_response, user_response
+    assert "S Trap" in user_response, user_response
+
+
+def test_matched_on_line_renders_on_the_forward_spec_fallback_path_too(monkeypatch):
+    """Reviewer round 5: no test anywhere asserted the Match line on a
+    FORWARD turn (a plain product description with no `require`/predicate at
+    all - the pre-existing `spec_fallback` path this feature never touched),
+    only on the newer HAS/require turns. `last_result_set` here is the
+    ORDINARY array shape (`indexed`, built off `compatible_entities` for a
+    plain business_query, `compile_state.py` ~line 461) - no `_set_page_carry`
+    dict involved, no `predicate` key in `gate_json` at all.
+
+    Also guards R31's fix on this path specifically: `gate_json.
+    compatible_entities` carries the one real product PLUS 30 unrelated
+    promotion-type rows (the same noise shape `test_set_answer_carries_the_
+    match_line_when_shown_entities_include_promotions` proves on the
+    require/predicate path) - the line must still render, counting the
+    product row only.
+
+    Green today - this is the ORIGINAL forward-answer contract
+    (spec-raw-text-migration), predating attribute-first asks entirely.
+    """
+    from app.services.chatbot.tail.compile_state import _matched_on_line
+
+    product_entity = {"uuid": "ZZT-fwd-uuid-1", "entity_type": "product", "code": "ZZT-WC-FWD"}
+    promotion_noise = [
+        {"uuid": f"ZZT-fwd-promo-{i}", "entity_type": "promotion", "code": None} for i in range(30)
+    ]
+    gate_json = {"compatible_entities": [product_entity, *promotion_noise]}
+    # The ordinary array `last_result_set`, exactly as a plain business_query's
+    # `indexed` roster shape carries it (idx/uuid/label/entity_type/...) - a
+    # forward turn never writes the dict-shaped set_page carry at all.
+    last_result_set = [
+        {
+            "idx": 1,
+            "uuid": product_entity["uuid"],
+            "label": product_entity["code"],
+            "entity_type": "product",
+        }
+    ]
+    resolver_json = {
+        "resolutions": [
+            {
+                "token": "water closet",
+                "matches": [
+                    {
+                        "uuid": product_entity["uuid"],
+                        "canonical_code": product_entity["code"],
+                        "match_tier": "spec_search",
+                        "display": {
+                            "matched_specs": ["class", "trap_type"],
+                            "specifications": {"class": "Water Closet", "trap_type": "s_trap"},
+                        },
+                    }
+                ],
+            }
+        ],
+        "spec_asked": [{"key": "trap_type"}],
+    }
+
+    user_response = _matched_on_line(
+        "1 water closet found.",
         qf={"message_type": "business_query"},
         resolver_json=resolver_json,
         gate_ran=True,
