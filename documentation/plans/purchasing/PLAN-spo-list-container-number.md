@@ -10,6 +10,12 @@ Domain: purchasing (SPO Allocations document list)
 > add inbound shipment's container number here and be able to search by the inbound
 > shipment container number
 
+Second ruling, same session:
+
+> let's do pill like "+1" if there is more to not clutter the cell, when expanded the column
+> width then the +1 will show, this is when it is linked to mulitple packing list, and make
+> the pill redirectable also to the packing list
+
 "Here" = the SPO Allocations header list (`/procurement-management/spo-allocations`,
 columns SPO No, Date, Supplier, Status, Earliest ETA, Total qty, Lines, Balance, Overdue).
 
@@ -39,18 +45,24 @@ columns SPO No, Date, Supplier, Status, Earliest ETA, Total qty, Lines, Balance,
 
 ### Backend (`sorento_crm_backend`)
 
-1. `app/services/procurement_service.py` `list_documents`: add one aggregate column
-   `container_numbers` = sorted distinct non-null values of
-   `coalesce(SPOAllocation.container_number, InboundShipment.shipping_container_number)`
-   over the document's VISIBLE lines (same `is_visible` gate the other rollups use).
-   SQL shape: `array_remove(array_agg(DISTINCT <expr> ORDER BY <expr>), NULL)`, where
-   `<expr>` = `CASE WHEN is_visible THEN coalesce(...) END`. Emit `container_numbers`
-   (Python list of str, `[]` when none) on each row dict. Add `sort_map["container_numbers"]`
-   = `min(<expr>)` so the column header sorts.
+1. `app/services/procurement_service.py` `list_documents`: each row gets
+   `containers: list[{container_number: str, shipment_id: str | None}]`, sorted by
+   `container_number`, one entry per distinct container over the document's VISIBLE lines
+   (same `is_visible` gate the other rollups use). Per line the container is
+   `coalesce(SPOAllocation.container_number, InboundShipment.shipping_container_number)`;
+   `shipment_id` is the line's `inbound_shipment_id` when set (when the same container
+   appears both linked and raw, keep the entry that carries a shipment id).
+   Build it the way `_document_supplier_rollup` already does (precedent earns its copy:
+   per-page detail that does not fit the GROUP BY): a second query over the page's
+   `spo_number`s selecting `(spo_number, container, inbound_shipment_id)` DISTINCT, folded
+   in Python. Sorting: `sort_map["containers"]` = `min(CASE WHEN is_visible THEN
+   coalesce(...) END)` in the main rollup, so the column header sorts server-side and
+   documents with no container sort last.
 2. Search: append `MatchLine.container_number.ilike(f"%{q_str}%")` to the existing `or_`
    so an ingested-but-unlinked container is findable too. Nothing else changes; the
    shipment-number and shipment-container legs stay.
-3. `app/schemas/procurement.py` `SPODocumentRow`: `container_numbers: list[str] = []`
+3. `app/schemas/procurement.py`: new `SPODocumentContainer(container_number: str,
+   shipment_id: Optional[str])`; `SPODocumentRow.containers: list[SPODocumentContainer] = []`
    with a docstring line. (`response_model` drops undeclared fields; the AC-2 field test
    pins the set.)
 4. Route docstring in `app/api/v1/procurement/spo_allocations.py` (`get_spo_documents`):
@@ -58,13 +70,26 @@ columns SPO No, Date, Supplier, Status, Earliest ETA, Total qty, Lines, Balance,
 
 ### Frontend (`sorento_crm_frontend/app/(protected)/procurement-management/spo-allocations/`)
 
-5. `types/spoDocument.types.ts` `SPODocumentRow`: `container_numbers: string[]`.
-6. `components/SPOAllocationsList.tsx`: new column right after Supplier, id
-   `container_numbers`, `accessorFn: row => row.container_numbers.join(', ')` (so the
-   client export carries it), header `DataGridColumnHeader title="Container No"`,
-   cell = joined string in `<span className="truncate" title={joined}>`, `-` when empty,
-   `size: 160`, `meta: { headerTitle: 'Container No' }`. Sorting goes through the grid's
-   existing server sort with `sort=container_numbers`.
+5. `types/spoDocument.types.ts`: `SPODocumentContainer { container_number: string;
+   shipment_id: string | null }`; `SPODocumentRow.containers: SPODocumentContainer[]`.
+6. `components/SPOAllocationsList.tsx`: new column right after Supplier, id `containers`,
+   `accessorFn: row => row.containers.map(c => c.container_number).join(', ')` (so the
+   client export carries every container), header `DataGridColumnHeader title="Container No"`,
+   `size: 170`, `meta: { headerTitle: 'Container No' }`. Cell, mirroring the Supplier
+   `+N more` shape:
+   - `-` when `containers` is empty.
+   - First container: a `Link` to `/procurement-management/packing-lists/{shipment_id}`
+     when it has one, plain text otherwise; `truncate` + `title` = every container joined.
+   - When more than one: a `Badge` pill `+{n-1}` after it (`ms-1`, `variant="secondary"`,
+     `size="sm"`; same `Badge` primitive the status pill uses). The pill is the redirect:
+     exactly one extra container -> the pill is a `Link` to that container's packing list
+     (plain text pill when that extra has no shipment id); two or more extras -> the pill
+     opens a `Popover` (`components/ui/popover`) listing each extra container as a `Link`
+     to its packing list (plain text when unlinked). Clicking the pill or a link must
+     `stopPropagation` so the row's own `rowHref` navigation does not fire.
+   - The cell truncates, so at the default width the pill can sit clipped; widening the
+     column (grid is `columnsResizable`) reveals it. No wrapping.
+   Sorting goes through the grid's existing server sort with `sort=containers`.
 7. Search placeholder -> `"Search SPO, product or container..."`.
 8. `services/spoDocumentService.ts` header comment already lists container; no code change.
 
@@ -80,22 +105,28 @@ No migration, no new table, no registry. Saved column orders merge the new id in
 ## Tests (tester writes first, red)
 
 pytest `tests/scm/test_spo_allocation_documents.py` (Postgres fixture, seed own chain):
-- AC-1 `test_document_row_carries_container_numbers`: two lines on one SPO, one linked to a
-  shipment with container `ZZTU1111111`, one with raw `container_number='ZZTU2222222'` and
-  no shipment -> row `container_numbers == ['ZZTU1111111', 'ZZTU2222222']` (sorted, distinct).
-- AC-2 `test_container_numbers_empty_when_none`: SPO with no container anywhere -> `[]`.
-- AC-3 `test_container_numbers_dedupe_and_skip_retired`: two lines both on the same
-  container -> one entry; a retired line's container is excluded.
+- AC-1 `test_document_row_carries_containers`: two lines on one SPO, one linked to a
+  shipment (id S1) with container `ZZTU1111111`, one with raw `container_number='ZZTU2222222'`
+  and no shipment -> row `containers == [{container_number:'ZZTU1111111', shipment_id:S1},
+  {container_number:'ZZTU2222222', shipment_id:None}]` (sorted by container, distinct).
+- AC-2 `test_containers_empty_when_none`: SPO with no container anywhere -> `[]`.
+- AC-3 `test_containers_dedupe_and_skip_retired`: two lines on the same container, one raw
+  only and one linked -> one entry carrying the shipment id; a retired line's container is
+  excluded.
 - AC-4 `test_query_matches_raw_allocation_container_number`: line with
   `container_number='ZZTU3333333'`, `inbound_shipment_id NULL`; `?query=ZZTU3333` returns
   the SPO, `?query=ZZTU9999` does not. Existing shipment-container search test stays green.
-- AC-5 `test_sort_by_container_numbers`: `sort=container_numbers&dir=asc` orders by the
-  first container; SPOs with none sort last.
-- Update `test_document_row_declares_every_ac2_field` to include `container_numbers`.
+- AC-5 `test_sort_by_containers`: `sort=containers&dir=asc` orders by the first
+  container; SPOs with none sort last in both directions.
+- Update `test_document_row_declares_every_ac2_field` to include `containers`.
 
 vitest `components/SPOAllocationsList.test.tsx`:
-- AC-6 column header "Container No" renders; row cell shows `ZZTU1111111, ZZTU2222222`
-  with `title` attribute; empty list renders `-`.
+- AC-6 column header "Container No" renders. Row with two containers (first linked to
+  shipment S1, second linked to S2): the first container is a link whose href ends with
+  `/procurement-management/packing-lists/S1`, a `+1` pill is a link to `.../packing-lists/S2`,
+  the cell's `title` reads `ZZTU1111111, ZZTU2222222`. Row with three containers: the pill
+  reads `+2` and opening it lists the two extra containers as links. Row with one raw-only
+  container: plain text, no link, no pill. Empty list renders `-`.
 - AC-7 search placeholder reads "Search SPO, product or container...".
 - `services/spoDocumentService.test.ts`: no change needed (query string unchanged).
 
