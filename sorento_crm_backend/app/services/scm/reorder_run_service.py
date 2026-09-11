@@ -52,6 +52,7 @@ from app.services.scm.money import (
     to_base,
 )
 from app.services.scm import plan_grain
+from app.services.scm import plan_scope
 from app.services.scm import product_supplier_service
 from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL, SITE_POOL_SQL
 from app.services.scm.reorder_policy import (
@@ -2805,6 +2806,19 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
     cash_impact = (_cash_impact_in_base(rounded, unit_cost, c.get("currency"),
                                         rate, rate_as_of)
                    if rec_type in ("buy", "covered") else None)
+    # PLAN-reorder-one-formula.md S3: stamped HERE, the one place every recommendation is
+    # built, so the run's own counts, the recommendations serializer and the decisions
+    # total all read this ONE column rather than re-deriving the rule three times over
+    # (the exact drift the plan measured: list 415, tile "0 of 950", sheet 950). The
+    # Python rule (`plan_scope.hidden_by_default`) stays the only RUNTIME source; SQL
+    # readers only ever read what it wrote here.
+    hidden = plan_scope.hidden_by_default(
+        rec_type=rec_type,
+        policy_type=c.get("policy_type"),
+        reorder_level=_fnum(c.get("reorder_level")),
+        master_reorder_level=_fnum(c.get("master_reorder_level")),
+        net_position=_r(c.get("net")),
+    )
 
     inputs = {
         "reason": reason,
@@ -2939,6 +2953,7 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         triggered_reason=(label[:100] if label else None),
         allocation=allocation,
         inputs=inputs,
+        hidden_by_default=hidden,
         status="proposed",
         source_system="scm",
         source_ref=_SEED,
@@ -3533,7 +3548,10 @@ def _summarise(recs: list[ReorderRecommendation]) -> dict:
         "disposition": disposition,
         "exceptions": exceptions,
         "total_cash_impact": round(total_cash, 2),
-        "recommendation_count": len(recs),
+        # PLAN-reorder-one-formula.md S3/AC-12: the ONE scope rule, stamped at write time
+        # (`_build_rec`) - a row hidden by default is not on the buyer's business and must
+        # not inflate the count the plan list's Lines column and this run's own tile read.
+        "recommendation_count": sum(1 for r in recs if not r.hidden_by_default),
     }
 
 
