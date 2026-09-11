@@ -21,7 +21,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { EM_DASH, fmtDecimal, fmtInt, fmtSupplierCost } from '../../lib/format';
 import { applySourceEdits, sourceEditsForTotal, type CoverProposal } from '../lib/coverPlan';
 import { lineCost, type LineCostMoney } from '../lib/lineCost';
-import { roundBuyQty } from '../lib/orderQtyLedger';
+import { composeMixture, roundBuyQty } from '../lib/orderQtyLedger';
 import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision } from '../lib/planDecisions';
 import type { PlanRowEdit } from '../lib/planEdits';
@@ -109,29 +109,47 @@ export function PlanRowPanel({
 }) {
   const [chartOpen, setChartOpen] = useState(false);
 
-  // ONE FORMULA (PLAN-reorder-one-formula.md, AC-8): the panel's own prefill reads the
-  // line's own on-hand PLUS whatever cross-location cover the row may ALSO draw on
-  // (`cover`, still cross-location-only - a product-grain row's own on-hand already sums
-  // every in-scope pool, so `cover` is empty for it and this is just `onHand`), and the
-  // panel's own LIVE po receipts fetch rather than the frozen `outstanding_po` snapshot -
-  // the receipts drill this same panel opens from is the fresher figure. `need` is
-  // reconstructed the same way `suggestedDecisionFor` does (S+P+B sum to it by
-  // construction); a `rawBuy` of 0 or less (a covered row) reads no mixture at all,
-  // matching "Nothing" everywhere else this line's suggestion is shown.
+  // ONE FORMULA (PLAN-reorder-one-formula.md, AC-8). The need is reconstructed off the
+  // line's own frozen fields - `need = recommended_qty + on hand + PO`, exactly as
+  // `suggestedDecisionFor` does - and the parts are measured against THAT, never against
+  // `order_qty`, which the engine has already netted once. A `rawBuy` of 0 or less (a
+  // covered row) reads no mixture at all, matching "Nothing" everywhere else.
+  //
+  // Three different things, kept apart:
+  //
+  // - S (`stockPart`) is the row's OWN site-pool stock the need consumes. A FACT, shown
+  //   read-only and NEVER persisted: the engine already spent it inside the net, and a
+  //   `stock` part with no `stock_takes` to name it is refused by the server anyway
+  //   ("a mixture needs more than one part").
+  // - the BORROW (`cover`) is cross-location stock this row's net does NOT contain. Only
+  //   a warehouse-grain row has any (`coverForLine` offers a product-grain row none), and
+  //   it IS a decision - it is what `PlanDecision.stock` means.
+  // - P is the open PO the buyer TRUSTS. Prefilled at what the need consumes and editable
+  //   down ("do not trust that PO"), which raises Buy by the same amount.
+  //
+  // PO is read off the panel's own LIVE receipts fetch rather than the frozen
+  // `outstanding_po` snapshot - the receipts drill this same panel opens is the fresher
+  // figure, and the two parts still sum back to the need either way.
   const onHand = line.rec.on_hand ?? 0;
   const poReceiptsQty = poReceipts.reduce((t, r) => t + r.remaining, 0);
   const rawBuy = line.rec.recommended_qty ?? line.order_qty;
-  const stockCap = onHand + cover.coverQty;
   const need = rawBuy > 0 ? rawBuy + onHand + poReceiptsQty : 0;
-  const stockPart = Math.min(stockCap, need);
-  const poPart = Math.min(poReceiptsQty, need - stockPart);
-  const buyPart = roundBuyQty(rawBuy, line.order_qty_inputs);
+  const stockPart = Math.min(onHand, need);
+  const rounding = line.order_qty_inputs;
+  const suggestedMix = composeMixture({
+    need,
+    stockQty: stockPart,
+    borrowedQty: cover.coverQty,
+    poQty: poReceiptsQty,
+  });
   const suggested: PlanDecision = {
-    ...(buyPart > 0 ? { buy: buyPart } : {}),
-    ...(stockPart > 0
+    ...(roundBuyQty(suggestedMix.buy, rounding) > 0
+      ? { buy: roundBuyQty(suggestedMix.buy, rounding) }
+      : {}),
+    ...(suggestedMix.borrowedQty > 0
       ? {
           stock: {
-            qty: stockPart,
+            qty: suggestedMix.borrowedQty,
             sources: cover.sources.map((s) => ({
               warehouse_id: s.warehouse_id,
               warehouse_code: s.warehouse_code,
@@ -140,22 +158,24 @@ export function PlanRowPanel({
           },
         }
       : {}),
-    ...(poPart > 0 ? { po: poPart } : {}),
+    ...(suggestedMix.usePo > 0 ? { po: suggestedMix.usePo } : {}),
   };
   // What the inputs READ: the draft first, then what is persisted, then the engine.
   const current: PlanDecision = edit?.decision ?? decision ?? suggested;
-  const stockMax = stockCap;
+  const borrowMax = cover.coverQty + cover.buyQty > 0 ? cover.coverQty : 0;
   const poMax = poReceiptsQty;
-  const needed = need;
   const skipped = Boolean(current.skip);
 
-  const stockQty = current.stock?.qty ?? 0;
-  /** Where the From-stock units are being taken from - the draft's own split (R18). */
-  const stockSources = current.stock?.sources ?? [];
+  /** The BORROW the draft currently holds, and where from (R18). */
+  const borrowQty = current.stock?.qty ?? 0;
+  const borrowSources = current.stock?.sources ?? [];
+  /** Which location the borrow comes out of, named rather than labelled "stock": one
+   *  offered pool is the normal case, and the per-source split is stated below it when
+   *  there is more than one. */
+  const borrowLabel =
+    cover.offered.length === 1 ? cover.offered[0].warehouse_code : 'Borrow';
   const poQty = current.po ?? 0;
   const buyQty = current.buy ?? 0;
-  const covered = stockQty + poQty + buyQty;
-  const gap = covered - needed;
 
   const moq = line.order_qty_inputs.moq;
   const masterMoq = line.order_qty_inputs.master_moq;
@@ -215,33 +235,45 @@ export function PlanRowPanel({
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
   };
 
+  /** Re-run the one formula for a changed part, and write the Buy it leaves behind. The
+   *  buyer moves a part, the remainder moves with it - they never have to do the
+   *  subtraction themselves, and the row can never record parts that do not sum. */
+  const recompose = (next: { borrowedQty: number; poQty: number }, sources: PlanDecision['stock']) => {
+    const m = composeMixture({ need, stockQty: stockPart, ...next });
+    setDecision({
+      ...current,
+      skip: undefined,
+      stock: m.borrowedQty > 0 ? sources : undefined,
+      po: m.usePo,
+      buy: roundBuyQty(m.buy, rounding),
+    });
+  };
+
   const setStock = (raw: string) => {
     // The per-bin split is scaled from the FRONT: the nearest bins ranked first, so they are
     // the ones kept when the buyer takes less than offered. Same helper the ledger's own
     // per-location inputs use, so a total typed here and quantities typed there agree.
     const edited = applySourceEdits(
       cover,
-      sourceEditsForTotal(cover, Math.min(num(raw), stockMax)),
+      sourceEditsForTotal(cover, Math.min(num(raw), borrowMax)),
     );
-    setDecision({
-      ...current,
-      skip: undefined,
-      stock:
-        edited.coverQty > 0
-          ? {
-              qty: edited.coverQty,
-              sources: edited.sources.map((s) => ({
-                warehouse_id: s.warehouse_id,
-                warehouse_code: s.warehouse_code,
-                qty: s.qty,
-              })),
-            }
-          : undefined,
-    });
+    recompose(
+      { borrowedQty: edited.coverQty, poQty },
+      edited.coverQty > 0
+        ? {
+            qty: edited.coverQty,
+            sources: edited.sources.map((s) => ({
+              warehouse_id: s.warehouse_id,
+              warehouse_code: s.warehouse_code,
+              qty: s.qty,
+            })),
+          }
+        : undefined,
+    );
   };
 
   const setPo = (raw: string) =>
-    setDecision({ ...current, skip: undefined, po: Math.min(num(raw), poMax) });
+    recompose({ borrowedQty: borrowQty, poQty: Math.min(num(raw), poMax) }, current.stock);
 
   const [buyDraft, setBuyDraft] = useState<string | null>(null);
   /** The Buy patch `commitBuy` would apply, computed but NOT applied - Save reads this
@@ -254,7 +286,7 @@ export function PlanRowPanel({
       : {
           // The supplier's MoQ and order multiple do not stop applying because the
           // figure was typed by hand - a buy is rounded wherever it is recorded.
-          decision: { ...current, skip: undefined, buy: roundBuyQty(num(buyDraft), line.order_qty_inputs) },
+          decision: { ...current, skip: undefined, buy: roundBuyQty(num(buyDraft), rounding) },
         };
   const commitBuy = () => {
     const patch = pendingBuyPatch();
@@ -313,19 +345,30 @@ export function PlanRowPanel({
         <section className="min-w-0 space-y-2">
           <ZoneTitle>Cover</ZoneTitle>
 
-          <NumberField
-            label="BRW"
-            value={stockQty}
-            max={stockMax}
-            disabled={disabled || stockMax <= 0}
-            onChange={setStock}
-          />
+          {/* S - a FACT, never an input. The row's own pool is already inside the net the
+              engine sized against, so a quantity here would net it a second time. */}
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="min-w-0 truncate text-muted-foreground">BRW</span>
+            <span className="tabular-nums">{fmtInt(stockPart)}</span>
+          </div>
+          {/* The BORROW: cross-location stock this row's own net does NOT contain, named
+              by where it comes from. A product-grain row is offered none (its on hand
+              already sums every in-scope pool), so the row is simply absent there. */}
+          {borrowMax > 0 ? (
+            <NumberField
+              label={borrowLabel}
+              value={borrowQty}
+              max={borrowMax}
+              disabled={disabled}
+              onChange={setStock}
+            />
+          ) : null}
           {/* WHICH pools the units come out of, once there is more than one (R18). One
               source needs no split: the input's own max already says how many. Only site
               pools reach here - a project bin is never a source. */}
-          {stockSources.length > 1 ? (
+          {borrowSources.length > 1 ? (
             <p className="text-2xs text-muted-foreground">
-              {stockSources
+              {borrowSources
                 .map((src) => `${src.warehouse_code} ${fmtInt(src.qty)}`)
                 .join(' + ')}
             </p>
@@ -382,16 +425,6 @@ export function PlanRowPanel({
               }
             />
           </label>
-
-          {/* Only when the mixture differs from what was suggested - a hint on every row is
-              a hint nobody reads. */}
-          {!skipped && gap !== 0 ? (
-            <p className="text-2xs text-muted-foreground">
-              {gap > 0
-                ? `${fmtInt(gap)} over suggested`
-                : `${fmtInt(Math.abs(gap))} short of suggested`}
-            </p>
-          ) : null}
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <Button

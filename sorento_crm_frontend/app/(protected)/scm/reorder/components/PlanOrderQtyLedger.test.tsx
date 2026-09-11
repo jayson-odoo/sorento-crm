@@ -288,7 +288,10 @@ describe('order-qty ledger - cover before buying', () => {
   ];
 
   it('reads "no cover available" when nothing offsets the buy', () => {
-    renderLedger({ line: line({ order_qty: 20 }) });
+    // Nothing at all offsets it: no own stock, no borrow, no open PO. Own stock is part
+    // of the answer now (the one formula lists it as the first thing the need consumes),
+    // so a row holding any would not be "no cover available".
+    renderLedger({ line: line({ order_qty: 20, on_hand: 0 }) });
     expect(screen.getByText(/No cover available/)).toBeInTheDocument();
   });
 
@@ -341,8 +344,12 @@ describe('order-qty ledger - the buy', () => {
   });
 
   it('a covered row with nothing left to buy collapses to "Nothing to buy"', () => {
+    // `recommended_qty` 0 is what "nothing left to buy" IS on a covered row - the engine
+    // clipped the gap at 0. The fixture used to leave the default 23 on it, which only
+    // read as covered because the ledger netted the cover proposal a second time against
+    // it (PLAN-reorder-one-formula.md).
     const covered = line({
-      id: 'r1', sku: 'COV-1', type: 'covered', order_qty: 15,
+      id: 'r1', sku: 'COV-1', type: 'covered', order_qty: 15, recommended_qty: 0,
       covered_committed: 15, covered_available: 150,
     });
     const cover = coverForLine(covered, []);
@@ -1001,9 +1008,15 @@ describe('order-qty ledger - PLAN-reorder-one-formula.md, AC-7', () => {
     const l = line({
       policy_type: 'reorder_level', reorder_level: null, master_reorder_level: null,
       order_qty: 196, recommended_qty: 196, net_position: -196,
+      // Product grain: the row names no warehouse, and its 128 on hand already sums every
+      // in-scope pool - so the free pool below must be offered to it as NOTHING.
+      warehouse_id: null,
       on_hand: 128, outstanding_po: 0, moq: null, order_multiple: null,
     });
-    const cover = coverForLine(l, []);
+    const cover = coverForLine(l, [
+      { warehouse_id: 'wh-BRW', warehouse_code: 'BRW', segment: 'dealer', qty: 128 },
+    ]);
+    expect(cover.coverQty).toBe(0);
     const receipts: PoReceipt[] = [
       { po_number: 'PO-B2155', status: 'active', expected_date: null, remaining: 339 },
     ];
@@ -1019,6 +1032,30 @@ describe('order-qty ledger - PLAN-reorder-one-formula.md, AC-7', () => {
     expect(screen.getByText('Buy before rounding')).toBeInTheDocument();
     const buyBeforeRoundingRow = screen.getByText('Buy before rounding').closest('div');
     expect(buyBeforeRoundingRow?.textContent).toContain('196');
+  });
+
+  it('a warehouse-grain row borrows from another pool, and giving it back raises the buy', () => {
+    // 23 short at BRW, 6 free at BRW-BB, 10 on an open PO, own pool holding 1.
+    const l = line({
+      order_qty: 23, recommended_qty: 23, on_hand: 1, moq: null, order_multiple: null,
+    });
+    const cover = coverForLine(l, [
+      { warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', segment: 'dealer', qty: 6 },
+    ]);
+    expect(cover.coverQty).toBe(6);
+    const receipts: PoReceipt[] = [
+      { po_number: 'PO-WH', status: 'active', expected_date: null, remaining: 10 },
+    ];
+    renderLedger({ line: l, cover, poReceipts: receipts });
+
+    // need 34 = own stock 1 + borrow 6 + PO 10 + buy 17. The engine's own gap (23) is
+    // already net of that 1 and that 10, so the BORROW is the only part left that can
+    // move it: 23 - 6 = 17.
+    expect(screen.getByText('Buy before rounding').closest('div')?.textContent).toContain('17');
+
+    // Giving the borrow back puts those 6 straight into the buy.
+    fireEvent.click(screen.getByRole('checkbox', { name: /Use stock 6/ }));
+    expect(screen.getByText('Buy before rounding').closest('div')?.textContent).toContain('23');
   });
 
   it('a covered row above its own line still prints "Line not breached"', () => {

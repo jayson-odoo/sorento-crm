@@ -9,7 +9,7 @@ import {
   roundBuyQty,
   roundOrderQty,
 } from './orderQtyLedger';
-import type { CoverProposal } from './coverPlan';
+import { coverForLine, type CoverSource, type CoverableLine } from './coverPlan';
 import type { TrajectoryEntry } from './trajectory';
 
 /**
@@ -281,43 +281,88 @@ describe('forecastQtyCap and clampForecastQty (Fix A, user feedback, 2026-08-12)
   });
 });
 
-describe('composeMixture (PLAN-reorder-one-formula.md, AC-6) - gap is the NEED, never the already-net order_qty', () => {
-  // B2155's own parts: need 663 = stock 128 + PO 339 + buy 196. Toggling a part off (or
-  // editing it down) must raise the buy by exactly the same amount it took away - never
-  // by re-netting the whole 663 against a SECOND stock/PO offer.
-  const b2155Cover: CoverProposal = {
-    coverQty: 128, buyQty: 535, sources: [], offered: [], isSplit: false,
+describe('composeMixture (PLAN-reorder-one-formula.md, AC-6) - the parts are measured against the NEED', () => {
+  // B2155-NL-BLUE as the engine froze it on run de3a0cf7: on hand 128, SPO 0, PO 339,
+  // project 493, retail 170, no level. need 663, and `recommended_qty` 196 is ALREADY net
+  // of the 128 and the 339 (#828). The proposal has to come out of `coverForLine` itself
+  // rather than a hand-built `{coverQty, buyQty}` pair, because the whole defect was that
+  // a product-grain row was being offered its own pool back as if it were cover.
+  const b2155: CoverableLine = {
+    order_qty: 196,
+    warehouse: '',
+    // Product grain: the row names no warehouse, and its `on_hand` already sums every
+    // in-scope pool.
+    warehouse_id: null,
+    status: 'buy',
+    rec: { segment: null },
   };
+  const brwFree: CoverSource[] = [
+    { warehouse_id: 'wh-BRW', warehouse_code: 'BRW', segment: 'dealer', qty: 128 },
+  ];
   const need = 663;
+  const onHand = 128;
   const poQty = 339;
 
-  it('both stock and PO on: Buy 196', () => {
-    const m = composeMixture(need, b2155Cover, poQty, { stockOn: true, poOn: true });
-    expect(m.buy).toBe(196);
+  it('offers a product-grain row NO cover - its own pool is already inside its net', () => {
+    expect(coverForLine(b2155, brwFree)).toMatchObject({ coverQty: 0, sources: [], offered: [] });
   });
 
-  it('turning stock off: Buy 324 (196 + the 128 that was covering it)', () => {
-    const m = composeMixture(need, b2155Cover, poQty, { stockOn: false, poOn: true });
-    expect(m.buy).toBe(324);
-  });
-
-  it('turning PO off: Buy 535 (196 + the 339 the PO was absorbing)', () => {
-    const m = composeMixture(need, b2155Cover, poQty, { stockOn: true, poOn: false });
-    expect(m.buy).toBe(535);
-  });
-
-  it('editing stock down to 100: Buy 224 (196 + the 28 taken back from stock)', () => {
-    const m = composeMixture(need, b2155Cover, poQty, {
-      stockOn: true, poOn: true, stockQty: 100,
+  it('stock 128 + PO 339 + buy 196 sums back to the need', () => {
+    const cover = coverForLine(b2155, brwFree);
+    const m = composeMixture({
+      need, stockQty: onHand, borrowedQty: cover.coverQty, poQty,
     });
-    expect(m.buy).toBe(224);
+    expect(m).toMatchObject({ stockQty: 128, borrowedQty: 0, usePo: 339, buy: 196 });
+    expect(m.stockQty + m.borrowedQty + m.usePo + m.buy).toBe(need);
   });
 
-  it('never goes negative, however much is toggled on', () => {
-    const generous: CoverProposal = {
-      coverQty: 10_000, buyQty: 0, sources: [], offered: [], isSplit: false,
-    };
-    const m = composeMixture(50, generous, 10_000, { stockOn: true, poOn: true });
-    expect(m.buy).toBeGreaterThanOrEqual(0);
+  it('lowering the PO the buyer does not trust raises Buy by exactly that much', () => {
+    const cover = coverForLine(b2155, brwFree);
+    expect(
+      composeMixture({ need, stockQty: onHand, borrowedQty: cover.coverQty, poQty: 300 }).buy,
+    ).toBe(235);
+    expect(
+      composeMixture({ need, stockQty: onHand, borrowedQty: cover.coverQty, poQty: 0 }).buy,
+    ).toBe(535);
+  });
+
+  it('never re-nets the already-net order_qty: the buy stays 196, not 196 - 128 - 339', () => {
+    const cover = coverForLine(b2155, brwFree);
+    const m = composeMixture({
+      need, stockQty: onHand, borrowedQty: cover.coverQty, poQty,
+    });
+    expect(m.buy).toBe(196);
+    expect(m.buy).toBeGreaterThan(0);
+  });
+
+  // A WAREHOUSE-grain row DOES have somewhere else to borrow from, and that borrow is a
+  // real decision part: turning it off raises the buy by what it was covering.
+  const dc1: CoverableLine = {
+    order_qty: 60,
+    warehouse: 'DC1',
+    warehouse_id: 'wh-DC1',
+    status: 'buy',
+    rec: { segment: 'dealer' },
+  };
+  const mwhFree: CoverSource[] = [
+    { warehouse_id: 'wh-MWH', warehouse_code: 'MWH', segment: 'dealer', qty: 50 },
+  ];
+
+  it('a warehouse-grain row still borrows from another location', () => {
+    const cover = coverForLine(dc1, mwhFree);
+    expect(cover).toMatchObject({ coverQty: 50, buyQty: 10 });
+    // need 90 = on hand 20 + PO 10 + the 60 it is short by.
+    const m = composeMixture({ need: 90, stockQty: 20, borrowedQty: cover.coverQty, poQty: 10 });
+    expect(m).toMatchObject({ stockQty: 20, borrowedQty: 50, usePo: 10, buy: 10 });
+  });
+
+  it('turning that borrow off raises Buy by the 50 it was covering', () => {
+    const m = composeMixture({ need: 90, stockQty: 20, borrowedQty: 0, poQty: 10 });
+    expect(m.buy).toBe(60);
+  });
+
+  it('never goes negative, however much is offered against the need', () => {
+    const m = composeMixture({ need: 50, stockQty: 10_000, borrowedQty: 10_000, poQty: 10_000 });
+    expect(m).toMatchObject({ stockQty: 50, borrowedQty: 0, usePo: 0, buy: 0 });
   });
 });

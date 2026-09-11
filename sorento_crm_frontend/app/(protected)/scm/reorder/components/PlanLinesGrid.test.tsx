@@ -421,12 +421,14 @@ describe('PlanLinesGrid - the panel edits a draft, never the backend (D2-D9)', (
     expect(screen.getByTestId('decision-pill-unsaved')).toBeInTheDocument();
   });
 
-  it('states the caps beside the two capped inputs (D2)', () => {
+  it('caps the PO input at the open book, and states BRW as a fact beside it (D2)', () => {
     renderGrid([line()], { poFor: () => [{ po_number: 'PO-1', status: 'open', expected_date: null, remaining: 40 }] });
     fireEvent.click(screen.getByText('SKU-1'));
-    // ONE FORMULA: the stock cap is the line's own on hand (the fixture's default, 1)
-    // plus whatever cross-location cover it may ALSO draw on (none configured here, 0).
-    expect((screen.getByLabelText('BRW') as HTMLInputElement).max).toBe('1');
+    // ONE FORMULA: the row's own pool is a FACT (already inside the engine's net), so BRW
+    // carries no input to cap. The PO the buyer trusts is capped at the open book.
+    const cover = screen.getByText('Cover').closest('section') as HTMLElement;
+    expect(within(cover).queryByLabelText('BRW')).not.toBeInTheDocument();
+    expect(within(cover).getByText('BRW')).toBeInTheDocument();
     expect((screen.getByLabelText('PO') as HTMLInputElement).max).toBe('40');
   });
 

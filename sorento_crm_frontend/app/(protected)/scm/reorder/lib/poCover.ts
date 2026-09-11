@@ -1,15 +1,14 @@
 /**
- * S15: offset the buy suggestion against the outstanding PO book.
+ * S15: the outstanding PO book, as the row's receipts read it.
  *
  * > "if there is outstanding PO already then why should i buy ... I was expecting the
  * >  system to suggest me to use the PO quantity and don't need to order"
  *
- * The engine's NETTING never counts the PO book (incoming = SPO allocation, the standing
- * rule - the book is an AutoCount import that can be stale, and quietly netting it would
- * silently unbuy every row). The SUGGESTION counts it: the row says "Use PO 504" instead
- * of "Buy 200", and buying anyway stays one click away. Order of preference is the
- * buyer's own: use stock first, then what is arriving (already inside the net), then what
- * is ordered, and buy only the remainder.
+ * Since #828 the ENGINE nets the open PO book into the same `net` the row is sized
+ * against, so the suggestion's "PO 339" part is a DISPLAY of what that net already
+ * consumed rather than a second offset applied on top of it (PLAN-reorder-one-formula.md).
+ * What survives here is the receipt list itself: which orders the figure stands for, so a
+ * buyer can check them before trusting "do not order".
  */
 import { fmtTrimmedDecimal } from '../../lib/format';
 
@@ -27,11 +26,10 @@ export interface PoReceipt {
   remaining: number;
 }
 
-/** How much of a remaining buy the PO book absorbs, and what is left to order. */
-export function poOffset(buyQty: number, poQty: number): { usePo: number; buy: number } {
-  const usePo = Math.min(Math.max(buyQty, 0), Math.max(poQty, 0));
-  return { usePo, buy: Math.max(buyQty - usePo, 0) };
-}
+// `poOffset` is DELETED (PLAN-reorder-one-formula.md, 11 Sep 2026). It nets a PO against a
+// remaining buy, and since #828 the engine's `recommended_qty` is already net of the open PO
+// book - so every caller was subtracting the same units twice. `orderQtyLedger.composeMixture`
+// now clamps every part against the NEED instead, which is the one place that netting happens.
 
 /** One line per order: the receipt the buyer verifies before trusting "don't order". */
 export function describePoBook(receipts: PoReceipt[]): string[] {
