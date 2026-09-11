@@ -928,9 +928,10 @@ def crossdomain_render(
 _CROSSDOMAIN_RUNG_TOOL: dict[str, str] = {"purchase_order": "crm_procurement_po_placed_list"}
 _CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
 #: Item 5 (8 Sep 2026): the rung's tool returns PO lines AND unshipped SPO allocations
-#: (`kind` "po" / "spo", presented as Source "PO" / "SPO"), so its sentences speak of
-#: what is ON ORDER rather than of a document type - `_CROSSDOMAIN_RUNG_WORD` ("no PO
-#: for X") went with that.
+#: (`kind` "po" / "spo", carried on the item's own top-level `kind` key since the 11 Sep
+#: 2026 ruling - no rendered Source field), so its sentences speak of what is ON ORDER
+#: rather than of a document type - `_CROSSDOMAIN_RUNG_WORD` ("no PO for X") went with
+#: that.
 #: The field-reveal key a contact must hold for the rung to run at all (8 Sep 2026). A rung
 #: with no row here is ungated.
 _CROSSDOMAIN_RUNG_GRANT: dict[str, str] = {"purchase_order": "purchase_orders.placed"}
@@ -1009,14 +1010,14 @@ def _crossdomain_rung_probe_args(
 
 def _crossdomain_rung_rows(
     probe_result: Any, *, missing: list[dict[str, Any]]
-) -> dict[str, list[tuple[str, str]]]:
-    """Which of `missing`'s codes the rung answered, and the rendered line per row.
+) -> dict[str, list[dict[str, Any]]]:
+    """Which of `missing`'s codes the rung answered, and the rung row per row.
 
-    Returns `{CODE: [(line, kind), ...]}` - only codes the rung actually found rows for,
-    `kind` "po" or "spo" (item 5; a row with no Source field is a PO row, today's shape).
-    Never renders `supplier`: the field template simply does not name it, which is what
-    keeps a dealer from ever seeing it here without threading the field-reveal grant into
-    this probe.
+    Returns `{CODE: [row, ...]}` - only codes the rung actually found rows for, each row
+    `kind` "po" or "spo" (item 5; a row with no top-level `kind` key is a PO row, today's
+    shape - owner ruling 11 Sep 2026). Never renders `supplier`: the field template
+    simply does not name it, which is what keeps a dealer from ever seeing it here
+    without threading the field-reveal grant into this probe.
     """
     env: Any = probe_result if jsc.truthy(probe_result) else {}
     if jsc.truthy(env) and isinstance(jsc.get(env, "output"), dict):
@@ -1033,7 +1034,7 @@ def _crossdomain_rung_rows(
         f = jsc.find(jsc.get(it, "fields") or [], lambda x: jsc.has(x, "key") and x["key"] == k)
         return jsc.get(f, "value") if jsc.truthy(f) else None
 
-    out: dict[str, list[str]] = {}
+    out: dict[str, list[dict[str, Any]]] = {}
     for m in missing:
         code = jsc.js_string(m.get("code") or m.get("_n"))
         rows = by_code.get(code.upper(), [])
@@ -1044,40 +1045,53 @@ def _crossdomain_rung_rows(
 
 
 def _crossdomain_rung_row(it: Any, field_by_key: Any) -> dict[str, Any]:
-    """One rung row as `{kind, number, po_date, expected, qty}` - `kind` "po" or "spo"
-    (a row with no Source field is a PO row, today's shape). Rendering is
-    `_crossdomain_rung_text`, which groups the rows by document."""
-    kind = "spo" if jsc.js_string(field_by_key(it, "kind") or "").strip().upper() == "SPO" else "po"
+    """One rung row as `{kind, number, product_code, ordered_qty, qty, po_date,
+    location}` - `kind` "po" or "spo". Owner ruling (11 Sep 2026): `kind` reads ONLY the
+    ITEM's own top-level key (the presenter no longer renders a Source field at all, so
+    there is nothing left to fall back to); a row with no top-level `kind` is a PO row,
+    today's shape. Rendering is `_crossdomain_rung_text`, which lays out one field per
+    line per row."""
+    kind = "spo" if jsc.js_string(jsc.get(it, "kind") or "").strip().upper() == "SPO" else "po"
     return {
         "kind": kind,
         "number": field_by_key(it, "po_number"),
-        "po_date": field_by_key(it, "po_date"),
-        "expected": field_by_key(it, "expected_date"),
+        "product_code": field_by_key(it, "product_code"),
+        "ordered_qty": field_by_key(it, "ordered_qty"),
         "qty": field_by_key(it, "outstanding_qty"),
+        "po_date": field_by_key(it, "po_date"),
+        "location": field_by_key(it, "location"),
     }
 
 
 def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
-    """D11/D14 (owner ruling, 8 Sep 2026): one line per PO/SPO LINE, `Qty {outstanding_qty}
-    placed on {document_date}` - `po_date` is `purchase_orders.issue_date` (the SPO's issue
-    date on an SPO row), never the expected/ETA date (owner: it is not accurate). No
-    per-document heading naming the PO/SPO number - D2's heading-per-document shape is
-    retired - and no "pcs". Lines from several documents just follow one another in the
-    rows' own order:
+    """Owner ruling (11 Sep 2026): one field per line per row - `Product Code:`,
+    `Ordered:`, `Outstanding:`, `PO date:`, `Location:` - rows separated by ONE blank
+    line. A null/empty `ordered_qty`, `po_date` or `location` OMITS that line entirely
+    (never a placeholder, never `_fmt_xd_value`'s own "-"); `Product Code` and
+    `Outstanding` always print. No per-document heading naming the PO/SPO number, and no
+    "pcs":
 
-        Qty 10 placed on 2026-07-29
-        Qty 20 placed on 2026-07-29
-
-    "placed on {date}" is omitted, along with the date, when the date is null - same as
-    before.
+        Product Code: SRTWC191-G3
+        Ordered: 30
+        Outstanding: 30
+        PO date: 2026-08-10
+        Location: KL-WH
     """
-    out: list[str] = []
+    blocks: list[str] = []
     for row in rows:
-        qty = _fmt_xd_value(row.get("qty"))
+        lines = [f"Product Code: {_fmt_xd_value(row.get('product_code'))}"]
+        ordered_qty = row.get("ordered_qty")
+        if ordered_qty not in (None, ""):
+            lines.append(f"Ordered: {_fmt_xd_value(ordered_qty)}")
+        lines.append(f"Outstanding: {_fmt_xd_value(row.get('qty'))}")
         po_date = row.get("po_date")
-        line = f"Qty {qty}" if po_date in (None, "") else f"Qty {qty} placed on {_fmt_xd_value(po_date)}"
-        out.append(line)
-    return "\n".join(out)
+        if po_date not in (None, ""):
+            lines.append(f"PO date: {_fmt_xd_value(po_date)}")
+        location = row.get("location")
+        if location not in (None, ""):
+            lines.append(f"Location: {_fmt_xd_value(location)}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 
 def _apply_crossdomain_rung(

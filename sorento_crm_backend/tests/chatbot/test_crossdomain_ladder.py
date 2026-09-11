@@ -61,22 +61,45 @@ def _po_row(
     code: str = "SRTWC8517",
     po_number: str = "PO-1001",
     po_date: str | None = "2026-05-01",
-    kind: str | None = "PO",
+    location: str | None = "KL-WH",
+    kind: str | None = "po",
 ) -> dict:
+    """The MCP presenter's shape after the 11 Sep 2026 ruling: `kind` is a TOP-LEVEL item
+    key ("po"/"spo"), never a rendered field - Source and Expected Date no longer render
+    at all. `date` (the old expected-date argument) is kept only so every existing call
+    site still parses; it is genuinely irrelevant to the rung's own text now, same as
+    before this ruling."""
     fields = [
         {"key": "po_number", "label": "PO Number", "value": po_number},
-    ]
-    if kind is not None:
-        fields.append({"key": "kind", "label": "Source", "value": kind})
-    fields += [
         {"key": "product_code", "label": "Product Code", "value": code},
+        {"key": "ordered_qty", "label": "Ordered Qty", "value": qty},
         {"key": "outstanding_qty", "label": "Outstanding Qty", "value": qty},
     ]
     if po_date is not None:
         fields.append({"key": "po_date", "label": "PO Date", "value": po_date})
+    if location is not None:
+        fields.append({"key": "location", "label": "Location", "value": location})
     if date is not None:
         fields.append({"key": "expected_date", "label": "Expected Date", "value": date})
-    return {"fields": fields}
+    item: dict[str, Any] = {"fields": fields}
+    if kind is not None:
+        item["kind"] = kind
+    return item
+
+
+def _row_block(
+    *, code: str = "SRTWC8517", qty: Any, po_date: str | None = "2026-05-01",
+    location: str | None = "KL-WH",
+) -> str:
+    """The 11 Sep 2026 ruling's per-row block: one field per line, `PO date:` and
+    `Location:` omitted when null. Matches `_po_row`'s own defaults so a test only names
+    what it overrides."""
+    lines = [f"Product Code: {code}", f"Ordered: {qty}", f"Outstanding: {qty}"]
+    if po_date not in (None, ""):
+        lines.append(f"PO date: {po_date}")
+    if location not in (None, ""):
+        lines.append(f"Location: {location}")
+    return "\n".join(lines)
 
 
 GRANTED = ["purchase_orders.placed"]
@@ -184,9 +207,9 @@ class TestAC921StockMissIncomingMissPOPlaced:
         block = result["render"]["_xdBlock"]["block"]
         assert "No stock and no incoming for SRTWC8517" in block
         assert "but PO is placed" in block
-        # D11 (owner ruling, 8 Sep 2026): `{outstanding_qty} {document_date}`, nothing
-        # else - no "PO PO-1001 dated ..." heading, no "pcs", no expected date.
-        assert "but PO is placed:\nQty 50 placed on 2026-05-01" in block
+        # Owner ruling, 11 Sep 2026: one field per line, no per-document heading naming
+        # PO-1001, no "pcs", no expected date.
+        assert f"but PO is placed:\n{_row_block(qty=50)}" in block
         # The rung writes NO offer: `crossdomain_compose` is the one writer (turns
         # 0184d84d / 5f73ddb0 / 90a1637a carried the question twice).
         assert "escalate" not in block.lower()
@@ -321,20 +344,20 @@ class TestOwner8SepTheOfferIsWrittenOnce:
         assert text.count(self._PHRASE) == 1
 
 
-class TestD11ThePORungLineIsQuantityAndDocumentDateOnly:
-    """D11/D14 (owner ruling, 8 Sep 2026): the rung's own render is reduced to exactly
-    `Qty {outstanding_qty} placed on {document_date}` per line - no per-document heading
-    naming the PO/SPO number, no "pcs", no expected/ETA date (the owner: it is not
-    accurate)."""
+class TestD11ThePORungLineIsStructuredFields:
+    """Owner ruling, 11 Sep 2026 (retires D11/D14's `Qty {outstanding_qty} placed on
+    {document_date}` line shape): one field per line - Product Code, Ordered, Outstanding,
+    PO date (if any), Location (if any) - no per-document heading naming the PO/SPO
+    number, no "pcs", no expected/ETA date (the owner: it is not accurate)."""
 
-    def test_the_line_is_quantity_and_document_date(self) -> None:
+    def test_the_line_is_the_structured_field_block(self) -> None:
         result, _ = _run(
             ladder=_LADDER_WITH_PO,
             incoming_response={"answers": [], "has_result": False},
             po_response={"answers": [_po_row(12, "2027-01-01")], "has_result": True},
         )
         block = result["render"]["_xdBlock"]["block"]
-        assert "but PO is placed:\nQty 12 placed on 2026-05-01" in block
+        assert f"but PO is placed:\n{_row_block(qty=12)}" in block
         assert "expected" not in block and "pcs" not in block
         assert "PO-1001" not in block
 
@@ -346,18 +369,28 @@ class TestD11ThePORungLineIsQuantityAndDocumentDateOnly:
             incoming_response={"answers": [], "has_result": False},
             po_response={"answers": [row], "has_result": True},
         )
-        assert "but PO is placed:\nQty 12" in result["render"]["_xdBlock"]["block"]
+        assert f"but PO is placed:\n{_row_block(qty=12, po_date=None)}" in result["render"]["_xdBlock"]["block"]
 
-    def test_the_date_part_is_omitted_when_the_document_has_no_date(self) -> None:
+    def test_the_po_date_line_is_omitted_when_the_document_has_no_date(self) -> None:
         result, _ = _run(
             ladder=_LADDER_WITH_PO,
             incoming_response={"answers": [], "has_result": False},
             po_response={"answers": [_po_row(12, "2026-07-01", po_date=None)], "has_result": True},
         )
         block = result["render"]["_xdBlock"]["block"]
-        assert "but PO is placed:\nQty 12" in block
-        assert "placed on" not in block
+        assert f"but PO is placed:\n{_row_block(qty=12, po_date=None)}" in block
+        assert "PO date" not in block and "placed on" not in block
         assert "2026-07-01" not in block  # the (irrelevant) expected date never renders
+
+    def test_the_location_line_is_omitted_when_the_row_has_no_location(self) -> None:
+        result, _ = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [_po_row(12, "2026-07-01", location=None)], "has_result": True},
+        )
+        block = result["render"]["_xdBlock"]["block"]
+        assert f"but PO is placed:\n{_row_block(qty=12, location=None)}" in block
+        assert "Location" not in block
 
 
 class TestOwner8SepThePORungIsPerContact:
@@ -408,30 +441,117 @@ class TestItem5UnshippedSPOIsOnOrderFromTheSupplier:
         return result["render"]["_xdBlock"]["block"]
 
     def test_an_spo_row_reads_on_order_from_supplier(self) -> None:
-        block = self._block([_po_row(7, "2026-10-05", po_number="SPO-2026/09-0001", po_date="2026-08-20", kind="SPO")])
+        block = self._block([_po_row(7, "2026-10-05", po_number="SPO-2026/09-0001", po_date="2026-08-20", kind="spo")])
         assert "but stock is on order from the supplier:" in block
-        # D11/D14: `Qty {qty} placed on {issue_date}`, no SPO number.
-        assert "but stock is on order from the supplier:\nQty 7 placed on 2026-08-20" in block
+        # 11 Sep 2026 ruling: the structured field block, no SPO number.
+        assert f"but stock is on order from the supplier:\n{_row_block(qty=7, po_date='2026-08-20')}" in block
         assert "SPO-2026/09-0001" not in block
         assert "but PO is placed" not in block
 
     def test_spo_parts_are_omitted_when_null(self) -> None:
-        block = self._block([_po_row(7, None, po_number="SPO-1", po_date=None, kind="SPO")])
-        assert "but stock is on order from the supplier:\nQty 7" in block
+        block = self._block([_po_row(7, None, po_number="SPO-1", po_date=None, location=None, kind="spo")])
+        assert f"but stock is on order from the supplier:\n{_row_block(qty=7, po_date=None, location=None)}" in block
         assert "dated" not in block and "expected" not in block and "SPO-1" not in block
+        assert "PO date" not in block and "Location" not in block
 
     def test_a_mixed_set_keeps_the_po_header_and_lines_follow_one_another(self) -> None:
         block = self._block([
-            _po_row(50, "2026-07-01", kind="PO"),
-            _po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="SPO"),
+            _po_row(50, "2026-07-01", kind="po"),
+            _po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="spo"),
         ])
-        assert "but PO is placed:\nQty 50 placed on 2026-05-01\nQty 7 placed on 2026-08-20" in block
+        expected = (
+            f"but PO is placed:\n{_row_block(qty=50)}\n\n{_row_block(qty=7, po_date='2026-08-20')}"
+        )
+        assert expected in block
         assert "SPO-9" not in block and "PO-1001" not in block
 
     def test_a_row_with_no_kind_is_read_as_a_po(self) -> None:
-        """An older envelope (no `kind` field) is today's PO row."""
+        """An older envelope (no `kind` field at all, top-level or rendered) is today's
+        PO row."""
         block = self._block([_po_row(50, "2026-07-01", kind=None)])
-        assert "but PO is placed:\nQty 50 placed on 2026-05-01" in block
+        assert f"but PO is placed:\n{_row_block(qty=50)}" in block
+
+
+class TestOwner11SepTheRungRendersStructuredFieldsPerRow:
+    """Owner ruling (11 Sep 2026): one field per line per row, rows separated by ONE blank
+    line - `Product Code:`, `Ordered:`, `Outstanding:`, `PO date:` (lower-case d),
+    `Location:`. A null/empty `po_date` or `location` OMITS that line entirely (never a
+    hyphen placeholder)."""
+
+    def _block(self, rows: list[dict]) -> str:
+        result, _ = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": rows, "has_result": True},
+        )
+        return result["render"]["_xdBlock"]["block"]
+
+    def test_two_rows_are_separated_by_one_blank_line(self) -> None:
+        # `_run`'s resolved product code is the default "SRTWC8517" - both rows must
+        # match it (`_crossdomain_rung_rows` groups by product code).
+        block = self._block([
+            _po_row(30, "2026-08-10", po_date="2026-08-10"),
+            _po_row(9, "2026-09-01", po_number="PO-2002", po_date="2026-09-01"),
+        ])
+        expected_rows = _row_block(qty=30, po_date="2026-08-10")
+        expected_rows_2 = _row_block(qty=9, po_date="2026-09-01")
+        assert f"{expected_rows}\n\n{expected_rows_2}" in block
+        # exactly one blank line between them, not two, not zero
+        assert f"{expected_rows}\n\n\n{expected_rows_2}" not in block
+        assert f"{expected_rows}\n{expected_rows_2}" not in block
+
+    def test_a_null_po_date_omits_the_po_date_line_only(self) -> None:
+        block = self._block([_po_row(30, "2026-08-10", po_date=None)])
+        assert "but PO is placed:\n" + _row_block(qty=30, po_date=None) in block
+        assert "PO date" not in block
+        # the other lines still print
+        assert "Product Code:" in block and "Ordered: 30" in block and "Outstanding: 30" in block
+        assert "Location:" in block  # location still defaults, only po_date is null here
+
+    def test_a_null_location_omits_the_location_line_only(self) -> None:
+        block = self._block([_po_row(30, "2026-08-10", location=None)])
+        assert "but PO is placed:\n" + _row_block(qty=30, location=None) in block
+        assert "Location" not in block
+        assert "PO date:" in block  # po_date still defaults, only location is null here
+
+    def test_an_all_spo_probe_keeps_the_on_order_from_supplier_header_with_no_source_field(self) -> None:
+        rows = [
+            _po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="spo"),
+            _po_row(3, "2026-10-06", po_number="SPO-10", po_date="2026-08-21", kind="spo"),
+        ]
+        block = self._block(rows)
+        assert "but stock is on order from the supplier:" in block
+        assert "but PO is placed" not in block
+        assert "Source" not in block and "SPO-9" not in block and "SPO-10" not in block
+
+    def test_a_mixed_po_and_spo_probe_yields_but_po_is_placed(self) -> None:
+        rows = [
+            _po_row(50, "2026-07-01", kind="po"),
+            _po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="spo"),
+        ]
+        block = self._block(rows)
+        assert "but PO is placed:" in block
+        assert "but stock is on order from the supplier" not in block
+
+    def test_ordered_qty_none_omits_the_ordered_line_only(self) -> None:
+        """Reviewer fix round (11 Sep 2026): `Ordered:` follows the SAME null rule as
+        `PO date:` / `Location:` - a row with no `ordered_qty` field prints `Product
+        Code:` straight into `Outstanding:`, no placeholder line between them."""
+        item = {
+            "fields": [
+                {"key": "po_number", "label": "PO Number", "value": "PO-1001"},
+                {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                {"key": "outstanding_qty", "label": "Outstanding Qty", "value": 30},
+                {"key": "po_date", "label": "PO Date", "value": "2026-08-10"},
+                {"key": "location", "label": "Location", "value": "KL-WH"},
+            ],
+            "kind": "po",
+        }
+        block = self._block([item])
+        assert (
+            "Product Code: SRTWC8517\nOutstanding: 30\nPO date: 2026-08-10\nLocation: KL-WH"
+        ) in block
+        assert "Ordered" not in block
 
 
 class TestThePORungGrantKey:
@@ -474,16 +594,16 @@ class TestThePORungGrantKey:
 
 
 class TestD11LinesFollowOneAnotherInToolOrder:
-    """D11/D14 (owner ruling, 8 Sep 2026), which retires D2's heading-per-document shape:
-    `Qty {outstanding_qty} placed on {document_date}` per line, nothing else - no
-    "PO 202607-S0054 dated ..." heading, no "pcs", no expected date. Lines from several
-    documents just follow one another in the rows' own (the tool's) order."""
+    """Owner ruling, 11 Sep 2026 (retires D11/D14's `Qty {outstanding_qty} placed on
+    {document_date}` line and D2's heading-per-document shape): the structured field
+    block per row, rows separated by ONE blank line, in the rows' own (the tool's) order -
+    no "PO 202607-S0054 dated ..." heading, no "pcs", no expected date."""
 
     def test_the_exact_block(self) -> None:
         rows = [
             _po_row(42, "2026-07-13", po_number="202607-S0054", po_date="2026-07-17"),
             _po_row(12, "2026-07-31", po_number="202607-S0054", po_date="2026-07-17"),
-            _po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="SPO"),
+            _po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="spo"),
             _po_row(3, None, po_number="202607-S0054", po_date="2026-07-17"),
         ]
         result, _ = _run(
@@ -494,10 +614,12 @@ class TestD11LinesFollowOneAnotherInToolOrder:
         block = result["render"]["_xdBlock"]["block"]
         assert block == (
             "No stock and no incoming for SRTWC8517, but PO is placed:\n"
-            "Qty 42 placed on 2026-07-17\n"
-            "Qty 12 placed on 2026-07-17\n"
-            "Qty 7 placed on 2026-08-20\n"
-            "Qty 3 placed on 2026-07-17"
+            + "\n\n".join([
+                _row_block(qty=42, po_date="2026-07-17"),
+                _row_block(qty=12, po_date="2026-07-17"),
+                _row_block(qty=7, po_date="2026-08-20"),
+                _row_block(qty=3, po_date="2026-07-17"),
+            ])
         )
         assert "202607-S0054" not in block
         assert "SPO-9" not in block
@@ -519,7 +641,9 @@ class TestD7AnIncomingAskClimbsToThePORung:
         )
         assert [name for name, _ in calls] == [_STOCK_TOOL, _PO_TOOL]
         block = result["render"]["_xdBlock"]["block"]
-        assert block.startswith("No incoming and no stock for SRTWC8517, but PO is placed:\nQty 42 placed on 2026-07-17")
+        assert block.startswith(
+            f"No incoming and no stock for SRTWC8517, but PO is placed:\n{_row_block(qty=42, po_date='2026-07-17')}"
+        )
         assert result["render"]["_xdBlock"]["team"] == "purchasing"
         assert _composed_text(result).count("Would you like me to escalate") == 1
 
@@ -537,7 +661,7 @@ class TestD7AnIncomingAskClimbsToThePORung:
         result, _ = _run(
             ladder=_LADDER_491,
             incoming_response={"answers": [], "has_result": False},
-            po_response={"answers": [_po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="SPO")], "has_result": True},
+            po_response={"answers": [_po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="spo")], "has_result": True},
             parser=_INCOMING_PARSER,
         )
         assert "No incoming and no stock for SRTWC8517, but stock is on order from the supplier:" in result["render"]["_xdBlock"]["block"]

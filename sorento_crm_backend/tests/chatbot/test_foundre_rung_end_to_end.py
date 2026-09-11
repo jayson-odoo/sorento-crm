@@ -65,8 +65,9 @@ PO_ROWS = {
         {
             "fields": [
                 {"key": "product_code", "label": "Product Code", "value": CODE},
+                {"key": "ordered_qty", "label": "Ordered Qty", "value": 1000},
                 {"key": "outstanding_qty", "label": "Outstanding Qty", "value": 1000},
-                {"key": "expected_date", "label": "Expected Date", "value": "2026-06-01"},
+                {"key": "location", "label": "Location", "value": "KL-WH"},
                 # The MCP envelope is UNFILTERED - the supplier is on the row. Whether the
                 # customer ever sees it is what AC-921's negative assertion grades.
                 {"key": "supplier", "label": "Supplier", "value": "GUANGDONG WORKS"},
@@ -209,8 +210,11 @@ class TestAC921ThePORungReachesTheCustomer:
         assert PO_TOOL in probes, "the PO rung never ran on a real turn"
         assert "but PO is placed" in said, said
         assert CODE in said
-        # D11: PO_ROWS carries no `po_date`, so the line is the quantity alone.
-        assert "1000" in said
+        # Owner ruling, 11 Sep 2026: the structured field block - PO_ROWS carries no
+        # `po_date`, so that line is omitted, but Ordered/Outstanding/Location print.
+        assert "Ordered: 1000" in said and "Outstanding: 1000" in said
+        assert "Location: KL-WH" in said
+        assert "PO date" not in said
 
     def test_the_supplier_is_never_in_the_rung_text(
         self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
@@ -405,9 +409,9 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
             "fields": [
                 {"key": "po_number", "label": "PO Number", "value": "202607-S0031"},
                 {"key": "product_code", "label": "Product Code", "value": CODE},
+                {"key": "ordered_qty", "label": "Ordered Qty", "value": 27},
                 {"key": "outstanding_qty", "label": "Outstanding Qty", "value": 27},
                 {"key": "po_date", "label": "PO Date", "value": "2026-06-30"},
-                {"key": "expected_date", "label": "Expected Date", "value": "2027-02-01"},
             ]
         }
         result, said, probes = _run_stock_turn(
@@ -415,8 +419,12 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes
-        # D11/D14 (owner ruling, 8 Sep 2026): `Qty {outstanding_qty} placed on {document_date}`, no heading.
-        assert "but PO is placed:\nQty 27 placed on 2026-06-30" in said, said
+        # Owner ruling, 11 Sep 2026: the structured field block, no per-document heading.
+        assert (
+            "but PO is placed:\n"
+            "Product Code: SRTWT7445-LV-NEW\nOrdered: 27\nOutstanding: 27\nPO date: 2026-06-30"
+        ) in said, said
+        assert "Location" not in said  # po_row carries no location
         assert "pcs" not in said and "expected" not in said and "202607-S0031" not in said
         # `said` joins the reply with every send action's copy of it; the count is on the
         # reply text alone.
@@ -466,9 +474,14 @@ class TestD7AnIncomingAskReachesThePORung:
         # the incoming lane's own picker probe may sit beside them; the climb is what matters
         assert probes.index("crm_inventory_stock_balance_list") < probes.index(PO_TOOL)
         assert f"No incoming and no stock for {CODE}, but PO is placed:" in said, said
-        # D11/D14: PO_ROWS carries no `po_date`, so the line is the quantity alone; the
-        # (irrelevant) expected date never renders either way.
-        assert "but PO is placed:\nQty 1000" in said
+        # Owner ruling, 11 Sep 2026: PO_ROWS carries no `po_date`, so that line is omitted;
+        # Ordered/Outstanding/Location still print, and the (irrelevant) expected date
+        # never renders either way.
+        assert (
+            "but PO is placed:\n"
+            f"Product Code: {CODE}\nOrdered: 1000\nOutstanding: 1000\nLocation: KL-WH"
+        ) in said
+        assert "PO date" not in said
         assert "expected" not in said and "2026-06-01" not in said
         assert "GUANGDONG" not in said
         text = (result.reply or {}).get("text") or ""
