@@ -264,7 +264,7 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
  * project bin and dealer bin are summed together must still show the dealer bin's receipts
  * while showing none of the project bin's.
  */
-describe('usePlanLines - poFor never offers a project row a purchase order', () => {
+describe('usePlanLines - poFor (P8 retired, PLAN-reorder-one-formula.md)', () => {
   function row(over: Record<string, unknown> = {}) {
     return {
       id: 'r1', type: 'buy', sku: 'SKU-1', product_name: 'Product one',
@@ -301,7 +301,7 @@ describe('usePlanLines - poFor never offers a project row a purchase order', () 
     expect(result.current.poFor(result.current.lines[0])).toHaveLength(1);
   });
 
-  it('serves none to a project row, even when the map still carries its key', async () => {
+  it('serves them to a project-only row too - P8 is retired', async () => {
     getBuyRecommendationsForCash.mockResolvedValue([
       row({ project_committed: 9857, retail_committed: 0 }),
     ]);
@@ -310,7 +310,7 @@ describe('usePlanLines - poFor never offers a project row a purchase order', () 
     const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
     await waitFor(() => expect(result.current.lines).toHaveLength(1));
 
-    expect(result.current.poFor(result.current.lines[0])).toEqual([]);
+    expect(result.current.poFor(result.current.lines[0])).toHaveLength(1);
   });
 });
 

@@ -12,8 +12,6 @@
  * member recommendation exactly as `usePlanLines.decide` / `.updateMoq` already do.
  */
 import { roundBuyQty } from './orderQtyLedger';
-import { NO_COVER, type CoverProposal } from './coverPlan';
-import { poOffset, type PoReceipt } from './poCover';
 import type { PlanLine } from './planLine';
 import { decidedCost, groupDecisionState, type PlanDecision, type PlanDecisionMap } from './planDecisions';
 import { isGroupedLine } from './planLineGrouping';
@@ -57,38 +55,44 @@ export function hasRowEdit(edit: PlanRowEdit | undefined): boolean {
 }
 
 /**
- * The engine's own mixture for a line: stock first (what is already free), then the open PO
- * book, then a buy for what is left, rounded to the supplier's MOQ and order multiple.
+ * The engine's own mixture for a line - ONE FORMULA (PLAN-reorder-one-formula.md, AC-5):
+ * `Stock S + PO P + Buy B` is a DISPLAY of what the engine's own net already consumed,
+ * never a second netting. Read off the line's own FROZEN fields alone (`on_hand`,
+ * `outstanding_po`, `recommended_qty`) - no `cover`/`poReceipts` pair from outside, which
+ * is what let the grid re-net a figure the engine (since #828) already nets once.
+ *
+ * `recommended_qty` is the engine's raw, unrounded gap (`need - on_hand - PO`, clipped at
+ * 0); reconstructing `need = recommended_qty + on_hand + PO` and then re-deriving
+ * `S = min(on_hand, need)` / `P = min(PO, need - S)` is algebraically a no-op when there
+ * IS a buy (S/P/B sum back to `need` by construction) and, for a `covered` row
+ * (`recommended_qty` 0 or absent), the gate below reads "Nothing" outright rather than
+ * reconstructing a `need` the clip-at-0 step already threw away - exactly the "Nothing"
+ * a covered row prints everywhere else (AC-4's sheet, the plan pill).
  *
  * Lifted out of the old decision cell so the pill, the panel and Confirm all read ONE
  * derivation - a button that says 14 and records 20 was the worse half of that bug.
+ *
+ * WARNING: the `stock` part this returns is the own-pool FACT, for DISPLAY only (it
+ * carries no `sources`, because the row's own pool is not a location it borrows from).
+ * It must never reach `decide()`: the server counts `stock_takes`, so a decision carrying
+ * a stock quantity nothing names is refused 422 as "a mixture needs more than one part".
+ * What is persisted is `{buy, po?, stock?}` where `stock` means a CROSS-LOCATION borrow
+ * with real sources - see `PlanRowPanel`, which reads this for the numbers it shows and
+ * builds what it saves separately.
  */
-export function suggestedDecisionFor(
-  line: PlanLine,
-  cover: CoverProposal = NO_COVER,
-  poReceipts: PoReceipt[] = [],
-): PlanDecision {
-  const needed = Math.ceil(line.order_qty);
-  const stockQty = cover.coverQty;
-  const afterStock = stockQty > 0 ? cover.buyQty : needed;
-  const poQty = poReceipts.reduce((t, r) => t + r.remaining, 0);
-  const { usePo, buy } = poOffset(afterStock, poQty);
-  const buyQty = roundBuyQty(buy, line.order_qty_inputs);
+export function suggestedDecisionFor(line: PlanLine): PlanDecision {
+  const rawBuy = line.rec.recommended_qty ?? line.order_qty;
+  if (!(rawBuy > 0)) return {};
+  const onHand = line.rec.on_hand ?? 0;
+  const po = line.rec.outstanding_po ?? 0;
+  const need = rawBuy + onHand + po;
+  const stockQty = Math.min(onHand, need);
+  const poQty = Math.min(po, need - stockQty);
+  const buyQty = roundBuyQty(rawBuy, line.order_qty_inputs);
   return {
     ...(buyQty > 0 ? { buy: buyQty } : {}),
-    ...(stockQty > 0
-      ? {
-          stock: {
-            qty: stockQty,
-            sources: cover.sources.map((s) => ({
-              warehouse_id: s.warehouse_id,
-              warehouse_code: s.warehouse_code,
-              qty: s.qty,
-            })),
-          },
-        }
-      : {}),
-    ...(usePo > 0 ? { po: usePo } : {}),
+    ...(stockQty > 0 ? { stock: { qty: stockQty, sources: [] } } : {}),
+    ...(poQty > 0 ? { po: poQty } : {}),
   };
 }
 

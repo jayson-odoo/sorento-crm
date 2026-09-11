@@ -272,7 +272,9 @@ describe('PlanLinesGrid - the Decision cell is a pill (C6)', () => {
   const pill = (state: string) => screen.getByTestId(`decision-pill-${state}`);
 
   it('reads Suggested with the engine mixture when nobody has touched the row', () => {
-    renderGrid([line({ order_qty: 31 })]);
+    // `recommended_qty` is what the ONE FORMULA reads for the raw buy (PLAN-reorder-one-
+    // formula.md) - carried alongside `order_qty` here for realism.
+    renderGrid([line({ order_qty: 31, recommended_qty: 31 })]);
     expect(pill('suggested')).toHaveTextContent('Suggested');
     expect(pill('suggested')).toHaveTextContent('Buy 31');
   });
@@ -361,7 +363,9 @@ describe('PlanLinesGrid - the six lightboxes (F1)', () => {
   });
 
   it('Project opens the project orders', () => {
-    renderGrid([line({ project_need: 4 })]);
+    // The column states the RAW open demand (`project_committed`), not the bought split -
+    // see the column's own note in PlanLinesGrid.tsx.
+    renderGrid([line({ project_committed: 4, project_need: 0 })]);
     openNumber(/^Project demand - open the orders behind it$/);
     expect(screen.getByRole('dialog')).toHaveTextContent('Project demand - SKU-1');
   });
@@ -419,18 +423,25 @@ describe('PlanLinesGrid - the panel edits a draft, never the backend (D2-D9)', (
     expect(screen.getByTestId('decision-pill-unsaved')).toBeInTheDocument();
   });
 
-  it('states the caps beside the two capped inputs (D2)', () => {
+  it('caps the PO input at the open book, and states BRW as a fact beside it (D2)', () => {
     renderGrid([line()], { poFor: () => [{ po_number: 'PO-1', status: 'open', expected_date: null, remaining: 40 }] });
     fireEvent.click(screen.getByText('SKU-1'));
-    expect(screen.getByText(/pool available/)).toBeInTheDocument();
-    expect(screen.getByText(/open 40/)).toBeInTheDocument();
+    // ONE FORMULA: the row's own pool is a FACT (already inside the engine's net), so BRW
+    // carries no input to cap. The PO the buyer trusts is capped at the open book.
+    const cover = screen.getByText('Cover').closest('section') as HTMLElement;
+    expect(within(cover).queryByLabelText('BRW')).not.toBeInTheDocument();
+    expect(within(cover).getByText('BRW')).toBeInTheDocument();
+    expect((screen.getByLabelText('PO') as HTMLInputElement).max).toBe('40');
   });
 
-  it('SPO arriving is a read-only fact, never an input (R2, D2)', () => {
+  it('SPO is a read-only fact, never an input (R2, D2)', () => {
     renderGrid([line({ incoming_spo: 12 })]);
     fireEvent.click(screen.getByText('SKU-1'));
-    expect(screen.getByText(/SPO arriving/)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/SPO arriving/)).not.toBeInTheDocument();
+    // Scoped to the Cover zone - the collapsed row's own SPO column header reads the
+    // same three letters.
+    const cover = screen.getByText('Cover').closest('section') as HTMLElement;
+    expect(within(cover).getByText('SPO')).toBeInTheDocument();
+    expect(within(cover).queryByLabelText('SPO')).not.toBeInTheDocument();
   });
 
   it('hints only when the mixture differs from the suggestion (D2)', () => {

@@ -57,8 +57,9 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
  * would subtract it twice. Moving it stays a decision on the fulfilment board.
  *
  * Where the cover block does render, it reads and writes the SAME decision state the
- * Decision cell and the Adjust dialog use (`coverForLine` / `poOffset`, S16) - there is no
- * second model of what a line's buy is made of, and the toggle IS the edit (UAC B4).
+ * Decision cell and the Adjust dialog use (`coverForLine` + `composeMixture`, the one
+ * formula) - there is no second model of what a line's buy is made of, and the toggle IS
+ * the edit (UAC B4).
  */
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -533,8 +534,25 @@ export function OrderQtyLedger({
   const rec = line.rec;
   const q = line.order_qty_inputs;
   const manual = rec.policy_type === 'reorder_level';
-  const needed = Math.ceil(line.order_qty);
   const poQty = poReceipts.reduce((t, r) => t + r.remaining, 0);
+  // ONE FORMULA (PLAN-reorder-one-formula.md, AC-7). `recommended_qty` is the engine's raw
+  // buy gap, already net of on-hand AND the open PO book (since #828), so the NEED it came
+  // out of is reconstructed here once - `need = recommended_qty + on hand + PO` - and every
+  // part below is measured against THAT. Measuring them against the already-net figure
+  // instead is what read a genuine 196-unit gap as "Nothing to buy".
+  //
+  // `stockPart` is S: the row's own site-pool stock the need consumes. A FACT, never a
+  // toggle and never persisted (the engine already spent it) - the toggles below own the
+  // two parts a buyer really can change, a cross-location BORROW and how much of the open
+  // PO book they trust.
+  //
+  // A `recommended_qty` of 0 or less (a covered row) still reveals a real buy the moment
+  // the PO is toggled OFF ("pretend that supply is not there") - that IS the question the
+  // toggle answers - while the default, everything on, still reads 0.
+  const onHand = rec.on_hand ?? 0;
+  const rawBuy = rec.recommended_qty ?? line.order_qty;
+  const need = Math.max(0, rawBuy) + onHand + poQty;
+  const stockPart = Math.min(onHand, need);
 
   // The orders behind this row, one fetch per channel - the same endpoint and the same
   // per-channel narrowing the SO cell's own drill uses. Fired when the ledger mounts,
@@ -607,10 +625,11 @@ export function OrderQtyLedger({
   // add-on is offered fresh, never assumed).
   const [forecastOn, setForecastOn] = useState(() => Boolean(decision?.reason?.startsWith('Forecast:')));
 
-  const mixture = composeMixture(needed, cover, poQty, {
-    stockOn,
-    poOn,
-    stockQty: edited.coverQty,
+  const mixture = composeMixture({
+    need,
+    stockQty: stockPart,
+    borrowedQty: stockOn ? edited.coverQty : 0,
+    poQty: poOn ? poQty : 0,
   });
   // The SAME trajectory verdict that drives the row's own Trend pill - a rising line never
   // sees a flat proposal here while its pill says "consider more" (S3 follow-up).
@@ -652,7 +671,12 @@ export function OrderQtyLedger({
     // The per-location figures ARE the split that gets recorded - the ledger never writes
     // the proposal's own sources back over an edit the buyer just made.
     const stock = applySourceEdits(cover, next.edits);
-    const m = composeMixture(needed, cover, poQty, { ...next, stockQty: stock.coverQty });
+    const m = composeMixture({
+      need,
+      stockQty: stockPart,
+      borrowedQty: next.stockOn ? stock.coverQty : 0,
+      poQty: next.poOn ? poQty : 0,
+    });
     const d = next.forecastOn ? next.forecastQty : 0;
     const before = m.buy + d;
     // The SAME helper the Accept button and the Adjust popup record through, so the three
@@ -660,10 +684,13 @@ export function OrderQtyLedger({
     const rounded = roundBuyQty(before, q);
     onDecide({
       ...(rounded > 0 ? { buy: rounded } : {}),
-      ...(m.stockQty > 0
+      // Only the BORROW is persisted as `stock`. S is the row's own pool, already inside
+      // the engine's net, so recording it would have the server net it a second time -
+      // and, with no `stock_takes` to name it, be refused as a mixture with one part.
+      ...(m.borrowedQty > 0
         ? {
             stock: {
-              qty: m.stockQty,
+              qty: m.borrowedQty,
               sources: stock.sources.map((s) => ({
                 warehouse_id: s.warehouse_id,
                 warehouse_code: s.warehouse_code,
@@ -710,7 +737,7 @@ export function OrderQtyLedger({
     if (forecastOn) commit({ stockOn, poOn, forecastOn, forecastQty: clamped, edits: sourceEdits });
   };
 
-  const noCoverAvailable = cover.coverQty <= 0 && poQty <= 0;
+  const noCoverAvailable = stockPart <= 0 && cover.coverQty <= 0 && poQty <= 0;
   const collapsed = buyBeforeRounding <= 0;
   const poLabel =
     poReceipts.length === 1 ? poReceipts[0].po_number : `${poReceipts.length} open orders`;
@@ -842,6 +869,16 @@ export function OrderQtyLedger({
               </p>
             ) : (
               <>
+                {/* S - the row's own site pool, stated in the order the need consumes it
+                    (own stock, then a borrow, then the open PO, then the buy). A FACT, not
+                    a toggle: the engine already spent it inside the net, so switching it
+                    off would be asking to buy what we are holding. */}
+                {stockPart > 0 ? (
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 truncate text-muted-foreground">Own stock</span>
+                    <span className="tabular-nums">{fmtInt(stockPart)}</span>
+                  </div>
+                ) : null}
                 {cover.coverQty > 0 ? (
                   <div className="space-y-1.5">
                     <ToggleLine

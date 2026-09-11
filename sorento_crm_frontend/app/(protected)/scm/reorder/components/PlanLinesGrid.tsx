@@ -510,13 +510,13 @@ export function PlanLinesGrid({
    */
   const readingFor = useCallback(
     (line: PlanLine) => {
-      const suggested = suggestedDecisionFor(line, coverFor?.(line) ?? NO_COVER, poFor?.(line) ?? []);
+      const suggested = suggestedDecisionFor(line);
       const { decision } = isGroupedLine(line)
         ? groupDecisionState(line.__group.members.map((m) => m.id), decisions)
         : { decision: decisions[line.id] };
       return planPillReading(edits[line.id], decision, suggested);
     },
-    [coverFor, poFor, decisions, edits],
+    [decisions, edits],
   );
 
   /** Open one of the six lightboxes on a row (plan 4.6). */
@@ -605,9 +605,6 @@ export function PlanLinesGrid({
                   />
                 </StopClick>
               </div>
-              <div className="truncate text-xs text-muted-foreground" title={row.original.product_name}>
-                {row.original.product_name}
-              </div>
             </div>
           );
         },
@@ -616,12 +613,7 @@ export function PlanLinesGrid({
         enableHiding: false,
         meta: {
           headerTitle: 'Product',
-          skeleton: (
-            <div className="space-y-1">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-3 w-24" />
-            </div>
-          ),
+          skeleton: <Skeleton className="h-4 w-32" />,
           // The decision itself (plan 4.4). `DataGridTable` renders this full-width below
           // any row whose `getIsExpanded()` is true, same mechanism as `POIntakeLinesGrid`'s
           // note panel. Every row can open it, and several can be open at once - Expand all
@@ -732,13 +724,20 @@ export function PlanLinesGrid({
       // class reads as retail and the SO import refuses a file that would create one (P4).
       {
         id: 'project_need',
-        accessorFn: (row) => row.rec.project_need ?? -1,
+        // The RAW open project demand (`project_committed`), never `project_need`.
+        // Since the one formula (PLAN-reorder-one-formula.md) `project_need` is the
+        // DISPLAY split of what is being BOUGHT, capped at the sized quantity - so it
+        // reads 0 on every covered row while the drill this cell opens lists that row's
+        // real orders. A column headed "Project demand", whose own title says "open the
+        // orders behind it", has to state the demand. The two are equal since P3 on any
+        // row that IS buying, so nothing moves on a buy row.
+        accessorFn: (row) => row.rec.project_committed ?? -1,
         header: ({ column }) => (
           <DataGridColumnHeader title="Project" visibility column={column} />
         ),
         cell: ({ row }) => (
           <ChannelNeed
-            value={row.original.rec.project_need}
+            value={row.original.rec.project_committed}
             title="Project demand - open the orders behind it"
             onOpen={() => openDialog('project', row.original)}
           />

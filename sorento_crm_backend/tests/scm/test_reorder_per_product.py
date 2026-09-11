@@ -344,9 +344,12 @@ def test_no_gap_buys_nothing_whatever_the_moq(scm_app):
 # --- AC-R7: no level, no guess ----------------------------------------------------------
 
 def test_a_product_with_no_level_anywhere_is_named_not_guessed_at(scm_app):
-    """AC-R7: no override and no master level is `needs_level`, carrying the suggestion,
-    and nothing is bought. The row names the PRODUCT, so accepting the suggestion writes
-    the product-wide level the next plan will read."""
+    """PLAN-reorder-one-formula.md (owner ruling, 11 Sep 2026): "no level = 0" - AC-R7's
+    OLD rule ("an unset level must never be planned as 0") is retired. A product with no
+    override and no master level plans against target 0, so a genuine shortage (net -5
+    here: 0 on hand against 5 committed) still buys - the row names the PRODUCT (product-
+    grain), carries `needs_level` true and the level suggestion (AC-R9's "Set AutoCount
+    level" nudge still fires), and `reorder_level` stays null - nothing was guessed at."""
     _, db, _, _ = scm_app
     _use_level_basis(db)
     a, a_code = _wh(db, "NLA")
@@ -367,17 +370,22 @@ def test_a_product_with_no_level_anywhere_is_named_not_guessed_at(scm_app):
 
     rows = _recs(db, _run(db, [a_code, b_code], code), pid)
 
-    assert not _buys(rows), "an unset level must never be planned as 0"
+    assert _buys(rows), "level 0 is breached by a genuine shortage (net -5)"
     row = _sizing_row(rows)
-    assert row["rec_type"] == "needs_level"
+    assert row["rec_type"] == "buy"
     assert row["warehouse_id"] is None, "the level to set is the product's, not a bin's"
+    assert row["inputs"]["reorder_level"] is None, "nothing was guessed at - still unset"
+    assert row["inputs"].get("needs_level") is True
     assert float(row["inputs"]["suggested_level"]) == 99.0
-    assert row["rounded_qty"] is None
+    assert float(row["rounded_qty"]) == 5.0
 
 
 def test_a_master_level_of_zero_is_not_a_level(scm_app):
-    """AC-R7: 0 is a real target that any deficit trips, so it would buy the whole
-    shortage on a number nobody chose."""
+    """PLAN-reorder-one-formula.md (owner ruling, 11 Sep 2026): a master level of 0 is
+    STILL not treated as a level anyone set (the AC-R7 rule the title names is unchanged -
+    `reorder_level` stays null, `needs_level` stays true), but "no level = 0" now means an
+    unset level plans against that SAME target 0 anyway - so the outcome is identical to a
+    genuinely-set level of 0: a 40-unit shortage (0 on hand, 40 committed) still buys."""
     _, db, _, _ = scm_app
     _use_level_basis(db)
     wid, wh_code = _wh(db, "NL0")
@@ -389,8 +397,12 @@ def test_a_master_level_of_zero_is_not_a_level(scm_app):
     db.flush()
 
     rows = _recs(db, _run(db, [wh_code], code), pid)
-    assert not _buys(rows)
-    assert _sizing_row(rows)["rec_type"] == "needs_level"
+    assert _buys(rows), "level 0 is breached by a genuine 40-unit shortage"
+    row = _sizing_row(rows)
+    assert row["rec_type"] == "buy"
+    assert row["inputs"]["reorder_level"] is None, "a master level of 0 is still not a level"
+    assert row["inputs"].get("needs_level") is True
+    assert float(row["rounded_qty"]) == 40.0
 
 
 # --- AC-R9: Set level writes the product row --------------------------------------------
@@ -626,9 +638,11 @@ def test_a_covered_rows_available_stock_is_the_pool_only(scm_app):
 # with the 914 dropped, even though CS already confirmed it.
 
 def test_a_confirmed_buy_is_bought_even_with_no_level_anywhere(scm_app):
-    """AC-1 / AC-2: no master level, no override, 914 confirmed unplaced Buy, a linked
-    supplier with no MOQ - the plan buys exactly 914, names the reason, and states the
-    level is still unset without also emitting a `needs_level` row beside the buy."""
+    """PLAN-reorder-one-formula.md AC-1/AC-2: no master level, no override, 914 confirmed
+    unplaced Buy, a linked supplier with no MOQ - the plan buys exactly 914 against level
+    0 ("no level = 0"), names the level-0 breach (not the retired "project buy" bypass
+    reason), and states the level is still unset without also emitting a `needs_level`
+    row beside the buy."""
     _, db, _, _ = scm_app
     _use_level_basis(db)
     wid, wh_code = _wh(db, "PB914")
@@ -647,7 +661,10 @@ def test_a_confirmed_buy_is_bought_even_with_no_level_anywhere(scm_app):
     row = _sizing_row(rows)
     assert row["rec_type"] == "buy"
     assert float(row["rounded_qty"]) == 914.0
-    assert (row["triggered_reason"] or "").startswith("project buy"), row["triggered_reason"]
+    reason = (row["triggered_reason"] or "").lower()
+    assert "project buy" not in reason, (
+        f"the level-0 breach must name itself, not the retired project-buy bypass: {reason}"
+    )
     assert float(row["inputs"]["project_need"]) == 914.0
     assert row["inputs"].get("needs_level") is True, (
         "the level is still unset - the panel keeps offering 'Set AutoCount level to N'"
@@ -659,12 +676,14 @@ def test_a_confirmed_buy_is_bought_even_with_no_level_anywhere(scm_app):
     assert float(summary["retail_replenishment_qty"]) == 0.0
 
 
-def test_no_level_with_retail_only_demand_still_asks_for_a_level_and_buys_nothing(scm_app):
-    """AC-3: a no-level product with ONLY retail-open-SO demand (no confirmed project Buy)
-    is unchanged - `needs_level`, no buy. Companion to
-    `test_a_product_with_no_level_anywhere_is_named_not_guessed_at`, seeded with a bare
-    committed retail line (no forecast demand rate) so the case is retail-only, not
-    retail-plus-forecast."""
+def test_no_level_with_retail_only_demand_buys_the_shortage_and_still_asks_for_a_level(scm_app):
+    """PLAN-reorder-one-formula.md (owner ruling, 11 Sep 2026): a no-level product with
+    ONLY retail-open-SO demand (no confirmed project Buy) now BUYS too - "no level = 0"
+    applies the same way regardless of which channel makes up the net. `needs_level`
+    stays true and the level suggestion still rides on the row (AC-R9's "Set AutoCount
+    level" nudge still fires) - it names itself unset, it does not stop the buy. Seeded
+    with a bare committed retail line (no forecast demand rate) so the case is
+    retail-only, not retail-plus-forecast."""
     _, db, _, _ = scm_app
     _use_level_basis(db)
     wid, wh_code = _wh(db, "RTLONLY")
@@ -677,9 +696,12 @@ def test_no_level_with_retail_only_demand_still_asks_for_a_level_and_buys_nothin
 
     rows = _recs(db, _run(db, [wh_code], code), pid)
 
-    assert not _buys(rows)
+    assert _buys(rows), "level 0 is breached by a genuine 40-unit retail shortage"
     row = _sizing_row(rows)
-    assert row["rec_type"] == "needs_level"
+    assert row["rec_type"] == "buy"
+    assert float(row["rounded_qty"]) == 40.0
+    assert row["inputs"]["reorder_level"] is None
+    assert row["inputs"].get("needs_level") is True
 
 
 def test_a_confirmed_buy_rounds_up_to_the_suppliers_moq_with_no_level(scm_app):
