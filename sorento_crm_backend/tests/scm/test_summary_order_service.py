@@ -1209,10 +1209,14 @@ def test_keying_a_product_with_no_decision_is_refused(db, chain):
 
 # --- PLAN-reorder-one-formula.md, S2/AC-9: Dealer o/s is the run's horizoned retail ----
 
-def _dated_retail_line(db, product, wh, qty, *, required_date):
+def _dated_retail_line(db, product, wh, qty, *, required_date, purchasing_status="pending"):
     """One open `retail`-class SO line at an explicit date - the SO-book leg `_demand_
-    aggregates` sums with no horizon at all, which is the figure AC-9 says must stop
-    being what `dealer_outstanding` freezes once the run carries the channel snapshot."""
+    aggregates` sums, which is the figure AC-9 says must stop being what
+    `dealer_outstanding` freezes once the run carries the channel snapshot.
+
+    `purchasing_status` so a caller can seed a line purchasing has already COVERED: the
+    plan's own committed figure excludes those (`demand.horizon_committed_select_sql`'s
+    book leg), so the aggregate beside it has to as well (SF-3)."""
     cust = Customer(id=_u(), customer_code=_code("C")[:30], customer_name="Dealer co")
     db.add(cust)
     db.flush()
@@ -1225,6 +1229,7 @@ def _dated_retail_line(db, product, wh, qty, *, required_date):
     db.add(SalesOrderLine(
         id=_u(), sales_order_id=so.id, product_id=product.id, warehouse_id=wh.id,
         qty_ordered=qty, qty_delivered=0, required_date=required_date, line_status="open",
+        purchasing_status=purchasing_status,
     ))
     db.flush()
 
@@ -1280,6 +1285,11 @@ def test_dealer_outstanding_is_the_runs_horizoned_retail(db):
     _dated_retail_line(db, product, wh, 170, required_date=date(2026, 6, 1))
     for _i in range(7):
         _dated_retail_line(db, product, wh, 173, required_date=date(2027, 3, 1))
+    # SF-3: in the window, open, and already COVERED by purchasing - so the plan's own
+    # committed figure does not contain it, and neither may the line count beside that
+    # figure. Counting it read "170 units across 2 lines".
+    _dated_retail_line(db, product, wh, 45, required_date=date(2026, 7, 1),
+                       purchasing_status="covered")
 
     created = rrs.create_run(
         db, [wh.warehouse_code], product_codes=[product.product_code], enqueue=False,
@@ -1315,8 +1325,9 @@ def test_dealer_outstanding_is_the_runs_horizoned_retail(db):
     # off an unhorizoned SO book stated "170 units across 8 lines", which is not a fact
     # about anything - the other 7 lines are the 1,211 units the window excluded.
     assert row.dealer_outstanding_line_count == 1, (
-        f"expected the 1 in-window retail line, got {row.dealer_outstanding_line_count} - "
-        "the 7 out-of-window lines were counted beside an in-window quantity"
+        f"expected the 1 in-window, not-yet-covered retail line, got "
+        f"{row.dealer_outstanding_line_count} - either the 7 out-of-window lines or the "
+        "covered one were counted beside a quantity that excludes them"
     )
 
 

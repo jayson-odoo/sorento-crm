@@ -724,13 +724,20 @@ export function PlanLinesGrid({
       // class reads as retail and the SO import refuses a file that would create one (P4).
       {
         id: 'project_need',
-        accessorFn: (row) => row.rec.project_need ?? -1,
+        // The RAW open project demand (`project_committed`), never `project_need`.
+        // Since the one formula (PLAN-reorder-one-formula.md) `project_need` is the
+        // DISPLAY split of what is being BOUGHT, capped at the sized quantity - so it
+        // reads 0 on every covered row while the drill this cell opens lists that row's
+        // real orders. A column headed "Project demand", whose own title says "open the
+        // orders behind it", has to state the demand. The two are equal since P3 on any
+        // row that IS buying, so nothing moves on a buy row.
+        accessorFn: (row) => row.rec.project_committed ?? -1,
         header: ({ column }) => (
           <DataGridColumnHeader title="Project" visibility column={column} />
         ),
         cell: ({ row }) => (
           <ChannelNeed
-            value={row.original.rec.project_need}
+            value={row.original.rec.project_committed}
             title="Project demand - open the orders behind it"
             onOpen={() => openDialog('project', row.original)}
           />

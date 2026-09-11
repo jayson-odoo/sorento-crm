@@ -71,6 +71,14 @@ export function hasRowEdit(edit: PlanRowEdit | undefined): boolean {
  *
  * Lifted out of the old decision cell so the pill, the panel and Confirm all read ONE
  * derivation - a button that says 14 and records 20 was the worse half of that bug.
+ *
+ * WARNING: the `stock` part this returns is the own-pool FACT, for DISPLAY only (it
+ * carries no `sources`, because the row's own pool is not a location it borrows from).
+ * It must never reach `decide()`: the server counts `stock_takes`, so a decision carrying
+ * a stock quantity nothing names is refused 422 as "a mixture needs more than one part".
+ * What is persisted is `{buy, po?, stock?}` where `stock` means a CROSS-LOCATION borrow
+ * with real sources - see `PlanRowPanel`, which reads this for the numbers it shows and
+ * builds what it saves separately.
  */
 export function suggestedDecisionFor(line: PlanLine): PlanDecision {
   const rawBuy = line.rec.recommended_qty ?? line.order_qty;

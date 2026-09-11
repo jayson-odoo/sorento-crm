@@ -363,7 +363,9 @@ describe('PlanLinesGrid - the six lightboxes (F1)', () => {
   });
 
   it('Project opens the project orders', () => {
-    renderGrid([line({ project_need: 4 })]);
+    // The column states the RAW open demand (`project_committed`), not the bought split -
+    // see the column's own note in PlanLinesGrid.tsx.
+    renderGrid([line({ project_committed: 4, project_need: 0 })]);
     openNumber(/^Project demand - open the orders behind it$/);
     expect(screen.getByRole('dialog')).toHaveTextContent('Project demand - SKU-1');
   });

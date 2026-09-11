@@ -515,6 +515,18 @@ def _belongs_on_the_book(recs: list, decision_grain: Optional[str]) -> bool:
     admission on that grain the same way would put roughly 4,000 undecidable rows on an
     unpaginated report and trip the export's own 2,000-row refusal - the exact fatigue
     AC-C2.2a exists to prevent, just relocated to the grain the owner was not asking about.
+
+    WHAT THE SECOND CLAUSE REACHES, since the one formula (PLAN-reorder-one-formula.md):
+    `exception` rows, and only those. `plan_basis.project_need` is now the DISPLAY split of
+    what the group SIZED (`_emit_cell` caps it at the sized quantity), so a covered
+    location-grain row carrying firm project demand reads 0 there and no longer earns a
+    Summary Order row - which is correct, because the one formula found its stock already
+    covers that demand and there is nothing to report buying. An `exception` still earns
+    one: it sized a real quantity and simply could not be sourced, and its basis says so
+    (`_emit_cell`'s exception branch passes `recommended`/`rounded`). Pinned by
+    `test_channel_read_model.py::test_project_need_is_netted_once_against_the_stock_that_covers_it`
+    (covered, no row) and `::test_confirmed_project_buy_survives_a_location_with_no_supplier`
+    (exception, a row stating 12).
     """
     if decision_grain == plan_grain.PRODUCT_GRAIN:
         return bool(recs)
@@ -581,7 +593,10 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     plan 5.3 and AC-E04 define it as and, since P3, the whole of project demand: the sheet
     leg the engine used to net alongside Retail is retired, and a sheet-origin project order
     nobody has decided is awaiting CS rather than part of any figure here. The open
-    project-class order book is separately visible as `project_demand` on the same row.
+    project-class order book is separately visible as `project_demand` on the same row -
+    the open book INSIDE THE RUN'S OWN WINDOW since SF-2, the same window `dealer_
+    outstanding` reports on, because two figures a reader compares side by side have to
+    cover the same period (`_demand_aggregates`).
     """
     buy_recs = [r for r in recs if r.rec_type == BUY_REC_TYPE]
     groups = _sizing_groups(recs)
@@ -1018,6 +1033,13 @@ def _demand_aggregates(
     beside it come from this function. Unhorizoned, the sheet read "170 units across 8
     lines" for a product whose window held exactly one of them.
 
+    The window narrows the PROJECT half too (`project_demand`, `project_demand_line_count`),
+    and that is deliberate: ONE window for the whole sheet. A reader comparing a project
+    figure against a retail figure on the same row has to be comparing the same period, and
+    a run that plans 2026 has no business reporting a 2027 order as demand it did nothing
+    about. On an unhorizoned run (both binds NULL) nothing narrows and every open line
+    counts, exactly as before.
+
     One query for the whole batch, split on the PERSISTED `sales_orders.demand_class`
     (front planning 5.2 / AC-E01). The class is the semantic owner: it is stamped by the
     import precedence (stored order type, stated order type, customer market segment, then
@@ -1033,12 +1055,22 @@ def _demand_aggregates(
     The stored columns keep their names (`dealer_*`); the API and the screens say retail,
     which is the user's word.
     """
+    # The SAME POPULATION as `demand.horizon_committed_select_sql`'s book leg, not merely
+    # the same dates (SF-3, review round 2): a line purchasing has already covered
+    # (`purchasing_status = 'covered'`) is out of the plan's own committed figure, so
+    # counting it here put a line on the sheet beside a quantity that excluded it. The
+    # outstanding quantity is `COALESCE(qty_required, qty_ordered) - qty_delivered` for
+    # the same reason - an amended line states its own required quantity, and reading
+    # `qty_ordered` alone reports the figure before the amendment.
+    outstanding = (
+        func.coalesce(SalesOrderLine.qty_required, SalesOrderLine.qty_ordered)
+        - func.coalesce(SalesOrderLine.qty_delivered, 0)
+    )
     query = (
         db.query(
             SalesOrderLine.product_id,
             SalesOrder.demand_class,
-            SalesOrderLine.qty_ordered,
-            SalesOrderLine.qty_delivered,
+            outstanding.label("outstanding"),
             SalesOrder.order_date,
         )
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
@@ -1046,7 +1078,8 @@ def _demand_aggregates(
             SalesOrderLine.product_id.in_(product_ids),
             SalesOrder.status == "open",
             SalesOrderLine.line_status == "open",
-            SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+            SalesOrderLine.purchasing_status != "covered",
+            outstanding > 0,
         )
     )
     if horizon is not None:
@@ -1073,7 +1106,7 @@ def _demand_aggregates(
                 "max_days_outstanding": None,
             },
         )
-        qty = float(r.qty_ordered or 0) - float(r.qty_delivered or 0)
+        qty = float(r.outstanding or 0)
         kind = _channel_of(r.demand_class)
         if kind == PROJECT_KIND:
             acc["project_qty"] += qty

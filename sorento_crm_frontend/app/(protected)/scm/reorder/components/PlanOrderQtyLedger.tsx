@@ -57,8 +57,9 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
  * would subtract it twice. Moving it stays a decision on the fulfilment board.
  *
  * Where the cover block does render, it reads and writes the SAME decision state the
- * Decision cell and the Adjust dialog use (`coverForLine` / `poOffset`, S16) - there is no
- * second model of what a line's buy is made of, and the toggle IS the edit (UAC B4).
+ * Decision cell and the Adjust dialog use (`coverForLine` + `composeMixture`, the one
+ * formula) - there is no second model of what a line's buy is made of, and the toggle IS
+ * the edit (UAC B4).
  */
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

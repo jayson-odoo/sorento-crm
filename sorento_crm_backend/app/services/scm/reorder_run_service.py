@@ -2377,7 +2377,8 @@ def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
     disp = c["disposition"]
     wid = str(row["warehouse_id"])
 
-    def _basis(shares: Optional[dict] = None, *, recommended=None, rounded=None) -> dict:
+    def _basis(shares: Optional[dict] = None, *, recommended=None, rounded=None,
+               cell: Optional[dict] = None) -> dict:
         """This cell's sizing group, in the ONE shape the product freeze reads.
 
         Per-warehouse scope makes every cell its own group: one location, sized on itself.
@@ -2385,9 +2386,16 @@ def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
         group, because its channel needs are a demand statement - the product row has to
         show them and the drill has to name the location - and it simply took no share of
         a buy, which is what the empty ``shares`` says.
+
+        ``cell`` is passed rather than closed over (review nit N-2): the caller REBINDS
+        ``c`` to a copy carrying the AC-F03 display split, and a closure reading the outer
+        name would silently pick up whichever binding happened to be current when it ran.
+        Every call site below passes the cell it means; the default keeps the one-argument
+        form honest for a caller that means "whatever `c` is now".
         """
-        return _plan_basis(wid, "location", [row], [c], shares or {},
-                           retail_need=float(c.get("retail_need") or 0.0),
+        cell = c if cell is None else cell
+        return _plan_basis(wid, "location", [row], [cell], shares or {},
+                           retail_need=float(cell.get("retail_need") or 0.0),
                            recommended=recommended, rounded=rounded)
 
     # G1 (product-grain admission, 2 Sep): the run only checked that the PRODUCT has
@@ -2431,7 +2439,7 @@ def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
         covered = _covered_rec(run_id, wid, [row], row, c,
                                moq=_fnum(c.get("moq")),
                                order_multiple=_fnum(c.get("order_multiple")),
-                               plan_basis=_basis())
+                               plan_basis=_basis(cell=c))
         if covered is not None:
             out.append(covered)
         return out
@@ -2446,7 +2454,7 @@ def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
                               order_qty=None, rounded=None,
                               reason_enum="needs_level",
                               reason_label=_needs_level_label(c),
-                              plan_basis=_basis()))
+                              plan_basis=_basis(cell=c)))
     elif c["triggered"] and rounded > 0:
         # A triggered cell whose order qty rounds to 0 (net already at/above order-up-to
         # once MOQ/multiple are applied) is NOT an actionable buy - "buy 0" is noise, so
@@ -2460,7 +2468,7 @@ def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
                                   # one thing to read rather than three.
                                   plan_basis=_basis({wid: rounded},
                                                     recommended=c["recommended"],
-                                                    rounded=c["rounded"])))
+                                                    rounded=c["rounded"], cell=c)))
         else:
             # The sharpest case for carrying a basis on a row that buys nothing: a
             # location holding CONFIRMED unplaced Project Buy with no linked supplier
@@ -2480,7 +2488,7 @@ def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
                                   order_qty=None, rounded=None,
                                   reason_label="no linked supplier - cannot source this reorder",
                                   plan_basis=_basis(recommended=c["recommended"],
-                                                    rounded=c["rounded"])))
+                                                    rounded=c["rounded"], cell=c)))
     else:
         # Stock covering the demand is a SUGGESTION, and writing nothing here would
         # silently decide "use stock" for the single-location case, which is most of the
@@ -2488,7 +2496,7 @@ def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
         covered = _covered_rec(run_id, wid, [row], row, c,
                                moq=_fnum(c.get("moq")),
                                order_multiple=_fnum(c.get("order_multiple")),
-                               plan_basis=_basis())
+                               plan_basis=_basis(cell=c))
         if covered is not None:
             out.append(covered)
 
