@@ -636,10 +636,14 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         # per page - a fresh run has decided none of them yet, but its planned figure
         # (by DISTINCT product, R14, the same rec types the decision layer decides on)
         # is known the moment generation finishes, off the rows already in hand.
+        # One scope (AC-12/AC-14, PLAN-reorder-one-formula.md): scoped to the same
+        # `hidden_by_default = false` rows `_refresh_run_counts`'s SQL and `_summarise`'s
+        # `recommendation_count` use, so the plans list's Decided denominator agrees with
+        # this run's own tile total instead of counting hidden-by-default rows too.
         from app.services.scm import decision_service as dsvc
         run.planned_count = len({
             str(r.product_id) for r in recs
-            if r.rec_type in dsvc._PLAN_ROW_DECIDABLE_TYPES
+            if r.rec_type in dsvc._PLAN_ROW_DECIDABLE_TYPES and not r.hidden_by_default
         })
         run.decided_count = 0
         run.confirmed_count = 0
@@ -2246,13 +2250,14 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     # the supplier's terms to one channel and not the other.
     retail_need, _unrounded = eng.order_qty(
         triggered, net=retail_net, oup=target, moq=None, order_multiple=None)
-    recommended = retail_need + project_need
-    if project_need > 0 and not triggered:
-        # Firm demand the netting never sees. Without this the location holds enough for
-        # Retail, nothing triggers, and a confirmed customer commitment is never bought.
-        triggered = True
-        reason_label = (f"project buy: {_qty_label(project_need)} confirmed unplaced Buy "
-                        f"at this location")
+    # One formula (S4, PLAN-reorder-one-formula.md): project is already inside `retail_net`
+    # (above), and `triggered`/`retail_need` were computed against THAT net, so the gap they
+    # return already covers both channels. A separate "project buy" bypass that added
+    # `project_need` again on top, and force-triggered whenever any project demand existed
+    # even with the location massively overstocked, double-counted it - deleted, matching the
+    # product-grain no-level row's formula (`need - on_hand - PO`, clipped at 0, never a
+    # second netting).
+    recommended = retail_need
     rounded = (eng.round_order_qty(recommended, moq, order_multiple)
                if triggered and recommended > 0 else 0.0)
     if not triggered:
