@@ -707,6 +707,14 @@ class SPODocumentLine(BaseModel):
         from_attributes = True
 
 
+class SPODocumentContainer(BaseModel):
+    """One distinct container over a document's visible lines (PLAN-spo-list-container-
+    number.md AC-1). `shipment_id` is null for a raw, unlinked
+    `spo_allocations.container_number`."""
+    container_number: str
+    shipment_id: Optional[str] = None
+
+
 class SPODocumentRow(BaseModel):
     """One SPO number's header row, as the document list renders it (AC-2, AC-15)."""
     #: The document's own key, echoed as `id` so the row satisfies the frontend pager's
@@ -729,6 +737,9 @@ class SPODocumentRow(BaseModel):
     line_count: int
     #: Max `overdue_days` over the document's OUTSTANDING lines; 0 when none are late.
     worst_overdue_days: int
+    #: Distinct containers over the document's visible lines, sorted by container
+    #: number (PLAN-spo-list-container-number.md AC-1/AC-2).
+    containers: List[SPODocumentContainer] = []
 
 
 class SPODocumentLinkagePackingList(BaseModel):

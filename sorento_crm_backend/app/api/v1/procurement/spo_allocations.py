@@ -169,7 +169,13 @@ async def get_spo_allocations_grouped_by_spo_number(
 async def get_spo_documents(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
-    query: Optional[str] = Query(None),
+    query: Optional[str] = Query(
+        None,
+        description=(
+            "SPO number, product code/name, warehouse code, shipment number, or "
+            "container number (linked shipment or raw spo_allocations.container_number)."
+        ),
+    ),
     state: str = Query("outstanding"),
     product_id: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),
@@ -180,7 +186,9 @@ async def get_spo_documents(
     db: Session = Depends(get_db),
 ):
     """Paged header rows grouped by `spo_number` (AC-11): one row per SPO document,
-    newest first by default, the fifth reader of `spo_supply.open_incoming_clauses()`."""
+    newest first by default, the fifth reader of `spo_supply.open_incoming_clauses()`.
+    `query` also matches the raw, unlinked `spo_allocations.container_number` (PLAN-
+    spo-list-container-number.md AC-4)."""
     try:
         service = SPOAllocationService(db)
         result = service.list_documents(
