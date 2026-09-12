@@ -1,9 +1,11 @@
 /**
- * The Was / Now table a changed line reads on its board cell (AC-P3-2, AC-P3-3, AC-P3-12).
+ * The Was / Now table a changed line reads on its board cell (AC-P3-2, AC-P3-3, AC-P3-12) and
+ * the suggestion printed under it (AC-C1).
  *
- * Three things are pinned here and nowhere else: a closed line still lands on a cell, the
- * batch's own reaction vocabulary never reaches a string a person reads, and the pre-mark
- * covers exactly the changed lines.
+ * Four things are pinned here and nowhere else: a closed line still lands on a cell, the
+ * retired reaction vocabulary (replan / retire / accept) never reaches a string a person
+ * reads, the engine's own composed sentences are carried through VERBATIM and in its order,
+ * and the pre-mark covers exactly the changed lines.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -82,8 +84,7 @@ function row(over: Partial<PlanningChangeRow>): PlanningChangeRow {
       },
       buy_actioned: { value: false, po_number: null },
     },
-    suggested: 'replan',
-    why: 'Advanced 6 days.',
+    suggestion: null,
     proposal: null,
     inquiry_rows: [],
     decision: null,
@@ -133,7 +134,6 @@ describe('the Was / Now table of a changed line', () => {
         kind: 'cancelled',
         from: { required_date: '2026-09-05', qty: '10', status: 'open' },
         to: { required_date: null, qty: null, status: 'closed' },
-        suggested: 'retire',
       }),
       'SO381895',
       'BRW-IB',
@@ -145,7 +145,7 @@ describe('the Was / Now table of a changed line', () => {
     expect(annotation.was.qty).toBe('10');
   });
 
-  it('never prints a reaction verb - the decision is in board words', () => {
+  it('never prints a retired reaction verb - the decision is in board words', () => {
     const annotation = annotationOf(
       row({
         held: {
@@ -155,16 +155,148 @@ describe('the Was / Now table of a changed line', () => {
           timely_spo_qty: '0',
           revision_no: 2,
         },
-        suggested: 'release',
+        suggestion: {
+          components: [
+            {
+              action: 'keep',
+              source: 'reserve',
+              qty_now: '40',
+              location: 'BRW-IB',
+              label: 'Keep 40',
+            },
+          ],
+        },
       }),
       'SO381895',
       'BRW-IB',
     );
     expect(annotation.was.decision).toBe('Use own location 40 from BRW-IB');
-    const printed = JSON.stringify(annotation);
-    for (const verb of ['keep', 'release', 'replan', 'reduce', 'retire']) {
-      expect(printed.toLowerCase()).not.toContain(`"${verb}"`);
+    // The machinery, not the suggestion: an action code, a decision value and the three
+    // retired verbs are all things the reader has no use for. `Keep 40` IS printed - it is
+    // the engine's own sentence about a component, which is the whole point of the row.
+    const printed = JSON.stringify(annotation).toLowerCase();
+    for (const word of ['replan', 'retire', 'accept', '"keep"', '"board"']) {
+      expect(printed).not.toContain(word);
     }
+    expect(annotation.suggestionLines).toEqual(['Keep 40']);
+  });
+
+  it('carries every composed sentence verbatim, in the order the engine wrote them (S2)', () => {
+    const annotation = annotationOf(
+      row({
+        kind: 'qty_down',
+        from: { required_date: '2026-09-04', qty: '234', status: 'open' },
+        to: { required_date: '2026-09-04', qty: '100', status: 'open' },
+        suggestion: {
+          components: [
+            {
+              action: 'reduce',
+              source: 'buy',
+              qty_was: '100',
+              qty_now: '0',
+              label: 'Reduce Buy 100 to 0',
+            },
+            {
+              action: 'keep',
+              source: 'po',
+              qty_was: '134',
+              qty_now: '100',
+              document: 'PO-A',
+              label: 'Keep PO-A 100 of 134',
+            },
+            {
+              action: 'reallocate',
+              source: 'po',
+              qty_now: '34',
+              document: 'PO-A',
+              target: 'SO420103 ORDER 50',
+              label: 'Reallocate PO-A 34 to SO420103 ORDER 50',
+            },
+          ],
+        },
+      }),
+      'SO403765',
+    );
+    expect(annotation.suggestionLines).toEqual([
+      'Reduce Buy 100 to 0',
+      'Keep PO-A 100 of 134',
+      'Reallocate PO-A 34 to SO420103 ORDER 50',
+    ]);
+  });
+
+  it('states lateness and shortfall as their own facts, not as a sentence to parse', () => {
+    const late = annotationOf(
+      row({
+        suggestion: {
+          components: [
+            { action: 'keep', source: 'po', qty_now: '134', document: 'PO-A', label: 'Keep PO-A 134' },
+          ],
+          late_days: 3,
+        },
+      }),
+      'SO401220',
+    );
+    expect(late.lateDays).toBe(3);
+    expect(late.shortfallQty).toBeNull();
+
+    const short = annotationOf(
+      row({
+        suggestion: {
+          components: [
+            { action: 'use_own', source: 'pool_share', qty_now: '90', location: 'BRW', label: 'Pool share 90 at BRW' },
+          ],
+          shortfall_qty: '44',
+        },
+      }),
+      'SO401220',
+    );
+    expect(short.shortfallQty).toBe('44');
+    expect(short.lateDays).toBeNull();
+  });
+
+  it('names the product a product_changed row used to be, and nothing on any other kind', () => {
+    const swapped = annotationOf(
+      row({
+        kind: 'product_changed',
+        item_code: 'B2155-NL-WHITE',
+        from: {
+          required_date: '2026-09-04',
+          qty: '134',
+          status: 'open',
+          item_code: 'B2155-NL-BLUE',
+        },
+        to: {
+          required_date: '2026-09-04',
+          qty: '134',
+          status: 'open',
+          item_code: 'B2155-NL-WHITE',
+        },
+      }),
+      'SO400875',
+    );
+    expect(swapped.productChangedFrom).toBe('B2155-NL-BLUE');
+    expect(swapped.itemCode).toBe('B2155-NL-WHITE');
+    expect(annotationOf(row({}), 'SO400875').productChangedFrom).toBeNull();
+  });
+
+  it('reads the Now decision off the pre-filled composition, ahead of the re-run proposal', () => {
+    // Slice C fills `composition` at build, and Amend edits THAT; printing the proposal
+    // ahead of it would show the engine's first answer over the planner's own.
+    const annotation = annotationOf(
+      row({
+        proposal: { sources: [{ kind: 'buy', qty: '25' }] } as never,
+        composition: {
+          project_line_id: 'pl-1',
+          timely_spo_qty: '0',
+          reserve: [{ warehouse_id: 'BRW-IB', qty: '25' }],
+          borrow: [],
+          buy_qty: '0',
+        },
+      }),
+      'SO381895',
+      'BRW-IB',
+    );
+    expect(annotation.now.decision).toBe('Use own location 25 from BRW-IB');
   });
 
   it('carries the moved-transfer phrase when the batch flagged one', () => {

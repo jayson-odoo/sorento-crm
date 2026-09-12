@@ -9,9 +9,11 @@
  *    never from its own content - `w-full` + `table-fixed` on the table, percentage column
  *    widths, `truncate` on anything that can run long (the SO number, a decision sentence).
  *    jsdom does not lay out CSS, so this is a class-level check, not a measured one.
- * 2. The batch's own reaction vocabulary - Keep / Release / Replan / Reduce / Retire - never
- *    reaches the screen at any width, because a planner reads supply in board words only
- *    (`boardChangeAnnotations.ts` module docstring, rule 1).
+ * 2. The retired reaction vocabulary - Replan / Retire / Accept - never reaches the screen at
+ *    any width, because a planner reads what the engine COMPOSED, not the name of a reaction
+ *    the row took to itself (`boardChangeAnnotations.ts` module docstring, rule 1; AC-C1).
+ *    Keep / Reduce / Release / Reallocate DO reach it: they are now the suggestion's own
+ *    words, printed verbatim from the server's sentence.
  */
 import React from 'react';
 import { render, screen, within } from '@testing-library/react';
@@ -34,6 +36,10 @@ function annotation(overrides: Partial<BoardChangeAnnotation> = {}): BoardChange
       date: '2026-08-19',
       decision: 'Use BRW 5 from BRW, 10 from WH3 . Borrow other location 10 from WH3-NTC',
     },
+    suggestionLines: ['Keep 10', 'Buy 15 for 19 Aug'],
+    lateDays: null,
+    shortfallQty: null,
+    productChangedFrom: null,
     movedTransfer: null,
     projectLineId: 'pl-381895-1',
     ...overrides,
@@ -106,11 +112,32 @@ describe('the Was / Now table at 375px', () => {
     expect(container.className).toMatch(/text-\[10px\]/);
   });
 
-  it('never renders the batch internal reaction words, at 375px or otherwise', () => {
+  it('never renders a retired reaction word, at 375px or otherwise', () => {
     render(<BoardChangeTable annotation={annotation()} />);
     const printed = screen.getByTestId('board-change-pcr-381895-1').textContent ?? '';
-    for (const verb of ['Keep', 'Release', 'Replan', 'Reduce', 'Retire']) {
+    for (const verb of ['Replan', 'Retire', 'Accept']) {
       expect(printed).not.toContain(verb);
     }
+    // What it DOES print is the engine's own sentence for each component.
+    expect(printed).toContain('Keep 10');
+  });
+
+  it('truncates every suggestion line rather than widening the cell it sits in', () => {
+    render(
+      <BoardChangeTable
+        annotation={annotation({
+          suggestionLines: [
+            'Reallocate PO-A 34 to SO420103 ORDER 50 at BRW-IB, a sentence long enough to run past any board cell',
+          ],
+        })}
+        compact
+      />,
+    );
+    const lines = screen.getAllByTestId('board-change-suggestion-line');
+    expect(lines).toHaveLength(1);
+    expect(lines[0].className).toMatch(/\btruncate\b/);
+    expect(lines[0].getAttribute('title')).toContain('Reallocate PO-A 34 to SO420103 ORDER 50');
+    // Still the 10px compact scale: the suggestion must not force a taller cell either.
+    expect(screen.getByTestId('board-change-pcr-381895-1').className).toMatch(/text-\[10px\]/);
   });
 });
