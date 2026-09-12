@@ -1,10 +1,8 @@
 # PLAN - Chatbot outstanding report: SO backlog and DO pending, one shape, four filters
 
-Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) BUILDING S1 to S3 from 12 Sep; S4 after #847 settles.
+Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) S1 to S3b BUILT and rebased onto `origin/main` 13 Sep; S4 brief being rewritten for main's own picker mechanism (owner ruling 13 Sep: this lane ships without #847).
 UAC: `chatbot-outstanding-report-acceptance-criteria.md` (AC-11xx).
-Base: stacked on `feat/chatbot-focus` (lane 1 of `PLAN-chatbot-focus-multi-domain.md`,
-issue #847), because the scope question and the detail pick are open-question kinds that
-mechanism owns. Branch `feat/chatbot-outstanding-report`, one PR, merged after #847.
+Base: `origin/main`. Owner ruling 13 Sep: ships without #847.
 Related: `PLAN-do-search-and-mcp-feedback-7sep.md` (built the `so_outstanding` bucket this
 plan stops using for the chatbot).
 
