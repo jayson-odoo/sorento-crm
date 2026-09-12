@@ -350,10 +350,9 @@ class TestNameClashAC5:
         by_ref = {r["source_ref"]: r for r in res.json()["records"]}
         assert by_ref[bad["source_ref"]]["outcome"] == "failed", by_ref[bad["source_ref"]]
         assert by_ref[good["source_ref"]]["outcome"] == "created", by_ref[good["source_ref"]]
-        # The failed record created nothing under its own code.
-        assert env.by_code("SORENTO", env.company_a) is None or env.by_code(
-            "SORENTO", env.company_a
-        )["brand_code"] == "SRT"
+        # The failed record created nothing under its own code - the only row
+        # is still the pre-existing SRT one, never a second "SORENTO" row.
+        assert env.by_code("SORENTO", env.company_a) is None
 
 
 # ============================================================================

@@ -199,3 +199,94 @@ class TestBackfillAndCleanup:
 
         assert first == company_a
         assert second == company_a
+
+
+# ============================================================ DDL shape (AC-16)
+class TestDDLShape:
+    """The kill test the reviewer named: neither test above notices if the
+    index swap in `apply()` is deleted outright - a backfill can run to
+    completion against a table that still carries only the old GLOBAL unique.
+    Asserted directly against the real catalogue on `bind`'s own connection
+    (plain `public`, no scratch schema in this file - see the module
+    docstring), so a stubbed-out DDL statement fails one of these, not just
+    silently passes the behavioural tests above.
+    """
+
+    def _indexes(self, bind) -> dict[str, str]:
+        rows = bind.execute(
+            text(
+                "SELECT indexname, indexdef FROM pg_indexes "
+                "WHERE tablename = 'integration_references'"
+            )
+        ).all()
+        return {row[0]: row[1] for row in rows}
+
+    def _column_nullable(self, bind, column: str) -> str:
+        return bind.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'integration_references' AND column_name = :c"
+            ),
+            {"c": column},
+        ).scalar()
+
+    def _fk_delete_rule(self, bind, column: str) -> str:
+        """`confdeltype` for the FK on ``column`` - 'c' is CASCADE."""
+        return bind.execute(
+            text(
+                """
+                SELECT con.confdeltype
+                FROM pg_constraint con
+                JOIN pg_attribute att
+                  ON att.attrelid = con.conrelid AND att.attnum = ANY(con.conkey)
+                WHERE con.conrelid = 'integration_references'::regclass
+                  AND con.contype = 'f'
+                  AND att.attname = :c
+                """
+            ),
+            {"c": column},
+        ).scalar()
+
+    def test_apply_swaps_the_global_unique_for_two_partial_ones(self, bind):
+        mig = _load_migration()
+        # This DATABASE already carries a real, permanent post-migration
+        # schema (its own `alembic_version` is at this revision) - so
+        # asserting straight after `apply()` would pass even with `apply()`
+        # gutted, because the shape it is "creating" already exists for real
+        # and outlives this test's rolled-back transaction. `revert()` first
+        # (safe: the table is empty, no unique-violation risk) puts THIS
+        # transaction back to the pre-migration shape, so `apply()` is the
+        # only thing that can produce the shape asserted below.
+        mig.revert(bind)
+        mig.apply(bind)
+
+        indexes = self._indexes(bind)
+        assert "uq_integration_ref_source" not in indexes, (
+            "the old GLOBAL unique must be gone, or a company-B row can still "
+            "collide with company-A's own claim on the same source_ref"
+        )
+        assert "uq_integration_ref_source_company" in indexes
+        assert "company_id IS NOT NULL" in indexes["uq_integration_ref_source_company"]
+        assert "uq_integration_ref_source_shared" in indexes
+        assert "company_id IS NULL" in indexes["uq_integration_ref_source_shared"]
+
+    def test_apply_adds_a_nullable_company_id_with_a_cascade_fk(self, bind):
+        mig = _load_migration()
+        # Same reset as above - this database's `company_id` column and its
+        # FK already exist for real, independent of this test's own call.
+        mig.revert(bind)
+        mig.apply(bind)
+
+        assert self._column_nullable(bind, "company_id") == "YES"
+        assert self._fk_delete_rule(bind, "company_id") == "c"
+
+    def test_revert_restores_the_global_unique(self, bind):
+        mig = _load_migration()
+        mig.revert(bind)  # start from the pre-migration shape, for the same reason
+        mig.apply(bind)
+        mig.revert(bind)
+
+        indexes = self._indexes(bind)
+        assert "uq_integration_ref_source" in indexes
+        assert "uq_integration_ref_source_company" not in indexes
+        assert "uq_integration_ref_source_shared" not in indexes

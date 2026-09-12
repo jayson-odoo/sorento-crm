@@ -196,10 +196,17 @@ class TestPerCompanyUniqueness:
 # =============================================== index-name assertions (AC-16/17)
 class TestIndexShape:
     def test_the_two_partial_indexes_exist_and_the_global_one_is_gone(self, db):
+        # schemaname = current_schema(): blank_session's SET LOCAL search_path
+        # puts the scratch schema first, so this pins the MODEL's own
+        # declaration - unfiltered, the same names on the REAL public table
+        # would satisfy the assertion even if the model declared none of this.
         names = {
             row[0]
             for row in db.execute(
-                text("SELECT indexname FROM pg_indexes WHERE tablename = 'integration_references'")
+                text(
+                    "SELECT indexname FROM pg_indexes WHERE tablename = 'integration_references' "
+                    "AND schemaname = current_schema()"
+                )
             )
         }
         assert "uq_integration_ref_source_company" in names
