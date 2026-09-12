@@ -1,0 +1,96 @@
+# Console case for the chatbot outstanding report (SO backlog + DO pending).
+#
+# `documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` S4 point 12 /
+# `chatbot-outstanding-report-acceptance-criteria.md` AC-1137 (the "Journey" section,
+# verbatim - six messages, one owner-facing conversation).
+#
+# NOT collected by pytest. Run with `scripts/chatbot_console_check.py` against the lane
+# stack once S4 is green (`documentation/agents/chatbot-verification.md`):
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-13-outstanding-report.yaml --base-url http://127.0.0.1:8004
+#
+# THE CODES ARE THE PLAN'S OWN EXAMPLES, not yet verified against a real database (this
+# lane has no SO/DO data seeded on the local prod copy as of 13 Sep 2026 - the S2 route's
+# own tests seed their own rows). Per the standing convention (see 2026-09-07-growth-r1.yaml's
+# own header), the coder running this for real MUST first confirm the product code carries
+# both open SO lines and DO rows on the lane stack's database (a SQL probe like the one
+# above each growth-r1 case), and substitute a real code/customer/location if
+# `SRTWT7443`/`SRTWT7445`/"Dealer A" do not resolve to anything - a case naming a code the
+# database does not hold grades the miss lane, not this one.
+#
+# The contact must hold `sales_orders.outstanding` (Contacts > Access > Field reveals) for
+# turns 1-5; AC-1140/AC-1141's "no key" cases are graded separately, by the pytest suite
+# (`tests/chatbot/test_outstanding_lane.py`), not here - a console contact's grants are the
+# owner's own and this file does not flip them mid-run.
+contact: "437264483"
+
+cases:
+  - name: outstanding report journey - SO direct ask, missing-scope question, both, detail, customer filter, miss
+    cold: true
+    turns:
+      # 1. Direct SO ask with a location suffix and no date - one reply, no question.
+      - text: "Srtwt7443 sales order outstanding for IB"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "SRTWT7443"
+            - "Location: IB"
+            - "Order date: all"
+            - "Sales order outstanding"
+            - "Outstanding:"
+            - "1. Sales order list"
+          reply_not_contains: ["Outstanding for which document?"]
+          no_uuid: true
+
+      # 2. Bare "outstanding" with a year - the scope question, nothing else.
+      - text: "SRTWT7445 outstanding in 2026"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "Outstanding for which document?"
+            - "1. Sales orders"
+            - "2. Delivery orders"
+            - "3. Both"
+          reply_not_contains: ["Sales order outstanding", "Delivery order pending"]
+          no_uuid: true
+          pending_kind: outstanding_scope
+
+      # 3. "3" answers the scope question - both blocks, carried dates/product.
+      - text: "3"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "SRTWT7445"
+            - "01/01/2026 to 31/12/2026"
+            - "Sales order outstanding"
+            - "Delivery order pending"
+            - "1. Sales order list"
+            - "2. Delivery order list"
+          no_uuid: true
+          pending_kind: outstanding_detail
+
+      # 4. "1" answers the detail offer - every matching SO, one row per SO.
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SO Number:", "Ordered:", "Transferred to DO:", "Outstanding:", "Order Date:"]
+          reply_not_contains: ["+", "more"]
+          no_uuid: true
+
+      # 5. A fresh ask, customer filter by name.
+      - text: "Dealer A outstanding SRTWT7445"
+        cold: true
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWT7445", "Dealer A"]
+          no_uuid: true
+
+      # 6. A miss - same header shape, one line per empty scope, then the existing
+      # escalate offer (AC-1107).
+      - text: "SRTWT9999 outstanding"
+        cold: true
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWT9999", "No open sales order", "No pending delivery order"]
+          no_uuid: true

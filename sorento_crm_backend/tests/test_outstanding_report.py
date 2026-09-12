@@ -544,7 +544,33 @@ def test_route_permission_and_api_key_act_as(db):
         app.dependency_overrides.clear()
 
 
-# --------------------------------------------------------------------- AC-1119
+# --------------------------------------------------------------------------- AC-1113b
+
+
+def test_customer_ids_filters_report(client, db):
+    """`customer_ids` (csv of `customers.id`) filters the same way `customer_query` does -
+    the chatbot lane sends the resolved customer entity's id, never the debtor code.
+    `customer_query` and `customer_ids` together intersect (S4 point 9 / AC-1113b)."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    match = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Customer Ids Match")
+    other = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Customer Ids Other")
+
+    _so_line(db, product_id=prod.id, ordered=10, delivered=0, customer_id=match.id)
+    _so_line(db, product_id=prod.id, ordered=25, delivered=0, customer_id=other.id)
+    db.commit()
+
+    resp = client.get(
+        BASE, params={"product_code": prod.product_code, "scope": "so", "customer_ids": match.id}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["so"]["ordered_qty"] == 10, (
+        f"customer_ids must filter the report the same way customer_query does: {body}"
+    )
+    assert {row["customer_name"] for row in body["so_by_customer"]} == {"ZZT Customer Ids Match"}
+
+
+# --------------------------------------------------------------------------- AC-1119
 
 
 def test_product_code_exact_no_siblings(client, db):
