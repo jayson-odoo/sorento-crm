@@ -1,6 +1,6 @@
 # PLAN - AutoCount `brands` ingest entity (contract 2.3)
 
-**Status:** BUILT 2026-09-12 (owner go; grilled x2 on Opus). Phase 3 review + security review done; fix round in flight; PR next.
+**Status:** PR #840 OPEN 2026-09-12 (owner go; grilled x2 on Opus; reviewer + security review clean; 340 tests green). Awaiting owner merge.
 
 **UAC:** `autocount-brands-ingest-acceptance-criteria.md` (alongside).
 **Origin:** cross-session brief from foundryx-shared-service-57, their plan
