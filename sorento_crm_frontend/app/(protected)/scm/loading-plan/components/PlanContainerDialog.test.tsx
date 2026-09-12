@@ -106,12 +106,15 @@ describe('PlanContainerDialog', () => {
     deleteLoadingPlan.mockResolvedValue(undefined);
   });
 
-  it('asks for the supplier, the sales order cut-off and the document, and nothing else', async () => {
+  it('asks for the supplier, the sales orders needed window and the document, and nothing else', async () => {
     renderDialog();
 
     expect(screen.getByRole('heading', { name: 'Plan a container' })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: /Supplier/i })).toBeTruthy();
-    expect(screen.getByLabelText('Sales order cut-off')).toBeTruthy();
+    // AC-N7: the cut-off is a From/To window now, worded like reorder planning's own.
+    expect(screen.getByText('Sales orders needed')).toBeTruthy();
+    expect(screen.getByLabelText('From')).toBeTruthy();
+    expect(screen.getByLabelText('To')).toBeTruthy();
     expect(screen.getByText('Empty = every open order counts.')).toBeTruthy();
     for (const kind of ['Stock list', 'Proforma invoice', 'No file']) {
       expect(screen.getByLabelText(kind)).toBeTruthy();
@@ -149,6 +152,7 @@ describe('PlanContainerDialog', () => {
     await waitFor(() =>
       expect(createLoadingPlanRecord).toHaveBeenCalledWith({
         supplier_id: 'sup-1',
+        plan_horizon_start: null,
         plan_horizon_date: null,
         document_kind: 'none',
         source_attachment_id: null,
@@ -159,19 +163,21 @@ describe('PlanContainerDialog', () => {
     expect(applyStockList).not.toHaveBeenCalled();
   });
 
-  it('carries the chosen cut-off onto the plan it creates', async () => {
+  it('carries the chosen window onto the plan it creates', async () => {
     renderDialog();
     fireEvent.click(screen.getByLabelText('No file'));
     await chooseSupplier();
-    fireEvent.change(screen.getByLabelText('Sales order cut-off'), {
-      target: { value: '2026-09-30' },
-    });
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-09-01' } });
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-09-30' } });
 
     fireEvent.click(screen.getByTestId('plan-container-confirm'));
 
     await waitFor(() =>
       expect(createLoadingPlanRecord).toHaveBeenCalledWith(
-        expect.objectContaining({ plan_horizon_date: '2026-09-30' }),
+        expect.objectContaining({
+          plan_horizon_start: '2026-09-01',
+          plan_horizon_date: '2026-09-30',
+        }),
       ),
     );
   });
@@ -213,6 +219,7 @@ describe('PlanContainerDialog', () => {
     await waitFor(() =>
       expect(createLoadingPlanRecord).toHaveBeenCalledWith({
         supplier_id: 'sup-1',
+        plan_horizon_start: null,
         plan_horizon_date: null,
         document_kind: 'stock_list',
         // The server points the plan at the sheet while it retains it, so the dialog has

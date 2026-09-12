@@ -136,6 +136,7 @@ const PLAN: LoadingPlanRecord = {
   supplier_name: 'CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD',
   supplier_email: 'sales@jinbaichuan.cn',
   started_at: '2026-08-27T14:02:00',
+  plan_horizon_start: null,
   plan_horizon_date: '2026-09-30',
   document_kind: 'stock_list',
   document_label: 'Stock list 27/07/2026',
@@ -279,7 +280,9 @@ describe('LoadingPlanView (the record)', () => {
     ).toBeTruthy();
     const subtitle = screen.getByTestId('plan-subtitle').textContent ?? '';
     expect(subtitle).toContain('Started');
-    expect(subtitle).toContain('SO cut-off 30/09/2026');
+    // AC-N7: the window is worded like reorder planning's own (`describeWindow`); no start
+    // on this plan's fixture, so it reads as an end-only window.
+    expect(subtitle).toContain('up to 30/09/2026');
     expect(subtitle).toContain('Stock list 27/07/2026');
     // The state pill, not the sidebar crumb that also reads "Planning".
     expect(
@@ -470,12 +473,15 @@ describe('LoadingPlanView (the record)', () => {
     renderView();
 
     fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
-    const input = await screen.findByLabelText('Sales order cut-off');
-    fireEvent.change(input, { target: { value: '2026-10-31' } });
+    const to = await screen.findByLabelText('To');
+    fireEvent.change(to, { target: { value: '2026-10-31' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Save cut-off' })[0]);
 
     await waitFor(() =>
-      expect(changeCutOff).toHaveBeenCalledWith('2026-10-31', expect.anything()),
+      expect(changeCutOff).toHaveBeenCalledWith(
+        { plan_horizon_start: null, plan_horizon_date: '2026-10-31' },
+        expect.anything(),
+      ),
     );
   });
 
