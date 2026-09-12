@@ -133,17 +133,13 @@ def derive_routing(out: dict) -> dict:
     # separately (query_brands / brand entity), never in the team name.
     if domain == "promotion":
         return {"suggested_team": "marketing_promotion", "suggested_agent": "general_enquiries"}
-    # Growth r1 A5 (AC-907). A PO question is a PURCHASING question, the same team
-    # `master_products` and `incoming` already route to - a supplier order is what that team
-    # placed. Replay-safe by construction: `purchase_order` is a domain this plan invents, so
-    # no captured turn can carry it and no fixture's routing can move.
-    if domain == "purchase_order":
-        return {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
-    # PLAN-chatbot-last-purchase-cost.md: same team as every other purchasing read
-    # (`master_products`, `incoming`, `purchase_order`) - a purchase cost is a
-    # purchasing question. Replay-safe by construction: `purchase_cost` is a domain
-    # this plan invents, so no captured turn can carry it.
-    if domain == "purchase_cost":
+    # Growth r1 A5 (AC-907) / PLAN-chatbot-last-purchase-cost.md (review N4, collapsed
+    # from two identical branches). A PO question and a purchase-cost question are both
+    # PURCHASING questions, the same team `master_products` and `incoming` already route
+    # to - a supplier order (or its cost) is what that team placed. Replay-safe by
+    # construction: both domains are inventions of their own plans, so no captured turn
+    # can carry either and no fixture's routing can move.
+    if domain in ("purchase_order", "purchase_cost"):
         return {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
     # ideate: no CS team (an idea is captured, never escalated) but its OWN access agent.
     # This is the SINGLE source of truth for the ideate agent: check-access keys on

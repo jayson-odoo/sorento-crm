@@ -24,9 +24,11 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-#: (chatbot-last-purchase-cost) registered BEFORE `/{po_id}` for the same reason
-#: `/placed` is - Starlette matches routes in registration order and a bare-uuid path
-#: parameter would swallow "last-cost" as an id.
+#: (chatbot-last-purchase-cost, review N1) registered ahead of `/placed` below. This
+#: router carries no `/{po_id}`-shaped route today, so there is nothing for "last-cost"
+#: to collide with yet - the placement is precautionary, matching `/placed`'s own
+#: position, so a future bare-uuid route added to this router cannot swallow it by
+#: registration order (Starlette matches in the order routes are added).
 @router.get("/last-cost")
 def get_purchase_orders_last_cost(
     product_ids: Optional[list[str]] = Query(
