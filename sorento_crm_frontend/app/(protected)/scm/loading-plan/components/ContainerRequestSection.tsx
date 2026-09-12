@@ -794,9 +794,11 @@ export function ContainerRequestSection({
     );
   }
 
-  // AC-A1: the "no stock list yet" card is GONE. The plan is built from what we buy from
-  // this supplier crossed with what customers are owed, so a supplier who has never sent a
-  // stock list still gets a table; "They hold" reads their newest proforma, or a dash.
+  // AC-A1: the "no stock list yet" card is GONE. A plan with a file on it (stock list or
+  // proforma) lists what the file names; a plan with none lists what we buy from this
+  // supplier crossed with what customers are owed (the file-or-links rule, 12 Sep 2026), so a
+  // supplier who has never sent a stock list still gets a table; "They hold" reads their
+  // newest proforma, or a dash.
   if (!build.data || rows.length === 0) {
     return (
       <div className="space-y-4">

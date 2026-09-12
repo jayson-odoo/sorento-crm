@@ -9,10 +9,13 @@ supplier reverts with a packing list does CBM matter, and that stage is unchange
 
 Two moves, two functions:
 
-* `build` - a pure read. The candidate product set comes off the supplier's current stock
-  list (`SupplierInventory` is a full-replace snapshot, so "current" already means "latest" -
-  there is nothing to pick a most-recent-of), the quantity to ask for off the outstanding
-  sales-order book, and the order off the ACTIVE Fulfilment Priority policy through
+* `build` - a pure read. The candidate product set is the statement on file when there is one
+  (the supplier's current stock list or proforma - `SupplierInventory` is a full-replace
+  snapshot, so "current" already means "latest" - there is nothing to pick a most-recent-of),
+  and the `product_suppliers` sourcing links alone when there is none (`_linked_products`,
+  never both - the file-or-links rule, 12 Sep 2026,
+  `PLAN-scm-loading-plan-lines-feedback-12sep.md`). The quantity to ask for comes off the
+  outstanding sales-order book, and the order off the ACTIVE Fulfilment Priority policy through
   `priority.factors_for_demand_rows` - the same call the fulfilment board makes, so a product
   cannot rank differently on the two screens (AC-H5).
 
@@ -68,7 +71,6 @@ from app.models.scm import (
     ProformaInvoice,
     ProformaInvoiceLine,
     SupplierInventory,
-    SupplierProductCodeAlias,
 )
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
@@ -243,28 +245,19 @@ def _aggregate_stock(rows: list) -> tuple[Optional[Any], dict[str, dict]]:
 
 
 def _linked_products(db: Session, supplier_id: str) -> set[str]:
-    """Every product we buy from this supplier - the universe's first leg (F1, AC-A1).
+    """Every product we buy from this supplier - the no-file universe, whole.
 
     `product_suppliers` is the sourcing link the reorder engine already reads, so "what does
     this supplier make for us" has one answer across the module. Company scope comes free:
     the ORM's loader criteria apply to `Product`, and a link to a foreign company's product
     therefore names nothing here.
 
-    Without this leg the universe was the supplier's stock list ALONE, which is why a
-    supplier who had never sent one produced an empty screen on the very page that exists to
-    say what to ask them for.
-
-    UNIONED with the supplier's remembered codes (AC-E0): once somebody has ruled that this
-    supplier's `SRTWC8354-SH` is our product, that ruling is a statement of what they make,
-    and it has to outlive the file it was answered on - otherwise a plan with no statement of
-    its own (S6) forgets every code the supplier has ever been matched on. A DISMISSED code
-    names nothing and is excluded.
-
-    A code ruled onto one of our SETS (AC-D3) is not a product id itself, so it joins through
-    the set's DRIVER - the same member whose figures a statement-named set row reads (R19).
-    Without this leg, ruling a code onto a set the supplier has never shipped a stock row for
-    left the driver, and therefore the whole set, out of the universe entirely: the ruling
-    was on file but nothing on screen ever asked about it.
+    Read ONLY when the plan has no statement on file (captain, 12 Sep 2026, the file-or-links
+    rule in `PLAN-scm-loading-plan-lines-feedback-12sep.md`). It used to be unioned into
+    every build, and unioned with the supplier's remembered codes (the old AC-E0 / AC-D3),
+    so a plan with a file on it listed products the file never named - "too confusing", in
+    the captain's words. An alias binds a file's code to our product; it is no membership
+    of its own any more.
     """
     rows = (
         db.query(ProductSupplier.product_id)
@@ -272,32 +265,7 @@ def _linked_products(db: Session, supplier_id: str) -> set[str]:
         .filter(ProductSupplier.supplier_id == supplier_id)
         .all()
     )
-    aliased = (
-        db.query(SupplierProductCodeAlias.product_id)
-        .join(Product, Product.id == SupplierProductCodeAlias.product_id)
-        .filter(
-            SupplierProductCodeAlias.supplier_id == supplier_id,
-            SupplierProductCodeAlias.product_id.isnot(None),
-        )
-        .all()
-    )
-    aliased_set_ids = [
-        str(r.product_set_id)
-        for r in db.query(SupplierProductCodeAlias.product_set_id)
-        .filter(
-            SupplierProductCodeAlias.supplier_id == supplier_id,
-            SupplierProductCodeAlias.product_set_id.isnot(None),
-        )
-        .all()
-    ]
-    from app.services.product_set_service import driver_members
-
-    drivers = driver_members(db, aliased_set_ids) if aliased_set_ids else {}
-    return (
-        {str(r.product_id) for r in rows}
-        | {str(r.product_id) for r in aliased}
-        | {str(member.product_id) for member in drivers.values()}
-    )
+    return {str(r.product_id) for r in rows}
 
 
 def _standin_proforma(db: Session, supplier_id: str) -> Optional[dict]:
@@ -1403,11 +1371,17 @@ def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) ->
 
 def _statement(
     db: Session, supplier_id: str, plan: Optional[Any]
-) -> tuple[Optional[Any], dict[str, dict], Optional[dict]]:
-    """What this build reads as "what they hold": `(as_of, stock rows, proforma)`.
+) -> tuple[Optional[Any], dict[str, dict], Optional[dict], bool]:
+    """What this build reads as "what they hold": `(as_of, stock rows, proforma, on_file)`.
 
     THE UNIVERSE's statement leg (F1, AC-A1). One statement, never two, because the stock
     list and the proforma answer the same question about the same warehouse.
+
+    `on_file` decides the UNIVERSE (12 Sep 2026, the file-or-links rule): a statement on file,
+    bound or not, IS the ask, and a plan with none asks about what `product_suppliers` says we
+    buy from this supplier instead - never both. A plan whose rows all bound to nothing HAS a
+    statement that names none of ours, so its ask is empty rows, not a fall-through to the
+    sourcing links.
 
     A PLAN reads its OWN rows and nothing else (S6, AC-F4/AC-F6): the stock list it was
     started from for `stock_list`, the invoices its upload created for `proforma`, and NOTHING
@@ -1430,19 +1404,20 @@ def _statement(
     """
     if plan is None:
         as_of, stock = _stock_list(db, supplier_id)
-        return as_of, stock, (_standin_proforma(db, supplier_id) if not stock else None)
+        proforma = _standin_proforma(db, supplier_id) if not stock else None
+        return as_of, stock, proforma, bool(stock) or proforma is not None
 
     kind = plan.document_kind
     if kind == "stock_list":
         if plan_statement.has_stock_rows(db, str(plan.id)):
             as_of, stock = _plan_stock_list(db, plan)
-            return as_of, stock, None
+            return as_of, stock, None, True
     elif kind == "proforma":
         if plan_statement.has_invoices(db, str(plan.id)):
-            return None, {}, _plan_proforma(db, plan)
+            return None, {}, _plan_proforma(db, plan), True
     else:
         # "No file" is a real answer, not a missing one: this plan reads no statement.
-        return None, {}, None
+        return None, {}, None, False
 
     # Legacy: nothing of this plan's own is on file. `loading_plan_id` routes the read
     # through `plan_statement.stock_scope`, which - because `has_stock_rows` above already
@@ -1450,7 +1425,8 @@ def _statement(
     # rather than every row on file for the supplier, so a newer plan's stamped snapshot for
     # the same code cannot double-count into this one.
     as_of, stock = _stock_list(db, supplier_id, loading_plan_id=str(plan.id))
-    return as_of, stock, (_standin_proforma(db, supplier_id) if not stock else None)
+    proforma = _standin_proforma(db, supplier_id) if not stock else None
+    return as_of, stock, proforma, bool(stock) or proforma is not None
 
 
 def build(
@@ -1495,7 +1471,7 @@ def build(
     and the horizon does not disturb it: every side applies it identically.
     """
     _supplier(db, supplier_id)
-    as_of, stock, proforma = _statement(db, supplier_id, plan)
+    as_of, stock, proforma, on_file = _statement(db, supplier_id, plan)
     stock_list_as_of = as_of.isoformat() if as_of else None
     holdings = _holdings(stock, proforma)
     holding_source = "stock_list" if stock else "proforma" if proforma else "none"
@@ -1510,9 +1486,12 @@ def build(
     driver_ids = {entry["driver_product_id"] for entry in sets.values()}
 
     product_holdings = {k: v for k, v in holdings.items() if _set_id_of(k) is None}
-    universe = (
-        _linked_products(db, supplier_id) | set(product_holdings) | driver_ids
-    ) - {None}
+    # The file-or-links rule (captain, 12 Sep 2026): a statement on file IS the ask, and a
+    # plan with none asks about what `product_suppliers` says we buy from them. Never both.
+    if on_file:
+        universe = (set(product_holdings) | driver_ids) - {None}
+    else:
+        universe = _linked_products(db, supplier_id)
     need = _open_need(db, universe, horizon=plan_horizon_date,
                       horizon_start=plan_horizon_start)
     project = _project_open_need(db, universe, horizon=plan_horizon_date,
