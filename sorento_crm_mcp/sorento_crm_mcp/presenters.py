@@ -54,6 +54,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_procurement_po_placed_list",
         "crm_procurement_spo_allocations_last_receipt_list",
         "crm_procurement_po_last_cost_list",
+        "crm_outstanding_report",
     }
 )
 
@@ -1530,6 +1531,23 @@ def present_response(tool_name: str, raw: str) -> str:
         return raw
     if not isinstance(data, dict):
         return raw
+
+    # S4 point 5 (AC-1114b): `crm_outstanding_report` never goes through the
+    # generic item/field envelope below - the report's shape (two named
+    # blocks, each with its own By location / By customer subgroup, D6) has no
+    # row list to build items from. A `detail` key on the payload is the SAME
+    # "payload-keyed presenter swap" the `so_outstanding` bucket already uses
+    # a few lines down (`data.get("order_status") == "so_outstanding"`):
+    # present, it swaps in `_outstanding_detail` for that scope; absent, the
+    # report itself. Both return the presenter's PLAIN TEXT directly, not an
+    # envelope - the chatbot lane's own `output_structurer` special-cases this
+    # tool name and uses that text as the reply verbatim
+    # (`app/services/chatbot/lanes/business/fetch.py`).
+    if tool_name == "crm_outstanding_report":
+        detail = data.get("detail")
+        if detail in ("so", "do"):
+            return _outstanding_detail(data, detail)
+        return _outstanding_report(data)
 
     rows = data.get("data")
     if not isinstance(rows, list):

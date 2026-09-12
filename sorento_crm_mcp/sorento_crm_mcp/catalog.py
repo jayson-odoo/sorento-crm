@@ -627,23 +627,28 @@ CATALOG: tuple[ToolSpec, ...] = (
             "rolled up).\n\n"
             "FILTERS: `product_code` (REQUIRED, exact, case-insensitive - no sibling-code expansion). "
             "`customer_query` - partial match on customer NAME only (never debtor/customer code). "
+            "`customer_ids` - canonical customer UUIDs (csv/JSON/repeated); intersects with "
+            "`customer_query` when both are given. "
             "`warehouse_codes` - exact warehouse codes (csv/JSON/repeated); resolve a location TOKEN "
             "(e.g. an 'IB' suffix matching several codes) to exact codes yourself before calling - this "
             "tool does not do suffix matching. `order_date_from`/`order_date_to` filter SO rows on "
             "sales_orders.order_date and DO rows on orders.order_date (never actual_delivery_date - a "
-            "pending DO by definition has none); omit both for all dates.\n\n"
+            "pending DO by definition has none); omit both for all dates. `detail` = so | do - render "
+            "the numbered detail list for that scope instead of the two-block report (`view=render`); "
+            "the report's own computation is unchanged by it.\n\n"
             "Use crm_order_management_orders_list / crm_order_management_orders_by_product_list instead "
             "for a plain row list or a delivered/actual-delivery-date question."
         ),
         "/api/v1/order-management/outstanding-report",
         (),
         (
-            "product_code", "scope", "customer_query", "warehouse_codes",
-            "order_date_from", "order_date_to",
+            "product_code", "scope", "customer_query", "customer_ids", "warehouse_codes",
+            "order_date_from", "order_date_to", "detail",
         ),
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"),
         escalation_team="sales",
+        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
     ),
     ToolSpec(
         "crm_order_analytics",
