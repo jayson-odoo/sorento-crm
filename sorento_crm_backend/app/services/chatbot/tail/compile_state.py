@@ -70,6 +70,9 @@ class CompiledState:
     item: dict[str, Any]
     answered_domain: str | None = None
     offer_open: bool = False
+    # The rows `sub-sendmsg` renders (AC-207). A per-turn OUTPUT, not memory: the five-key
+    # session does not carry them and the sender must still get them (L1-S3).
+    result_set: Any = None
 
 
 # --------------------------------------------------------------------------- #
@@ -990,6 +993,16 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         answered=jsc.truthy(jsc.get(qf, "open_question_answered")),
     )
 
+    # THE ROWS THE SENDER RENDERS travel with the TURN, not with the memory (L1-S3).
+    # `sub-sendmsg` reaches for `result_set` by name (AC-207) and it used to read it off
+    # the persisted patch - which stopped working the moment the patch became five keys,
+    # and silently: the reply kept its text and lost its rows.
+    #
+    # On `CompiledState`, NOT on the item: `item` is what n8n emits byte for byte and what
+    # the replay corpus grades, so a key added there would diverge every capture of this
+    # node. The same reason `answered_domain` and `offer_open` ride the object.
+    result_set = variables.get("last_result_set")
+
     # ---- AC-1001: FIVE KEYS LEAVE THIS FUNCTION, and nothing else ---------- #
     # Everything above still runs, and it still decides the reply text, the quick replies
     # and the roster the customer is looking at. What changes is what is REMEMBERED: the
@@ -1011,6 +1024,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         item=strip_undefined({"reply": seal(output)}),
         answered_domain=turn_state["answered_domain"],
         offer_open=offer_open,
+        result_set=result_set,
     )
 
 

@@ -3406,8 +3406,14 @@ def run_tail(
         "text": sealed.get("text"),
         "quick_replies": sealed.get("quick_replies"),
         # What `sub-sendmsg` and `send-attachments` reach for by name today, handed
-        # back as fields so their expressions become one read each (AC-207).
-        "result_set": variables.get("last_result_set"),
+        # back as fields so their expressions become one read each (AC-207). Off the SEAL
+        # now: the rows are this turn's output, and the five-key memory does not carry
+        # them (L1-S3). The patch is still read for a reply sealed by an older build.
+        "result_set": (
+            compiled.result_set
+            if compiled.result_set is not None
+            else variables.get("last_result_set")
+        ),
         "attachments_src": _attachments_src(values["answer"]),
     }
     return reply, session_patch
