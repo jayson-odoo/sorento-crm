@@ -644,6 +644,136 @@ def body_difference(
 
 
 # --------------------------------------------------------------------------- #
+# AC-1033: the grader mapping, legacy -> five keys
+# --------------------------------------------------------------------------- #
+#
+# Every captured world predates `focus` / `open_question` existing at all, so
+# `expected_variables` is the 34(+3)-key legacy shape - the same shape `_graded_variables`
+# used to exclude wholesale (`_PORT_ONLY_KEYS`). AC-1033 wants the world grader to instead
+# TRANSLATE that legacy shape into the five keys lane 1 persists, so a captured world can
+# still be graded against what the CRM actually writes now, one function, in ONE place.
+#
+# `pending.kind` -> `open_question.kind`, per the fold D5 already performed on the LIVE
+# contract (`escalate_yes_no` folds into `team_pick`); every other pending kind keeps its
+# own name because `OPEN_QUESTION_KINDS` already uses it.
+_PENDING_KIND_TO_OPEN_QUESTION_KIND: dict[str, str] = {
+    "escalation_offer": "team_pick",
+    "team_clarify": "team_pick",
+    "company_clarify": "company_pick",
+    "tier_ask": "tier_pick",
+    "member_offer": "member_offer",
+}
+
+
+def map_expected_variables_to_five_keys(
+    expected: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """`(mapped, None)` or `(None, reason)` - never a silent skip (AC-1033).
+
+    `mapped` is the five-key shape (`focus`, `open_question`, `ideation`, `access_levels`,
+    `contains_flyer`) built out of the legacy capture:
+
+    * `domain_hint` -> `focus.domains` (a ONE-entry list: a legacy capture never named two
+      domains, D3/D11 is what lets a dealer do that now);
+    * `entities` -> `focus.products`;
+    * `query_brands` -> `focus.brands`; `tier_menu` -> `focus.tier`;
+    * `date_filter_start` / `date_filter_end` / `date_mode` -> `focus.date_window`;
+    * `pending` -> `open_question.kind` (via `_PENDING_KIND_TO_OPEN_QUESTION_KIND`) plus
+      `payload.team` from `pending.team`;
+    * `last_result_set` / `dym_last_result_set` (whichever is non-empty, the dym roster
+      winning when both are - it is the one the customer was actually shown) ->
+      `open_question.options`, defaulting the kind to `product_pick` when no `pending`
+      marker says otherwise;
+    * everything else (`intent_hint`, `routing`, `escalation`, `response`, `match_mode`,
+      `requested_attributes`, `picker_*`, `routing_*`, ...) is DROPPED - it is either gone
+      from the state entirely (D14's `intent_hint`) or was never part of `focus` /
+      `open_question` to begin with.
+
+    Every `FocusSlot` is stamped `set_at_turn=0`, `source="reuse"`: a captured world has no
+    real turn number to date the slot to, and `reuse` is the honest source for a value the
+    mapping inferred rather than one a rule just wrote.
+
+    Unmappable, by name, rather than silently dropped: a `pending.kind` this mapping does
+    not recognise (the vocabulary moved, `OPEN_QUESTION_KINDS` is closed) returns a reason
+    instead of guessing.
+    """
+    pending = expected.get("pending")
+    pending = pending if isinstance(pending, dict) else None
+    if pending is not None and pending.get("kind") not in _PENDING_KIND_TO_OPEN_QUESTION_KIND:
+        return None, (
+            f"pending.kind {pending.get('kind')!r} has no open_question equivalent in "
+            "_PENDING_KIND_TO_OPEN_QUESTION_KIND"
+        )
+
+    def _slot(value: Any) -> dict[str, Any]:
+        return {"value": value, "set_at_turn": 0, "set_at": None, "source": "reuse"}
+
+    focus: dict[str, Any] = {}
+
+    domain_hint = expected.get("domain_hint")
+    if domain_hint:
+        focus["domains"] = _slot([domain_hint])
+
+    entities = expected.get("entities")
+    if entities:
+        focus["products"] = _slot(entities)
+
+    query_brands = expected.get("query_brands")
+    if query_brands:
+        focus["brands"] = _slot(query_brands)
+
+    tier_menu = expected.get("tier_menu")
+    if tier_menu:
+        focus["tier"] = _slot(tier_menu)
+
+    date_start = expected.get("date_filter_start")
+    date_end = expected.get("date_filter_end")
+    date_mode = expected.get("date_mode")
+    if date_start or date_end or date_mode:
+        focus["date_window"] = _slot({"start": date_start, "end": date_end, "mode": date_mode})
+
+    dym_roster = expected.get("dym_last_result_set")
+    plain_roster = expected.get("last_result_set")
+    roster = dym_roster if dym_roster else plain_roster
+
+    open_question: dict[str, Any] | None = None
+    if pending is not None:
+        options = list(roster) if isinstance(roster, list) else []
+        payload: dict[str, Any] = {}
+        if pending.get("team"):
+            payload["team"] = pending["team"]
+        open_question = {
+            "kind": _PENDING_KIND_TO_OPEN_QUESTION_KIND[pending["kind"]],
+            "options": options,
+            "expects": "pick" if options else "yes_no",
+            "asked_at_turn": 0,
+            "asked_at": None,
+            "payload": payload,
+        }
+    elif isinstance(roster, list) and roster:
+        # No `pending` marker but a roster is on screen: the ordinary picker shape
+        # (`selection_context: disambiguation` / `suggest_offer`), which is always a
+        # `product_pick` - the legacy corpus never rosters a customer or a tier this way.
+        open_question = {
+            "kind": "product_pick",
+            "options": list(roster),
+            "expects": "pick",
+            "asked_at_turn": 0,
+            "asked_at": None,
+            "payload": {},
+        }
+
+    mapped = {
+        "focus": focus,
+        "open_question": open_question,
+        "ideation": expected.get("ideation"),
+        "access_levels": expected.get("access_levels") or [],
+        "contains_flyer": bool(expected.get("contains_flyer")),
+    }
+    return mapped, None
+
+
+# --------------------------------------------------------------------------- #
 # The OWNER worlds (growth r1 slice B5, AC-940 to AC-948)
 # --------------------------------------------------------------------------- #
 #
