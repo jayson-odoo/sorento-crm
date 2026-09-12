@@ -996,6 +996,89 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:
         ) from exc
 
 
+def _outstanding_scope_pick(prev_state: Any, o: Any) -> str | None:
+    """AC-1132/AC-1138: which option this turn answered an OPEN `outstanding_scope` or
+    `outstanding_detail` ask with, or None (out of range / not answered) - the SAME
+    structured read `_team_clarify_pick` makes (`reference_positions` against OUR OWN
+    persisted rows), never text matching."""
+    options = jsc.array(jsc.get(prev_state, "last_result_set"))
+    for pos in jsc.array(o.get("reference_positions")):
+        for row in options:
+            if jsc.get(row, "idx") == pos:
+                return jsc.get(row, "value")
+    return None
+
+
+def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -> None:
+    """S4 points 4/5 (PLAN-chatbot-outstanding-report.md): resolve an OPEN
+    `outstanding_scope` or `outstanding_detail` ask against this turn, mutating `o` in
+    place. Idempotent - called twice (once early, once as the final pass right before
+    `_post_process` returns) so neither call has to out-race the ~47 other sites in this
+    function that touch `entities`/`domain_hint`.
+    """
+    kind = jsc.get(prev_pending, "kind")
+    if kind not in ("outstanding_scope", "outstanding_detail"):
+        return
+
+    filters = jsc.get(prev_state, "outstanding_filters")
+    filters = filters if isinstance(filters, dict) else {}
+    product_code = filters.get("product_code")
+
+    if kind == "outstanding_detail":
+        # D9 (chatbot-focus): a turn that brings its OWN business question - a new
+        # entity, or its own domain - is a NEW ask, not an answer to "1"/"2", and the
+        # pending must be dropped rather than mis-resolved. `_team_clarify_pick` makes
+        # the same "own_question" carve-out for its numbered ask.
+        own_question = bool(jsc.array(o.get("entities"))) or jsc.truthy(o.get("domain_hint"))
+        if own_question:
+            return
+
+    picked = _outstanding_scope_pick(prev_state, o)
+
+    o["domain_hint"] = "order"
+    o["message_type"] = "business_query"
+    o["intent_hint"] = "check_order"
+    if product_code:
+        o["entities"] = [
+            {
+                "raw": product_code,
+                "hint": "product",
+                "canonical_code": product_code,
+                "current_message": True,
+                "confident": True,
+            }
+        ]
+    o["date_filter_start"] = filters.get("date_filter_start")
+    o["date_filter_end"] = filters.get("date_filter_end")
+    # The carried customer_ids are ALREADY resolved UUIDs, not a raw token the
+    # resolve-entity seam could look up again - restored directly onto the fetch args
+    # in `fetch.entity_ids_transformer`, never through entity resolution.
+    o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
+
+    if kind == "outstanding_scope":
+        if picked is not None:
+            o["order_status"] = {
+                "so": "so_outstanding", "do": "do_outstanding", "both": "outstanding_both",
+            }[picked]
+        else:
+            # Out of range: re-ask the SAME question rather than fetch nothing - this
+            # turn re-typed no product, so `run_fetch` reads the carried filters
+            # directly (`outstanding_reask_filters`) instead of the entities list.
+            o["order_status"] = "outstanding"
+            o["outstanding_reask_filters"] = filters
+        return
+
+    # kind == "outstanding_detail" (AC-1138)
+    if picked in ("so", "do"):
+        o["order_status"] = "so_outstanding" if picked == "so" else "do_outstanding"
+        o["outstanding_detail_pick"] = picked
+    else:
+        # Out of range: re-run the report (not the detail list) with the carried
+        # filters, same as a fresh outstanding ask - there is no "detail re-ask" text,
+        # the report itself re-offers whichever scopes still have rows.
+        o["order_status"] = "outstanding_both"
+
+
 def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     """The body. `output` is `{output: <the LLM object>}`; returns it with `_parser_raw`.
 
@@ -1110,6 +1193,30 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     #     so every downstream reader sees one clean signal. `coerce_domain_hint` carries
     #     the evidence and is the SAME guard the engine puts on the carried domain.
     o["domain_hint"] = coerce_domain_hint(o["domain_hint"])
+
+    # -- S4 points 3/4/5 (PLAN-chatbot-outstanding-report.md) -------------------------- #
+    # AC-1132/AC-1138: an OPEN `outstanding_scope` or `outstanding_detail` ask is
+    # answered here, the same seam `_team_clarify_pick` uses for its own numbered
+    # question. Re-applied again at the very end of this function (see the comment
+    # there) for the same reason the axis-broaden drop is: ~47 sites between here and
+    # there assign `entities`/`domain_hint`.
+    prev_state = parent_input.get("previous_conversation_state")
+    prev_pending = jsc.get(prev_state, "pending") if prev_state is not None else None
+    _apply_outstanding_pending(o, prev_state=prev_state, prev_pending=prev_pending)
+    if (
+        jsc.get(prev_pending, "kind") not in ("outstanding_scope", "outstanding_detail")
+        and jsc.js_string(o.get("order_status") or "").strip() == "outstanding"
+        and jsc.js_string(o.get("domain_hint") or "") == "order"
+        and any(
+            jsc.js_string(jsc.get(e, "hint") or "") == "product"
+            for e in jsc.array(o.get("entities"))
+        )
+    ):
+        # A PURELY SYNTACTIC signal - no grant knowledge here, that check lives in
+        # `lanes/business/__init__.py::run_fetch`, the only place `ctx.access` is
+        # already read. A direct `run_fetch` call (that module's own tests) never
+        # sets this, so it just fetches - which is what `TestToolPick` pins.
+        o["outstanding_scope_ask_candidate"] = True
 
     # reuse means "no new value this turn" - but if the parser emitted current entities it
     # contradicts itself. Promote to additive replace_combine so the new value survives.
@@ -3298,6 +3405,14 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             e for e in o["entities"] if jsc.lower_or_empty(jsc.get(e, "hint")) != ba_final
         ]
         o["broaden_axis_dropped"] = before - len(o["entities"])
+
+    # S4 points 4/5 (PLAN-chatbot-outstanding-report.md), FINAL PASS: same reason the
+    # axis-broaden drop above runs immediately before the return - ~47 sites in this
+    # function assign `entities`/`domain_hint`/`order_status` between the early call
+    # above and here, and the positional-pick resolution in particular resets
+    # `entities` to this turn's OWN (empty) list when the pick was out of range.
+    # Re-applied here, where it is final by definition.
+    _apply_outstanding_pending(o, prev_state=prev_state, prev_pending=prev_pending)
 
     output["_parser_raw"] = parser_raw_snapshot
     return output

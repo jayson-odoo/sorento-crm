@@ -405,6 +405,19 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_resource_attachments_catalogue": ("uploaded_at_from", "uploaded_at_to"),
     "crm_sla_conversation_event_logs_list": ("date_from", "date_to"),
     "crm_procurement_po_placed_list": ("expected_date_from", "expected_date_to"),
+    # S4 point 8 (PLAN-chatbot-outstanding-report.md): the report's own contract
+    # is order_date, never actual_delivery_date - a pending DO by definition has
+    # none, and the SO arm has no delivery date at all.
+    "crm_outstanding_report": ("order_date_from", "order_date_to"),
+}
+
+# S4 point 3 (AC-1131 fetch half): so_outstanding/do_outstanding/outstanding_both ->
+# so/do/both. Bare "outstanding" is deliberately absent - it is resolved by the
+# field-reveal gate in `run_fetch`, not by this table (D13).
+ORDER_STATUS_TO_SCOPE: dict[str, str] = {
+    "so_outstanding": "so",
+    "do_outstanding": "do",
+    "outstanding_both": "both",
 }
 
 ORDER_TOOLS: frozenset[str] = frozenset(
@@ -540,6 +553,41 @@ def entity_ids_transformer(
     for key in ("contact_id", "space_id", "access_levels", "is_active"):
         if jsc.has(semantic_input, key):
             out[key] = semantic_input[key]
+
+    # S4 points 2/7/9 (PLAN-chatbot-outstanding-report.md): crm_outstanding_report's
+    # OWN contract (`product_code` a string, `scope`, `customer_ids`, `warehouse_codes`
+    # csv, `order_date_from/to` above) is not the generic UUID-list shape every other
+    # order tool takes, so it is built here rather than through TYPE_TO_PARAM.
+    if tool_name == "crm_outstanding_report":
+        out.pop("product_ids", None)
+        out.pop("warehouse_ids", None)
+        for e in jsc.array(entities):
+            if jsc.js_string(jsc.get(e, "entity_type")) == "product":
+                # `gate.py` renames the resolver's `canonical_code` to `code` when it
+                # builds `compatible_entities`; a caller that hands entities straight
+                # in (this module's own tests) still spells it `canonical_code`.
+                code = jsc.get(e, "code") or jsc.get(e, "canonical_code")
+                if jsc.truthy(code):
+                    out["product_code"] = jsc.js_string(code)
+                break
+        scope = jsc.get(semantic_input, "outstanding_scope")
+        if jsc.truthy(scope):
+            out["scope"] = jsc.js_string(scope)
+        warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
+        if isinstance(warehouse_codes, list) and warehouse_codes:
+            out["warehouse_codes"] = warehouse_codes
+        # AC-1132: the scope-answer's carried customer_ids are ALREADY resolved UUIDs
+        # (restored by `head/output_exchange.py`, never re-parsed) - they win over
+        # whatever THIS turn's own (empty) entity list produced.
+        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
+        if isinstance(carried_customers, list) and carried_customers:
+            out["customer_ids"] = carried_customers
+        # AC-1138 (D10 on main): "1"/"2" against an open detail offer re-runs THIS
+        # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
+        # (S4 point 5); the route's own computation is unchanged by it.
+        detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
+        if detail_pick in ("so", "do"):
+            out["detail"] = detail_pick
 
     # order_status (order tools only): "outstanding" | "delivered" | "so_outstanding"
     # (A3, AC-905); omitted when null.
@@ -1296,6 +1344,149 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         e["spec_misses"] = misses
 
 
+# --------------------------------------------------------------------------- #
+# crm_outstanding_report - never the generic envelope below (S4 point 5)
+# --------------------------------------------------------------------------- #
+
+
+def _outstanding_report_offer(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """S4 point 5/AC-1135: which detail options to offer - only the scopes that are
+    PRESENT and non-empty, SO-then-DO order, the same rule
+    `sorento_crm_mcp.presenters._outstanding_report` uses for its own footer."""
+    rows: list[dict[str, Any]] = []
+    so = result.get("so")
+    if isinstance(so, dict) and so.get("so_count"):
+        rows.append({"idx": len(rows) + 1, "label": "Sales order list", "value": "so"})
+    do = result.get("do")
+    if isinstance(do, dict) and do.get("do_count"):
+        rows.append({"idx": len(rows) + 1, "label": "Delivery order list", "value": "do"})
+    return rows
+
+
+_SO_LIST_OFFER_RE = re.compile(r"(?m)^\d+\.\s*Sales order list\s*$")
+_DO_LIST_OFFER_RE = re.compile(r"(?m)^\d+\.\s*Delivery order list\s*$")
+
+
+def _outstanding_offer_from_text(text: str) -> list[dict[str, Any]]:
+    """The same offer, read off ALREADY-RENDERED text (production: `present_response`
+    rendered this server-side, so there is no `so`/`do` block left to inspect here) -
+    the two option lines the S1 presenter itself writes are the only source of truth
+    left, and reusing them can never disagree with what the customer is looking at."""
+    rows: list[dict[str, Any]] = []
+    if _SO_LIST_OFFER_RE.search(text):
+        rows.append({"idx": len(rows) + 1, "label": "Sales order list", "value": "so"})
+    if _DO_LIST_OFFER_RE.search(text):
+        rows.append({"idx": len(rows) + 1, "label": "Delivery order list", "value": "do"})
+    return rows
+
+
+def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
+    """The SAME `outstanding_filters` shape `business/__init__.py::_outstanding_filters_from`
+    builds for the scope-question ask - the detail offer carries the identical filter
+    set forward so a later "1"/"2" re-runs the tool with them, unchanged (D10)."""
+    semantic_input = ctx.get("semantic_input")
+    if isinstance(semantic_input, str):
+        semantic_input = _safe_json(semantic_input)
+    semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
+    product_code = None
+    customer_ids: list[Any] = []
+    for e in jsc.array(ctx.get("entities")):
+        if not isinstance(e, dict):
+            continue
+        et = e.get("entity_type")
+        if et == "product" and product_code is None:
+            code = e.get("code") or e.get("canonical_code")
+            if code:
+                product_code = code
+        elif et == "customer":
+            uid = e.get("uuid")
+            if uid and uid not in customer_ids:
+                customer_ids.append(uid)
+    return {
+        "product_code": product_code,
+        "date_filter_start": semantic_input.get("date_filter_start"),
+        "date_filter_end": semantic_input.get("date_filter_end"),
+        "customer_ids": customer_ids,
+        "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
+    }
+
+
+def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
+    """S4 point 5 (AC-1114b/AC-1135/AC-1138/AC-1141): `crm_outstanding_report` never
+    goes through the generic envelope below - the report's shape (two named blocks,
+    each with its own By location / By customer subgroup) has no row list to build
+    items from.
+
+    `result` is a STRING in production - `sorento_crm_mcp.presenters._outstanding_report`
+    / `_outstanding_detail` already rendered it server-side, the SAME PRESENTER_TOOLS +
+    `view=render` mechanism every other tool uses - and is used verbatim. A DICT means
+    the caller skipped that render step (a test double standing in for the whole MCP
+    round trip); a minimal LOCAL summary substitutes rather than importing
+    `sorento_crm_mcp`, which the backend container does not carry (`CHATBOT_READ_ONLY_
+    TOOLS`'s own docstring above explains why that import is unavailable here).
+    """
+    semantic_input = ctx.get("semantic_input")
+    if isinstance(semantic_input, str):
+        semantic_input = _safe_json(semantic_input) or {}
+    semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
+    so_refused = bool(jsc.truthy(semantic_input.get("outstanding_so_refused")))
+    refusal = "Sales order figures are not enabled for your account." if so_refused else None
+
+    if isinstance(result, str):
+        text = result
+        offer = _outstanding_offer_from_text(text)
+        has_result = bool(text.strip())
+    else:
+        data = result if isinstance(result, dict) else {}
+        detail = data.get("detail")
+        if detail in ("so", "do"):
+            rows = data.get(f"{detail}_rows") or []
+            text = f"{len(rows)} {detail} row(s)" if rows else f"No {detail} rows"
+            offer = []
+            has_result = bool(rows)
+        else:
+            parts = [f"Product: {data.get('product_code')}"]
+            so_block = data.get("so")
+            do_block = data.get("do")
+            so_hit = isinstance(so_block, dict) and bool(so_block.get("so_count"))
+            do_hit = isinstance(do_block, dict) and bool(do_block.get("do_count"))
+            if so_block is not None:
+                parts.append("Sales order outstanding" if so_hit else "No open sales order.")
+            if do_block is not None:
+                parts.append("Delivery order pending" if do_hit else "No pending delivery order.")
+            text = "\n".join(parts)
+            offer = _outstanding_report_offer(data)
+            has_result = bool(so_hit or do_hit)
+
+    if refusal:
+        text = f"{refusal}\n\n{text}"
+
+    outstanding_ask = (
+        {
+            "kind": "outstanding_detail",
+            "last_result_set": offer,
+            "filters": _outstanding_filters_from_ctx(ctx),
+        }
+        if offer
+        else None
+    )
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_ask": outstanding_ask,
+    }
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -1304,6 +1495,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     parameters and nothing else about the body changes.
     """
     ctx = ctx if isinstance(ctx, dict) else {}
+    if jsc.js_string(ctx.get("tool") or "") == "crm_outstanding_report":
+        return _outstanding_report_output(result, ctx)
     e = _extract_envelope(result)
 
     # -- restricted-field drop (A2/A5/A6, general rule) ---------------------- #

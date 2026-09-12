@@ -173,6 +173,12 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
             # The customer master is claimed HERE and not by `master_products`: a
             # customer is only ever looked up to narrow an order question.
             "crm_master_customers_list",
+            # S4 point 2 (PLAN-chatbot-outstanding-report.md): NEVER `tools[0]` - the
+            # override lives in `lanes/business/__init__.py::run_fetch`, which swaps
+            # the pick to this tool for domain "order" + a resolved product + an
+            # outstanding order_status. Listed here only so `CHATBOT_READ_ONLY_TOOLS`
+            # (derived from `DOMAIN_CLAIMED_TOOLS`, this tuple's own union) allows it.
+            "crm_outstanding_report",
         ),
         escalation_team="customer_service",
     ),
@@ -595,6 +601,9 @@ PENDING_KINDS = (
     "company_clarify",
     "tier_ask",
     "member_offer",
+    # PLAN-chatbot-outstanding-report.md, S4 points 4/5.
+    "outstanding_scope",
+    "outstanding_detail",
 )
 PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
 
@@ -708,6 +717,10 @@ class SessionVars(BaseModel):
     routing_brand_source: Any = None
     routing_company: Any = None
     routing_companies: Any = None
+    # S4 point 4 (PLAN-chatbot-outstanding-report.md): the parsed product/dates/
+    # customer/location, carried across the scope-question turn and the detail-offer
+    # turn (see `tail/compile_state.py`).
+    outstanding_filters: Any = None
     pending: Pending | None = None
 
 

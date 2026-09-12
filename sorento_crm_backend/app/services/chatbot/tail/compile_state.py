@@ -418,6 +418,12 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
 
     # ---- the business summary (the parser-facing compressed `response`) ---- #
     result_obj = get_result_obj()
+    # S4 points 4/5 (PLAN-chatbot-outstanding-report.md): `fetch.output_structurer`'s
+    # `crm_outstanding_report` branch stamps `outstanding_ask` on the SAME dict that
+    # reaches here as `outcome["central-exchange"]` (the passthrough `sub_answer.
+    # central_exchange` gives any non-LLM shape) - never None for any other tool's
+    # answer, since no other presenter writes this key.
+    outstanding_ask = jsc.get(result_obj, "outstanding_ask") if jsc.truthy(result_obj) else None
     items_list = (
         jsc.get(result_obj, "items")
         if jsc.is_array(jsc.get(result_obj, "items"))
@@ -489,6 +495,10 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         last_result_set = jsc.array(jsc.get(sug, "suggest_last_result_set"))
     elif jsc.truthy(mem):
         last_result_set = jsc.array(jsc.get(mem, "cs_last_result_set"))
+    elif jsc.truthy(outstanding_ask):
+        # AC-1130/AC-1135: the scope question's three rows, or the detail offer's
+        # one/two - whichever `run_fetch` / `output_structurer` armed this turn.
+        last_result_set = jsc.array(jsc.get(outstanding_ask, "last_result_set"))
     r_obj = get_result_obj()
     is_disambig = bool(
         jsc.truthy(r_obj)
@@ -538,6 +548,8 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         if promo is not None
         else "tier_offer"
         if tier is not None
+        else jsc.get(outstanding_ask, "kind")
+        if jsc.truthy(outstanding_ask)
         else "disambiguation"
         if is_disambig
         else None
@@ -789,6 +801,19 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     tier_menu = tm_born or (tm_prev if tm_domain_ok else None)
     if tier_menu:
         variables["tier_menu"] = tier_menu
+
+    # S4 point 4 (PLAN-chatbot-outstanding-report.md): the parsed product/dates/
+    # customer/location, written when a NEW outstanding ask arms (the scope question
+    # or the detail offer) and carried forward otherwise - same "omit when there is
+    # nothing to say" rule `tier_menu` just used above, so a world captured before
+    # this key existed never sees it appear.
+    outstanding_filters_value = (
+        jsc.get(outstanding_ask, "filters")
+        if jsc.truthy(outstanding_ask)
+        else jsc.get(prev, "outstanding_filters")
+    )
+    if outstanding_filters_value:
+        variables["outstanding_filters"] = outstanding_filters_value
 
     # ---- an open offer survives the answer (the picker carry) ------------- #
     _picker_carry(
@@ -1920,6 +1945,16 @@ def _offer_carry(
     prev_ctx = jsc.get(prev, "selection_context")
     prev_set = jsc.get(prev, "last_result_set")
     if not jsc.truthy(prev_ctx) or not jsc.is_array(prev_set) or len(prev_set) == 0:
+        return None
+    if prev_ctx in ("outstanding_scope", "outstanding_detail"):
+        # S4 points 4/5 (PLAN-chatbot-outstanding-report.md): ONE-TURN LIFE, same
+        # exclusion as `team_clarify` right below and for the same reason - answered
+        # on the very next turn or not at all (`head/output_exchange.py::
+        # _apply_outstanding_pending` already resolved it, or dropped it because this
+        # turn brought its own question). `topic.changed` cannot bound it either: a
+        # bare "SRTWC999" carries the SAME domain_hint ("order") as the ask it answers,
+        # so an un-excluded carry would keep re-arming a pending the customer's new
+        # product question already moved past.
         return None
     if prev_ctx == "team_clarify":
         # THE ONE LABEL THAT IS NEVER CARRIED (review of #713, blocker B1). Every other

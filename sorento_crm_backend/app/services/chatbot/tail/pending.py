@@ -70,6 +70,12 @@ def derive(
     dym-offer lifecycle learned the hard way: a branch that relies on "the key just is not
     there" survives one refactor and then silently keeps a stale offer alive.
     """
+    if selection_context in ("outstanding_scope", "outstanding_detail"):
+        # PLAN-chatbot-outstanding-report.md, S4 point 4/5: two more numbered-question
+        # kinds, one-turn life like `team_clarify` - `output_exchange.py` resolves
+        # against the `outstanding_filters` session variable carried alongside, never
+        # against this marker's own body.
+        return {"kind": selection_context}
     if selection_context == "team_clarify":
         # THE THIRD KIND (AC-822, owner rule R-b). The module docstring above says the
         # clarify kinds have a structured reader already and no text read to replace, so

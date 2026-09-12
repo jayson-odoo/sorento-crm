@@ -53,7 +53,9 @@ ALLOWED: dict[str, list[str]] = {
     ],
     "promotion": ["product", "promotion", "category", "brand"],
     "inventory": ["product", "warehouse", "category", "brand"],
-    "order": ["order", "customer_order", "transporter", "customer", "product"],
+    # S4 point 7 (PLAN-chatbot-outstanding-report.md, D5): a location word narrows
+    # crm_outstanding_report the same way it already narrows inventory/spo_allocation.
+    "order": ["order", "customer_order", "transporter", "customer", "product", "warehouse"],
     "incoming": ["product", "inbound_shipment", "category", "brand"],
     "forms": ["form"],
     "portal_link": [],

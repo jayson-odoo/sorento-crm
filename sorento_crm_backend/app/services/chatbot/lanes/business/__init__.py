@@ -47,6 +47,97 @@ ENTRY_BY_BRANCH_KIND: dict[str, str] = {
 # they converge on ONE node (`resolve-arm`), and the arm they take there is `_exit_kind`.
 DELEGATE = "business_query"
 
+# D13 (PLAN-chatbot-outstanding-report.md): the field-reveal key that gates SO figures
+# on the outstanding report. Read the way `answer._CROSSDOMAIN_RUNG_GRANT` reads its own
+# key - `ctx["access"]["attributes"]`, the same set `output_structurer`'s restricted-field
+# drop reads. Declared here (not in `answer.py`) because `run_fetch`, this module's own
+# function, is the one place that checks it, before any tool call.
+_OUTSTANDING_SO_GRANT = "sales_orders.outstanding"
+
+_OUTSTANDING_SCOPE_OPTIONS: tuple[dict[str, Any], ...] = (
+    {"idx": 1, "label": "Sales orders", "value": "so"},
+    {"idx": 2, "label": "Delivery orders", "value": "do"},
+    {"idx": 3, "label": "Both", "value": "both"},
+)
+
+
+def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> dict[str, Any]:
+    """S4 point 4's `outstanding_filters`: the parsed product/dates/customer/location,
+    carried across the scope-question turn and the detail-offer turn so neither has to
+    re-parse the message that named them."""
+    product_code = None
+    customer_ids: list[Any] = []
+    for e in entities or []:
+        if not isinstance(e, dict):
+            continue
+        et = e.get("entity_type")
+        if et == "product" and product_code is None:
+            # `gate.py` renames the resolver's `canonical_code` to `code` when it
+            # builds `compatible_entities`; a hand-built test payload still spells
+            # it `canonical_code`.
+            code = e.get("code") or e.get("canonical_code")
+            if code:
+                product_code = code
+        elif et == "customer":
+            uid = e.get("uuid")
+            if uid and uid not in customer_ids:
+                customer_ids.append(uid)
+    return {
+        "product_code": product_code,
+        "date_filter_start": semantic_input.get("date_filter_start"),
+        "date_filter_end": semantic_input.get("date_filter_end"),
+        "customer_ids": customer_ids,
+        "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
+    }
+
+
+def _outstanding_scope_ask(entities: Any, semantic_input: dict[str, Any]) -> dict[str, Any]:
+    """AC-1130: ARM the scope question, no fetch this turn - the FIRST ask, filters
+    freshly parsed off this turn's resolved entities."""
+    return _outstanding_scope_ask_from_filters(_outstanding_filters_from(entities, semantic_input))
+
+
+def _outstanding_scope_ask_from_filters(filters: dict[str, Any]) -> dict[str, Any]:
+    """AC-1130/AC-1132: ARM the scope question, no fetch this turn. Builds the SAME
+    `structured` shape `output_structurer`'s `crm_outstanding_report` branch returns for
+    a real hit (`response` + `outstanding_ask`), so `tail/compile_state.py` reads both
+    through one code path - see that function's own docstring. `filters` is either
+    freshly parsed (the first ask) or carried forward unchanged (an out-of-range
+    re-ask, AC-1132)."""
+    text = (
+        f"Product: {jsc.js_string(filters.get('product_code') or '')}\n"
+        "Outstanding for which document?\n"
+        "1. Sales orders (not yet transferred to DO)\n"
+        "2. Delivery orders (not yet delivered)\n"
+        "3. Both"
+    )
+    structured: dict[str, Any] = {
+        "response": text,
+        "outstanding_ask": {
+            "kind": "outstanding_scope",
+            "last_result_set": [dict(row) for row in _OUTSTANDING_SCOPE_OPTIONS],
+            "filters": filters,
+        },
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
 
 def handles(branch_kind: str | None) -> bool:
     """Does the business lane own this arm?"""
@@ -76,6 +167,20 @@ def run_until_exit(
     `system_settings.chatbot_stock_denial_enabled` is on (R1), so no second flag read is
     needed - with the switch off no turn reaches this branch at all.
     """
+    # AC-1132 out-of-range re-ask: `head/output_exchange.py::_post_process` restores
+    # the carried product as a RAW (unresolved) entity, since this turn re-typed no
+    # product for the resolver to match against - so resolve+gate's own gate would
+    # find nothing compatible and exit `not_found` before `run_fetch` ever saw the
+    # flag it actually checks. Skipped here, before that gate runs at all; `run_fetch`
+    # (via the ENGINE's normal `_exit_kind == "continue"` path) is where the flag is
+    # actually read and the SAME question gets re-armed.
+    parse_output_peek = ((ctx.get("parse") or {}).get("output")) or {}
+    if isinstance(parse_output_peek.get("outstanding_reask_filters"), dict):
+        return {
+            "delegate": DELEGATE,
+            "payload": {"gate": {}, "tier_gate": None, "ctx": ctx, "_exit_kind": "continue"},
+        }
+
     entry = ENTRY_BY_BRANCH_KIND[branch_kind]
     payload = resolve_gate.run(
         ctx,
@@ -145,6 +250,13 @@ def _fetch_semantic_input(
         # transformer omits a null rather than sending one.
         "group_by": parse_output.get("group_by"),
         "top_n": parse_output.get("top_n"),
+        # AC-1132: the outstanding-scope answer's carried customer_ids (ALREADY
+        # resolved UUIDs, not a raw token to re-resolve) - `entity_ids_transformer`
+        # restores them onto `crm_outstanding_report`'s own args directly.
+        "outstanding_carried_customer_ids": parse_output.get("outstanding_carried_customer_ids"),
+        # AC-1138: "1"/"2" against an OPEN outstanding_detail offer - which detail list
+        # to render, passed straight through to the MCP tool's own `detail` param.
+        "outstanding_detail_pick": parse_output.get("outstanding_detail_pick"),
     }
 
 
@@ -265,6 +377,21 @@ def run_fetch(
             fetch_mod.call_tool(tool, args, mcp=_McpSeam(services.mcp_call))
         )
 
+    # ── AC-1132 out-of-range: re-ask the SAME outstanding_scope question ──────
+    # `head/output_exchange.py::_post_process` stamps this when the previous turn's
+    # `outstanding_scope` ask was answered with a number that named no option. It
+    # carries the ALREADY-KNOWN filters directly, independent of `entities`/gate
+    # resolution (this turn re-typed no product at all, so there is nothing there to
+    # resolve) - the same reason the tier-ask arm below short-circuits before any
+    # tool pick.
+    reask_filters = parse_output.get("outstanding_reask_filters")
+    if isinstance(reask_filters, dict):
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _OUTSTANDING_SO_GRANT in granted:
+            return _outstanding_scope_ask_from_filters(reask_filters)
+
     # ── the tier ask, with its per-tier probe ────────────────────────────────
     # `if-tier-ask` sits UPSTREAM of the rag call in n8n: there is nothing to fetch until
     # the customer has said which tier they mean. The probe plan is what makes the ask
@@ -347,6 +474,53 @@ def run_fetch(
     # ── the read ─────────────────────────────────────────────────────────────
     tool_item = pick.items[0]["json"]
     tool_name = jsc.js_string(tool_item.get("name") or "")
+
+    # S4 point 2 (PLAN-chatbot-outstanding-report.md): domain "order" + a resolved
+    # product + an outstanding order_status picks the report over the plain
+    # order-list tool `tool_filter` would otherwise have chosen. No product means
+    # the ask is customer/date-only, which the existing so_outstanding bucket over
+    # `crm_order_management_orders_list` already answers - untouched.
+    order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
+    if (
+        domain == "order"
+        and has_product
+        and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
+    ):
+        tool_name = "crm_outstanding_report"
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "outstanding_override"}}
+
+        # -- D13: the sales_orders.outstanding field-reveal gate, before any fetch -- #
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        has_so_grant = _OUTSTANDING_SO_GRANT in granted
+
+        # S4 point 3 (AC-1130): bare "outstanding" + the grant arms the scope
+        # question instead of fetching. `outstanding_scope_ask_candidate` is a
+        # PURELY SYNTACTIC flag `head/output_exchange.py::_post_process` sets
+        # BEFORE resolve+gate even runs (domain/product/bare-order_status, no
+        # grant knowledge there) - the grant check happens HERE, the only place
+        # that already reads `ctx.access`, so a direct `run_fetch` call (this
+        # module's own tests) that never went through that step just fetches,
+        # which is what `TestToolPick` pins.
+        if (
+            order_status_raw == "outstanding"
+            and jsc.truthy(parse_output.get("outstanding_scope_ask_candidate"))
+            and has_so_grant
+        ):
+            return _outstanding_scope_ask(entities, semantic_input)
+
+        scope = fetch_mod.ORDER_STATUS_TO_SCOPE.get(order_status_raw, "both")
+        so_refused = False
+        if scope in ("so", "both") and not has_so_grant:
+            scope = "do"
+            # AC-1140 vs AC-1141: a BARE "outstanding" silently redirects to `do` (no
+            # question was ever asked, so there is nothing to refuse); an EXPLICIT SO
+            # ask ("so_outstanding" / "outstanding_both") gets the refusal line.
+            so_refused = order_status_raw != "outstanding"
+        semantic_input["outstanding_scope"] = scope
+        semantic_input["outstanding_so_refused"] = so_refused
+
     trigger = {
         "tool": tool_name,
         "entities": entities,
