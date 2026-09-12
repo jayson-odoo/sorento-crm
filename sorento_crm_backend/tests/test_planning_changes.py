@@ -911,7 +911,10 @@ def test_apply_closed_retires_open_row_and_notes_actioned_row(api):
     db.commit()
     out = planning_change_service.get_batch(db, str(batch.id))
     row = out["orders"][0]["rows"][0]
-    assert row["kind"] == "closed"
+    # Slice A (`PLAN-scm-change-management-one-engine.md`, AC-A1): the row kind is
+    # renamed CLOSED -> "cancelled" - outstanding_diff's own CLOSED constant stays "closed",
+    # only the planning-change ROW's stored/wire kind changes.
+    assert row["kind"] == "cancelled"
     assert row["suggested"] == "retire"
 
     result = planning_change_service.apply(db, str(batch.id), world.actor)
