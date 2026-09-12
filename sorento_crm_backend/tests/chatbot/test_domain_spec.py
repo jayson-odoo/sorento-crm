@@ -83,8 +83,10 @@ DOMAIN_SWITCH_WORDS_BEFORE = {
     # bd6eacf4 / 796957f4).
     "po": "purchase_order",
     "spo": "spo_allocation",
-    # 12 Sep 2026 (PLAN-chatbot-last-purchase-cost.md): the same measured-trigger rule.
-    "cost": "purchase_cost",
+    # `purchase_cost` (12 Sep 2026, PLAN-chatbot-last-purchase-cost.md, review SF3) has
+    # NO switch word - "cost" is the everyday word for the SELLING price, and a
+    # whole-token switch would drag "how much does M218 cost" into this domain for
+    # every ungranted contact. Same ruling as `purchase_order`'s own row.
 }
 
 DEFAULT_UNSUPPORTED_DOMAINS_BEFORE = ("goods_receive",)

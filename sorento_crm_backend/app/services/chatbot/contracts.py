@@ -280,11 +280,14 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
         # No bare-entity row: a bare code under this domain has answered no measured turn
         # yet, same reasoning as `purchase_order`'s own row.
         bare_entity_type=None,
-        # "cost" / "成本" / "harga belian" (PLAN-chatbot-last-purchase-cost.md). Only
-        # "cost" can ever fire through `_TOKEN_RE` (ascii `[a-z0-9]+`, no spaces) - the
-        # CJK and Malay phrases are the parser prompt's to teach (AC-25), not this
-        # table's; they are named here anyway so the vocabulary is visible in one place.
-        switch_words=("cost",),
+        # No switch words (review SF3, 12 Sep 2026), same ruling as `purchase_order`'s
+        # own row: "cost" is the everyday word for the SELLING price ("how much does
+        # M218 cost"), and `DOMAIN_SWITCH_WORDS` is matched per WHOLE TOKEN with no
+        # domain context - a whole-token switch on "cost" would drag every such ask
+        # into this domain and refuse it for every contact without the grant. Routing
+        # is the parser prompt's job alone here (`LAST_COST_ADDENDUM`); add a switch
+        # word when a measured turn shows the intent alone is not enough.
+        switch_words=(),
         tools=("crm_procurement_po_last_cost_list",),
         escalation_team="purchasing",
     ),
