@@ -1457,20 +1457,31 @@ def composition_from_proposal(proposal: Optional[dict]) -> dict:
             qty_text(reserve_qty),
             proposal.get("key") or project_line_id,
         )
+    # No `qty_proposed_borrow` aggregate exists on `BoardContribution` (unlike reserve and
+    # incoming) - LADDER V7.1's `order_borrow`/`supply_borrow` rungs are newer than that
+    # field, and every reader of a whole-unit Borrow sums `sources` itself (`rank_score`
+    # sources, `_group_sibling_warehouses`). Summed the same way here.
+    borrow_qty = sum((_dec(s.get("qty")) for s in sources if s.get("kind") == "borrow"), _ZERO)
     owed = _dec(
         proposal.get("qty_outstanding")
         if proposal.get("qty_outstanding") is not None
         else proposal.get("qty")
     )
     buy_raw = proposal.get("qty_proposed_buy")
-    buy = _dec(buy_raw) if buy_raw is not None else max(owed - incoming - reserve_qty, _ZERO)
+    buy = (
+        _dec(buy_raw) if buy_raw is not None
+        else max(owed - incoming - reserve_qty - borrow_qty, _ZERO)
+    )
     return {
         "project_line_id": project_line_id,
         "timely_spo_qty": qty_text(incoming),
         "reserve": _reserve_components_from_sources(sources, reserve_qty),
-        # The board never proposes a Borrow (it allocates per product/location only); one
-        # composed by hand takes the `amend` path, which posts what the planner built.
-        "borrow": [],
+        # LADDER V7.1's `order_borrow` rung (S1/AC-B2) DOES propose a whole-unit Borrow
+        # off a later donor's own committed stock - built the same way Reserve is, from
+        # the proposal's own `sources`. An amendment still takes the `amend` path and
+        # posts whatever the planner composed by hand; this is only the "take the
+        # proposal as it stands" (`confirm`) reading of it.
+        "borrow": _borrow_components_from_sources(sources, borrow_qty),
         "buy_qty": qty_text(buy),
         "buy_reason": None,
         "amend_reason": None,
@@ -1497,6 +1508,56 @@ def _reserve_components_from_sources(sources: List[dict], reserve_qty: Decimal) 
     # Whatever the sources could not address (the proposal rounded, or asked for more than
     # any one source stated) lands on the last addressable warehouse - the only one this
     # side can name it against.
+    if remaining > _ZERO and out:
+        out[-1]["qty"] = qty_text(_dec(out[-1]["qty"]) + remaining)
+    return out
+
+
+def _borrow_components_from_sources(sources: List[dict], borrow_qty: Decimal) -> List[dict]:
+    """A `ConfirmBorrowComponent`-shaped dict per borrow source, in the same take-until-
+    covered order `_reserve_components_from_sources` uses.
+
+    `donor_core_line_id` (plus the display-only `donor_so_number`/`donor_line_no`/
+    `donor_agent_code`/`same_agent`/`donor_required_date`) is what makes this a Borrow the
+    confirm mechanics can actually act on - `ProjectSupplyService._check_line` only takes
+    the "another order's own committed quantity" branch when it is present
+    (`item.source == ALLOC_SOURCE_OTHER_LOCATION and donor_core_line_id`), and
+    `_borrow_shortfalls` reads the SAME attribute to raise the donor's ORDER_BACK row.
+    `source` is always `ALLOC_SOURCE_OTHER_LOCATION` here: every rung the board proposes a
+    Borrow on today (`order_borrow`, the pool's borrow half, `supply_borrow`) takes stock
+    already committed to, or moving for, a NAMED sales-order line or document, never a
+    cross-project claim (`ALLOC_SOURCE_OTHER_PROJECT`, which only the `amend` dialog's own
+    hand-built composition uses) - and `_check_line`'s `supply_key` branch (step 3) returns
+    before ever reading `source` at all, so the value is inert there.
+    """
+    borrow_sources = [s for s in sources if s.get("kind") == "borrow" and s.get("warehouse_id")]
+    out: List[dict] = []
+    remaining = borrow_qty
+    for s in borrow_sources:
+        if remaining <= _ZERO:
+            break
+        take = min(_dec(s.get("qty")), remaining)
+        if take <= _ZERO:
+            continue
+        out.append({
+            "source": ALLOC_SOURCE_OTHER_LOCATION,
+            "warehouse_id": s["warehouse_id"],
+            "donor_project_id": None,
+            "qty": qty_text(take),
+            "reason": s.get("reason") or "",
+            "donor_core_line_id": s.get("donor_core_line_id"),
+            "donor_so_number": s.get("donor_so_number"),
+            "donor_line_no": s.get("donor_line_no"),
+            "donor_agent_code": s.get("donor_agent_code"),
+            "same_agent": bool(s.get("same_agent", False)),
+            "donor_required_date": s.get("donor_required_date"),
+            "supply_key": s.get("supply_key"),
+            "supply_document": s.get("supply_document"),
+            "arrival_date": s.get("arrival_date"),
+        })
+        remaining -= take
+    # Same rounding carry `_reserve_components_from_sources` does - whatever the sources
+    # could not address lands on the last addressable one.
     if remaining > _ZERO and out:
         out[-1]["qty"] = qty_text(_dec(out[-1]["qty"]) + remaining)
     return out
@@ -1559,6 +1620,20 @@ def _validate_composition_shape(
                 "donor_project_id": i.get("donor_project_id"),
                 "qty": qty_text(_dec(i.get("qty"))),
                 "reason": i.get("reason") or "",
+                # Round-tripped, not re-derived (`ConfirmBorrowComponent`'s own docstring:
+                # "display only; never validated") - `donor_core_line_id` is what the
+                # confirm mechanics act ON (`_check_line`'s group-borrow branch,
+                # `_borrow_shortfalls`'s order-back), so dropping it here would store a
+                # composition the confirm path cannot execute the way it was proposed.
+                "donor_core_line_id": i.get("donor_core_line_id"),
+                "donor_so_number": i.get("donor_so_number"),
+                "donor_line_no": i.get("donor_line_no"),
+                "donor_agent_code": i.get("donor_agent_code"),
+                "same_agent": bool(i.get("same_agent", False)),
+                "donor_required_date": i.get("donor_required_date"),
+                "supply_key": i.get("supply_key"),
+                "supply_document": i.get("supply_document"),
+                "arrival_date": i.get("arrival_date"),
             }
             for i in borrow
         ],
@@ -1765,6 +1840,16 @@ def _to_confirm_line(payload: dict):
                 donor_project_id=c.get("donor_project_id"),
                 qty=c["qty"],
                 reason=c.get("reason") or "",
+                # Same fields `_validate_composition_shape` stores - dropped here, an
+                # apply built off a `confirm`/`amend` decision would post a Borrow that
+                # takes free stock rather than a NAMED donor line's committed quantity,
+                # and `_borrow_shortfalls` would raise no ORDER_BACK row for it at all.
+                donor_core_line_id=c.get("donor_core_line_id"),
+                donor_so_number=c.get("donor_so_number"),
+                donor_line_no=c.get("donor_line_no"),
+                donor_agent_code=c.get("donor_agent_code"),
+                same_agent=bool(c.get("same_agent", False)),
+                donor_required_date=c.get("donor_required_date"),
                 supply_key=c.get("supply_key"),
                 supply_document=c.get("supply_document"),
                 arrival_date=c.get("arrival_date"),
