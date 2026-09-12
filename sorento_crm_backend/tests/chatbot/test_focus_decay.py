@@ -21,7 +21,6 @@ import pytest
 from sqlalchemy import text
 
 from app.models.chatbot_turn import ChatbotTurn
-from app.models.user import SystemSetting
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot import trace as trace_mod
 from app.services.chatbot.contracts import FOCUS_SLOTS, Envelope, Focus, OpenQuestion, SessionVars
@@ -140,7 +139,7 @@ class TestApplyDropsTheDeadAndTracesEveryDrop:
         )
 
         assert trace.stages() == ["received"]
-        assert len(trace.records) == 2
+        assert len(trace.persisted()) == 2
 
     def test_an_unanswered_open_question_dies_on_its_own_ttl_not_the_focus_one(self) -> None:
         """AC-945: an offer nobody answered is cleared with a trace line, never silently
@@ -494,51 +493,11 @@ class TestTheTurnNumberIsTheContactsOwn:
         assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=mine) == 3
 
 
-class TestTheEngineReadsTheTtlColumn:
-    def test_the_default_is_three_when_there_is_no_settings_row(self) -> None:
-        assert engine_mod._focus_ttl_turns(None) == engine_mod.DEFAULT_FOCUS_TTL_TURNS == 3
-
-    def test_operator_nonsense_falls_back_rather_than_failing_the_turn(self) -> None:
-        class _Row:
-            chatbot_focus_ttl_turns = "not a number"
-
-        assert engine_mod._focus_ttl_turns(_Row()) == 3
-
-    def test_a_negative_is_clamped_to_this_turn_only(self) -> None:
-        class _Row:
-            chatbot_focus_ttl_turns = -5
-
-        assert engine_mod._focus_ttl_turns(_Row()) == 0
-
-    def test_the_configured_value_is_what_the_turn_runs_under(
-        self, session_factory, seeded, stub_parser, stub_access
-    ) -> None:
-        """AC-982: a DRY RUN reads the column, and writes nothing outside `chatbot.turns`.
-
-        The read is what this asserts; the "writes nothing" half is already asserted by
-        `test_engine.py`'s D14 block and by `test_dry_run_isolation.py`, and this adds the
-        new column to the same claim by checking the contact's session blob is untouched.
-        """
-        db = session_factory()
-        row = SystemSetting()
-        row.chatbot_focus_ttl_turns = 7
-        db.add(row)
-        db.commit()
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(is_test=True), session_factory=session_factory)
-
-        assert result.status != "failed"
-        received = next(r for r in _trace_of(session_factory, result.turn_id) if r.get("stage") == "received")
-        assert received["facts"]["focus_ttl_turns"] == 7
-        assert received["facts"]["turn_no"] == 1
-        stored = session_factory().execute(
-            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
-        ).scalar()
-        stored = json.loads(stored) if isinstance(stored, str) else stored
-        assert (stored or {}).get("variables") == {}
+# `TestTheEngineReadsTheTtlColumn` retired here (D9, owner 12 Sep 2026): no counter, no
+# TTL, anywhere. `system_settings.chatbot_focus_ttl_turns` and
+# `engine_mod._focus_ttl_turns` go with it - a focus slot is cleared only by a
+# same-axis replace, a topic reset, or the conversation-closed marker
+# (`dialogue/clearing.py`, see `tests/chatbot/test_clearing.py`), never by age.
 
 
 def _trace_of(session_factory, turn_id: str) -> list[dict[str, Any]]:
