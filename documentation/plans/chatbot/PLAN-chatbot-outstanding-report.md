@@ -1,6 +1,6 @@
 # PLAN - Chatbot outstanding report: SO backlog and DO pending, one shape, four filters
 
-Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) sits on origin/main and ships WITHOUT #847. S1 to S4 built; Phase 3 fix round in progress (reviewer S4/S5 + the 13 Sep console check).
+Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) sits on origin/main and ships WITHOUT #847. S1 to S4 built; Phase 3 PASSED (reviewer + security reviewer + console run 5, six of six journey turns green); PR open.
 UAC: `chatbot-outstanding-report-acceptance-criteria.md` (AC-11xx).
 Base: stacked on `feat/chatbot-focus` (lane 1 of `PLAN-chatbot-focus-multi-domain.md`,
 issue #847), because the scope question and the detail pick are open-question kinds that

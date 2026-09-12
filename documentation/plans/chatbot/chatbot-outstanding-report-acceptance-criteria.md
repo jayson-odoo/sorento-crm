@@ -227,3 +227,12 @@ resolution and the filter set in the console trace.
   window was wrong. None measured today.
 - Repairing `so_outstanding_summary` / `stamp_so_outstanding_rows` for other consumers of
   `include_pipeline`. Trigger: a second consumer that reads those figures.
+- The SHARED product resolver's family widening. A single product token takes the
+  resolver's OR-mode, where the gate calls a candidate exact only on `match_tier ==
+  "exact"` - a tier `entity_resolver._prefix_probe_product` never stamps - so the whole
+  prefix family arrives and the reader picks one. AND-mode already keys on "canonical_code
+  EQUALS a typed token" (`gate.py`, `prod_exacts`). This lane fixes it for the OUTSTANDING
+  path only (`fetch.outstanding_product_code`), deliberately: every other domain widened to
+  the family on purpose, and changing the shared gate would change all of them at once.
+  Trigger for the shared fix: a SECOND domain measured answering about a sibling of a code
+  the customer typed exactly.
