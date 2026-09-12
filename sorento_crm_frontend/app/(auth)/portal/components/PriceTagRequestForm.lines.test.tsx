@@ -113,6 +113,14 @@ beforeEach(() => {
   (createRequest as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'req-1' });
 });
 
+// The lines table (and its "Add line" button) lives inside the "Sales Order
+// & Lines" section (D-P1), which is collapsed until a customer is picked
+// (AC-P3) or opened by hand - Radix's Collapsible unmounts its content while
+// closed, so a test that never picks a customer has to open it itself.
+function openSalesOrderSection() {
+  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+}
+
 async function addLine() {
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 }
@@ -121,6 +129,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   it('adds a row with one button and offers sets and products in one dropdown', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
 
     // The two Add buttons are gone: there is exactly one.
     expect(screen.queryByRole('button', { name: /^Product$/ })).toBeNull();
@@ -139,11 +148,10 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
   it('a picked product posts line_type product with the product id', async () => {
     render(<PriceTagRequestForm />);
+    // Need by is optional since D-P2b - Customer + one line is the whole
+    // requirement (AC-P10); picking the customer auto-opens Sales Order &
+    // Lines (AC-P3).
     await selectOption('Debtor', 'ZZTD01');
-    // The deadline starts empty since D48a, and Submit asks for it by name.
-    fireEvent.change(screen.getByLabelText(/Need by/), {
-      target: { value: '2026-09-30' },
-    });
 
     await addLine();
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
@@ -166,11 +174,8 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
   it('a picked set posts line_type product_set with no product id', async () => {
     render(<PriceTagRequestForm />);
+    // Need by is optional since D-P2b - see the note above.
     await selectOption('Debtor', 'ZZTD01');
-    // The deadline starts empty since D48a, and Submit asks for it by name.
-    fireEvent.change(screen.getByLabelText(/Need by/), {
-      target: { value: '2026-09-30' },
-    });
 
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
@@ -191,6 +196,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   it('a set row has no Alternatives column (D3/AC-S1-3)', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
 
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
@@ -202,6 +208,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   it('a product row has no Alternatives column either', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
 
     await addLine();
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
@@ -213,6 +220,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   it('removes a row without asking for a confirmation', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
 
     await addLine();
     await screen.findByLabelText('Search a set or product...');

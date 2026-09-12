@@ -17,7 +17,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -124,6 +124,14 @@ beforeEach(() => {
   });
 });
 
+// The lines table (where "Quantity for line N" / "Remarks for line N" render)
+// lives inside the "Sales Order & Lines" section (D-P1), collapsed by
+// default - no customer is picked in these tests, so it never auto-opens
+// (AC-P3), and Radix's Collapsible unmounts its content while closed.
+function openSalesOrderSection() {
+  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+}
+
 /** Runs the extraction resolve pass (per-code lookup) and waits for every
  *  code's match to settle before Apply reads them off the ref. */
 async function extractAndSettle(products: Record<string, unknown>[]) {
@@ -141,6 +149,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('a matched product row becomes a line with qty defaulted to 1 and remarks from notes', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [
       {
@@ -166,6 +175,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('quantity from the extracted row is rounded and floored at 1, not defaulted', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [
       {
@@ -186,6 +196,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('a matched SET row becomes a line too, same as a matched product', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [{ product_code: MATCHED_SET.code, quantity: 1, notes: 'set note' }];
     await extractAndSettle(products);
@@ -220,6 +231,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('a mixed batch appends only the matched rows, in order, and reports the rest', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [
       { product_code: MATCHED_PRODUCT.code, quantity: 2, notes: 'first' },
@@ -245,6 +257,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('honours alsoAttach: the extracted files join the Sales Order pending files (review fix)', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }];
     await extractAndSettle(products);
