@@ -62,6 +62,7 @@ def crossdomain_compose(
     result: Any = None,
     answered: bool = False,
     result_set: Any = jsc.UNDEFINED,
+    offer_out: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`{reply}` in, `{reply}` out. `result` is the `build-result` carrier (nullable).
 
@@ -72,6 +73,13 @@ def crossdomain_compose(
     grading it green. `UNDEFINED` is a caller that does not KNOW the rows (the replay
     runner, which has no `CompiledState`): it asserts nothing about them and the `answered`
     flag stands on its own.
+
+    `offer_out` is an OUT-PARAMETER, deliberately not a key on the returned item: this node
+    is replayed against 84 captures which compare it whole, so one added key would diverge
+    every one of them. It is the same channel `output_exchange` uses for `_dialogue_out`.
+    The ANSWERED branch appends an escalate OFFER, and an offer nobody recorded is an offer
+    the next turn's "yes" cannot resolve (AC-1015) - so the fact and the team are handed
+    back, and the TAIL arms the question, where the turn number is known.
     """
     if result is None:
         return dict(item)  # build-result did not run: pass the turn through byte-identical
@@ -111,6 +119,8 @@ def crossdomain_compose(
         # the node replay feeds and nothing the engine produces.
         if "response" in variables:
             variables["response"] = f"{jsc.js_string(variables.get('response'))}. {phrase}"
+        if offer_out is not None:
+            offer_out["team"] = jsc.get(block, "team")
         existing = out.get("quick_reply")
         out["quick_reply"] = (
             f"{jsc.js_string(existing)},Yes escalate,No it's okay"

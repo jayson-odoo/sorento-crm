@@ -3259,6 +3259,52 @@ def _label_attachments(files: list, rows: list[tuple[Any, list[str]]]) -> list:
     return labelled
 
 
+def _arm_cross_domain_offer(
+    sealed: Mapping[str, Any],
+    offer: Mapping[str, Any],
+    *,
+    ctx: Mapping[str, Any],
+    domain: Any,
+) -> None:
+    """The cross-domain escalate offer, recorded as the ONE open question (AC-1015).
+
+    `crossdomain_compose` appends "Would you like me to escalate to X team?" AFTER the tail
+    compiled the state, so the question it opens is the only one no lane and no compiler
+    arms. Without it the next turn's "yes" resolves nothing: `_resolve_open_question` finds
+    no question, the turn falls through as a bare affirmative, and the customer who said
+    yes is answered by silence.
+
+    Armed HERE because this is where the turn number is - `compile_state` stamps it on the
+    parse block and `crossdomain_compose` never sees it. Same shape every other lane's
+    question has, built by the one constructor: a `team_pick` offering ONE team, `expects:
+    yes_no` (D5), options frozen so a "1" means the team the customer read.
+
+    THE CLOCK DOES NOT RESTART: an offer re-made on a later turn keeps the turn it was
+    first asked on, which is what `same_question` is for.
+    """
+    team = jsc.get(offer, "team")
+    if not jsc.truthy(team):
+        return
+    patch = sealed.get("session_patch") if isinstance(sealed, Mapping) else None
+    variables = patch.get("variables") if isinstance(patch, dict) else None
+    if not isinstance(variables, dict):
+        return
+    parse = jsc.get(ctx, "parse")
+    turn_no = int(jsc.js_number(jsc.get(parse, "_turn_no")) or 0)
+    question = open_question_mod.ask(
+        "team_pick",
+        options=[{"idx": 1, "team": team, "label": team}],
+        turn_no=turn_no,
+        expects="yes_no",
+        domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+        payload={"team": team, "domain": domain},
+    )
+    previous = jsc.get(parse, "_open_question_before") or variables.get("open_question")
+    if open_question_mod.same_question(question, previous) and isinstance(previous, dict):
+        question["asked_at_turn"] = int(previous.get("asked_at_turn", question["asked_at_turn"]))
+    variables["open_question"] = question
+
+
 def run_tail(
     db: Session,
     *,
@@ -3342,6 +3388,7 @@ def run_tail(
         gate=values["gate"],
         execution_id=turn_id,
     )
+    xd_offer: dict[str, Any] = {}
     composed = compose_mod.crossdomain_compose(
         compiled.item,
         result=values["result"],
@@ -3350,8 +3397,10 @@ def run_tail(
         # `variables` is five keys and has held no `last_result_set` since L1-S3, so the
         # answered branch was reading an absent key and folding nothing in.
         result_set=compiled.result_set,
+        offer_out=xd_offer,
     )
     sealed = composed.get("reply") or {}
+    _arm_cross_domain_offer(sealed, xd_offer, ctx=ctx, domain=compiled.answered_domain)
     # A lane may have composed quick replies of its own before the tail ran: the
     # escalation clarifies name the teams so the answer is a tap, and the tail composes no
     # `quick_reply` on that arm. Seeded HERE rather than at the send seal so the persisted
