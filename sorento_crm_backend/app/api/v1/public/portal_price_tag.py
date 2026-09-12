@@ -320,7 +320,7 @@ def portal_update_price_tag_request(
             db,
             entity_type="price_tag_request",
             entity_id=req.id,
-            action="portal_edit_after_submit",
+            action="portal_edit",
             contact_id=req.contact_id,
             new_values=update_data,
             description="Portal edit after submit",

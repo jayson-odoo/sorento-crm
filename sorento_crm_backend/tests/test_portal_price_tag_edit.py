@@ -283,7 +283,7 @@ class TestPostSubmitEditAllowed:
             .all()
         )
         assert len(rows) == 1, rows
-        assert "portal_edit_after_submit" in rows[0].action.lower()
+        assert "portal_edit" in rows[0].action.lower()
 
     def test_put_after_submit_lines_are_replaced(self, client):
         """The header fields AND the lines are the whole payload the plan

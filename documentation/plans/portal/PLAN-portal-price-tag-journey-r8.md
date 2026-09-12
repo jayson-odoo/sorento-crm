@@ -141,7 +141,7 @@ All line refs are `origin/main` at c385da410.
   `portal_draft_at` is set OR `status in (new, changes_requested)`; PUT uses it, DELETE and
   submit keep `_require_draft`. The PUT path for a non-draft: same `update_request` service
   call (which already re-derives `show_promo_price` and validates price mode), then
-  `record_audit(...)` with action `portal_edit_after_submit`; no `emit_form_event`, no status
+  `record_audit(...)` with action `portal_edit`; no `emit_form_event`, no status
   or assignee change. `_detail_body` adds `is_editable`. Trigger for notifying the designer:
   a designer reports designing against stale lines.
 - **D-M1** No new motion beyond `--duration-fast` opacity on section bodies (AC-U1); the

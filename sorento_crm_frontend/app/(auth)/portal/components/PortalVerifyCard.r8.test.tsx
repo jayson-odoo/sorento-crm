@@ -113,7 +113,7 @@ describe('PortalVerifyCard - r8 demarcation (AC-V1)', () => {
 describe('PortalVerifyCard - auto-verify and inline error (AC-V2)', () => {
   it('verifies without a button once the sixth digit lands', async () => {
     await renderOtpCard();
-    mockVerifyOtp.mockResolvedValue({ token: 'tok-123' });
+    mockVerifyOtp.mockResolvedValue({ token: 'tok-123', expires_at: '2026-01-02T00:00:00Z' });
 
     fireEvent.change(screen.getByLabelText('Verification code'), {
       target: { value: '123456' },
@@ -162,6 +162,9 @@ describe('PortalVerifyCard - legacy token route (AC-V4)', () => {
     mockTokenInfo.mockResolvedValue({
       contact_id: 'c1',
       space_id: 's1',
+      expires_at: '2026-01-02T00:00:00Z',
+      expired: false,
+      revoked: false,
       name: 'Ahmad Tester',
       masked_phone: '+60••••9999',
       whatsapp_number: '60123456789',
