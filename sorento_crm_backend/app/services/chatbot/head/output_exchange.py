@@ -74,11 +74,49 @@ _CERTIFICATE_RE = re.compile(r"cert|certificate", re.IGNORECASE)
 _VALID_BRANDS = ("sorento", "cabana", "mocha")
 
 
+# Which ACCESS AGENT each domain's turn is checked against. A separate axis from the team:
+# the team is who a turn escalates TO (`DOMAIN_SPEC[d].escalation_team`, one table, read
+# below), and the agent is which access grant the contact must hold to be answered at all.
+# Four domains name one of their own and everything else shares `general_enquiries`, which
+# is why this is four rows and a default rather than a column on `DOMAIN_SPEC`.
+# Which ACCESS AGENT each ROUTED domain is checked against, and the list of routed domains
+# in one place. A domain absent from this map routes to nothing at all - `portal_link`,
+# `resource_attachment`, `goods_receive` and `spo_allocation` fall through to the null pair
+# exactly as the live body does, and `check_access` keys on `suggested_agent`, so inventing
+# one for them would check a grant no turn has ever needed.
+_AGENT_BY_DOMAIN: dict[str, str] = {
+    "master_products": "general_enquiries",
+    "product_attachment": "general_enquiries",
+    "promotion": "general_enquiries",
+    "inventory": "general_enquiries",
+    "purchase_order": "general_enquiries",
+    "incoming": "incoming_stock_enquiries",
+    "forms": "marketing_form",
+    "order": "order_enquiries",
+    # An idea is captured, never escalated, so `ideate` has no team - but it HAS its own
+    # agent, and this is the single source of truth for it: check-access keys on
+    # `suggested_agent` and the no-access message renders from the same field.
+    "ideate": "ideation",
+}
+_DEFAULT_AGENT = "general_enquiries"
+
+
 def derive_routing(out: dict) -> dict:
-    domain = out.get("domain_hint")
+    """Who answers this turn, off ONE table plus the one split a table cannot hold.
+
+    `DOMAIN_SPEC[d].escalation_team` is the team, for every domain, and the per-domain `if`
+    chain that used to restate it is gone (AC-1032): a second copy of a per-domain fact is
+    the thing that drifts, and this one had already drifted from the catalogue once.
+
+    THE CERTIFICATE SPLIT STAYS, because it is not a per-domain fact at all: inside
+    `product_attachment` a CERTIFICATE goes to purchasing_certification and a photo or a
+    drawing goes to marketing_product, and which one it is depends on what the customer
+    asked for in THIS message - the attachment_type entity's own words, or a certificate
+    word in `user_goal` when the model typed the intent but not the entity.
+    """
+    domain = jsc.js_string(out.get("domain_hint") or "")
     ents = jsc.array(out.get("entities"))
 
-    # attachment_type discriminator (the cert-vs-photo split within product_attachment)
     attach_types = [
         jsc.lower_or_empty(e.get("canonical_code") if jsc.truthy(e.get("canonical_code")) else e.get("raw"))
         for e in ents
@@ -91,64 +129,17 @@ def derive_routing(out: dict) -> dict:
         out.get("intent_hint") == "check_product_attachment"
         and bool(_CERTIFICATE_RE.search(jsc.lower_or_empty(out.get("user_goal")) or ""))
     )
+    if domain == "product_attachment" and is_cert:
+        return {
+            "suggested_team": "purchasing_certification",
+            "suggested_agent": _DEFAULT_AGENT,
+        }
 
-    # brand for promotion routing (entity wins, else access level). D9: prefer the
-    # DERIVED query_brands - it is the union of the brand entity and the brand half of a
-    # compound stated level, so it survives the tier-token normalisation that made the
-    # access-level fallback below dead.
-    brand_ent = jsc.find(ents, lambda e: jsc.lower_or_empty(jsc.get(e, "hint")) == "brand")
-    access = [jsc.js_string(a).lower() for a in jsc.array(out.get("access_levels"))]
-    query_brands = out.get("query_brands")
-    brand = query_brands[0] if jsc.is_array(query_brands) and len(query_brands) else None
-    if not jsc.truthy(brand):
-        brand = jsc.lower_or_empty(jsc.get(brand_ent, "raw")) if brand_ent is not None else None
-    if not jsc.truthy(brand):
-        if any("mocha" in a for a in access):
-            brand = "mocha"
-        elif any("cabana" in a for a in access):
-            brand = "cabana"
-        elif any("sorento" in a for a in access):
-            brand = "sorento"
-    # D3 fix: clamp to the valid promotion-brand enum; garbled/unknown -> None.
-    _b2 = re.sub(r"[^a-z]", "", jsc.js_string(brand if jsc.truthy(brand) else ""))
-    brand = next((v for v in _VALID_BRANDS if v in _b2), None)
-
-    if domain == "master_products":
-        return {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
-    if domain == "incoming":
-        return {"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"}
-    if domain == "product_attachment":
-        return (
-            {"suggested_team": "purchasing_certification", "suggested_agent": "general_enquiries"}
-            if is_cert
-            else {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}
-        )
-    # NO `resource_attachment` case. The live body falls through to the null pair for it;
-    # the marketing_product row that pairs it with product_attachment's non-cert arm is part
-    # of the UNPROMOTED B-TEAM-1' lane change and is not what production runs today.
-    if domain == "forms":
-        return {"suggested_team": "marketing_form", "suggested_agent": "marketing_form"}
-    if domain == "inventory":
-        return {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"}
-    if domain == "order":
-        return {"suggested_team": "customer_service", "suggested_agent": "order_enquiries"}
-    # ONE promotion team for every brand (CRM migration 371 collapsed the legacy
-    # marketing_promotion_<brand> rows into base + brand_code). The brand travels
-    # separately (query_brands / brand entity), never in the team name.
-    if domain == "promotion":
-        return {"suggested_team": "marketing_promotion", "suggested_agent": "general_enquiries"}
-    # Growth r1 A5 (AC-907). A PO question is a PURCHASING question, the same team
-    # `master_products` and `incoming` already route to - a supplier order is what that team
-    # placed. Replay-safe by construction: `purchase_order` is a domain this plan invents, so
-    # no captured turn can carry it and no fixture's routing can move.
-    if domain == "purchase_order":
-        return {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
-    # ideate: no CS team (an idea is captured, never escalated) but its OWN access agent.
-    # This is the SINGLE source of truth for the ideate agent: check-access keys on
-    # suggested_agent and the no-access message renders from the SAME field.
-    if domain == "ideate":
-        return {"suggested_team": None, "suggested_agent": "ideation"}
-    return {"suggested_team": None, "suggested_agent": None}
+    spec = DOMAIN_SPEC.get(domain)
+    agent = _AGENT_BY_DOMAIN.get(domain)
+    if spec is None or agent is None:
+        return {"suggested_team": None, "suggested_agent": None}
+    return {"suggested_team": spec.escalation_team, "suggested_agent": agent}
 
 
 # --------------------------------------------------------------------------- #
@@ -653,28 +644,26 @@ _FENCE_MARK_RE = re.compile(r"```json?|```")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
-def _switch_word_domain(message: Any) -> str | None:
-    """The ONE domain whose switch word appears among THIS message's content tokens
-    (`_TOKEN_RE` minus `SWITCH_FILLER`, the #6 consumer's own tokenisation, over the
-    sanctioned `DOMAIN_SWITCH_WORDS` table and nothing else). None when no token is a
-    switch word, and None when the tokens name more than one domain - "stock and delivery
-    for hanlim" is ambiguous here and is left to the model.
+# `_switch_word_domain` is DELETED (AC-1032). A domain word is an ASK under parser v3 and
+# `dialogue/focus.domains_from_asks` is the one rule that acts on it.
 
-    Unlike #6 this does NOT require every content token to be a switch word: it is one
-    structural signal read beside a current-message entity (owner turn 2d903c96,
-    8 Sep 2026: "delivery to hanlim" is a delivery word plus a customer name), never a
-    classifier of the text on its own.
-    """
-    msg = _split_reply_to(message).lower()
-    domains = {
-        DOMAIN_SWITCH_WORDS[t]
-        for t in _TOKEN_RE.findall(msg)
-        if t not in SWITCH_FILLER and t in DOMAIN_SWITCH_WORDS
-    }
-    return next(iter(domains)) if len(domains) == 1 else None
 # U+2010..U+2015, U+2212, U+FE58, U+FE63, U+FF0D - the copy-paste dashes Excel / Word /
 # Sheets / PDF emit instead of ASCII '-' (observed live, exec 12053189).
-_DASHES = re.compile("[‐-―−﹘﹣－]")
+_DASHES = re.compile("[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]")
+
+
+def _domain_named_this_message(o: Any, parser_raw: Any) -> str | None:
+    """The domain THIS message named, off the parse. None when it named none.
+
+    Two contracts, one answer: v3 lists what the message asks about in `asks[]`, and v1
+    puts the model's own reading in `domain_hint` - read from the RAW snapshot, so a domain
+    a carry supplied later cannot be mistaken for one the customer said.
+    """
+    domains = o.get("domains") if isinstance(o, dict) else None
+    if isinstance(domains, list) and domains:
+        return jsc.js_string(domains[0])
+    raw_domain = jsc.get(parser_raw, "domain_hint") if isinstance(parser_raw, dict) else None
+    return jsc.js_string(raw_domain) if jsc.truthy(raw_domain) else None
 
 
 def _split_reply_to(message: Any) -> str:
@@ -1496,24 +1485,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # `domain_hint` the carry has just rewritten - would let a bare continuation drop the
     # very scope it is continuing.
 
-    # -- #6: deterministic domain-SWITCH word signal (this-turn-only) -------------------- #
-    # A bare/dominant domain word in the CURRENT message must SWITCH domain, not let the
-    # continuity carry reuse the prior one (repro exec 10826285: "promo" after a stock
-    # turn -> stock again). Whole-word, case-insensitive.
+    # The `#6` domain-SWITCH word override is DELETED (AC-1032). A bare domain word is an
+    # ASK now - parser v3 emits it as `asks[{domain}]` and `dialogue/focus.domains_from_asks`
+    # REPLACES the domain list with it (D7) - so a second reader that re-derived the same
+    # switch from the raw message, after the fact, could only ever disagree with the first.
+    # `switch_domain` survives as the name the focus rules still take, always None from
+    # here: nothing in this function decides a domain switch any more.
     switch_domain: str | None = None
-    if not explicit:
-        sw_msg = _split_reply_to(parent_input.get("latest_user_message")).lower()
-        sw_toks = [t for t in _TOKEN_RE.findall(sw_msg) if t not in SWITCH_FILLER]
-        # defense-in-depth: a current-message entity means this is a real query
-        sw_has_cur_ent = any(
-            jsc.truthy(e) and jsc.get(e, "current_message") is True
-            for e in jsc.array(o.get("entities"))
-        )
-        if len(sw_toks) >= 1 and not sw_has_cur_ent:
-            sw_doms = [DOMAIN_SWITCH_WORDS.get(t) for t in sw_toks]
-            # EVERY remaining content token must be a switch word of the SAME domain.
-            if all(d is not None for d in sw_doms) and len(set(sw_doms)) == 1:
-                switch_domain = sw_doms[0]
 
     ce_unknown_hints: set[str] = set()
 
@@ -1569,88 +1547,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 
     prev_state_domain = jsc.get(parent_input.get("previous_conversation_state"), "domain_hint") or None
 
-    # -- AXIS BROADEN: naming a KIND of thing widens one filter, not the subject --------- #
-    # exec 13624889: after "srt59-cr for mastile klang" in the order domain, "all products"
-    # came back master_products / entity_op clear - it jumped to the catalogue AND dropped
-    # the customer. Restore the domain BEFORE the executor.
-    ba = jsc.lower_or_empty(o.get("broaden_axis"))
-    prev_dom0 = prev_state_domain
-    wandered_dom0 = o.get("domain_hint") if jsc.truthy(o.get("domain_hint")) else None
-
-    # PLAN-broaden-domain-switch (exec 15121180, 9 Sep 2026): "Any incoming" after a stock
-    # turn came back domain_hint incoming / intent_hint check_incoming / broaden_axis all /
-    # scope_intent broaden - a COHERENT (incoming, check_incoming) pair, not the "all
-    # products" wander this block exists for. The prompt defines a widen as "KEEP
-    # domain_hint", so a coherent pair naming a DIFFERENT, non-catalogue domain is
-    # self-contradictory: a wander lands on a CATALOGUE_DOMAINS entry (a KIND of thing);
-    # nobody reaches an activity domain that way, so this is a deliberate switch and the
-    # restore below must not undo it.
-    #
-    # Review, blocker B2 (9 Sep 2026): narrowed to `ba == "all"` only. `date` and an
-    # entity-hint axis are NOT wander-only shapes the way "all" is - the prompt's own
-    # widen instruction says KEEP domain_hint for both, so a DIFFERING domain there is a
-    # known MODEL violation of its own instruction, which the restore below exists to
-    # correct, not a deliberate switch. Firing on those axes measured three regressions:
-    # a `date` widen ("not just August") stuck in the wandered domain instead of
-    # restoring; a `date` widen's `broaden_axis: None` skipped the reuse arm's `all_time`
-    # wipe, silently restoring the OLD window instead of clearing it; and an entity-hint
-    # widen's `broaden_axis: None` left the final drop pass (`ba_final`, ~line 3270) with
-    # nothing to drop. Only `"all"` has no KEEP clause in the prompt and only `"all"` has
-    # a real capture (exec 15121180) - `date` and entity-hint axes stay on the restore
-    # path unconditionally.
-    switch_spec = DOMAIN_SPEC.get(wandered_dom0) if isinstance(wandered_dom0, str) else None
-    switched = bool(
-        ba == "all"
-        and jsc.truthy(prev_dom0)
-        and wandered_dom0 != prev_dom0
-        and switch_spec is not None
-        and o.get("intent_hint") in switch_spec.intents
-        and wandered_dom0 not in CATALOGUE_DOMAINS
-    )
-    if switched:
-        o["domain_switch_over_broaden"] = prev_dom0  # diagnostic
-        o["broaden_axis"] = None
-        o["scope_intent"] = None
-        has_current_ent = any(
-            jsc.truthy(e) and jsc.get(e, "current_message") is True
-            for e in jsc.array(o.get("entities"))
-        )
-        blocked_for_new = set(DOMAIN_BLOCKED_HINTS.get(wandered_dom0, []))
-        if (
-            not has_current_ent
-            and prev_state_entities
-            and all(
-                jsc.lower_or_empty(jsc.get(e, "hint")) not in blocked_for_new
-                for e in prev_state_entities
-            )
-        ):
-            o["entity_op"] = "reuse"
-        # else leave entity_op exactly as the model emitted it.
-    elif ba and jsc.truthy(prev_dom0):
-        o["domain_hint"] = prev_dom0
-        prev_intent = jsc.get(parent_input.get("previous_conversation_state"), "intent_hint")
-        o["intent_hint"] = (
-            prev_intent
-            if jsc.truthy(prev_intent)
-            else (o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None)
-        )
-        o["broaden_axis_domain_restored"] = True
-
-        # exec 13728314: "all products" on an order in progress came back entity_op
-        # "clear" + broaden_axis "all" + scope_intent the STRING "null" - the model misread
-        # ONE axis being widened as a request for the whole catalogue. A genuine
-        # broaden-everything turn must still clear; only a MISREAD "all" is rescued.
-        scope_intent = jsc.nullish_str(o.get("scope_intent")).lower()
-        if ba == "all" and scope_intent != "broaden":
-            if o.get("entity_op") == "clear":
-                o["entity_op"] = "reuse"
-                o["broaden_axis_clear_rescued"] = True
-            # The domain the model wandered TO names the axis it actually meant.
-            wandered_hint = DOMAIN_SUBJECT_HINT.get(wandered_dom0) if wandered_dom0 else None
-            if jsc.truthy(wandered_hint):
-                o["broaden_axis"] = wandered_hint
-                o["broaden_axis_resolved_from_domain"] = wandered_dom0
-            # an unmapped wandered domain leaves broaden_axis as "all" - fail open.
+    # The AXIS BROADEN RESTORE is DELETED (AC-1032). It existed because a widen turn
+    # ("all products" after an order question) came back naming the catalogue domain and
+    # the executor then dropped the customer with it - a carry deciding a domain, which is
+    # the defect the dialogue state exists to end. Under parser v3 a widen names no ask, so
+    # `domains_from_asks` leaves the alive domains exactly where they were and there is
+    # nothing to restore. `broaden_axis` itself is gone from the v3 schema.
 
     # -- ENTITY OPERATION EXECUTOR (op + axis-aware replace/combine) --------------------- #
     # Set by the `reuse` arm below and read by the focus rules at the `#6` position, which
@@ -2564,11 +2466,15 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # WIDENED (owner turn 2d903c96, 8 Sep 2026, "delivery to hanlim"): the model emitted
     # `request_for_help` with intent AND domain null, so the decisive-intent half was
     # never true and the lane went `out_of_scope`. The second half is just as structural:
-    # a switch word of ONE domain among this message's content tokens (`_switch_word_domain`,
-    # over the sanctioned `DOMAIN_SWITCH_WORDS` table only) beside an entity named THIS
-    # turn. Still both halves - a switch word alone ("can someone help me with my order")
-    # names nothing and stays a help request; an entity alone is a picker answer.
-    switch_word_domain_now = _switch_word_domain(parent_input.get("latest_user_message"))
+    # this message NAMES A DOMAIN OF ITS OWN beside an entity named this turn. Still both
+    # halves - a domain word alone ("can someone help me with my order") names nothing and
+    # stays a help request; an entity alone is a picker answer.
+    #
+    # The signal is the PARSE, not a re-reading of the customer's words: v3 says it in
+    # `asks[].domain` and v1 says it in the RAW `domain_hint`, before any carry could have
+    # supplied one. `_switch_word_domain` re-tokenised the message to answer the same
+    # question a second way, which is exactly the two-writers defect AC-1032 deletes.
+    switch_word_domain_now = _domain_named_this_message(o, parser_raw_snapshot)
     entity_named_now = jsc.is_array(o.get("entities")) and any(
         jsc.get(e, "current_message") is True for e in o["entities"]
     )
@@ -3334,19 +3240,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["entities"] = [e for e in o["entities"] if sn(jsc.get(e, "raw")) not in superseded]
             o["dym_superseded_dropped"] = before - len(o["entities"])
 
-    # -- AXIS BROADEN, FINAL PASS: the widened filter must not come back -------------------- #
-    # This drop used to sit right after the executor; a LATER writer re-attached the product
-    # anyway (~47 sites assign entities/domain_hint), so it runs immediately before the
-    # return, where `entities` is final by definition. Drop by HINT, not by axis: live's
-    # maps lump customer/product/order into ONE order_scope, so an axis-equality drop would
-    # take the customer out with the product.
-    ba_final = jsc.lower_or_empty(o.get("broaden_axis"))
-    if ba_final and ba_final != "all" and ba_final != "date" and jsc.is_array(o.get("entities")):
-        before = len(o["entities"])
-        o["entities"] = [
-            e for e in o["entities"] if jsc.lower_or_empty(jsc.get(e, "hint")) != ba_final
-        ]
-        o["broaden_axis_dropped"] = before - len(o["entities"])
+    # The AXIS BROADEN FINAL PASS is DELETED with the restore above (AC-1032). Both halves
+    # existed to undo what `broaden_axis` had done earlier in the same function; v3 emits no
+    # such key, and what a customer widens is now a slot the focus rules clear by name.
 
     output["_parser_raw"] = parser_raw_snapshot
     return output

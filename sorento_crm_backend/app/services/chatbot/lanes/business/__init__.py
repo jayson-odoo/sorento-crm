@@ -97,6 +97,7 @@ def _fetch_semantic_input(
     tier_gate: dict[str, Any] | None,
     contact_id: Any,
     space_id: str | None,
+    focus: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`Call 'sub-get-results'`'s `semantic_input`, all thirteen fields plus growth r1's two.
 
@@ -110,8 +111,24 @@ def _fetch_semantic_input(
     list otherwise, which is the legacy behaviour off the promotion lane.
     """
     tg = tier_gate if isinstance(tier_gate, dict) else None
+    # WHAT THE CONVERSATION IS ABOUT comes from `focus`, not from the emission (L1-S3).
+    # Four of the fields below are focus AXES - the domain, the date window, the requested
+    # attributes and the tier - and the whole point of the dialogue state is that one
+    # writer decides them and every reader reads the same answer. The emission is the
+    # fallback for a session written before the focus existed, and for the per-turn fields
+    # below that are not axes at all (`message_type`, `user_goal`, `is_active`,
+    # `order_status`), which describe THIS message and are never carried.
+    slots = focus if isinstance(focus, dict) else {}
+    domains = _slot_value(slots, "domains")
+    window = _slot_value(slots, "date_window")
+    window = window if isinstance(window, dict) else {}
+    attributes = _slot_value(slots, "attributes")
+    tier = _slot_value(slots, "tier")
+
     if tg is not None:
         access_levels = tg.get("access_levels_recomposed")
+    elif isinstance(tier, list) and tier:
+        access_levels = tier
     else:
         access_levels = (
             parse_output.get("access_levels")
@@ -121,20 +138,26 @@ def _fetch_semantic_input(
     return {
         "message_type": parse_output.get("message_type"),
         "intent_hint": parse_output.get("intent_hint"),
-        "domain_hint": parse_output.get("domain_hint"),
+        "domain_hint": (
+            domains[0] if isinstance(domains, list) and domains else parse_output.get("domain_hint")
+        ),
         "user_goal": parse_output.get("user_goal"),
         "access_levels": access_levels,
         "contact_id": jsc.js_string(contact_id) if contact_id is not None else None,
         "space_id": fetch_mod.space_id_or_default(space_id),
-        "date_mode": parse_output.get("date_mode"),
-        "date_filter_start": parse_output.get("date_filter_start"),
-        "date_filter_end": parse_output.get("date_filter_end"),
+        "date_mode": window.get("mode") or parse_output.get("date_mode"),
+        "date_filter_start": window.get("start") or parse_output.get("date_filter_start"),
+        "date_filter_end": window.get("end") or parse_output.get("date_filter_end"),
         "is_active": parse_output.get("is_active"),
         "order_status": parse_output.get("order_status"),
         "requested_attributes": (
-            parse_output.get("requested_attributes")
-            if parse_output.get("requested_attributes") is not None
-            else []
+            attributes
+            if isinstance(attributes, list) and attributes
+            else (
+                parse_output.get("requested_attributes")
+                if parse_output.get("requested_attributes") is not None
+                else []
+            )
         ),
         # Growth r1 (AC-909 / AC-910). Fifteen fields now, and these two are the reason the
         # docstring above says an empty object is not a small omission: `entity_ids_
@@ -146,6 +169,12 @@ def _fetch_semantic_input(
         "group_by": parse_output.get("group_by"),
         "top_n": parse_output.get("top_n"),
     }
+
+
+def _slot_value(focus: dict[str, Any], name: str) -> Any:
+    """One focus slot's value, or None. The slot shape is `{value, set_at_turn, ...}`."""
+    slot = focus.get(name)
+    return slot.get("value") if isinstance(slot, dict) else None
 
 
 def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any]:
@@ -249,7 +278,14 @@ def run_fetch(
     contact_id = (ctx.get("contact") or {}).get("id")
     entities = gate.get("compatible_entities") or []
     semantic_input = _fetch_semantic_input(
-        parse_output, tier_gate=tier_gate, contact_id=contact_id, space_id=space_id
+        parse_output,
+        tier_gate=tier_gate,
+        contact_id=contact_id,
+        space_id=space_id,
+        # The dialogue state the engine applied before this lane ran. It rides `ctx.parse`
+        # beside `_parser_raw` because `parse.output` is the graded wire shape and may not
+        # grow a key (`head/output_exchange`'s own note on the out-parameter).
+        focus=(ctx.get("parse") or {}).get("_focus"),
     )
 
     def probe(tool: str, probe_entities: Any, probe_levels: Any) -> Any:
