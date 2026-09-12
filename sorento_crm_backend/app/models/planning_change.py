@@ -1,8 +1,11 @@
 """A planning change batch: what a re-uploaded AutoCount SO book did to the plan.
 
 `documentation/plans/scm/PLAN-so-book-diff-replanning.md` section 2. Two append-only
-tables, both records rather than working state: a batch is born the moment
-`outstanding_import_service.apply()` diffs a book that changed a PLANNED line, and it is
+tables, both records rather than working state: a batch is born only when a re-uploaded
+book, an ESB push or a manual edit changed a line that is HELD by the order's active
+supply decision or carries a non-cancelled Order Inquiry row
+(`PLAN-scm-planning-change-gate-held-or-inquiry.md`, AC-G1) - an adopted-but-undecided
+line raises nothing, so no empty batch is ever created for it - and once born, a batch is
 never deleted (AC-R10, "the batch is a record").
 
 `projects.planning_change_batches` carries the upload's own counts; `projects

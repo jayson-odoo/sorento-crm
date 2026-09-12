@@ -1,6 +1,6 @@
 # PLAN: a planning change is raised only for a line someone has decided on
 
-**Status:** IN PROGRESS, 12 September 2026. Captain's call on the local prod copy: 1,307 of
+**Status:** IN REVIEW, 12 September 2026. Gate, pill filter and migration 513 landed on lane/main-so-changes-12sep; reviewer clean on logic, fix round (S1 failed-row predicate, N2 create-batch-only-when-kept, migration test) in flight. Captain's call on the local prod copy: 1,307 of
 1,308 pending planning-change rows on live sit on lines with no held decision and no inquiry
 row, so the `Changed` pill on the SCM Sales Orders list sends the reader to a board with
 nothing to re-decide.
@@ -47,14 +47,17 @@ Consequences, spelled out:
 
 1. `planning_change_service._build_row` returns `None` when `held is None and not
    inquiry_rows`; `build_batch` skips those, recounts `order_count` / `line_count` from the
-   kept rows, and deletes the batch it flushed when nothing was kept, returning `None`.
+   kept rows, and creates the batch only when at least one row was kept (the empty case is
+   the common one on live), returning `None` otherwise.
 2. `sales_order_service.with_planning_changes` adds `PlanningChangeRow.applied_state ==
    pending` to the join filter.
-3. Data migration `513_planning_change_gate_backfill`: every pending row on an unapplied
-   batch with no `held_json` and no inquiry rows becomes `superseded` with a reason naming
-   this migration; a batch left with no pending row gets `applied_at = now()` (no
-   `applied_by`, the FE already renders that as applied with no actor) and a `result_json`
-   note. Nothing is deleted.
+3. Data migration `513_planning_gate_backfill` (26 chars; the alembic version column caps
+   ids at 32): every pending row on an unapplied batch with no `held_json` and no inquiry
+   rows becomes `superseded` with a reason naming this migration; a batch left with no
+   pending AND no failed row gets `applied_at = now()` (no `applied_by`, the FE already
+   renders that as applied with no actor) and a `result_json` note. SQL lives in
+   `apply(connection)` so `tests/test_migration_513_planning_gate_backfill.py` drives it.
+   Nothing is deleted.
 4. Tests updated where they asserted the old rule (`test_planning_changes.py` AC-R03 shape
    test, `tests/scm/test_scm_sales_order_edit_propagation.py` batch-raising tests now seed a
    decision first; one of them flips to "undecided line, no batch").
@@ -66,6 +69,13 @@ Consequences, spelled out:
 - No new "date moved" hint on undecided board rows. The board shows the live date; a hint
   would be a second opinion about a value it already shows. Revisit if CS asks.
 - No change to the P8a divergence path (ours vs AutoCount's copy). Different mechanism.
+- The pill reads the STORED `applied_state`. `row_out` also derives a dynamic `superseded` for
+  a pending row whose held revision drifted, so an order can still show the pill for a batch
+  whose only row the board already draws as superseded. Deferred: the stored state is what
+  every writer sets, and moving the drift check into the list query would run
+  `active_decision` per order on a paged list. Revisit if it is ever seen on live.
+- A batch left with no pending row but a failed row is NOT closed by the backfill: apply()
+  keeps such a batch open on purpose so it can be retried once the cause is fixed.
 
 ## Verification
 

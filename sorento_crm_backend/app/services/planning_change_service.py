@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -458,22 +459,23 @@ def build_batch(
     for e in entries:
         by_order[str(e["order"].id)].append(e)
 
+    # The id is generated here, not left to the column default, so a kept `PlanningChangeRow`
+    # can carry `batch_id` before the batch itself is ever added to the session - the empty
+    # case (1,307 of 1,308 changed lines on the 10 Sep live measurement) is the COMMON path
+    # under the held-or-inquiry gate, so it must not pay for an INSERT it then has to DELETE.
     batch = PlanningChangeBatch(
+        id=str(uuid.uuid4()),
         import_job_id=import_job_id,
         upload_file_name=file_name,
         created_by=actor,
-        order_count=len(by_order),
-        line_count=len(entries),
     )
-    db.add(batch)
-    db.flush()
 
     supply = ProjectSupplyService(db)
     # Keyed `(so_number, project_line_id)`, not just `so_number` - see `_proposal_for`.
     board_cache: Dict[Tuple[str, Optional[str]], dict] = {}
 
     kept_orders: set = set()
-    kept_count = 0
+    kept_rows: List[PlanningChangeRow] = []
     for pso_id, group in by_order.items():
         order = group[0]["order"]
         active_decision = supply.active_decision(pso_id)
@@ -505,19 +507,19 @@ def build_batch(
                 # AC-G1/AC-G4: the line is neither held nor inquired, so it stays off the
                 # batch entirely - not a row worth counting.
                 continue
-            db.add(row)
             kept_orders.add(pso_id)
-            kept_count += 1
+            kept_rows.append(row)
 
-    if kept_count == 0:
+    if not kept_rows:
         # Every changed line on this upload/edit failed the held-or-inquiry gate: there is
-        # nothing to re-decide, so no batch is left standing for the pill to point at.
-        db.delete(batch)
-        db.flush()
+        # nothing to re-decide, so no batch is ever written for the pill to point at.
         return None
 
     batch.order_count = len(kept_orders)
-    batch.line_count = kept_count
+    batch.line_count = len(kept_rows)
+    db.add(batch)
+    for row in kept_rows:
+        db.add(row)
     db.flush()
     return batch
 

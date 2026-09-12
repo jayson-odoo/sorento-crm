@@ -26,7 +26,7 @@ undecided line both changed in one upload, then the batch has `line_count == 1`,
 all `superseded`, then `GET /api/v1/scm/sales-orders` returns `planning_change_batch_id` null
 for that order; given the same batch with one `pending` row, it returns the batch id.
 
-**AC-G6 (backfill).** After migration `513_planning_change_gate_backfill` on the 10 Sep live
+**AC-G6 (backfill).** After migration `513_planning_gate_backfill` on the 10 Sep live
 copy, every pending row with no held decision and no inquiry row is `superseded` with a
 reason, every batch left without a pending row has `applied_at` set, and SO389799's held row
 stays `pending` with its batch still open. No row or batch is deleted.
