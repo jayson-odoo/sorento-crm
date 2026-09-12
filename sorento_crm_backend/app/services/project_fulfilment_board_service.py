@@ -2379,12 +2379,14 @@ class FulfilmentBoardService:
     def _apply_frozen(self, row: _Row) -> None:
         """A covered line states what was decided for it, and nothing else (13.4).
 
-        The sources are the FROZEN composition, including a Borrow - the engine proposes none,
-        but a person did, and printing it as anything else would describe a decision nobody
-        took. There is no trail because no ladder was walked, no contest because a decided line
-        is not competing, and no share of the queue because it is not in the queue: `null`
-        there, never `0`, which would be a claim about a contest it left. Its donors are the
-        one thing still read for it, by `_allocate`, because it can still be amended.
+        The sources are the FROZEN composition, including a Borrow - the engine's own ladder
+        (`order_borrow`/`supply_borrow`) can propose one too, but a decided line prints what was
+        actually confirmed for it, not what the ladder would propose if walked again today, and
+        printing anything else would describe a decision nobody took. There is no trail because
+        no ladder was walked, no contest because a decided line is not competing, and no share
+        of the queue because it is not in the queue: `null` there, never `0`, which would be a
+        claim about a contest it left. Its donors are the one thing still read for it, by
+        `_allocate`, because it can still be amended.
         """
         decision = row.decision or {}
         reserve = sum((_dec(c["qty"]) for c in decision.get("reserve") or []), _ZERO)

@@ -1460,8 +1460,24 @@ def composition_from_proposal(proposal: Optional[dict]) -> dict:
     # No `qty_proposed_borrow` aggregate exists on `BoardContribution` (unlike reserve and
     # incoming) - LADDER V7.1's `order_borrow`/`supply_borrow` rungs are newer than that
     # field, and every reader of a whole-unit Borrow sums `sources` itself (`rank_score`
-    # sources, `_group_sibling_warehouses`). Summed the same way here.
-    borrow_qty = sum((_dec(s.get("qty")) for s in sources if s.get("kind") == "borrow"), _ZERO)
+    # sources, `_group_sibling_warehouses`). Summed over the SAME filtered list
+    # `_borrow_components_from_sources` builds from (a source without a `warehouse_id`
+    # cannot be addressed as a component), so the two never disagree about how much borrow
+    # the sources themselves account for.
+    borrow_sources_all = [s for s in sources if s.get("kind") == "borrow"]
+    borrow_qty = sum(
+        (_dec(s.get("qty")) for s in borrow_sources_all if s.get("warehouse_id")), _ZERO
+    )
+    sources_borrow_total = sum((_dec(s.get("qty")) for s in borrow_sources_all), _ZERO)
+    if sources_borrow_total != borrow_qty:
+        logger.warning(
+            "planning change composition: sources borrow total %s disagrees with the "
+            "addressable borrow %s on row %s - a borrow source is missing its "
+            "warehouse_id; trusting the addressable total.",
+            qty_text(sources_borrow_total),
+            qty_text(borrow_qty),
+            proposal.get("key") or project_line_id,
+        )
     owed = _dec(
         proposal.get("qty_outstanding")
         if proposal.get("qty_outstanding") is not None
