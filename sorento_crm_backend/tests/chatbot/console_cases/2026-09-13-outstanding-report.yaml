@@ -110,3 +110,17 @@ cases:
           branch_kind: business_query
           reply_contains: ["SRTWT02", "No open sales order", "No pending delivery order"]
           no_uuid: true
+
+  # AC-1140: a contact with NO `sales_orders.outstanding` grant asks a bare "outstanding" -
+  # no scope question, the report runs directly with scope=do (DO only). Contact 438930735
+  # (12 prior chatbot.turns rows so the script can borrow an envelope; confirmed via
+  # `contact_field_reveal_service.granted_keys` to hold no reveal keys at all).
+  - name: AC-1140 - no sales_orders.outstanding grant runs DO-only, never asks
+    contact: "438930735"
+    cold: true
+    text: "SRTWT7445 outstanding"
+    expect:
+      branch_kind: business_query
+      reply_contains: ["Delivery order pending"]
+      reply_not_contains: ["Outstanding for which document?", "Sales order outstanding"]
+      no_uuid: true
