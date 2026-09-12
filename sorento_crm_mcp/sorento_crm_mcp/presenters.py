@@ -53,6 +53,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_portal_link_get",
         "crm_procurement_po_placed_list",
         "crm_procurement_spo_allocations_last_receipt_list",
+        "crm_procurement_po_last_cost_list",
     }
 )
 
@@ -75,6 +76,7 @@ _DEFAULT_INTRO = {
     "crm_portal_link_get": "Here is the link you requested.",
     "crm_procurement_po_placed_list": "Here is the PO placed I found.",
     "crm_procurement_spo_allocations_last_receipt_list": "Here is the last SPO line per product.",
+    "crm_procurement_po_last_cost_list": "Here is the last purchase cost per product and location.",
 }
 
 _RESULT_TYPE = {
@@ -94,6 +96,7 @@ _RESULT_TYPE = {
     "crm_portal_link_get": "portal_link",
     "crm_procurement_po_placed_list": "purchase_orders_placed",
     "crm_procurement_spo_allocations_last_receipt_list": "spo_last_receipt",
+    "crm_procurement_po_last_cost_list": "po_last_cost",
 }
 
 _STOCK_TOOL = "crm_inventory_stock_balance_list"
@@ -513,6 +516,56 @@ def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
                 ("warehouse", "Warehouse", r.get("warehouse")),
             ],
         )
+
+
+def _po_last_cost(rows: list[dict], b: _Builder) -> None:
+    """Owner ruling 12 Sep 2026 (`PLAN-chatbot-last-purchase-cost.md`), against the
+    rendered answer, AC-20..AC-24. A row reads, in this order:
+
+        PO Number, Product Code, PO Quantity, PO Date, Cost / unit,
+        Discount / unit (if any), Cost after discount / unit, Warehouse (if any)
+
+    The three money figures are PER UNIT, derived by the backend from the line's own
+    `discount` / `line_total` amounts (a LINE figure on `purchase_order_lines`, never a
+    unit one) - `Discount / unit` is "if any": absent unless the line actually carries
+    a positive discount. Money renders `f"{currency} {value:.2f}"` using the LINE's own
+    currency, never a hardcoded MYR.
+
+    RESTRICTED to a contact holding `purchase_orders.cost`: the whole answer is a cost
+    figure, so all three money fields are marked here - belt and braces alongside the
+    whole-domain gate the chatbot lane applies before this tool is ever called.
+    """
+    for r in rows:
+        currency = str(r.get("currency") or "").strip()
+
+        def _line_money(v: Any) -> str | None:
+            if not _filled(v):
+                return None
+            try:
+                return f"{currency} {float(v):.2f}".strip()
+            except (TypeError, ValueError):
+                return None
+
+        b.item(
+            r.get("po_number"),
+            [
+                ("po_number", "PO Number", r.get("po_number")),
+                ("product_code", "Product Code", r.get("product_code")),
+                ("po_quantity", "PO Quantity", _qty(r.get("po_quantity"))),
+                ("po_date", "PO Date", r.get("po_date")),
+                ("unit_cost", "Cost / unit", _line_money(r.get("unit_cost"))),
+                ("discount_per_unit", "Discount / unit", _line_money(r.get("discount_per_unit"))),
+                (
+                    "unit_cost_after_discount",
+                    "Cost after discount / unit",
+                    _line_money(r.get("unit_cost_after_discount")),
+                ),
+                ("warehouse", "Warehouse", r.get("warehouse")),
+            ],
+        )
+    b.restrict("unit_cost", "purchase_orders.cost")
+    b.restrict("discount_per_unit", "purchase_orders.cost")
+    b.restrict("unit_cost_after_discount", "purchase_orders.cost")
 
 
 def _orders_by_product(rows: list[dict], b: _Builder) -> None:
@@ -1385,6 +1438,7 @@ _BUILDERS = {
     "crm_forms_management_forms_list": _forms,
     "crm_procurement_po_placed_list": _purchase_orders_placed,
     "crm_procurement_spo_allocations_last_receipt_list": _spo_last_receipt,
+    "crm_procurement_po_last_cost_list": _po_last_cost,
 }
 
 

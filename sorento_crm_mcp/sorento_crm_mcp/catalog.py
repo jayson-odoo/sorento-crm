@@ -1097,6 +1097,49 @@ CATALOG: tuple[ToolSpec, ...] = (
         related_tools=("crm_procurement_po_placed_list", "crm_incoming_stock_by_product"),
         escalation_team="procurement",
     ),
+    # --- procurement: last purchase cost per product per location
+    # (PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026) ---
+    ToolSpec(
+        "crm_procurement_po_last_cost_list",
+        (
+            "The last PURCHASE ORDER line PER PRODUCT PER LOCATION and its cost - 'last "
+            "purchase cost for X', 'what did we pay for X', 'last cost', 'buying price'. "
+            "Cancelled lines and cancelled POs are excluded; a line with no unit_cost is "
+            "never picked.\n\n"
+            "Each row reads in this order: PO Number, Product Code, PO Quantity, "
+            "PO Date, Cost / unit, Discount / unit, Cost after discount / unit, "
+            "Warehouse. The three money figures are PER UNIT, DERIVED by the backend "
+            "from the LINE's own discount / line_total amounts (never a unit figure the "
+            "source data carries directly): Discount / unit is present ONLY when the "
+            "line carries a positive discount, Cost after discount / unit falls back to "
+            "the plain Cost / unit when the line has no line_total, and Warehouse is "
+            "present ONLY when the line names one - a line bought with no warehouse "
+            "stated answers with no Warehouse field.\n\n"
+            "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON "
+            "/ repeated), both optional; `warehouse_ids` narrows BEFORE the pick. "
+            "`top_n` (default 1) = lines per (product, warehouse) when `product_ids` is "
+            "given, else lines overall - a resolved product FAMILY returns up to "
+            "`top_n` lines for EACH member at EACH of its locations, not `top_n` rows "
+            "overall; with no product named, `top_n` is a plain cap over every line, "
+            "newest first, across every product.\n\n"
+            "RESTRICTED: the whole answer (unit_cost, discount_per_unit and "
+            "unit_cost_after_discount) is gated on the contact holding "
+            "purchase_orders.cost - a dealer without that grant never sees a cost "
+            "figure.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/procurement/purchase-orders/last-cost",
+        (),
+        ("product_ids", "warehouse_ids", "top_n", "contact_id", "space_id"),
+        domain="purchase_cost",
+        related_tools=(
+            "crm_procurement_po_placed_list",
+            "crm_procurement_spo_allocations_last_receipt_list",
+        ),
+        escalation_team="procurement",
+        restricted_fields=(("purchase_orders.cost", "Last purchase cost"),),
+    ),
     # --- project sales (read-only; AC-K1 / AC-K2) ---
     ToolSpec(
         "crm_projects_list",
