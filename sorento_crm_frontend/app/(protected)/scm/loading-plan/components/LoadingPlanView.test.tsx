@@ -479,6 +479,38 @@ describe('LoadingPlanView (the record)', () => {
     );
   });
 
+  // AC-N7 (PLAN-scm-loading-plan-lines-feedback-12sep.md): the "Change cut-off" dialog
+  // becomes a From/To window, worded like reorder planning's Start Plan dialog.
+  it('the Change cut-off dialog pre-fills the window and sends both dates (AC-N7)', async () => {
+    state.plan = {
+      ...PLAN,
+      plan_horizon_date: '2026-10-31',
+      plan_horizon_start: '2026-10-01',
+    } as LoadingPlanRecord;
+    renderView();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
+
+    expect(await screen.findByText('Sales orders needed')).toBeTruthy();
+    const from = screen.getByLabelText('From') as HTMLInputElement;
+    const to = screen.getByLabelText('To') as HTMLInputElement;
+    expect(from.value).toBe('2026-10-01');
+    expect(to.value).toBe('2026-10-31');
+
+    fireEvent.change(from, { target: { value: '2026-11-01' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save cut-off' })[0]);
+
+    await waitFor(() =>
+      expect(changeCutOff).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan_horizon_start: '2026-11-01',
+          plan_horizon_date: '2026-10-31',
+        }),
+        expect.anything(),
+      ),
+    );
+  });
+
   // S2, review round 1: a remark typed on the PREVIEW's own input shows in the plan table -
   // the same `edits` map backs both (`LoadingPlanView.tsx:423-424`), so this never waits on a
   // save or a refetch.

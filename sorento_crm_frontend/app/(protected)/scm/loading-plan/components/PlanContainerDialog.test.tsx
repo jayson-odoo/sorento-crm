@@ -176,6 +176,29 @@ describe('PlanContainerDialog', () => {
     );
   });
 
+  // AC-N7 (PLAN-scm-loading-plan-lines-feedback-12sep.md): the cut-off becomes a window,
+  // worded and shaped as reorder planning's own Start Plan dialog (RunPlanningModal.tsx).
+  it('asks "Sales orders needed" with From/To fields, and sends both dates to the plan it creates (AC-N7)', async () => {
+    renderDialog();
+    fireEvent.click(screen.getByLabelText('No file'));
+    await chooseSupplier();
+
+    expect(screen.getByText('Sales orders needed')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-10-01' } });
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
+
+    fireEvent.click(screen.getByTestId('plan-container-confirm'));
+
+    await waitFor(() =>
+      expect(createLoadingPlanRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan_horizon_start: '2026-10-01',
+          plan_horizon_date: '2026-10-31',
+        }),
+      ),
+    );
+  });
+
   it('creates the plan FIRST, then applies the file INTO it (AC-F2)', async () => {
     renderDialog();
     await chooseSupplier();

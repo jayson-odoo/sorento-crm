@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from './AttachmentPreviewModal';
@@ -211,6 +211,80 @@ describe('AttachmentPreviewModal', () => {
 
       await waitFor(() => expect(customFetchBytes).toHaveBeenCalledWith(img));
       expect(apiFetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // AC-N6 (PLAN-scm-loading-plan-lines-feedback-12sep.md): a supplier sheet like the
+  // Container Status workbook is 60+ rows deep; Ms Tee needs to find one row by typing,
+  // the same move the loading plan's own Lines table search box gives her (AC-N3).
+  describe('search in sheet (AC-N6)', () => {
+    const sheetXlsx: AttachmentPreviewItem = {
+      id: 'f',
+      name: 'catalogue.xlsx',
+      url: 'https://cdn.example.com/catalogue.xlsx',
+      downloadUrl: '/api/v1/resource-management/attachments/f/download',
+    };
+
+    function mockSheet() {
+      apiFetchMock.mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+      });
+      vi.doMock('xlsx', () => ({
+        read: () => ({ SheetNames: ['Sheet1'], Sheets: { Sheet1: {} } }),
+        utils: {
+          sheet_to_json: () => [
+            ['SRTWC286-SH-150', 'S', '150'],
+            ['RPACC', 'R', '1'],
+            ['CWCY605', 'C', '2'],
+          ],
+        },
+      }));
+    }
+
+    it('shows a "Search in sheet" box once the sheet has loaded', async () => {
+      mockSheet();
+      render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[sheetXlsx]} />);
+      await waitFor(() => expect(screen.getByText('RPACC')).toBeTruthy());
+
+      expect(screen.getByPlaceholderText('Search in sheet')).toBeTruthy();
+      // No filter typed yet: the plain preview, no "N of M rows" count.
+      expect(screen.queryByText(/of 3 rows/)).toBeNull();
+    });
+
+    it('shows no search box for a PDF slide', () => {
+      render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[pdf]} />);
+      expect(screen.queryByPlaceholderText('Search in sheet')).toBeNull();
+    });
+
+    it('filters to rows matching the typed text, case-insensitively, and counts the matches', async () => {
+      mockSheet();
+      render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[sheetXlsx]} />);
+      await waitFor(() => expect(screen.getByText('RPACC')).toBeTruthy());
+
+      fireEvent.change(screen.getByPlaceholderText('Search in sheet'), {
+        target: { value: 'rpacc' },
+      });
+
+      expect(screen.getByText('RPACC')).toBeTruthy();
+      expect(screen.queryByText('SRTWC286-SH-150')).toBeNull();
+      expect(screen.queryByText('CWCY605')).toBeNull();
+      expect(screen.getByText('1 of 3 rows')).toBeTruthy();
+    });
+
+    it('shows "No cell matches" for a query nothing matches, and clearing restores every row', async () => {
+      mockSheet();
+      render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[sheetXlsx]} />);
+      await waitFor(() => expect(screen.getByText('RPACC')).toBeTruthy());
+      const input = screen.getByPlaceholderText('Search in sheet');
+
+      fireEvent.change(input, { target: { value: 'zzz' } });
+      expect(screen.getByText('No cell matches')).toBeTruthy();
+
+      fireEvent.change(input, { target: { value: '' } });
+      expect(screen.getByText('SRTWC286-SH-150')).toBeTruthy();
+      expect(screen.getByText('RPACC')).toBeTruthy();
+      expect(screen.getByText('CWCY605')).toBeTruthy();
     });
   });
 });
