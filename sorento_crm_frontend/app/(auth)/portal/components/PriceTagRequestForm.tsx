@@ -15,7 +15,6 @@ import {
   Check,
   Copy,
   Download,
-  FileText,
   Loader2,
   MessageSquare,
   Plus,
@@ -79,8 +78,6 @@ import {
   type AIExtractApplyPayload,
 } from './AIExtractDialog';
 import type { AIExtractedProductLine } from '../lib/portal-client';
-import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
-import { toPreviewItem, portalFetchBytes } from '../lib/portal-preview';
 import {
   uploadAttachment,
   getPriceTagDesign,
@@ -294,9 +291,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
-  // ---- Read-only view: PO attachment preview + Download PDF (D19/S2) ----
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewIndex, setPreviewIndex] = useState(0);
+  // ---- Read-only view: Download PDF (D19/S2). The attachment preview
+  // modal is the read-only AttachmentDropzone's own (D-P5) - no separate
+  // state needed here anymore. ----
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [gearOpen, setGearOpen] = useState(false);
 
@@ -316,6 +313,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // the read-only page instead of the form.
   const isDraft = Boolean(request?.portal_draft_at);
   const isEditable = isNew || isDraft;
+  // D-P6: a post-submit edit at New / Changes requested. `editing` is a
+  // separate flip from `isEditable` - it only ever turns on via the header's
+  // own Edit button, never from status/draft state directly, so a Cancel can
+  // put the read view back with no round trip.
+  const [editing, setEditing] = useState(false);
+  const showEditForm = isEditable || editing;
   const isProofReady = request?.status === 'proof_ready';
   // The design preview shows for longer than the approve/request-changes
   // actions do (D11/AC-S4-4): once approved the salesperson can still look
@@ -402,6 +405,20 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         : null,
   };
 
+  // Shared by the load effect and Cancel (D-P6): both put the form's field
+  // state back to what the loaded request itself says, so Cancel needs no
+  // round trip and Save + re-`getRequest` needs no separate mapping.
+  const applyRequestFieldsFrom = useCallback((data: PriceTagRequestDetail) => {
+    setDebtorCode(data.debtor_code ?? '');
+    setPromotionId(data.promotion_id ?? '');
+    setPriceMode(data.price_mode ?? 'list');
+    priceModeChosenRef.current = true;
+    setNeededByDate(data.needed_by_date ?? '');
+    setNotes(data.notes ?? '');
+    setLines(data.lines.map(lineToDraft));
+    setAttachments(data.attachments ?? []);
+  }, []);
+
   // ---- Load lookups ----
   useEffect(() => {
     // The debtor list is scoped to the sales agent this portal account is linked
@@ -434,21 +451,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           return;
         }
         setRequest(data);
-        setDebtorCode(data.debtor_code ?? '');
-        setPromotionId(data.promotion_id ?? '');
-        setPriceMode(data.price_mode ?? 'list');
         // A loaded request already has a real price mode, not the blank
         // form's resting default - so a later mode click is free to act on
         // it (AC-P8). Also open every section that already holds a value
         // directly (AC-P11): a `setPriceMode('list')` here is a no-op when
         // the mode was already 'list' at mount, so the reactive rule alone
         // would never see it change and never fire.
-        priceModeChosenRef.current = true;
-        // Both are nullable on a draft (D48a): an empty input, not a crash.
-        setNeededByDate(data.needed_by_date ?? '');
-        setNotes(data.notes ?? '');
-        setLines(data.lines.map(lineToDraft));
-        setAttachments(data.attachments ?? []);
+        applyRequestFieldsFrom(data);
         if (data.debtor_code) openSectionOnce('sales_order');
         if (data.lines.length > 0) openSectionOnce('price');
         openSectionOnce('need_by');
@@ -861,6 +870,48 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
+  // ---- Post-submit edit (D-P6): Save writes in place, no re-submit, no SLA
+  // restart, and lands back on the read view with the saved values - never a
+  // navigate-away like Save Draft does. ----
+  const handleSaveEdit = useCallback(async () => {
+    if (!effectiveId) return;
+    setSaving(true);
+    try {
+      const debtor = debtors.find((d) => d.code === debtorCode);
+      const payload = {
+        debtor_code: debtorCode || null,
+        debtor_name: debtorCode ? (debtor?.name ?? debtorCode) : null,
+        promotion_id: promotionId || null,
+        needed_by_date: neededByDate || null,
+        notes: notes || null,
+        price_mode: priceMode,
+        lines: payloadLines(),
+      };
+      await updateRequest(effectiveId, payload);
+      await flushPendingFiles(effectiveId);
+      const fresh = await getRequest(effectiveId);
+      if (fresh) {
+        setRequest(fresh);
+        applyRequestFieldsFrom(fresh);
+      }
+      setEditing(false);
+      toast.success('Saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save changes');
+    } finally {
+      setSaving(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, applyRequestFieldsFrom]);
+
+  // Cancel restores the values shown before Edit (AC-P13) - no round trip,
+  // `request` already holds them.
+  const handleCancelEdit = useCallback(() => {
+    if (request) applyRequestFieldsFrom(request);
+    setPendingFiles([]);
+    setEditing(false);
+  }, [request, applyRequestFieldsFrom]);
+
   // ---- Delete draft ----
   const handleDeleteDraft = useCallback(async () => {
     if (!requestId) return;
@@ -1002,9 +1053,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // place for its read-only value (AC-S2-1). Proof-ready appends the proof
   // section beneath it (AC-S2-2); `RequestDetailView` no longer exists as a
   // separate layout.
-  if (request && !isEditable) {
-    const attachmentPreviewItems = attachments.map(toPreviewItem);
-
+  if (request && !showEditForm) {
     return (
       <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
         <div className="flex items-center justify-between gap-2">
@@ -1015,48 +1064,58 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           >
             <ArrowLeft className="size-4 mr-1" /> Back
           </Button>
-          {/* The gear (D19): Download PDF, disabled with a reason until a
-              completed export exists. The stub toast is gone. Controlled open
-              state so the menu closes itself once the download settles,
-              instead of sitting open with a stale item until an outside
-              click. */}
-          <DetailActionsMenu
-            ariaLabel="Price tag request actions"
-            open={gearOpen}
-            onOpenChange={setGearOpen}
-          >
-            <DropdownMenuItem
-              disabled={!request.has_completed_export || downloadingPdf}
-              onSelect={(event) => {
-                event.preventDefault();
-                void handleDownloadPdf();
-              }}
+          <div className="flex items-center gap-2">
+            {/* D-P6: New / Changes requested only (AC-B6 reads `is_editable`,
+                never the status list itself) - Designing onward keeps its
+                existing Request Changes / Approve actions instead. */}
+            {request.is_editable && (
+              <Button size="sm" onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+            )}
+            {/* The gear (D19): Download PDF, disabled with a reason until a
+                completed export exists. The stub toast is gone. Controlled open
+                state so the menu closes itself once the download settles,
+                instead of sitting open with a stale item until an outside
+                click. */}
+            <DetailActionsMenu
+              ariaLabel="Price tag request actions"
+              open={gearOpen}
+              onOpenChange={setGearOpen}
             >
-              {downloadingPdf ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Download className="size-4" />
-              )}
-              <span className="flex flex-col items-start">
-                <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
-                {!request.has_completed_export && !downloadingPdf && (
-                  <span className="text-xs text-muted-foreground">
-                    No completed export yet
-                  </span>
+              <DropdownMenuItem
+                disabled={!request.has_completed_export || downloadingPdf}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  void handleDownloadPdf();
+                }}
+              >
+                {downloadingPdf ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Download className="size-4" />
                 )}
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={(event) => {
-                event.preventDefault();
-                setGearOpen(false);
-                router.push(portalDuplicatePath('price_tag_request', request.id, slug));
-              }}
-            >
-              <Copy className="size-4" />
-              Duplicate
-            </DropdownMenuItem>
-          </DetailActionsMenu>
+                <span className="flex flex-col items-start">
+                  <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
+                  {!request.has_completed_export && !downloadingPdf && (
+                    <span className="text-xs text-muted-foreground">
+                      No completed export yet
+                    </span>
+                  )}
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={(event) => {
+                  event.preventDefault();
+                  setGearOpen(false);
+                  router.push(portalDuplicatePath('price_tag_request', request.id, slug));
+                }}
+              >
+                <Copy className="size-4" />
+                Duplicate
+              </DropdownMenuItem>
+            </DetailActionsMenu>
+          </div>
         </div>
 
         <div className="space-y-1">
@@ -1098,38 +1157,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           open={sectionOpen.sales_order}
           onOpenChange={(next) => toggleSection('sales_order', next)}
         >
-          {/* Sales Order - the files the salesperson attached, openable in
-              place. Always rendered, empty state when there are none, so a
-              reader never wonders whether the section has one at all. */}
+          {/* Sales Order - D-P5: the same dropzone the form uses, in
+              `readOnly` mode - same tiles, same ordering, same preview
+              modal, but no drop area, no paste, no remove, no per-tile
+              Extract. Nothing here is actionable until Edit is tapped. */}
           <div className="space-y-1.5">
             <Label>Sales Order</Label>
-            {attachments.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                No sales order files attached.
-              </p>
-            ) : (
-              <div className="space-y-1">
-                {attachments.map((att, idx) => (
-                  <button
-                    key={att.link_id}
-                    type="button"
-                    onClick={() => {
-                      setPreviewIndex(idx);
-                      setPreviewOpen(true);
-                    }}
-                    className="flex w-full items-center text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition-colors text-left"
-                  >
-                    <FileText className="size-3.5 mr-2 text-muted-foreground shrink-0" />
-                    <span
-                      className="truncate"
-                      title={att.filename ?? undefined}
-                    >
-                      {att.filename || 'Attachment'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+            <AttachmentDropzone
+              kind="price_tag_request"
+              submissionId={request.id}
+              attachments={attachments}
+              onChange={() => {}}
+              readOnly
+            />
           </div>
 
           {/* Lines: same table the edit form uses, cells read-only. */}
@@ -1234,14 +1274,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             </p>
           </div>
         </FormSection>
-
-        <AttachmentPreviewModal
-          open={previewOpen}
-          onOpenChange={setPreviewOpen}
-          items={attachmentPreviewItems}
-          startIndex={previewIndex}
-          fetchBytes={portalFetchBytes}
-        />
 
         {/* Design preview appends beneath the same layout (AC-S2-2); nothing
             below here renders for a plain read-only status. It shows for
@@ -1614,35 +1646,53 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-        {/* Delete sits apart from Save and Submit, and asks first. */}
-        {!isNew && isDraft && (
+      {/* Actions - D-P6: a post-submit edit (editing, never a draft or new
+          form here - see `showEditForm`) shows Save / Cancel instead of
+          Save Draft / Submit, and never Delete. */}
+      {editing ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           <Button
             variant="outline"
-            className="text-destructive sm:mr-auto"
-            onClick={() => setShowDeleteDialog(true)}
-            disabled={saving || submitting || deleting}
+            onClick={handleCancelEdit}
+            disabled={saving}
           >
-            <Trash2 className="size-4 mr-1" />
-            Delete Draft
+            Cancel
           </Button>
-        )}
-        <Button
-          variant="outline"
-          onClick={handleSaveDraft}
-          disabled={saving || submitting || !hasSomethingToSave}
-        >
-          {saving && <Loader2 className="size-4 mr-1 animate-spin" />}
-          Save Draft
-        </Button>
-        {/* Enabled whenever the form is idle (D48b): a disabled button with no
-            explanation is what sent the salesperson looking for the reason. */}
-        <Button onClick={handleSubmit} disabled={submitting || saving}>
-          {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
-          Submit
-        </Button>
-      </div>
+          <Button onClick={handleSaveEdit} disabled={saving}>
+            {saving && <Loader2 className="size-4 mr-1 animate-spin" />}
+            Save
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          {/* Delete sits apart from Save and Submit, and asks first. */}
+          {!isNew && isDraft && (
+            <Button
+              variant="outline"
+              className="text-destructive sm:mr-auto"
+              onClick={() => setShowDeleteDialog(true)}
+              disabled={saving || submitting || deleting}
+            >
+              <Trash2 className="size-4 mr-1" />
+              Delete Draft
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={handleSaveDraft}
+            disabled={saving || submitting || !hasSomethingToSave}
+          >
+            {saving && <Loader2 className="size-4 mr-1 animate-spin" />}
+            Save Draft
+          </Button>
+          {/* Enabled whenever the form is idle (D48b): a disabled button with no
+              explanation is what sent the salesperson looking for the reason. */}
+          <Button onClick={handleSubmit} disabled={submitting || saving}>
+            {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
+            Submit
+          </Button>
+        </div>
+      )}
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>

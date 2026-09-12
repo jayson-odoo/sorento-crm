@@ -60,6 +60,13 @@ interface Props {
   pendingFiles?: File[];
   onPendingFilesChange?: (files: File[]) => void;
   /**
+   * D-P5: view-only mode for a submitted record - tiles, ordering and
+   * preview are the same, but no drop area, no paste, no per-tile remove
+   * and no per-tile Extract, whatever `onExtract`/`onChange` are passed.
+   * `disabled` alone only greys the control set out; this drops it.
+   */
+  readOnly?: boolean;
+  /**
    * Per-tile "Extract with AI" action (D-P3): given for a tile, whether
    * already uploaded or still pending. Uploaded tiles are fetched into a
    * `File` here (the dropzone already owns `portalFetchBytes`) so the caller
@@ -77,6 +84,7 @@ export function AttachmentDropzone({
   pendingFiles,
   onPendingFilesChange,
   onExtract,
+  readOnly,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -206,7 +214,7 @@ export function AttachmentDropzone({
 
   // Desktop: paste image directly into the page (Ctrl/Cmd+V after screenshot).
   useEffect(() => {
-    if (disabled) return;
+    if (disabled || readOnly) return;
     // When no submissionId yet, paste is supported via pending-files buffer.
     if (!submissionId && !onPendingFilesChange) return;
     const onPaste = (e: ClipboardEvent) => {
@@ -258,7 +266,7 @@ export function AttachmentDropzone({
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [addFiles, disabled, submissionId, onPendingFilesChange]);
+  }, [addFiles, disabled, readOnly, submissionId, onPendingFilesChange]);
 
   // Mobile: explicit Paste button - iOS/Android Chrome don't fire `paste` reliably
   // without a focused input, so the Async Clipboard API is the path that works.
@@ -323,62 +331,64 @@ export function AttachmentDropzone({
 
   return (
     <div className="space-y-3">
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-        className={`flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-4 text-center transition-colors ${
-          dragOver ? 'border-primary bg-primary/5' : 'border-border'
-        } ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
-      >
-        <Upload className="h-6 w-6 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          Drop a file here, paste a screenshot or text, or
-        </p>
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => inputRef.current?.click()}
-            disabled={busy || disabled}
-          >
-            <Paperclip className="h-4 w-4 mr-2" />
-            Choose file
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleClipboardPaste}
-            disabled={busy || disabled}
-          >
-            <Clipboard className="h-4 w-4 mr-2" />
-            Paste from clipboard
-          </Button>
-        </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*,video/*,.pdf,.txt"
-          className="hidden"
-          multiple
-          onChange={handleSelect}
-        />
-        {!submissionId && !onPendingFilesChange && (
-          <p className="text-xs text-amber-700">Save as draft first to attach files.</p>
-        )}
-        {!submissionId && onPendingFilesChange && (pendingFiles?.length ?? 0) > 0 && (
-          <p className="text-xs text-muted-foreground">
-            {(pendingFiles?.length ?? 0)} file
-            {(pendingFiles?.length ?? 0) === 1 ? '' : 's'} will upload when you save or submit.
+      {!readOnly && (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+          className={`flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-4 text-center transition-colors ${
+            dragOver ? 'border-primary bg-primary/5' : 'border-border'
+          } ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
+        >
+          <Upload className="h-6 w-6 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Drop a file here, paste a screenshot or text, or
           </p>
-        )}
-      </div>
-      {(attachments.length > 0 || (pendingFiles?.length ?? 0) > 0) && (
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => inputRef.current?.click()}
+              disabled={busy || disabled}
+            >
+              <Paperclip className="h-4 w-4 mr-2" />
+              Choose file
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleClipboardPaste}
+              disabled={busy || disabled}
+            >
+              <Clipboard className="h-4 w-4 mr-2" />
+              Paste from clipboard
+            </Button>
+          </div>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*,video/*,.pdf,.txt"
+            className="hidden"
+            multiple
+            onChange={handleSelect}
+          />
+          {!submissionId && !onPendingFilesChange && (
+            <p className="text-xs text-amber-700">Save as draft first to attach files.</p>
+          )}
+          {!submissionId && onPendingFilesChange && (pendingFiles?.length ?? 0) > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {(pendingFiles?.length ?? 0)} file
+              {(pendingFiles?.length ?? 0) === 1 ? '' : 's'} will upload when you save or submit.
+            </p>
+          )}
+        </div>
+      )}
+      {(attachments.length > 0 || (pendingFiles?.length ?? 0) > 0) ? (
         <ul className="space-y-2">
           {attachments.map((a) => (
             <UploadedRow
@@ -386,8 +396,10 @@ export function AttachmentDropzone({
               attachment={a}
               disabled={disabled}
               onView={() => openPreview(a.link_id)}
-              onRemove={() => setUnlinkTarget(a)}
-              onExtract={onExtract ? () => handleExtractAttachment(a) : undefined}
+              onRemove={readOnly ? undefined : () => setUnlinkTarget(a)}
+              onExtract={
+                !readOnly && onExtract ? () => handleExtractAttachment(a) : undefined
+              }
             />
           ))}
           {(pendingFiles ?? []).map((file, idx) => (
@@ -397,15 +409,24 @@ export function AttachmentDropzone({
               previewUrl={pendingUrls[idx] ?? null}
               disabled={disabled}
               onView={() => openPendingPreview(idx)}
-              onRemove={() =>
-                onPendingFilesChange?.(
-                  (pendingFiles ?? []).filter((_, i) => i !== idx),
-                )
+              onRemove={
+                readOnly
+                  ? undefined
+                  : () =>
+                      onPendingFilesChange?.(
+                        (pendingFiles ?? []).filter((_, i) => i !== idx),
+                      )
               }
-              onExtract={onExtract ? () => onExtract(file) : undefined}
+              onExtract={!readOnly && onExtract ? () => onExtract(file) : undefined}
             />
           ))}
         </ul>
+      ) : (
+        readOnly && (
+          <p className="text-sm text-muted-foreground text-center py-4">
+            No sales order files attached.
+          </p>
+        )
       )}
 
       <AttachmentPreviewModal
@@ -465,14 +486,15 @@ function UploadedRow({
   attachment: PortalAttachment;
   disabled?: boolean;
   onView: () => void;
-  onRemove: () => void;
+  onRemove?: () => void;
   onExtract?: () => void;
 }) {
   const isImage = isImageAttachment(attachment);
   const isVideo = isVideoAttachment(attachment);
   const url = attachment.url ?? null;
-  // Staff-uploaded rows can't be unlinked by the contact (server-enforced too).
-  const canUnlink = attachment.can_unlink !== false;
+  // Staff-uploaded rows can't be unlinked by the contact (server-enforced too);
+  // an absent `onRemove` (D-P5 read-only) is the same "no button" outcome.
+  const canUnlink = attachment.can_unlink !== false && !!onRemove;
   const uploader = uploaderLabel(attachment);
   return (
     <li className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
@@ -563,7 +585,7 @@ function PendingRow({
   previewUrl: string | null;
   disabled?: boolean;
   onView: () => void;
-  onRemove: () => void;
+  onRemove?: () => void;
   onExtract?: () => void;
 }) {
   return (
@@ -621,16 +643,18 @@ function PendingRow({
             <Sparkles className="h-4 w-4 text-primary" />
           </Button>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onRemove}
-          disabled={disabled}
-          aria-label="Remove pending file"
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        {onRemove && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onRemove}
+            disabled={disabled}
+            aria-label="Remove pending file"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </li>
   );
