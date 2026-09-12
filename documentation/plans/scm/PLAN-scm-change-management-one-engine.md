@@ -1,7 +1,8 @@
 # PLAN: managing a sales-order change after planning, one engine
 
-**Status:** AGREED, pre-code, 13 September 2026. Grilled with the owner across four rounds on
-12 and 13 September 2026; the agreed page is versioned at
+**Status:** Slice A in progress on lane/scm-change-a-diff-parity; ONE PR (#855) for all
+slices per the owner, 13 Sep 2026. Grilled with the owner across four rounds on 12 and 13
+September 2026; the agreed page is versioned at
 `documentation/plans/scm/mockups/so-change-management-grill-v4.html` (twelve worked
 scenarios). This plan is the contract; the UAC is
 `scm-change-management-one-engine-acceptance-criteria.md`. Supersedes the suggestion
@@ -94,3 +95,66 @@ because it moves state between decisions. E is independent and small; it can rid
 
 Per slice: red pytest from the UAC first, then green; vitest for the board vocabulary; a
 browser run on a lane against the prod copy with the twelve scenarios seeded on SO419772.
+
+## Slice A contract (captain, 13 September 2026, after reading `outstanding_diff.py`,
+`planning_change_service.py`, `sales_order_service.py`)
+
+Recorded here because these shapes are the ones the tester's red tests assume, and the plan
+is the source of truth once code diverges from the table above:
+
+1. `app/models/planning_change.py`: `PLANNING_CHANGE_KIND_CLOSED` renamed
+   `PLANNING_CHANGE_KIND_CANCELLED = "cancelled"` (every reference updated, `suggest()`
+   included); `PLANNING_CHANGE_KIND_PRODUCT_CHANGED = "product_changed"` added.
+   `app/schemas/planning_change.py` `PlanningChangeKind` Literal = delayed, advanced, qty_up,
+   qty_down, cancelled, added, product_changed. `PlanningChangeFromTo` gains `item_code`.
+   FE mirror: `planningChange.types.ts`, the `__mocks__/planningChanges.ts` fixture,
+   `boardChangeAnnotations.ts` (`row.kind === 'closed'` -> `'cancelled'`).
+2. Migration `514_planning_change_kind_cancelled` (revision id shortened to
+   `514_plan_change_kind_cancelled`, <=32 chars), down_revision
+   `513_planning_gate_backfill`: data-only rename `kind='closed'` -> `kind='cancelled'` on
+   `projects.planning_change_rows`, reversible, idempotent, Core-built against the mapped
+   table (513's own Reviewer S2 reason).
+3. `app/services/scm/outstanding_diff.py`: `Line.line_id: Optional[str] = None`. `diff_lines`
+   pairs a before/after sharing the same `line_id` FIRST (pass 0), ahead of the
+   `(doc, item, location)` + date-order fallback, which only lines with NO `line_id` ever
+   reach; a `line_id` line unmatched by that pass closes/adds directly rather than entering
+   the fallback (this is what keeps two differently-identified same-looking lines from
+   zipping into a false `unchanged`). New `PRODUCT_CHANGED` kind: a `line_id` pair whose
+   item_code differs and whose after is not settled; after settled (qty 0) is `CLOSED` even
+   with a different item_code; before-only is `CLOSED`; after-only is `ADDED`. `CLOSED`
+   keeps the value `"closed"` inside this module - only the wire row kind renames. `diff_lines`
+   also gained a keyword-only `scope_documents` override: a manual edit removing every line
+   off one order leaves the after side empty, and the scope `diff_lines` derives from an
+   empty incoming list would read the whole order as untouched rather than wholly closed.
+4. `app/services/planning_change_service.py`: `_map_kind` CLOSED -> `"cancelled"`,
+   PRODUCT_CHANGED -> `"product_changed"`; `suggest()`'s own dispatch renamed the same way,
+   plus a `product_changed` branch. `_from_to` puts `item_code` (old/new) into
+   `from_json`/`to_json`; the row's own `item_code`/`product_name` are already the NEW
+   product because `Change.item_code` is built from the after side. Gate in `_build_row`
+   unchanged for every other kind; an `added` change (no mirror line) is raised when the
+   ORDER has at least one held or inquiry line, asked once per order group
+   (`_order_has_held_or_inquiry`, only queried when the group actually carries an `added`).
+5. `app/services/scm/sales_order_service.py`:
+   - `_upsert_lines` returns a `_LineUpsertResult` (`matched` / `removed` / `added`) instead
+     of a bare list, capturing the OLD item_code/location on a matched line (needed for a
+     product swap's "before" side) and the freshly-inserted line objects. `has_dependents`
+     drops `OrderInquiryRow` (four EXISTS, not five); a NEW `has_inquiry` check plus
+     `ProjectSupplyService.frozen_lines_of(active_decision)` decide, PER REMOVED LINE, held
+     or inquired -> the CORE line is set `line_status = CANCELLED` (never deleted, mirror
+     line and inquiry row both survive) instead of being pruned/deleted. **Deviation from
+     the plan's first cut:** the held-or-inquiry check runs BEFORE `has_dependents`, not
+     after - confirming a decision (even a pure Buy) always writes the line its own
+     `SOLineAllocation` row, so a held line always has a "dependent" in the four-table
+     sense, and checking that first would 409 the exact removal rule 5 requires to be
+     accepted. `is_authored` and the `OrderLinkClaim` 409 are untouched.
+   - `_propagate_planning_change` builds `outstanding_diff.Line` before/after pairs keyed by
+     the CORE line id (`line_id`) from `_LineUpsertResult` and calls `diff_lines` (with
+     `scope_documents=(so.so_number,)`, see point 3) instead of hand-classifying - one call
+     covers matched (qty/date/product), removed (`CLOSED`) and added (`ADDED`) lines
+     uniformly. The manual-edit batch stamping (`source_kind = so_manual_edit`) and the
+     best-effort try/except are unchanged.
+   - `app/schemas/scm_orders.py`: `SalesOrderLineInput.qty_ordered` loosened `gt=0` -> `ge=0`
+     (shared by `SalesOrderFormData`/create and `SalesOrderUpdate`; no test asks create to
+     stay positive, so the validator was not split by operation).
+6. One manual-edit batch per save, `source_kind = so_manual_edit`, every changed row of that
+   save in it - unchanged from before this slice.
