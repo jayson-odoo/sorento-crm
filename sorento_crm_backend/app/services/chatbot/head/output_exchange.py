@@ -757,6 +757,50 @@ def picker_rows(state: Any) -> list:
 
 PICKER_KINDS = ("product_pick", "customer_pick")
 
+# The four focus slots that hold an ENTITY, in the order a carried scope is rebuilt from
+# them. `domains`, `date_window`, `attributes`, `tier` and `brands` are the other five and
+# none of them is a thing the conversation is ABOUT - they are constraints on it.
+_FOCUS_ENTITY_SLOTS = ("products", "customer", "transporter", "warehouse")
+
+
+def focus_value(state: Any, name: str) -> Any:
+    """One focus slot's value off the PREVIOUS session, or None.
+
+    Every read in this file that used to reach for a legacy key off
+    `previous_conversation_state` - `entities`, `domain_hint`, `intent_hint`, the date
+    window - comes through here now. The session is five keys (AC-1001) and `focus` is the
+    one that says what the conversation is about, per axis, each ageing on its own counter
+    (D11); the 34-key bag those reads were written against was rebuilt from a single turn's
+    parse and has not existed since L1-S3.
+    """
+    slot = jsc.get(jsc.get(state, "focus"), name)
+    return slot.get("value") if isinstance(slot, dict) else None
+
+
+def focus_entities(state: Any) -> list:
+    """WHAT THE CONVERSATION IS ABOUT, as the entity list the carries speak in.
+
+    The four entity slots read back in a fixed order, so a list rebuilt from the focus is
+    the same list every time. Read in place of `previous_conversation_state.entities`.
+    """
+    out: list = []
+    for name in _FOCUS_ENTITY_SLOTS:
+        value = focus_value(state, name)
+        rows = value if isinstance(value, list) else ([value] if jsc.truthy(value) else [])
+        out.extend(e for e in rows if jsc.truthy(e))
+    return out
+
+
+def focus_domain(state: Any) -> Any:
+    """The FIRST alive domain, which is what a single-domain carry used to read.
+
+    Lane 2 fans a turn out over several; this file predates that and every reader here
+    wants one, so the first is what it gets - the order the dealer named them in (D3).
+    """
+    domains = focus_value(state, "domains")
+    rows = [d for d in jsc.array(domains) if jsc.truthy(d)]
+    return rows[0] if rows else None
+
 
 def picker_candidates(state: Any) -> list:
     """The picker's rows in the CANDIDATE shape the three pick rules read.
@@ -1188,8 +1232,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # "Carried" is derived from PROVENANCE, never from `current_message`: applyDymPick
     # re-maps EVERY prior entity to `current_message: true` before the executor runs. The
     # uncorrupted this-turn signal is the frozen snapshot.
-    prev_state_entities = jsc.array(jsc.get(parent_input.get("previous_conversation_state"), "entities"))
-    ce_prior_keys_any = {k for e in prev_state_entities for k in _ce_keys_of(e)}
+    #
+    # The PRIOR half is gone with the legacy session (L1-S3 fix round): the previous turn's
+    # `entities` list is not a session key any more, and what the conversation is about is
+    # `focus` - which `dialogue/focus.py` owns and which this function is handed as an
+    # out-parameter rather than reading back. An entity the LLM did not name this turn is
+    # still recognised as carried by the snapshot test below.
+    ce_prior_keys_any: set[str] = set()
     ce_llm_keys_any = {
         k for e in jsc.array(jsc.get(parser_raw_snapshot, "entities")) for k in _ce_keys_of(e)
     }
@@ -1275,7 +1324,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 
     # reuse means "no new value this turn" - but if the parser emitted current entities it
     # contradicts itself. Promote to additive replace_combine so the new value survives.
-    prior_ents0 = prev_state_entities
+    prior_ents0 = focus_entities(parent_input.get("previous_conversation_state"))
     if (
         o.get("entity_op") == "reuse"
         and jsc.is_array(o.get("entities"))
@@ -1407,14 +1456,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["entity_op"] = "replace"
         o["scope_exclusive"] = False  # IGNORE the LLM's scope_exclusive=true
         o["message_type"] = "business_query"
-        # carry the prior date window if THIS turn named none
-        if not (jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))):
-            if jsc.truthy(pv.get("date_filter_start")):
-                o["date_filter_start"] = pv["date_filter_start"]
-            if jsc.truthy(pv.get("date_filter_end")):
-                o["date_filter_end"] = pv["date_filter_end"]
-            if jsc.truthy(pv.get("date_mode")):
-                o["date_mode"] = pv["date_mode"]
+        # THE PRIOR DATE WINDOW is carried by `focus.date_window`, not from here: a pick
+        # does not change when the customer was asking about, and the axis that remembers
+        # it ages on its own counter (D11). The session keys this used to read are gone.
         o["dym_pick_applied"] = True
         o["dym_offer_pick_code"] = hit.get("code")
         # #5 domain-carry: a CONFIRMED, UNAMBIGUOUS pick STAYS in the offer's domain.
@@ -1425,7 +1469,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         via_numbered = use_slot is False
         if (is_bare_code or via_numbered) and isinstance(offer, dict) and jsc.truthy(offer.get("domain")):
             o["domain_hint"] = offer["domain"]
-            o["intent_hint"] = pv.get("intent_hint") if pv.get("intent_hint") is not None else None
+            # The OFFER's domain decides the turn; the intent the previous turn happened to
+            # carry is not a fact about this one, and D14 stopped persisting it anyway.
+            o["intent_hint"] = None
             o["dym_pick_domain_forced"] = offer["domain"]
         return final
 
@@ -1471,7 +1517,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         hit = jsc.find(cands, code_matches)
         if hit is None:
             return
-        o["entities"] = apply_dym_pick(hit, offer, prev.get("entities"), True)
+        o["entities"] = apply_dym_pick(hit, offer, focus_entities(prev), True)
 
     try_dym_pick()
 
@@ -1525,9 +1571,11 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         if " ".join(kept) not in DW_PHRASES:
             return False
         pv = parent_input.get("previous_conversation_state") or {}
-        if not (jsc.is_array(pv.get("entities")) and len(pv["entities"])):
+        if not focus_entities(pv):
             return False  # (2) nothing to widen onto
-        if not (jsc.truthy(pv.get("date_filter_start")) or jsc.truthy(pv.get("date_filter_end"))):
+        window = focus_value(pv, "date_window")
+        window = window if isinstance(window, dict) else {}
+        if not (jsc.truthy(window.get("start")) or jsc.truthy(window.get("end"))):
             return False  # (3) no window to drop
         return True
 
@@ -1546,7 +1594,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["escalation"] = {"is_escalation_confirmation": False}
         o["date_widen_applied"] = True
 
-    prev_state_domain = jsc.get(parent_input.get("previous_conversation_state"), "domain_hint") or None
+    prev_state_domain = focus_domain(parent_input.get("previous_conversation_state"))
 
     # -- ENTITY OPERATION EXECUTOR (op + axis-aware replace/combine) --------------------- #
     # Set by the `reuse` arm below and read by the focus rules at the `#6` position, which
@@ -1562,7 +1610,10 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         all_ents = jsc.array(o.get("entities"))
         # split on the flag the PARSER set - do NOT override it
         current = [e for e in all_ents if jsc.get(e, "current_message") is True]
-        prior = [{**e, "current_message": False} for e in prev_state_entities]
+        prior = [
+            {**e, "current_message": False}
+            for e in focus_entities(parent_input.get("previous_conversation_state"))
+        ]
 
         if op == "clear":
             final_entities: list = []
@@ -1623,10 +1674,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["date_filter_start"] = None
         o["date_filter_end"] = None
         o["date_mode"] = None
-        dw_pv = parent_input.get("previous_conversation_state") or {}
-        if jsc.truthy(dw_pv.get("domain_hint")):
-            o["domain_hint"] = dw_pv["domain_hint"]
-            o["intent_hint"] = dw_pv.get("intent_hint") if jsc.truthy(dw_pv.get("intent_hint")) else None
+        dw_domain = focus_domain(parent_input.get("previous_conversation_state"))
+        if jsc.truthy(dw_domain):
+            o["domain_hint"] = dw_domain
+            # The INTENT is derived from this turn's own parse (D14): it is not a session
+            # key, so there is nothing carried to re-pin and a stale one would be a guess.
+            o["intent_hint"] = None
 
     prev_state = parent_input.get("previous_conversation_state") or {}
 
@@ -1685,22 +1738,24 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             return  # no pick signal -> a new query / casual abandons the ask
         o["access_levels"] = [t for t in TIER_ORDER if t in chosen]
         # (c) carry the ORIGINAL scope to the answer turn - S5-shaped, own flag
-        prev_ents = jsc.array(prev_state.get("entities"))
+        prev_ents = focus_entities(prev_state)
         if prev_ents:
             o["entities"] = [{**x, "current_message": False} for x in prev_ents]
             o["entity_op"] = "reuse"
         if not (jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))):
-            if jsc.truthy(prev_state.get("date_filter_start")):
-                o["date_filter_start"] = prev_state["date_filter_start"]
-            if jsc.truthy(prev_state.get("date_filter_end")):
-                o["date_filter_end"] = prev_state["date_filter_end"]
-            if jsc.truthy(prev_state.get("date_mode")):
-                o["date_mode"] = prev_state["date_mode"]
+            window = focus_value(prev_state, "date_window")
+            window = window if isinstance(window, dict) else {}
+            if jsc.truthy(window.get("start")):
+                o["date_filter_start"] = window["start"]
+            if jsc.truthy(window.get("end")):
+                o["date_filter_end"] = window["end"]
+            if jsc.truthy(window.get("mode")):
+                o["date_mode"] = window["mode"]
         o["_tier_pick_scope_reused"] = True
         o["domain_hint"] = "promotion"
-        o["intent_hint"] = (
-            prev_state.get("intent_hint") if jsc.truthy(prev_state.get("intent_hint")) else "check_promotion"
-        )
+        # A tier pick is always a promotion question, so the intent is known rather than
+        # carried: `intent_hint` is derived per turn (D14) and is not a session key.
+        o["intent_hint"] = "check_promotion"
         o["message_type"] = "business_query"
         o["scope_intent"] = None
         # consumed: the positions were TIER picks - they must not mint entities off the
@@ -1775,20 +1830,15 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["entity_op"] = "reuse"
         o["message_type"] = "business_query"
         if not jsc.truthy(o.get("domain_hint")):
-            o["domain_hint"] = prev_state.get("domain_hint")
-        if not jsc.truthy(o.get("intent_hint")):
-            o["intent_hint"] = prev_state.get("intent_hint")
+            o["domain_hint"] = focus_domain(prev_state)
         o["select_all_expanded"] = True
 
     if (
         not jsc.truthy(o.get("domain_hint"))
-        and jsc.truthy(prev_state.get("domain_hint"))
+        and jsc.truthy(focus_domain(prev_state))
         and len(o["reference_positions"]) > 0
     ):
-        o["domain_hint"] = prev_state.get("domain_hint")
-        o["intent_hint"] = (
-            o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else prev_state.get("intent_hint")
-        )
+        o["domain_hint"] = focus_domain(prev_state)
         o["message_type"] = "business_query"
         o["domain_inherited_for_position"] = True
 
@@ -1819,7 +1869,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             return  # no dym set -> untouched byIdx (backbone guard)
         offer = picker_offer(prev_state)
         by_idx = jsc.JsMap([(jsc.js_number(jsc.get(r, "idx")), r) for r in dym_set])
-        base = jsc.array(prev_state.get("entities"))  # retains the resolved stock entity
+        base = focus_entities(prev_state)  # retains the resolved stock entity
         applied = False
         for p in positions:
             row = by_idx.get(jsc.js_number(p))
@@ -1949,7 +1999,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 key = _code_key(jsc.get(cand, "code"))
                 if key and key not in by_code:
                     by_code[key] = cand
-            base = jsc.array(prev_state.get("entities"))
+            base = focus_entities(prev_state)
             picked_cands = [
                 c
                 for c in (
@@ -2033,7 +2083,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             for e in jsc.array(o.get("entities"))
         )
         if not current_has_attach_type:
-            prior_ents = jsc.array(prev_state.get("entities"))
+            prior_ents = focus_entities(prev_state)
             for at in [
                 e for e in prior_ents if jsc.lower_or_empty(jsc.get(e, "hint")) == "attachment_type"
             ]:
@@ -2057,7 +2107,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         and jsc.has(e, "ordinal")  # `e.ordinal !== undefined` - presence, not non-null
         for e in o["entities"]
     ):
-        cp_prior = jsc.array(prev_state.get("entities"))
+        cp_prior = focus_entities(prev_state)
 
         def cp_key(e: Any) -> str:
             code = jsc.get(e, "canonical_code") if jsc.truthy(jsc.get(e, "canonical_code")) else jsc.get(e, "raw")
@@ -2584,7 +2634,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     dym_pick = prev_dym or o.get("dym_pick_applied") is True
     # F10: do NOT drop promotion-hinted entities here - Q25 allows a list scoped BY A
     # PROMOTION NAME, and filtering those out left the scope empty.
-    prev_scope = [] if (quoted or dym_pick) else jsc.array(prev5.get("entities"))
+    prev_scope = [] if (quoted or dym_pick) else focus_entities(prev5)
     if o.get("domain_hint") == "promotion" and picking and len(prev_scope) > 0:
         o["entities"] = [{**x, "current_message": False} for x in prev_scope]
         o["entity_op"] = "reuse"
@@ -2612,7 +2662,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         and no_scope
         and not quoted
         and not dym_pick
-        and jsc.is_array(prev5.get("entities"))
+        and bool(focus_entities(prev5))
         and len(prev5["entities"]) > 0
     ):
         o["entities"] = [{**x, "current_message": False} for x in prev5["entities"]]

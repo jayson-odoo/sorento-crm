@@ -13,7 +13,7 @@ whole contract, and say so in the reason.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -1084,6 +1084,150 @@ DIVERGENCES: list[Divergence] = [
     ),
 ]
 
+
+
+# --------------------------------------------------------------------------- #
+# L1-S3 fix round (D8, AC-1032): the six legacy keys `output_exchange` stopped
+# reading off `previous_conversation_state`.
+# --------------------------------------------------------------------------- #
+#
+# The engine hands this node the FIVE-KEY session, so `entities`, `domain_hint`,
+# `intent_hint`, `date_filter_start`, `date_filter_end` and `date_mode` are values the
+# captured previous state carries and the node can no longer read. Every rule that used to
+# reach for them reads `focus` instead - `focus_entities`, `focus_domain`, `focus_value`,
+# the three readers in `head/output_exchange.py` - which is the axis-wise record of what
+# the conversation is about (D11) and the only one the session still holds. `intent_hint`
+# is not carried at all: it is derived from this turn's own parse (D14).
+#
+# A capture predates `focus` by construction, so on these fixtures the carries find nothing
+# and the turn keeps only what its own message named. MEASURED, and it is why this is an
+# allowance and not a defect: the reads are already inert in PRODUCTION - they have been
+# looking at a five-key dict since the session shape changed - so deleting them moves no
+# customer-visible behaviour on any live turn. The blast radius was measured by blanking
+# the six keys out of `previous_conversation_state` inside `post_process` and replaying the
+# whole corpus.
+#
+# FIELD-SCOPED to what a carry decides: the turn's SCOPE (`entities` and the flags the
+# executor stamps beside it), the domain and date window it inherits, and the routing team
+# that follows from the domain. Everything else in the emission is still compared byte for
+# byte - `access_levels`, `query_brands`, `match_mode`, `reference_positions`,
+# `escalation`, `is_affirmative`, `order_status`, `user_goal` and the rest - so what the
+# parse UNDERSTOOD about the customer's own words is graded on these fixtures exactly as
+# before. The carries themselves are graded by `tests/chatbot/test_focus_rules.py`,
+# `test_focus_worlds.py` and the world corpus, which speak the five-key shape.
+_FIXROUND_CARRY_PATHS: tuple[tuple[str, ...], ...] = (
+    ("output", "entities"),
+    ("output", "entity_op"),
+    ("output", "entity_op_applied"),
+    ("output", "entity_op_corrected"),
+    ("output", "entities_filtered"),
+    ("output", "entities_emptied_by_filter"),
+    ("output", "broaden_dropped"),
+    ("output", "scope_exclusive_applied"),
+    ("output", "message_type"),
+    ("output", "domain_hint"),
+    ("output", "intent_hint"),
+    ("output", "domain_inherited_for_position"),
+    ("output", "date_filter_start"),
+    ("output", "date_filter_end"),
+    ("output", "date_mode"),
+    ("output", "date_filter_gated"),
+    ("output", "requested_attributes"),
+    ("output", "routing"),
+    ("output", "_query_brands_carried"),
+)
+
+_FIXROUND_HAZARD = "L1-S3 fix round (D8, AC-1032)"
+_FIXROUND_REASON = (
+    "the engine hands the node five keys, so the captured previous state carries values "
+    "the node can no longer read - `entities`, `domain_hint`, `intent_hint` and the date "
+    "window. The carries read `focus` now, which no capture can have. Field-scoped to what "
+    "a carry decides: the turn's scope, the domain and window it inherits, and the routing "
+    "that follows; every other byte of the emission, and everything the parse understood "
+    "about the customer's own words, stays graded."
+)
+
+_FIXROUND_OUTPUT_EXCHANGE: tuple[str, ...] = (
+    "b56-t4-parser",
+    "parser-15025626",
+    "parser-15030893",
+    "parser-15036672",
+    "parser-15074293",
+    "parser-15074683",
+    "parser-15102165",
+    "parser-15109813",
+    "parser-15111167",
+    "parser-15114945",
+    "parser-15115377",
+    "parser-15116349",
+    "parser-15116385",
+    "parser-15116421",
+    "parser-15116905",
+    "parser-15117445",
+    "parser-15118011",
+    "parser-15118060",
+    "parser-15118611",
+    "parser-15118916",
+    "parser-15123783",
+    "parser-15123848",
+    "parser-15123878",
+    "parser-15124433",
+    "parser-15128968",
+    "parser-15129616",
+    "parser-15129819",
+    "parser-15130185",
+    "parser-15130269",
+    "parser-15130311",
+    "parser-15135865",
+    "parser-15137523",
+    "parser-15138906",
+    "parser-15142072",
+    "parser-15143883",
+    "parser-15146879",
+    "parser-15151810",
+    "parser-15152029",
+    "parser-15152089",
+    "parser-15152139",
+    "parser-15157067",
+    "parser-15157165",
+    "parser-15158411",
+    "parser-15164413",
+)
+
+
+# A fixture that ALREADY has an entry - for owner ruling B, D1, D10, the broaden switch or
+# L1-S3 step 4 - must carry this strip on THAT entry: `find` returns the first match and
+# uses it whole, so a second entry for the same fixture would never be reached. Everything
+# else gets one of its own, spliced in AHEAD of the blanket `fixture=None` entry for the
+# same reason.
+DIVERGENCES = [
+    replace(entry, strip_paths=entry.strip_paths + _FIXROUND_CARRY_PATHS)
+    if entry.node == "output_exchange"
+    and entry.fixture is not None
+    and entry.fixture in _FIXROUND_OUTPUT_EXCHANGE
+    else entry
+    for entry in DIVERGENCES
+]
+
+_FIXROUND_NEW = [
+    Divergence(
+        node="output_exchange",
+        fixture=name,
+        hazard=_FIXROUND_HAZARD,
+        reason=_FIXROUND_REASON,
+        strip_paths=_FIXROUND_CARRY_PATHS + _ADDED_DIAGNOSTIC_KEYS,
+    )
+    for name in _FIXROUND_OUTPUT_EXCHANGE
+    if not any(
+        entry.node == "output_exchange" and entry.fixture == name for entry in DIVERGENCES
+    )
+]
+_FIXROUND_BLANKET_AT = next(
+    index
+    for index, entry in enumerate(DIVERGENCES)
+    if entry.node == "output_exchange" and entry.fixture is None
+)
+DIVERGENCES[_FIXROUND_BLANKET_AT:_FIXROUND_BLANKET_AT] = _FIXROUND_NEW
 
 
 # World-level allowances live in `tests/chatbot/worlds.py`, not here, and there are
