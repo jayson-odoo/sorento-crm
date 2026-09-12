@@ -8,8 +8,8 @@ Contract under test (plan section "D-P6", UAC AC-B1..B6, B9):
   request is NOT a draft but its ``status`` is ``new`` / ``changes_requested``
   (the new post-submit edit gate, ``_require_editable``). On that new path:
   ``status``, ``assigned_to_id`` and ``portal_draft_at`` are unchanged, no form
-  SLA event fires, and an audit row is written (action containing
-  ``portal_edit_after_submit``).
+  SLA event fires, and an audit row is written (``action == "UPDATE"``,
+  description "portal edit after submit" - AC-B10).
 - Every other post-submit status (``designing``, ``proof_ready``, ``approved``,
   ``ready``, ``void``) refuses PUT with 409 ``NOT_EDITABLE``.
 - Ownership (another contact's request) still 403/404s as today.
@@ -283,7 +283,8 @@ class TestPostSubmitEditAllowed:
             .all()
         )
         assert len(rows) == 1, rows
-        assert "portal_edit" in rows[0].action.lower()
+        assert rows[0].action == "UPDATE"
+        assert rows[0].description == "portal edit after submit"
 
     def test_put_after_submit_lines_are_replaced(self, client):
         """The header fields AND the lines are the whole payload the plan

@@ -81,6 +81,24 @@ function baseRequest(over: Record<string, unknown> = {}) {
   };
 }
 
+// A single line, for tests where post-submit Save must actually reach PUT -
+// AC-P10/D-P6b now refuses a zero-line Save client-side, so any test of the
+// PUT path itself needs a request that already carries one.
+const ONE_LINE = {
+  id: 'line-1',
+  line_type: 'product',
+  product_id: 'prod-1',
+  product_set_id: null,
+  name: 'ZZT Kitchen Sink',
+  code: 'CBF-1234',
+  show_promo_price: false,
+  quantity: 1,
+  alternatives: [],
+  included_accessories: null,
+  remarks: null,
+  sort_order: 0,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -138,7 +156,7 @@ describe('PriceTagRequestForm - Edit CTA gated on is_editable (AC-P12)', () => {
 describe('PriceTagRequestForm - Edit / Save / Cancel (AC-P13)', () => {
   it('Save writes via PUT, returns to read mode with the saved values, status unchanged, toasts Saved', async () => {
     asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', is_editable: true }),
+      baseRequest({ status: 'new', is_editable: true, lines: [ONE_LINE] }),
     );
     asMock(updateRequest).mockResolvedValue({ id: 'req-1' });
 
@@ -159,6 +177,7 @@ describe('PriceTagRequestForm - Edit / Save / Cancel (AC-P13)', () => {
         status: 'new',
         is_editable: true,
         notes: 'Edited after submit',
+        lines: [ONE_LINE],
       }),
     );
 

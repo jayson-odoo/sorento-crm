@@ -194,4 +194,7 @@ class TestAttachmentRoutesRefuseWhenNotEditable:
             f"{_ATTACHMENTS_BASE}/{ok_link_id}",
             headers={"X-Portal-Token": token.token},
         )
-        assert ok_delete_res.status_code == 204, ok_delete_res.text
+        # The generic attachment DELETE answers 200, not 204 (see
+        # test_price_tag_request_portal_attachments.py::
+        # test_delete_own_upload_removes_the_link).
+        assert ok_delete_res.status_code == 200, ok_delete_res.text
