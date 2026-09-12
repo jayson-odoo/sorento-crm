@@ -1522,12 +1522,16 @@ def _run_stages(  # noqa: PLR0915
     # shape. It hands it back on `parent_input` instead, and the engine carries it on the
     # PARSE BLOCK, beside `_parser_raw`, which is how `ctx.parse` already carries a value
     # the emission does not (`tail/compile_state._picker_carry` reads that one).
+    # POPPED ONCE, and this is the only place that pops it. The post-processor sets the
+    # out-parameter on exactly one call per turn, so a second `pop` below would read None,
+    # write `{}` over the focus this line just stamped, and every turn that never re-ran
+    # the rules would persist a focus with no products and no domains (measured 13 Sep
+    # 2026: a plain business turn came back with both slots null).
     dialogue_out = parent_input.pop("_dialogue_out", None) or {}
     parse_block["_focus"] = dialogue_out.get("focus") or {}
     # The tail needs the counter to date the question it arms this turn, and it only has
     # `ctx`. Same channel as `_focus`, for the same reason.
     parse_block["_turn_no"] = turn_no
-    parse_block["_open_question_before"] = dialogue_out.get("open_question_before")
     for entry in dialogue_out.get("trace") or []:
         turn_trace.add("focus", entry)
     if dialogue_out.get("open_question"):
@@ -1583,13 +1587,12 @@ def _run_stages(  # noqa: PLR0915
         if cleared_question:
             open_question_before = None
 
-    dialogue_out = parent_input.pop("_dialogue_out", None) or {}
-    parse_block["_focus"] = dialogue_out.get("focus") or {}
+    # The focus is ALREADY on the parse block, stamped where the out-parameter was read.
+    # What this stage adds is the answer: which question was open when the turn started,
+    # what answering it decided, and the lane the outcome names.
     parse_block["_open_question_before"] = open_question_before
     parse_block["_answered"] = answered_entry
     parse_block["_lane_override"] = lane_override
-    for entry in dialogue_out.get("trace") or []:
-        turn_trace.add("focus", entry)
 
     turn_trace.record(
         "answered",
