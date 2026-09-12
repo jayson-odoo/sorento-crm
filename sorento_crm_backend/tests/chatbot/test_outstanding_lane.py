@@ -316,6 +316,98 @@ class TestLocationTokenResolution:
         assert business_services.resolve_warehouse_token(db, "ZZZ-NO-SUCH-TOKEN") == []
 
 
+class TestLocationTokenPipeline:
+    """AC-1133's PIPELINE half, found by the coder after `services.resolve_warehouse_token`
+    landed: the function above is correct in isolation, but nothing in the fetch pipeline
+    ever calls it with the customer's own location word, so a live "... outstanding for
+    IB" turn sends no `warehouse_codes` to `crm_outstanding_report` at all. Same fake-fetch
+    style as `TestScopeAnswerRunsReportWithCarriedFilters` (AC-1132): a REAL `warehouses`
+    table via `session_factory` (the location resolver is DB-backed and must not be
+    faked), the product resolved through the same `_resolve_services` seam every other
+    test in this file uses, and the tool call captured through the fake `mcp_call`."""
+
+    def _seed_warehouses(self, session_factory) -> None:
+        from app.models.inventory import Warehouse
+
+        db = session_factory()
+        db.add_all(
+            [
+                Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW-IB", warehouse_name="BRW IB", is_active=True),
+                Warehouse(id=str(uuid.uuid4()), warehouse_code="MWH-IB", warehouse_name="MWH IB", is_active=True),
+                Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW", warehouse_name="BRW", is_active=True),
+            ]
+        )
+        db.commit()
+
+    def test_location_token_in_message_reaches_tool_as_warehouse_codes(self, session_factory, monkeypatch) -> None:
+        self._seed_warehouses(session_factory)
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status="so_outstanding",
+                entities=[
+                    {
+                        "raw": PRODUCT_CODE, "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                    {
+                        "raw": "IB", "hint": "warehouse", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="SRTWT7445 sales order outstanding for IB",
+            msg_id="ZZT-outstanding-location-ib-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the report must still be fetched"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", name
+        assert set(args.get("warehouse_codes") or []) == {"BRW-IB", "MWH-IB"}, (
+            f"the 'IB' suffix token must resolve to every warehouse code ending in it "
+            f"and reach the tool as warehouse_codes: {args}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Location: IB (BRW-IB, MWH-IB)" in reply, (
+            f"the header must echo the token and what it resolved to (D5/AC-1105): {reply!r}"
+        )
+
+    def test_exact_code_token_in_message_reaches_tool(self, session_factory, monkeypatch) -> None:
+        self._seed_warehouses(session_factory)
+        _seed_contact(session_factory, variables={})
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status="so_outstanding",
+                entities=[
+                    {
+                        "raw": PRODUCT_CODE, "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                    {
+                        "raw": "BRW", "hint": "warehouse", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="SRTWT7445 sales order outstanding for BRW",
+            msg_id="ZZT-outstanding-location-brw-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the report must still be fetched"
+        _name, args = captured[0]
+        assert args.get("warehouse_codes") == ["BRW"], (
+            f"an exact warehouse-code token must resolve to itself only, no other code: {args}"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # AC-1134 - date params, order_date not actual_delivery_date
 # --------------------------------------------------------------------------- #
