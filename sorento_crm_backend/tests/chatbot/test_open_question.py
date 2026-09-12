@@ -52,36 +52,10 @@ def _answer(**kw: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-class TestTheSevenKinds:
-    def test_every_declared_kind_has_a_spec_and_a_handler(self) -> None:
-        assert set(oq.KIND_SPEC) == set(OPEN_QUESTION_KINDS)
-        assert set(oq._HANDLERS) == set(OPEN_QUESTION_KINDS)
-
-    def test_ask_refuses_a_kind_nobody_declared(self) -> None:
-        with pytest.raises(ValueError, match="unknown open question kind"):
-            oq.ask("product_guess", turn_no=1)
-
-    def test_ask_freezes_the_rows_and_numbers_them_as_shown(self) -> None:
-        question = oq.ask("product_pick", options=_rows("A", "B"), turn_no=4)
-
-        assert question["expects"] == "pick"
-        assert question["asked_at_turn"] == 4
-        assert [r["idx"] for r in question["options"]] == [1, 2]
-        assert [r["uuid"] for r in question["options"]] == ["uuid-A", "uuid-B"]
-        assert OpenQuestion(**question).kind == "product_pick"
-
-    def test_a_row_without_its_own_number_gets_its_position(self) -> None:
-        question = oq.ask("tier_pick", options=[{"value": "dealer"}, {"value": "office"}], turn_no=1)
-
-        assert [r["idx"] for r in question["options"]] == [1, 2]
-
-    def test_the_lifetimes_are_per_kind_and_not_one_number(self) -> None:
-        """A roster is on screen for 3 turns; a clarify is answered next turn or not at
-        all, and carrying one indefinitely masked every later offer."""
-        assert oq.KIND_SPEC["member_offer"]["ttl_turns"] == 3
-        assert oq.KIND_SPEC["product_pick"]["ttl_turns"] == 3
-        assert oq.KIND_SPEC["team_pick"]["ttl_turns"] == 1
-        assert oq.KIND_SPEC["escalate_yes_no"]["ttl_turns"] == 1
+# `TestTheSevenKinds` retired here (D5, D9): `escalate_yes_no` folds into `team_pick`
+# (six kinds, not seven) and `ttl_turns` is gone from `KIND_SPEC` entirely - no counter,
+# no TTL, anywhere. Ported coverage: `tests/chatbot/test_open_question_shape.py`
+# (`test_kinds_are_exactly_six`, `test_option_idx_numbered_from_one_and_carries_domain`).
 
 
 # --------------------------------------------------------------------------- #
@@ -350,118 +324,13 @@ class TestTheRemainingHandlers:
 # --------------------------------------------------------------------------- #
 
 
-class TestTheMirrorOffTheLegacyKeys:
-    @pytest.mark.parametrize(
-        "context,kind",
-        [
-            ("disambiguation", "product_pick"),
-            ("suggest_offer", "product_pick"),
-            ("member_offer", "member_offer"),
-            ("tier_offer", "tier_pick"),
-            ("team_clarify", "team_pick"),
-            ("company_clarify", "company_pick"),
-        ],
-    )
-    def test_each_selection_context_names_its_kind(self, context: str, kind: str) -> None:
-        question = oq.from_state(
-            {"selection_context": context, "last_result_set": _rows("A")}, asked_at_turn=2
-        )
-
-        assert question["kind"] == kind
-
-    def test_a_customer_roster_under_the_same_label_is_a_customer_pick(self) -> None:
-        question = oq.from_state(
-            {
-                "selection_context": "disambiguation",
-                "last_result_set": [
-                    {"idx": 1, "label": "ABC", "entity_type": "customer"},
-                    {"idx": 2, "label": "ABD", "entity_type": "customer"},
-                ],
-            },
-            asked_at_turn=2,
-        )
-
-        assert question["kind"] == "customer_pick"
-
-    def test_a_pending_escalation_offer_with_no_roster_is_a_yes_no(self) -> None:
-        question = oq.from_state(
-            {"pending": {"kind": "escalation_offer", "team": "warehouse"}}, asked_at_turn=2
-        )
-
-        assert question["kind"] == "escalate_yes_no"
-        assert question["expects"] == "yes_no"
-        assert question["payload"]["team"] == "warehouse"
-
-    def test_a_team_clarify_resolves_against_the_teams_the_ask_offered(self) -> None:
-        """Owner rule R-a narrowed the ask, so `selection_context` alone cannot say which
-        three teams were offered; the marker's own list is the roster."""
-        question = oq.from_state(
-            {
-                "selection_context": "team_clarify",
-                "last_result_set": _rows("stale", "rows"),
-                "pending": {
-                    "kind": "team_clarify",
-                    "options": [
-                        {"team": "marketing_product", "label": "Marketing Product"},
-                        {"team": "marketing_form", "label": "Marketing Form"},
-                    ],
-                },
-            },
-            asked_at_turn=2,
-        )
-
-        assert [r["team"] for r in question["options"]] == [
-            "marketing_product",
-            "marketing_form",
-        ]
-
-    def test_a_partial_miss_freezes_the_SUGGESTIONS_not_the_answer_rows(self) -> None:
-        """Two rosters are live at once and they are not interchangeable: `last_result_set`
-        holds the stock lines for the code that DID resolve, and the numbered rows the
-        reply printed are `dym_last_result_set`. The legacy ladder resolves a numbered
-        pick against the second, so this must too."""
-        question = oq.from_state(
-            {
-                "selection_context": "suggest_offer",
-                "last_result_set": [{"idx": 1, "label": "SRTKS6091 - 12 in KL"}],
-                "dym_last_result_set": _rows("SRTKS8091-A", "SRTKS8091-B"),
-            },
-            asked_at_turn=3,
-        )
-
-        assert [r["label"] for r in question["options"]] == ["SRTKS8091-A", "SRTKS8091-B"]
-
-    def test_an_ordinary_picker_still_freezes_the_last_result_set(self) -> None:
-        question = oq.from_state(
-            {"selection_context": "disambiguation", "last_result_set": _rows("A", "B")},
-            asked_at_turn=3,
-        )
-
-        assert [r["label"] for r in question["options"]] == ["A", "B"]
-
-    def test_a_suggest_offer_with_no_dym_rows_falls_back(self) -> None:
-        """Same discriminator the ladder uses: the dym array has to be NON-EMPTY."""
-        question = oq.from_state(
-            {
-                "selection_context": "suggest_offer",
-                "last_result_set": _rows("A", "B"),
-                "dym_last_result_set": [],
-            },
-            asked_at_turn=3,
-        )
-
-        assert [r["label"] for r in question["options"]] == ["A", "B"]
-
-    def test_nothing_open_is_none(self) -> None:
-        assert oq.from_state({}, asked_at_turn=1) is None
-        assert oq.from_state({"selection_context": None}, asked_at_turn=1) is None
-
-    def test_a_stored_question_wins_over_the_derivation(self) -> None:
-        stored = oq.ask("tier_pick", options=_rows("dealer"), turn_no=9)
-
-        assert oq.from_state(
-            {"open_question": stored, "selection_context": "disambiguation"}, asked_at_turn=1
-        ) is stored
+# `TestTheMirrorOffTheLegacyKeys` retired here (AC-1033, owner 12 Sep 2026: "no
+# persisted mirrors" reverses growth-r1's direction). `from_state` derived
+# `open_question` FROM the legacy `pending` / `selection_context` / `last_result_set` /
+# `dym_last_result_set` markers; those markers no longer exist in `SessionVars` at all
+# (five keys only), so nothing is left to derive FROM. `open_question` is authoritative
+# now, written directly by `dialogue/open_question.py::ask` at the point each lane
+# decides to ask. Ported coverage: `tests/chatbot/test_open_question_clearing.py`.
 
 
 # --------------------------------------------------------------------------- #

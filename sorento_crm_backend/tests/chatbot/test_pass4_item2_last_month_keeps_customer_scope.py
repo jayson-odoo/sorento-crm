@@ -78,7 +78,7 @@ from app.services.chatbot import engine as engine_mod
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
 from tests.chatbot.test_engine_company_scope import _wire_real_resolve_entity
-from tests.chatbot.test_r3_pending_end_to_end import _stub_parser
+from tests.chatbot._shared_turn_helpers import _stub_parser
 
 CUSTOMER_LABEL = "L. A. W. Transport (K.L.) Sdn. Bhd. (SRT)"  # roster label, brand-decorated
 CUSTOMER_NAME = "L. A. W. Transport (K.L.) Sdn. Bhd."  # the REAL customers.customer_name column

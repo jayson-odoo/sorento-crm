@@ -854,31 +854,11 @@ class TestReviewRound2B2TheRetypeIsTheMeasuredArmOnly:
         assert out["escalation"]["is_escalation_confirmation"] is False
 
 
-class TestSwitchWordDomainOfThisMessage:
-    """`_switch_word_domain`: the single domain whose switch word appears among the
-    message's content tokens (`_TOKEN_RE` minus `SWITCH_FILLER`, the #6 consumer's own
-    tokenisation); None on zero or on more than one domain."""
-
-    @pytest.mark.parametrize(
-        ("message", "domain"),
-        [
-            ("delivery to hanlim", "order"),
-            ("any DO delivered to hanlim last week", "order"),
-            ("penghantaran untuk hanlim", "order"),
-            ("PO for SRTWC8517", "purchase_order"),
-            ("PO?", "purchase_order"),
-            ("spo SRTWC8517", "spo_allocation"),
-            ("check stock srtwc286", "inventory"),
-            ("stock and delivery for hanlim", None),  # two domains
-            ("yes", None),
-            ("can someone help me", None),
-            ("do you have srtwc286", None),  # "do" is deliberately NOT a switch word
-        ],
-    )
-    def test_domain_of(self, message: str, domain: str | None) -> None:
-        from app.services.chatbot.head.output_exchange import _switch_word_domain
-
-        assert _switch_word_domain(message) == domain
+# `TestSwitchWordDomainOfThisMessage` retired here (D3, D7): `output_exchange.py`'s
+# `_switch_word_domain` - the single domain whose switch word appears among the raw
+# message's tokens - is superseded by `dialogue/focus.py::domains_from_asks`, which
+# reads the parser's own `asks[]` instead of tokenising the customer's text. Ported
+# coverage: `tests/chatbot/test_focus_rules.py::TestDomainsFromAsks`.
 
 
 class TestD9AFileLinkThatCannotBeSignedIsLeftOut:
