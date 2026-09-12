@@ -237,7 +237,7 @@ def _load_migration():
         Path(__file__).resolve().parents[2]
         / "alembic"
         / "versions"
-        / "489_chatbot_parser_v3.py"
+        / "513_chatbot_parser_v3.py"
     )
     spec = importlib.util.spec_from_file_location("migration_under_test_489", path)
     module = importlib.util.module_from_spec(spec)

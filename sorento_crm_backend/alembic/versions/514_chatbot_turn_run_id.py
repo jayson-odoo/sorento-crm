@@ -11,14 +11,14 @@ what the row did not carry.
 
 Nullable, and null on every live delivery: a live turn belongs to no run.
 
-Revision ID: 490_chatbot_turn_run_id
-Revises: 489_chatbot_parser_v3
+Revision ID: 514_chatbot_turn_run_id
+Revises: 513_chatbot_parser_v3
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "490_chatbot_turn_run_id"
-down_revision = "489_chatbot_parser_v3"
+revision = "514_chatbot_turn_run_id"
+down_revision = "513_chatbot_parser_v3"
 branch_labels = None
 depends_on = None
 

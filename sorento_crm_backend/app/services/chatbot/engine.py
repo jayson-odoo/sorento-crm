@@ -97,10 +97,12 @@ GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
 # customer is watching "typing...", so it must never queue behind a 39-minute import.
 CHAT_QUEUE = "chat"
 
-# Growth r1 D11. The same 3 as `SystemSetting.chatbot_focus_ttl_turns`'s own default,
-# declared here as well because a build with no settings row still has to age its memory,
-# and because `_focus_ttl_turns` needs a value to fall back to when the column holds
-# operator nonsense.
+# D9 (PLAN-chatbot-focus-multi-domain, owner 12 Sep 2026): there is no TTL and no
+# settings column any more - `system_settings.chatbot_focus_ttl_turns` is removed, and a
+# focus slot is cleared only by a new entity on the same axis, a topic reset or the
+# Respond.io conversation-closed event. This constant is what `decay.apply` reads until
+# `decay.py` becomes `clearing.py`.
+# D9: removed in L1-S1.
 DEFAULT_FOCUS_TTL_TURNS = 3
 
 # How often the waiting request looks at the job. Same order as `/external/media`'s own
@@ -1262,7 +1264,8 @@ def _run_stages(  # noqa: PLR0915
         decayed = decay_mod.apply(
             variables,
             turn_no=turn_no,
-            ttl_turns=switches.chatbot_focus_ttl_turns,
+            # D9: removed in L1-S1. No settings column behind this any more.
+            ttl_turns=DEFAULT_FOCUS_TTL_TURNS,
             trace=turn_trace,
         )
         # The stored blob is what every downstream reader holds (`parent_input`, `ctx`),
@@ -1295,7 +1298,8 @@ def _run_stages(  # noqa: PLR0915
             # reason: "nothing decayed" and "this build does not decay" must not read
             # the same on the trace screen.
             "turn_no": turn_no,
-            "focus_ttl_turns": switches.chatbot_focus_ttl_turns,
+            # D9: removed in L1-S1.
+            "focus_ttl_turns": DEFAULT_FOCUS_TTL_TURNS,
             "focus_slots_alive": sorted(decayed.focus),
             "focus_slots_decayed": [d["slot"] for d in decayed.dropped],
         },
@@ -2722,11 +2726,6 @@ class _TurnSwitches:
     chatbot_completed_lanes: Any = None
     chatbot_business_lane_enabled: bool = False
     chatbot_ordering_enabled: bool = False
-    # Growth r1 D11: how many turns a focus slot survives without being restated. Read on
-    # the SAME row as everything above, so decay and routing can never disagree about the
-    # settings a turn ran under - and so a dry run reads it without writing anything
-    # (AC-982).
-    chatbot_focus_ttl_turns: int = DEFAULT_FOCUS_TTL_TURNS
     # A7 (chatbot-growth-r1). MISSING until 8 Sep 2026, and that single omission is why
     # Foundre's rule never fired for a customer: `_crossdomain_ladder` reads this snapshot,
     # `getattr` found no attribute, returned None, and `_next_crossdomain_rung` reads None
@@ -2751,23 +2750,8 @@ def _read_switches(db: Session) -> _TurnSwitches:
             getattr(row, "chatbot_business_lane_enabled", False)
         ),
         chatbot_ordering_enabled=bool(getattr(row, "chatbot_ordering_enabled", False)),
-        chatbot_focus_ttl_turns=_focus_ttl_turns(row),
         chatbot_crossdomain_ladder=getattr(row, "chatbot_crossdomain_ladder", None),
     )
-
-
-def _focus_ttl_turns(row: Any) -> int:
-    """`system_settings.chatbot_focus_ttl_turns`, default 3, never negative.
-
-    A settings column is OPERATOR DATA, so a nonsense value must not take the turn engine
-    down: anything unreadable falls back to the default, and a negative is clamped to 0,
-    which means "this turn only" rather than "every slot is already dead".
-    """
-    try:
-        value = int(getattr(row, "chatbot_focus_ttl_turns", DEFAULT_FOCUS_TTL_TURNS))
-    except (TypeError, ValueError):
-        return DEFAULT_FOCUS_TTL_TURNS
-    return max(0, value)
 
 
 def _stock_denial_enabled(db: Session, row: Any = _UNSET) -> bool:

@@ -179,7 +179,7 @@ SEMANTIC_PARSER_PROMPT_SLIM = "You are the Sorento Semantic Parser. You are give
 # ~69 keys from this emission and a key quietly dropped here is a lane that stops working
 # with no error anywhere.
 #
-# **Not promoted by its migration.** `489_chatbot_parser_v3` publishes this as the next
+# **Not promoted by its migration.** `513_chatbot_parser_v3` publishes this as the next
 # UNLABELLED version of `chatbot_semantic_parser`, exactly as 475 and 480 and 487 did.
 # Promotion is a label move in the admin UI and it is the OWNER's step, after the shadow
 # window in AC-952 (branch parity 99%+, reply parity 97%+ on turns with no open question)

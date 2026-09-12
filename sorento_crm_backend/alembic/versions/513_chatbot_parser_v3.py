@@ -23,8 +23,8 @@ The insert logic lives in module-level ``publish(session)`` so it can be called 
 alembic (e.g. to publish against the shared dev database without an ``alembic upgrade``),
 the same shape 487 uses.
 
-Revision ID: 489_chatbot_parser_v3
-Revises: 488_chatbot_focus_ttl
+Revision ID: 513_chatbot_parser_v3
+Revises: 512_integration_ref_company
 """
 import logging
 
@@ -35,8 +35,8 @@ from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_seed import seed_prompt_registry
 
-revision = "489_chatbot_parser_v3"
-down_revision = "488_chatbot_focus_ttl"
+revision = "513_chatbot_parser_v3"
+down_revision = "512_integration_ref_company"
 branch_labels = None
 depends_on = None
 

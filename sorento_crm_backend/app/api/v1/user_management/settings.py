@@ -166,8 +166,6 @@ class SystemSettingUpdate(BaseModel):
     # above - they must appear HERE and in the GET dict, because both are manual.
     chatbot_business_lane_enabled: Optional[bool] = None
     chatbot_ordering_enabled: Optional[bool] = None
-    # Growth r1 D11: how many turns a chatbot focus slot survives without being restated.
-    chatbot_focus_ttl_turns: Optional[int] = None
 
 
 class ChatbotLane(BaseModel):
@@ -384,7 +382,6 @@ async def get_settings(
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
-                "chatbot_focus_ttl_turns": getattr(settings, "chatbot_focus_ttl_turns", 3) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]

@@ -665,8 +665,10 @@ class Focus(BaseModel):
     ONE writer (`dialogue/focus.py`), against the two the growth plan measured: the
     parser prompt's "always continue the previous turn" plus ten deterministic rules in
     `head/output_exchange.py`. A slot the customer has not restated for
-    `system_settings.chatbot_focus_ttl_turns` turns is dropped at intake, before the
-    parser is asked anything, and the drop is traced.
+    `engine.DEFAULT_FOCUS_TTL_TURNS` turns is dropped at intake, before the parser is
+    asked anything, and the drop is traced. D9: removed in L1-S1 - there is no TTL and no
+    settings column; a slot is cleared by a same-axis entity, a topic reset or the
+    conversation-closed event.
     """
 
     model_config = ConfigDict(extra="forbid")
