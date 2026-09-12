@@ -321,7 +321,7 @@ SRTWT7445-LV-NEW, SRT62-GM) all missed identically until the two tools were seed
    environment is currently on. Rolling back is the reverse label move.
 
 
-### Slice B - Dialogue state: focus + open question, single writer
+### Slice B - Dialogue state: focus + open question, single writer (SUPERSEDED 12 Sep 2026 by `PLAN-chatbot-focus-multi-domain.md`; the unpushed branch `feat/chatbot-growth-dialogue` carries this slice and lane 1 of that plan builds on it)
 
 New keys inside `SessionVars` (persisted shape stays JSONB, allow-list grows by two):
 
