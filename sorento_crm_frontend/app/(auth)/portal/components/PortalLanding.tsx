@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, Filter, FileText, LogOut, Plus, Star } from 'lucide-react';
+import { AlertCircle, FileText, LogOut, Plus, Star } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,13 +24,7 @@ import {
 } from '@/components/ui/dialog';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import type { ListBoardViewMode } from '@/hooks/useListBoardViewPreference';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
@@ -66,6 +60,18 @@ import {
 } from '../lib/portal-paths';
 import { useRevisionPolicy } from '../hooks/useRevisions';
 import { ReviseAction } from './ReviseAction';
+import { LandingToolbar } from './LandingToolbar';
+import {
+  DEFAULT_LANDING_SORT,
+  applyLandingFilters,
+  landingFieldsFor,
+  sortLandingItems,
+  type LandingFilters,
+  type LandingSort,
+} from '../lib/landing-fields';
+
+// Shared across every kind, so the choice survives a type switch (AC-L7).
+const PORTAL_VIEW_KEY = 'sorento.portalView';
 
 // Display order differs from the canonical list: stock inquiry first.
 const TYPES: PortalSubmissionKind[] = [
@@ -93,8 +99,6 @@ const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
   sponsorship_form: [],
   price_tag_request: [],
 };
-
-type StatusFilter = 'all' | 'draft' | 'submitted' | 'rejected';
 
 type BadgeVariant =
   | 'primary'
@@ -149,12 +153,6 @@ function statusCardClass(row: PortalSubmissionSummary): string {
   return 'bg-primary/5 border-primary/30';
 }
 
-function effectiveStatus(row: PortalSubmissionSummary): StatusFilter {
-  if (row.is_draft) return 'draft';
-  if (row.status === 'rejected') return 'rejected';
-  return 'submitted';
-}
-
 // Per-kind primary/secondary metadata picked for the compact card layout.
 function pickCardMeta(row: PortalSubmissionSummary): {
   product?: string;
@@ -198,13 +196,41 @@ export function PortalLanding({ slug }: { slug?: string }) {
     debouncedValue: debouncedSearch,
     isSettling: searchSettling,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const initialTabFromUrl = (() => {
     const t = searchParams?.get('type');
     return isLandingKind(t) ? t : 'stock_inquiry';
   })();
   const [activeTab, setActiveTab] =
     useState<PortalLandingKind>(initialTabFromUrl);
+  // Filter + sort are component state that resets whenever the type changes
+  // (D-L4) - the field set differs per kind, so a status or field value
+  // picked for one kind has no business surviving a tab switch. The view
+  // choice (cards vs list) is the one thing that persists, per device,
+  // across both a reload and a type switch (AC-L7).
+  const [filters, setFilters] = useState<LandingFilters>({});
+  const [sort, setSort] = useState<LandingSort>(DEFAULT_LANDING_SORT);
+  useEffect(() => {
+    setFilters({});
+    setSort(DEFAULT_LANDING_SORT);
+  }, [activeTab]);
+  const [view, setViewState] = useState<ListBoardViewMode>('board');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = window.localStorage.getItem(PORTAL_VIEW_KEY);
+    if (stored === 'list' || stored === 'board') {
+      setViewState(stored);
+      return;
+    }
+    // Tailwind's `md:` breakpoint (768px) - a media query, not innerWidth, so
+    // it stays live if the window is resized before the first pick is made.
+    setViewState(window.matchMedia('(min-width: 768px)').matches ? 'list' : 'board');
+  }, []);
+  const setView = useCallback((mode: ListBoardViewMode) => {
+    setViewState(mode);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(PORTAL_VIEW_KEY, mode);
+    }
+  }, []);
   const userPickedTabRef = useRef<boolean>(Boolean(searchParams?.get('type')));
   // Mirror current URL `?type=` so loadAll's expired-token redirect can read it
   // without depending on `searchParams` (which would re-create loadAll and
@@ -457,56 +483,16 @@ export function PortalLanding({ slug }: { slug?: string }) {
         </Button>
       </div>
 
-      {/* Search input + status-filter icon button on the same row to save
-          vertical space. The button gets a primary outline when a non-default
-          filter is active. */}
-      <div className="flex items-stretch gap-2">
-        <ListSearchInput
-          value={search}
-          onChange={setSearch}
-          isSettling={searchSettling}
-          placeholder="Search..."
-          aria-label="Search submissions"
-          className="flex-1"
-          inputClassName="h-12 text-base"
-        />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              className={`h-12 w-12 p-0 shrink-0 ${
-                statusFilter !== 'all' ? 'border-primary text-primary' : ''
-              }`}
-              aria-label="Filter by status"
-              title={
-                statusFilter === 'all'
-                  ? 'Filter by status'
-                  : `Filter: ${statusFilter}`
-              }
-            >
-              <Filter className="h-5 w-5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[10rem]">
-            <DropdownMenuRadioGroup
-              value={statusFilter}
-              onValueChange={(v) => setStatusFilter(v as StatusFilter)}
-            >
-              <DropdownMenuRadioItem value="all">
-                All statuses
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="draft">Draft</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="submitted">
-                Submitted
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="rejected">
-                Rejected
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      {/* Search input only (D-L3) - the status filter now lives in the
+          toolbar's Filter popover, alongside every other filterable field. */}
+      <ListSearchInput
+        value={search}
+        onChange={setSearch}
+        isSettling={searchSettling}
+        placeholder="Search..."
+        aria-label="Search submissions"
+        inputClassName="h-12 text-base"
+      />
 
       <div className="flex items-stretch gap-2">
         <SearchableSelect
@@ -583,7 +569,12 @@ export function PortalLanding({ slug }: { slug?: string }) {
       <SubmissionList
         kind={activeTab}
         items={submissions[activeTab] ?? []}
-        statusFilter={statusFilter}
+        filters={filters}
+        onFiltersChange={setFilters}
+        sort={sort}
+        onSortChange={setSort}
+        view={view}
+        onViewChange={setView}
         slug={slug}
       />
     </div>
@@ -593,20 +584,29 @@ export function PortalLanding({ slug }: { slug?: string }) {
 function SubmissionList({
   kind,
   items,
-  statusFilter,
+  filters,
+  onFiltersChange,
+  sort,
+  onSortChange,
+  view,
+  onViewChange,
   slug,
 }: {
   kind: PortalLandingKind;
   items: PortalSubmissionSummary[];
-  statusFilter: StatusFilter;
+  filters: LandingFilters;
+  onFiltersChange: (next: LandingFilters) => void;
+  sort: LandingSort;
+  onSortChange: (next: LandingSort) => void;
+  view: ListBoardViewMode;
+  onViewChange: (mode: ListBoardViewMode) => void;
   slug?: string;
 }) {
-  const filtered = useMemo(() => {
-    // Substring search runs server-side (every field). Local filter only
-    // narrows by status for a snappy tab switch.
-    if (statusFilter === 'all') return items;
-    return items.filter((r) => effectiveStatus(r) === statusFilter);
-  }, [items, statusFilter]);
+  const fields = useMemo(() => landingFieldsFor(kind), [kind]);
+  const filtered = useMemo(
+    () => sortLandingItems(applyLandingFilters(items, fields, filters), fields, sort),
+    [items, fields, filters, sort],
+  );
 
   const [previewRow, setPreviewRow] = useState<PortalSubmissionSummary | null>(
     null,
@@ -614,10 +614,20 @@ function SubmissionList({
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
-        <Button asChild className="h-10">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <LandingToolbar
+          fields={fields}
+          items={items}
+          filters={filters}
+          onFiltersChange={onFiltersChange}
+          sort={sort}
+          onSortChange={onSortChange}
+          view={view}
+          onViewChange={onViewChange}
+        />
+        <Button asChild size="sm" className="shrink-0">
           <Link href={portalNewPath(kind, slug)}>
-            <Plus className="h-4 w-4 mr-2" />
+            <Plus />
             New {LANDING_LABELS[kind]}
           </Link>
         </Button>
@@ -629,10 +639,33 @@ function SubmissionList({
             {items.length === 0 ? (
               <p>No {LANDING_LABELS[kind].toLowerCase()} submissions yet.</p>
             ) : (
-              <p>No submissions match your filters.</p>
+              <>
+                <p>No submissions match your filters.</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onFiltersChange({})}
+                >
+                  Clear filters
+                </Button>
+              </>
             )}
           </CardContent>
         </Card>
+      ) : view === 'list' ? (
+        <ul className="space-y-1.5">
+          {filtered.map((row) => (
+            <li key={row.id}>
+              <SubmissionRow
+                row={row}
+                kind={kind}
+                slug={slug}
+                onLongPress={() => setPreviewRow(row)}
+              />
+            </li>
+          ))}
+        </ul>
       ) : (
         <ul className="space-y-2.5">
           {filtered.map((row) => (
@@ -658,23 +691,25 @@ function SubmissionList({
   );
 }
 
-function SubmissionCard({
-  row,
+/**
+ * Click / long-press / keyboard wiring shared by SubmissionCard and
+ * SubmissionRow (D-L5) - both open the detail page on a tap/click/Enter and
+ * the preview dialog on a long-press, right-click or context-menu key.
+ */
+function useSubmissionPress({
   kind,
+  id,
   slug,
   onLongPress,
 }: {
-  row: PortalSubmissionSummary;
   kind: PortalLandingKind;
+  id: string;
   slug?: string;
   onLongPress: () => void;
 }) {
   const router = useRouter();
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
-  const meta = pickCardMeta(row);
-  const primary = row.document_number ?? row.title ?? '-';
-  const tintClass = statusCardClass(row);
 
   const startPress = () => {
     longPressFired.current = false;
@@ -690,6 +725,128 @@ function SubmissionCard({
     }
   };
 
+  return {
+    role: 'link' as const,
+    tabIndex: 0,
+    onClick: () => {
+      if (longPressFired.current) {
+        longPressFired.current = false;
+        return;
+      }
+      router.push(portalDetailPath(kind, id, slug));
+    },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        router.push(portalDetailPath(kind, id, slug));
+      }
+    },
+    onContextMenu: (e: React.MouseEvent) => {
+      e.preventDefault();
+      onLongPress();
+    },
+    onTouchStart: startPress,
+    onTouchEnd: clearPress,
+    onTouchMove: clearPress,
+    onTouchCancel: clearPress,
+    onMouseDown: startPress,
+    onMouseUp: clearPress,
+    onMouseLeave: clearPress,
+  };
+}
+
+function SubmissionRow({
+  row,
+  kind,
+  slug,
+  onLongPress,
+}: {
+  row: PortalSubmissionSummary;
+  kind: PortalLandingKind;
+  slug?: string;
+  onLongPress: () => void;
+}) {
+  const press = useSubmissionPress({ kind, id: row.id, slug, onLongPress });
+  const meta = pickCardMeta(row);
+  const primaryMeta = meta.product ?? meta.project ?? meta.customer ?? null;
+  const primary = row.document_number ?? row.title ?? '-';
+  const isComplaint = row.kind === 'complaint';
+  const statusText = row.is_draft
+    ? 'Draft'
+    : isComplaint
+      ? complaintStatusLabel(row.status)
+      : statusLabel(row.status);
+  const createdText = row.created_at
+    ? new Date(row.created_at).toLocaleDateString(undefined, {
+        dateStyle: 'medium',
+      })
+    : null;
+
+  return (
+    <div
+      {...press}
+      className="flex items-center gap-2 overflow-hidden rounded-lg border bg-card px-3 py-2 hover:brightness-95 active:brightness-90 transition-[filter] select-none cursor-pointer"
+    >
+      {isComplaint && !row.is_draft ? (
+        <span
+          className={`shrink-0 inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${complaintStatusPillClass(row.status)}`}
+        >
+          {statusText}
+        </span>
+      ) : (
+        <Badge
+          variant={statusVariant(row)}
+          className="shrink-0 whitespace-nowrap"
+        >
+          {statusText}
+        </Badge>
+      )}
+      <span
+        className="min-w-0 flex-[2] truncate text-sm font-medium"
+        title={primary}
+      >
+        {primary}
+      </span>
+      <span
+        className="min-w-0 flex-1 truncate text-sm text-muted-foreground"
+        title={primaryMeta ?? undefined}
+      >
+        {primaryMeta}
+      </span>
+      {row.needed_by_date && (
+        <span
+          className="shrink-0 w-20 truncate text-right text-xs text-muted-foreground"
+          title={row.needed_by_date}
+        >
+          {row.needed_by_date}
+        </span>
+      )}
+      <span
+        className="shrink-0 w-20 truncate text-right text-xs text-muted-foreground"
+        title={createdText ?? undefined}
+      >
+        {createdText}
+      </span>
+    </div>
+  );
+}
+
+function SubmissionCard({
+  row,
+  kind,
+  slug,
+  onLongPress,
+}: {
+  row: PortalSubmissionSummary;
+  kind: PortalLandingKind;
+  slug?: string;
+  onLongPress: () => void;
+}) {
+  const press = useSubmissionPress({ kind, id: row.id, slug, onLongPress });
+  const meta = pickCardMeta(row);
+  const primary = row.document_number ?? row.title ?? '-';
+  const tintClass = statusCardClass(row);
+
   // Complaints use the shared status map so portal labels + colours tally with
   // the internal system view; other kinds keep the generic badge variant.
   const isComplaint = row.kind === 'complaint';
@@ -701,32 +858,7 @@ function SubmissionCard({
 
   return (
     <div
-      role="link"
-      tabIndex={0}
-      onClick={() => {
-        if (longPressFired.current) {
-          longPressFired.current = false;
-          return;
-        }
-        router.push(portalDetailPath(kind, row.id, slug));
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          router.push(portalDetailPath(kind, row.id, slug));
-        }
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onLongPress();
-      }}
-      onTouchStart={startPress}
-      onTouchEnd={clearPress}
-      onTouchMove={clearPress}
-      onTouchCancel={clearPress}
-      onMouseDown={startPress}
-      onMouseUp={clearPress}
-      onMouseLeave={clearPress}
+      {...press}
       className={`relative block rounded-lg border ${tintClass} px-3.5 py-3 pr-3 hover:brightness-95 active:brightness-90 transition-[filter] select-none cursor-pointer`}
     >
       {/* Status badge anchored top-right; allows multi-word status to wrap
