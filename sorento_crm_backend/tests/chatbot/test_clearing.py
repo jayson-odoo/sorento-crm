@@ -1,10 +1,12 @@
 """AC-1003, AC-1004: `dialogue/clearing.py`, the ONLY three ways a focus slot dies.
 
 D9 (owner, 12 Sep 2026): no counter, no TTL, anywhere. A focus slot is cleared only by
-(a) a current-message entity of the same axis replacing it, (b) `topic_reset`, or (c) the
-Respond.io "conversation closed" event. `clearing.apply(session, parse, conversation_closed)`
-is the one function that applies all three and returns `(session, trace_lines)`, each trace
-line `{slot, reason}`.
+(a) a current-message entity of the same axis replacing it, or (b) `topic_reset` -
+`clearing.apply(session, parse)` is the function that applies both and returns
+`(session, trace_lines)`, each trace line `{slot, reason}`. The third cause, the
+Respond.io "conversation closed" event, is the SLA path's own eager clear
+(`ConversationSLATrackingService._clear_chatbot_dialogue_state_best_effort`) - not a
+`conversation_closed` parameter on this function, which review fix round retired.
 
 RED: `app.services.chatbot.dialogue.clearing` does not exist on this branch yet -
 `dialogue/decay.py` still owns turn-count TTL clearing (`is_alive`, `age_turns`), which this
@@ -73,7 +75,7 @@ class TestTheThreeClearingCauses:
                 }
             ],
         )
-        new_session, trace_lines = clearing.apply(session, parse, conversation_closed=False)
+        new_session, trace_lines = clearing.apply(session, parse)
 
         products_value = new_session["focus"]["products"]["value"]
         assert products_value != [{"code": "ZZT-OLD", "hint": "product"}], (
@@ -92,7 +94,7 @@ class TestTheThreeClearingCauses:
         session = {"focus": _full_focus(), "open_question": None}
         parse = _casual_parse(message_type="business_query", topic_reset=True)
 
-        new_session, trace_lines = clearing.apply(session, parse, conversation_closed=False)
+        new_session, trace_lines = clearing.apply(session, parse)
         focus = new_session["focus"]
 
         assert focus.get("domains") in (None, {}), focus.get("domains")
@@ -161,7 +163,7 @@ class TestFiveCasualMessagesLeaveStateUntouched:
 
         for _ in range(5):
             session, trace_lines = clearing.apply(
-                session, _casual_parse(), conversation_closed=False
+                session, _casual_parse()
             )
             assert trace_lines == [], (
                 "a casual message must not trigger any clearing cause"

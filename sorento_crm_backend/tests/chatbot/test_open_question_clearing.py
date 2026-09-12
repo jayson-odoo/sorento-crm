@@ -62,7 +62,7 @@ class TestOpenQuestionSurvivesOrClears:
 
         session = {"focus": {}, "open_question": _open_question()}
         new_session, trace_lines = clearing.apply(
-            session, _casual_parse(), conversation_closed=False
+            session, _casual_parse()
         )
         assert new_session["open_question"] == _open_question()
         assert trace_lines == []
@@ -72,7 +72,7 @@ class TestOpenQuestionSurvivesOrClears:
 
         session = {"focus": {}, "open_question": _open_question()}
         new_session, trace_lines = clearing.apply(
-            session, _new_ask_parse(), conversation_closed=False
+            session, _new_ask_parse()
         )
         assert new_session["open_question"] is None
         assert len(trace_lines) >= 1
@@ -88,7 +88,7 @@ class TestOpenQuestionSurvivesOrClears:
         session = {"focus": {}, "open_question": old_question}
 
         cleared_session, _trace_lines = clearing.apply(
-            session, _new_ask_parse(), conversation_closed=False
+            session, _new_ask_parse()
         )
         assert cleared_session["open_question"] is None
 

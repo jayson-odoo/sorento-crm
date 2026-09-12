@@ -111,6 +111,7 @@ function settings(overrides: Partial<ChatbotSettings> = {}): ChatbotSettings {
     chatbot_business_lane_enabled: false,
     chatbot_ordering_enabled: false,
     chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'],
+    chatbot_parser_shadow_version: null,
     ...overrides,
   };
 }
@@ -284,6 +285,7 @@ describe('ChatbotSettingsPage - Save payload (AC-809, AC-810)', () => {
       chatbot_business_lane_enabled: false,
       chatbot_ordering_enabled: false,
       chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'],
+      chatbot_parser_shadow_version: null,
     });
     expect(payload.chatbot_completed_lanes).toHaveLength(2);
   });
