@@ -27,7 +27,7 @@ from fastapi import (
     status,
 )
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -499,6 +499,10 @@ class LoadingPlanCreate(BaseModel):
     """Start a plan: whose container, how far ahead, and which document it starts from."""
 
     supplier_id: str
+    #: "Sales orders needed" window (AC-N7): the same From/To shape and the same reading
+    #: `CreateReorderRunRequest` already gives the reorder run. None on either side means
+    #: unbounded on that side; demand carrying no date at all is always counted regardless.
+    plan_horizon_start: Optional[date] = None
     #: "Sales order cut-off". None means every open order counts - the same words and the
     #: same rule the reorder run's own horizon uses.
     plan_horizon_date: Optional[date] = None
@@ -506,6 +510,21 @@ class LoadingPlanCreate(BaseModel):
     #: The retained sheet this plan was started from, so the record can offer "View uploaded
     #: list". Optional: the retain is itself best-effort, and a plan without it is still a plan.
     source_attachment_id: Optional[str] = None
+
+    # Same validator, same message, as `CreateReorderRunRequest._start_before_end`
+    # (`app/schemas/scm_reorder.py`) - one rule, so the two screens cannot disagree about
+    # what a backwards window means.
+    @model_validator(mode="after")
+    def _start_before_end(self):
+        if (
+            self.plan_horizon_start is not None
+            and self.plan_horizon_date is not None
+            and self.plan_horizon_start > self.plan_horizon_date
+        ):
+            raise ValueError(
+                "plan_horizon_start must be on or before plan_horizon_date"
+            )
+        return self
 
 
 @router.post("/loading-plans", status_code=status.HTTP_201_CREATED)
@@ -519,6 +538,7 @@ def create_loading_plan(
         plan = loading_plan_service.create_record(
             db,
             supplier_id=body.supplier_id,
+            plan_horizon_start=body.plan_horizon_start,
             plan_horizon_date=body.plan_horizon_date,
             document_kind=body.document_kind,
             source_attachment_id=body.source_attachment_id,
@@ -534,7 +554,20 @@ def create_loading_plan(
 class LoadingPlanUpdate(BaseModel):
     """The only thing an open plan changes about itself: how far ahead it is planning."""
 
+    plan_horizon_start: Optional[date] = None
     plan_horizon_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _start_before_end(self):
+        if (
+            self.plan_horizon_start is not None
+            and self.plan_horizon_date is not None
+            and self.plan_horizon_start > self.plan_horizon_date
+        ):
+            raise ValueError(
+                "plan_horizon_start must be on or before plan_horizon_date"
+            )
+        return self
 
 
 @router.patch("/loading-plans/{plan_id}")
@@ -551,6 +584,7 @@ def update_loading_plan(
     """
     plan = _plan_or_404(db, plan_id)
     _refuse_cancelled(plan)
+    plan.plan_horizon_start = body.plan_horizon_start
     plan.plan_horizon_date = body.plan_horizon_date
     db.flush()
     out = loading_plan_service.record_dict(db, plan)

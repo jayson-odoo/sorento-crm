@@ -1341,6 +1341,8 @@ def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) ->
         db,
         supplier_id=str(plan.supplier_id),
         include_lines=include_lines,
+        # AC-N7: the window's start-side twin, read off the row exactly like the end date.
+        plan_horizon_start=plan.plan_horizon_start,
         plan_horizon_date=plan.plan_horizon_date,
         # S6: the plan reads its OWN statement, so `build` is handed the row rather than just
         # the supplier it names.

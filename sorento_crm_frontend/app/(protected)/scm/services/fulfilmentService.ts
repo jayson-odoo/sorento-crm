@@ -363,6 +363,9 @@ export interface LoadingPlanRecord {
   /** When somebody started planning this container. The row has no number: it is named by
    *  supplier and start time, exactly as a reorder run is. */
   started_at: string;
+  /** "Sales orders needed" window (AC-N7) - the start-side twin, the same reading reorder
+   *  planning's own `plan_horizon_start` gives. Null = unbounded on that side. */
+  plan_horizon_start: string | null;
   /** "Sales order cut-off". Null = every open order counts. */
   plan_horizon_date: string | null;
   document_kind: PlanDocumentKind;
@@ -419,6 +422,7 @@ export async function getLoadingPlanList(
 
 export interface LoadingPlanCreate {
   supplier_id: string;
+  plan_horizon_start: string | null;
   plan_horizon_date: string | null;
   document_kind: PlanDocumentKind;
   source_attachment_id: string | null;
@@ -435,20 +439,25 @@ export async function createLoadingPlanRecord(
   return readJson<LoadingPlanRecord>(res, 'Failed to start the plan');
 }
 
+export interface LoadingPlanWindow {
+  plan_horizon_start: string | null;
+  plan_horizon_date: string | null;
+}
+
 /**
- * Change the sales order cut-off on an open plan (the gear's "Change cut-off", R5).
+ * Change the "sales orders needed" window on an open plan (the gear's "Change cut-off", R5).
  *
  * A PATCH on the plan, not a new plan: the buyer is narrowing the same ask, and starting a
  * second row for it would leave two plans for one container with nothing to tell them apart.
  */
 export async function updateLoadingPlanCutOff(
   id: string,
-  planHorizonDate: string | null,
+  window: LoadingPlanWindow,
 ): Promise<LoadingPlanRecord> {
   const res = await apiFetch(`/api/v1/scm/loading-plans/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_horizon_date: planHorizonDate }),
+    body: JSON.stringify(window),
   });
   return readJson<LoadingPlanRecord>(res, 'Failed to change the cut-off');
 }
@@ -833,6 +842,8 @@ export interface ContainerRequestBuild {
    *  never has to trust its own state alone for what the numbers on screen mean. Null when
    *  none was asked for. */
   plan_horizon_date: string | null;
+  /** The window's start-side twin (AC-N7), echoed the same way. */
+  plan_horizon_start: string | null;
 }
 
 export async function buildContainerRequest(planId: string): Promise<ContainerRequestBuild> {

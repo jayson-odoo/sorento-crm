@@ -92,6 +92,9 @@ export function PlanContainerDialog({
   const router = useRouter();
   const [supplierId, setSupplierId] = useState('');
   const [supplierOption, setSupplierOption] = useState<SearchableSelectOption | null>(null);
+  // AC-N7: "Sales orders needed", worded and shaped like reorder planning's own Start Plan
+  // dialog (RunPlanningModal.tsx) - a window, not an end-only cut-off.
+  const [planHorizonStart, setPlanHorizonStart] = useState('');
   const [planHorizonDate, setPlanHorizonDate] = useState('');
   const [docKind, setDocKind] = useState<PlanDocumentKind>('stock_list');
   const [starting, setStarting] = useState(false);
@@ -112,6 +115,7 @@ export function PlanContainerDialog({
     if (!open) return;
     setSupplierId('');
     setSupplierOption(null);
+    setPlanHorizonStart('');
     setPlanHorizonDate('');
     setDocKind('stock_list');
     setStarting(false);
@@ -123,6 +127,7 @@ export function PlanContainerDialog({
   const createPlan = () =>
     create.mutateAsync({
       supplier_id: supplierId,
+      plan_horizon_start: planHorizonStart || null,
       plan_horizon_date: planHorizonDate || null,
       document_kind: docKind,
       // Stamped by the server while the file is being applied (S6): the sheet is retained
@@ -265,32 +270,42 @@ export function PlanContainerDialog({
           </div>
 
           <div>
-            <Label htmlFor="plan-container-horizon" className="mb-1 block text-xs">
-              Sales order cut-off
-            </Label>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                id="plan-container-horizon"
-                type="date"
-                className="w-44"
-                value={planHorizonDate}
-                disabled={busy}
-                onChange={(e) => setPlanHorizonDate(e.target.value)}
-              />
-              {planHorizonDate ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setPlanHorizonDate('')}
-                  data-testid="clear-plan-horizon"
+            <Label className="mb-1 block text-xs">Sales orders needed</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label
+                  htmlFor="plan-container-horizon-start"
+                  className="mb-1 block text-2xs text-muted-foreground"
                 >
-                  Clear
-                </Button>
-              ) : null}
-              <span className="text-2xs text-muted-foreground">
-                Empty = every open order counts.
-              </span>
+                  From
+                </Label>
+                <Input
+                  id="plan-container-horizon-start"
+                  type="date"
+                  value={planHorizonStart}
+                  disabled={busy}
+                  onChange={(e) => setPlanHorizonStart(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label
+                  htmlFor="plan-container-horizon"
+                  className="mb-1 block text-2xs text-muted-foreground"
+                >
+                  To
+                </Label>
+                <Input
+                  id="plan-container-horizon"
+                  type="date"
+                  value={planHorizonDate}
+                  disabled={busy}
+                  onChange={(e) => setPlanHorizonDate(e.target.value)}
+                />
+              </div>
             </div>
+            <p className="mt-1 text-2xs text-muted-foreground">
+              Empty = every open order counts.
+            </p>
           </div>
 
           <div>

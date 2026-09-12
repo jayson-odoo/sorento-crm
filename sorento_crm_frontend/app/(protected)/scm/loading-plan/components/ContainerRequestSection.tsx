@@ -30,6 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
+import { describeWindow } from '../../reorder/lib/runListing';
 import { useContainerRequestBuild, useContainerRequestHistory } from '../../hooks/useFulfilment';
 import type {
   ContainerRequestHistoryProduct,
@@ -900,9 +901,14 @@ export function ContainerRequestSection({
           <CardHeader className="py-3">
             <h3 className="text-sm font-semibold">
               What to ask {supplierName}
-              {build.data.plan_horizon_date
-                ? ` to cover until ${formatDateInMalaysia(build.data.plan_horizon_date)}`
-                : ' for'}
+              {/* AC-N7: the window, both ends, the same wording the record's own header and
+                  the plans list use (`describeWindow`). */}
+              {(() => {
+                const window = describeWindow(
+                  build.data.plan_horizon_start, build.data.plan_horizon_date,
+                );
+                return window === 'every open order' ? ' for' : ` to cover ${window}`;
+              })()}
             </h3>
           </CardHeader>
 
