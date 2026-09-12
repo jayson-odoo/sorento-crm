@@ -126,18 +126,16 @@ def decide(
                 esc.get("member_reprompt"), str
             ):
                 return False
-            question = _prev_variables(ctx).get("open_question")
-            if jsc.get(question, "kind") != "member_offer":
-                return False
             # OWNER RULING K, rule 3 (2026-09-06), and a DIVERGENCE from n8n: live tests
             # only `routing_roster_plan.length > 1`, so an out-of-range pick against an
             # ordinary SINGLE-company roster ("9" on a six-name list) fell past this arm,
             # and `is_low_signal` then read the bare digit as a content-free casual
-            # message and answered with a clarifier. The roster is on the customer's
-            # screen either way, so the reprompt is owed either way; a multi-company plan
-            # was one reason the offer is live, not the only one - which is why the plan
-            # key is not missed now the offer's own rows are the test (L1-S3d step 4).
-            return len(jsc.array(jsc.get(question, "options"))) > 0
+            # message and answered with a clarifier. Two keys said "an offer is open" and
+            # they could disagree; the OPEN QUESTION is the one record of it, so an open
+            # `member_offer` is the whole test (L1-S3d step 4). Its rows are NOT tested
+            # either: a multi-company offer whose rosters all came back empty has none,
+            # and it is exactly the offer this arm re-prompts.
+            return jsc.get(_prev_variables(ctx).get("open_question"), "kind") == "member_offer"
         except Exception:
             return False
 
