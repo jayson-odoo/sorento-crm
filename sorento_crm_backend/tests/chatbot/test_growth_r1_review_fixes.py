@@ -488,11 +488,26 @@ class TestOwner8SepPOAskTypesTheCodeAsAProduct:
             ),
             # The carried product arrives the way it does live: off the PREVIOUS state,
             # merged back by the entity-op executor, not typed into this turn's emission.
+            # D8/S3d: the carries read `focus` now, never the legacy 34-key bag - the
+            # same `{value, set_at_turn, set_at, source}` slot shape
+            # `test_focus_worlds.py` seeds.
             previous={
-                "domain_hint": "purchase_order",
-                "entities": [
-                    {"raw": "SRTKS7547-BL-NEW", "hint": "product", "current_message": False}
-                ],
+                "focus": {
+                    "domains": {
+                        "value": ["purchase_order"],
+                        "set_at_turn": 1,
+                        "set_at": None,
+                        "source": "reuse",
+                    },
+                    "products": {
+                        "value": [
+                            {"raw": "SRTKS7547-BL-NEW", "hint": "product", "current_message": False}
+                        ],
+                        "set_at_turn": 1,
+                        "set_at": None,
+                        "source": "reuse",
+                    },
+                },
             },
         )
         assert out["entities"] == []
