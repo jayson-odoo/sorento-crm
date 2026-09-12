@@ -196,6 +196,8 @@ def _ask_for_turn(
     selection_context: Any,
     options: Any,
     team_clarify_options: Any,
+    roster_plan: Any,
+    companies: Any,
     turn_no: int,
 ) -> dict[str, Any] | None:
     """The question THIS turn left open, composed by `open_question.ask` (AC-1013).
@@ -233,12 +235,22 @@ def _ask_for_turn(
             payload=payload,
         )
     if context == "member_offer":
+        # THE POOL THE OFFER WAS MADE OVER travels with the offer. `offer_hold` re-prompts
+        # it a turn later and composes the company names from these two lists; they were
+        # `routing_roster_plan` / `routing_companies` session keys, so the re-prompt came
+        # back empty the moment the session became five keys. Frozen here, beside the rows,
+        # because this is the moment the offer and its pool are known to belong together.
+        pool = dict(payload)
+        if jsc.is_array(roster_plan) and len(roster_plan) > 0:
+            pool["roster_plan"] = list(roster_plan)
+        if jsc.is_array(companies) and len(companies) > 0:
+            pool["companies"] = list(companies)
         return oq.ask(
             "member_offer",
             options=list(jsc.array(options)),
             turn_no=turn_no,
             domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
-            payload=payload,
+            payload=pool,
         )
     if context == "tier_offer":
         return oq.ask(
@@ -1049,6 +1061,8 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         selection_context=variables.get("selection_context"),
         options=last_result_set,
         team_clarify_options=turn_state.get("team_clarify_options"),
+        roster_plan=variables.get("routing_roster_plan"),
+        companies=variables.get("routing_companies"),
         turn_no=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
     )
 
