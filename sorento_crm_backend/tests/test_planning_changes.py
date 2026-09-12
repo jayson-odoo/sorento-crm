@@ -31,7 +31,6 @@ from app.models.project_so import (
 )
 from app.models.user import User
 from app.services import planning_change_service, project_seed_service
-from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.scm.outstanding_diff import (
     ADDED,
@@ -1265,122 +1264,6 @@ def test_composition_from_proposal_no_warning_when_sources_agree_with_the_aggreg
 # ============================================================================
 
 
-def test_apply_placed_offset_full_redirect_when_the_pool_alone_covers_it():
-    """Pool has plenty (`qty_proposed_reserve` 20 >= placed 12): the WHOLE placed
-    quantity redirects and nothing is relabelled - `sources`/`trail` are untouched, which
-    is what keeps them agreeing with the aggregate (Fix 1's own guarantee)."""
-    proposal = {
-        "qty_proposed_reserve": "20",
-        "qty_proposed_incoming": "0",
-        "qty_proposed_buy": "0",
-        "sources": [{"kind": "reserve", "qty": "20", "location": "BRW"}],
-        "trail": [
-            {"step": 2, "kind": "pool", "location": "BRW", "taken": "20",
-             "remaining_after": "0", "outcome": "took"},
-        ],
-    }
-    out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-1")
-    assert out["qty_proposed_reserve"] == "20"
-    assert out["qty_proposed_buy"] == "0"
-    assert out["placed_redirect_qty"] == "12"
-    assert out["sources"] == proposal["sources"]
-    assert out["trail"][0].get("note") is None  # nothing relabelled, nothing to narrate
-
-
-def test_apply_placed_offset_relabels_the_water_before_it_redirects_the_pool():
-    """LADDER V5, second pass (27 August 2026): a placed PO is expected supply, and so is
-    the water question 1 draws off the group's net. Two promises of one delivery, so the
-    PO relabels the WATER first and only what is left of it reaches the pool redirect.
-
-    9 on the water and 5 in the pool against 12 placed: the whole 9 becomes Buy, and 3 of
-    the placed quantity redirects to replenish the pool. Under the old order the redirect
-    ate 5 of the 12 first and left 2 of the water standing beside a PO that had already
-    bought it."""
-    proposal = {
-        "qty_proposed_reserve": "5",
-        "qty_proposed_incoming": "9",
-        "qty_proposed_buy": "0",
-        "sources": [
-            {"kind": "reserve", "qty": "5", "location": "BRW"},
-            {"kind": "timely_spo", "qty": "9", "location": "OWN", "spo_number": "SPO-1"},
-        ],
-        "trail": [
-            {"step": 2, "kind": "incoming", "location": "OWN", "taken": "9",
-             "remaining_after": "0", "outcome": "took"},
-            {"step": 3, "kind": "pool", "location": "BRW", "taken": "5",
-             "remaining_after": "0", "outcome": "took"},
-        ],
-    }
-    out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-2")
-    assert out["qty_proposed_reserve"] == "5"  # untouched - the pool take always stands
-    assert out["qty_proposed_incoming"] == "0"  # the whole 9 was already bought
-    assert out["qty_proposed_buy"] == "9"
-    assert out["placed_redirect_qty"] == "3"  # 12 - 9, and 3 <= the pool's 5
-
-    assert not [s for s in out["sources"] if s["kind"] == "timely_spo"]
-    reserve_source = next(s for s in out["sources"] if s["kind"] == "reserve")
-    assert reserve_source["qty"] == "5"  # untouched
-
-    incoming_step = next(s for s in out["trail"] if s["kind"] == "incoming")
-    assert "9 already placed on PO-2, kept as the buy" in incoming_step["note"]
-    pool_step = next(s for s in out["trail"] if s["kind"] == "pool")
-    assert pool_step.get("note") is None  # the redirect-eligible rung is never narrated here
-
-
-def test_apply_placed_offset_narrates_a_v5_trail_whose_water_came_to_a_sibling():
-    """A ladder v5 trail has no `incoming` step - question 1 draws the water, under the key
-    `own` - and question 1's step names the LINE's own location while the water may be
-    coming to a sibling. Matching the code exactly then found nothing, so the step went on
-    claiming 9 the aggregate had just moved onto Buy, which is the exact defect
-    `_annotate_trail_for_offset` was written to stop.
-    """
-    proposal = {
-        "qty_proposed_reserve": "5",
-        "qty_proposed_incoming": "9",
-        "qty_proposed_buy": "0",
-        "sources": [
-            {"kind": "reserve", "qty": "5", "location": "BRW"},
-            {"kind": "timely_spo", "qty": "9", "location": "MWH-SMC"},
-        ],
-        "trail": [
-            {"step": 1, "kind": "own", "location": "BRW-SMC", "taken": "9",
-             "remaining_after": "5", "outcome": "took"},
-            {"step": 2, "kind": "pool", "location": "BRW", "taken": "5",
-             "remaining_after": "0", "outcome": "took"},
-        ],
-    }
-    out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-4")
-
-    assert out["qty_proposed_incoming"] == "0"
-    assert out["qty_proposed_buy"] == "9"
-    assert out["placed_redirect_qty"] == "3"
-    own_step = next(s for s in out["trail"] if s["kind"] == "own")
-    assert "9 already placed on PO-4, kept as the buy" in (own_step["note"] or "")
-    pool_step = next(s for s in out["trail"] if s["kind"] == "pool")
-    assert pool_step.get("note") is None
-
-
-def test_apply_placed_offset_redirects_the_whole_placed_qty_when_there_is_no_water():
-    """The other side of the same order: nothing on the water, so nothing is relabelled and
-    the pool redirect gets the whole placed quantity - exactly the captain's 21 Aug ruling,
-    unchanged. What moved is only WHICH of the two goes first when both are on the table."""
-    proposal = {
-        "qty_proposed_reserve": "5",
-        "qty_proposed_incoming": "0",
-        "qty_proposed_buy": "7",
-        "sources": [{"kind": "reserve", "qty": "5", "location": "BRW"}],
-        "trail": [
-            {"step": 2, "kind": "pool", "location": "BRW", "taken": "5",
-             "remaining_after": "7", "outcome": "took"},
-        ],
-    }
-    out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-3")
-    assert out["qty_proposed_reserve"] == "5"
-    assert out["qty_proposed_incoming"] == "0"
-    assert out["qty_proposed_buy"] == "7"
-    assert out["placed_redirect_qty"] == "5"
-
-
 def test_apply_placed_offset_is_a_noop_with_nothing_placed():
     proposal = {"qty_proposed_reserve": "10", "sources": ["sentinel"], "trail": ["sentinel"]}
     out = planning_change_service._apply_placed_offset(proposal, Decimal("0"))
@@ -2296,7 +2179,10 @@ def test_apply_qty_up_after_a_real_place_on_po_updates_the_one_row_and_keeps_its
     # placed 5 to redirect against - the boundary the captain's 21 Aug ruling names, and
     # the old relabel-onto-Buy path (netted below by `refresh_for_decision`, not by a
     # trim here, because there is nothing on Reserve/incoming to trim) still applies.
-    assert row["proposal"]["placed_redirect_qty"] == "0"
+    # `placed_redirect_qty` itself is retired (Slice D, rule 6): where the placed
+    # quantity goes is decided at Apply by the reallocation the suggestion names, not
+    # carried as a second answer on the proposal.
+    assert "placed_redirect_qty" not in row["proposal"]
 
     put = client.put(
         f"{BASE}/planning-changes/{batch.id}/rows/{row['id']}", json={"decision": "confirm"},
@@ -2328,14 +2214,20 @@ def test_apply_qty_up_after_a_real_place_on_po_updates_the_one_row_and_keeps_its
     assert [str(link.qty) for link in links] == ["5.0000"]
 
 
-def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the_pool(api):
-    """Case B (the captain, 20 Aug, REVERSED by the captain's 21 Aug ruling on SO397450 /
-    SRT382-6-DIY): SO349754 SRTWC287A-RL - a real placed 5 and NO active decision at all,
-    the pool holding plenty of stock. The board proposes Reserve for the WHOLE new
-    quantity (10, all from the pool) - this used to be trimmed to 5 and relabelled onto
-    Buy so the placed 5 was not double-counted; the ruling reverses that: the pool take
-    STANDS (Reserve 10 in full), and the already-placed 5 is instead REDIRECTED to
-    replenish the pool it now draws down, never relabelled and never cancelled."""
+def test_apply_qty_up_with_no_decision_and_a_real_placed_row_is_cancelled_and_unlinked(api):
+    """Case B (the captain, 20 Aug; Slice D, issue #859, measured after the coder's
+    landing): SO349754 SRTWC287A-RL - a real placed 5 and NO active decision at all, the
+    pool holding plenty of stock. The board still proposes Reserve for the WHOLE new
+    quantity (10, all from the pool) - the pool take stands, nothing is trimmed onto Buy.
+
+    But the REDIRECT-to-pool this case used to name only runs off `_persist`/apply's
+    decision-scoped reallocation (AC-D1-D3): it is the counterpart to an active decision
+    being superseded, and there is no active decision here to attribute it to (AC-R03,
+    `held` is null). Measured directly: apply still succeeds, the composed need is 0 more
+    Buy, and the ordinary qty-down netting path takes over instead of a redirect - the
+    placed row is CANCELLED and UNLINKED from the PO it was placed on (the PO's own
+    history is untouched; only this line's claim on it is). Was named "...redirects_it_to
+    _the_pool", asserting the opposite outcome under the pre-Slice-D mechanism."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=50)
@@ -2394,9 +2286,10 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the
         "the pool take stands in full - it is no longer trimmed by the placed 5"
     )
     assert Decimal(proposal["qty_proposed_buy"]) == Decimal("0")
-    assert Decimal(proposal["placed_redirect_qty"]) == Decimal("5"), (
-        "the overlap the pool covers, read back at Apply to redirect the placed PO"
-    )
+    # `placed_redirect_qty` is retired (Slice D, rule 6): where a placed quantity goes is
+    # decided at Apply by the reallocation the suggestion names, not carried as a second
+    # answer on the proposal.
+    assert "placed_redirect_qty" not in proposal
     # sources/trail agree with the untouched aggregate - nothing was trimmed.
     reserve_sources_total = sum(
         (Decimal(s["qty"]) for s in proposal["sources"] if s["kind"] == "reserve"),
@@ -2418,36 +2311,37 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the
     assert apply_response.json()["applied_orders"] == [order.autocount_doc_no]
 
     db.expire_all()
-    live_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
-        .all()
-    )
-    assert len(live_rows) == 1, (
-        "the placed row is redirected, not cancelled and not duplicated - no CANCEL_BALANCE, "
-        "no fresh ORDER row"
-    )
-    assert live_rows[0].id == row.id
-    assert live_rows[0].state == INQUIRY_PLACED  # untouched state; still a real placed PO
-    assert live_rows[0].qty == Decimal("5")  # untouched quantity
-    assert live_rows[0].po_ref == po.po_number  # untouched PO link
-    assert live_rows[0].redirected_to_pool is True
-    assert live_rows[0].stock_location == world.pool_wh.warehouse_code
-    assert "Redirected" in (live_rows[0].note or "")
-    assert world.own_wh.warehouse_code in (live_rows[0].note or "")  # names where it WAS
+    # No active decision exists for this reallocation to attribute a redirect to (AC-R03),
+    # so it does not run: the ordinary qty-down netting path takes over instead - the
+    # composed need is 0 more Buy, so this row (nothing else was raised for the line) is
+    # cancelled, and its link to the PO it was placed on is removed with it.
+    all_rows = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).all()
+    assert len(all_rows) == 1, "no CANCEL_BALANCE, no fresh ORDER row - the one row is reused"
+    assert all_rows[0].id == row.id
+    assert all_rows[0].state == INQUIRY_CANCELLED
+    assert all_rows[0].redirected_to_pool is not True
+    links = ProjectOrderInquiryService(db)._links_of(all_rows[0].id)
+    assert links == [], "the PO link is removed - purchasing's own PO history is untouched"
+    assert "the book left nothing to buy" in (all_rows[0].note or "")
 
 
-def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_pool(api):
-    """The SO397450 / SRT382-6-DIY shape, end-to-end, under the captain's 21 Aug ruling:
-    an ADVANCE whose fresh proposal draws 432 from the pool at BRW while the line already
-    has 432 on TWO real purchase orders (300 + 132). Confirming as proposed keeps the
-    pool's Reserve 432 whole - no relabel onto Buy - and Apply redirects the placed row to
-    replenish the pool: it is not cancelled, not duplicated, and no CANCEL_BALANCE is
-    raised for the placed 432 the fresh Buy no longer needs.
+def test_apply_advance_with_pool_available_redirects_the_freed_placed_qty_to_a_pool_row(api):
+    """The SO397450 / SRT382-6-DIY shape, end-to-end, under Slice D (issue #859), measured
+    after the coder's landing: an ADVANCE whose fresh proposal draws 432 from the pool at
+    BRW while the line already has 432 on TWO real purchase orders (300 + 132). Confirming
+    as proposed keeps the pool's Reserve 432 whole - no relabel onto Buy.
 
-    Since section 3.I the two purchase orders are two LINKS on ONE row rather than two
-    split rows (AC-I6), so the redirect marks one row and the documents are read off its
-    links. The arithmetic is unchanged: 432 placed, 432 redirected, nothing re-raised."""
+    Under Slice D the redirect is no longer a flag on the SAME row (`redirected_to_pool`
+    is retired from being set at all): the line's own ORDER row is CANCELLED and unlinked
+    from both purchase orders (their own PO history is untouched - only this line's claim
+    on them is), and the freed 432 lands on a fresh POOL-LOCATION ORDER row instead
+    (`so_line_id` null, `stock_location` the pool warehouse code), carrying the SAME
+    `order_inquiry_id` as the row it replaced - the same document, read differently - so it
+    counts as cover for the pool's own book. No CANCEL_BALANCE, no duplicate, and no
+    informational ADVANCE row either: the pool covers the whole need before the ladder logs
+    a date-change instruction. Was
+    "...redirects_both_placed_rows_to_the_pool", asserting the pre-Slice-D
+    same-row-flag mechanism."""
     client, world = api
     db = world.db
     # 1000, not 500: ladder v8 lends a project HALF the pool (R-B), and these cases are
@@ -2537,7 +2431,9 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
     proposal = row_out["proposal"]
     assert Decimal(proposal["qty_proposed_reserve"]) == Decimal("432")
     assert Decimal(proposal["qty_proposed_buy"]) == Decimal("0")
-    assert Decimal(proposal["placed_redirect_qty"]) == Decimal("432")
+    # `placed_redirect_qty` is retired (Slice D, rule 6): where a placed quantity goes is
+    # decided at Apply by the reallocation the suggestion names, not carried on the proposal.
+    assert "placed_redirect_qty" not in proposal
     # The trail still reads "the pool took 432 at BRW", unedited - the pool take stands,
     # so there is nothing to relabel and nothing to narrate.
     pool_step = next(step for step in proposal["trail"] if step["kind"] == "pool")
@@ -2566,45 +2462,45 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
     assert apply_response.json()["applied_orders"] == [order.autocount_doc_no]
 
     db.expire_all()
-    live_rows = (
+    # The line's own row is CANCELLED (not redirected in place) and unlinked from both POs
+    # it was placed on - `redirected_to_pool` is never set under Slice D.
+    own_rows = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).all()
+    assert len(own_rows) == 1, "no CANCEL_BALANCE, no fresh ORDER row - the one row is reused"
+    original = own_rows[0]
+    assert original.id == placed_row.id
+    assert original.state == INQUIRY_CANCELLED
+    assert original.redirected_to_pool is not True
+    assert ProjectOrderInquiryService(db)._links_of(original.id) == [], (
+        "unlinked - the two purchase orders' own history is untouched, only this line's "
+        "claim on them is"
+    )
+
+    # The freed 432 lands on a fresh pool-location ORDER row instead: no so_line_id (it is
+    # not any one line's row any more), stock_location the pool warehouse, the SAME
+    # order_inquiry_id as the row it replaced (the same document, read differently).
+    pool_rows = (
         db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code,
+                OrderInquiryRow.order_inquiry_id == original.order_inquiry_id)
         .all()
     )
-    # Two live rows: the redirected placed ORDER row carrying both links, plus the
-    # informational ADVANCE row every advance/delay always raises (`_oi_demand_rows`) - a
-    # date-change instruction, never a purchase (Fix 3's own subject). No CANCEL_BALANCE,
-    # and no fresh ORDER row: `refresh_for_decision` sees a composed need of 0 and a
-    # placed total of 0 (redirected), so it raises nothing further.
-    assert len(live_rows) == 2
-    assert [r for r in live_rows if r.verb == "CANCEL_BALANCE"] == []
-    assert [r for r in live_rows if r.verb == IV_ORDER and r.state == INQUIRY_RAISED] == []
+    assert len(pool_rows) == 1, pool_rows
+    assert pool_rows[0].qty == Decimal("432")
+    assert pool_rows[0].redirected_to_pool is not True
+    assert pool_rows[0].state != INQUIRY_CANCELLED
 
-    order_rows = [r for r in live_rows if r.verb == IV_ORDER]
-    assert len(order_rows) == 1
-    redirected = order_rows[0]
-    assert redirected.state == INQUIRY_PLACED
-    assert redirected.redirected_to_pool is True
-    assert redirected.stock_location == world.pool_wh.warehouse_code
-    assert "Redirected" in (redirected.note or "")
-    assert redirected.qty == Decimal("432")
-    # BOTH purchase orders are still named, off the links rather than off a scalar that
-    # could only ever hold one of them.
-    links = ProjectOrderInquiryService(db)._links_of(redirected.id)
-    assert {link.qty for link in links} == {Decimal("300.0000"), Decimal("132.0000")}
-    assert {link.document for link in links} == {po_a.po_number, po_b.po_number}
+    # No informational ADVANCE row: the pool covers the whole need before the ladder logs
+    # a date-change instruction that has nothing left to say.
+    from app.models.project_so import OrderInquiry as _OrderInquiry
 
-    advance_row = next(r for r in live_rows if r.verb == "ADVANCE")
-    assert advance_row.state == INQUIRY_RAISED
-    assert advance_row.qty == Decimal("432")
-    # Fix 3's own subject: the worklist's "Taken from PO"/"Remaining" for THIS row are
-    # scoped to ORDER-verb siblings only, both now 0 (both redirected) - a figure that
-    # would read as "fully handled" next to an unactioned date change; the frontend mutes
-    # it with an honest per-verb label instead (`flowExclusionLabel`).
-    flow = OrderInquiryWorklistService(db)._quantity_flow_by_so_line([advance_row])
-    line_flow = flow.get(str(line.id), {})
-    assert line_flow.get("taken", Decimal("0")) == Decimal("0")
-    assert line_flow.get("remaining", Decimal("0")) == Decimal("0")
+    advance_rows = (
+        db.query(OrderInquiryRow)
+        .join(_OrderInquiry, _OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+        .filter(_OrderInquiry.project_sales_order_id == order.id, OrderInquiryRow.verb == "ADVANCE")
+        .all()
+    )
+    assert advance_rows == []
 
 
 def test_build_batch_facts_read_buy_actioned_true_for_a_really_placed_row(api):

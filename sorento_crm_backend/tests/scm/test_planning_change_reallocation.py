@@ -61,6 +61,7 @@ from tests.scm.test_planning_change_recompute_and_diff import (
 from tests.scm.test_planning_change_delta_seam import (
     _change_and_batch,
     _held_reserve_world,
+    _hold_qty,
     _seed_order,
 )
 from tests.scm.test_planning_change_delta_seam import _only_row as _seam_only_row
@@ -311,7 +312,14 @@ def test_freed_po_qty_nobody_needs_lands_on_a_pool_row_and_counts_as_cover(api):
         for l in _links_of(db, r_id)
     )
     assert total_linked == Decimal("134"), total_linked
-    assert po.qty_ordered - total_linked == Decimal("0")
+    from app.models.procurement import PurchaseOrderLine
+
+    po_line = (
+        db.query(PurchaseOrderLine)
+        .filter(PurchaseOrderLine.purchase_order_id == po.id)
+        .one()
+    )
+    assert po_line.qty_ordered - total_linked == Decimal("0")
 
 
 # --------------------------------------------------------------------------- #
@@ -390,13 +398,11 @@ def test_reserve_moves_to_the_earlier_order_row_and_the_line_is_resourced_whole(
         assert b_row.state == INQUIRY_CANCELLED, b_row.state
         assert b_row.note and "Found: reserve 80" in b_row.note, b_row.note
 
-        a_hold = (
-            db.query(SOLineAllocation)
-            .filter(SOLineAllocation.so_line_id == world["line"].id,
-                    SOLineAllocation.confirmed_at.isnot(None))
-            .all()
-        )
-        assert sum(Decimal(str(a.qty)) for a in a_hold) == Decimal("0"), a_hold
+        # The engine's own hold predicate (project_supply_service.py:7696-7767, restated
+        # by `_hold_qty`): a plain `confirmed_at IS NOT NULL` sum here double-counts the
+        # superseded revision's own 134 alongside the new revision's 134 stock hold, so
+        # it never reads as "the reserve moved away" no matter what actually happened.
+        assert _hold_qty(db, world["line"].id) == Decimal("0")
 
         a_live_rows = (
             db.query(OrderInquiryRow)
