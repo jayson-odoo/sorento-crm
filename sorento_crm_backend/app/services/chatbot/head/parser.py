@@ -405,11 +405,15 @@ def build_user_block(
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
-    The ONE addition S1 makes (and the only prompt change allowed before S1b): the
-    persisted `pending` marker, stated as a fact rather than left for the model to infer
-    from the previous reply's wording (R3, D11). The legacy string is still present in
-    `previous_response`, so a session written by n8n and one written by the CRM both
-    parse the same way during the migration window.
+    The ONE addition S1 makes (and the only prompt change allowed before S1b): what the
+    bot is waiting for, stated as a fact rather than left for the model to infer from the
+    previous reply's wording (R3, D11). It is the open question's kind now, the marker it
+    used to read having gone with the five-key session.
+
+    `previous_response` is a v1 / v2 input and the CALLER decides it: the engine reads the
+    last `done` turn ROW, never session state, and sends None under v3 (AC-1023 bans
+    previous reply text there). The `Previous turn (...)` strip below is kept for a row
+    written while the tail still prefixed the compressed view.
 
     **Growth r1 slice B adds two more, and they are gated on the PROMPT VERSION.** `Focus:`
     is the alive slots and `Open question:` is what the bot is waiting for, each as one

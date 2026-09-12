@@ -493,6 +493,54 @@ def _turn_no(db: Session, *, contact_respond_id: str, row: ChatbotTurn) -> int:
     )
 
 
+def _previous_response(
+    db: Session, *, contact_respond_id: str, row: ChatbotTurn
+) -> tuple[str | None, str | None]:
+    """WHAT THE BOT SAID LAST, for the v1 prompt's `Previous response:` line.
+
+    The JS read `variables.response` - a compressed, parser-facing copy of the reply that
+    the tail wrote back into the session every turn. The five-key session does not carry
+    one (AC-1001), so that line has been EMPTY on every turn since L1-S3, and the promoted
+    v1 prompt's carry instructions are written against it. The turn ROWS already hold what
+    was said, so this reads the record instead of re-introducing the mirror: `turns` is
+    written once per turn and cannot disagree with itself.
+
+    `reply.text` is what the customer was actually sent; `item.user_response` is the same
+    string on a row written before the reply seal existed. NEVER the customer's own words
+    and never a transcript - one previous bot reply, which is what the prompt asks for.
+
+    Scoped exactly like `_turn_no`: strictly BEFORE this row in the same order, `attempt
+    == 1` so a retry does not read its own original's successor, and the same world (live
+    rows, plus this console run's own) so a dry run reads what a live turn would read
+    without touching the live conversation. Returns `(text, turn id)` so the trace can say
+    which row answered.
+    """
+    anchor = sa_func.coalesce(ChatbotTurn.started_at, ChatbotTurn.created_at)
+    mine = (row.started_at or row.created_at, str(row.id))
+    world = ChatbotTurn.is_test.is_(False)
+    if row.test_run_id:
+        world = or_(world, ChatbotTurn.test_run_id == row.test_run_id)
+    previous = (
+        db.query(ChatbotTurn.id, ChatbotTurn.response)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.status == "done",
+            ChatbotTurn.attempt == 1,
+            world,
+            tuple_(anchor, ChatbotTurn.id) < tuple_(*mine),
+        )
+        .order_by(anchor.desc(), ChatbotTurn.id.desc())
+        .first()
+    )
+    if previous is None:
+        return None, None
+    response = previous.response if isinstance(previous.response, dict) else {}
+    text = jsc.get(jsc.get(response, "reply"), "text")
+    if not jsc.truthy(text):
+        text = jsc.get(jsc.get(response, "item"), "user_response")
+    return (jsc.js_string(text) if jsc.truthy(text) else None), str(previous.id)
+
+
 def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | None) -> dict:
     """`get-session-vars`: the same body `GET /external/conversation-variables/{id}` returns."""
     from app.services.conversation_variables_service import (
@@ -1395,6 +1443,15 @@ def _run_stages(  # noqa: PLR0915
             current_date=_current_date_directive(),
             override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
         )
+        # WHAT THE BOT SAID LAST, and only for the prompt that asks for it. v1's carry
+        # instructions are written against a `Previous response:` line; v3 is told the
+        # alive state structurally instead and AC-1023 bans previous reply text from it
+        # outright, so a v3 turn does not pay for the query either.
+        previous_response, previous_response_turn_id = (
+            (None, None)
+            if parser_config.emits_v3
+            else _previous_response(db, contact_respond_id=contact_respond_id, row=turn_row)
+        )
 
     turn_trace.record(
         "received",
@@ -1413,6 +1470,10 @@ def _run_stages(  # noqa: PLR0915
             # "this build does not report it" must not read the same on the trace screen.
             "turn_no": turn_no,
             "focus_slots_alive": sorted(alive_focus),
+            # WHICH ROW the prompt's previous-response line came from, so an operator can
+            # read the turn it quoted. "none" on a v3 turn (it is never sent one) and on
+            # the first turn of a conversation.
+            "previous_response": previous_response_turn_id or "none",
         },
         raw={"session_vars": session_block},
     )
@@ -1435,7 +1496,10 @@ def _run_stages(  # noqa: PLR0915
         "parser_emits_v3": parser_config.emits_v3,
     }
     user_block = parser.build_user_block(
-        previous_response=variables.get("response"),
+        # OFF THE TURN ROWS, never off session state (L1-S3d). `variables.response` was a
+        # compressed copy of the reply that the tail wrote back every turn; it is not one
+        # of the five keys and nothing writes it, so this line was empty on every turn.
+        previous_response=previous_response,
         latest_user_message=latest_user_message,
         pending_kind=_pending_kind(variables),
         # D6: the parser receives STRUCTURED HINTS about what is still alive, never the
