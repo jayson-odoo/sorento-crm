@@ -1,5 +1,9 @@
 # Console check, lane stack, 13 Sep 2026
 
+**Final state (run 5, lane tip `0b8bad4cf`, prompt pinned to FULL v15
+`8615d49a-42be-4090-95ea-aa8a6ea0ac81`): the six-turn journey passes 6 of 6, plus the isolated
+stale-pending replay and the BB-suffix ad-hoc check both pass.**
+
 Backend :8085 (worktree `chatbot-outstanding-report`, tip `f48473439`), MCP :8766 with
 `CRM_BASE_URL=http://localhost:8085`, both started with
 `PYTHONPATH=.../chatbot-outstanding-report/sorento_crm_mcp` (verified: `import sorento_crm_mcp`
@@ -496,6 +500,81 @@ narrower, newly-isolated findings (5: sibling code on the scope-question path on
 detail-pick tool re-run) remaining, plus one new cosmetic artifact (6).
 
 ## Restoration confirmed (run 4)
+
+`sorento_crm_backend/.env` MD5 back to `3230cafdad30a5a064f1a76e838dcfac`, `DATABASE_URL`/
+`DIRECT_URL` back to `sorento_osr_ci`, `AI_ASSISTANT_MCP_URL` override removed; `git status` on
+`sorento_crm_backend/.env` shows nothing. Backend (:8085) and MCP (:8766) processes killed by
+pid; `lsof -i :8085 -i :8766 -sTCP:LISTEN` empty afterwards. Ports :8000/:8765/:3000/:8080
+confirmed untouched (other lanes' own pre-existing listeners only).
+
+## Run 5 - 13 Sep 2026, lane tip `0b8bad4cf`, formal run - all green
+
+Same recipe: backend :8085 + MCP :8766, `PYTHONPATH` pinned to the lane's own `sorento_crm_mcp`,
+`.env` flipped to `sorento_ai_automation_0907` (+ `AI_ASSISTANT_MCP_URL` override, restored
+after), `ENABLE_SCHEDULER` already `false`. Contact `437264483` still holds
+`sales_orders.outstanding` (re-confirmed via `granted_keys`). `alembic_version` already
+`514_chatbot_outstanding_vocab`; FULL v15 (`8615d49a-42be-4090-95ea-aa8a6ea0ac81`) still present
+with `do_outstanding`/`outstanding_both` - the coder's own fix commit did not change the prompt
+body, so no republish was needed. Console check pinned to v15, same id as run 4.
+
+### Six-turn journey (`console-run5-pinned-v15.log`, raw replies `turn-replies-run5-main.txt`)
+
+    PASS  outstanding report journey - SO direct ask, missing-scope question, both, detail, customer filter, miss
+    branch=business_query  'Product: SRTWT02 Customer: all Location: all Order date: all ...'
+    1 passed, 0 failed  (console-check-1789248064)
+
+All six `expect:` blocks passed outright, including the three `pending_kind` assertions
+(`outstanding_scope` on turn 2, `outstanding_detail` on turns 3 and 4) - the script now reads
+`pending` from the turn's own trace (`0b8bad4cf`) rather than the top-level `response` column
+that was always empty in runs 1-4, so those assertions are meaningful for the first time.
+
+| turn | result |
+|---|---|
+| 1 SO direct ask + location token ("Srtwt7443 sales order outstanding for IB") | **PASS** |
+| 2 bare outstanding, right after turn 1's hit ("SRTWT7445 outstanding in 2026") | **PASS** - scope question asked, `pending_kind=outstanding_scope` |
+| 3 "3" (both) | **PASS** - both blocks, sub-headings, correct offer, `pending_kind=outstanding_detail`, no stray "not found" text |
+| 4 "1" (detail) | **PASS** - re-runs `crm_outstanding_report` with `detail=so`, one row per SO |
+| 5 customer filter, different product ("FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI) sales order outstanding SRTWT7445") | **PASS** - no inheritance from turns 1-4 |
+| 6 miss ("SRTWT02 outstanding both") | **PASS** - both `No ...` block lines, then escalate + team picker |
+
+### Isolated stale-pending replay (`run5-isolated-stale-pending.log`)
+
+Fresh reset, `--say "Srtwt7443 sales order outstanding for IB" --say "SRTWT7445 outstanding in
+2026"`: turn 1 hits (`tool=crm_outstanding_report args={"scope": "so", ...,
+"product_code": "SRTWT7443", ...}`); turn 2's reply is `Product: SRTWT7445` (no sibling
+suffix this time - finding 5 from run 4 is also gone) with the scope question and
+`trace: no tool call`. **PASS**, independent confirmation of turn 2 above.
+
+### BB-suffix ad-hoc check (`run5-bb-suffix.log`)
+
+Fresh reset, `--say "SRTWT7445 outstanding for BB" --say "2"`: turn 1 arms the scope question
+(`Product: SRTWT7445 / Outstanding for which document? ...`, no tool call - the location word
+alone, with no explicit so/do/both word, still asks). Turn 2's "2" resolves to DO scope and
+carries the location token through, all in ONE call:
+
+    tool=crm_outstanding_report args={"scope": "do", ..., "product_code": "SRTWT7445",
+    "location_token": "BB", "warehouse_codes": ["DC1-BB", "BRW-BB", "WH3-BB", "MWH-BB", "RSW-BB"]}
+
+Reply: `Location: BB (DC1-BB, BRW-BB, WH3-BB, MWH-BB, RSW-BB)`, DO block populated (551/358/193,
+17 orders), `*_By location_*`/`*_By customer_*` sub-headings, product stays `SRTWT7445` (no
+sibling). **PASS** - the location-token carry-through-the-scope-question mechanism (turn 3's own
+finding in run 4) now works for a suffix other than "IB", and the scope answer ("2") correctly
+threads the carried location into the SAME tool call.
+
+### Run 5 summary
+
+| check | result |
+|---|---|
+| six-turn journey (all `expect:` blocks, including `pending_kind`) | **6/6 PASS** |
+| isolated stale-pending replay | **PASS** |
+| BB-suffix ad-hoc (scope question then pick, carried location) | **PASS** |
+
+Every finding logged across runs 1-4 (location-word mis-hint, missing vocabulary, header
+duplication, stale-pending block, sibling-code substitution on the scope-question path, the
+stray "not found" fragment, the detail-pick tool re-run) is now closed. No further findings
+from this run.
+
+## Restoration confirmed (run 5)
 
 `sorento_crm_backend/.env` MD5 back to `3230cafdad30a5a064f1a76e838dcfac`, `DATABASE_URL`/
 `DIRECT_URL` back to `sorento_osr_ci`, `AI_ASSISTANT_MCP_URL` override removed; `git status` on
