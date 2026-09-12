@@ -4002,18 +4002,12 @@ def _apply_one_order(
     settled_in_place: List[str] = []
     auto_place_products: List[str] = []
     if confirm_lines:
-        if active_decision is not None:
-            # AC-E2 (Slice E, one signal): the borrow-hold release `challenge_if_drifted`
-            # used to perform for the WHOLE decision now has to be earned per line here -
-            # `confirm()`'s own retirement of a re-decided line's old placement only
-            # reaches a line that is actually CHECKED (named or carried), so a line this
-            # batch UNCOVERS or RETIRES, which is neither, would otherwise keep its old
-            # step-3 placement pinned to a revision that no longer covers it.
-            ProjectOrderInquiryService(db).retire_supply_borrow_rows(
-                pso_id,
-                reason=f"Planning change {batch.id}",
-                line_ids=list(by_line_id.keys()),
-            )
+        # AC-E2 (Slice E, one signal): the borrow-hold release `challenge_if_drifted` used
+        # to perform for the WHOLE decision on drift is already covered without a call
+        # here - a line THIS BATCH names in the confirm is retired by `confirm()`'s own
+        # `_retire_supply_borrows`, and a cancelled line by `_retire_inquiry_rows` above
+        # (a line this apply UNCOVERS is always a subset of the lines it either names or
+        # cancels, so there is no third case left for a call here to reach).
         body = ConfirmSupplyBody(lines=[_to_confirm_line(p) for p in confirm_lines])
         result = supply.confirm(
             order, body, actor_user_id=actor, uncover_line_ids=uncover_line_ids,
@@ -4256,7 +4250,7 @@ def apply(
             reason = "This sales order no longer exists."
             for r in order_rows:
                 if (
-                    r.decision in ("confirm", "amend")
+                    (r.decision in ("confirm", "amend") or r.kind == "cancelled")
                     and r.applied_state == PLANNING_CHANGE_STATE_PENDING
                 ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
@@ -4277,7 +4271,7 @@ def apply(
             logger.exception("planning change apply failed for order %s", so_number)
             for r in order_rows:
                 if (
-                    r.decision in ("confirm", "amend")
+                    (r.decision in ("confirm", "amend") or r.kind == "cancelled")
                     and r.applied_state == PLANNING_CHANGE_STATE_PENDING
                 ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED

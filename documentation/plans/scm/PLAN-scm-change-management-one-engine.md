@@ -423,18 +423,19 @@ S3, S4, S9, S10, S12 likewise), `decision` null / confirm / amend only.
    on a stale snapshot. `_carry_snapshot_has_drifted` reads the same three facts `challenge_
    if_drifted` used to compare, per line, so only the drifted line goes back to undecided -
    the lines a confirmation DOES name still commit exactly as before.
-3. The borrow-hold release `challenge_if_drifted` used to perform as a side effect moves to
-   batch apply: `_apply_one_order` (`planning_change_service.py`), immediately before the
-   order's own `confirm()` call, retires the previous active revision's step-3 supply-borrow
-   placements on every line THIS BATCH has a row for (`ProjectOrderInquiryService.
-   retire_supply_borrow_rows(pso_id, reason=f"Planning change {batch.id}", line_ids=list(
-   by_line_id.keys()))`). `confirm()`'s own retirement of a re-decided line's old placement
-   (`_retire_supply_borrows`) only reaches a line that is actually CHECKED (named in the
-   payload, or carried) - a line this batch UNCOVERS or RETIRES is neither, so without this
-   call its old placement would keep a document pinned to a revision that no longer covers
-   it. A composition that still carries the same document is re-placed by `confirm()`
-   moments later at the new quantity (one live link, never two); one that drops it leaves
-   nothing pinned.
+3. The borrow-hold release `challenge_if_drifted` used to perform as a side effect on drift
+   needs no new call at batch apply: it is already delivered by the two paths every apply
+   already runs through. A line THIS BATCH names in the confirm has its old placement
+   retired by `project_supply_service.confirm`'s own `_retire_supply_borrows` (the moment a
+   later revision decides a line again, regardless of drift); a line the book CANCELLED has
+   its rows retired by `_apply_one_order`'s own `_retire_inquiry_rows`, called before the
+   confirm for exactly that reason. A line this batch UNCOVERS is always a subset of one of
+   those two (uncover names a line that is either being re-decided as part of the same
+   confirm or cancelled), so there is no third case an extra call could reach - a
+   `retire_supply_borrow_rows` call added here on the theory that one existed (review round,
+   14 September 2026) left all 7 of `tests/scm/test_one_signal.py` green when deleted, which
+   is what "redundant" means: it is machinery no test can isolate, so it is machinery to
+   delete (lane rule).
 4. AC-X1 (issue #854): `_purchasing_user_ids` (`project_order_inquiry_service.py`) matches
    every role slug STARTING WITH `purchasing` (`UserRole.slug.like("purchasing%")`) rather
    than the single literal slug, so `purchasing_manager` and `purchasing_executive` are
@@ -615,3 +616,10 @@ old "Reallocate SPO" wording is gone.
 **Left alone, named.** `_purchasing_user_ids` has no company filter. It is pre-existing, it
 predates this lane, and widening it here would change who gets notified on an unrelated
 journey: it needs its own change with its own evidence.
+
+**Left alone, named (cleanup round, 14 September 2026).** `_unclaim_shares` orders the
+candidate links `linked_at ASC` across every `OrderInquiryRow` the line has, not per row, so
+on a line with two ORDER rows sharing a purchase-order line the OLDER row's link is the one
+stripped first regardless of which row over-claimed. The totals it leaves are always right
+(the same quantity comes off the same purchase-order line either way); only which of the
+line's own rows the link is attributed to is approximate.

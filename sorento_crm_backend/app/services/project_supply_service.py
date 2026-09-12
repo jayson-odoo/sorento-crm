@@ -6929,10 +6929,14 @@ class ProjectSupplyService:
     def _unowned_holds(self, line: ProjectSalesOrderLine) -> Dict[str, Decimal]:
         """What this line already holds under NO revision, by warehouse.
 
-        Only a reallocation writes one (`planning_change_service._move_reserve`): a reserve
+        A reallocation writes one (`planning_change_service._move_reserve`): a reserve
         another order gave this line, deliberately tied to no decision so that superseding
         one cannot make it read gone. Every later revision that names the same reserve is
-        naming THAT hold.
+        naming THAT hold. Scoped to the reallocation's own `reason` prefix rather than to
+        `decision_id IS NULL` alone - `_hold_query`'s docstring is explicit that NULL also
+        covers every row written before Stage 1C, a much wider set this method has no
+        business summing, and a future backfill of THOSE rows must not silently change what
+        every confirm writes here.
         """
         rows = (
             self.db.query(SOLineAllocation.warehouse_id, SOLineAllocation.qty)
@@ -6942,6 +6946,7 @@ class ProjectSupplyService:
                 SOLineAllocation.confirmed_at.isnot(None),
                 SOLineAllocation.warehouse_id.isnot(None),
                 SOLineAllocation.source_type != ALLOC_SOURCE_ORDER,
+                SOLineAllocation.reason.like("Reallocated from %"),
             )
             .all()
         )
