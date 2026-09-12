@@ -62,6 +62,21 @@ def access_denied_text(ctx: Mapping[str, Any], copy: CannedCopy) -> str:
     return copy.render("access_denied", team=folded)
 
 
+def field_grant_denied_text(copy: CannedCopy, subject: str) -> str:
+    """The SAME `access_denied` template, subject a plain-language FEATURE name rather
+    than an agent (D6, PLAN-chatbot-last-purchase-cost.md, review B1).
+
+    `access_denied_text` above answers "is this contact allowed the AGENT" - the
+    head-level refusal, keyed on `routing.suggested_agent` (`purchasing`,
+    `warehouse`, ...). A whole-domain field-reveal gate answers a DIFFERENT
+    question - "is this contact allowed the FEATURE" - so it names the feature
+    ("purchase cost") rather than the team, and takes no `ctx`: there is no agent to
+    read. No new wording is invented; both callers render the one registered
+    `access_denied` key.
+    """
+    return copy.render("access_denied", team=subject)
+
+
 def offer_hold_clarify_text(
     *,
     routing_roster_plan: Any,

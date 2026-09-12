@@ -1070,6 +1070,12 @@ _CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
 #: The field-reveal key a contact must hold for the rung to run at all (8 Sep 2026). A rung
 #: with no row here is ungated.
 _CROSSDOMAIN_RUNG_GRANT: dict[str, str] = {"purchase_order": "purchase_orders.placed"}
+#: PLAN-chatbot-last-purchase-cost.md D6: the WHOLE `purchase_cost` domain is refused
+#: without this grant, checked in `run_fetch` before any tool call - a PO row without
+#: its cost is a different answer from the one asked, so a per-field drop is not enough
+#: (that drop still runs too, belt and braces: AC-18). A domain with no row here is
+#: ungated, same convention as `_CROSSDOMAIN_RUNG_GRANT` above.
+DOMAIN_GRANT_REQUIRED: dict[str, str] = {"purchase_cost": "purchase_orders.cost"}
 #: The shipped ladder (migration 491, D7): stock -> incoming -> PO from either side. The
 #: DATABASE row is where the default lives; `engine._crossdomain_ladder` hands this out
 #: only for a settings row that carries no usable ladder (a `create_all` schema), never
