@@ -1116,7 +1116,7 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:
         ) from exc
 
 
-def _apply_open_question(o: dict, question: dict, outcome: Any) -> None:
+def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
     """The handler's outcome, written into the emission the rest of the turn reads.
 
     ONE place, so the seven handlers stay pure and only this function knows the `qf`
@@ -2223,117 +2223,42 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             # was added.
             o["bare_entity_under_offer"] = True
 
-    # -- ANSWERED (growth r1 slice B4): the open question, resolved before the focus ----- #
-    # INERT under prompt v1 and v2. `answers_open_question.resolved` is what arms it, and
-    # neither of those prompts has an instruction that mentions the key - so the whole
-    # block is skipped on every one of the 1,875 captured emissions and on production
-    # until the owner moves the label (AC-952).
-    #
-    # It runs HERE, immediately before the focus rules, because a pick IS this turn's
-    # scope: the focus rules must see the picked entities as the current message's own.
-    # The plan calls this an `answered` STAGE; it is a trace ENTRY instead, and the plan's
-    # own slice-D shape agrees (`open_question: {before, answer, after, handler,
-    # outcome}` is listed among the entries, not among the stages). `TURN_STAGES` is a
-    # closed vocabulary of eight that the timeline renders, `chatbot.turns.stage` stores
-    # and 1,875 fixtures carry; a ninth for a deterministic, instantaneous step would be a
-    # wire change for no reader's benefit.
+    # -- the three v3 signals, for the rules below ---------------------------------------- #
+    # The ANSWERED step moved OUT of this function in L1-S3 and is a real turn stage now
+    # (`engine._run_stages`, before `access`): resolving the open question needs the
+    # persisted `open_question` slot rather than a mirror re-derived from the legacy keys,
+    # and its outcome decides the LANE, which is a routing decision and does not belong in
+    # a post-processor. What is left here is the signals the focus rules read.
     turn_signals = v3_signals(
         parser_raw_snapshot, emits_v3=parent_input.get("parser_emits_v3") is True
     )
-    answered_entry = None
-    open_question = open_question_mod.from_state(
-        prev_state, asked_at_turn=int(jsc.js_number(parent_input.get("turn_no")) or 1) - 1
-    )
-    if open_question and turn_signals["answers_open_question"]["resolved"]:
-        # AC-947: a QUOTED reply resolves against THAT message's frozen options, not the
-        # alive question's. Same precedence the positional block above already applies, and
-        # for the same reason: the rows the customer is looking at are the ones they quoted.
-        quoted_rows = jsc.array(parent_input.get("referenced_result_set"))
-        options = quoted_rows if len(quoted_rows) > 0 else open_question.get("options")
-        outcome = open_question_mod.resolve(
-            open_question["kind"],
-            turn_signals["answers_open_question"],
-            options,
-            open_question.get("payload"),
-        )
-        before_entities = jsc.array(o.get("entities"))
-        _apply_open_question(o, open_question, outcome)
-        answered_entry = {
-            "before": {
-                "kind": open_question["kind"],
-                "expects": open_question["expects"],
-                "options": len(options or []),
-                "quoted": len(quoted_rows) > 0,
-            },
-            "answer": turn_signals["answers_open_question"],
-            "after": {
-                "entities": len(jsc.array(o.get("entities"))),
-                "entities_before": len(before_entities),
-                "escalate": outcome.escalate,
-                "declined": outcome.declined,
-            },
-            "handler": outcome.handler,
-            "outcome": outcome.outcome,
-        }
 
-    # -- THE FOCUS RULES (growth r1 slice B3) -------------------------------------------- #
-    # ONE call, in the position the two blocks it replaces occupied: after every writer of
-    # `o["entities"]` (the did-you-mean pick, the numbered multi-select, the positional
-    # resolve and the tier pick all run above) and BEFORE the B2' reconciliation and the
-    # domain blocklist, both of which read `domain_hint` and must read the FINAL one. That
-    # ordering is why this is here rather than at the end of the function; the file says so
-    # at each of those two blocks and the corpus is what proves it.
+    # -- THE FOCUS RULES' INPUTS (L1-S3) -------------------------------------------------- #
+    # The rules themselves run in `engine._run_stages`, AFTER `resolve_gate`, because two
+    # of them need answers only the resolver has: what a token turned out to BE
+    # (`entity_type`) and whether it resolved cleanly (`confident`). What this function
+    # knows and the engine does not is the per-turn shape of the message - whether the
+    # customer was explicit, what the entity executor treated as carried, whether a date
+    # widen fired - so it hands those across on `parent_input` and stops there.
     #
-    # Deleted from HERE and rewritten as named rules in `dialogue/focus.py` (AC-950):
-    # owner ruling K rule 4 (`domain_inherited_compatible` / `bare_entity_retyped` /
-    # `domain_inherit_blocked`), the `#6` switch-word override, owner ruling K rule 2
-    # (`entities_dropped_on_topic_change`), the executor's date / attribute / `is_active`
-    # carries and `_query_brands_carried` / `_tier_carried`. Every diagnostic those blocks
-    # stamped is still stamped, by the rule that took the decision over, which is what lets
-    # the 1,875 captured fixtures grade the move.
-    focus_turn = focus_rules.Turn(
-        o=o,
-        prev=prev_state,
-        turn_no=int(jsc.js_number(parent_input.get("turn_no")) or 1)
+    # An OUT-PARAMETER, deliberately not a key on the emission: `output.output` IS the
+    # graded wire shape, 271 captured `output_exchange` fixtures compare it byte for byte,
+    # and one added key would diverge all of them. `parent_input` is the caller's own
+    # per-turn dict and is never compared.
+    parent_input["_focus_inputs"] = {
+        "o": o,
+        "prev": prev_state,
+        "turn_no": int(jsc.js_number(parent_input.get("turn_no")) or 1)
         if parent_input.get("turn_no") is not None
         else 1,
-        explicit=bool(explicit),
-        switch_domain=switch_domain,
-        is_carried=ce_is_carried,
-        date_widened=bool(date_widen),
-        signals=turn_signals,
-        parser_raw=parser_raw_snapshot if isinstance(parser_raw_snapshot, dict) else {},
-        latest_user_message=parent_input.get("latest_user_message"),
-        # An open question is alive when the previous turn armed a roster the customer can
-        # still see. `selection_context` is that marker today and stays the reader for one
-        # release (AC-951); slice B4 replaces it with `open_question` and this line with it.
-        has_picker=open_question is not None,
-        entityless_domain_reused=entityless_domain_reused,
-        # A pick is the customer choosing from rows we showed them, so the slot it sets is
-        # sourced `pick` rather than `current_message` - which is what the trace has to say
-        # for an operator to tell "they typed it" from "they chose it".
-        answered_by_pick=answered_entry is not None,
-    )
-    focus_out = focus_rules.apply(
-        focus_rules.from_session(prev_state, turn_no=focus_turn.turn_no), focus_turn
-    )
-    # OUT-PARAMETER, and deliberately not a key on the emission. `output.output` IS the
-    # graded wire shape: 271 captured `output_exchange` fixtures compare it byte for byte
-    # and every world compares `ctx.parse.output` against the parse its own execution
-    # produced, so one added key would diverge all of them and skip every world with "the
-    # parser post-processor disagrees with the body that produced this capture" - which is
-    # the gate, not a formality. `parent_input` is the caller's own per-turn dict, is never
-    # compared, and is exactly where the engine can read the result back from.
-    parent_input["_dialogue_out"] = {
-        "focus": focus_out.focus,
-        "trace": focus_out.entries,
-        "open_question": answered_entry,
-        # The question that was open when this turn STARTED, as the head derived it. The
-        # tail needs it to decide whether the one it re-derives is the same question still
-        # waiting or a fresh one, and it cannot recompute it: by then `pending` and
-        # `selection_context` have been rebuilt from THIS turn's outcome, so the marker
-        # that described the open question is already gone.
-        "open_question_before": open_question,
+        "explicit": bool(explicit),
+        "switch_domain": switch_domain,
+        "is_carried": ce_is_carried,
+        "date_widened": bool(date_widen),
+        "signals": turn_signals,
+        "parser_raw": parser_raw_snapshot if isinstance(parser_raw_snapshot, dict) else {},
+        "latest_user_message": parent_input.get("latest_user_message"),
+        "entityless_domain_reused": entityless_domain_reused,
     }
 
     # -- B2' POST-MERGE ENTITY RECONCILIATION -------------------------------------------- #
@@ -2555,7 +2480,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # and nothing else when the drop ran early. What is left for this pass is exactly what
     # the blocklist cannot see: an entity whose hint is legal in the new domain and which
     # nevertheless belongs to the old subject.
-    if focus_out.drop_carried_entities and not jsc.truthy(o.get("is_menu_label")):
+    # The DROP the reset decides. `reset_on_topic` runs with the rest of the rules in the
+    # engine now, so the decision is taken from the same inputs, here, where the write has
+    # always landed - after the blocklist, which already removes a carried entity whose
+    # HINT cannot belong to the new domain.
+    if not jsc.truthy(o.get("is_menu_label")) and focus_rules.resets_topic(
+        o, signals=turn_signals, prev=prev_state, explicit=bool(explicit), is_carried=ce_is_carried
+    ):
         focus_rules.drop_carried_entities_on_topic_change(o, is_carried=ce_is_carried)
     prior_routing = jsc.get(parent_input.get("previous_conversation_state"), "routing")
     if prior_routing is None:

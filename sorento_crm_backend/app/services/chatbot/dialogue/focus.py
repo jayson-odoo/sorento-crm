@@ -312,19 +312,15 @@ def reset_on_topic(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
     `entities_dropped_on_topic_change` diagnostic the deleted block stamped, so the corpus
     grades the move.
     """
-    entities = turn.o.get("entities")
-    if jsc.truthy(turn.o.get("is_menu_label")) or not jsc.is_array(entities):
+    if not resets_topic(
+        turn.o,
+        signals=turn.signals,
+        prev=turn.prev,
+        explicit=turn.explicit,
+        is_carried=turn.is_carried,
+    ):
         return
-
-    this_turn = [e for e in entities if jsc.truthy(e) and not turn.is_carried(e)]
-    ruling_k2 = bool(
-        turn.explicit
-        and len(this_turn) > 0
-        and topic.changed(jsc.get(turn.prev, "domain_hint") or None, turn.o.get("domain_hint"))
-    )
     said_so = turn.signals.get("topic_reset") is True
-    if not (ruling_k2 or said_so):
-        return
 
     # DEFERRED, not applied: see `Outputs.drop_carried_entities`.
     out.drop_carried_entities = True
@@ -349,6 +345,35 @@ def reset_on_topic(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
         if _set_this_turn(focus, name, turn):
             continue
         _clear(focus, name, turn, out, rule="reset_on_topic")
+
+
+def resets_topic(
+    o: dict[str, Any],
+    *,
+    signals: dict[str, Any],
+    prev: Any,
+    explicit: bool,
+    is_carried: Callable[[Any], bool],
+) -> bool:
+    """Does this turn change the subject? The SAME two triggers `reset_on_topic` applies.
+
+    Split out because the decision and the WRITE happen in two places now: the rules run in
+    the engine, after the resolver, and the emission half has always landed in
+    `head/output_exchange` after the domain blocklist (16 captured fixtures move on the
+    diagnostics if it runs earlier). One predicate, two callers, so the state and the
+    emission can never disagree about whether the customer moved on.
+    """
+    entities = o.get("entities")
+    if jsc.truthy(o.get("is_menu_label")) or not jsc.is_array(entities):
+        return False
+    if signals.get("topic_reset") is True:
+        return True
+    this_turn = [e for e in entities if jsc.truthy(e) and not is_carried(e)]
+    return bool(
+        explicit
+        and len(this_turn) > 0
+        and topic.changed(jsc.get(prev, "domain_hint") or None, o.get("domain_hint"))
+    )
 
 
 def drop_carried_entities_on_topic_change(o: dict[str, Any], *, is_carried: Callable[[Any], bool]) -> None:

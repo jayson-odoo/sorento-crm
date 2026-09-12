@@ -485,6 +485,14 @@ TAG_ONLY_BRANCH_KINDS: frozenset[str] = frozenset(
 TURN_STAGES = (
     "received",
     "understood",
+    # L1-S3 (D6): between understanding the message and deciding who may see what, the
+    # turn asks whether this message ANSWERS the question the bot was waiting for. It is a
+    # stage rather than a footnote because its outcome decides the LANE - a "yes" to an
+    # escalate offer routes to escalation, a pick routes back to the business lane - and a
+    # routing decision an operator cannot see on the timeline is one they cannot explain.
+    # Recorded on every turn, "nothing was open" included, so the absence of the row never
+    # has to be told apart from the absence of the feature.
+    "answered",
     "access",
     "routed",
     "looked_up",

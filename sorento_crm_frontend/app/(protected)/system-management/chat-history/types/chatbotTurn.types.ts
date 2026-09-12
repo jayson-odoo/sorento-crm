@@ -6,10 +6,13 @@
  * the 1,535 captured fixtures the engine is graded against.
  */
 
-/** The eight stages a turn can record, in the order the timeline renders them. */
+/** The nine stages a turn can record, in the order the timeline renders them. */
 export const TURN_STAGES = [
   'received',
   'understood',
+  // L1-S3: did this message answer the question the bot was waiting for? Its outcome
+  // decides the lane, so it is a row on the timeline and not a footnote.
+  'answered',
   'access',
   'routed',
   'looked_up',
