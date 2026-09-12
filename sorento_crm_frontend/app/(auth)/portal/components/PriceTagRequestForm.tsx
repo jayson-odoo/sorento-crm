@@ -13,6 +13,7 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  Copy,
   Download,
   FileText,
   Loader2,
@@ -49,7 +50,7 @@ import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
-import { portalBase } from '../lib/portal-paths';
+import { portalBase, portalDuplicatePath } from '../lib/portal-paths';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
@@ -368,6 +369,36 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       cancelled = true;
     };
   }, [requestId, router]);
+
+  // ---- Duplicate (D-D1): `?from=<id>` copies header fields + lines into a
+  // NEW draft. Attachments stay empty (Sales Order files are not copied);
+  // nothing is saved until Save draft / Submit. A source this contact does
+  // not own, or that no longer exists, falls back to a toast + empty form.
+  useEffect(() => {
+    if (!isNew || typeof window === 'undefined') return;
+    const fromId = new URL(window.location.href).searchParams.get('from');
+    if (!fromId || !fromId.trim()) return;
+    let cancelled = false;
+    getRequest(fromId.trim())
+      .then((data) => {
+        if (cancelled || !data) {
+          if (!cancelled) toast.error('Could not copy that submission.');
+          return;
+        }
+        setDebtorCode(data.debtor_code ?? '');
+        setPromotionId(data.promotion_id ?? '');
+        setPriceMode(data.price_mode ?? 'list');
+        setNeededByDate(data.needed_by_date ?? '');
+        setNotes(data.notes ?? '');
+        setLines(data.lines.map(lineToDraft));
+      })
+      .catch(() => {
+        if (!cancelled) toast.error('Could not copy that submission.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew]);
 
   // ---- Debtor options ----
   const debtorOptions = useMemo<SearchableSelectOption[]>(
@@ -910,6 +941,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                   </span>
                 )}
               </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                setGearOpen(false);
+                router.push(portalDuplicatePath('price_tag_request', request.id, slug));
+              }}
+            >
+              <Copy className="size-4" />
+              Duplicate
             </DropdownMenuItem>
           </DetailActionsMenu>
         </div>

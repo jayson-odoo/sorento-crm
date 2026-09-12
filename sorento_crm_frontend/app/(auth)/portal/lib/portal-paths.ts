@@ -78,6 +78,19 @@ export function portalNewPath(kind: string, slug?: string | null): string {
   return `${portalBase(slug)}/${kind}/new`;
 }
 
+/**
+ * New-mode form pre-loaded from an existing submission (D-D1): the form
+ * fetches `from`, copies its fields + lines, and starts empty otherwise - no
+ * draft row exists until Save draft / Submit.
+ */
+export function portalDuplicatePath(
+  kind: string,
+  fromId: string,
+  slug?: string | null,
+): string {
+  return `${portalNewPath(kind, slug)}?from=${encodeURIComponent(fromId)}`;
+}
+
 export function portalDetailPath(kind: string, id: string, slug?: string | null): string {
   return `${portalBase(slug)}/${kind}/${encodeURIComponent(id)}`;
 }

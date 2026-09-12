@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, FileText, LogOut, Plus, Star } from 'lucide-react';
+import { AlertCircle, Copy, FileText, LogOut, Plus, Star } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -54,6 +54,7 @@ import {
 import { revisionBadgeLabel } from '@/lib/document-number';
 import {
   portalDetailPath,
+  portalDuplicatePath,
   portalNewPath,
   portalRevisePath,
   portalVerifyPath,
@@ -1056,6 +1057,17 @@ function SubmissionPreviewDialog({
             className="h-10"
           >
             Close
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (row) router.push(portalDuplicatePath(kind, row.id, slug));
+              onOpenChange(false);
+            }}
+            className="h-10"
+          >
+            <Copy className="h-4 w-4 mr-2" />
+            Duplicate
           </Button>
           <Button
             onClick={() => {
