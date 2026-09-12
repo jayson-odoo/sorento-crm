@@ -1,6 +1,6 @@
 """AC-16, AC-17, AC-18, AC-25, AC-27, AC-28, AC-29 (chatbot-last-purchase-cost): the
 whole-domain field-reveal gate, the parser prompt addendum, the gate matrix row, the
-`top_n` passthrough, and the migration 511 publish.
+`top_n` passthrough, and the migration 513 publish.
 
 `documentation/plans/chatbot/PLAN-chatbot-last-purchase-cost.md`;
 `documentation/plans/chatbot/chatbot-last-purchase-cost-acceptance-criteria.md`.
@@ -335,11 +335,23 @@ def test_ac28_top_n_passes_direct() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# AC-29: migration 511 publishes both prompt bodies, idempotent, no label moved -
-# mirrors `tests/test_chatbot_warehouse_cue_migration.py`'s own pin for 487.
+# AC-29: migration 513 publishes both prompt bodies, idempotent, no label moved -
+# mirrors `tests/test_chatbot_warehouse_cue_migration.py::
+# test_publish_is_idempotent_one_new_version_each_then_none`'s own pin for 487 EXACTLY,
+# stale-v1 shape and all.
+#
+# Why the stale v1: on a genuinely blank schema `seed_prompt_registry` seeds v1 from the
+# CURRENT full fallback (`app.services.chatbot_parser_prompt.SEMANTIC_PARSER_PROMPT`),
+# which by AC-25 already carries the last-cost vocabulary once this lane ships - so a v1
+# seeded from the live constant would make the FULL half of the first `publish()` a
+# guaranteed no-op (the template it tries to insert already exists as v1) and the test
+# would never see the "adds one new version" behaviour it exists to pin. Seeding v1 with
+# a STALE placeholder first, the same way 487's own test does, is what keeps the FULL
+# half of `publish()` genuinely exercised regardless of what the live prompt constant
+# says.
 # --------------------------------------------------------------------------- #
 
-MIGRATION_FILE = "511_chatbot_parser_last_cost.py"
+MIGRATION_FILE = "513_chatbot_parser_last_cost.py"
 
 
 def _load_migration():
@@ -351,20 +363,34 @@ def _load_migration():
         / "versions"
         / MIGRATION_FILE
     )
-    spec = importlib.util.spec_from_file_location("migration_under_test_511", path)
+    spec = importlib.util.spec_from_file_location("migration_under_test_513", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def test_ac29_migration_511_publish_idempotent() -> None:
+def test_ac29_migration_513_publish_idempotent() -> None:
     from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+    from app.services.ai_prompt_registry import PROMPT_KEYS
     from tests._pg_fixture import blank_session
 
     module = _load_migration()
     with blank_session() as session:
         from app.services.ai_prompt_seed import seed_prompt_registry
 
+        spec = PROMPT_KEYS["chatbot_semantic_parser"]
+        session.add(
+            AIPromptVersion(
+                name="chatbot_semantic_parser",
+                version=1,
+                type="text",
+                template="STALE FULL PROMPT TEXT (pre last-cost fix)",
+                variables=list(spec.variables),
+            )
+        )
+        session.commit()
+        # v1 already exists (the stale row above), so this only adds the production
+        # label pointing at it - it never overwrites a live row.
         seed_prompt_registry(session.get_bind())
 
         production_label_before = (
@@ -376,13 +402,25 @@ def test_ac29_migration_511_publish_idempotent() -> None:
             .first()
         )
         assert production_label_before is not None
-        version_id_before = production_label_before.version_id
+        v1 = (
+            session.query(AIPromptVersion)
+            .filter(
+                AIPromptVersion.name == "chatbot_semantic_parser",
+                AIPromptVersion.version == 1,
+            )
+            .first()
+        )
+        assert production_label_before.version_id == v1.id
 
         first = module.publish(session)
         assert isinstance(first, dict) and set(first) == {"full", "slim"}
-        assert isinstance(first["full"], int)
-        assert isinstance(first["slim"], int)
-        assert first["full"] != first["slim"]
+        assert isinstance(first["full"], int) and first["full"] >= 2, (
+            "first publish() must create a new FULL version above the stale v1"
+        )
+        assert isinstance(first["slim"], int) and first["slim"] >= 2, (
+            "first publish() must create a new SLIM version above the stale v1"
+        )
+        assert first["full"] != first["slim"], "FULL and SLIM texts differ, so must be distinct versions"
 
         second = module.publish(session)
         assert second == {"full": None, "slim": None}, (
@@ -407,6 +445,7 @@ def test_ac29_migration_511_publish_idempotent() -> None:
             .first()
         )
         assert production_label_after is not None
-        assert production_label_after.version_id == version_id_before, (
-            "publish() must never move the production label"
+        assert production_label_after.version_id == v1.id, (
+            "publish() must never move the production label off the stale v1 - "
+            "promoting is a deliberate, separate action in the admin UI"
         )
