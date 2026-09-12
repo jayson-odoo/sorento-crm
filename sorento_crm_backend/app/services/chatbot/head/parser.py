@@ -80,6 +80,32 @@ class ParserConfig:
 # asserting the live v1 body never mentions one.
 V3_EMISSION_KEYS: tuple[str, ...] = ("answers_open_question", "anaphora", "topic_reset")
 
+# What v3 ADDS beyond those three (L1-S2, D3), and what it DROPS.
+#
+# `asks` replaces the flat `domain_hint` + `entities` pair with what the dealer actually
+# said: a list of {domain, entities}, in the order the message names them, so "stock for A
+# and eta for B" survives as two asks instead of collapsing into one domain and two loose
+# codes. `intent_hint` goes because every domain declares exactly one intent (measured
+# 13:13), so it carried nothing `domain_hint` did not; the lanes that still want the word
+# derive it from `DOMAIN_SPEC` (AC-1026). `scope_intent`, `broaden_axis`,
+# `reference_positions` and `reference_target` go because the deterministic rules that read
+# them are the carry rules `dialogue/` replaces.
+#
+# V1 KEEPS ALL OF THEM (D10). Strict structured output makes every declared property
+# required, so a schema shared between the versions would hold the PROMOTED v1 prompt to
+# emitting `asks` - a key no instruction in it mentions - and every live turn would fail at
+# `understood` before the owner ever moved a label.
+V3_ONLY_KEYS: tuple[str, ...] = ("asks", *V3_EMISSION_KEYS)
+V1_ONLY_KEYS: tuple[str, ...] = (
+    "domain_hint",
+    "intent_hint",
+    "entities",
+    "scope_intent",
+    "broaden_axis",
+    "reference_positions",
+    "reference_target",
+)
+
 # The token that says a resolved prompt asks for the v3 shape.
 #
 # **The marker is the KEY ITSELF, and that is the point.** The registry offers two other
@@ -238,8 +264,48 @@ def _build_json_schema(*, v3: bool) -> dict[str, Any]:
         },
     }
     if v3:
+        for legacy in V1_ONLY_KEYS:
+            properties.pop(legacy, None)
         properties.update(
             {
+                # WHAT THE DEALER ASKED, in the order they asked it (D3, D11). One entry
+                # per domain named; `entities` are the ones that ask BINDS ("stock for A")
+                # and an ask with an empty list is a domain named with no subject of its
+                # own ("PO?"). An entity the message did not bind to any domain rides an
+                # ask with `domain: null`, which `intake.flatten` folds into the turn's
+                # entity list without binding it.
+                "asks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "domain": string_or_null,
+                            "entities": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "raw": string_or_null,
+                                        "hint": string_or_null,
+                                        "canonical_code": string_or_null,
+                                        "current_message": {"type": ["boolean", "null"]},
+                                        "confident": {"type": ["boolean", "null"]},
+                                    },
+                                    "required": [
+                                        "raw",
+                                        "hint",
+                                        "canonical_code",
+                                        "current_message",
+                                        "confident",
+                                    ],
+                                },
+                            },
+                        },
+                        "required": ["domain", "entities"],
+                    },
+                },
                 # 1-based POSITIONS against the frozen `open_question.options` rows,
                 # never uuids: the model is shown labels only, so a position is the
                 # only handle it can hold and the engine resolves it.

@@ -39,6 +39,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
+from app.services.chatbot.dialogue import clearing
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,12 @@ def resolve_for_prompt(db: Session, *, ctx: dict) -> dict:
 # --------------------------------------------------------------------------- #
 
 
+# Which clarifier lanes are shown the dialogue hints (D15). `clarification` is the parser's
+# own word for what `lanes/casual.py` calls the low_signal lane; `unknown` is a message type
+# in its own right. `casual` is deliberately absent.
+_CLARIFIER_LANES_WITH_HINTS = ("clarification", "unknown")
+
+
 def construct_user_prompt(ctx: dict, resolved: dict | None) -> dict[str, Any]:
     """The six fields the LLM chain reads. Pure.
 
@@ -161,6 +168,9 @@ def construct_user_prompt(ctx: dict, resolved: dict | None) -> dict[str, Any]:
     out = _qf(ctx)
     message_type = out.get("message_type")
     session_vars = jsc.get(jsc.get(ctx, "session"), "session_vars")
+    # Kept unblanked for the hint block below, which reads the dialogue state rather than
+    # the bag the clarifier is shown.
+    session_vars_raw = session_vars
 
     entities: list[dict[str, Any]] = []
     for res in jsc.array(jsc.get(resolved, "resolutions")):
@@ -187,7 +197,7 @@ def construct_user_prompt(ctx: dict, resolved: dict | None) -> dict[str, Any]:
     if message_type == "casual" or message_type == "unknown":
         session_vars = {}
 
-    return {
+    prompt: dict[str, Any] = {
         "message_type": message_type,
         "intent_hint": out.get("intent_hint"),
         "domain_hint": out.get("domain_hint"),
@@ -195,6 +205,25 @@ def construct_user_prompt(ctx: dict, resolved: dict | None) -> dict[str, Any]:
         "entities": entities,
         "user_goal": goal if jsc.truthy(goal) else input_msg,
     }
+
+    # D15 / AC-1024: the LOW-SIGNAL clarifier is told what the conversation is still about,
+    # in the dialogue module's typed hints - the alive focus slots and, always beside it,
+    # whether a question is open. Its whole job is to ask for the ONE axis the alive focus
+    # lacks, and it cannot do that without knowing which axes are filled.
+    #
+    # `casual` gets NEITHER, and that is the same rule the blanking above applies for the
+    # same reason: a customer who only said hello has not asked anything, and handing the
+    # model a subject invites a reply about the last order. `unknown` is on the other side
+    # of the line because an undetermined message IS an attempt to ask something.
+    if message_type in _CLARIFIER_LANES_WITH_HINTS:
+        variables = jsc.get(session_vars_raw, "variables")
+        focus = variables.get("focus") if isinstance(variables, dict) else None
+        question = variables.get("open_question") if isinstance(variables, dict) else None
+        prompt["focus_hints"] = clearing.focus_hints(focus if isinstance(focus, dict) else {})
+        # ALWAYS present, `None` included: "nothing is open" and "this build does not report
+        # it" must not read the same to the model.
+        prompt["open_question"] = clearing.open_question_hint(question)
+    return prompt
 
 
 def render_user_message(prompt: dict[str, Any]) -> str:
@@ -210,6 +239,22 @@ def render_user_message(prompt: dict[str, Any]) -> str:
         f"user_goal: {jsc.js_string(prompt.get('user_goal'))}   \n"
         f"entities: {json.dumps(prompt.get('entities'), separators=(',', ':'))}   \n"
         f"session_vars: {json.dumps(prompt.get('session_vars'), separators=(',', ':'))}  "
+        + _hint_lines(prompt)
+    )
+
+
+def _hint_lines(prompt: dict[str, Any]) -> str:
+    """The two D15 lines, rendered ONLY for the lanes that get them (AC-1024).
+
+    Absent on a `casual` turn, so that message renders byte-identically to what the live
+    model has been answering all along, and a clarifier prompt version that predates the
+    hints is unaffected by a turn that carries them.
+    """
+    if "focus_hints" not in prompt:
+        return ""
+    return (
+        f"\nfocus_hints: {json.dumps(prompt.get('focus_hints'), separators=(',', ':'))}  \n"
+        f"open_question: {json.dumps(prompt.get('open_question'), separators=(',', ':'))}  "
     )
 
 

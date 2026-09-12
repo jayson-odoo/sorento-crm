@@ -31,6 +31,7 @@ from typing import Any
 
 from app.services.chatbot import jsc, topic
 from app.services.chatbot.dialogue import focus as focus_rules
+from app.services.chatbot.dialogue import intake
 from app.services.chatbot.dialogue import open_question as open_question_mod
 from app.services.chatbot.head import parser as parser_keys
 from app.services.chatbot.contracts import (
@@ -997,16 +998,69 @@ def v3_signals(o: Any, *, emits_v3: bool = True) -> dict[str, Any]:
         "anaphora": jsc.get(o, "anaphora") is True,
         "topic_reset": jsc.get(o, "topic_reset") is True,
     }
+def intent_for(domain: Any) -> str | None:
+    """The intent word for a domain, DERIVED and never stored (AC-1026, D14).
+
+    Every domain in `DOMAIN_SPEC` declares exactly one intent (measured 13:13), so
+    `intent_hint` never carried anything `domain_hint` did not. The lanes that still speak
+    the word get it from here, per turn; nothing persists it, and no state, contract or
+    trace key is named after it.
+    """
+    spec = DOMAIN_SPEC.get(jsc.js_string(domain)) if jsc.truthy(domain) else None
+    intents = getattr(spec, "intents", None) or ()
+    return intents[0] if intents else None
+
+
+def _apply_asks(o: dict) -> None:
+    """Flatten a v3 emission into the flat shape every rule and lane below already reads.
+
+    AC-1021. `asks` is the truth about what the dealer said; `domain_hint` and a flat
+    `entities` list are what 1,600 lines of post-processing and every lane are written
+    against. Rather than rewrite both at once, the emission is flattened HERE, once, before
+    anything reads it - so the difference between the two parser versions stops at this
+    line instead of running through the rest of the turn.
+
+    The seven keys v3 dropped are filled with their INERT values, not guessed at: the body
+    hard-reads `reference_positions` and tests the other three for truthiness, and a v3
+    emission genuinely says nothing about any of them. `domains` and `ask_binding` are
+    stamped beside them for the rules that want the list rather than its head.
+    """
+    flat = intake.flatten(o)
+    domains = flat["domains"]
+    o["asks"] = o.get("asks") or []
+    o["domains"] = domains
+    o["ask_binding"] = flat["binding"]
+    o["entities"] = flat["entities"]
+    o["domain_hint"] = domains[0] if domains else None
+    o["intent_hint"] = intent_for(domains[0]) if domains else None
+    o.setdefault("scope_intent", None)
+    o.setdefault("broaden_axis", None)
+    o.setdefault("reference_positions", [])
+    o.setdefault("reference_target", None)
+
+
 _EMISSION_ARRAY_KEYS = ("entities", "access_levels", "requested_attributes", "reference_positions")
+# v3 dropped `entities` and `reference_positions` and put `asks` in their place, so the
+# container check follows the contract the emission was made under (D10).
+_EMISSION_ARRAY_KEYS_V3 = ("asks", "access_levels", "requested_attributes")
 _EMISSION_OBJECT_KEYS = ("routing", "escalation")
 
 
-def _required_emission_keys() -> frozenset[str]:
-    """The V1 keys minus the three exemptions. Never the v3 ones: see `_EXEMPT_FROM_REQUIRED`."""
-    return parser_keys.DECLARED_KEYS - _EXEMPT_FROM_REQUIRED
+def _required_emission_keys(*, emits_v3: bool = False) -> frozenset[str]:
+    """The keys the emission must carry, for the CONTRACT it was made under.
+
+    Two answers, because there are two contracts. v1 owes its 28 keys minus the three
+    exemptions; v3 owes `asks` and the three signals and owes NONE of the seven keys it
+    dropped. Asking the v1 question of a v3 emission would demand `domain_hint` of a prompt
+    that no longer mentions it - and asking the v3 question of a v1 emission would demand
+    `asks` of the PROMOTED prompt, so every live turn would fail at `understood` before the
+    owner had promoted anything (D10).
+    """
+    declared = parser_keys.DECLARED_KEYS_V3 if emits_v3 else parser_keys.DECLARED_KEYS
+    return declared - _EXEMPT_FROM_REQUIRED
 
 
-def _assert_emission(o: dict) -> None:
+def _assert_emission(o: dict, *, emits_v3: bool = False) -> None:
     """Refuse an emission that cannot be post-processed, naming what is wrong.
 
     Up front, before any of the 1,600 lines below touch it, because the alternative is
@@ -1016,12 +1070,12 @@ def _assert_emission(o: dict) -> None:
     Checking here also means the message names EVERY missing key at once, so a mock or a
     prompt regression is fixed in one pass instead of one key per run.
     """
-    missing = sorted(key for key in _required_emission_keys() if key not in o)
+    missing = sorted(key for key in _required_emission_keys(emits_v3=emits_v3) if key not in o)
     if missing:
         raise ParserOutputError(
             "parser emission missing " + ", ".join(repr(key) for key in missing)
         )
-    for key in _EMISSION_ARRAY_KEYS:
+    for key in (_EMISSION_ARRAY_KEYS_V3 if emits_v3 else _EMISSION_ARRAY_KEYS):
         if not isinstance(o.get(key), list):
             raise ParserOutputError(
                 f"parser emission key {key!r} must be an array, got "
@@ -1125,7 +1179,10 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         raise ParserOutputError("parser did not emit a JSON object")
 
     o: dict[str, Any] = output["output"]
-    _assert_emission(o)
+    emits_v3 = parent_input.get("parser_emits_v3") is True
+    _assert_emission(o, emits_v3=emits_v3)
+    if emits_v3:
+        _apply_asks(o)
 
     # -- state-transition monitor: snapshot the RAW LLM object BEFORE any post-processing.
     # Everything below mutates `o`; this is the only point where the pre-code shape exists.

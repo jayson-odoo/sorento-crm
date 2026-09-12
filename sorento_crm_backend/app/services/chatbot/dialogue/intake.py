@@ -24,15 +24,23 @@ from typing import Any
 
 
 def flatten(parse: Any) -> dict[str, Any]:
-    """`{domains, entities, binding}` from one parser v3 emission.
+    """`{domains, entities, binding}` from ONE emission, of either parser version.
+
+    A v3 emission flattens its `asks` as described above. A v1 or v2 emission has no asks
+    and never will (the label does not move until the owner moves it, D10), so it flattens
+    through its own flat keys instead: `domains` is `[domain_hint]` or empty, `entities` is
+    the list it already carries, and `binding` is empty because a flat emission never said
+    which entity belonged to which domain. ONE function for both, so a reader never has to
+    ask which prompt answered the turn - which is the same reason the engine derives
+    `domain_hint` per turn rather than persisting it (AC-1026).
 
     Tolerant of everything: a parse with no `asks`, an ask with no domain, an ask with no
-    entities, a non-dict in either list. A v1 or v2 emission simply flattens to empty
-    lists, which is the correct reading of "this parse predates asks" and is why the
-    caller needs no version check.
+    entities, a non-dict in either list.
     """
     emission = parse if isinstance(parse, dict) else {}
     asks = emission.get("asks")
+    if not isinstance(asks, list) or not asks:
+        return _flatten_v1(emission)
     asks = asks if isinstance(asks, list) else []
 
     domains: list[str] = []
@@ -72,6 +80,24 @@ def flatten(parse: Any) -> dict[str, Any]:
         binding[domain] = _merge(binding.get(domain), bound)
 
     return {"domains": domains, "entities": entities, "binding": binding}
+
+
+def _flatten_v1(emission: dict[str, Any]) -> dict[str, Any]:
+    """The same three views off a FLAT (v1 / v2) emission.
+
+    `binding` is empty rather than "every entity under the one domain", and the difference
+    matters: an empty binding means "the message did not say", which is what a flat
+    emission is, and a full one would claim the dealer had bound each code to a domain when
+    the prompt never asked them to.
+    """
+    domain = emission.get("domain_hint")
+    domain = str(domain).strip() if isinstance(domain, str) and domain.strip() else None
+    entities = [e for e in (emission.get("entities") or []) if isinstance(e, dict)]
+    return {
+        "domains": [domain] if domain else [],
+        "entities": entities,
+        "binding": {},
+    }
 
 
 def _identity(entity: dict[str, Any]) -> tuple[str, str]:
