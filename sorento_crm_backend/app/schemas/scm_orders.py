@@ -10,7 +10,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- sales orders -----------------------------------------------------------
@@ -330,6 +330,23 @@ class SalesOrderFormData(BaseModel):
     #: Who sold it. Optional - most manual creates name no agent - applied as given.
     sales_agent_id: Optional[str] = None
     lines: List[SalesOrderLineInput] = Field(..., min_length=1)
+
+    #: A brand-new order can never OPEN with a zero-qty line (review round, R-S4) - `0` is
+    #: new vocabulary only an EDIT reads as "settle this held line" (AC-A4); creating one
+    #: at 0 has no line to settle. `SalesOrderLineInput.qty_ordered` itself stays `ge=0` -
+    #: it is shared with `SalesOrderUpdate` - so the positive-on-create rule lives here,
+    #: on the smaller (create-only) schema, rather than splitting the shared line model.
+    @field_validator("lines")
+    @classmethod
+    def _lines_are_all_positive(
+        cls, lines: List[SalesOrderLineInput]
+    ) -> List[SalesOrderLineInput]:
+        for line in lines:
+            if line.qty_ordered <= 0:
+                raise ValueError(
+                    f"Line {line.sku}: qty_ordered must be greater than 0 on a new order"
+                )
+        return lines
 
 
 class SalesOrderUpdate(BaseModel):
