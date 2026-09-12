@@ -836,9 +836,11 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
     assert refreshed.state in ("superseded", "challenged")
 
 
-def test_a_fact_drift_challenges_the_active_decision_on_read(api):
-    """PLAN 5.3: `proposal_for` compares each snapshot against live facts on every read and
-    flips a mismatching active decision to `challenged`."""
+def test_a_fact_drift_on_read_leaves_the_active_decision_active(api):
+    """AC-E1/AC-E2 (`PLAN-scm-change-management-one-engine.md` rule 9, issue #860):
+    `proposal_for` no longer calls `challenge_if_drifted` on the sheet read - a drift is
+    the change batch's job now, not a flip on the decision the sheet is reading. Was
+    `test_a_fact_drift_challenges_the_active_decision_on_read`, asserting the opposite."""
     from app.models.project_so import SOSupplyDecision
 
     client, world = api
@@ -865,12 +867,9 @@ def test_a_fact_drift_challenges_the_active_decision_on_read(api):
 
     response = client.get(f"{BASE}/sales-orders/{order.id}/supply")
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["review_state"] == "needs_cs_review"
-    assert body.get("decision", {}).get("challenged_reason")
 
     db.expire_all()
-    assert db.get(SOSupplyDecision, decision.id).state == "challenged"
+    assert db.get(SOSupplyDecision, decision.id).state == "active"
 
 
 def test_review_states_for_reads_confirmed_when_an_active_decision_exists(api):

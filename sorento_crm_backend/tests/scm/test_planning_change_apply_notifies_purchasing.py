@@ -102,3 +102,105 @@ def test_confirm_all_applies_the_batch_and_notifies_purchasing_without_dying(api
         .all()
     )
     assert len(notifications) == 1, notifications
+
+
+# --------------------------------------------------------------------------- #
+# AC-X1 (issue #854): every purchasing role, not the one literal slug `purchasing`
+# --------------------------------------------------------------------------- #
+
+
+def _seed_user_with_role(db, slug: str) -> User:
+    """The same shape `_seed_purchasing_user` seeds, parameterised on the role SLUG - the
+    live gap issue #854 names: `_purchasing_user_ids()` resolves `UserRole.slug ==
+    'purchasing'` only, and live has `purchasing_manager` / `purchasing_executive`
+    instead, never the bare slug."""
+    role = UserRole(
+        id=str(uuid.uuid4()), slug=slug,
+        name=f"ZZT {slug} {uuid.uuid4().hex[:6]}",
+    )
+    db.add(role)
+    db.flush()
+    user = User(
+        id=str(uuid.uuid4()), email=f"zzt-{slug}-{uuid.uuid4().hex[:6]}@zzt.test",
+        name=f"ZZT {slug}", status=UserStatus.ACTIVE.value, is_trashed=False,
+    )
+    db.add(user)
+    db.flush()
+    db.add(UserRoleAssignment(id=str(uuid.uuid4()), user_id=user.id, role_id=role.id))
+    db.flush()
+    return user
+
+
+def test_purchasing_manager_and_executive_roles_are_notified(api):
+    """Neither seeded user holds the bare `purchasing` slug - only the two roles live
+    people actually hold - so a notification for both proves the resolution widened past
+    the one literal string."""
+    client, world = api
+    db = world.db
+    manager = _seed_user_with_role(db, "purchasing_manager")
+    executive = _seed_user_with_role(db, "purchasing_executive")
+
+    _stock(db, world.product, world.pool_wh, on_hand=200)
+    a_so, a_core, a_order, a_line = _adopted_line(db, world, qty="40")
+    a_payload = _line_payload(
+        a_line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}],
+    )
+    _confirm(client, a_order.id, {"lines": [a_payload]})
+    change = _change(
+        DATE_MOVED, a_so, a_core, old_qty="40", new_qty="40", new_date=DELAY_PAST_WINDOW,
+    )
+    a_batch = _build(db, world, a_so, [(change, a_core)])
+    db.commit()
+
+    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json={
+        "orders": [{"pso_id": a_order.id, "lines": [a_payload], "batch_id": str(a_batch.id)}],
+    })
+    assert response.status_code == 200, response.text
+    a_result = response.json()["results"][0]
+    assert a_result["ok"] is True, a_result
+
+    dedup_key = f"{a_batch.id}:{a_order.id}:planning_change_applied"
+    for user in (manager, executive):
+        notifications = (
+            db.query(Notification)
+            .filter_by(user_id=user.id, dedup_key=dedup_key)
+            .all()
+        )
+        assert len(notifications) == 1, (user.email, notifications)
+
+
+def test_a_role_that_merely_contains_the_word_is_not_notified(api):
+    """A role slug that happens to CONTAIN "purchasing" but is not a purchasing role
+    itself (an admin role covering purchasing among other things, say) must not resolve -
+    the widened match is by every role whose slug STARTS WITH `purchasing`, not a
+    substring anywhere in it."""
+    client, world = api
+    db = world.db
+    bystander = _seed_user_with_role(db, "non_purchasing_admin")
+
+    _stock(db, world.product, world.pool_wh, on_hand=200)
+    a_so, a_core, a_order, a_line = _adopted_line(db, world, qty="40")
+    a_payload = _line_payload(
+        a_line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}],
+    )
+    _confirm(client, a_order.id, {"lines": [a_payload]})
+    change = _change(
+        DATE_MOVED, a_so, a_core, old_qty="40", new_qty="40", new_date=DELAY_PAST_WINDOW,
+    )
+    a_batch = _build(db, world, a_so, [(change, a_core)])
+    db.commit()
+
+    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json={
+        "orders": [{"pso_id": a_order.id, "lines": [a_payload], "batch_id": str(a_batch.id)}],
+    })
+    assert response.status_code == 200, response.text
+    a_result = response.json()["results"][0]
+    assert a_result["ok"] is True, a_result
+
+    dedup_key = f"{a_batch.id}:{a_order.id}:planning_change_applied"
+    notifications = (
+        db.query(Notification)
+        .filter_by(user_id=bystander.id, dedup_key=dedup_key)
+        .all()
+    )
+    assert notifications == [], notifications

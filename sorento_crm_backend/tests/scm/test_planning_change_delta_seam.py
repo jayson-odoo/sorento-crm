@@ -34,7 +34,6 @@ from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 from app.models.project_so import (
     ALLOC_SOURCE_ORDER,
     DECISION_ACTIVE,
-    DECISION_CHALLENGED,
     DECISION_SUPERSEDED,
     INQUIRY_CANCELLED,
     IV_ORDER,
@@ -556,16 +555,13 @@ def test_qty_up_on_a_held_use_own_takes_more_stock_when_the_group_has_it():
         assert _live_order_rows(db, world["line"].id) == []
         # The previous revision's decision must stop holding stock the moment it is
         # replaced (`_hold_query`'s own reasoning: decision_id IS NULL OR state ==
-        # DECISION_ACTIVE). Widened to either CHALLENGED or SUPERSEDED (the reviewer,
-        # Slice B follow-up): with the flip removed, `_write_decision` marks the prior
-        # decision SUPERSEDED and the holds still read right either way - CHALLENGED is
-        # not the only name this can land on, and Slice E ("one signal, challenge_if_
-        # drifted removed") may retire it outright.
+        # DECISION_ACTIVE), AND its terminal state is SUPERSEDED only (Slice E, AC-E1/
+        # AC-E2, issue #860): `challenge_if_drifted` is retired from `confirm`, so
+        # `_write_decision`'s own `active_decision()` lookup finds the prior revision
+        # still ACTIVE and correctly flips it, rather than finding nothing left to
+        # supersede because a mid-`confirm()` challenge got there first.
         previous_decision = db.query(SOSupplyDecision).get(previous_decision_id)
-        assert previous_decision.state != DECISION_ACTIVE, previous_decision.state
-        assert previous_decision.state in (DECISION_CHALLENGED, DECISION_SUPERSEDED), (
-            previous_decision.state
-        )
+        assert previous_decision.state == DECISION_SUPERSEDED, previous_decision.state
 
 
 # --------------------------------------------------------------------------- #
