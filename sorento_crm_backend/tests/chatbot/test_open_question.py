@@ -23,7 +23,6 @@ import pytest
 
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import OPEN_QUESTION_KINDS, Envelope, OpenQuestion
-from app.services.chatbot.dialogue import decay as decay_mod
 from app.services.chatbot.dialogue import open_question as oq
 from app.services.chatbot.head import output_exchange as ox
 
@@ -138,39 +137,32 @@ class TestAPositionMeansTheRowTheCustomerSaw:
 
 
 class TestAnUnansweredQuestionStaysOpen:
+    """D5: a one-team escalate offer is `team_pick` with `expects: yes_no` and no
+    roster - the same yes/no shape `escalate_yes_no` used to be, folded into the one
+    kind. D9 retired this class's fourth test (`...cleared_by_its_own_ttl...`): no
+    counter, no TTL, anywhere - an unanswered question is cleared only by
+    `dialogue/clearing.py`'s three causes (a same-axis replace, a topic reset, or the
+    conversation-closed marker), never by age. See `tests/chatbot/test_open_question_clearing.py`
+    for that behaviour."""
+
     def test_yes_runs_the_escalation(self) -> None:
-        outcome = oq.resolve("escalate_yes_no", _answer(resolved=True, yes_no="yes"), [], {"team": "warehouse"})
+        outcome = oq.resolve("team_pick", _answer(resolved=True, yes_no="yes"), [], {"team": "warehouse"})
 
         assert outcome.escalate is True
         assert outcome.routing["suggested_team"] == "warehouse"
 
     def test_no_renders_the_declined_copy(self) -> None:
-        outcome = oq.resolve("escalate_yes_no", _answer(resolved=True, yes_no="no"), [], {})
+        outcome = oq.resolve("team_pick", _answer(resolved=True, yes_no="no"), [], {})
 
         assert outcome.declined is True
         assert outcome.escalate is False
 
     def test_a_stock_question_instead_of_yes_or_no_leaves_it_unanswered(self) -> None:
-        outcome = oq.resolve("escalate_yes_no", _answer(resolved=True), [], {})
+        outcome = oq.resolve("team_pick", _answer(resolved=True), [], {})
 
         assert outcome.resolved is False
         assert outcome.escalate is False
         assert outcome.declined is False
-
-    def test_and_the_offer_is_then_cleared_by_its_own_ttl_with_a_trace_line(self) -> None:
-        session = {
-            "open_question": oq.ask("escalate_yes_no", turn_no=1, options=[]),
-        }
-        from app.services.chatbot import trace as trace_mod
-
-        trace = trace_mod.TurnTrace()
-        result = decay_mod.apply(session, turn_no=3, ttl_turns=99, trace=trace)
-
-        assert result.open_question is None
-        entry = trace.entries("decay")[0]
-        assert entry["slot"] == "open_question"
-        assert entry["value"] == "escalate_yes_no"
-        assert "answered silently" in entry["reason"]
 
 
 # --------------------------------------------------------------------------- #
@@ -665,7 +657,7 @@ class TestTheClockDoesNotRestartOnACarry:
         """`pending.derive` re-emits an escalation offer only on the turn a lane offers
         one, so without this the question would vanish on the next turn - answered by
         nothing, cleared by nothing, and never traced."""
-        asked = oq.ask("escalate_yes_no", turn_no=4, options=[])
+        asked = oq.ask("team_pick", turn_no=4, options=[])
 
         carried = oq.from_state({}, asked_at_turn=5, previous=asked)
 
@@ -674,6 +666,6 @@ class TestTheClockDoesNotRestartOnACarry:
     def test_an_ANSWERED_question_is_never_re_armed(self) -> None:
         """The hazard `_picker_carry` names: a later bare "yes" assigning a human off an
         offer the customer already replied to."""
-        asked = oq.ask("escalate_yes_no", turn_no=4, options=[])
+        asked = oq.ask("team_pick", turn_no=4, options=[])
 
         assert oq.from_state({}, asked_at_turn=5, previous=asked, answered=True) is None

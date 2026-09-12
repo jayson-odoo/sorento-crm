@@ -509,9 +509,9 @@ def _assert_owner_expectations(
         slot = focus.get("products") or {}
         got = _codes(slot.get("value"))
         assert got == expect["focus_products"], f"{where}: focus.products"
-    if "focus_domain" in expect:
-        assert (focus.get("domain") or {}).get("value") == expect["focus_domain"], (
-            f"{where}: focus.domain"
+    if "focus_domains" in expect:
+        assert (focus.get("domains") or {}).get("value") == expect["focus_domains"], (
+            f"{where}: focus.domains"
         )
     if "focus_customer" in expect:
         slot = (focus.get("customer") or {}).get("value") or {}
@@ -683,6 +683,10 @@ class TestTheOwnerWorldsCoverWhatTheOwnerAskedFor:
             assert len(world.turns) >= 2, f"{world.world_id} is not multi-turn"
 
     def test_the_criteria_the_plan_names_are_all_covered(self) -> None:
+        # AC-940 and AC-941 dropped here: their two worlds (the TTL ones) retired under
+        # D9 (12 Sep 2026, no counter no TTL anywhere), and the plan's own supersession
+        # map moves AC-940 to AC-1006 and AC-941 to AC-1010 / AC-1003 - both graded by
+        # `tests/chatbot/test_focus_worlds.py` instead, not by an OwnerWorld here.
         covered = {ac for world in worlds_mod.OWNER_WORLDS for ac in world.acs}
 
-        assert {"AC-940", "AC-941", "AC-942", "AC-944", "AC-945", "AC-946", "AC-947"} <= covered
+        assert {"AC-942", "AC-944", "AC-945", "AC-946", "AC-947"} <= covered
