@@ -142,6 +142,24 @@ function demandA(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
   } as BoardDemandLine;
 }
 
+/** A second, unrelated line on SO381895 - only ever named by the STALE applied batch below. */
+function demandA2(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
+  return {
+    sales_order_id: 'so-381895',
+    so_number: 'SO381895',
+    customer_name: 'YOTU BUILDER',
+    project_sales_order_id: 'pso-381895',
+    project_line_id: 'pl-381895-2',
+    line_no: 2,
+    item_code: 'SRTWCX-OTHER-ITEM',
+    qty: '10',
+    required_date: '2026-08-25',
+    fulfilment_location: 'BRW-IB',
+    priority: null,
+    ...overrides,
+  } as BoardDemandLine;
+}
+
 function demandB(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
   return {
     sales_order_id: 'so-381896',
@@ -460,5 +478,67 @@ describe('S1: a URL-applied batch and a board-pending batch on the same order', 
     );
     expect(byPso['pso-so-381895']).toBeDefined();
     expect(byPso['pso-so-381895']?.batch_id).toBe(BATCH_A.id);
+  });
+
+  it('does not pre-mark a line that only the stale, deduped-away applied batch names', async () => {
+    // The board's own PENDING batch for this order carries ONE row (line 1 only).
+    const pendingSingleLineBatch = {
+      ...BATCH_A,
+      orders: [{ ...BATCH_A.orders[0], rows: [BATCH_A.orders[0].rows[0]] }],
+    };
+    // The URL's APPLIED batch is stale: besides line 1 (now applied), it still names an
+    // EXTRA line (2) nothing pending covers any more. Pre-marking off the raw, un-deduped
+    // batch list would seed an approved draft for that extra line too.
+    const extraStaleRow = {
+      ...BATCH_A.orders[0].rows[0],
+      id: 'pcr-381895-2-stale',
+      project_line_id: 'pl-381895-2',
+      line_no: 2,
+      item_code: 'SRTWCX-OTHER-ITEM',
+      applied_state: 'applied' as const,
+    };
+    const appliedWithExtraLine = {
+      ...BATCH_A,
+      id: 'pcb-so381895-applied-extra',
+      applied_at: '2026-08-19T10:00:00Z',
+      applied_by_name: 'Cyndi Tee',
+      orders: [
+        {
+          ...BATCH_A.orders[0],
+          rows: [
+            { ...BATCH_A.orders[0].rows[0], applied_state: 'applied' as const },
+            extraStaleRow,
+          ],
+        },
+      ],
+    };
+
+    getPlanningBoard.mockResolvedValue(
+      withPendingBatch(
+        buildBoard([demandA(), demandA2()], {
+          today: TODAY,
+          freeStock: {},
+          granularity: 'week',
+        }),
+        { 'so-381895': pendingSingleLineBatch.id },
+      ),
+    );
+    getPlanningChangeBatch.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === appliedWithExtraLine.id ? appliedWithExtraLine : pendingSingleLineBatch,
+      ),
+    );
+
+    // URL batchId names the STALE applied batch (a deep link from the planning-changes
+    // list); the board itself names the surviving PENDING, single-line batch.
+    renderPanel(appliedWithExtraLine.id, ['SO381895']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await screen.findByTestId('board-change-pcr-381895-1');
+
+    // Only the surviving pending batch's one line is pre-marked - the applied batch's
+    // extra, deduped-away line must not add a second approved draft to Confirm's count.
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
   });
 });

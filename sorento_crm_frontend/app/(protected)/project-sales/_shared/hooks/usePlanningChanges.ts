@@ -46,9 +46,11 @@ export function usePlanningChangeBatches(params: PlanningChangeListParams = {}) 
  * directly rather than the raw per-query result objects `useQueries` hands back by
  * default - `useQueries` gives that array a NEW identity every render whether or not any
  * query's data actually changed, which fed a fresh array into every `useMemo` reading it
- * downstream on every render. `combine` is memoized internally by React Query the same
- * way a single `useQuery`'s `data` is, so the panel's own `useMemo`s over this result stay
- * referentially stable across a render that changed nothing here.
+ * downstream on every render. The stability comes from React Query itself: it runs
+ * `combine` on every render but diffs its RETURN VALUE with `replaceEqualDeep` against the
+ * previous one, and keeps the old reference when the two are structurally equal - so the
+ * panel's own `useMemo`s over this result stay referentially stable across a render that
+ * changed nothing here, even though `combine` itself is a fresh inline function each time.
  */
 export function usePlanningChangeBatchesByIds(batchIds: string[]): PlanningChangeBatch[] {
   return useQueries({

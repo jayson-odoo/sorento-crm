@@ -398,16 +398,19 @@ def confirm_all(
 
     `batch_id` travels PER ORDER now (`PLAN-scm-board-picks-up-pending-change.md`, change 4,
     AC-B5/AC-B6). The body-level `batch_id` is the LEGACY shape and only applies when NO
-    order in the payload names its own: the instant any order carries `batch_id` (even an
-    explicit `null`, meaning "this order has none"), the body-level id is ignored for every
-    order that did not name one - it must not silently inherit a batch another order in the
-    same press answered (reviewer finding B1, 39a5d8b07: the frontend already sends both a
-    body-level id AND a per-order `null` on a mixed board, and `entry.batch_id or
-    payload.batch_id` could not tell "this order legitimately has none" from "this order
-    said nothing", so it tried to apply order A's batch against order B, which held none of
-    its rows). An order that resolves to a batch takes the same apply the per-order Confirm
-    takes for a `?batch=` board (one press, one call, one revision, batch rows marked
-    applied); an order with neither confirms as an ordinary revision beside it.
+    order in the payload names a non-null `batch_id` of its own: the instant at least one
+    order carries a real id, the body-level id is ignored for every OTHER order in the same
+    payload, including one that explicitly said `batch_id: null` - it must not silently
+    inherit a batch a sibling order in the same press answered (reviewer finding B1,
+    39a5d8b07: the frontend already sends both a body-level id AND a per-order `null` on a
+    mixed board, and `entry.batch_id or payload.batch_id` could not tell "this order
+    legitimately has none" from "this order said nothing", so it tried to apply order A's
+    batch against order B, which held none of its rows). A payload where every order's
+    `batch_id` is null or absent still falls back to the body-level id for all of them,
+    exactly as before this fix - that is the legacy, single-batch shape. An order that
+    resolves to a batch takes the same apply the per-order Confirm takes for a `?batch=`
+    board (one press, one call, one revision, batch rows marked applied); an order with
+    neither confirms as an ordinary revision beside it.
     """
     try:
         if not payload.orders:

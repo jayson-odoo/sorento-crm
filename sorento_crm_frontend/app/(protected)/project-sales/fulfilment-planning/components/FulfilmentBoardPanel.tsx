@@ -271,6 +271,10 @@ export function FulfilmentBoardPanel({
    * because that is the one with something left to decide; between two pending (or two
    * applied) batches on the same order, the NEWEST `created_at` wins. The other batch's
    * row for that order is dropped entirely - not merged - so the cell renders once.
+   * Newest-wins is safe here rather than a real conflict: the backend's own
+   * `pending_batch_id_by_sales_order` already returns only the SINGLE newest pending batch
+   * per order, so the only way an OLDER pending batch reaches this map at all is via the
+   * URL deep link, never via the board's own union.
    */
   const bySoNumber = React.useMemo(() => {
     const out = new Map<string, { batch: PlanningChangeBatch; order: PlanningChangeOrder }>();
@@ -301,6 +305,23 @@ export function FulfilmentBoardPanel({
   const batchIdBySoNumber = React.useMemo(() => {
     const map = new Map<string, string>();
     for (const [soNumber, entry] of bySoNumber) map.set(soNumber, entry.batch.id);
+    return map;
+  }, [bySoNumber]);
+
+  /**
+   * The SURVIVING rows, grouped back by the batch that survived for them - the pre-mark
+   * effect below must read THIS, never the raw `loadedBatches`. An order the dedup above
+   * dropped (an applied batch a pending one superseded for the SAME so_number) still sits
+   * in `loadedBatches`, and seeding a draft from its rows would pre-mark a line the board
+   * no longer has anything pending to decide for.
+   */
+  const survivingOrdersByBatchId = React.useMemo(() => {
+    const map = new Map<string, PlanningChangeOrder[]>();
+    for (const { batch, order } of bySoNumber.values()) {
+      const list = map.get(batch.id);
+      if (list) list.push(order);
+      else map.set(batch.id, [order]);
+    }
     return map;
   }, [bySoNumber]);
 
@@ -415,22 +436,35 @@ export function FulfilmentBoardPanel({
    * re-seeding a sibling batch's lines the planner has already touched.
    *
    * A verdict the planner has already given is never overwritten.
+   *
+   * Reads `survivingOrdersByBatchId`, never the raw `loadedBatches`: a batch the S1 dedup
+   * dropped for a given order (an applied batch a pending one superseded on the SAME
+   * so_number) must not still seed an approved draft for that order's rows.
+   *
+   * Waits for EVERY id in `boardBatchIds` to have loaded before seeding anything, rather
+   * than reacting to each one as it arrives: two batches for the same so_number can settle
+   * on different renders (`useQueries`, one query per id), and while only one has loaded
+   * it is the sole, unopposed "survivor" the S1 dedup above ever sees - so seeding from
+   * that partial state can mark the STALE batch's rows a moment before the real survivor
+   * is known, and the once-per-batch-id guard below has no way to take an already-seeded
+   * key back once the true survivor turns out to be a different batch.
    */
   const preMarkedBatchIds = React.useRef<Set<string>>(new Set());
   React.useEffect(() => {
     if (allContributions.length === 0) return;
-    for (const batch of loadedBatches) {
-      if (preMarkedBatchIds.current.has(batch.id)) continue;
-      const keys = preMarkedKeys({ orders: batch.orders }, allContributions);
+    if (loadedBatches.length < boardBatchIds.length) return;
+    for (const [batchId, orders] of survivingOrdersByBatchId) {
+      if (preMarkedBatchIds.current.has(batchId)) continue;
+      const keys = preMarkedKeys({ orders }, allContributions);
       if (keys.length === 0) continue;
-      preMarkedBatchIds.current.add(batch.id);
+      preMarkedBatchIds.current.add(batchId);
       setDraft((current) => {
         const next = { ...current };
         for (const key of keys) if (!next[key]) next[key] = { verdict: 'approved' };
         return next;
       });
     }
-  }, [loadedBatches, allContributions]);
+  }, [survivingOrdersByBatchId, allContributions, loadedBatches, boardBatchIds]);
 
   /**
    * Keys whose DELETE is on the wire right now (C1, code review round 3 batch 2): added

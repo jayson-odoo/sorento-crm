@@ -290,20 +290,27 @@ def test_b1_mixed_body_and_per_order_batch_id_a_first(api):
     _assert_a_applied_b_ordinary(db, a_order, a_batch, b_order, response)
 
 
-def test_b1_mixed_body_and_per_order_batch_id_b_first(api):
-    """Same body, orders REVERSED - the reviewer's finding was order-dependent, so both
-    sequences are pinned rather than just the one that happened to be tried first."""
-    client, world = api
-    db = world.db
-    a_order, a_batch, a_payload, b_order, b_payload = _seed_mixed_batch_and_ordinary_orders(
-        client, world,
-    )
-
-    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json={
-        "orders": [
-            {"pso_id": b_order.id, "lines": [b_payload], "batch_id": None},
-            {"pso_id": a_order.id, "lines": [a_payload], "batch_id": str(a_batch.id)},
-        ],
-        "batch_id": str(a_batch.id),
-    })
-    _assert_a_applied_b_ordinary(db, a_order, a_batch, b_order, response)
+# NOTE: the reviewer's finding was order-dependent (B-first stayed green under the
+# reverted guard), so a `..._b_first` counterpart was written and then DELETED after
+# verification, not merely left green. Traced empirically (revert the guard in a
+# throwaway `git worktree`, diff a diagnostic dump of the full response, the batch's
+# final `result_json`/`applied_at`, and a seeded-purchasing-user notification count,
+# against the same dump with the guard intact): with B processed first, B's write is
+# routed into `_confirm_a_planning_change(batch=X, only_pso_ids={B})`, which finds ZERO
+# `PlanningChangeRow`s for (X, B) and so folds B's own composition into `apply()`'s
+# `extra_confirm_lines` - which calls the exact same `ProjectSupplyService.confirm`
+# ordinary confirms do, with the same `uncover_line_ids`/`settle_in_place_line_ids`
+# (both empty for B either way). `apply()`'s own `left_out_pending` guard then refuses to
+# stamp batch X `applied_at` off B's spurious pass (A's row is still `pending` and A is
+# not in B's `only_pso_ids`), so A's own later, correctly-routed turn is what actually
+# settles the batch - to an identical `result_json` either way. The one durable side
+# effect that DOES differ (`_notify_purchasing` fires a real `Notification` row keyed to
+# batch X for order B, which an ordinary confirm never would) only fires when a
+# `purchasing`-role user exists to receive it; seeding one to observe it uncovered an
+# UNRELATED bug (`NotificationService.create_with_channel_preferences` appears to close
+# the outer transaction, turning BOTH orders' results into "This transaction is closed" -
+# a real defect, but a different one, and not a report to bury in this test file's own
+# assertion). No assertion available to this fixture turns red on the revert without that
+# extra, unrelated fixture. A green test that cannot fail on the bug it names is worse
+# than an honest gap, so B-first stays untested here; A-first alone (above) already pins
+# the fix, since a fixed `write_one` cannot special-case which order runs first.
