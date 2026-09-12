@@ -360,7 +360,7 @@ def run_fetch(
     }
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
     if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(
-        args
+        args, tool_name=tool_name
     ):
         # Nothing the customer named resolved, so no filter could be built, and the document
         # tools answer an unfiltered call with the whole library. Refused as an ABSENCE (the
@@ -564,12 +564,15 @@ def complete_answer(
         fragments["incoming_picker"] = lane_item
 
     elif fetch_arm == "error" and fetch.get("outcome") == "access_denied":
-        # D6 (PLAN-chatbot-last-purchase-cost.md): the whole-domain grant gate in
-        # `run_fetch` refused the turn before any tool ran. The customer gets the SAME
-        # canned copy the head-level agent-denial answers with, reused rather than
-        # invented - `outcome_fragment["escalate-catalog"]` overrides `build-outcome`'s
-        # own key VERBATIM (RS-6.1c's mechanism, the same one `lanes/ideate.py` uses),
-        # so the tail's compile ladder renders this response with NO branch_kind of its
+        # D6 (PLAN-chatbot-last-purchase-cost.md, review B1): the whole-domain grant
+        # gate in `run_fetch` refused the turn before any tool ran. The customer gets
+        # the SAME registered `access_denied` template the head-level agent-denial
+        # renders, but the SUBJECT is the FEATURE ("purchase cost"), never the parser's
+        # `suggested_agent` - a field-reveal refusal is not an agent refusal, and
+        # `canned.access_denied_text` stays untouched (its own callers still want the
+        # agent). `outcome_fragment["escalate-catalog"]` overrides `build-outcome`'s own
+        # key VERBATIM (RS-6.1c's mechanism, the same one `lanes/ideate.py` uses), so
+        # the tail's compile ladder renders this response with NO branch_kind of its
         # own and therefore no catalog switch to teach a tenth arm to.
         from app.services.chatbot import copy as copy_mod
         from app.services.chatbot.lanes import canned as canned_lanes
@@ -579,7 +582,7 @@ def complete_answer(
             canned = copy_mod.resolve(db_session)
         finally:
             db_session.close()
-        denial_text = canned_lanes.access_denied_text(ctx, canned)
+        denial_text = canned_lanes.field_grant_denied_text(canned, "purchase cost")
         lane_item = {
             "outcome_fragment": {
                 "escalate-catalog": {
