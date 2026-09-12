@@ -3027,6 +3027,21 @@ def _apply_one_order(
         return empty_result
 
     by_line_id = {r.project_line_id: r for r in live if r.project_line_id}
+    # Every line THIS batch changed and nobody has decided yet. Not the same thing as a
+    # bystander: the book moved it, so its frozen composition is about a line that no
+    # longer exists, and `confirm()`'s carry-forward rule (13.4, "the union is the
+    # server's") would copy that stale answer into the new revision the moment any OTHER
+    # line of the order is named (seen live: SO403765 rev 5 kept line 12's old Buy and old
+    # date after an ADVANCE had been raised for it). It is UNCOVERED instead - back on the
+    # board at its new state - which is what the retired `replan` verb used to do for it.
+    undecided_changed_line_ids = {
+        str(r.project_line_id)
+        for r in order_rows
+        if r.project_line_id
+        and r.decision is None
+        and r.kind != "cancelled"
+        and r.applied_state == PLANNING_CHANGE_STATE_PENDING
+    }
     confirm_lines: List[dict] = []
     replanned = 0
     retired = 0
@@ -3051,6 +3066,10 @@ def _apply_one_order(
     for line_id, frozen_entry in frozen.items():
         row = by_line_id.get(line_id)
         if row is None:
+            if str(line_id) in undecided_changed_line_ids:
+                replanned += 1
+                uncover_line_ids.append(line_id)
+                continue
             # This line has no row in THIS batch - nobody on the board decided anything
             # about it. Leave it OUT of the payload entirely rather than re-naming it
             # from its frozen snapshot: `confirm()`'s own carry-forward rule (13.4, "the
