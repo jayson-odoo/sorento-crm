@@ -923,8 +923,11 @@ def crossdomain_render(
     # the send lane reads `envelope.attachments` off the PRIMARY answer alone
     # (`engine._attachments_src`) - the cross-domain probe's own envelope never reaches a
     # send, so the sentence was never true. `xd_files` still feeds `_xdBlock["attachments"]`
-    # below (harmless, nothing reads it downstream); only the claim that they were sent is
-    # gone.
+    # below - review fix round: NOT dropped after all (see the reviewer note below the
+    # `_xdBlock` literal) - the key is graded byte-for-byte by the crossdomain-render
+    # corpus replay (`test_s6c_answer_lane.py`/`test_s6c_engine_paths.py`, six registered
+    # captures), so removing it turns 12 green replays red; only the claim that the files
+    # were SENT is gone.
     xd_files = env["attachments"] if isinstance(jsc.get(env, "attachments"), list) else []
 
     silent_note = ""

@@ -51,7 +51,10 @@ cases:
     expect:
       branch_kind: business_query
       reply_contains: ["SRTKT71SS", "Specs:"]
-      reply_not_contains: [" more"]
+      # The retired cap ("and N more") only ever fires for N in 1..4 (8 shown, up to 12
+      # populated keys measured) - narrower than a bare " more" so a legitimate spec
+      # value that happens to contain the word "more" cannot false-fail this case.
+      reply_not_contains: [" and 1 more", " and 2 more", " and 3 more", " and 4 more"]
       no_uuid: true
 
   # ======================================================================================

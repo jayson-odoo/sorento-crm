@@ -1,6 +1,6 @@
 # PLAN: Chatbot answer polish, 12 Sep 2026 (five owner findings from live turns)
 
-Status: planned
+Status: implemented (PR pending)
 Branch: `feat/chatbot-answer-polish` (worktree `.claude/worktrees/chatbot-answer-polish`)
 UAC: `chatbot-answer-polish-12sep-acceptance-criteria.md`
 Lane stack: backend :8080 (uvicorn, worktree venv symlinked to the primary venv), MCP :8765

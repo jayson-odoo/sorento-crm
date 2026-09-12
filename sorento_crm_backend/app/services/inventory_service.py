@@ -1,6 +1,6 @@
 """Inventory service for business logic."""
-from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_, tuple_
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, or_, and_, tuple_, select
 from typing import Optional, TYPE_CHECKING
 import time
 import uuid
@@ -774,21 +774,21 @@ class StockService:
         # while compact correctly printed "*Total:* 0 (O/S: 21) ... but PO is
         # placed" for the same all-zero product.
         #
-        # The EXISTS carries the SAME warehouse criterion as the outer query, and
-        # an EXPLICIT `company_id` equality, both mandatory: issue #832 is a
-        # correlated EXISTS escaping the `do_orm_execute` company-scope filter, so
-        # a sibling row in another company (or a warehouse this policy excludes)
-        # must not count as "has stock somewhere" - it counts only inside this
-        # filter's own subquery, never through the ORM-level auto-filter, which a
-        # correlated EXISTS does not go through.
+        # The EXISTS carries the SAME warehouse criterion AND the same active-warehouse
+        # restriction as the outer query, plus an EXPLICIT `company_id` equality, all
+        # mandatory: issue #832 is a correlated EXISTS escaping the `do_orm_execute`
+        # company-scope filter, so a sibling row in another company, a warehouse this
+        # policy excludes, or a warehouse the outer query never shows at all because it
+        # is `is_active=False` must not count as "has stock somewhere" - an inactive
+        # location is outside the visible set, so stock sitting there is as unseen as
+        # stock in an excluded one, and it counts only inside this filter's own
+        # subquery, never through the ORM-level auto-filter, which a correlated EXISTS
+        # does not go through.
         if (
             policy is not None
             and policy.hide_zero_locations
             and policy.mode == "detailed"
         ):
-            from sqlalchemy import select
-            from sqlalchemy.orm import aliased
-
             s2 = aliased(Stock)
             has_stock_elsewhere = (
                 select(s2.id)
@@ -796,6 +796,7 @@ class StockService:
                     s2.product_id == Stock.product_id,
                     s2.company_id == Stock.company_id,
                     warehouse_criterion(policy, s2.warehouse_id),
+                    s2.warehouse.has(Warehouse.is_active.is_(True)),
                     s2.quantity_on_hand != 0,
                 )
                 .exists()
