@@ -1149,6 +1149,14 @@ _FIXROUND_REASON = (
 
 _FIXROUND_OUTPUT_EXCHANGE: tuple[str, ...] = (
     "b56-t4-parser",
+    # The last four moved when `reuse_domain_entityless` stopped carrying `intent_hint`
+    # off the previous state. It is the same removal as the six above, one module across:
+    # the rule lives in `dialogue/focus.py` and read the legacy key from inside the entity
+    # executor. `intent_hint` is derived per turn (D14) and is not a session key at all.
+    "exec-13488927",
+    "parser-15114106",
+    "rs09-t2-parser",
+    "rs09-t3-parser",
     "parser-15025626",
     "parser-15030893",
     "parser-15036672",

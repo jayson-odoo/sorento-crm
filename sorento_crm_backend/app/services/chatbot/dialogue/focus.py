@@ -442,11 +442,18 @@ def reuse_domain_entityless(
     is the same one, the module is the same one, and the ordering the corpus records is
     kept.
 
-    Reproduced predicate for predicate, INCLUDING that the diagnostic is stamped even when
-    the previous state carried no domain at all: the old block set the key unconditionally
-    once past its two gates, and 5 captures grade that.
+    THE ALIVE DOMAIN, off `focus.domains` - the same value `_reuse_domain` reads at the
+    `#6` position. It read the legacy `domain_hint` off the previous session until the
+    L1-S3 fix round, which is a key the five-key session does not carry: so it wrote
+    `domain_hint = None`, returned True anyway, and `_reuse_domain` - seeing the carry
+    already "done" - skipped its own restore. Between them the domain was lost on every
+    entity-less continuation, and "last month" after a picked customer went out with no
+    domain and never reached the order tool.
 
-    Returns whether it fired, so `apply` can write the `focus` trace entry for it.
+    Returns whether a domain was actually RESTORED, which is what makes the two halves
+    agree: `apply` writes the trace entry on it, and `_reuse_domain` runs when this did
+    not. The old contract - True once past the two gates, restored or not - is why they
+    could disagree at all.
     """
     if o.get("message_type") in ("casual", "request_for_help"):
         return False
@@ -457,20 +464,22 @@ def reuse_domain_entityless(
         # `reset_on_topic` is evaluated, so it takes the signal directly rather than
         # carrying a domain the rule two steps later is about to clear.
         return False
-    prev_domain = jsc.get(prev, "domain_hint")
-    prev_intent = jsc.get(prev, "intent_hint")
+    alive = [d for d in jsc.array(value_of(from_session(prev, turn_no=0), "domains")) if jsc.truthy(d)]
+    prev_domain = alive[0] if alive else None
     o["domain_hint"] = (
         prev_domain
         if jsc.truthy(prev_domain)
         else (o.get("domain_hint") if jsc.truthy(o.get("domain_hint")) else None)
     )
-    o["intent_hint"] = (
-        prev_intent
-        if jsc.truthy(prev_intent)
-        else (o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None)
-    )
+    # `intent_hint` is NOT carried. It is derived from this turn's own parse (D14) and is
+    # not a session key, so the only honest value is the one this turn emitted.
+    o["intent_hint"] = o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None
+    # The DIAGNOSTIC stays unconditional once past the three gates - the old block stamped
+    # it whether or not the previous state carried a domain, and 5 captures grade that.
+    # What is conditional is the RETURN, which is a different question: did a domain
+    # actually come back.
     o["domain_reused_entityless"] = True
-    return True
+    return bool(jsc.truthy(prev_domain))
 
 
 def reuse_alive(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
