@@ -547,6 +547,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "instead of (alongside) the flat list - use for 'DO by transporter this week', 'open DO by "
             "customer'. Applies to every bucket. `sort`/`dir`/`limit` narrow and order the rows before "
             "grouping.\n\n"
+            "`customer_query` - partial customer/debtor name or code match (case-insensitive), an "
+            "alternative to resolving `customer_ids` upstream. `warehouse_codes` - exact warehouse codes "
+            "(csv/JSON/repeated); an order qualifies when ANY of its lines sits at one of these "
+            "warehouses. The only date filter here is `actual_delivery_date_from`/"
+            "`actual_delivery_date_to` above; for a sales-order-placement-date window over open/pending "
+            "figures use crm_outstanding_report instead.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -556,10 +562,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
             "include_pipeline", "group_by", "sort", "dir",
+            "customer_query", "warehouse_codes",
             "contact_id", "space_id",
         ),
         domain="orders",
-        related_tools=("crm_order_management_orders_by_product_list",),
+        related_tools=("crm_order_management_orders_by_product_list", "crm_outstanding_report"),
         escalation_team="sales",
     ),
     ToolSpec(
@@ -579,6 +586,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "alongside it to fold `so_outstanding_qty` (open SO lines not yet a DO, same "
             "customer_ids/product_ids scope) into EVERY `summary.products` and `summary.groups` row; "
             "default false, independent of `include_summary`. Omit both for a plain DO list.\n\n"
+            "`customer_query` - partial customer/debtor name or code match (case-insensitive). "
+            "`warehouse_codes` - exact warehouse codes (csv/JSON/repeated), filtered on the SAME line "
+            "that matched the product. The only date filter here is `actual_delivery_date_from`/"
+            "`actual_delivery_date_to` above; for a sales-order-placement-date window over "
+            "open/pending figures use crm_outstanding_report instead.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -587,10 +599,50 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "page", "limit", "product_ids", "customer_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
-            "include_pipeline", "sort", "dir", "contact_id", "space_id",
+            "include_pipeline", "sort", "dir",
+            "customer_query", "warehouse_codes",
+            "contact_id", "space_id",
         ),
         domain="orders",
-        related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product"),
+        related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product", "crm_outstanding_report"),
+        escalation_team="sales",
+    ),
+    ToolSpec(
+        "crm_outstanding_report",
+        (
+            "SO backlog + DO pending for ONE product - the report to use for any 'outstanding', 'o/s', "
+            "'backlog', 'sales order outstanding', 'DO pending', 'not yet delivered', 'not yet "
+            "transferred to DO' question. Returns TWO named blocks, never the bare word "
+            "'outstanding' alone:\n"
+            "  • `so` - Sales order outstanding: `ordered_qty` (SUM qty_ordered), `transferred_qty` "
+            "(SUM qty_delivered), `outstanding_qty` (the difference - booked, not yet turned into a "
+            "DO), `so_count`, `order_date_min`/`order_date_max`.\n"
+            "  • `do` - Delivery order pending: `do_qty` (every matching DO, delivered + pending), "
+            "`delivered_qty`, `pending_qty` (DO raised, not yet delivered), `do_count`, "
+            "`do_date_min`/`do_date_max`.\n"
+            "`scope` = so | do | both (default both) picks which block(s) come back - the OTHER key is "
+            "absent from the body entirely, not null. Every total is also broken down as "
+            "`so_by_location`/`so_by_customer`/`do_by_location`/`do_by_customer` (code/customer_name + "
+            "that block's own quantities), and as `so_rows`/`do_rows` (one row per SO / per DO, lines "
+            "rolled up).\n\n"
+            "FILTERS: `product_code` (REQUIRED, exact, case-insensitive - no sibling-code expansion). "
+            "`customer_query` - partial match on customer NAME only (never debtor/customer code). "
+            "`warehouse_codes` - exact warehouse codes (csv/JSON/repeated); resolve a location TOKEN "
+            "(e.g. an 'IB' suffix matching several codes) to exact codes yourself before calling - this "
+            "tool does not do suffix matching. `order_date_from`/`order_date_to` filter SO rows on "
+            "sales_orders.order_date and DO rows on orders.order_date (never actual_delivery_date - a "
+            "pending DO by definition has none); omit both for all dates.\n\n"
+            "Use crm_order_management_orders_list / crm_order_management_orders_by_product_list instead "
+            "for a plain row list or a delivered/actual-delivery-date question."
+        ),
+        "/api/v1/order-management/outstanding-report",
+        (),
+        (
+            "product_code", "scope", "customer_query", "warehouse_codes",
+            "order_date_from", "order_date_to",
+        ),
+        domain="orders",
+        related_tools=("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"),
         escalation_team="sales",
     ),
     ToolSpec(
