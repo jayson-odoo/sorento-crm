@@ -31,6 +31,11 @@ Third ruling, from live verification the same day, verbatim:
 
 > we should show supplier also
 
+Fourth ruling, same round, verbatim:
+
+> we need to sort by latest PO date first otherwise very confusing, so first sort by the
+> product, then latest PO date first
+
 ## What exists today (measured, local prod copy `sorento_ai_automation`, 12 Sep 2026)
 
 - `purchase_order_lines` carries the whole money line from AutoCount: `unit_cost`
@@ -105,9 +110,15 @@ Third ruling, from live verification the same day, verbatim:
 - D3 Cancelled excluded: `purchase_order_lines.line_status <> 'cancelled'` AND
   `purchase_orders.status <> 'cancelled'`. Lines with `unit_cost IS NULL` never answer: a
   cost answer with no cost is not an answer.
-- D4 Ordering key: `purchase_orders.issue_date DESC`, then `purchase_order_lines.created_at
-  DESC`, then `id` for determinism. No fallback chain and no `_source` field: `issue_date`
-  is 100% populated.
+- D4 Pick key (which lines answer): `purchase_orders.issue_date DESC`, then
+  `purchase_order_lines.created_at DESC`, then `id` for determinism. No fallback chain and
+  no `_source` field: `issue_date` is 100% populated. Display order (fourth owner ruling,
+  live verification, 12 Sep 2026, verbatim: "we need to sort by latest PO date first
+  otherwise very confusing, so first sort by the product, then latest PO date first"):
+  grouped by `product_code` ASC, then `issue_date` DESC (nulls last), then `created_at`
+  DESC within each product - the windowed branch's OUTER query orders on this, separately
+  from the `rn` the inner window used to pick which lines answer. The unscoped branch was
+  already newest-first across every product, so it needs no change.
 - D5 Family = every member. `product_ids` carries every resolved member and `top_n` is per
   `(product, warehouse)` group, never an overall cap. Same rule on last-in (per product).
   Unscoped ask (no `product_ids`): plain `top_n` cap over every line, newest first, exactly

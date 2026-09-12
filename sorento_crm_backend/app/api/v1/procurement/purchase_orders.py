@@ -44,10 +44,12 @@ def get_purchase_orders_last_cost(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """The last `top_n` PO lines per `(product, warehouse)`, newest first by the PO's own
-    `issue_date`. With NO `product_ids` (an unscoped ask), `top_n` is instead a plain cap
-    over every line - the same ordering, newest first, any product - never one row per
-    product across the whole table.
+    """The last `top_n` PO lines per `(product, warehouse)`, grouped by product, newest
+    PO date first within each product (owner ruling, live verification, 12 Sep 2026,
+    verbatim: "we need to sort by latest PO date first otherwise very confusing, so
+    first sort by the product, then latest PO date first"). With NO `product_ids` (an
+    unscoped ask), `top_n` is instead a plain cap over every line - the same ordering,
+    newest first, any product - never one row per product across the whole table.
 
     Cancelled lines and cancelled POs are excluded; a line with no `unit_cost` never
     answers. `Cost / unit`, `Discount / unit` and `Cost after discount / unit` are all

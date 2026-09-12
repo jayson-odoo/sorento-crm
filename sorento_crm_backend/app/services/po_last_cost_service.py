@@ -10,7 +10,9 @@ discount / unit, Warehouse`. Second ruling the same day: the three money figures
 UNIT, cancelled lines are excluded, family resolution answers every member, and `top_n`
 was never an overall cap when products are named. Third ruling, from live verification the
 same day, verbatim: "we should always show discount even though it is null or 0" and "we
-should show supplier also".
+should show supplier also". Fourth ruling, same day, verbatim: "we need to sort by latest
+PO date first otherwise very confusing, so first sort by the product, then latest PO date
+first".
 
 `discount` on `purchase_order_lines` is a LINE amount, not a unit figure - measured on the
 local prod copy `sorento_ai_automation`, 12 Sep 2026: on 59,585 of 59,859 fully-populated
@@ -36,10 +38,16 @@ Cancelled excluded: `purchase_order_lines.line_status <> 'cancelled'` AND
 `purchase_orders.status <> 'cancelled'`. A line with `unit_cost IS NULL` never answers - a
 cost answer with no cost is not an answer.
 
-Ordering key: `purchase_orders.issue_date DESC`, then `purchase_order_lines.created_at
-DESC`, then `id` for determinism - `issue_date` is 100% populated (6,349 of 6,349 header
-rows on the same measured copy), so unlike `spo_last_receipt_service` there is no fallback
-chain and no `_source` field to say which column answered.
+Pick key (which lines answer): `purchase_orders.issue_date DESC`, then
+`purchase_order_lines.created_at DESC`, then `id` for determinism - `issue_date` is 100%
+populated (6,349 of 6,349 header rows on the same measured copy), so unlike
+`spo_last_receipt_service` there is no fallback chain and no `_source` field to say which
+column answered.
+
+Display order (fourth owner ruling, live verification): `Product.product_code ASC`, then
+`issue_date DESC` (nulls last), then `created_at DESC` - grouped by product first, newest
+PO date first within each product, never the pick's own `rn` order. The unscoped branch
+(no `product_ids`) was already newest-first across every product, so it needs no change.
 """
 from __future__ import annotations
 
@@ -130,6 +138,12 @@ def last_cost_rows(
     `warehouse_ids` narrows BEFORE the pick, so a line at an excluded warehouse can never
     displace one at an included warehouse.
 
+    Display order, when `product_ids` is given (fourth owner ruling, live verification,
+    12 Sep 2026, verbatim: "we need to sort by latest PO date first otherwise very
+    confusing, so first sort by the product, then latest PO date first"): grouped by
+    `product_code` ASC, then newest `po_date` first within each product, `created_at`
+    breaking a tie. The unscoped branch is already newest-first across every product.
+
     Row keys: `po_number`, `product_id`, `product_code`, `product_name`, `po_quantity`
     (plain number), `po_date` (ISO, or None), `currency` (the LINE's own), `unit_cost`,
     `discount_per_unit` (ALWAYS a number, `0.0` when the line's discount is NULL or
@@ -161,6 +175,7 @@ def last_cost_rows(
                 PurchaseOrder.supplier_id,
                 PurchaseOrderLine.qty_ordered,
                 PurchaseOrder.issue_date,
+                PurchaseOrderLine.created_at,
                 PurchaseOrderLine.currency,
                 PurchaseOrderLine.unit_cost,
                 PurchaseOrderLine.discount,
@@ -206,7 +221,16 @@ def last_cost_rows(
             .outerjoin(Warehouse, Warehouse.id == sub.c.warehouse_id)
             .outerjoin(Supplier, Supplier.id == sub.c.supplier_id)
             .filter(sub.c.rn <= top_n)
-            .order_by(Product.product_code.asc(), sub.c.rn.asc())
+            # Owner ruling, 12 Sep 2026, verbatim: "we need to sort by latest PO date
+            # first otherwise very confusing, so first sort by the product, then latest
+            # PO date first" - grouped by product, newest PO date first within each
+            # product, `created_at` breaks a same-date tie. `rn` still picks WHICH lines
+            # answer (per product, warehouse); this only orders how they are displayed.
+            .order_by(
+                Product.product_code.asc(),
+                sub.c.issue_date.desc().nulls_last(),
+                sub.c.created_at.desc(),
+            )
             .all()
         )
     else:
