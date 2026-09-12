@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import SPOAllocation, Supplier
-from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.services.dependent_probe import is_referenced, referrers_of, relation_name
 from app.services.document_ingest_service import CANCELLED, DOCUMENT_SPECS
@@ -122,6 +122,7 @@ ENTITY_MODELS: dict[str, type] = {
     "customers": Customer,
     "products": Product,
     "sales_agents": SalesAgent,
+    "brands": Brand,
     **{name: spec.header_model for name, spec in DOCUMENT_SPECS.items()},
 }
 
@@ -138,6 +139,7 @@ MASTER_DEACTIVATION: dict[str, tuple[str, Any]] = {
     "customers": ("is_active", False),
     "products": ("is_discontinued", True),
     "sales_agents": ("is_active", False),
+    "brands": ("is_active", False),
 }
 
 
@@ -153,7 +155,7 @@ class DeletionService:
         # incumbent company, and a deletion meant for the other one would remove
         # a row this caller never named.
         self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        self.refs = IntegrationReferenceService(db, company_id=self.company_id)
 
     def delete(
         self, entity_type: str, source_refs: list[str], *, dry_run: bool = False

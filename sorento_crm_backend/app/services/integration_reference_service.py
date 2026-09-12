@@ -72,7 +72,22 @@ SUPPORTED_ENTITY_TYPES = {
     "picking_lines",
     "orders",
     "order_lines",
+    # autocount-brands-ingest AC-15: brands joined the ingest surface.
+    "brands",
 }
+
+# Tables where a row serves every company (`company_id` NULL). Moved here from
+# `master_ingest_service` (autocount-brands-ingest BL-056, D11): this service
+# needs it too now, for its own `company_id` column, and the refs service
+# cannot import the ingest service (circular) - `master_ingest_service`
+# re-exports both names, so `deletion_service.py` and `master_read_service.py`
+# keep importing from where they always have.
+SHARED_TABLES = {"sales_agents"}
+
+
+def _is_company_scoped(table: str) -> bool:
+    return table not in SHARED_TABLES
+
 
 DEFAULT_SOURCE_SYSTEM = "autocount"
 
@@ -87,8 +102,16 @@ def _require_supported(entity_type: str) -> str:
 
 
 class IntegrationReferenceService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, *, company_id: Optional[str] = None):
         self.db = db
+        # BL-056 (D14): the anchor company a scoped `resolve()`/`link()` reads
+        # and writes under. Every real caller (the six ingest/read/deletion
+        # constructors) always has one. Left `None` only by a caller with no
+        # anchor of its own to give - `resolve()` then falls back to the
+        # pre-BL-056 global lookup (nothing to narrow BY without one) and
+        # `link()` infers the entity's own company instead - see
+        # `_anchor_for_link`.
+        self.company_id = company_id
 
     # ------------------------------------------------------------------ write
 
@@ -106,18 +129,25 @@ class IntegrationReferenceService:
 
         Re-linking the same pair updates in place, which is what makes ingest
         idempotent: a re-push must never create a second record.
+
+        BL-056 (D12/D14): the same ``source_ref`` may exist once PER COMPANY
+        for a scoped ``entity_type`` - so "already linked" is scoped to the
+        anchor too, and linking the same ref under a different company is a
+        brand new row, never a conflict with this one.
         """
         _require_supported(entity_type)
+        anchor = self._anchor_for_link(entity_type, entity_id)
 
-        existing = (
-            self.db.query(IntegrationReference)
-            .filter(
-                IntegrationReference.source_system == source_system,
-                IntegrationReference.entity_type == entity_type,
-                IntegrationReference.source_ref == source_ref,
-            )
-            .first()
+        existing_query = self.db.query(IntegrationReference).filter(
+            IntegrationReference.source_system == source_system,
+            IntegrationReference.entity_type == entity_type,
+            IntegrationReference.source_ref == source_ref,
         )
+        if anchor is not None:
+            existing_query = existing_query.filter(IntegrationReference.company_id == anchor)
+        else:
+            existing_query = existing_query.filter(IntegrationReference.company_id.is_(None))
+        existing = existing_query.first()
         if existing is not None:
             if str(existing.entity_id) != str(entity_id):
                 # One external document maps to one local record. A second
@@ -165,10 +195,38 @@ class IntegrationReferenceService:
             source_ref=source_ref,
             source_doc_no=source_doc_no,
             integration_id=integration_id,
+            company_id=anchor,
         )
         self.db.add(row)
         self.db.flush()
         return row
+
+    def _anchor_for_link(self, entity_type: str, entity_id: str) -> Optional[str]:
+        """The company_id to store on a linked reference, or None for a shared
+        type (BL-056 D14).
+
+        The constructor's own anchor wins when given. Without one, a scoped
+        type falls back to the ENTITY's own stored company - the row being
+        linked already belongs to a definite company, so there is nothing to
+        guess (unlike `resolve()`, which has no row to read a company off and
+        must refuse instead - see its own docstring).
+        """
+        if not _is_company_scoped(entity_type):
+            return None
+        if self.company_id is not None:
+            return self.company_id
+        table = _require_supported(entity_type)
+        row = self.db.execute(
+            text(f"SELECT company_id FROM {table} WHERE id = :entity_id"),
+            {"entity_id": str(entity_id)},
+        ).first()
+        found = row[0] if row else None
+        if found is None:
+            raise ValueError(
+                f"cannot link a company-scoped {entity_type} reference without an anchor "
+                f"company_id, and {entity_id!r} has none of its own"
+            )
+        return str(found)
 
     def unlink(self, *, entity_type: str, entity_id: str) -> int:
         """Drop the mapping for a record. Call when deleting the record itself."""
@@ -206,18 +264,29 @@ class IntegrationReferenceService:
         Returns None -- and removes the mapping -- when the referenced record has
         since been deleted, so ingest treats it as new rather than updating a
         row that is gone.
+
+        BL-056 (D14): a scoped ``entity_type`` resolves only within THIS
+        instance's anchor company - a ref linked under a different company is
+        reported exactly like one that was never linked at all. An unanchored
+        call on a scoped type (no ``company_id`` given at construction) is not
+        narrowed by company at all - the pre-BL-056 global lookup - since
+        without an anchor there is no company to narrow BY; every real caller
+        (the six ingest/read/deletion services) always has one, so this path
+        is exercised only by callers with no anchor of their own to give.
         """
         _require_supported(entity_type)
 
-        row = (
-            self.db.query(IntegrationReference)
-            .filter(
-                IntegrationReference.source_system == source_system,
-                IntegrationReference.entity_type == entity_type,
-                IntegrationReference.source_ref == source_ref,
-            )
-            .first()
+        query = self.db.query(IntegrationReference).filter(
+            IntegrationReference.source_system == source_system,
+            IntegrationReference.entity_type == entity_type,
+            IntegrationReference.source_ref == source_ref,
         )
+        if _is_company_scoped(entity_type):
+            if self.company_id is not None:
+                query = query.filter(IntegrationReference.company_id == self.company_id)
+        else:
+            query = query.filter(IntegrationReference.company_id.is_(None))
+        row = query.first()
         if row is None:
             return None
 

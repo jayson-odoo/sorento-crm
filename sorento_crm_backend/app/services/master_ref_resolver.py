@@ -86,14 +86,14 @@ class MasterRefResolver:
         self.db = db
         self.integration_id = integration_id
         self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        self.refs = IntegrationReferenceService(db, company_id=self.company_id)
         # Perf round 5: one resolver instance already lives for exactly one
         # batch (a fresh `DocumentIngestService`/`ShippingOrderIngestService`
         # per `ingest()` call), so a plain instance dict is the whole cache -
         # never persisted, never shared across instances or companies. Keyed
         # `(tablename, "ref"|"code", value)` -> entity_id. A ref is cached
-        # only AFTER `_require_same_company` has passed for it (so a cache
-        # hit can skip that check too, safely); a code lookup is cached
+        # only AFTER `self.refs.resolve()` (scoped to this anchor, BL-056) has
+        # vouched for it; a code lookup is cached
         # positive for every model, negative (`None`) ONLY for `Product` and
         # `Warehouse`, which this ladder never back-creates - a negative
         # cache for `Customer`/`Supplier` would go stale the moment this same
@@ -113,7 +113,21 @@ class MasterRefResolver:
         FK NULL - an order whose debtor Sorento does not hold is still an order.
         A ref that WAS sent and does not resolve is a sequencing artefact: the
         master push has not drained yet, so the whole document is retryable
-        rather than written with the attribution silently dropped.
+        rather than written with the attribution silently dropped. BL-056
+        (D15): that now covers a ref that resolves, just not under THIS
+        company - `self.refs` is scoped to the anchor, so it is invisible here
+        exactly like one that was never linked. The cross-company refusal
+        this used to need (`_require_same_company`) is unreachable through
+        refs now and has been removed.
+
+        AC-19b: a ref linked in ANOTHER company is marked `unconditional`
+        (checked with a throwaway UNANCHORED service - the pre-BL-056 global
+        lookup, see `IntegrationReferenceService.resolve`) so `_resolve_
+        master` re-raises it even when a code/name was ALSO sent, instead of
+        falling through to them the way a genuinely-unknown ref does
+        (AC-V1-3/5) - sending more identifying information must not turn a
+        cross-company sequencing artefact into a silent back-create/unresolved
+        warning under the wrong company.
         """
         if source_ref is None or source_ref == "":
             return None
@@ -124,43 +138,16 @@ class MasterRefResolver:
             entity_type=model.__tablename__, source_ref=source_ref
         )
         if entity_id is None:
-            raise MissingReference(field, source_ref)
-        self._require_same_company(
-            model, entity_id, f"{field} {source_ref!r}", field_name=field
-        )
-        # Cached only now that the company check has actually passed for it.
+            known_elsewhere = (
+                IntegrationReferenceService(self.db).resolve(
+                    entity_type=model.__tablename__, source_ref=source_ref
+                )
+                is not None
+            )
+            raise MissingReference(field, source_ref, unconditional=known_elsewhere)
+        # Cached only now that the anchor's own resolve() has vouched for it.
         self._memo[memo_key] = entity_id
         return entity_id
-
-    def _require_same_company(
-        self, model: type, entity_id: str, subject: str, *, field_name: str = "source_ref"
-    ) -> None:
-        """Refuse a reference that resolves into another company.
-
-        `integration_references` is global, so a ref finds its row whatever
-        company the request anchored to. Binding this document to it - or
-        updating it - would be a cross-company write wearing the clothes of an
-        ordinary re-sync. Shared masters (`sales_agents`) carry no company at all
-        and are visible from either anchor, so they are exempt.
-
-        `field_name` (AC-V1-8) is the verdict-error key the conflict is filed
-        under: the document's own `source_ref` for the header's own adoption
-        check (the default, unchanged), or the specific master field (e.g.
-        `"customer_ref"`) when this guards a v2 ladder resolution - so the ESB
-        sees WHICH reference conflicted, not just that the record failed.
-        """
-        if not _is_company_scoped(model.__tablename__):
-            return
-        mine = (
-            self.db.query(model.id)
-            .filter(model.id == str(entity_id), model.company_id == self.company_id)
-            .first()
-        )
-        if mine is None:
-            raise ReferenceConflict(
-                f"{subject} is already claimed outside this company anchor",
-                field_name=field_name,
-            )
 
     # -------------------------------------------------------- v2 resolution
     def _resolve_master(
@@ -192,7 +179,13 @@ class MasterRefResolver:
         if ref:
             try:
                 return self._resolve_ref(ref_field, ref, model)
-            except MissingReference:
+            except MissingReference as exc:
+                # AC-19b: a ref linked in ANOTHER company re-raises regardless
+                # of a sent code/name - D10's warehouse exemption still wins
+                # (it never raises, cross-company or not), everything else
+                # does not get the AC-V1-3/5 fallback for THIS kind of miss.
+                if exc.unconditional and model is not Warehouse:
+                    raise
                 # B1 fix: a sent ref that fails falls through to code/name
                 # exactly like every other model - warehouse's ONLY difference
                 # is that it never raises once every avenue is exhausted
