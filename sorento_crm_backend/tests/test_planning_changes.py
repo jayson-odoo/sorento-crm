@@ -288,136 +288,6 @@ def _place_row_on_a_real_po(db, world, row: OrderInquiryRow, *, qty_ordered):
 
 
 # ============================================================================
-# AC-R12: one test per row of the section-0 rule table, against `suggest()` (pure).
-# ============================================================================
-
-
-def _facts(*, dealer=False, dealer_where=None, project_hot=False, discontinued=False,
-           days_moved=0, within_window=True, window_days=60, buy_actioned=False,
-           po_number=None):
-    return {
-        "dealer_hot_selling": {"value": dealer, "where": dealer_where or []},
-        "project_hot_selling": {"value": project_hot, "where": []},
-        "discontinued": discontinued,
-        "days_moved": days_moved,
-        "within_reserve_window": {
-            "value": within_window, "window_days": window_days,
-            "new_date": "2026-09-01", "window_end": "2026-10-01",
-        },
-        "buy_actioned": {"value": buy_actioned, "po_number": po_number},
-    }
-
-
-def _held(*, reserve=None, buy_qty="0"):
-    return {
-        "reserve": reserve or [], "borrow": [], "buy_qty": buy_qty,
-        "timely_spo_qty": "0", "revision_no": 1,
-    }
-
-
-def test_rule_1_delay_within_window_not_hot_keeps():
-    verb, why = planning_change_service.suggest(
-        "delayed",
-        _held(reserve=[{"location": "BRW-BB", "qty": "66"}]),
-        _facts(days_moved=14, within_window=True),
-    )
-    assert verb == "keep"
-    assert "window" in why
-
-
-def test_rule_2_delay_beyond_window_not_hot_not_discontinued_releases():
-    verb, why = planning_change_service.suggest(
-        "delayed",
-        _held(reserve=[{"location": "MWH-IB", "qty": "40"}]),
-        _facts(days_moved=197, within_window=False),
-    )
-    assert verb == "release"
-    assert "beyond" in why
-
-
-def test_rule_3_delay_dealer_hot_selling_releases_whatever_the_delay():
-    verb, why = planning_change_service.suggest(
-        "delayed",
-        _held(reserve=[{"location": "BRW", "qty": "30"}]),
-        _facts(days_moved=21, within_window=True, dealer=True, dealer_where=["BRW", "BRW-IB"]),
-    )
-    assert verb == "release"
-    assert "Dealer hot-selling" in why
-
-
-def test_rule_4_delay_discontinued_keeps_whatever_the_delay():
-    verb, why = planning_change_service.suggest(
-        "delayed",
-        _held(reserve=[{"location": "MWH-IB", "qty": "18"}]),
-        _facts(days_moved=259, within_window=False, discontinued=True),
-    )
-    assert verb == "keep"
-    assert "Discontinued" in why
-
-
-def test_rule_5_delay_holds_only_buy_not_actioned_keeps():
-    verb, why = planning_change_service.suggest(
-        "delayed", _held(reserve=[], buy_qty="25"),
-        _facts(days_moved=19, buy_actioned=False),
-    )
-    assert verb == "keep"
-    assert "has not actioned" in why
-
-
-def test_rule_6_delay_buy_already_actioned_keeps_and_notes_po():
-    verb, why = planning_change_service.suggest(
-        "delayed", _held(reserve=[], buy_qty="18"),
-        _facts(days_moved=21, buy_actioned=True, po_number="PO2026-0412"),
-    )
-    assert verb == "keep"
-    assert "PO2026-0412" in why
-
-
-def test_rule_7_advance_always_replans():
-    verb, why = planning_change_service.suggest(
-        "advanced", _held(reserve=[{"location": "BRW-BB", "qty": "20"}], buy_qty="40"),
-        _facts(days_moved=-14),
-    )
-    assert verb == "replan"
-    assert "Advanced" in why
-
-
-def test_rule_8_qty_up_replans_the_delta():
-    verb, why = planning_change_service.suggest(
-        "qty_up", _held(reserve=[{"location": "BRW-BB", "qty": "72"}]), _facts(),
-    )
-    assert verb == "replan"
-
-
-def test_rule_9_qty_down_reduces():
-    verb, why = planning_change_service.suggest(
-        "qty_down", _held(reserve=[{"location": "BRW-BB", "qty": "50"}], buy_qty="16"),
-        _facts(),
-    )
-    assert verb == "reduce"
-
-
-def test_rule_10_closed_retires():
-    verb, why = planning_change_service.suggest(
-        "cancelled", _held(reserve=[{"location": "MWH-IB", "qty": "4"}], buy_qty="8"), _facts(),
-    )
-    assert verb == "retire"
-
-
-def test_rule_11_new_line_on_planned_order_replans_not_decided():
-    verb, why = planning_change_service.suggest("added", None, _facts())
-    assert verb == "replan"
-    assert "New line" in why
-
-
-def test_ac_r03_no_decision_always_replans_whatever_the_kind():
-    verb, why = planning_change_service.suggest("delayed", None, _facts(days_moved=90))
-    assert verb == "replan"
-    verb2, _ = planning_change_service.suggest("cancelled", None, _facts())
-    assert verb2 == "replan"
-
-
-# ============================================================================
 # build_batch
 # ============================================================================
 
@@ -1174,13 +1044,17 @@ def test_routes_list_get_put_and_apply_happy_path(api):
     detail = client.get(f"{BASE}/planning-changes/{batch.id}")
     assert detail.status_code == 200, detail.text
     row = detail.json()["orders"][0]["rows"][0]
-    assert row["suggested"] == "keep"  # 14 days, within the reserve window
+    # Slice C: no more reaction verb - the row carries a COMPOSED suggestion instead.
+    assert row["suggestion"]["components"], row["suggestion"]
+    assert "suggested" not in row, row
     row_id = row["id"]
+    # `confirm` derives its own composition from the row's proposal server-side - no body
+    # composition needed (`set_row_decision`'s "confirm" branch).
     put = client.put(
-        f"{BASE}/planning-changes/{batch.id}/rows/{row_id}", json={"decision": "keep"},
+        f"{BASE}/planning-changes/{batch.id}/rows/{row_id}", json={"decision": "confirm"},
     )
     assert put.status_code == 200, put.text
-    assert put.json()["decision"] == "keep"
+    assert put.json()["decision"] == "confirm"
 
     apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
     assert apply_response.status_code == 200, apply_response.text
@@ -1242,7 +1116,7 @@ def test_apply_and_put_are_denied_for_a_view_only_principal(api):
         assert listing.status_code == 200
 
         put = client.put(
-            f"{BASE}/planning-changes/{batch.id}/rows/{row_id}", json={"decision": "keep"},
+            f"{BASE}/planning-changes/{batch.id}/rows/{row_id}", json={"decision": "confirm"},
         )
         assert put.status_code == 403
 

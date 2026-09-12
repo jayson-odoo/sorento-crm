@@ -1325,7 +1325,7 @@ def test_confirming_one_order_of_a_batch_applies_that_order_alone(api):
     # have refused (409, `planning_change_batch_applied`).
     row = _batch_rows_for(world, batch, second["order"])[0]
     edited = client.put(
-        f"{BASE}/planning-changes/{batch.id}/rows/{row.id}", json={"decision": "accept"}
+        f"{BASE}/planning-changes/{batch.id}/rows/{row.id}", json={"decision": "confirm"}
     )
     assert edited.status_code == 200, edited.text
 

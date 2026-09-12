@@ -111,7 +111,10 @@ def test_ac_g2_held_line_raises_one_row_with_held_json(api):
     assert batch.line_count == 1 and batch.order_count == 1
     row = db.query(PlanningChangeRow).filter_by(batch_id=batch.id).one()
     assert row.held_json is not None
-    assert row.suggested == "release"  # rule 2: delay beyond the window, not hot, not discontinued
+    # Slice C: no more reaction verb - a delay past the window on a reserve (AC-C3)
+    # composes a release component instead.
+    components = row.suggestion_json["components"]
+    assert any(c["action"] == "release" for c in components), components
 
 
 # --------------------------------------------------------------------------- #
