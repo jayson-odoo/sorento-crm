@@ -616,6 +616,99 @@ class TestExactProductCodeWinsOverSiblings:
             f"the header must name the code the customer typed: {reply!r}"
         )
 
+    def test_the_scope_question_arm_stores_the_typed_code_too(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Finding 5 (console run 4): the typed-code rule landed on the DIRECT report
+        path only. A BARE "outstanding" arms the scope question instead of fetching, and
+        the filter set it stores took the first product entity - the sibling - so the
+        answering turn reported the wrong product under a header that named it."""
+        self._seed_products(session_factory)
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status="outstanding",
+                entities=[
+                    {
+                        "raw": "Zzt7445", "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="Zzt7445 outstanding",
+            msg_id="ZZT-outstanding-exact-code-arm-1",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+            real_resolver=True,
+        )
+        assert captured == [], f"the scope question fetches nothing: {captured}"
+        reply = (result.reply or {}).get("text") or ""
+        assert reply.startswith("Product: ZZT7445\n"), (
+            f"the question must name the code the customer typed: {reply!r}"
+        )
+        stored = _session_of(session_factory)["variables"]
+        assert stored.get("outstanding_filters", {}).get("product_code") == "ZZT7445", (
+            f"the carried filter set must hold the typed code, or the ANSWER turn reports "
+            f"the wrong product: {stored.get('outstanding_filters')}"
+        )
+
+    def test_the_answer_turn_reports_the_typed_code(self, session_factory, monkeypatch) -> None:
+        """The other half of finding 5, end to end: arm the question on the typed code,
+        answer "3", and the report runs for what the customer typed."""
+        self._seed_products(session_factory)
+        _seed_contact(session_factory, variables={})
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status="outstanding",
+                entities=[
+                    {
+                        "raw": "Zzt7445", "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="Zzt7445 outstanding",
+            msg_id="ZZT-outstanding-exact-code-arm-2",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+            real_resolver=True,
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None,
+                entities=[
+                    # The live parser hints the answer word itself as an entity (console
+                    # run 4, finding 6) - it is the ANSWER, never a filter.
+                    {
+                        "raw": "Both", "hint": "order", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+                reference_positions=[3],
+            ),
+            text_body="3",
+            msg_id="ZZT-outstanding-exact-code-answer-2",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+            real_resolver=True,
+        )
+        assert captured, "the answer must run the report"
+        _name, args = captured[0]
+        assert args.get("product_code") == "ZZT7445", (
+            f"the answering turn must report the code the customer typed: {args}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Couldn't find" not in reply and "not found" not in reply, (
+            f"the answer word is not an entity to look up, and its 'not found' echo must "
+            f"never be appended to the report (console run 4, finding 6): {reply!r}"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # AC-1134 - date params, order_date not actual_delivery_date

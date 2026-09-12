@@ -66,20 +66,15 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
     """S4 point 4's `outstanding_filters`: the parsed product/dates/customer/location,
     carried across the scope-question turn and the detail-offer turn so neither has to
     re-parse the message that named them."""
-    product_code = None
+    # AC-1119 / console run 4 finding 5: the SAME rule the tool arguments use - the code
+    # the customer typed wins over a family sibling. Shared, because the question, its
+    # answer and the header all have to name one product.
+    product_code = fetch_mod.outstanding_product_code(entities, semantic_input)
     customer_ids: list[Any] = []
     for e in entities or []:
         if not isinstance(e, dict):
             continue
-        et = e.get("entity_type")
-        if et == "product" and product_code is None:
-            # `gate.py` renames the resolver's `canonical_code` to `code` when it
-            # builds `compatible_entities`; a hand-built test payload still spells
-            # it `canonical_code`.
-            code = e.get("code") or e.get("canonical_code")
-            if code:
-                product_code = code
-        elif et == "customer":
+        if e.get("entity_type") == "customer":
             uid = e.get("uuid")
             if uid and uid not in customer_ids:
                 customer_ids.append(uid)

@@ -569,24 +569,11 @@ def entity_ids_transformer(
     if tool_name == "crm_outstanding_report":
         out.pop("product_ids", None)
         out.pop("warehouse_ids", None)
-        # AC-1119 (reviewer N5): the code the customer TYPED, when the lane matched one
-        # of the gate's products to it exactly (`run_fetch`). Only when nothing matched
-        # exactly does the first product stand - a prefix or spec-search hit is the only
-        # candidate there, and refusing to answer it would be a worse answer than
-        # naming it.
-        typed_code = jsc.get(semantic_input, "outstanding_product_code")
-        if jsc.truthy(typed_code):
-            out["product_code"] = jsc.js_string(typed_code)
-        else:
-            for e in jsc.array(entities):
-                if jsc.js_string(jsc.get(e, "entity_type")) == "product":
-                    # `gate.py` renames the resolver's `canonical_code` to `code` when it
-                    # builds `compatible_entities`; a caller that hands entities straight
-                    # in (this module's own tests) still spells it `canonical_code`.
-                    code = jsc.get(e, "code") or jsc.get(e, "canonical_code")
-                    if jsc.truthy(code):
-                        out["product_code"] = jsc.js_string(code)
-                    break
+        # AC-1119: one rule for which code this report is about, shared with both filter
+        # builders (`outstanding_product_code`).
+        picked_code = outstanding_product_code(entities, semantic_input)
+        if jsc.truthy(picked_code):
+            out["product_code"] = picked_code
         scope = jsc.get(semantic_input, "outstanding_scope")
         if jsc.truthy(scope):
             out["scope"] = jsc.js_string(scope)
@@ -1423,6 +1410,35 @@ def _outstanding_offer_from_text(text: str) -> list[dict[str, Any]]:
     return rows
 
 
+def outstanding_product_code(entities: Any, semantic_input: Any) -> Any:
+    """WHICH product this report is about, in one place (AC-1119, reviewer N5 +
+    console run 4 finding 5).
+
+    `run_fetch` matches the gate's products against the codes the customer TYPED and
+    stamps the winner as `semantic_input.outstanding_product_code`; that one wins.
+    Only when no candidate equalled a typed code (a prefix or spec-search hit, where the
+    family member is the only answer there is) does the first product entity stand.
+
+    Every caller that names the product goes through here - the tool arguments, the
+    detail offer's stored filters and the scope question's stored filters - so the
+    question, the answer and the header can never disagree about which code was asked
+    about, which is exactly what console run 4 read on the scope-question arm.
+    """
+    si = semantic_input if isinstance(semantic_input, dict) else {}
+    typed = si.get("outstanding_product_code")
+    if jsc.truthy(typed):
+        return jsc.js_string(typed)
+    for e in jsc.array(entities):
+        if not isinstance(e, dict) or jsc.js_string(e.get("entity_type")) != "product":
+            continue
+        # `gate.py` renames the resolver's `canonical_code` to `code` when it builds
+        # `compatible_entities`; a caller that hands entities straight in (this module's
+        # own tests) still spells it `canonical_code`.
+        code = e.get("code") or e.get("canonical_code")
+        return jsc.js_string(code) if jsc.truthy(code) else None
+    return None
+
+
 def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
     """The SAME `outstanding_filters` shape `business/__init__.py::_outstanding_filters_from`
     builds for the scope-question ask - the detail offer carries the identical filter
@@ -1431,17 +1447,12 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
     if isinstance(semantic_input, str):
         semantic_input = _safe_json(semantic_input)
     semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
-    product_code = None
+    product_code = outstanding_product_code(ctx.get("entities"), semantic_input)
     customer_ids: list[Any] = []
     for e in jsc.array(ctx.get("entities")):
         if not isinstance(e, dict):
             continue
-        et = e.get("entity_type")
-        if et == "product" and product_code is None:
-            code = e.get("code") or e.get("canonical_code")
-            if code:
-                product_code = code
-        elif et == "customer":
+        if e.get("entity_type") == "customer":
             uid = e.get("uuid")
             if uid and uid not in customer_ids:
                 customer_ids.append(uid)
