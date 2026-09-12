@@ -133,6 +133,16 @@ def run_for(
                 override_version_id=version_id,
             )
             prompt_version = config.prompt_version
+            if prompt_version is None:
+                # `ai_prompt_registry.get_prompt` answers with a HARDCODED fallback prompt
+                # when it cannot find the row, and says so by returning no version. A
+                # window that measured that fallback would report a parser nobody wrote
+                # and nobody can promote - so this is a FAILED row, which is visible, and
+                # not a `done` one, which would be a lie with a number attached.
+                raise ValueError(
+                    f"{shadow_version!r} resolved to the built-in fallback prompt, which "
+                    "has no version to shadow"
+                )
 
         # OUTSIDE the session, exactly as the live turn calls it: the provider must never
         # be answered with a database connection held open.
@@ -287,11 +297,12 @@ def fire(
 ) -> None:
     """Start the shadow parse and return immediately. Never raises, never blocks a reply.
 
-    `offloaded` is the same flag the live turn ran under: with a worker, this rides the same
-    `chat` queue, so a window costs the customer's turn nothing at all. Without one it runs
-    in-process, because an install with no worker must still be able to run a window - and
-    it runs AFTER the live row is inserted, so a slow provider delays the observation rather
-    than the answer.
+    CALLED AT THE END OF THE TURN, after the reply and its send action are composed - see
+    `engine.run_turn`'s `finally`. `offloaded` is the same flag the live turn ran under:
+    with a worker this rides the same `chat` queue, so the window costs the customer's turn
+    nothing at all. Without one it runs IN PROCESS, which is why where it is called from
+    matters: an install with no worker must still be able to run a window, and the only
+    thing a slow provider may delay is the observation.
     """
     if not isinstance(shadow_version, str) or not shadow_version.strip():
         return

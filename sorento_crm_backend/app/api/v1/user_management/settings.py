@@ -635,6 +635,20 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 ),
             )
 
+    # AC-1027, and the same rule as the lane vocabulary above: a shadow version that names
+    # nothing is refused HERE, naming it, rather than saved and then turned into a row of
+    # `failed` shadow parses nobody is watching. The window is the evidence a new parser is
+    # promoted on, so a typo in it is the one failure that quietly produces no evidence at
+    # all. An empty string is the OFF switch and is always allowed.
+    shadow_version = update_data.get("chatbot_parser_shadow_version")
+    if isinstance(shadow_version, str) and shadow_version.strip():
+        from app.modules.chatbot.lane_vocabulary import resolve_shadow_version
+
+        try:
+            resolve_shadow_version(db, shadow_version)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
     # The chatbot columns are NOT NULL with a default, so an explicit `null` in the body
     # means "reset to the default" - not a null write. Without this the loop below sends
     # NULL into a NOT NULL column and the PUT 500s at commit, which reads to the caller as
