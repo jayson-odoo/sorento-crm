@@ -1,6 +1,6 @@
 # PLAN: the fulfilment board picks up a pending planning change on its own
 
-**Status:** IN PROGRESS, 12 September 2026. Lane `lane/main-so-changes-12sep`, same lane as
+**Status:** READY FOR PR, 12 September 2026 (built 39a5d8b07, reviewer fix round 22cf21e6c: per-order batch id never falls back onto a batchless order, one batch per order on the board, stable batch queries; hook is named usePlanningChangeBatchesByIds, the board-wide applied banner stays for the single-batch case only). Lane `lane/main-so-changes-12sep`, same lane as
 `PLAN-scm-planning-change-gate-held-or-inquiry.md` (one lane, one PR).
 
 ## The problem, reproduced
