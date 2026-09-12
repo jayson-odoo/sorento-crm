@@ -595,11 +595,15 @@ def _released_line(api, *, linked: bool):
 
 
 def test_release_moves_a_linked_row_to_the_pool_with_its_links_and_raises_nothing(api):
-    """Renamed in spirit, not in name (the title's own premise - "moves to the pool" - is
-    retired): a linked Buy delayed past the window composes "keep" (source `po`), and
-    confirming it settles the SAME row in place rather than moving it anywhere. Measured
-    directly: `stock_location` stays the line's own bin, the row id is unchanged, its
-    links are kept, and the note documents what it was."""
+    """Slice D semantics (AC-D1-D3, issue #859), superseding the C1-era premise this
+    docstring used to carry (a linked Buy delayed past the window composed "keep" and
+    kept its links in place): the coder's own fixture now composes `reallocate po 40 to
+    pool` + `buy 40 for the new date`, measured directly on HEAD 4fc3b1c37. Confirming it,
+    the row GIVES UP its document - its own links are gone - and the freed 40 lands on a
+    fresh pool-location row linked to the SAME purchase-order line for the same 40 (D1:
+    a pool row carries the links it was created for), so the PO line reads fully claimed
+    throughout. The line's own row is reused (never duplicated) and now reads raised for
+    the fresh Buy the new, far date needs."""
     fixture = _released_line(api, linked=True)
     world = fixture["world"]
     line = fixture["line"]
@@ -608,6 +612,14 @@ def test_release_moves_a_linked_row_to_the_pool_with_its_links_and_raises_nothin
     row_out = planning_change_service.get_batch(world.db, str(fixture["batch"].id))[
         "orders"
     ][0]["rows"][0]
+    reallocate = next(
+        c for c in row_out["suggestion"]["components"] if c["action"] == "reallocate"
+    )
+    assert reallocate["source"] == "po", reallocate
+    assert reallocate["target"] == "pool", reallocate
+    assert reallocate["qty_now"] == "40", reallocate
+    assert reallocate["document"], reallocate
+
     planning_change_service.set_row_decision(
         world.db, str(fixture["batch"].id), row_out["id"], "confirm",
     )
@@ -616,18 +628,44 @@ def test_release_moves_a_linked_row_to_the_pool_with_its_links_and_raises_nothin
     assert result["failed_orders"] == []
 
     world.db.expire_all()
+    svc = ProjectOrderInquiryService(world.db)
     row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).one()
     assert row.state != INQUIRY_CANCELLED
-    assert row.stock_location == world.own_wh.warehouse_code, (
-        "settled in place - still for THIS line's own bin, never moved to the pool"
-    )
-    assert ProjectOrderInquiryService(world.db)._links_of(row.id), "its links are kept"
+    assert svc._links_of(row.id) == [], "the row gives its document up - no link stays on it"
     assert row.note and "2026-08-25" in row.note, "the note names what it was"
+
+    pool_rows = (
+        world.db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
+        .all()
+    )
+    assert len(pool_rows) == 1, pool_rows
+    assert pool_rows[0].qty == Decimal("40")
+    pool_links = svc._links_of(pool_rows[0].id)
+    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("40"), pool_links
+
+    from app.models.procurement import PurchaseOrderLine
+
+    po_line = (
+        world.db.query(PurchaseOrderLine)
+        .filter(PurchaseOrderLine.product_id == world.product.id)
+        .one()
+    )
+    linked_total = sum(
+        Decimal(str(l.qty))
+        for l in world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.po_line_id == po_line.id)
+        .all()
+    )
+    assert po_line.qty_ordered - linked_total == Decimal("0"), (po_line.qty_ordered, linked_total)
+
     raised = [
         r for r in _rows_of(world, line)
         if r.state != INQUIRY_CANCELLED and str(r.id) != row_id
     ]
     assert raised == [], "settled in place - no second order inquiry row"
+    assert row.qty == Decimal("40")
 
 
 def test_release_of_an_unlinked_row_hands_purchasing_a_delay_with_the_previous_date(api):
