@@ -754,9 +754,47 @@ def picker_rows(state: Any) -> list:
     is an ANSWER, not a picker.
     """
     question = open_question_of(state)
-    if jsc.get(question, "kind") in ("product_pick", "customer_pick"):
+    if jsc.get(question, "kind") in PICKER_KINDS:
         return jsc.array(jsc.get(question, "options"))
     return []
+
+
+PICKER_KINDS = ("product_pick", "customer_pick")
+
+
+def picker_candidates(state: Any) -> list:
+    """The picker's rows in the CANDIDATE shape the three pick rules read.
+
+    Same rows, same order, same `idx`; `code` is the row's canonical code, which a frozen
+    row calls `product` (and `value` where the row had no code of its own, e.g. a uuid
+    keyed match whose `value` is the label). ONE translation, here, instead of a
+    `product or value or code` chain at each reader - which is how the two halves of the
+    old module came to read two different shapes of the same list.
+    """
+    out = []
+    for row in picker_rows(state):
+        if not isinstance(row, dict):
+            continue
+        code = row.get("product") or row.get("code") or row.get("value")
+        out.append({**row, "code": code})
+    return out
+
+
+def picker_offer(state: Any) -> dict | None:
+    """The picker's own IDENTITY and domain, or None when no picker is open.
+
+    `apply_dym_pick` stamps `id` onto the picked entity as `dym_slot`, which is a stable
+    handle back to the offer once the first pick has overwritten `raw` and destroyed the
+    `for_raw` linkage. The miss lane freezes both onto the question it asks
+    (`lanes/business/miss_suggest._attach_question`), so the offer record that used to be
+    a session key of its own is read off the question that replaced it.
+    """
+    question = open_question_of(state)
+    if jsc.get(question, "kind") not in PICKER_KINDS:
+        return None
+    payload = jsc.get(question, "payload")
+    payload = payload if isinstance(payload, dict) else {}
+    return {"id": payload.get("offer_id"), "domain": payload.get("domain")}
 
 
 def offer_is_open(state: Any) -> bool:
@@ -1397,17 +1435,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 
     def try_dym_pick() -> None:
         prev = parent_input.get("previous_conversation_state") or {}
-        # Source candidates from the offer object; fall back to the legacy flat array
-        # during the spine/parser promotion window.
-        offer = prev.get("dym_offer") if isinstance(prev.get("dym_offer"), dict) else None
-        # `dym_candidates` was a flat READ-ONLY MIRROR of `offer.candidates`, written for
-        # the spine-to-parser promotion window. It is gone with the five-key session and
-        # nothing writes it, so the mirror goes rather than being read forever (step 4).
-        cands = (
-            offer["candidates"]
-            if offer is not None and jsc.is_array(offer.get("candidates"))
-            else []
-        )
+        # THE OFFER IS THE QUESTION (L1-S3d step 4). `dym_offer` and its flat mirror
+        # `dym_candidates` were two session keys saying what the picker's rows were; the
+        # rows are frozen onto the question by the lane that printed them, so there is one
+        # record and it is the one the customer read.
+        offer = picker_offer(prev)
+        cands = picker_candidates(prev)
         if not len(cands):
             return
 
@@ -1621,11 +1654,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     def tier_offer_pick() -> None:
         if jsc.truthy(o.get("is_menu_label")):
             return
-        if jsc.nullish_str(prev_state.get("selection_context") or "") != "tier_offer":
+        tier_question = open_question_of(prev_state)
+        if jsc.get(tier_question, "kind") != "tier_pick":
             return
         roster = [
             r
-            for r in jsc.array(prev_state.get("last_result_set"))
+            for r in jsc.array(jsc.get(tier_question, "options"))
             if jsc.truthy(r)
             and jsc.lower_or_empty(
                 r.get("tier") if r.get("tier") is not None else r.get("value")
@@ -1717,12 +1751,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # legitimately disagree (new brand, same tier).
 
     # -- "ALL / SEMUA" on a numbered menu -> expand to EVERY offered position ------------ #
-    sel_ctx0 = jsc.nullish_str(prev_state.get("selection_context") or "")
     # A quote-reply delivers the replied-to menu in referenced_result_set - prefer it over
-    # the immediate last_result_set, and treat its presence as a pick-context.
+    # the open question's own rows, and treat its presence as a pick-context.
     ref_set = jsc.array(parent_input.get("referenced_result_set"))
-    lrs_all = ref_set if len(ref_set) > 0 else jsc.array(prev_state.get("last_result_set"))
-    pick_ctx = len(ref_set) > 0 or sel_ctx0 in ("disambiguation", "suggest_offer")
+    open_rows = jsc.array(jsc.get(open_question_of(prev_state), "options"))
+    lrs_all = ref_set if len(ref_set) > 0 else open_rows
+    pick_ctx = len(ref_set) > 0 or jsc.get(open_question_of(prev_state), "kind") in PICKER_KINDS
     msg_all_src = parent_input.get("latest_user_message")
     if msg_all_src is None:
         msg_all_src = parent_input.get("user_message")
@@ -1771,7 +1805,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 
     # pick under a menu business_query, even if the LLM carried a domain_hint
     if (
-        prev_state.get("selection_context") == "disambiguation"
+        jsc.get(open_question_of(prev_state), "kind") in PICKER_KINDS
         and jsc.is_array(o.get("reference_positions"))
         and len(o["reference_positions"]) > 0
         and o.get("message_type") == "casual"
@@ -1794,7 +1828,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         dym_set = picker_rows(prev_state)
         if len(dym_set) == 0:
             return  # no dym set -> untouched byIdx (backbone guard)
-        offer = prev_state.get("dym_offer") if isinstance(prev_state.get("dym_offer"), dict) else None
+        offer = picker_offer(prev_state)
         by_idx = jsc.JsMap([(jsc.js_number(jsc.get(r, "idx")), r) for r in dym_set])
         base = jsc.array(prev_state.get("entities"))  # retains the resolved stock entity
         applied = False
@@ -1827,7 +1861,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         last_set = (
             parent_input["referenced_result_set"]
             if jsc.is_array(parent_input.get("referenced_result_set"))
-            else jsc.array(prev_state.get("last_result_set"))
+            else jsc.array(jsc.get(open_question_of(prev_state), "options"))
         )
         by_idx = jsc.JsMap([(jsc.get(r, "idx"), r) for r in last_set])
 
@@ -1899,8 +1933,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         #
         # `apply_dym_pick` stays keyed on the roster it is given (no widening of the dym
         # block's guard, and no second merge implementation): what this does is HAND it the
-        # other roster. The linkage it needs is already persisted - `dym_offer.candidates`
-        # carries `for_raw` / `for_hint` / `for_canonical` per candidate on exactly these
+        # other roster. The linkage it needs rides the question - each frozen row carries
+        # `for_raw` / `for_hint` / `for_canonical` beside its own code on exactly these
         # turns - so the pick replaces the token it was offered FOR, in place, and every
         # other prior entity survives. A picked row with no candidate record is left to the
         # replacement above rather than guessed at: without the linkage there is nothing
@@ -1915,18 +1949,14 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         # also what keeps the corpus byte-equal: capture `parser-15157067` is this exact
         # shape with a prior `SRTWT165-FT` against a `for_raw` of `SRTWT165FT` (the
         # separator differs), so nothing ties and nothing changes.
-        sug_offer = (
-            prev_state.get("dym_offer")
-            if prev_state.get("selection_context") == "suggest_offer"
-            and isinstance(prev_state.get("dym_offer"), dict)
-            else None
-        )
-        if resolved and sug_offer is not None:
+        sug_offer = picker_offer(prev_state)
+        sug_cands = picker_candidates(prev_state)
+        if resolved and sug_offer is not None and sug_cands:
             def _code_key(value: Any) -> str:
                 return jsc.nullish_str(value).strip().lower()
 
             by_code = {}
-            for cand in jsc.array(sug_offer.get("candidates")):
+            for cand in sug_cands:
                 key = _code_key(jsc.get(cand, "code"))
                 if key and key not in by_code:
                     by_code[key] = cand
@@ -2081,7 +2111,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         ]
         if (
             _bf_ents
-            and jsc.get(_bf_prev, "selection_context") == "member_offer"
+            and jsc.get(open_question_of(_bf_prev), "kind") == "member_offer"
             and offer_is_open(_bf_prev)
             and o.get("is_affirmative") is None
             and not jsc.array(o.get("reference_positions"))
@@ -2562,9 +2592,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # `reference_target === 'dym'` is NOT the signal - it is the model's DEFAULT and comes
     # back on an ordinary promo-roster pick too. The real discriminator is whether a dym
     # offer was actually PENDING in the previous state.
-    prev_dym = len(picker_rows(prev5)) > 0 or bool(
-        prev5.get("dym_offer") is not None and isinstance(prev5.get("dym_offer"), dict)
-    )
+    prev_dym = picker_offer(prev5) is not None
     dym_pick = prev_dym or o.get("dym_pick_applied") is True
     # F10: do NOT drop promotion-hinted entities here - Q25 allows a list scoped BY A
     # PROMOTION NAME, and filtering those out left the scope empty.
@@ -2579,7 +2607,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         roster = (
             jsc.array(parent_input.get("referenced_result_set"))
             if quoted
-            else jsc.array(prev5.get("last_result_set"))
+            else jsc.array(jsc.get(open_question_of(prev5), "options"))
         )
         if len(roster):
             labels = []
@@ -2786,9 +2814,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         return {"any": pick if pick is not None else llm_pick()}
 
     # -- CS member-pick override (final say) ---------------------------------------------- #
-    sel_ctx = jsc.get(parent_input.get("previous_conversation_state"), "selection_context")
-    if sel_ctx == "member_offer" and o.get("dym_pick_applied") is not True:
-        last_set = jsc.array(jsc.get(parent_input.get("previous_conversation_state"), "last_result_set"))
+    _mp_question = open_question_of(parent_input.get("previous_conversation_state"))
+    if jsc.get(_mp_question, "kind") == "member_offer" and o.get("dym_pick_applied") is not True:
+        last_set = jsc.array(jsc.get(_mp_question, "options"))
         max_idx = len(last_set)
 
         def extract(msg: Any, llm: Any) -> list:
@@ -3130,7 +3158,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # rosters all came back empty). "Open" = the FROZEN phrase is in the persisted previous
     # response - deliberately NOT the persisted roster plan, which the spine carries
     # forward across same-team turns and would re-open a closed offer.
-    if sel_ctx != "member_offer" and o.get("dym_pick_applied") is not True:
+    if jsc.get(_mp_question, "kind") != "member_offer" and o.get("dym_pick_applied") is not True:
         st_o = parent_input.get("previous_conversation_state") or {}
         open_o = offer_is_open(st_o)
         if open_o and not jsc.truthy(o.get("domain_hint")):
@@ -3165,12 +3193,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # RESOLVED pick (provenance flags), or a CONTINUATION (a non-tier roster is pending AND
     # this turn named no new scope). The second half is what keeps D4 alive - "promo for
     # CBS212-WH" with a roster pending IS a new query and MUST re-ask.
-    pp_prev_ctx = jsc.nullish_str(prev_state.get("selection_context") or "")
-    pp_roster_pending = pp_prev_ctx in ("suggest_offer", "member_offer", "disambiguation") or (
-        pp_prev_ctx != "tier_offer"
-        and jsc.is_array(prev_state.get("last_result_set"))
-        and len(prev_state["last_result_set"]) > 0
-    )
+    # A NON-TIER QUESTION IS OPEN. The legacy pair said this twice - a roster label, and
+    # "some roster is in state" - and the second half counted the ANSWER's own rows as a
+    # pending roster, which is why it had to exclude `tier_offer` by name. One question,
+    # one test: anything open that is not the tier ask.
+    pp_prev_kind = jsc.nullish_str(jsc.get(open_question_of(prev_state), "kind") or "")
+    pp_roster_pending = bool(pp_prev_kind) and pp_prev_kind != "tier_pick"
     pp_named_new_scope = any(
         jsc.truthy(e) and jsc.get(e, "current_message") is True for e in jsc.array(o.get("entities"))
     )
@@ -3194,7 +3222,10 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # says the turn accepts a correction (dym_pick_applied), and the offer records which
     # token each candidate was for.
     dym_applied = o.get("dym_pick_applied") is True
-    dym_cands = jsc.get(prev_state.get("dym_offer"), "candidates")
+    # The rows the customer was shown ARE the candidate record: each carries the token it
+    # was offered for (`for_raw`) beside its own code, which is the whole of what this
+    # rule ever read `dym_offer.candidates` for.
+    dym_cands = picker_candidates(prev_state)
     if dym_applied and jsc.is_array(dym_cands) and len(dym_cands) and jsc.is_array(o.get("entities")):
         def sn(v: Any) -> str:
             return re.sub(r"[^a-z0-9]+", "", jsc.nullish_str(v).strip().lower())
@@ -3235,17 +3266,24 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 def suggest_follow_up(item: dict, parent_input: dict) -> dict:
     """Port of `suggest-follow-up.js`. Runs AFTER output_exchange, on the same item.
 
-    When the PREVIOUS turn was a `suggest_offer`: a tapped code / typed position re-queries
-    in the RETAINED domain (never a CS assign); a plain "yes" escalates; "no" declines and
-    stops. Inert on every other turn - byte-identical output when selection_context differs.
+    When the PREVIOUS turn left a PICKER open: a tapped code / typed position re-queries in
+    the RETAINED domain (never a CS assign); a plain "yes" escalates; "no" declines and
+    stops. Inert on every other turn - byte-identical output when no picker is open.
+
+    The gate was `selection_context == "suggest_offer"` and the retained domain came off
+    `prev_state.domain_hint`; both are gone with the five-key session (L1-S3d step 4). A
+    `product_pick` / `customer_pick` IS the picker that label named, and the domain it was
+    asked in is stamped on the question by the lane that asked it.
     """
     output = item
     parent_input = parent_input or {}
     prev_state = parent_input.get("previous_conversation_state") or {}
+    question = open_question_of(prev_state)
+    prior_domain = jsc.get(jsc.get(question, "payload"), "domain")
     if (
         jsc.truthy(output)
         and jsc.truthy(jsc.get(output, "output"))
-        and prev_state.get("selection_context") == "suggest_offer"
+        and jsc.get(question, "kind") in PICKER_KINDS
     ):
         o = output["output"]
         has_entity_pick = jsc.is_array(o.get("entities")) and any(
@@ -3255,11 +3293,8 @@ def suggest_follow_up(item: dict, parent_input: dict) -> dict:
         if has_entity_pick or has_pos_pick:
             # a bare code (button tap) or a position was given -> keep the prior domain when
             # the reply carried no decisive domain term, then let normal processing re-query.
-            if not jsc.truthy(o.get("domain_hint")) and jsc.truthy(prev_state.get("domain_hint")):
-                o["domain_hint"] = prev_state["domain_hint"]
-                o["intent_hint"] = (
-                    o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else prev_state.get("intent_hint")
-                )
+            if not jsc.truthy(o.get("domain_hint")) and jsc.truthy(prior_domain):
+                o["domain_hint"] = prior_domain
                 o["domain_inherited_for_suggest"] = True
             if jsc.truthy(o.get("domain_hint")):
                 o["message_type"] = "business_query"

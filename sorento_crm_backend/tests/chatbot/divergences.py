@@ -62,6 +62,28 @@ _PORT_ONLY_SESSION_KEYS: tuple[tuple[str, ...], ...] = (
 )
 
 
+# The keys `output_exchange` EMITS that no capture can contain, because n8n's body has no
+# arm that writes them. Declared once because two entries need the same list: the blanket
+# owner-ruling-K entry below, and every per-fixture entry that wins the `find` lookup ahead
+# of it - a per-fixture entry is used WHOLE, so it has to carry this strip itself.
+_ADDED_DIAGNOSTIC_KEYS: tuple[tuple[str, ...], ...] = (
+    ("output", "member_offer_filter_modification"),
+    ("output", "bare_entity_retyped"),
+    ("output", "entities_dropped_on_topic_change"),
+    # Console pass 4, item 3 (AC-823): the diagnostic the filter-modification arm stamps
+    # when it puts the offer's own scope back. n8n has no such arm.
+    ("output", "member_offer_scope_reused"),
+    # Console pass 4, item 4 / issue #708 (AC-824): stamped when a numbered pick over a
+    # `suggest_offer` roster is merged through `apply_dym_pick` instead of replacing the
+    # scope. n8n has no such arm either.
+    ("output", "suggest_offer_pick_merged"),
+    # Console pass 5, item B2 (H80/AC-829): stamped by
+    # `resolve_gate.resolve_bare_reply_under_member_offer` when a bare reply under an open
+    # member_offer resolved against the RESOLVER and replaced a half of the carried pair.
+    ("output", "bare_member_offer_entity_resolved"),
+)
+
+
 # The five owner-ruling-K captures whose re-prompt turn named no domain and no entities,
 # so the SUBJECT carry (AC-816 rule 1, 6 Sep 2026) moves them on those two fields as well
 # as on the three the whole group moves on. Measured, one capture at a time: the other
@@ -76,6 +98,120 @@ _SUBJECT_CARRY_MOVES = frozenset(
     }
 )
 
+
+
+# L1-S3d step 4 (D8, AC-1001): the captures whose `previous_conversation_state` is the
+# 34-key shape, replayed against a node that no longer reads it.
+#
+# The engine persists FIVE keys, so what it hands `output_exchange` as
+# `previous_conversation_state` is `{focus, open_question, ideation, access_levels,
+# contains_flyer}`. Every rule that used to resolve a pick off `selection_context`,
+# `last_result_set`, `dym_offer`, `dym_last_result_set`, `pending`, `dym_candidates`,
+# `picker_last_result_set` or `tier_menu` reads the OPEN QUESTION instead - one record of
+# what the bot asked, with the rows the customer saw frozen onto it. A capture predates
+# that key by construction, so on these fixtures the picker is simply not there and the
+# pick does not apply.
+#
+# MEASURED, not assumed, and this is why it is an allowance rather than a defect: the same
+# reads are already inert in PRODUCTION. They have been reading a five-key dict since the
+# session shape changed, so deleting them changes no customer-visible behaviour on any
+# live turn - it only stops these captures grading a path the engine cannot reach. The
+# blast radius was measured by blanking the eight keys out of `previous_conversation_state`
+# inside `post_process` and replaying the whole corpus: 38 of `output_exchange`'s graded
+# parametrisations move (29 distinct fixtures), and 17 of `suggest-follow-up`'s.
+#
+# FIELD-SCOPED to what the pick decides - the turn's scope (`entities`), the positional
+# bookkeeping beside it, and the escalation a member pick confirms. Everything else in the
+# emission is still compared byte for byte: `message_type`, `domain_hint`, `intent_hint`,
+# `routing`, `access_levels`, `date_filter_*`, `query_brands`, `match_mode`,
+# `reference_positions` and the rest, so a turn's CLASSIFICATION and its ROUTING are
+# graded on these fixtures exactly as before. The behaviour that stops being graded here
+# is graded instead by `tests/chatbot/test_open_question.py`, `test_focus_worlds.py` and
+# the world corpus, which speak the five-key shape.
+_STEP4_PICK_PATHS: tuple[tuple[str, ...], ...] = (
+    ("output", "entities"),
+    ("output", "escalation"),
+    ("output", "positions_resolved"),
+    ("output", "positions_out_of_range"),
+    ("output", "member_pick_context"),
+    ("output", "suggest_pick_context"),
+    ("output", "_pending_pick"),
+    ("output", "domain_inherited_compatible"),
+    ("output", "domain_inherited_for_suggest"),
+    ("output", "dym_pick_applied"),
+    ("output", "dym_offer_pick_code"),
+    ("output", "dym_pick_domain_forced"),
+    ("output", "dym_superseded_dropped"),
+    ("output", "dym_replace_unmatched"),
+    ("output", "select_all_expanded"),
+    ("output", "incoming_hint_retyped_to_product"),
+    ("output", "entities_dropped_on_topic_change"),
+)
+
+_STEP4_HAZARD = "L1-S3 step 4 (D8, AC-1001)"
+_STEP4_REASON = (
+    "the engine persists five keys, so the captured previous state carries keys it can "
+    "no longer hand the node, and the reads were deleted. The pick rules resolve against "
+    "the open question now; a capture predates it, so no picker is open and the pick does "
+    "not apply. Field-scoped to what a pick decides - the turn's scope, the positional "
+    "bookkeeping and the escalation a member pick confirms - so the classification, the "
+    "routing and every other byte of the emission stay graded. Measured: the same reads "
+    "are already inert in production, which is why this costs coverage and not behaviour."
+)
+
+# Twenty-four of the twenty-nine. The other five - `parser-15118060`, `parser-15136058`,
+# `parser-15143320`, `parser-15143474` (owner ruling B) and `parser-15121180`
+# (PLAN-broaden-domain-switch) - already had an entry of their own, and `find` uses the
+# FIRST match WHOLE, so `_STEP4_PICK_PATHS` is appended to those entries instead of listed
+# twice here. One fixture, one entry, saying everything true of it.
+_STEP4_OUTPUT_EXCHANGE: tuple[str, ...] = (
+    "b56-t4-parser",
+    "exec-13484619",
+    "exec-13488927",
+    "parser-15024720",
+    "parser-15114106",
+    "parser-15119212",
+    "parser-15119542",
+    "parser-15121134",
+    "parser-15121349",
+    "parser-15123316",
+    "parser-15123878",
+    "parser-15125372",
+    "parser-15129616",
+    "parser-15137523",
+    "parser-15137788",
+    "parser-15143883",
+    "parser-15151918",
+    "parser-15154295",
+    "parser-15157067",
+    "parser-15157165",
+    "parser-15158411",
+    "parser-15158778",
+    "rs09-t2-parser",
+    "rs09-t3-parser",
+)
+
+# `suggest-follow-up` is the SAME cause one node later: its whole gate was
+# `selection_context == "suggest_offer"`, which is a `product_pick` / `customer_pick` now.
+_STEP4_SUGGEST_FOLLOW_UP: tuple[str, ...] = (
+    "parser-15026562",
+    "parser-15110268",
+    "parser-15115511",
+    "parser-15118060",
+    "parser-15125289",
+    "parser-15125372",
+    "parser-15126468",
+    "parser-15127533",
+    "parser-15130007",
+    "parser-15130401",
+    "parser-15136058",
+    "parser-15137523",
+    "parser-15139161",
+    "parser-15143320",
+    "parser-15143883",
+    "parser-15157067",
+    "parser-15161626",
+)
 
 # Every entry here must name a hazard id or an owner decision from the plan, and be
 # traceable to an AC. S1 shipped with none; S2 adds two - AC-202 authorises the `pending`
@@ -490,13 +626,17 @@ DIVERGENCES: list[Divergence] = [
             hazard="owner ruling B (console pass 3, 6 Sep 2026)",
             reason=(
                 "a did-you-mean pick names its op `replace`, not `replace_combine` - the "
-                "picks ARE the scope. Field-scoped to the op; the entity list this "
-                "capture records is byte-equal either way."
+                "picks ARE the scope. Field-scoped to the op. These four are ALSO L1-S3d "
+                "step 4 captures, so they carry its strip as well: one fixture gets one "
+                "entry (`find` returns the first match and uses it whole), so the entry "
+                "has to say everything true of the fixture."
             ),
             strip_paths=(
                 ("output", "entity_op"),
                 ("output", "entity_op_applied"),
-            ),
+            )
+            + _STEP4_PICK_PATHS
+            + _ADDED_DIAGNOSTIC_KEYS,
         )
         for name in (
             "parser-15118060",
@@ -751,7 +891,8 @@ DIVERGENCES: list[Divergence] = [
             "pair beside broaden_axis restored to the PRIOR domain (inventory) and cleared "
             "the carried product. The port now reads it as a domain switch, not a wander, "
             "and reuses the carried entity. Field-scoped to the fields the switch rule "
-            "moves."
+            "moves. It is ALSO an L1-S3d step 4 capture, so it carries that strip too: "
+            "one fixture gets one entry, and the entry has to say everything true of it."
         ),
         strip_paths=(
             ("output", "domain_hint"),
@@ -764,7 +905,27 @@ DIVERGENCES: list[Divergence] = [
             ("output", "broaden_axis_domain_restored"),
             ("output", "domain_switch_over_broaden"),
             ("output", "routing"),
-        ),
+        )
+        + _STEP4_PICK_PATHS
+        + _ADDED_DIAGNOSTIC_KEYS,
+    ),
+    # L1-S3d step 4: the 29 + 17 captures whose pick the five-key session cannot reach.
+    # AHEAD of the blanket entry below, which `find` would otherwise answer with - and
+    # therefore carrying `_ADDED_DIAGNOSTIC_KEYS` itself, since a per-fixture entry is used
+    # whole. The reason is on `_STEP4_REASON`, said once for all 46.
+    *(
+        Divergence(
+            node=node,
+            fixture=name,
+            hazard=_STEP4_HAZARD,
+            reason=_STEP4_REASON,
+            strip_paths=_STEP4_PICK_PATHS + _ADDED_DIAGNOSTIC_KEYS,
+        )
+        for node, names in (
+            ("output_exchange", _STEP4_OUTPUT_EXCHANGE),
+            ("suggest-follow-up", _STEP4_SUGGEST_FOLLOW_UP),
+        )
+        for name in names
     ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this
@@ -788,25 +949,7 @@ DIVERGENCES: list[Divergence] = [
             "class - a key no capture can contain - and a capture that reached one would "
             "otherwise fail on a diagnostic rather than on behaviour."
         ),
-        strip_paths=(
-            ("output", "member_offer_filter_modification"),
-            ("output", "bare_entity_retyped"),
-            ("output", "entities_dropped_on_topic_change"),
-            # Console pass 4, item 3 (AC-823): the same class again - the diagnostic the
-            # filter-modification arm stamps when it puts the offer's own scope back. n8n
-            # has no such arm, so no capture can carry the key.
-            ("output", "member_offer_scope_reused"),
-            # Console pass 4, item 4 / issue #708 (AC-824): stamped when a numbered pick
-            # over a `suggest_offer` roster is merged through `apply_dym_pick` instead of
-            # replacing the scope. n8n has no such arm either.
-            ("output", "suggest_offer_pick_merged"),
-            # Console pass 5, item B2 (H80/AC-829): stamped by
-            # `resolve_gate.resolve_bare_reply_under_member_offer` when a bare reply under
-            # an open member_offer resolved against the RESOLVER and replaced a half of
-            # the carried pair. Same class as the five above - a key no capture can
-            # contain, because `sub-resolve-and-gate` has no equivalent arm at all.
-            ("output", "bare_member_offer_entity_resolved"),
-        ),
+        strip_paths=_ADDED_DIAGNOSTIC_KEYS,
     ),
     # A7 (chatbot-growth-r1, AC-921/AC-922): `crossdomain_render`'s `_xdBlock` gained three
     # diagnostic keys - `nothing_codes`, `nothing_note`, `nothing_missing` - so
@@ -940,6 +1083,7 @@ DIVERGENCES: list[Divergence] = [
         strip_paths=(("_xd", "requested"),),
     ),
 ]
+
 
 
 # World-level allowances live in `tests/chatbot/worlds.py`, not here, and there are
