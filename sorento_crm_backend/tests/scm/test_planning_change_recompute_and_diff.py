@@ -458,6 +458,14 @@ def test_product_change_releases_held_and_sources_the_new_product(api):
     sourced = next(c for c in components if c is not release)
     assert sourced["item_code"] == new_product.product_code, sourced
     assert sourced["qty_now"] == "134", sourced
+    # Review round C5: product_changed labels carry the item code; non-product-changed
+    # rows (AC-C2's "Keep 134" above) stay code-free.
+    assert release["label"] == (
+        f"Release 134 {old_product.product_code}, free at {world.own_wh.warehouse_code}"
+    ), release
+    assert sourced["label"] == (
+        f"Buy 134 {new_product.product_code} for {date(2027, 3, 1).strftime('%-d %b')}"
+    ), sourced
 
 
 # --------------------------------------------------------------------------- #
@@ -507,7 +515,10 @@ def test_advance_the_po_cannot_meet_with_no_donor_suggests_keep_late(api):
     assert components[0]["action"] == "keep"
     late_days = (po_arrival - new_required_date).days
     assert row.suggestion_json.get("late_days") == late_days, row.suggestion_json
-    assert components[0]["label"] == f"Keep 134, late by {late_days} days", components[0]
+    # Review round C6: the label reads late-free once ("Keep 134") - lateness is stated
+    # once, as the fact (`late_days` above and the board's own separate badge), never
+    # duplicated inside the label text too.
+    assert components[0]["label"] == "Keep 134", components[0]
 
     planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "confirm")
     db.commit()
@@ -652,6 +663,11 @@ def test_advance_inside_the_window_the_ladder_cannot_cover_shows_it_short():
         assert buy_component["qty_now"] == "84", components
         assert row.suggestion_json.get("shortfall_qty") == "84", row.suggestion_json
         assert buy_component["label"].startswith("Short 84 by"), buy_component
+        # Review round C4: label order and exact wording.
+        assert components.index(pool_component) < components.index(buy_component), components
+        assert buy_component["label"] == (
+            f"Short 84 by {IMMEDIATE.strftime('%-d %b')} (was Buy 134)"
+        ), buy_component
 
 
 # --------------------------------------------------------------------------- #
@@ -674,3 +690,80 @@ def test_planning_change_decision_literal_is_confirm_and_amend_only():
         "board (compose_suggestion replaces suggest(), the row-decision route accepts "
         "confirm/amend only)"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Review round C1 (blocker, rule 7 / S10 / owner ruling 4.2): a delay past the
+# reserve window reallocates a PLACED PO, it does not just "keep" it.
+# --------------------------------------------------------------------------- #
+
+def test_delay_past_the_window_with_a_placed_po_reallocates_it_and_buys_again(api):
+    """A placed document whose arrival + RESERVE_WINDOW_DAYS (project_so_delta_service
+    .RESERVE_WINDOW_DAYS = 60) is before the new required date is reallocated and the
+    line bought again for the new date - `test_build_batch_facts_read_buy_actioned_true_
+    for_a_really_placed_row` (line ~2591, a 10-day delay) is the counter-shape: arrival +
+    60 is still >= the new date there, so it keeps the PO instead. Not duplicated here."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    required = date.today() + timedelta(days=30)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="134",
+                            required_date=required)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="134", buy_reason="ZZT no stock anywhere"),
+    ]})
+    placed_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    arrival = date.today() + timedelta(days=40)
+    po, _po_line = _place_row_on_a_real_po(db, world, placed_row, qty_ordered="134")
+    # `_place_row_on_a_real_po` places against a real PO line with no `expected_date`
+    # stated - arrival is read off it some other way in this codebase; stamp it directly
+    # so this test pins arrival + RESERVE_WINDOW_DAYS unambiguously.
+    _po_line = (
+        db.query(PurchaseOrderLine)
+        .filter(PurchaseOrderLine.purchase_order_id == po.id)
+        .one()
+    )
+    _po_line.expected_date = arrival
+    db.commit()
+
+    new_date = date.today() + timedelta(days=190)
+    core_line.required_date = new_date
+    line.delivery_date = new_date
+    db.flush()
+    changed = _diff_change(
+        DATE_MOVED, core_line, doc_number=core_so.so_number,
+        item_code=world.product.product_code, location=world.own_wh.warehouse_code,
+        old_date=required, new_date=new_date, old_qty="134", new_qty="134",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="test.xlsx",
+    )
+    db.commit()
+    assert batch is not None
+    row = _only_row(db, batch)
+    components = row.suggestion_json["components"]
+    assert not any(c["action"] == "keep" for c in components), components
+    reallocate = next((c for c in components if c["action"] == "reallocate"), None)
+    assert reallocate is not None, components
+    assert reallocate["source"] == "po", reallocate
+    assert reallocate["qty_now"] == "134", reallocate
+    assert reallocate["target"] == "pool", reallocate  # bare world - rule 6's fallback
+    assert reallocate["label"] == f"Reallocate {po.po_number} 134 to pool", reallocate
+    buy = next((c for c in components if c["action"] == "buy"), None)
+    assert buy is not None, components
+    assert buy["qty_now"] == "134", buy
+    assert buy["label"] == f"Buy 134 for {new_date.strftime('%-d %b')}", buy
+
+    composition = planning_change_service.composition_from_proposal(row.proposal_json)
+    assert composition.get("buy_qty") == "134", composition
+    assert composition.get("reserve") == [], composition

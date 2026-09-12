@@ -596,33 +596,39 @@ def test_a_document_the_walk_already_gave_the_asker_covers_its_own_unit():
 
 
 def test_a_planning_change_reconfirms_a_step_three_borrow_as_the_document_it_was():
-    """FINDING 3. `_confirm_payload` rebuilds the frozen composition for a keep or a reduce,
-    and `_to_confirm_line` turns it into the body the confirmation takes.
+    """FINDING 3. `_to_confirm_line` turns a composition dict into the body the
+    confirmation takes.
 
     The three step-3 fields were dropped on the way through, so a keep re-confirmed a
     borrow OFF A DOCUMENT as an ordinary free-stock borrow at whatever bin the document is
     bound for: the placement link came down and the confirmation re-checked the quantity
     against on-hand capacity at a bin that has never held it.
-    """
-    from app.services.planning_change_service import _confirm_payload, _to_confirm_line
 
-    frozen = {
-        "components": [
+    `_confirm_payload` (which used to build this dict from a frozen `components` list) is
+    retired - Slice C applies a row from the composition CS confirmed, never from a verb
+    Apply re-decides off a frozen snapshot - so the composition dict it would have built
+    for this one borrow component is built by hand here instead (review round C7).
+    """
+    from app.services.planning_change_service import _to_confirm_line
+
+    payload = {
+        "project_line_id": "33333333-3333-3333-3333-333333333333",
+        "timely_spo_qty": Decimal("0"),
+        "reserve": [],
+        "borrow": [
             {
-                "kind": "borrow",
-                "qty": "40",
                 "source": "other_location",
-                "source_warehouse_id": "11111111-1111-1111-1111-111111111111",
-                "cs_reason": "Taking the container",
-                "rung": "supply_borrow",
+                "warehouse_id": "11111111-1111-1111-1111-111111111111",
+                "donor_project_id": None,
+                "qty": Decimal("40"),
+                "reason": "Taking the container",
                 "supply_key": "spo:22222222-2222-2222-2222-222222222222",
                 "supply_document": "SPO 202607-S0105",
                 "arrival_date": "2026-09-15",
             }
         ],
+        "buy_qty": Decimal("0"),
     }
-
-    payload = _confirm_payload("33333333-3333-3333-3333-333333333333", frozen)
     line = _to_confirm_line(payload)
 
     assert [

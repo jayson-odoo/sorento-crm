@@ -67,13 +67,13 @@ describe('the composed suggestion on the board', () => {
   });
 
   it('S12: a unit nobody can cover in time is kept, and said to be late', () => {
+    // Review round C6: lateness is stated ONCE, as the fact/badge - the label itself
+    // stays plain ("Keep 134"), never duplicating "late by N days" inside the sentence.
     const { row, soNumber } = rowOf('pcr-s12');
     render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
-    expect(
-      screen.getAllByTestId('board-change-suggestion-line').map((line) => line.textContent),
-      // The engine says the lateness in its own sentence AND as a fact, so the board can
-      // print the fact even where the sentence is long enough to truncate.
-    ).toEqual(['Keep 134, late by 3 days']);
+    const lines = screen.getAllByTestId('board-change-suggestion-line');
+    expect(lines.map((line) => line.textContent)).toEqual(['Keep 134']);
+    // `getByTestId` itself throws on more than one match, so this also pins "exactly once".
     expect(screen.getByTestId('board-change-late-pcr-s12').textContent).toBe('Late by 3 days');
     expect(screen.queryByTestId('board-change-short-pcr-s12')).toBeNull();
   });

@@ -861,7 +861,7 @@ const ROW_S12: PlanningChangeRow = {
         source: 'po',
         qty_now: '134',
         document: 'PO-A',
-        label: 'Keep 134, late by 3 days',
+        label: 'Keep 134',
       },
     ],
     late_days: 3,
