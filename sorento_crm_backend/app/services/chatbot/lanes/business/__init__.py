@@ -30,6 +30,7 @@ from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
+    resolve_warehouse_token,
 )
 
 logger = logging.getLogger(__name__)
@@ -320,6 +321,7 @@ def run_fetch(
     dry_run: bool = False,
     space_id: str | None = None,
     trace: Any = None,
+    db: Any = None,
 ) -> dict[str, Any]:
     """S6b: the fetch step, the next call site after `run_until_exit`'s `continue` exit.
 
@@ -349,6 +351,11 @@ def run_fetch(
     "the read" below records one `tool` event (`name`, `args`, the envelope, `ms`) via
     `trace.add`. `None` is a no-op, so every existing caller (and every world/replay test)
     is unaffected by omitting it.
+
+    `db` (S4c, PLAN-chatbot-outstanding-report.md): the live Session, optional - only
+    `crm_outstanding_report`'s own location resolution (D5, AC-1133) reads it, through
+    `services.resolve_warehouse_token`. `None` is a no-op there too (a direct `run_fetch`
+    call, this module's own tests), same as no location word at all.
     """
     _ = dry_run
     raw_gate = payload.get("gate")
@@ -488,6 +495,26 @@ def run_fetch(
     ):
         tool_name = "crm_outstanding_report"
         tool_item = {"name": tool_name, "_tool_pick": {"source": "outstanding_override"}}
+
+        # -- S4c (D5, AC-1133 pipeline half): the location word, before any fetch -- #
+        # Read off the RAW parsed entities (`parse_output`), never the gated
+        # `entities`/`compatible_entities` above - those only ever carry what the
+        # GENERIC resolver matched, and D5's exact-then-suffix grammar is this
+        # report's own rule, not that resolver's job (a suffix token like "IB" is not
+        # any single warehouse's own code, so the generic resolver never returns it).
+        # `db` is None outside a real turn (this module's own direct `run_fetch`
+        # tests), which is a no-op, same as no location word at all.
+        for e in jsc.array(parse_output.get("entities")):
+            if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "warehouse":
+                continue
+            token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+            if not token or db is None:
+                break
+            codes = resolve_warehouse_token(db, token)
+            if codes:
+                semantic_input["outstanding_warehouse_codes"] = codes
+                semantic_input["outstanding_location_token"] = token
+            break  # D5/AC-1105: one location word per turn
 
         # -- D13: the sales_orders.outstanding field-reveal gate, before any fetch -- #
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}

@@ -1411,6 +1411,22 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _outstanding_location_line(token: Any, codes: Any) -> str:
+    """S4c (D5, AC-1133/AC-1105): the SAME header rule
+    `sorento_crm_mcp.presenters._outstanding_location_header` renders server-side -
+    `"IB"` resolved to two codes -> `"IB (BRW-IB, MWH-IB)"`; an exact code prints
+    alone; no token, or one that resolved to nothing, prints `"all"`. Duplicated here
+    (not imported) for the same reason `_outstanding_report_output`'s own docstring
+    gives: the backend container does not carry `sorento_crm_mcp`."""
+    token = jsc.js_string(token or "").strip()
+    resolved = [jsc.js_string(c) for c in (codes or []) if jsc.truthy(c)]
+    if not token or not resolved:
+        return "all"
+    if len(resolved) == 1 and resolved[0].casefold() == token.casefold():
+        return resolved[0]
+    return f"{token} ({', '.join(resolved)})"
+
+
 def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     """S4 point 5 (AC-1114b/AC-1135/AC-1138/AC-1141): `crm_outstanding_report` never
     goes through the generic envelope below - the report's shape (two named blocks,
@@ -1445,7 +1461,17 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
             offer = []
             has_result = bool(rows)
         else:
-            parts = [f"Product: {data.get('product_code')}"]
+            parts = [
+                f"Product: {data.get('product_code')}",
+                # S4c (D5, AC-1133 pipeline half): the token the customer typed plus
+                # what it resolved to - from `semantic_input`, never `data` (the
+                # report body carries no location echo of its own).
+                "Location: "
+                + _outstanding_location_line(
+                    semantic_input.get("outstanding_location_token"),
+                    semantic_input.get("outstanding_warehouse_codes"),
+                ),
+            ]
             so_block = data.get("so")
             do_block = data.get("do")
             so_hit = isinstance(so_block, dict) and bool(so_block.get("so_count"))
