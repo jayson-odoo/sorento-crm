@@ -196,6 +196,13 @@ class PriceTagRequestResponse(BaseModel):
     # (PLAN-price-tag-feedback-r2 S2).
     has_completed_export: bool = False
 
+    # D-P6/AC-B6: whether a post-submit edit is currently allowed - True for
+    # a draft, or a submitted request at New / Changes requested; False at
+    # every other status. Filled by ``response_with_resolved_lines`` for the
+    # same reason as the fields above it. The FE Edit button reads this,
+    # never the status list.
+    is_editable: bool = False
+
 
 class PriceTagRequestListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)

@@ -426,11 +426,10 @@ class PriceTagRequestService:
         ``ck_price_tag_request_lines_one_ref`` refuses it on insert. The form
         catches that one on the client, where the empty row actually is.
         """
+        # D-P2b: need by is optional - dropped from what "complete" requires.
         missing: list[tuple[str, str]] = []
         if not (request.debtor_name or "").strip():
             missing.append(("debtor_name", "a dealer"))
-        if request.needed_by_date is None:
-            missing.append(("needed_by_date", "a needed by date"))
         if not request.lines:
             missing.append(("lines", "at least one line"))
         if missing:
@@ -447,14 +446,8 @@ class PriceTagRequestService:
                 code="SUBMIT_INCOMPLETE",
             )
 
-        # D5: Selling price has nothing to sell against without a promotion.
-        if request.price_mode == "selling" and not request.promotion_id:
-            raise AppException(
-                status_code=422,
-                message="Selling price needs a promotion before this request can be submitted.",
-                detail="promotion_id",
-                code="PRICE_MODE_NEEDS_PROMOTION",
-            )
+        # D-P2 (owner ruling): Selling with no promotion is a valid end state
+        # now - the PRICE_MODE_NEEDS_PROMOTION guard is retired.
 
     @staticmethod
     def validate_claimable(request: PriceTagRequest) -> None:
@@ -706,6 +699,15 @@ class PriceTagRequestService:
 
         response.has_completed_export = (
             latest_completed_export(db, request.id) is not None
+        )
+
+        # D-P6/AC-B6: the FE Edit button reads this, never the status list
+        # itself - a draft is always editable; a submitted request stays
+        # editable only at New / Changes requested, mirroring
+        # ``portal_price_tag._require_editable``.
+        response.is_editable = bool(request.portal_draft_at) or request.status in (
+            STATUS_NEW,
+            STATUS_CHANGES_REQUESTED,
         )
 
         # The header's names, from the same resolver the listing uses so the two

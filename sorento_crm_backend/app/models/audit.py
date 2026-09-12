@@ -17,7 +17,9 @@ class AuditLog(Base):
     # production currently types this column `uuid`, which silently rejects those
     # rows, so market-segment changes have never been audited. See migration 297.
     entity_id = Column(String(100), nullable=False, index=True)
-    action = Column(String(20), nullable=False)  # INSERT | UPDATE | DELETE
+    # INSERT | UPDATE | DELETE, or a longer self-describing action name like
+    # portal_edit_after_submit (migration ptag_0006 widened this from 20).
+    action = Column(String(40), nullable=False)
     user_id = Column(UUID(as_uuid=False), nullable=True)  # system, or user id when available
     # Acting contact (respond_contacts.id) for portal/public-link writes where there is
     # no staff user_id. NULL for staff writes and the `system` automation principal.

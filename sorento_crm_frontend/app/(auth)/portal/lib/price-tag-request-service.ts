@@ -84,12 +84,7 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
    * D-P6/AC-B6: true while a post-submit edit is allowed (status `new` or
    * `changes_requested`, not a draft - a draft is already editable via
    * `portal_draft_at`). The FE Edit button reads this, never the status
-   * list directly.
-   *
-   * MOCKED here until S8 lands the real backend field: the server does not
-   * send `is_editable` yet, so `getRequest` below derives the same rule
-   * client-side. Swap out `deriveIsEditable` for a plain passthrough once
-   * S8 ships it.
+   * list directly. Sent by the server since S8.
    */
   is_editable?: boolean;
 }
@@ -334,24 +329,14 @@ export async function listRequestsAsSummaries(
   });
 }
 
-// MOCK (Phase 1, D-P6): the statuses a post-submit edit is allowed at. The
-// server does not send `is_editable` until S8 - remove this and the derive
-// call below once it does, and this file goes back to a plain passthrough.
-const MOCK_EDITABLE_STATUSES = new Set(['new', 'changes_requested']);
-
-function deriveIsEditable(data: PriceTagRequestDetail): boolean {
-  if (data.is_editable !== undefined) return data.is_editable;
-  if (data.portal_draft_at) return true;
-  return MOCK_EDITABLE_STATUSES.has((data.status ?? '').toLowerCase());
-}
-
 export async function getRequest(id: string): Promise<PriceTagRequestDetail | null> {
   const res = await portalFetch(
     `${BASE}/${encodeURIComponent(id)}`,
   );
   if (res.status === 404) return null;
-  const data = await unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
-  return { ...data, is_editable: deriveIsEditable(data) };
+  // D-P6/S8: `is_editable` is the server's own field now (AC-B6) - true for a
+  // draft, or a submitted request at New / Changes requested. No FE mock left.
+  return unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
 }
 
 /**

@@ -289,11 +289,17 @@ def portal_update_price_tag_request(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Update a draft price tag request."""
+    """Update a draft, or (D-P6) a submitted request still at New / Changes
+    requested. The latter never touches ``status``, ``assigned_to_id`` or
+    ``portal_draft_at``, and never re-fires the form SLA - only ``submit``
+    does that, and it stays gated on ``_require_draft`` so a post-submit edit
+    can never re-open that door. It writes an audit row instead, so the
+    change is on record even though nothing else observably happened."""
     request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
-    _require_draft(req, "Only draft requests can be updated.")
+    _require_editable(req)
+    is_post_submit_edit = req.portal_draft_at is None
 
     update_data = payload.model_dump(exclude_unset=True)
     # `lines` is a relationship, not a column: given, it REPLACES the draft's
@@ -306,6 +312,20 @@ def portal_update_price_tag_request(
         PriceTagRequestService.replace_lines(db, req, lines)
 
     db.flush()
+
+    if is_post_submit_edit:
+        from app.services.audit_service import log_audit
+
+        log_audit(
+            db,
+            entity_type="price_tag_request",
+            entity_id=req.id,
+            action="portal_edit_after_submit",
+            contact_id=req.contact_id,
+            new_values=update_data,
+            description="Portal edit after submit",
+        )
+
     db.commit()
     return _detail_body(db, req)
 
@@ -592,6 +612,24 @@ def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
     """
     if req.portal_draft_at is None:
         raise AppException(status_code=409, message=message, code=code)
+
+
+def _require_editable(req) -> None:
+    """D-P6: PUT only. A draft is always editable (unchanged); a submitted
+    request stays editable while marketing has not started designing it yet
+    (``new`` / ``changes_requested``) - once it does, the tag data underneath
+    is being worked on and a silent edit would land under the designer's
+    feet. DELETE and submit keep the stricter ``_require_draft``: only a
+    draft may be deleted or (re-)submitted."""
+    if req.portal_draft_at is not None:
+        return
+    if req.status in (STATUS_NEW, STATUS_CHANGES_REQUESTED):
+        return
+    raise AppException(
+        status_code=409,
+        message="This request can no longer be edited.",
+        code="NOT_EDITABLE",
+    )
 
 
 def _detail_body(db: Session, req) -> dict:
