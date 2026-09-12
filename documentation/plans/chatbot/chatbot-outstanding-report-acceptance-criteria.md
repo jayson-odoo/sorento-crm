@@ -5,7 +5,9 @@ evidence (pytest / golden fixture / world / console check). "Contact" = a Respon
 through `/api/v1/external/chat/turn`. "Management" = a contact whose grants reveal customer
 names and quantities (the owner's own test contact today). Stacked on lane 1 of
 `PLAN-chatbot-focus-multi-domain.md` (`feat/chatbot-focus`), which owns the open-question
-mechanism this plan adds two kinds to.
+mechanism this plan adds two kinds to. REBASED 13 Sep: the lane ships off origin/main
+without #847; Phase 2 lane ACs use main's `selection_context` / `pending.kind` picker
+mechanism (see the plan's "S4 on main").
 
 ## Journey
 
@@ -116,6 +118,12 @@ resolution and the filter set in the console trace.
   null` when it is not. Evidence: pytest.
 - **AC-1113 [BE]** `customer_query=Dealer A` matches `customers.customer_name` ILIKE, never
   `debtor_code`. Evidence: pytest with a code that would match and a name that would not.
+- **AC-1113b [BE]** `customer_ids` (csv of `customers.id`) filters the same way and is what
+  the chatbot lane sends (the resolved customer entity); `crm_outstanding_report` exposes it.
+  `customer_query` and `customer_ids` together intersect. Evidence: pytest (route + catalog).
+- **AC-1114b [BE]** `detail=so|do` makes the MCP tool render `_outstanding_detail` for that
+  scope instead of the report (`view=render`); the route itself is unchanged by `detail`.
+  Evidence: MCP pytest on `present_response`.
 - **AC-1114 [BE]** `so_rows[]` is one row per SO: an SO with two live lines of the product
   (205 + 205) returns one row with `ordered_qty=410`, `location` = the distinct warehouse
   codes joined by `, `. Sorted by `order_date` asc then `so_number`. Evidence: pytest.
@@ -153,18 +161,23 @@ resolution and the filter set in the console trace.
 
 ### Chatbot lane
 
-- **AC-1130 [BE]** Given a message carrying the word "outstanding" (or "o/s", "os",
-  "backlog", "pending") with a product and no scope word, when the business lane runs, then
-  it asks open question kind `outstanding_scope` with frozen options `[Sales orders,
-  Delivery orders, Both]` and sends nothing else. Evidence: pytest on `answer.py` + world.
+- **AC-1130 [BE]** Given a message carrying the bare word "outstanding" (or "o/s", "os",
+  "backlog") with a product and no document word, from a contact holding
+  `sales_orders.outstanding`, when the turn compiles, then no tool is called, the reply is
+  the plan's scope question, and the session carries `selection_context =
+  "outstanding_scope"`, `pending.kind = "outstanding_scope"`, `last_result_set` of three
+  rows (so / do / both) and `outstanding_filters` holding the parsed product, dates,
+  customer and location. Evidence: pytest on compile_state / pending + console case.
 - **AC-1131 [BE]** Scope words bind without a question: "sales order", "SO", "so
-  outstanding" → `so`; "delivery order", "DO", "pending delivery" → `do`; "both" → `both`.
-  Evidence: pytest table.
-- **AC-1132 [BE]** Given `outstanding_scope` is open and the next message is "2" or
-  "delivery order", then `open_question.resolve` returns `Outcome(focus={"outstanding_scope":
-  "do"})` and the report runs in the same turn with the product, dates, customer and
-  location already parsed on the asking turn (carried in the question `payload`). Evidence:
-  pytest on `dialogue/open_question.py` + world replay of journey steps 2 and 3.
+  outstanding" → `order_status=so_outstanding` → scope `so`; "delivery order", "DO",
+  "pending delivery" → `do_outstanding` → `do`; "both" → `outstanding_both` → `both`.
+  Evidence: pytest table over the parser vocabulary and the fetch mapping.
+- **AC-1132 [BE]** Given `pending.kind == "outstanding_scope"` from the previous turn and
+  the next message is "2" or "delivery order", then `head/output_exchange.py` stamps
+  `order_status=do_outstanding`, restores `outstanding_filters` into the parser output, and
+  the business lane calls `crm_outstanding_report` in the same turn with those filters
+  (no re-parse of the product). "1" → so, "3" / "both" → both; an out-of-range number
+  re-asks. Evidence: pytest on output_exchange + console case (journey steps 2 and 3).
 - **AC-1133 [BE]** Location token resolution: a token equal to a `warehouse_code` (case
   insensitive) → that code only (`BRW` → `BRW`); a token that is the suffix of one or more
   codes after `-` (`IB` → `BRW-IB`, `MWH-IB`) → all of them; a token matching nothing → no
@@ -173,12 +186,21 @@ resolution and the filter set in the console trace.
 - **AC-1134 [BE]** No date in the message → no `order_date_*` param and header `Order date:
   all`. A parsed window → `order_date_from/to`, never `actual_delivery_date_*`, for this tool.
   Evidence: pytest on `fetch.py`.
-- **AC-1135 [BE]** After a report, open question kind `detail_pick` is armed with the offered
-  options (1 SO list, 2 DO list, per scope). "1" renders the SO detail from the SAME report
-  payload (no second fetch, no re-parse); a product code or domain word instead clears it
-  (D9 of the focus plan). Evidence: pytest + world.
-- **AC-1136 [BE]** Customer name in the message ("Dealer A outstanding SRTWT7445") becomes
-  `customer_query`; the header prints the resolved `customer_name`. Evidence: pytest.
+- **AC-1135 [BE]** After a report with at least one non-empty block, the session carries
+  `selection_context = "outstanding_detail"`, `pending.kind = "outstanding_detail"`,
+  `last_result_set` = the offered options only (1 Sales order list, 2 Delivery order list,
+  per scope present) and the same `outstanding_filters`; no escalate offer is appended on a
+  hit. Evidence: pytest on compile_state / pending.
+- **AC-1138 [BE]** Given `pending.kind == "outstanding_detail"` and the next message is "1",
+  then the lane calls `crm_outstanding_report` again with the stored filters plus
+  `detail=so` and the reply is the SO detail list (AC-1106); "2" → `detail=do`. A product
+  code or a domain word instead is a new ask and the pending is dropped. Evidence: pytest +
+  console case (journey step 4).
+- **AC-1139 [BE]** When the tool called was `crm_outstanding_report`, `_search_scope_header`
+  prints nothing (the report carries its own header lines). Evidence: pytest.
+- **AC-1136 [BE]** Customer name in the message ("Dealer A outstanding SRTWT7445") resolves
+  through the existing customer entity and is sent as `customer_ids`; the header prints the
+  response's `customer_name`. Evidence: pytest.
 - **AC-1140 [BE]** Given a contact whose granted reveal keys lack `sales_orders.outstanding`,
   when the message is "SRTWT7445 outstanding" (no scope word), then no scope question is
   asked, the report runs with `scope=do`, and the reply carries only the DO block. Evidence:
@@ -187,14 +209,17 @@ resolution and the filter set in the console trace.
   or scope answer "1"/"3"), then no SO query runs and the reply is the header, one line
   `Sales order figures are not enabled for your account.`, then the DO block. Evidence:
   pytest asserts the report call carries `scope=do`.
-- **AC-1142 [FE]** `sales_orders.outstanding` appears on Contacts > Access > field reveals
-  with label `Sales order outstanding`, granted and revoked the way `purchase_orders.placed`
-  is, and the grant flips the behaviour in AC-1140 on the next turn. Evidence: vitest on the
-  reveal list + agent-browser run + world.
+- **AC-1142 [FE]** `sales_orders.outstanding` is in `FIELD_REVEAL_KEYS` (label `Sales order
+  outstanding`) and in `crm_outstanding_report`'s catalog `restricted_fields`, so the pinning
+  test `tests/chatbot/test_field_reveal_keys_pinned_to_catalog.py` stays green and the key
+  appears on Contacts > Access > field reveals, granted and revoked the way
+  `purchase_orders.placed` is; the grant flips AC-1140 on the next turn. Evidence: pytest +
+  agent-browser run.
 - **AC-1137 [BE]** Console check (`documentation/agents/chatbot-verification.md`) passes for
-  the six journey messages against the lane stack, and the trace shows `outstanding_scope`
-  asked/resolved, the location resolution and the final filter set. Evidence: console run
-  recorded under `documentation/plans/chatbot/evidence/outstanding-report/`.
+  the six journey messages as `tests/chatbot/console_cases/2026-09-13-outstanding-report.yaml`
+  against the lane stack, and the trace shows the scope question asked and resolved, the
+  location resolution and the final filter set. Evidence: console run recorded under
+  `documentation/plans/chatbot/evidence/outstanding-report/`.
 
 ## Out of scope (backlog)
 
