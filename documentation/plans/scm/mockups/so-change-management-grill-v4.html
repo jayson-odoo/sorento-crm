@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>SO change management grill v4</title>
+<style>
+body{font:14px/1.45 -apple-system,Inter,sans-serif;color:#1a1a1a;background:#fafaf8;margin:0;padding:28px 32px;max-width:1500px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:32px 0 8px;border-bottom:2px solid #e2e0d8;padding-bottom:4px}
+h3{font-size:15px;margin:22px 0 6px}
+p.lead{color:#555;margin:0 0 18px}
+table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:8px}
+th,td{border:1px solid #ddd;padding:7px 9px;vertical-align:top;text-align:left}
+th{background:#f0efe9;font-weight:600}
+td.k{font-weight:600;white-space:nowrap;background:#fbfbf9;width:120px}
+.s{background:#fff;border:1px solid #d9d7cf;padding:12px 16px;margin:12px 0;border-left:4px solid #5a8f5a}
+.s h3{margin-top:0}
+.q{background:#fff;border:1px solid #d9d7cf;border-left:4px solid #3b6ea5;padding:10px 14px;margin:10px 0}
+.q b{display:block;margin-bottom:4px}
+.d{background:#eef5ee;border:1px solid #cfe0cf;padding:8px 14px;margin:6px 0;font-size:13px}
+code{background:#eee;padding:1px 4px;border-radius:3px;font-size:12px}
+.have{color:#2d6a2d}.new{color:#a04000;font-weight:600}
+ul,ol{margin:4px 0 8px 18px}
+</style></head><body>
+<h1>Managing a sales-order change after planning, v4</h1>
+<p class="lead">Changes from v3: S1 corrected to the whole-unit rule; every candidate is an inquiry row and the text now says so; dealer hot-selling wins; reserve reallocation is in scope; four new scenarios S9 to S12 (small delay, big delay, advance into the immediate window, advance still not immediate). Decided items are marked. Open items are at the end.</p>
+
+<h2>0. The rules we are planning against</h2>
+<ol>
+<li><b>One engine, whole unit.</b> A planning unit (order, product, location, date) is covered by ONE step of the ladder or by a Buy: pool share (inside the immediate window only, may cover part), Use own, Borrow (order-back for the donor), SPO, Buy. Half from stock and half bought is never a suggestion, because two sources means two delivery stories. Existing rule R10/R33.</li>
+<li><b>Step 0.</b> A line due beyond the reserve window, or beyond purchasing's reorder-coverage date, is not reserved from stock at all: the whole unit is a Buy. Existing. This is what the "60 days" means: the ladder's own window, not a change-specific knob.</li>
+<li><b>Change = re-run at the new state, diff against what is held.</b> The diff is the suggestion: Keep / Reduce / Release / Reallocate on held components, plus new sourcing. CS decides Confirm or Amend.</li>
+<li><b>A top-up joins the held source.</b> Qty up on a Buy line tops up the Buy (same inquiry row, "Was 134"). Qty up on a Use own line takes more stock if the group has it, else the whole unit moves to the next step that covers all of it. A partial mix is allowed only where the ladder already allows it: the pool-share step inside the immediate window.</li>
+<li><b>Reallocation candidates are inquiry rows.</b> Only an order that has been fulfilment-planned has inquiry rows; only a raised or partly linked ORDER row with unlinked quantity can receive freed PO / SPO quantity or freed stock. Project lines without an inquiry row have nothing to do with purchasing and are not candidates. Dealer hot-selling wins: freed quantity goes to the dealer pool first (decided). Then inquiry rows through the linking engine's priority. Then a pool-location row.</li>
+<li><b>Borrow raises an ORDER_BACK row for the donor.</b> Existing. A bumped Buy bumps the same row; a Borrow adds the order-back row (decided).</li>
+<li><b>The receiving order's CS is not asked.</b> Its inquiry row shows "Found: PO-A 34" or its Buy row is cancelled because stock now covers it; its board reads the new state next time it opens (decided, since candidates always have inquiry rows).</li>
+</ol>
+
+<h2>1. Scenarios, all on SO419772 / B2155-NL-BLUE, own location BRW-IB, pool BRW</h2>
+
+<div class="s"><h3>S1. Qty up 134 to 234, Buy 134 raised, not on a PO, line due 4 Sep (not immediate)</h3>
+<table>
+<tr><td class="k">Held</td><td>Buy 134. Inquiry row ORDER 134 raised.</td></tr>
+<tr><td class="k">Engine</td><td>Re-run the unit at 234. Held source is Buy; the top-up joins it unless a single step now covers all 234.</td></tr>
+<tr><td class="k">Board</td><td>Was 134 / Now 234. Keep and top up: Buy 234. If SO419900 (due 30 Nov) holds 234 on hand: Borrow 234 whole, order-back for SO419900, the Buy row cancelled. Never "Use own 40 + Buy 194".</td></tr>
+<tr><td class="k">OI after Confirm</td><td>Same row ORDER 234, note "Was 134". Borrow case: ORDER 134 cancelled (RELEASE note), ORDER_BACK 234 raised on SO419900's line.</td></tr>
+</table></div>
+
+<div class="s"><h3>S2. Qty down 234 to 100, Buy 134 placed on PO-A, Buy 100 raised</h3>
+<table>
+<tr><td class="k">Held</td><td>Buy 134 placed (PO-A, 1 Oct). Buy 100 raised. Two inquiry rows.</td></tr>
+<tr><td class="k">Engine</td><td>134 no longer needed. Reduce unplaced first, then placed. Freed PO quantity: dealer hot-selling? dealer pool. Else inquiry rows. Else pool location.</td></tr>
+<tr><td class="k">Board</td><td>Was 234 / Now 100. Reduce Buy 100 to 0. Keep PO-A 100 of 134. Reallocate PO-A 34: to BRW if BLUE is dealer hot-selling; else to SO420103 (ORDER 50 raised, unlinked, due 15 Oct); else pool.</td></tr>
+<tr><td class="k">OI after Confirm</td><td>Raised row ORDER 100 cancelled, CANCEL_BALANCE. Placed row ORDER 134 becomes 100, "Was 134", PO-A link trimmed. Receiving: SO420103's row gets PO-A link 34 (partly linked, "Found"), or a pool-location row for 34.</td></tr>
+</table></div>
+
+<div class="s"><h3>S3. Date delayed 4 Sep to 20 Nov, Use own 134 reserved on BRW-IB (inside the reserve window)</h3>
+<table>
+<tr><td class="k">Held</td><td>Reserve 134. No inquiry row.</td></tr>
+<tr><td class="k">Engine</td><td>Re-run at 20 Nov: still inside the window, so a reserve is still a valid answer. Does an inquiry row need this stock before 20 Nov? SO420100 has ORDER 80 raised, unlinked, due 1 Oct: yes.</td></tr>
+<tr><td class="k">Board</td><td>Was 4 Sep / Now 20 Nov. Reallocate 80 of the reserve to SO420100 (its Buy 80 becomes Use own 80). This line re-run for 134 at 20 Nov as a whole unit: SPO-77 (10 Nov, 200 free) covers it: SPO 134. If no row needs the stock: Keep 134.</td></tr>
+<tr><td class="k">OI after Confirm</td><td>SO420100's ORDER 80 cancelled (stock covers it now). This line: ALREADY_INBOUND 134 covered_by SPO-77, DELAY note "Was 4 Sep". Keep case: nothing.</td></tr>
+</table></div>
+
+<div class="s"><h3>S4. Date advanced 4 Sep to 20 Aug (still not immediate), Buy 134 placed on PO-A arriving 1 Sep</h3>
+<table>
+<tr><td class="k">Held</td><td>Buy 134 placed on PO-A. ORDER 134 placed.</td></tr>
+<tr><td class="k">Engine</td><td>Re-run at 20 Aug. PO-A lands too late. One step must cover 134 whole: BRW-IB free 20 does not; SO419900 (30 Nov) holds 134 on hand: Borrow whole.</td></tr>
+<tr><td class="k">Board</td><td>Was 4 Sep / Now 20 Aug. Borrow 134 from SO419900, order-back for SO419900. Reallocate PO-A 134: dealer pool if hot-selling; else to SO419900's order-back row itself (it is owed 134 and PO-A lands well before 30 Nov); else other rows, else pool.</td></tr>
+<tr><td class="k">OI after Confirm</td><td>This line's ORDER 134 cancelled, ADVANCE note. SO419900: ORDER_BACK 134 raised and linked to PO-A 134 (placed). Purchasing sees the PO moved from one order to the other.</td></tr>
+</table></div>
+
+<div class="s"><h3>S5. Line cancelled or removed, Reserve 50 + Buy 84 placed on PO-B</h3>
+<table>
+<tr><td class="k">Board</td><td>Line closed. Release reserve 50 (free at BRW-IB; dealer pool if hot-selling). Reallocate PO-B 84: dealer pool if hot-selling; else inquiry rows; else pool location. Removal is never refused.</td></tr>
+<tr><td class="k">OI after Confirm</td><td>ORDER 84 cancelled, RELEASE note "Line closed". PO-B 84 linked to the receiving row(s) or a pool-location row.</td></tr>
+</table></div>
+
+<div class="s"><h3>S6. New line added on an order with held lines: B2160-NL-BLUE 60, 4 Sep</h3>
+<table>
+<tr><td class="k">Board</td><td>In the same change view: New line. One step for 60 whole: Use own 60 if the group has it, else Borrow, else SPO, else Buy 60.</td></tr>
+<tr><td class="k">OI after Confirm</td><td>New ORDER 60 row if Buy; ORDER_BACK if Borrow; nothing if Use own. The linking engine tries to place a Buy right away, as today.</td></tr>
+</table></div>
+
+<div class="s"><h3>S7. Product changed: B2155-NL-BLUE 134 becomes B2155-NL-WHITE 134</h3>
+<table>
+<tr><td class="k">Board</td><td>ONE row "Product changed, was B2155-NL-BLUE". BLUE side as S5 (Release / Reallocate). WHITE side as S6 (one step for 134 whole).</td></tr>
+<tr><td class="k">OI after Confirm</td><td>BLUE row cancelled "Product changed to WHITE"; its PO quantity reallocated per rule 5. WHITE row raised per its source. A BLUE PO is never relabelled WHITE.</td></tr>
+</table></div>
+
+<div class="s"><h3>S8. Date and qty together: 134 on 4 Sep becomes 100 on 20 Nov, Reserve 134</h3>
+<table>
+<tr><td class="k">Board</td><td>One run on (100, 20 Nov). Was 134 on 4 Sep / Now 100 on 20 Nov. Reduce reserve to 100; the freed 34 per rule 5. Then S3's question on the 100.</td></tr>
+</table></div>
+
+<div class="s"><h3>S9. Small delay: 4 Sep to 25 Sep, Reserve 134, nobody's inquiry row needs the stock before 25 Sep</h3>
+<table>
+<tr><td class="k">Engine</td><td>Re-run at 25 Sep: inside the window, reserve still valid, no earlier row needs it.</td></tr>
+<tr><td class="k">Board</td><td>Was 4 Sep / Now 25 Sep. Keep 134. Nothing else. If the line held a Buy instead: Keep, the inquiry row carries DELAY "Was 4 Sep"; a placed PO keeps its link.</td></tr>
+</table></div>
+
+<div class="s"><h3>S10. Big delay: 4 Sep to 15 Mar next year, Reserve 134 (beyond the reserve window)</h3>
+<table>
+<tr><td class="k">Engine</td><td>Re-run at 15 Mar: step 0 fires, the line is beyond the window, no stock is reserved for a line that far out; the whole unit is a Buy at its own time.</td></tr>
+<tr><td class="k">Board</td><td>Was 4 Sep / Now 15 Mar. Release reserve 134 (dealer pool if hot-selling, else free at BRW-IB). Buy 134 for 15 Mar. Same if the held component was a Borrow: the borrow ends, the donor's order-back is cancelled. A held Buy already placed on a PO landing in October: Reallocate the PO quantity per rule 5 and Buy again nearer the date (or Keep if purchasing prefers to hold stock; that is an Amend).</td></tr>
+<tr><td class="k">OI after Confirm</td><td>New ORDER 134 for 15 Mar (RESERVE_AND_ORDER vs ORDER decided by the existing window rule at raise time). Any cancelled or reallocated rows carry their notes.</td></tr>
+</table></div>
+
+<div class="s"><h3>S11. Advance INTO the immediate window: 4 Sep to 3 days from now, Buy 134 raised, not on a PO</h3>
+<table>
+<tr><td class="k">Engine</td><td>Re-run as immediate. Only here may the pool-share step give PART of the unit: BRW's project allowance has 90 free now.</td></tr>
+<tr><td class="k">Board</td><td>Was 4 Sep / Now (3 days). Pool share 90 now. Remaining 44: one step whole (Use own 44 from the group if it has it, else Borrow 44 from a later order with order-back, else the Buy 44 stays and the line is short, shown as such). The Buy 134 row is Reduced to 44 or cancelled.</td></tr>
+<tr><td class="k">OI after Confirm</td><td>ORDER 134 becomes ORDER 44 "Was 134" (or cancelled); ORDER_BACK if a borrow was used. The board shows the shortfall plainly when nothing covers the rest in time.</td></tr>
+</table></div>
+
+<div class="s"><h3>S12. Advance but still not immediate: 4 Sep to 25 Aug, Buy 134 placed on PO-A arriving 28 Aug</h3>
+<table>
+<tr><td class="k">Engine</td><td>Re-run at 25 Aug. PO-A lands three days late. Whole-unit rule: one step must cover 134 by 25 Aug or the unit stays as it is and is late.</td></tr>
+<tr><td class="k">Board</td><td>Was 4 Sep / Now 25 Aug. If a donor can lend 134 whole: Borrow, order-back, Reallocate PO-A to the donor's order-back row (as S4). If nobody can: Keep PO-A 134, flagged late by 3 days, so CS can Amend (accept late) or push purchasing on the PO date outside the system.</td></tr>
+</table></div>
+
+<h2>2. Decided on this page</h2>
+<div class="d">Dealer hot-selling wins over a waiting project inquiry row (3.1). The receiving order's CS is not asked; its inquiry row and board show the new state (3.2). Reserve reallocation across orders ships in this plan (3.3). Small and big delay, and advance into or outside the immediate window, are the four scenarios above (3.4).</div>
+
+<h2>3. What is new (unchanged list from v3, one addition)</h2>
+<ul>
+<li>Manual-edit diff parity (added, removed, product changed, qty-to-zero as cancelled, removal never refused).</li>
+<li>Kind "product changed" by line identity.</li>
+<li>Delta run with held components as Keep candidates, whole-unit rule applied to the top-up (S1), partial only via pool share inside the immediate window (S11).</li>
+<li>Reallocate freed PO / SPO quantity: unlink, then re-deal through the linking engine with dealer hot-selling routed to the dealer pool first.</li>
+<li>Reallocate reserved stock between decisions (S3).</li>
+<li>Board vocabulary Keep / Reduce / Release / Reallocate; Confirm / Amend only.</li>
+<li>Challenged flip retired.</li>
+<li><b>Addition:</b> a late-but-kept unit (S12) is shown as late on the board rather than silently kept.</li>
+</ul>
+
+<h2>4. Open</h2>
+<div class="q"><b>4.1 S11 shortfall.</b> When the advanced line cannot be covered in time even after pool share and borrow, the board shows the shortfall and the Buy row stays for the remainder. Is "show it short, CS decides" right, or should the engine also propose the earliest date the remainder CAN be covered (the ladder already computes "how late" per option, R36) so CS can push the customer's date back with a number?</div>
+<div class="q"><b>4.2 Big delay on a placed PO (S10).</b> Reallocate the October PO to whoever needs it and buy again for March, or keep the PO and hold the stock five months? I proposed Reallocate as the suggestion with Keep as the Amend. Confirm.</div>
+<div class="q"><b>4.3 Anything else?</b> If not, this page becomes the plan and UAC for the next lane, sequenced as: diff parity, delta seam with whole-unit top-up, recompute-and-diff vocabulary, reallocation of PO / SPO and of reserves, flip retired.</div>
+</body></html>
