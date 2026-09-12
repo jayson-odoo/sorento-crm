@@ -1847,7 +1847,10 @@ class ProjectOrderInquiryService:
         )
 
     def _purchasing_user_ids(self) -> List[str]:
-        """Everyone holding the `purchasing` role, which is what SCM is granted through."""
+        """Everyone holding a purchasing role - `purchasing`, `purchasing_manager`,
+        `purchasing_executive`, or any other slug SCM's own family grows to (AC-X1) - which
+        is what SCM is granted through. Matched by prefix, not substring: a role that merely
+        contains the word (an admin role covering purchasing among other things) is not one."""
         from app.models.user import User, UserRole, UserRoleAssignment, UserStatus
 
         rows = (
@@ -1855,7 +1858,7 @@ class ProjectOrderInquiryService:
             .join(UserRole, UserRole.id == UserRoleAssignment.role_id)
             .join(User, User.id == UserRoleAssignment.user_id)
             .filter(
-                UserRole.slug == "purchasing",
+                UserRole.slug.like("purchasing%"),
                 User.status == UserStatus.ACTIVE.value,
                 User.is_trashed.is_(False),
             )

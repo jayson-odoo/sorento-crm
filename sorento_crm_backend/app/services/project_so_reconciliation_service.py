@@ -507,9 +507,9 @@ class ProjectSOReconciliationService:
         A re-mapping is a material change (AC-C06): an active revision was decided against
         the links that stood then, so if any of them moves it is superseded and the whole
         SO goes back to Needs CS review. When the links stand but the facts behind them
-        have drifted - a quantity or a required date on the core line - the revision is
-        challenged instead, which says the same thing about the promise and keeps the
-        evidence of what was promised.
+        have drifted - a quantity or a required date on the core line - that is no longer
+        read as a signal of its own here (Slice E, one signal): the change batch a re-run
+        or manual edit raises is the only thing that supersedes an active revision now.
         """
         relinked = [
             row
@@ -550,17 +550,12 @@ class ProjectSOReconciliationService:
                 "reconciled. Re-run the reconciliation to see which line it took.",
             ) from exc
 
-        from app.services.project_supply_service import ProjectSupplyService
-
-        supply = ProjectSupplyService(self.db)
         if relinked:
-            supply.supersede_for_material_change(
+            from app.services.project_supply_service import ProjectSupplyService
+
+            ProjectSupplyService(self.db).supersede_for_material_change(
                 outcome.order,
                 "The AutoCount line mapping changed after this revision was confirmed.",
-            )
-        else:
-            supply.challenge_if_drifted(
-                outcome.order, lines=[row.line for row in outcome.lines]
             )
 
     # ---------------------------------------------------------------- the map
