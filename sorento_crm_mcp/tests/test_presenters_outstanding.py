@@ -222,24 +222,30 @@ def test_detail_so_list_every_row_renders_numbered():
 # AC-1107: miss lines, header unchanged, no offer, escalate offer left to the lane
 # --------------------------------------------------------------------------
 
-def test_miss_prints_one_line_per_scope_under_the_same_header():
+def test_miss_prints_block_titles_and_one_line_per_scope_under_the_same_header():
     rendered = _outstanding_report(_miss_report())
     assert rendered == _golden("outstanding-report-miss.txt")
-    assert "No open sales order." in rendered
-    assert "No pending delivery order." in rendered
+    assert "*Sales order outstanding*\nNo open sales order." in rendered
+    assert "*Delivery order pending*\nNo pending delivery order." in rendered
     # the presenter stops there - the escalate offer is the lane's job, not this function's
     assert "Reply with a number for detail" not in rendered
     assert "escalat" not in rendered.lower()
 
 
 def test_partial_miss_keeps_the_hit_scopes_offer():
+    """One scope empty, the other not: the empty block prints its OWN title plus the
+    one miss line (never the omitted-block treatment AC-1102 uses for a scope that
+    was never asked), the hit block prints in full, and only the hit scope is offered."""
     report = copy.deepcopy(_MOCK)
     report["do"]["do_count"] = 0
     rendered = _outstanding_report(report)
-    assert "No pending delivery order." in rendered
+    assert "*Delivery order pending*\nNo pending delivery order." in rendered
     assert "Sales order outstanding" in rendered
     assert "1. Sales order list" in rendered
     assert "Delivery order list" not in rendered
+    # the empty scope keeps its title but not its breakdown body
+    assert "DO qty:" not in rendered
+    assert "Delivered:" not in rendered
 
 
 # --------------------------------------------------------------------------

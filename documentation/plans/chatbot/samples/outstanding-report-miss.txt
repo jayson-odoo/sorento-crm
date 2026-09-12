@@ -3,6 +3,8 @@ Customer: all
 Location: all
 Order date: all
 
+*Sales order outstanding*
 No open sales order.
 
+*Delivery order pending*
 No pending delivery order.

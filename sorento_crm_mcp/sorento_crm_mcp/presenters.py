@@ -1679,9 +1679,11 @@ def present_response(tool_name: str, raw: str) -> str:
 #   - `location_token`: the raw location word from the message (`"IB"`), or `None`.
 #   - `location_codes`: what it resolved to (`["BRW-IB", "MWH-IB"]`), or `[]`.
 # `so` / `do` is `None` when that scope was not asked (D1); present with
-# `so_count`/`do_count` == 0 collapses the whole block to one miss line (AC-1107)
-# and drops that scope from the detail offer, so a miss never advertises a list
-# with nothing in it.
+# `so_count`/`do_count` == 0 keeps the block's own title but collapses its body to
+# one miss line (AC-1107, "the approved shape keeps the block titles") and drops
+# that scope from the detail offer, so a miss never advertises a list with
+# nothing in it. A partial miss (one scope empty, the other not) prints each
+# block independently - the empty one as title + miss line, the other in full.
 
 
 def _outstanding_fmt_int(v: Any) -> str:
@@ -1798,7 +1800,7 @@ def _outstanding_report(report: dict) -> str:
     so = report.get("so")
     if so is not None:
         if not so.get("so_count"):
-            blocks.append("No open sales order.")
+            blocks.append("*Sales order outstanding*\nNo open sales order.")
         else:
             blocks.append(
                 _outstanding_so_block(
@@ -1810,7 +1812,7 @@ def _outstanding_report(report: dict) -> str:
     do = report.get("do")
     if do is not None:
         if not do.get("do_count"):
-            blocks.append("No pending delivery order.")
+            blocks.append("*Delivery order pending*\nNo pending delivery order.")
         else:
             blocks.append(
                 _outstanding_do_block(
