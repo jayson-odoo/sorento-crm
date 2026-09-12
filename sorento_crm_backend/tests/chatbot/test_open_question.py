@@ -96,13 +96,14 @@ class TestAPositionMeansTheRowTheCustomerSaw:
 
         assert [r["label"] for r in outcome.picked] == ["A", "C"]
 
-    def test_two_again_with_no_question_alive_is_a_new_message_not_a_pick(self) -> None:
-        """AC-944's second half. `decay` cleared the question, so `from_state` reads the
-        explicit `None` rather than deriving one back off the legacy keys."""
-        after_decay = {"open_question": None, "selection_context": "disambiguation",
-                       "last_result_set": _rows("A", "B")}
-
-        assert oq.from_state(after_decay, asked_at_turn=4) is None
+    # `test_two_again_with_no_question_alive_is_a_new_message_not_a_pick` RETIRED (S3d
+    # step 4): `oq.from_state` is deleted - it was the LEGACY-SESSION DERIVATION step this
+    # claim measured (an explicit `None` wins over stale legacy markers alongside it).
+    # There is no derivation left to test: `output_exchange.open_question_of` reads
+    # `state["open_question"]` directly and never looks at `selection_context` /
+    # `last_result_set` at all, so the claim is now true by construction rather than by a
+    # precedence rule - see `open_question_of`'s own docstring, `app/services/chatbot/
+    # head/output_exchange.py`.
 
 
 # --------------------------------------------------------------------------- #
@@ -205,45 +206,15 @@ class TestIssue708PartialMissKeepsTheSiblings:
 
         assert [e["raw"] for e in outcome.focus["products"]] == ["SRTKS8091-B"]
 
-    def test_the_keep_list_is_frozen_when_the_question_is_asked(self) -> None:
-        """Not re-derived at answer time: without the linkage there is nothing that says
-        which token the pick answers."""
-        question = oq.from_state(
-            {
-                "selection_context": "suggest_offer",
-                "last_result_set": _rows("A", "B"),
-                "entities": [
-                    {"raw": "SRTKS6091", "hint": "product", "canonical_code": "SRTKS6091"},
-                    {"raw": "SRTKS8091", "hint": "product", "canonical_code": "SRTKS8091"},
-                ],
-                "dym_offer": {
-                    "candidates": [
-                        {"code": "A", "for_raw": "SRTKS8091", "for_canonical": "SRTKS8091"},
-                        {"code": "B", "for_raw": "SRTKS8091", "for_canonical": "SRTKS8091"},
-                    ]
-                },
-            },
-            asked_at_turn=3,
-        )
-
-        assert [e["raw"] for e in question["payload"]["keep"]] == ["SRTKS6091"], (
-            "the token the picker was offered FOR is not a sibling to keep"
-        )
-
-    def test_with_no_linkage_nothing_is_kept_rather_than_guessed(self) -> None:
-        """A picker with no `dym_offer.candidates` records no `for_raw`, so there is
-        nothing that says which token the pick answers - and keeping the prior scope there
-        puts the very token being disambiguated back beside its own answer."""
-        question = oq.from_state(
-            {
-                "selection_context": "disambiguation",
-                "last_result_set": _rows("A", "B"),
-                "entities": [{"raw": "SRTKS8091", "hint": "product"}],
-            },
-            asked_at_turn=3,
-        )
-
-        assert question["payload"]["keep"] == []
+    # `test_the_keep_list_is_frozen_when_the_question_is_asked` and
+    # `test_with_no_linkage_nothing_is_kept_rather_than_guessed` RETIRED (S3d step 4):
+    # both called the deleted `oq.from_state`, which derived `payload.keep` off legacy
+    # `dym_offer.candidates` linkage at LEGACY-SESSION READ time. The lane that offers a
+    # `product_pick` now calls `open_question.ask(..., payload={"keep": [...]})` directly
+    # at the point it decides the linkage (issue #708), so the freezing claim these two
+    # made is the LANE's own responsibility now, not `open_question.py`'s - covered by
+    # `test_pass4_item4_issue708_partial_pick_scope.py`, which grades it end to end
+    # through the real miss-suggest lane rather than a `from_state` unit call.
 
 
 # --------------------------------------------------------------------------- #
@@ -378,9 +349,15 @@ class TestTheAnsweredStepOnARealTurn:
         result = self._run(
             session_factory,
             {
-                "selection_context": "disambiguation",
-                "domain_hint": "inventory",
-                "last_result_set": _rows("SRTWC8517", "SRTKS6091"),
+                "focus": {"domains": {"value": ["inventory"], "set_at_turn": 1, "set_at": None, "source": "reuse"}},
+                "open_question": oq.ask(
+                    "product_pick",
+                    options=_rows("SRTWC8517", "SRTKS6091"),
+                    turn_no=1,
+                ),
+                "ideation": None,
+                "access_levels": [],
+                "contains_flyer": False,
             },
             emission,
         )
@@ -410,7 +387,13 @@ class TestTheAnsweredStepOnARealTurn:
         )
         result = self._run(
             session_factory,
-            {"selection_context": "disambiguation", "last_result_set": _rows("A", "B")},
+            {
+                "focus": {},
+                "open_question": oq.ask("product_pick", options=_rows("A", "B"), turn_no=1),
+                "ideation": None,
+                "access_levels": [],
+                "contains_flyer": False,
+            },
             emission,
         )
 
@@ -477,45 +460,18 @@ class TestTheClockDoesNotRestartOnACarry:
     without `same_question` the age was permanently 1 and nothing could ever expire.
     """
 
-    def test_the_same_roster_keeps_the_turn_it_was_actually_asked_on(self) -> None:
-        session = {"selection_context": "disambiguation", "last_result_set": _rows("A", "B")}
-        first = oq.from_state(session, asked_at_turn=4)
-
-        second = oq.from_state(session, asked_at_turn=5, previous=first)
-        third = oq.from_state(session, asked_at_turn=6, previous=second)
-
-        assert first["asked_at_turn"] == 4
-        assert second["asked_at_turn"] == 4
-        assert third["asked_at_turn"] == 4
-
-    def test_a_changed_roster_is_a_new_question(self) -> None:
-        first = oq.from_state(
-            {"selection_context": "disambiguation", "last_result_set": _rows("A", "B")},
-            asked_at_turn=4,
-        )
-
-        second = oq.from_state(
-            {"selection_context": "disambiguation", "last_result_set": _rows("C", "D")},
-            asked_at_turn=6,
-            previous=first,
-        )
-
-        assert second["asked_at_turn"] == 6
-
-    def test_a_changed_KIND_is_a_new_question_even_on_the_same_rows(self) -> None:
-        rows = [{"idx": 1, "label": "ABC", "uuid": "u1", "entity_type": "customer"}]
-        first = oq.from_state(
-            {"selection_context": "disambiguation", "last_result_set": rows}, asked_at_turn=4
-        )
-        second = oq.from_state(
-            {"selection_context": "team_clarify", "last_result_set": rows},
-            asked_at_turn=6,
-            previous=first,
-        )
-
-        assert first["kind"] == "customer_pick"
-        assert second["kind"] == "team_pick"
-        assert second["asked_at_turn"] == 6
+    # `test_the_same_roster_keeps_the_turn_it_was_actually_asked_on`,
+    # `test_a_changed_roster_is_a_new_question` and
+    # `test_a_changed_KIND_is_a_new_question_even_on_the_same_rows` RETIRED (S3d step 4):
+    # all three called the deleted `oq.from_state`, which owned the
+    # "same_question -> keep the old asked_at_turn" carry this class is named for. The
+    # carry itself SURVIVES - `same_question` is still called for exactly this reason, now
+    # inline in `tail/compile_state.py` (`if pending_open_question.same_question(asked,
+    # previous) and isinstance(previous, dict): turn_no = int(previous.get(
+    # "asked_at_turn", turn_no))`) - but that is a private, per-turn calculation over a
+    # `ctx`-shaped state this module has no seam to drive directly, not a small pure
+    # function `open_question.py` still exports. `test_identity_is_the_row_not_its_number`
+    # right below keeps the ONE piece of this class `same_question` itself still owns.
 
     def test_identity_is_the_row_not_its_number(self) -> None:
         """A list whose numbering is identical and whose CONTENTS changed is a different
@@ -529,19 +485,11 @@ class TestTheClockDoesNotRestartOnACarry:
             {"kind": "product_pick", "options": _rows("A", "C")},
         )
 
-    def test_an_unanswered_question_outlives_the_marker_that_made_it(self) -> None:
-        """`pending.derive` re-emits an escalation offer only on the turn a lane offers
-        one, so without this the question would vanish on the next turn - answered by
-        nothing, cleared by nothing, and never traced."""
-        asked = oq.ask("team_pick", turn_no=4, options=[])
-
-        carried = oq.from_state({}, asked_at_turn=5, previous=asked)
-
-        assert carried is asked
-
-    def test_an_ANSWERED_question_is_never_re_armed(self) -> None:
-        """The hazard `_picker_carry` names: a later bare "yes" assigning a human off an
-        offer the customer already replied to."""
-        asked = oq.ask("team_pick", turn_no=4, options=[])
-
-        assert oq.from_state({}, asked_at_turn=5, previous=asked, answered=True) is None
+    # `test_an_unanswered_question_outlives_the_marker_that_made_it` and
+    # `test_an_ANSWERED_question_is_never_re_armed` RETIRED (S3d step 4): both called the
+    # deleted `oq.from_state`. Their claims survive as `compile_state.py`'s own
+    # `elif`/`else` arms quoted above ("nothing asked this turn: the one the customer is
+    # still looking at stands" / "CONSUMED. A question the customer has answered is never
+    # re-armed") - engine-level behaviour now, covered by
+    # `test_s5_escalation_lane.py`'s real-turn suite rather than a pure `open_question.py`
+    # unit call.

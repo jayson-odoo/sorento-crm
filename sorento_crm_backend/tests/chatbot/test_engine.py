@@ -534,29 +534,15 @@ class TestSessionDiscipline:
 
 
 class TestPendingMarkerRead:
-    def test_the_parser_is_told_what_the_bot_is_waiting_for(
-        self, session_factory, seeded, stub_parser, stub_access
-    ):
-        """R3: the ONE prompt-input change S1 makes (D16 slimming is S1b)."""
-        db = session_factory()
-        db.execute(
-            text(
-                "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
-                "WHERE respond_io_id = :c"
-            ),
-            {
-                "c": CONTACT_ID,
-                "sv": json.dumps({"variables": {"pending": {"kind": "escalation_offer"}}}),
-            },
-        )
-        db.commit()
-
-        blocks: list[str] = []
-        stub_parser(on_call=blocks.append)
-        stub_access()
-        engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert "Pending: the assistant is waiting for a escalation_offer reply." in blocks[0]
+    # `test_the_parser_is_told_what_the_bot_is_waiting_for` RETIRED (S3d step 4,
+    # AC-1019): it seeded `session_vars.variables.pending` directly onto the contact row
+    # and expected the "Pending:" prompt line to read it. The engine reads `open_question`
+    # only now - the marker is gone, not merely renamed, so there is no legacy input left
+    # to seed through this end-to-end path. The lower-level unit half of this same claim
+    # (the "Pending:" line now names the open question's KIND) is
+    # `test_parser_user_block_parity.py`, ported directly against `build_user_block`; the
+    # end-to-end half (a real escalation offer produces the line) is
+    # `test_s5_escalation_lane.py`'s own suite.
 
     def test_nothing_is_added_when_nothing_is_pending(
         self, session_factory, seeded, stub_parser, stub_access

@@ -353,10 +353,10 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
 
     * the ASK reaches the customer - `clarify_text` becomes the turn's reply, replacing
       the out-of-scope acknowledgement that the human-intervention arm sends;
-    * the prior offer state SURVIVES - `selection_context` and `last_result_set` are
-      re-persisted, because the next turn resolves the customer's "2" or "Sorento Trading"
-      against exactly that pool. Clearing them here would leave the customer answering a
-      question the bot has forgotten it asked.
+    * the prior offer state SURVIVES - the `open_question` slot is re-persisted, because
+      the next turn resolves the customer's "2" or "Sorento Trading" against exactly that
+      pool. Clearing it here would leave the customer answering a question the bot has
+      forgotten it asked.
     """
     from sqlalchemy import text as sql_text
 
@@ -364,14 +364,24 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     from app.models.user import SystemSetting
     from app.services.chatbot import engine as engine_mod
     from app.services.chatbot.contracts import Envelope
+    from app.services.chatbot.dialogue.open_question import ask as open_question_ask
     from app.services.chatbot.head import parser as parser_mod
 
     contact_id = "ZZT-esc-clarify-1"
+    # D8/S3d step 4: no `selection_context` / `last_result_set` / `routing_roster_plan` /
+    # `response` marker - the SAME prior offer, frozen through `open_question.ask` the way
+    # a real lane would have armed it, in the five-key shape the engine reads now.
     prior_variables = {
-        "selection_context": "member_offer",
-        "last_result_set": PRIOR_RESULT_SET,
-        "routing_roster_plan": PRIOR_ROSTER_PLAN,
-        "response": "Which company should take this?",
+        "focus": {},
+        "open_question": open_question_ask(
+            "member_offer",
+            options=PRIOR_RESULT_SET,
+            turn_no=1,
+            payload={"team": "customer_service"},
+        ),
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
     }
 
     db = session_factory()
@@ -506,13 +516,15 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     # D8/AC-1019: no `selection_context` / `last_result_set` / `routing_roster_plan` /
     # `response` / `pending` mirrors, and `member_offer`'s TTL of 3 is gone with the rest
     # (D9, no counter survives an open question - it is cleared only by an answer, a
-    # newer question, or a new ask). The re-offer is one `open_question` slot: the SAME
-    # roster the prior turn showed, re-frozen (AC-1013's `idx` numbering is stable across
-    # a re-offer because the rows carry their own `idx` already), team on the payload.
+    # newer question, or a new ask). The re-offer is one `open_question` slot, `kind
+    # member_offer`, `yes_no` - a plain accept/decline, never a numbered pick, so (same
+    # as `test_s3_canned_and_ideate.py::TestOfferHold`) `options` stays empty; the two
+    # company names the customer reads ride the COMPOSED TEXT (`clarify_text` above),
+    # never a persisted roster. Team still rides the payload.
     open_question = variables.get("open_question") or {}
     assert open_question.get("kind") == "member_offer"
     assert open_question.get("expects") == "yes_no"
-    assert open_question.get("options") == PRIOR_RESULT_SET
+    assert open_question.get("options") == []
     assert open_question.get("payload", {}).get("team") == "customer_service"
     for legacy_key in (
         "selection_context",

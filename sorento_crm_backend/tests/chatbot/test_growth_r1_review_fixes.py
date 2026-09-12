@@ -326,11 +326,15 @@ class TestShouldFix89TheRungSentenceAndTeam:
         assert "no purchase order" not in block
 
     def test_the_rung_that_answered_sets_the_turns_escalation_team(self) -> None:
-        """The sentence offers `purchasing`; `tail/pending.escalation_team` reads the
-        turn's own routing, which for a stock question is `warehouse`. One team, or the
-        customer is told one thing and handed to another (the H64 shape)."""
-        from app.services.chatbot.tail.pending import escalation_team
+        """The sentence offers `purchasing`, which for a stock question differs from the
+        turn's OWN routing (`warehouse`, per `PARSER`'s override below). One team, or the
+        customer is told one thing and handed to another (the H64 shape).
 
+        `tail/pending.escalation_team` RETIRED (S3d step 4, `tail/pending.py` deleted):
+        the claim it made - the rung's own team wins, stamped on the parser output as
+        `crossdomain_rung_team` - is asserted directly below; there is no separate reader
+        function left to call in parallel with it.
+        """
         parser = {**PARSER, "routing": {"suggested_team": "warehouse", "suggested_agent": None}}
         result, _ = _run_ladder(
             validator=TOTAL_MISS, ladder=DEFAULT_LADDER, po_response=PO_ROWS, parser=parser
@@ -340,7 +344,6 @@ class TestShouldFix89TheRungSentenceAndTeam:
         # the offer itself is compose's (8 Sep 2026); the TEAM it will name is the block's
         assert "escalate" not in block["block"].lower()
         assert block["team"] == "purchasing"
-        assert escalation_team(parser, None) == "purchasing"
         assert parser["crossdomain_rung_team"] == "purchasing"
 
     def test_a_rung_that_never_fires_leaves_the_routing_alone(self) -> None:

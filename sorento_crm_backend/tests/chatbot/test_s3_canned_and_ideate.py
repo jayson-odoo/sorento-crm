@@ -220,7 +220,16 @@ OFFER_HOLD_CLARIFY_TEXT = (
 
 
 def _setup_offer_hold(session_factory, monkeypatch) -> tuple[dict, Any, str]:
-    """Tier-4 (junk/no-signal) re-offer on an open two-company member roster."""
+    """Tier-4 (junk/no-signal) re-offer on an open two-company member roster.
+
+    D8/AC-1019 (S3d step 4): no `selection_context` / `routing_roster_plan` /
+    `routing_companies` mirrors - the five-key shape, `open_question` armed
+    `member_offer` through `dialogue/open_question.ask` the way a real lane would have
+    left it, `payload.companies` carrying the roster `offer_hold_clarify_text` composes
+    the names from.
+    """
+    from app.services.chatbot.dialogue.open_question import ask as open_question_ask
+
     session_factory  # seeded by the caller via _seed_session_variables
     overrides = _parser_output(
         message_type="casual",
@@ -233,9 +242,16 @@ def _setup_offer_hold(session_factory, monkeypatch) -> tuple[dict, Any, str]:
         escalation={"is_escalation_confirmation": False, "company_pick": None},
     )
     session_vars = {
-        "selection_context": "member_offer",
-        "routing_roster_plan": TWO_COMPANY_ROSTER,
-        "routing_companies": TWO_COMPANY_ROSTER,
+        "focus": {},
+        "open_question": open_question_ask(
+            "member_offer",
+            options=[],
+            turn_no=1,
+            payload={"companies": TWO_COMPANY_ROSTER},
+        ),
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
     }
     return overrides, session_vars, OFFER_HOLD_CLARIFY_TEXT, "not sure"
 

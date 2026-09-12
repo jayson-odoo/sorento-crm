@@ -123,7 +123,12 @@ def test_a_session_WITH_focus_state_still_sends_the_same_bytes_under_v1(turn6) -
     the worst population to change under.
 
     So this is the same fixture with a full focus and an open question forced into the
-    session, asserted byte-identical to the block n8n sends.
+    session, asserted byte-identical to the block n8n sends - PLUS the one line that is
+    NOT gated on the prompt version at all (`build_user_block`'s `pending_kind` line runs
+    for v1 same as v3, unlike `Focus:` / `Open question:`): since the legacy `pending`
+    marker is gone (AC-1019), `engine._pending_kind` reads the open question's own `kind`
+    directly, so a v1 prompt now names it in the SAME vocabulary lane 1 uses everywhere
+    else, not the retired five-name `PENDING_KINDS` set n8n's own captures used.
     """
     envelope = Envelope(**turn6["envelope"])
     session_block = turn6["session_block"]
@@ -158,7 +163,10 @@ def test_a_session_WITH_focus_state_still_sends_the_same_bytes_under_v1(turn6) -
         open_question_hint=open_question_hint,
     )
 
-    assert crm == _n8n_user_block(turn6["baseline_workflow_inputs"])
+    assert crm == (
+        _n8n_user_block(turn6["baseline_workflow_inputs"])
+        + "\nPending: the assistant is waiting for a product_pick reply."
+    )
     assert "Focus:" not in crm
     assert "Open question:" not in crm
 
