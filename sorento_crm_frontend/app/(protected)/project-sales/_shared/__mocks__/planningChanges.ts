@@ -26,34 +26,27 @@ import type {
   PlanningChangeBuyActionedFact,
   PlanningChangeEvidencedFact,
   PlanningChangeHeld,
-  PlanningChangeReserveWindowFact,
+  PlanningChangePlacedFact,
   PlanningChangeRow,
 } from '../types/planningChange.types';
-
-/** One calendar day arithmetic helper, UTC so a date-only string round-trips exactly. */
-function addDays(dateStr: string, days: number): string {
-  const date = new Date(`${dateStr}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
 
 /** A fact with no supporting evidence - `dealer_hot_selling: false` needs no `where`. */
 function evidencedFact(value: boolean, where: string[] = []): PlanningChangeEvidencedFact {
   return { value, where };
 }
 
-/** The 60-day reserve window, measured from the line's previous delivery date. */
-function windowFact(
-  fromDate: string,
-  toDate: string,
-  daysMoved: number,
-): PlanningChangeReserveWindowFact {
-  return {
-    value: Math.abs(daysMoved) <= 60,
-    window_days: 60,
-    new_date: toDate,
-    window_end: addDays(fromDate, 60),
-  };
+/**
+ * What is already ON a document for this line, and when it lands (S2, S12).
+ *
+ * `within_reserve_window` used to sit beside this; Slice C retired it (rule 2) - the
+ * ladder's own step 0 decides whether a line that far out may hold stock.
+ */
+function placedFact(
+  qty = '0',
+  document: string | null = null,
+  arrivalDate: string | null = null,
+): PlanningChangePlacedFact {
+  return { qty, document, arrival_date: arrivalDate };
 }
 
 function buyActionedFact(value: boolean, poNumber: string | null = null): PlanningChangeBuyActionedFact {
@@ -269,8 +262,8 @@ const ROW_S1: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 0,
-    within_reserve_window: windowFact('2026-09-04', '2026-09-04', 0),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
   suggestion: {
     components: [
@@ -324,8 +317,8 @@ const ROW_S2: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 0,
-    within_reserve_window: windowFact('2026-09-04', '2026-09-04', 0),
     buy_actioned: buyActionedFact(true, 'PO-A'),
+    placed: placedFact('134', 'PO-A', '2026-10-01'),
   },
   suggestion: {
     components: [
@@ -386,8 +379,8 @@ const ROW_S3: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 77,
-    within_reserve_window: windowFact('2026-09-04', '2026-11-20', 77),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
   suggestion: {
     components: [
@@ -443,8 +436,8 @@ const ROW_S4: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: -15,
-    within_reserve_window: windowFact('2026-09-04', '2026-08-20', -15),
     buy_actioned: buyActionedFact(true, 'PO-A'),
+    placed: placedFact('134', 'PO-A', '2026-09-01'),
   },
   suggestion: {
     components: [
@@ -453,8 +446,8 @@ const ROW_S4: PlanningChangeRow = {
         source: 'po',
         qty_now: '134',
         document: 'PO-A',
-        target: 'SO419900 ORDER_BACK 134',
-        label: 'Reallocate PO-A 134 to SO419900 ORDER_BACK 134',
+        target: 'SO419900 ORDER BACK 134',
+        label: 'Reallocate PO-A 134 to SO419900 ORDER BACK 134',
       },
       {
         action: 'borrow',
@@ -498,8 +491,8 @@ const ROW_S5: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 0,
-    within_reserve_window: windowFact('2026-09-04', '2026-09-04', 0),
     buy_actioned: buyActionedFact(true, 'PO-B'),
+    placed: placedFact('84', 'PO-B', '2026-10-08'),
   },
   suggestion: {
     components: [
@@ -508,7 +501,8 @@ const ROW_S5: PlanningChangeRow = {
         source: 'reserve',
         qty_now: '50',
         location: 'BRW-IB',
-        label: 'Release 50, free at BRW-IB',
+        target: 'dealer pool',
+        label: 'Release 50 to dealer pool',
       },
       {
         action: 'reallocate',
@@ -548,8 +542,8 @@ const ROW_S6: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 0,
-    within_reserve_window: windowFact('2026-09-04', '2026-09-04', 0),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
   suggestion: {
     components: [
@@ -601,8 +595,8 @@ const ROW_S7: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 0,
-    within_reserve_window: windowFact('2026-09-04', '2026-09-04', 0),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
   suggestion: {
     components: [
@@ -618,7 +612,7 @@ const ROW_S7: PlanningChangeRow = {
         source: 'buy',
         qty_now: '134',
         item_code: 'B2155-NL-WHITE',
-        label: 'Buy B2155-NL-WHITE 134 for 4 Sep',
+        label: 'Buy 134 for 4 Sep',
       },
     ],
   },
@@ -650,8 +644,8 @@ const ROW_S8: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 77,
-    within_reserve_window: windowFact('2026-09-04', '2026-11-20', 77),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
   suggestion: {
     components: [
@@ -662,13 +656,6 @@ const ROW_S8: PlanningChangeRow = {
         qty_now: '100',
         location: 'BRW-IB',
         label: 'Reduce reserve 134 to 100',
-      },
-      {
-        action: 'release',
-        source: 'reserve',
-        qty_now: '34',
-        location: 'BRW-IB',
-        label: 'Release 34, free at BRW-IB',
       },
     ],
   },
@@ -703,8 +690,8 @@ const ROW_S9: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 21,
-    within_reserve_window: windowFact('2026-09-04', '2026-09-25', 21),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
   suggestion: {
     components: [
@@ -749,8 +736,8 @@ const ROW_S10: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 192,
-    within_reserve_window: windowFact('2026-09-04', '2027-03-15', 192),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
   suggestion: {
     components: [
@@ -798,17 +785,17 @@ const ROW_S11: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: -13,
-    within_reserve_window: windowFact('2026-09-04', '2026-08-22', -13),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
   suggestion: {
     components: [
       {
-        action: 'reduce',
+        action: 'buy',
         source: 'buy',
         qty_was: '134',
         qty_now: '44',
-        label: 'Reduce Buy 134 to 44',
+        label: 'Short 44 by 22 Aug',
       },
       {
         action: 'use_own',
@@ -864,8 +851,8 @@ const ROW_S12: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: -10,
-    within_reserve_window: windowFact('2026-09-04', '2026-08-25', -10),
     buy_actioned: buyActionedFact(true, 'PO-A'),
+    placed: placedFact('134', 'PO-A', '2026-08-28'),
   },
   suggestion: {
     components: [
@@ -874,7 +861,7 @@ const ROW_S12: PlanningChangeRow = {
         source: 'po',
         qty_now: '134',
         document: 'PO-A',
-        label: 'Keep PO-A 134',
+        label: 'Keep 134, late by 3 days',
       },
     ],
     late_days: 3,
@@ -997,8 +984,8 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 15,
-            within_reserve_window: windowFact('2026-07-20', '2026-08-04', 15),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
           suggestion: {
             components: [
@@ -1038,8 +1025,8 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 0,
-            within_reserve_window: windowFact('2026-08-01', '2026-08-01', 0),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
           suggestion: {
             components: [
@@ -1086,8 +1073,8 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 153,
-            within_reserve_window: windowFact('2026-08-05', '2027-01-05', 153),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
           suggestion: {
             components: [
@@ -1142,8 +1129,8 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 145,
-            within_reserve_window: windowFact('2026-07-28', '2026-12-20', 145),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
           suggestion: {
             components: [
@@ -1185,8 +1172,8 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 0,
-            within_reserve_window: windowFact('2026-08-02', '2026-08-02', 0),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
           suggestion: {
             components: [
@@ -1301,8 +1288,8 @@ export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE_2: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 14,
-            within_reserve_window: windowFact('2026-08-20', '2026-09-03', 14),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
           suggestion: {
             components: [
@@ -1369,8 +1356,8 @@ export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: -6,
-            within_reserve_window: windowFact('2026-08-25', '2026-08-19', -6),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
           suggestion: {
             components: [
@@ -1417,8 +1404,8 @@ export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 0,
-            within_reserve_window: windowFact('2026-09-05', '2026-09-05', 0),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
           suggestion: {
             components: [
@@ -1455,8 +1442,8 @@ export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 0,
-            within_reserve_window: windowFact('2026-09-10', '2026-09-10', 0),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
           suggestion: {
             components: [

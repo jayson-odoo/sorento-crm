@@ -40,6 +40,9 @@
  *                 the rule table (migration 515 maps accept/keep -> confirm, board -> null).
  *   `suggested` and `why` are GONE from the payload: a verb the row agreed with executed
  *   nothing, which is why "accept" had to exist at all.
+ *   `facts` loses `within_reserve_window` (rule 2: the ladder's own step 0 decides whether a
+ *   line that far out may hold stock) and gains `placed` - how much of the line's demand is
+ *   already on a document, which one, and when it lands (what "late by N days" measures).
  * ──────────────────────────────────────────────────────────────────────────────────────────
  *   POST /api/v1/project-sales/planning-changes/{batch_id}/apply             (AC-R05)
  *        -> ApplyPlanningChangesResult { applied_orders, failed_orders, already_applied,

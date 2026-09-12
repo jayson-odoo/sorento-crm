@@ -71,13 +71,17 @@ describe('the composed suggestion on the board', () => {
     render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
     expect(
       screen.getAllByTestId('board-change-suggestion-line').map((line) => line.textContent),
-    ).toEqual(['Keep PO-A 134']);
+      // The engine says the lateness in its own sentence AND as a fact, so the board can
+      // print the fact even where the sentence is long enough to truncate.
+    ).toEqual(['Keep 134, late by 3 days']);
     expect(screen.getByTestId('board-change-late-pcr-s12').textContent).toBe('Late by 3 days');
     expect(screen.queryByTestId('board-change-short-pcr-s12')).toBeNull();
   });
 
   it('S11: what the pool can cover now is stated, and the rest is shown short', () => {
-    expect(linesOf('pcr-s11')).toEqual(['Reduce Buy 134 to 44', 'Pool share 90 at BRW']);
+    // The held Buy IS the shortfall line (rule 8: "the remainder stays a Buy"), so it is
+    // one component saying both what is left and that it cannot land in time.
+    expect(linesOf('pcr-s11')).toEqual(['Short 44 by 22 Aug', 'Pool share 90 at BRW']);
     expect(screen.getByTestId('board-change-short-pcr-s11').textContent).toBe('Short 44');
     expect(screen.queryByTestId('board-change-late-pcr-s11')).toBeNull();
   });
@@ -90,7 +94,9 @@ describe('the composed suggestion on the board', () => {
     );
     expect(
       screen.getAllByTestId('board-change-suggestion-line').map((line) => line.textContent),
-    ).toEqual(['Release 134, free at BRW-IB', 'Buy B2155-NL-WHITE 134 for 4 Sep']);
+      // Which product each half is about is `item_code` on the component, not words in
+      // the sentence - the row's own "Product changed, was ..." line carries that.
+    ).toEqual(['Release 134, free at BRW-IB', 'Buy 134 for 4 Sep']);
   });
 
   it('S5: a cancelled line reads Cancelled in Now and still says where its hold went', () => {
@@ -100,7 +106,8 @@ describe('the composed suggestion on the board', () => {
     expect(screen.getByTestId('change-now-decision').textContent).toBe('Cancelled');
     expect(
       screen.getAllByTestId('board-change-suggestion-line').map((line) => line.textContent),
-    ).toEqual(['Release 50, free at BRW-IB', 'Reallocate PO-B 84 to dealer pool']);
+      // Dealer hot-selling wins for the reserve as well as for the placed quantity.
+    ).toEqual(['Release 50 to dealer pool', 'Reallocate PO-B 84 to dealer pool']);
   });
 
   it('S1: a top-up joins the held Buy on the same row, and says what it was', () => {
@@ -114,7 +121,8 @@ describe('the composed suggestion on the board', () => {
     expect(screen.getByTestId('change-now-qty').textContent).toBe('100');
     expect(
       screen.getAllByTestId('board-change-suggestion-line').map((line) => line.textContent),
-    ).toEqual(['Reduce reserve 134 to 100', 'Release 34, free at BRW-IB']);
+      // ONE component: "Reduce reserve 134 to 100" already says what the 34 did.
+    ).toEqual(['Reduce reserve 134 to 100']);
   });
 
   it('prints every line at 375px compact, inside the board cell, with none dropped', () => {

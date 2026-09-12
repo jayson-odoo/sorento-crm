@@ -172,29 +172,36 @@ export interface PlanningChangeEvidencedFact {
   where: string[];
 }
 
-/**
- * Whether the new date still lands inside the reserve window, and the window itself - not
- * just the verdict, so "beyond window" can say WHICH window and by how much.
- */
-export interface PlanningChangeReserveWindowFact {
-  value: boolean;
-  /** The window's length in days (currently a flat 60). */
-  window_days: number;
-  /** The line's new delivery date - what the window is being checked against. */
-  new_date: string;
-  /** The window's own end date, measured from the line's previous delivery date. */
-  window_end: string;
-}
-
 /** Whether purchasing already placed the Buy this line holds, and which PO it landed on. */
 export interface PlanningChangeBuyActionedFact {
   value: boolean;
   po_number: string | null;
+  /** The sum of every currently placed-or-actioned Buy on the line. */
+  qty?: string | null;
+}
+
+/**
+ * How much of this line's demand is already ON a document, and which one (S2, S12).
+ *
+ * Read off the placement LINKS, not the row's state: a row placed for part of its quantity
+ * still reads `partly_linked` and keeps its full demand.
+ */
+export interface PlanningChangePlacedFact {
+  qty: string;
+  /** `PO-A`, `SPO-77`. Never a UUID. */
+  document: string | null;
+  /** When that supply is expected - what "late by N days" is measured from. */
+  arrival_date: string | null;
 }
 
 /**
  * The facts the rule used to choose the verb (AC-R02): "nothing is inferred by the reader; the
  * row says which fact chose the verb, and the fact carries its own proof."
+ *
+ * `within_reserve_window` is RETIRED (Slice C rule 2): the ladder's own step 0 decides
+ * whether a line that far out may hold stock, and a second window constant in the change
+ * service could only disagree with it. What the row says now is what the re-run PROPOSED,
+ * which already has that decision inside it.
  *
  * `dealer_hot_selling` is retail (dealer) demand: this item is inside the top 80% of quantity
  * delivered on dealer orders in the last 12 months, at the locations named. `project_hot_selling`
@@ -208,8 +215,8 @@ export interface PlanningChangeFacts {
   discontinued: boolean;
   /** How many days the delivery date moved, negative for an advance. Mirrors the row's own. */
   days_moved: number;
-  within_reserve_window: PlanningChangeReserveWindowFact;
   buy_actioned: PlanningChangeBuyActionedFact;
+  placed: PlanningChangePlacedFact;
 }
 
 /** One Order Inquiry row this line already raised, as purchasing sees it today. */
