@@ -150,6 +150,59 @@ def test_ac1_latest_line_per_location(db):
     assert by_wh["W2"]["po_number"] == "PO-AUG15"
 
 
+def test_ac1b_output_order_is_product_then_newest_po_date(db):
+    """Owner ruling 4, 12 Sep 2026, verbatim: "we need to sort by latest PO date first
+    otherwise very confusing, so first sort by the product, then latest PO date first".
+    The PICK per (product, warehouse) is unchanged - only the OUTPUT order changes.
+
+    One product with three warehouses whose latest lines are dated 1 Jun, 1 Sep, 24 Jul
+    -> rows come back 1 Sep, 24 Jul, 1 Jun (newest PO date first, within the product).
+    Two products A and B -> ALL of A's rows (newest first) come before ALL of B's rows
+    (product_code ASC first, then po_date DESC within it)."""
+    last_cost_rows = _import_last_cost_rows()
+
+    # -- one product, three warehouses, three different latest dates ------------------
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="AC1B-ONE")
+    w_jun = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="AC1B-JUN")
+    w_sep = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="AC1B-SEP")
+    w_jul = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="AC1B-JUL")
+
+    po_jun = _po(db, issue_date=date(2026, 6, 1), po_number="PO-AC1B-JUN")
+    _line(db, po=po_jun, product_id=prod.id, warehouse_id=w_jun.id, unit_cost=1)
+    po_sep = _po(db, issue_date=date(2026, 9, 1), po_number="PO-AC1B-SEP")
+    _line(db, po=po_sep, product_id=prod.id, warehouse_id=w_sep.id, unit_cost=2)
+    po_jul = _po(db, issue_date=date(2026, 7, 24), po_number="PO-AC1B-JUL")
+    _line(db, po=po_jul, product_id=prod.id, warehouse_id=w_jul.id, unit_cost=3)
+    db.commit()
+
+    rows = last_cost_rows(db, product_ids=[prod.id])
+    assert [r["po_number"] for r in rows] == ["PO-AC1B-SEP", "PO-AC1B-JUL", "PO-AC1B-JUN"]
+
+    # -- two products, product_code ASC first, newest-first WITHIN each --------------
+    prod_a = product(db, company_id=DEFAULT_COMPANY_ID, code="AC1B-A")
+    prod_b = product(db, company_id=DEFAULT_COMPANY_ID, code="AC1B-B")
+    w1 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="AC1B-W1")
+    w2 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="AC1B-W2")
+
+    po_a_old = _po(db, issue_date=date(2026, 8, 1), po_number="PO-AC1B-A-OLD")
+    _line(db, po=po_a_old, product_id=prod_a.id, warehouse_id=w1.id, unit_cost=4)
+    po_a_new = _po(db, issue_date=date(2026, 8, 20), po_number="PO-AC1B-A-NEW")
+    _line(db, po=po_a_new, product_id=prod_a.id, warehouse_id=w2.id, unit_cost=5)
+    po_b_old = _po(db, issue_date=date(2026, 8, 2), po_number="PO-AC1B-B-OLD")
+    _line(db, po=po_b_old, product_id=prod_b.id, warehouse_id=w1.id, unit_cost=6)
+    po_b_new = _po(db, issue_date=date(2026, 8, 25), po_number="PO-AC1B-B-NEW")
+    _line(db, po=po_b_new, product_id=prod_b.id, warehouse_id=w2.id, unit_cost=7)
+    db.commit()
+
+    rows_ab = last_cost_rows(db, product_ids=[prod_a.id, prod_b.id])
+    assert [r["po_number"] for r in rows_ab] == [
+        "PO-AC1B-A-NEW",
+        "PO-AC1B-A-OLD",
+        "PO-AC1B-B-NEW",
+        "PO-AC1B-B-OLD",
+    ]
+
+
 def test_ac2_null_warehouse_is_its_own_bucket(db):
     """A NULL-warehouse cost line answers its own row with warehouse None, alongside the
     W1 row - it never displaces, and is never displaced by, a warehouse row."""

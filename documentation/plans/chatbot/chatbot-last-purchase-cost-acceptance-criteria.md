@@ -7,6 +7,15 @@ Plan: `PLAN-chatbot-last-purchase-cost.md`.
 - AC-1 Latest line per location. Product P with lines at warehouse W1 (issue dates 1 Aug,
   1 Sep) and W2 (15 Aug): `last_cost_rows(db, product_ids=[P])` returns exactly two rows,
   W1's from the 1 Sep PO and W2's from the 15 Aug PO.
+- AC-1b Output order. Owner ruling 4 from live verification, 12 Sep 2026, verbatim: "we
+  need to sort by latest PO date first otherwise very confusing, so first sort by the
+  product, then latest PO date first". The windowed branch (`product_ids` given) orders
+  by `product_code` ASC, then `po_date` DESC within that product across its locations,
+  `created_at` DESC breaking a same-date tie - the PICK per `(product, warehouse)` is
+  unchanged, only the output order changes. One product with three warehouses whose
+  latest lines are dated 1 Jun, 1 Sep, 24 Jul returns rows in the order 1 Sep, 24 Jul,
+  1 Jun; two products A and B return ALL of A's rows (newest first) before ALL of B's.
+  The unscoped branch is already newest-first across every product.
 - AC-2 No-warehouse bucket. A cost line with `warehouse_id` NULL answers its own row with
   `row["warehouse"] is None`; it never displaces a warehouse row and no warehouse row
   displaces it.
