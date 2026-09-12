@@ -455,10 +455,16 @@ def test_r5_the_compound_is_the_wire_shape_the_brand_is_read_from() -> None:
 
 def _pending_member_offer_state(**overrides) -> dict:
     base = {
-        "selection_context": "member_offer",
-        "last_result_set": [
-            {"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 7)
-        ],
+        "open_question": {
+            "kind": "member_offer",
+            "options": [
+                {"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 7)
+            ],
+            "expects": "yes_no",
+            "asked_at_turn": 1,
+            "asked_at": None,
+            "payload": {},
+        },
         "routing": {"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
     }
     base.update(overrides)

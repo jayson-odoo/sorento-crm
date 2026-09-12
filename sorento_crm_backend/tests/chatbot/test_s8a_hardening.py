@@ -585,12 +585,22 @@ class TestPostProcessEmissionValidation:
         )
 
         from app.services.chatbot.head.output_exchange import output_exchange
+        from tests.chatbot import divergences
 
         parent_input = target.first("When Executed by Another Workflow")
         actual = _corpus.json_round_trip(
             [{"json": output_exchange(item.get("json") or {}, parent_input)} for item in target.input]
         )
         expected = _corpus.json_round_trip(target.expected)
+        # a9dbe9d9d (coordinator ruling 1) registered this fixture's `output_exchange`
+        # divergence - the same field-scoped strip `test_replay.py::_replay` applies for
+        # every OTHER graded fixture, applied here too rather than bypassed, so this test
+        # still proves the exemption end to end on real output outside the registered
+        # fields.
+        registered = divergences.find("output_exchange", target.name.split("/")[-1])
+        if registered is not None and registered.strip_paths:
+            actual = divergences.strip(actual, registered.strip_paths)
+            expected = divergences.strip(expected, registered.strip_paths)
         assert actual == expected
 
 
