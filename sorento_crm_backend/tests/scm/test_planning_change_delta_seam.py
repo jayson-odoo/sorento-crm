@@ -34,9 +34,12 @@ from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 from app.models.project_so import (
     ALLOC_SOURCE_ORDER,
     DECISION_ACTIVE,
+    DECISION_CHALLENGED,
+    DECISION_SUPERSEDED,
     INQUIRY_CANCELLED,
     IV_ORDER,
     IV_ORDER_BACK,
+    OrderInquiryLink,
     OrderInquiryRow,
     SOLineAllocation,
     SOSupplyDecision,
@@ -57,7 +60,8 @@ from tests.test_so_supply_confirmation import (  # noqa: F401  (helpers, not fix
     _uid,
     _warehouse,
 )
-from tests.scm.test_project_supply_service_ladder import _group_sites, _world
+from tests.scm.test_project_supply_service_ladder import _group_sites, _lead_time, _world
+from tests.scm.test_ladder_v7_supply_borrow import _spo
 
 MARKER = "zzt-deltaseam"
 
@@ -552,15 +556,16 @@ def test_qty_up_on_a_held_use_own_takes_more_stock_when_the_group_has_it():
         assert _live_order_rows(db, world["line"].id) == []
         # The previous revision's decision must stop holding stock the moment it is
         # replaced (`_hold_query`'s own reasoning: decision_id IS NULL OR state ==
-        # DECISION_ACTIVE). Observed today as "challenged" (DECISION_CHALLENGED), not
-        # "superseded" - `_confirm_and_apply`'s re-confirm marks the prior decision
-        # CHALLENGED, matching the fulfilment-board "Changed" flow's own naming (a live
-        # decision that a new proposal has now disagreed with). Slice E ("one signal,
-        # challenge_if_drifted removed") may retire this state name; if this assertion
-        # starts failing there, that is the expected place for it to move.
+        # DECISION_ACTIVE). Widened to either CHALLENGED or SUPERSEDED (the reviewer,
+        # Slice B follow-up): with the flip removed, `_write_decision` marks the prior
+        # decision SUPERSEDED and the holds still read right either way - CHALLENGED is
+        # not the only name this can land on, and Slice E ("one signal, challenge_if_
+        # drifted removed") may retire it outright.
         previous_decision = db.query(SOSupplyDecision).get(previous_decision_id)
         assert previous_decision.state != DECISION_ACTIVE, previous_decision.state
-        assert previous_decision.state == "challenged", previous_decision.state
+        assert previous_decision.state in (DECISION_CHALLENGED, DECISION_SUPERSEDED), (
+            previous_decision.state
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -591,3 +596,67 @@ def test_qty_up_on_a_held_use_own_moves_the_whole_unit_to_the_next_step_when_sto
         live_rows = _live_order_rows(db, world["line"].id)
         assert len(live_rows) == 1, [str(r.id) for r in live_rows]
         assert live_rows[0].qty == Decimal("234")
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer follow-up: a qty-up covered by a step-3 supply borrow (an SPO
+# placed for nobody, arriving before the date) composes and confirms.
+# --------------------------------------------------------------------------- #
+
+def test_qty_up_covered_by_a_step_3_supply_borrow_composes_and_confirms():
+    """A whole-unit cover from ladder v7.1 step 3 (`test_ladder_v7_supply_borrow.py`'s own
+    `test_a_free_document_is_taken_rather_than_borrowed_and_owes_nobody` shape): an SPO
+    nobody is waiting on, arriving well before the line's own date, beats buying. This is
+    the first planning-change exercise of `composition_from_proposal`'s `supply_key`/
+    `supply_document`/`arrival_date` carry-through (fixed for the group-borrow case in
+    298388e72; step 3's OWN documents have not run through a planning change before)."""
+    # Local dates, deliberately NOT `NON_IMMEDIATE`: step 3 is only reached when the
+    # document lands AFTER the asker's own date yet still beats a fresh purchase
+    # (`test_ladder_v7_supply_borrow.py`'s own module docstring, R32) - with a lead time
+    # of 30 days, a required date 100 days out (`NON_IMMEDIATE`) already comfortably
+    # outlives ANY fresh buy, so nothing ever needs to borrow a document for it (verified
+    # empirically: that shape reads `kind="buy"`, "beyond the lead time window", every
+    # stock rung skipped). Matching `test_ladder_v7_supply_borrow.py`'s own ASKER_DAY(20)/
+    # LATE_ARRIVAL_DAY(25)/LEAD_DAYS(30) instead reproduces its rung exactly.
+    asker_day = date.today() + timedelta(days=20)
+    late_arrival = date.today() + timedelta(days=25)
+    with blank_session() as db:
+        world = _held_buy_world(db, qty="134", required_date=asker_day)
+        _lead_time(db, world["product"], 30)
+        # A different bin from the asking line's own - the document is free to nobody,
+        # which is what routes it through step 3 rather than an ordinary reserve.
+        donor_bin = _warehouse(db, f"ZZT-SPB-{_uid()[:4]}")
+        allocation = _spo(db, world["product"], donor_bin, qty=234, arrives=late_arrival)
+
+        batch = _change_and_batch(db, world, new_qty="234")
+        assert batch is not None
+        row = _only_row(db, batch)
+        assert row.kind == "qty_up"
+        composition = planning_change_service.composition_from_proposal(row.proposal_json)
+        assert composition.get("buy_qty") == "0", composition
+        borrow = composition.get("borrow") or []
+        assert len(borrow) == 1, composition
+        component = borrow[0]
+        assert component["qty"] == "234", component
+        assert component["supply_key"], component
+        # The board's own sentence prefixes the document type ("SPO ...", `_spo_source_label`
+        # or similar) - measured directly rather than assumed.
+        assert component["supply_document"] == f"SPO {allocation.spo_number}", component
+        assert component["arrival_date"] == late_arrival.isoformat(), component
+
+        result = _confirm_and_apply(db, world, batch)
+        # `_check_supply_borrow` refuses a partial-cover composition the same way every
+        # other line-shape does; a whole-unit borrow like this one should confirm clean.
+        assert result["failed_orders"] == [], result["failed_orders"]
+
+        db.expire_all()
+        links = (
+            db.query(OrderInquiryLink)
+            .filter(OrderInquiryLink.spo_allocation_id == str(allocation.id))
+            .all()
+        )
+        assert [str(l.qty) for l in links] == ["234.0000"], links
+        linked_row = db.get(OrderInquiryRow, links[0].row_id)
+        assert linked_row.so_line_id == world["line"].id, (
+            "the placement link should move to THIS line, not stay on nobody's row"
+        )
