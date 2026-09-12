@@ -8,10 +8,10 @@
  * - token mode (`/portal/verify`): legacy flow - identity recovered from the
  *   (possibly expired) token via fetchTokenInfo.
  *
- * Always renders the WhatsApp escape hatch: OTP delivery is fire-and-forget
- * (Respond.io accepts the send even when the 24h customer-service window is
- * closed and the message silently fails), so the user can always reopen the
- * window by messaging the business first, then tap Resend.
+ * Minimal card per r8 D-V1: masked-number line, "Not your number?" directly
+ * under it, the code input, and a single Resend button. The sixth digit
+ * verifies automatically; no separate "Verify and continue" button and no
+ * WhatsApp escape hatch on this card (recovery is Resend only).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -409,16 +409,14 @@ export function PortalVerifyCard({ slug }: Props) {
 
   return (
     <VerifyShell title="Verify your identity">
-      <Alert>
-        <AlertIcon>
-          <AlertCircle />
-        </AlertIcon>
-        <AlertTitle>
-          {isLogout
-            ? 'You have been logged out. Verify with an OTP to continue.'
-            : 'Verify with a one-time code to open your portal.'}
-        </AlertTitle>
-      </Alert>
+      {isLogout && (
+        <Alert>
+          <AlertIcon>
+            <AlertCircle />
+          </AlertIcon>
+          <AlertTitle>You have been logged out. Verify with an OTP to continue.</AlertTitle>
+        </Alert>
+      )}
 
       {maskedPhone && (
         <p className="text-sm">
@@ -427,11 +425,21 @@ export function PortalVerifyCard({ slug }: Props) {
         </p>
       )}
 
-      {sentTo && (
-        <p className="text-xs text-muted-foreground">
-          Code sent{maskedPhone ? '' : ` to ${sentTo}`}. It expires in 10 minutes.
-          Please do not share it with anyone.
-        </p>
+      {slug && (
+        <button
+          type="button"
+          onClick={() => {
+            // Wrong identity on this device - drop the stored slug + token so
+            // the next visit starts clean, then point at the link-request CTA.
+            clearPortalToken();
+            clearPortalSlug();
+            setState('request-link');
+          }}
+          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          data-testid="not-your-number"
+        >
+          Not your number?
+        </button>
       )}
 
       <div className="space-y-1.5">
@@ -450,29 +458,19 @@ export function PortalVerifyCard({ slug }: Props) {
         />
       </div>
 
-      <div className="flex flex-col-reverse sm:flex-row gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={handleResend}
-          disabled={pending || !contactId || !spaceId || cooldown > 0}
-          className="h-11 w-full sm:w-auto"
-        >
-          {cooldown > 0
-            ? `Resend in ${cooldown}s`
-            : sentTo
-              ? 'Resend code'
-              : 'Send code'}
-        </Button>
-        <Button
-          type="button"
-          onClick={handleVerify}
-          disabled={pending || !sentTo}
-          className="h-11 w-full sm:flex-1"
-        >
-          Verify and continue
-        </Button>
-      </div>
+      <Button
+        type="button"
+        variant="outline"
+        onClick={handleResend}
+        disabled={pending || !contactId || !spaceId || cooldown > 0}
+        className="h-11 w-full"
+      >
+        {cooldown > 0
+          ? `Resend in ${cooldown}s`
+          : sentTo
+            ? 'Resend code'
+            : 'Send code'}
+      </Button>
 
       {error && (
         <Alert variant="destructive">
@@ -481,49 +479,6 @@ export function PortalVerifyCard({ slug }: Props) {
           </AlertIcon>
           <AlertTitle>{error}</AlertTitle>
         </Alert>
-      )}
-
-      {/* WhatsApp escape hatch - always visible when the business number is
-          configured. Delivery is fire-and-forget, so when the 24h window is
-          closed the code never arrives; messaging the business first reopens
-          the window, then Resend delivers. */}
-      {whatsappNumber && (
-        <div
-          className="rounded-lg border bg-muted/40 px-3 py-3 space-y-2"
-          data-testid="wa-escape-hatch"
-        >
-          <p className="text-xs text-muted-foreground">
-            No code after a minute? WhatsApp sometimes blocks messages from us until
-            you message first. Send us any message, then tap Resend.
-          </p>
-          <Button asChild variant="outline" size="sm" className="h-9 w-full">
-            <a
-              href={waMeUrl(whatsappNumber, WA_TEXT)}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <MessageCircle className="h-4 w-4 mr-2" />
-              Message us on WhatsApp
-            </a>
-          </Button>
-        </div>
-      )}
-
-      {slug && (
-        <button
-          type="button"
-          onClick={() => {
-            // Wrong identity on this device - drop the stored slug + token so
-            // the next visit starts clean, then point at the link-request CTA.
-            clearPortalToken();
-            clearPortalSlug();
-            setState('request-link');
-          }}
-          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          data-testid="not-your-number"
-        >
-          Not your number?
-        </button>
       )}
     </VerifyShell>
   );
