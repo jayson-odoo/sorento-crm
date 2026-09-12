@@ -230,6 +230,30 @@ def test_ac6_per_unit_discount_m218_shape(db):
     assert rows[0]["unit_cost_after_discount"] == 44.0
 
 
+def test_ac6b_money_rounds_to_two_decimals(client, db):
+    """qty 3, unit_cost 110, discount 100, line_total 230 -> discount_per_unit == 33.33
+    (100/3 = 33.3333... rounded half-up to 2dp), unit_cost_after_discount == 76.67
+    (230/3 = 76.6666... rounded half-up to 2dp) - never a raw float division result like
+    33.333333333333336. The route answers the SAME rounded 2dp floats, not a re-derived
+    figure of its own."""
+    last_cost_rows = _import_last_cost_rows()
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="ROUND-P1")
+
+    po = _po(db, issue_date=date(2026, 8, 1), po_number="PO-ROUND")
+    _line(db, po=po, product_id=prod.id, qty_ordered=3, unit_cost=110, discount=100, line_total=230)
+    db.commit()
+
+    rows = last_cost_rows(db, product_ids=[prod.id])
+    assert rows[0]["discount_per_unit"] == 33.33
+    assert rows[0]["unit_cost_after_discount"] == 76.67
+
+    resp = client.get(f"{BASE}/last-cost", params={"product_ids": prod.id})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"][0]
+    assert body["discount_per_unit"] == 33.33
+    assert body["unit_cost_after_discount"] == 76.67
+
+
 def test_ac7_zero_or_null_discount_absent(db):
     """discount 0 or NULL answers discount_per_unit is None and
     unit_cost_after_discount == unit_cost, on both branches."""

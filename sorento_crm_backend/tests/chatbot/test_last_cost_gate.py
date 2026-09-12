@@ -35,6 +35,8 @@ from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output, seeded, stub_access, stub_parser  # noqa: F401
 
 PRODUCT_UUID = "44444444-4444-4444-4444-444444444444"
+WAREHOUSE_UUID = "55555555-5555-5555-5555-555555555555"
+BRAND_UUID = "66666666-6666-6666-6666-666666666666"
 TOOL = "crm_procurement_po_last_cost_list"
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -156,8 +158,22 @@ class TestAC16DomainRefusedWithoutGrant:
         self, session_factory, seeded, stub_parser, stub_access, monkeypatch
     ) -> None:
         """A contact without `purchase_orders.cost` asking "last purchase cost for M218"
-        gets the access_denied canned reply for team purchasing; no MCP tool is called;
-        the trace carries {"skipped": "not_granted", "needs": "purchase_orders.cost"}."""
+        gets the access_denied canned reply, its SUBJECT "purchase cost" rather than the
+        parser's agent guess - captain's ruling: the exact string is
+        "Sorry, you are not allowed to access purchase cost". No MCP tool is called; the
+        trace carries {"skipped": "not_granted", "needs": "purchase_orders.cost"}.
+
+        The expected string is built off the FALLBACK template
+        (`app.services.chatbot_reply_copy.CHATBOT_REPLY_ACCESS_DENIED`), not typed out a
+        second time, and not read off a DB row: `copy_mod.resolve(db)` (`app.services.
+        chatbot.copy`) falls back to this exact template when the prompt registry has no
+        seeded `chatbot_reply_access_denied` row, which a `blank_session()` schema never
+        does."""
+        from app.services.chatbot_reply_copy import CHATBOT_REPLY_ACCESS_DENIED
+
+        expected_text = CHATBOT_REPLY_ACCESS_DENIED.replace("{{team}}", "purchase cost")
+        assert expected_text == "Sorry, you are not allowed to access purchase cost"
+
         calls: list[tuple[str, dict]] = []
 
         def mcp_call(name: str, args: dict) -> str:
@@ -175,7 +191,7 @@ class TestAC16DomainRefusedWithoutGrant:
         assert calls == [], f"the tool must never be called without the grant: {calls!r}"
 
         text = result.reply.get("text") or ""
-        assert "not allowed to access" in text, text
+        assert text == expected_text, text
 
         trace = (_turn_row(session_factory, result.turn_id).trace) or []
         skip_events = [
@@ -278,6 +294,16 @@ class TestAC18OutputStructurerDropsMoneyFieldsWithoutGrant:
 # --------------------------------------------------------------------------- #
 
 _PHRASES = ["last purchase cost", "what did we pay", "上次采购价", "harga belian terakhir"]
+# Selling-price phrasings that must stay OUT of purchase_cost (review SF3, 12 Sep 2026) -
+# "how much does it cost" and "berapa harga" are the everyday words for what WE CHARGE, and
+# must route to master_products / promotion / check_stock instead. Checked against
+# WHITESPACE-COLLAPSED text: the prompt bodies hard-wrap long lines with a literal "\n",
+# and a phrase that happens to wrap across one must not read as absent.
+_NOT_PHRASES = ["how much does it cost", "berapa harga"]
+
+
+def _collapsed(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
 
 
 @pytest.mark.parametrize(
@@ -286,6 +312,7 @@ _PHRASES = ["last purchase cost", "what did we pay", "上次采购价", "harga b
 )
 def test_ac25_parser_prompt_teaches_purchase_cost(body_name: str) -> None:
     import app.services.chatbot_parser_prompt as prompt_mod
+    from app.services.chatbot.contracts import DOMAIN_SPEC
 
     body = getattr(prompt_mod, body_name)
     for phrase in _PHRASES:
@@ -297,6 +324,17 @@ def test_ac25_parser_prompt_teaches_purchase_cost(body_name: str) -> None:
     assert match is not None, f"{body_name}: no 'domain_hint = ONE of:' literal found"
     tokens = [t.strip() for t in match.group(0).split(":", 1)[1].split("|")]
     assert "purchase_cost" in tokens, f"{body_name}: {tokens!r}"
+
+    collapsed = _collapsed(body)
+    for phrase in _NOT_PHRASES:
+        assert phrase in collapsed, f"{body_name} missing NOT-purchase_cost phrase {phrase!r}"
+
+    # purchase_cost has NO switch words, precedent = how purchase_order shipped: "cost" is
+    # the everyday word for the SELLING price too, and a whole-token switch on it would drag
+    # every such ask into this domain and refuse it for every ungranted contact. Routing is
+    # the parser prompt's job alone. Domain-spec-level, so this only needs asserting once,
+    # not once per body - kept inside the parametrized test purely for a single call site.
+    assert DOMAIN_SPEC["purchase_cost"].switch_words == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -314,6 +352,68 @@ def test_ac27_gate_allows_product_and_warehouse_no_allows_empty() -> None:
         resolver={"resolutions": []},
     )
     assert out["gate_passed"] is False
+
+
+def test_ac27b_warehouse_entity_passes_warehouse_ids() -> None:
+    """A purchase_cost ask with a resolved warehouse entity, alongside a product, passes
+    `warehouse_ids` to the tool - the same seam AC-28 drives. `TYPE_TO_PARAM["warehouse"]`
+    is a GLOBAL mapping (not per-domain), so this may already be green - if so it stands
+    as the regression pin, not a red-to-green transition."""
+    trigger = {
+        "entities": [
+            {"entity_type": "product", "uuid": PRODUCT_UUID, "code": "M218"},
+            {"entity_type": "warehouse", "uuid": WAREHOUSE_UUID, "code": "BRW"},
+        ],
+        "tool": TOOL,
+        "semantic_input": {"contact_id": "1", "space_id": "s"},
+    }
+    out = fetch.entity_ids_transformer(trigger)
+    assert out.get("warehouse_ids") == [WAREHOUSE_UUID]
+    assert out.get("product_ids") == [PRODUCT_UUID]
+
+
+def test_ac27c_brand_only_ask_is_refused_not_found_with_zero_mcp_calls() -> None:
+    """The tool is in `fetch.ENTITY_FILTER_REQUIRED_TOOLS`, and a brand-only ask (the
+    gate passes - brand is an allowed entity type for `purchase_cost` - but
+    `TYPE_TO_PARAM` has no "brand" key, so `entity_ids_transformer` builds no `*_ids` at
+    all) is refused as `not_found` with ZERO MCP calls, never answered from the unscoped
+    branch (which would otherwise hand back a plain `top_n` cap over EVERY product's
+    cost line, a directory dump nobody asked for). Mirrors `test_s6b_fetch_lane.py::
+    TestEngineDispatch::test_a_resource_attachment_fetch_with_no_resolved_entity_never_ships_unfiltered`
+    for the sibling document-tool rule."""
+    assert TOOL in fetch.ENTITY_FILTER_REQUIRED_TOOLS
+
+    from app.services.chatbot.lanes import business as business_mod
+
+    calls: list[tuple[str, dict]] = []
+
+    def mcp_call(name: str, args: dict) -> str:
+        calls.append((name, dict(args)))
+        raise AssertionError(f"the tool must never be called on an unfiltered ask: {name}")
+
+    services = FetchServices(mcp_call=mcp_call)
+    payload = {
+        "_exit_kind": "continue",
+        "gate": {
+            "compatible_entities": [
+                {"uuid": BRAND_UUID, "entity_type": "brand", "code": "Acme"}
+            ]
+        },
+        "ctx": {
+            "parse": {"output": {"domain_hint": "purchase_cost"}},
+            "contact": {"id": "1"},
+            # Granted, so this test isolates the ENTITY_FILTER_REQUIRED_TOOLS rule from
+            # AC-16's whole-domain grant gate - an access_denied outcome here would be
+            # red for the WRONG reason.
+            "access": {"attributes": ["purchase_orders.cost"]},
+        },
+    }
+
+    fragment = business_mod.run_fetch(payload, services=services, dry_run=False)
+
+    assert calls == [], f"the tool must never be called: {calls!r}"
+    assert fragment.get("kind") == "error", fragment
+    assert fragment.get("outcome") == "not_found", fragment
 
 
 # --------------------------------------------------------------------------- #
@@ -449,3 +549,27 @@ def test_ac29_migration_513_publish_idempotent() -> None:
             "publish() must never move the production label off the stale v1 - "
             "promoting is a deliberate, separate action in the admin UI"
         )
+
+
+# --------------------------------------------------------------------------- #
+# AC-33: the tool is kept OUT of RAG / cosine tool-search, and its capability-summary
+# description never leaks the internal field-reveal key. SF1 (security review,
+# PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026): RAG tool-search - the in-app
+# assistant's embedding pick, and n8n's cosine pick for anything outside the chatbot's own
+# `DOMAIN_SPEC -> select_tool` path - has NO field-reveal drop, so a retrieved call would
+# answer with an unfiltered cost figure to whoever the assistant is running as. The chatbot
+# reaches the tool ONLY through `DOMAIN_SPEC`, never through this pool.
+# --------------------------------------------------------------------------- #
+
+
+def test_ac33_tool_is_skipped_from_embedding_and_hides_the_grant_key() -> None:
+    from app.services import mcp_tool_capability_service as capability_mod
+
+    assert TOOL in capability_mod._EMBEDDING_SKIP_TOOLS
+
+    intent = capability_mod.TOOL_INTENTS.get(TOOL)
+    assert intent is not None, f"{TOOL} has no ToolIntent entry"
+    assert "purchase_orders.cost" not in intent.description, (
+        "the internal field-reveal key must never reach the customer-visible "
+        "capability summary"
+    )

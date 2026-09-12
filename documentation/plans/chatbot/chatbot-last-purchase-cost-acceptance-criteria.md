@@ -20,6 +20,10 @@ Plan: `PLAN-chatbot-last-purchase-cost.md`.
 - AC-6 Per-unit discount. qty 19, unit_cost 110.00, discount 1254.00, line_total 836.00
   answers `unit_cost == 110.0`, `discount_per_unit == 66.0`,
   `unit_cost_after_discount == 44.0`.
+- AC-6b Money rounds to two decimals. qty 3, unit_cost 110, discount 100, line_total 230
+  answers `discount_per_unit == 33.33` (100/3, half up) and
+  `unit_cost_after_discount == 76.67` (230/3, half up); the route returns the same two
+  decimal place floats, never a raw division result such as 33.333333333333336.
 - AC-7 Discount absent. discount 0 or NULL answers `discount_per_unit is None` and
   `unit_cost_after_discount == unit_cost`.
 - AC-8 No line_total. `line_total` NULL answers `unit_cost_after_discount == unit_cost`
@@ -44,8 +48,10 @@ Plan: `PLAN-chatbot-last-purchase-cost.md`.
   "Last purchase cost"; the Contacts > Access > Field reveals card shows it unticked for a
   contact with no row.
 - AC-16 Default hidden, whole domain. A contact WITHOUT the key asking "last purchase cost
-  for M218" gets the `access_denied` canned reply for the purchasing team; no MCP tool is
-  called; the trace carries `{"skipped": "not_granted", "needs": "purchase_orders.cost"}`.
+  for M218" gets the exact reply `Sorry, you are not allowed to access purchase cost` (the
+  existing `access_denied` canned copy, subject "purchase cost" rather than an agent name);
+  no MCP tool is called; the trace carries
+  `{"skipped": "not_granted", "needs": "purchase_orders.cost"}`.
 - AC-17 Granted. The same contact WITH the key gets the answer; the reply contains
   "Cost / unit" and "Cost after discount / unit" and no UUID.
 - AC-18 Belt and braces. `output_structurer` with a granted set lacking
@@ -75,17 +81,30 @@ Plan: `PLAN-chatbot-last-purchase-cost.md`.
 - AC-25 Parser. Under the new prompt version, "last purchase cost for M218", "what did we
   pay for M218", "上次采购价 M218", "harga belian terakhir M218" emit
   `domain_hint purchase_cost` / `intent_hint check_po_cost`; "how much do we sell M218
-  for" does not.
+  for", "how much does it cost" and "berapa harga" do not - those stay `check_stock` /
+  product domains, the everyday words for the SELLING price. `purchase_cost` has NO
+  switch words (`DOMAIN_SPEC["purchase_cost"].switch_words == ()`); the parser prompt
+  alone routes it, the same precedent as `purchase_order`.
 - AC-26 Domain table. `test_domain_spec.py` is green: `purchase_cost` has one intent, one
   tool, unique switch words, and `CHATBOT_READ_ONLY_TOOLS` includes
   `crm_procurement_po_last_cost_list`.
-- AC-27 Gate. A `purchase_cost` ask with a product resolves and calls the tool with
+- AC-27 Gate. (a) A `purchase_cost` ask with a product resolves and calls the tool with
   `product_ids`; with a warehouse named, `warehouse_ids` is passed too; with no entity, the
-  gate asks for a product (no `ALLOWS_EMPTY` row).
+  gate asks for a product (no `ALLOWS_EMPTY` row). (b) A resolved warehouse entity passes
+  `warehouse_ids` to the tool. (c) The tool is in
+  `fetch.ENTITY_FILTER_REQUIRED_TOOLS`; a brand-only ask (gate passes - brand is an
+  allowed entity type - but no `*_ids` can be built for it) is refused as `not_found`
+  with ZERO MCP calls, never answered from the unscoped branch.
 - AC-28 top_n passthrough. "last 3 purchase cost for M218" passes `top_n=3` directly (tool
   is in `TOP_N_DIRECT_TOOLS`), not `limit`.
 - AC-29 Prompt publish. Migration 513 adds one new unlabelled version per body, is
   idempotent on re-run, and moves no label.
+- AC-33 RAG skip and no key leak. `crm_procurement_po_last_cost_list` is in
+  `mcp_tool_capability_service._EMBEDDING_SKIP_TOOLS` (kept out of the in-app assistant's
+  RAG pick and n8n's cosine pick; the chatbot reaches it via `DOMAIN_SPEC` only, which is
+  the one path with the field-reveal drop). The tool's `ToolIntent.description` does not
+  contain the string `purchase_orders.cost` - the internal key must never reach the
+  customer-visible capability summary.
 
 ## Last-in family (pin, D5)
 
