@@ -9,14 +9,11 @@ route over HTTP and must fail with 404 (route not found) until the coder wires i
 an import error, not a fixture bug. Postgres only (`tests/_pg_fixture.py`), every row seeded
 here; CI's database has none.
 
-Interpretation note for the coder (AC-1115): the plan states the `do` block literally as
-`do_qty` = SUM over `_outstanding_clause` (the pending population only), `pending_qty =
-do_qty`, and `delivered_qty` as a SEPARATE sum over `_delivered_clause` orders in the same
-filter/window - NOT `do_qty = delivered_qty + pending_qty`. `do_rows` is read here as one row
-per DO in that SAME (pending) population, since D10's "Delivery order list" detail is offered
-under the "Delivery order pending" block. If that reading is wrong, this test is the place to
-correct alongside the implementation - it is unambiguous in the plan text, but the two
-possible arithmetic identities are both defensible, so flag before diverging further.
+AC-1115 (captain ruling, 12 Sep 2026): the `do` block carries the same identity as the `so`
+block - `do_qty = delivered_qty + pending_qty` over every DO (pending and delivered) matching
+the product/filters, `pending_qty` = SUM over `_outstanding_clause`, `delivered_qty` = SUM over
+`_delivered_clause`, `do_count` counts both, and `do_rows[]` lists BOTH pending and delivered
+DOs, each row carrying its own `do_qty` / `delivered_qty` / `pending_qty`.
 """
 from __future__ import annotations
 
@@ -377,21 +374,22 @@ def test_so_rows_roll_up_lines_per_so(client, db):
 
 
 def test_do_block_pending_and_delivered(client, db):
-    """One delivered DO and one pending DO for the same product: `do_qty` and
-    `pending_qty` are the pending sum only, `delivered_qty` is the separate delivered
-    sum, and `do_rows` lists the pending DO (see module docstring)."""
+    """One delivered DO (qty 5) and one pending DO (qty 7) for the same product:
+    `do_qty = delivered_qty + pending_qty` (12 = 5 + 7), `do_count` counts both, and
+    `do_rows` lists BOTH DOs, each carrying its own `do_qty` / `delivered_qty` /
+    `pending_qty` (captain ruling 12 Sep 2026 - see module docstring)."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT DO Customer")
     delivered_status = _delivered_status(db)
 
     _do(
-        db, product_id=prod.id, warehouse_id=wh.id, qty=100, customer_id=cust.id,
+        db, product_id=prod.id, warehouse_id=wh.id, qty=5, customer_id=cust.id,
         order_status_id=delivered_status.id, actual_delivery_date=date(2026, 3, 1),
         number="ZZT-DO-DELIVERED",
     )
     _do(
-        db, product_id=prod.id, warehouse_id=wh.id, qty=50, customer_id=cust.id,
+        db, product_id=prod.id, warehouse_id=wh.id, qty=7, customer_id=cust.id,
         order_status_id=None, actual_delivery_date=None, number="ZZT-DO-PENDING",
     )
     db.commit()
@@ -399,12 +397,16 @@ def test_do_block_pending_and_delivered(client, db):
     resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "do"})
     assert resp.status_code == 200, resp.text
     do = resp.json()["do"]
-    assert do["do_qty"] == 50
-    assert do["pending_qty"] == 50
-    assert do["delivered_qty"] == 100
-    assert do["do_count"] == 1
-    rows = resp.json()["do_rows"]
-    assert [r["do_number"] for r in rows] == ["ZZT-DO-PENDING"]
+    assert (do["do_qty"], do["delivered_qty"], do["pending_qty"]) == (12, 5, 7)
+    assert do["do_qty"] == do["delivered_qty"] + do["pending_qty"]
+    assert do["do_count"] == 2
+
+    rows = {r["do_number"]: r for r in resp.json()["do_rows"]}
+    assert set(rows) == {"ZZT-DO-DELIVERED", "ZZT-DO-PENDING"}
+    delivered_row = rows["ZZT-DO-DELIVERED"]
+    assert (delivered_row["do_qty"], delivered_row["delivered_qty"], delivered_row["pending_qty"]) == (5, 5, 0)
+    pending_row = rows["ZZT-DO-PENDING"]
+    assert (pending_row["do_qty"], pending_row["delivered_qty"], pending_row["pending_qty"]) == (7, 0, 7)
 
 
 # --------------------------------------------------------------------- AC-1116

@@ -9,17 +9,18 @@ fail with `StopIteration` (no such tool name in `CATALOG` yet), not an import er
 `test_order_list_tools_expose_new_params` finds its two tools fine (they already exist) and
 fails on the missing params.
 
-Note for the coder: `test_catalog_compile.py::test_orders_list_uses_actual_delivery_date_only`
-currently asserts `order_date_from`/`order_date_to` are ABSENT from
-`crm_order_management_orders_list`'s query_params and description. Adding them here (AC-1121)
-will need that assertion reconciled - not this file's job to change, flagging so it is not
-missed.
+AC-1121 (captain ruling, 12 Sep 2026): `order_date_from`/`order_date_to` stay OFF
+`crm_order_management_orders_list` and `_by_product_list` - the standing test
+`test_catalog_compile.py::test_orders_list_uses_actual_delivery_date_only` is a prior owner
+ruling and must stay green. Only `customer_query` and `warehouse_codes` are new on those two
+tools; the outstanding-report tool itself still takes `order_date_from`/`order_date_to` (its
+own params, asserted separately below - unaffected by this ruling).
 """
 from __future__ import annotations
 
 from sorento_crm_mcp.catalog import CATALOG
 
-NEW_ORDER_LIST_PARAMS = ("customer_query", "order_date_from", "order_date_to", "warehouse_codes")
+NEW_ORDER_LIST_PARAMS = ("customer_query", "warehouse_codes")
 
 
 def test_catalog_lists_outstanding_report_tool():
@@ -38,3 +39,8 @@ def test_order_list_tools_expose_new_params():
         spec = next(s for s in CATALOG if s.name == name)
         for param in NEW_ORDER_LIST_PARAMS:
             assert param in spec.query_params, f"{name} missing query param: {param}"
+        # AC-1121 ruling: order_date_* stays OFF these two tools - the DO list keeps
+        # actual_delivery_date_* as its only date axis (standing test in
+        # test_catalog_compile.py). A coder who adds these here breaks that ruling.
+        assert "order_date_from" not in spec.query_params, f"{name} must not gain order_date_from"
+        assert "order_date_to" not in spec.query_params, f"{name} must not gain order_date_to"

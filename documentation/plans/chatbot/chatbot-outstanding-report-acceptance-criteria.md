@@ -119,10 +119,12 @@ resolution and the filter set in the console trace.
 - **AC-1114 [BE]** `so_rows[]` is one row per SO: an SO with two live lines of the product
   (205 + 205) returns one row with `ordered_qty=410`, `location` = the distinct warehouse
   codes joined by `, `. Sorted by `order_date` asc then `so_number`. Evidence: pytest.
-- **AC-1115 [BE]** `do` block: `do_qty` = SUM `order_lines.quantity` for the product on
+- **AC-1115 [BE]** `do` block: `pending_qty` = SUM `order_lines.quantity` for the product on
   orders matching `_outstanding_clause` (`order_service.py:67-93`); `delivered_qty` = same
-  sum over delivered orders in the window; `pending_qty = do_qty` (a DO is pending as a
-  whole); `do_rows[]` one row per DO. Evidence: pytest with one delivered and one pending DO.
+  sum over orders matching `_delivered_clause`; `do_qty = delivered_qty + pending_qty`;
+  `do_count` counts both; `do_rows[]` one row per DO (pending and delivered, each row
+  carrying its own `do_qty`, `delivered_qty`, `pending_qty`). Evidence: pytest with one
+  delivered DO (qty 5) and one pending DO (qty 7) asserts 12 / 5 / 7.
 - **AC-1116 [BE]** `so_by_location[]` / `so_by_customer[]` carry `ordered_qty` and
   `outstanding_qty`; `do_by_location[]` / `do_by_customer[]` carry `do_qty` and
   `pending_qty`; each filtered identically to its block's totals, and each group's sums equal
@@ -144,8 +146,10 @@ resolution and the filter set in the console trace.
   `order_date_to`; the catalog test lists it and the tool is seeded (MCP tool seeding rule).
   Evidence: pytest in `sorento_crm_mcp/tests`.
 - **AC-1121 [BE]** `crm_order_management_orders_list` and `_by_product_list` expose
-  `customer_query`, `order_date_from`, `order_date_to`, `warehouse_codes` (the last one is
-  new on the backend route too and filters on `order_lines.warehouse_id`). Evidence: pytest.
+  `customer_query` and `warehouse_codes` (the last one is new on the backend route too and
+  filters on `order_lines.warehouse_id`). `order_date_*` stays OFF these tools: the standing
+  test `test_orders_list_uses_actual_delivery_date_only` keeps the DO list on actual delivery
+  dates. Evidence: pytest, and that standing test still green.
 
 ### Chatbot lane
 

@@ -41,7 +41,7 @@ Three defects and one missing definition, all measured (UAC "Measured"):
 | D10 | Detail is offered as a numbered reply (`1. Sales order list`, `2. Delivery order list`), served from the report the bot already holds, no second fetch. |
 | D11 | The chatbot stops calling the `so_outstanding` bucket for outstanding asks. That bucket and `include_pipeline` stay for their other readers; repairing them is backlog (trigger in UAC). |
 | D13 | Access (owner ruling on the lavish page): every `order_enquiries` contact sees DO figures, as today. SO figures are gated per contact by ONE field-reveal key `sales_orders.outstanding` on Contacts > Access (same table and screen as `purchase_orders.placed`, which already gates a whole answer family: `answer.py:936, 1113-1122`). Default deny. Without the key the scope question is never asked (scope is DO) and an explicit SO ask prints `Sales order figures are not enabled for your account.` then the DO block. Checked before any fetch. No new table, no new agent. |
-| D12 | The existing order-list MCP tools additionally expose `customer_query`, `order_date_from/to`, `warehouse_codes` so n8n can filter DOs the same way. |
+| D12 | The existing order-list MCP tools additionally expose `customer_query` and `warehouse_codes`. NOT `order_date_*`: the DO list tool's dates are actual delivery dates by a standing ruling (`sorento_crm_mcp/tests/test_catalog_compile.py::test_orders_list_uses_actual_delivery_date_only`), and pending DOs by order date are served by the new report route instead. |
 
 ## The reply (contract for Phase 1)
 
@@ -146,7 +146,8 @@ qty_delivered)`. The identity is then arithmetic, not luck.
 
 DO population: `OrderService._outstanding_clause` (`order_service.py:67-93`) for pending,
 `_delivered_clause` for delivered, qty from `order_lines.quantity` for the product, location
-from `order_lines.warehouse_id`.
+from `order_lines.warehouse_id`. `do_qty = delivered_qty + pending_qty` over the DOs in the
+window, so the DO block carries the same identity as the SO block (captain ruling 12 Sep).
 
 One service function `outstanding_report(db, filters) -> dict` in a new
 `app/services/outstanding_report_service.py` (about 150 lines: two base queries, four
@@ -159,7 +160,7 @@ shape is a report, not a grid.
 |---|---|---|---|
 | S1 | 1 | Presenter over mock report JSON; golden fixtures for both / so / do / miss / detail lists; dash guard test | `sorento_crm_mcp/sorento_crm_mcp/presenters.py` (`_outstanding_report`, `_outstanding_detail`), `documentation/plans/chatbot/samples/outstanding-report-*.txt`, `sorento_crm_mcp/tests/test_presenters_outstanding.py` |
 | S2 | 2 | Route + service + response model + tests (tester first) | `app/api/v1/order_management/orders.py` (new route), `app/services/outstanding_report_service.py`, `app/schemas/order_management.py`, `tests/test_outstanding_report.py` |
-| S3 | 2 | MCP tool `crm_outstanding_report`; extra params on the two order-list tools; backend `warehouse_codes` on `GET /orders` and `/orders/by-product`; tool seeding | `sorento_crm_mcp/sorento_crm_mcp/catalog.py`, `orders.py`, `order_service.py:843-853`, `sorento_crm_mcp/tests/test_catalog.py` |
+| S3 | 2 | MCP tool `crm_outstanding_report`; `customer_query` + `warehouse_codes` on the two order-list tools (no `order_date_*`); backend `warehouse_codes` on `GET /orders` and `/orders/by-product`; tool seeding | `sorento_crm_mcp/sorento_crm_mcp/catalog.py`, `orders.py`, `order_service.py:843-853`, `sorento_crm_mcp/tests/test_catalog.py` |
 | S4 | 2 | Lane wiring: scope words and `outstanding_scope` question, location token resolution, `order_date_*` mapping, `detail_pick`, header lines, miss lines, D13 gate (`sales_orders.outstanding`: no scope question and DO scope without the key, refusal line on an explicit SO ask), key registered on the reveal screen | `app/services/chatbot/contracts.py` (two kinds), `dialogue/open_question.py` (two handlers), `lanes/business/fetch.py` (tool pick + DATE_PARAMS entry + location resolver), `lanes/business/answer.py`, `tail/compile_state.py` (`Location:` axis), tests `test_open_question.py`, `test_outstanding_lane.py`, one world under `tests/chatbot/worlds/` |
 | S5 | 3 | reviewer + browser-less console check (chatbot-verification.md) in parallel; guide-writer updates the chatbot user guide with the six journey messages | `documentation/plans/chatbot/evidence/outstanding-report/`, `documentation/user-guides/` |
 
