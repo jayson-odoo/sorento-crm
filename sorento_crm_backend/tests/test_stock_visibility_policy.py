@@ -1769,6 +1769,29 @@ def test_detailed_without_the_flag_still_shows_the_zero_rows(db):
     assert result["stock_visibility"]["hide_zero_locations"] is False
 
 
+def test_detailed_hide_zero_takes_the_existing_empty_path(db):
+    """B17 (re-added, review fix round - D5 does not reverse this). The product
+    HAS stock (5 at BRW), but the REQUEST itself is narrowed to a DIFFERENT
+    warehouse (BRW-BB, via the `warehouse_id` argument) where it has no row at
+    all - not a zero row, no row. That is the plain "nothing matched this
+    filter" shape, unrelated to D5's zero-everywhere rule, and it still takes
+    the existing empty path: `data: []`, `total: 0`, `empty: true`."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=5)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, warehouse_id=brw_bb.id
+    )
+
+    assert result["data"] == []
+    assert result["pagination"]["total"] == 0
+    assert result["empty"] is True
+
+
 def test_compact_drops_the_zero_locations_and_keeps_the_total(db):
     """B17. In `compact` the flag works on the location LINES, not on the rows:
     a line reading `BRW-BB: 0` is noise in a WhatsApp message, while the total is
@@ -1884,6 +1907,31 @@ def test_detailed_hide_zero_negative_row_stays_and_the_zero_sibling_still_drops(
     assert result["pagination"]["total"] == 1
 
 
+def test_detailed_hide_zero_all_zero_ignores_stock_in_an_inactive_warehouse(db):
+    """AC-12 (inactive-warehouse half, review fix round). The AC-9 product also
+    holds 5 in a THIRD test warehouse that is `is_active=False` - the outer
+    query already excludes inactive warehouses
+    (`Stock.warehouse.has(Warehouse.is_active.is_(True))`), and the
+    zero-everywhere predicate must carry that SAME criterion, or the inactive
+    row still counts as "has stock somewhere" and wrongly drops the two active
+    0 rows."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    inactive_wh = _wh(db, unique_code("INACTWH")[:50])
+    inactive_wh.is_active = False
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=inactive_wh.id, on_hand=5)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id}
+    assert result["pagination"]["total"] == 2
+
+
 def test_detailed_hide_zero_all_zero_ignores_stock_in_an_excluded_warehouse(db):
     """AC-12 (excluded-warehouse half). The AC-9 product also holds 7 in a
     warehouse the policy EXCLUDES - that stock must not count as "has stock
@@ -1911,12 +1959,24 @@ def test_detailed_hide_zero_all_zero_ignores_stock_in_an_excluded_warehouse(db):
 def test_detailed_hide_zero_all_zero_ignores_stock_in_another_company(db):
     """AC-12 (another-company half). A row in ANOTHER company, sharing the SAME
     `product_id` (a data shape that should never make a product "has stock
-    somewhere" for a DIFFERENT company's contact), must not count either - the
-    two 0 rows still return. Pins issue #832: a correlated EXISTS escaping the
-    do_orm_execute company filter would see this row and wrongly conclude the
-    product has stock somewhere, dropping both 0 rows."""
+    somewhere" for a DIFFERENT company's contact), must not count either.
+
+    Company scope is pinned to BOTH companies (review fix round): under a
+    single-company scope, `with_loader_criteria(..., include_aliases=True)`
+    already hides the Mocha row inside the EXISTS on its own, so the test would
+    stay green even with the predicate's `s2.company_id == Stock.company_id`
+    clause deleted - it would not be pinning anything. With both companies in
+    scope the loader criteria injects nothing, so this is the ONLY thing left
+    to keep the Mocha row from being read as "stock somewhere": mentally
+    delete the predicate and the Mocha row makes the product look non-zero
+    everywhere, and the two 0 rows would vanish along with the Mocha row
+    itself (the query already scopes `product_ids=[p.id]` company-blind, but
+    the visibility policy's OWN row filter is what must exclude it). All three
+    rows return - the two 0 rows genuinely visible to this Sorento contact,
+    and the Mocha row because the query itself is scoped to both companies
+    here (this is a service-level unit test, not a company-scoped API path)."""
     seed_mocha(db)
-    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
     brw, brw_bb, _ = _three_warehouses(db)
     mocha_wh = _wh(db, unique_code("MCHWH")[:50], company_id=MOCHA_ID)
     p = product(db, company_id=DEFAULT_COMPANY_ID)
@@ -1929,8 +1989,8 @@ def test_detailed_hide_zero_all_zero_ignores_stock_in_another_company(db):
 
     result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
 
-    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id}
-    assert result["pagination"]["total"] == 2
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id, mocha_wh.id}
+    assert result["pagination"]["total"] == 3
 
 
 def test_availability_ignores_hide_zero_locations(db):
