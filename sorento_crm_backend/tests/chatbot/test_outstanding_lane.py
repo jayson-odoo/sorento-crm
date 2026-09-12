@@ -1010,6 +1010,94 @@ class TestScopeAnswerRunsReportWithCarriedFilters:
             f"the open scope question must be DROPPED by a new ask, never re-asked: {reply!r}"
         )
 
+    def test_a_scope_word_with_a_new_product_is_a_new_ask_not_an_answer(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Reviewer N2: the carve-out fired only when nothing was picked, and a SCOPE WORD
+        picks - so "sales order outstanding for SRTWC8517" typed while a scope question
+        about SRTWT7445 was open kept the OLD customer, location and product and answered
+        about the wrong thing. A turn that names a product is a new ask, whatever else it
+        says."""
+        _seed_open_outstanding_scope(session_factory)
+        other_uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status="so_outstanding",
+                date_filter_start="2026-01-01",
+                date_filter_end="2026-12-31",
+                entities=[
+                    {
+                        "raw": "SRTWC8517", "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="sales order outstanding for SRTWC8517",
+            msg_id="ZZT-outstanding-scope-new-product-1",
+            attributes=["sales_orders.outstanding"],
+            matches={"SRTWC8517": {"uuid": other_uuid, "entity_type": "product", "canonical_code": "SRTWC8517"}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the new ask must still be answered"
+        _name, args = captured[0]
+        assert args.get("product_code") == "SRTWC8517", (
+            f"the product the customer just typed is the subject, not the carried one: {args}"
+        )
+        assert not args.get("customer_ids"), (
+            f"a new ask must not inherit the previous question's customer: {args}"
+        )
+        assert not args.get("warehouse_codes"), (
+            f"a new ask must not inherit the previous question's location: {args}"
+        )
+        assert "location_token" not in args, args
+        assert args.get("order_date_from") == "2026-01-01", (
+            f"the new message's own window must reach the tool: {args}"
+        )
+
+    def test_a_date_in_the_answering_turn_wins_over_the_carried_one(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Reviewer N2, second half: the carried dates were restored UNCONDITIONALLY, so
+        a pick that narrowed the window ("2, but only 2026") was answered over the
+        previous question's dates. The turn's own window wins; the rest of the filter set
+        still carries, because this turn named nothing else of its own."""
+        _seed_open_outstanding_scope(
+            session_factory,
+            filters={
+                "product_code": PRODUCT_CODE,
+                "date_filter_start": "2025-01-01",
+                "date_filter_end": "2025-12-31",
+                "customer_ids": [],
+                "warehouse_codes": [],
+                "location_token": None,
+            },
+        )
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[2],
+                date_filter_start="2026-01-01",
+                date_filter_end="2026-12-31",
+            ),
+            text_body="2 in 2026",
+            msg_id="ZZT-outstanding-scope-own-date-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the pick must still run the report"
+        _name, args = captured[0]
+        assert args.get("product_code") == PRODUCT_CODE, args
+        assert args.get("scope") == "do", args
+        assert args.get("order_date_from") == "2026-01-01", (
+            f"the window the customer just named must win over the carried one: {args}"
+        )
+        assert args.get("order_date_to") == "2026-12-31", args
+
     def test_out_of_range_number_reasks(self, session_factory, monkeypatch) -> None:
         _seed_open_outstanding_scope(session_factory)
         result, captured = _run_turn(

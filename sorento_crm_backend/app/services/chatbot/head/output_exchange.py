@@ -1049,8 +1049,19 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # scope question AGAIN, so the customer could not leave the question except by
     # answering it. A pick (a number, or a scope word) is what an ANSWER looks like, and
     # only an answer keeps the pending alive.
-    own_question = bool(jsc.array(o.get("entities"))) or jsc.truthy(o.get("domain_hint"))
-    if own_question and (kind == "outstanding_detail" or picked is None):
+    named_entities = jsc.array(o.get("entities"))
+    names_product = any(
+        jsc.js_string(jsc.get(e, "hint") or "") == "product" for e in named_entities
+    )
+    names_own_dates = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))
+
+    own_question = bool(named_entities) or jsc.truthy(o.get("domain_hint"))
+    # N2 (re-review, 13 Sep 2026): a SCOPE WORD sets `picked`, so "sales order
+    # outstanding for SRTWC8517" typed while a scope question about another product was
+    # open looked like an answer and inherited the old product, customer and location. A
+    # turn that names a PRODUCT is a new ask, whatever else it says - the product is the
+    # subject of this report, and there can only be one.
+    if names_product or (own_question and (kind == "outstanding_detail" or picked is None)):
         # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask is
         # DROPPED here, and every later reader of `prev_pending` this turn has to see that
         # - the scope-ask signal below and the `outstanding_filters` carry in
@@ -1064,26 +1075,36 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     o["message_type"] = "business_query"
     o["intent_hint"] = "check_order"
     if product_code:
-        o["entities"] = [
-            {
-                "raw": product_code,
-                "hint": "product",
-                "canonical_code": product_code,
-                "current_message": True,
-                "confident": True,
-            }
-        ]
-    o["date_filter_start"] = filters.get("date_filter_start")
-    o["date_filter_end"] = filters.get("date_filter_end")
+        # The subject of the question being answered. Anything this turn named of its own
+        # is KEPT beside it rather than overwritten - the customer just typed it.
+        carried_product = {
+            "raw": product_code,
+            "hint": "product",
+            "canonical_code": product_code,
+            "current_message": True,
+            "confident": True,
+        }
+        o["entities"] = [carried_product, *named_entities]
+    # N2: the carried window is a DEFAULT, not an override. It used to be assigned
+    # unconditionally, so a pick that narrowed the window ("2, but only 2026") was
+    # answered over the previous question's dates.
+    if not names_own_dates:
+        o["date_filter_start"] = filters.get("date_filter_start")
+        o["date_filter_end"] = filters.get("date_filter_end")
     # The carried customer_ids are ALREADY resolved UUIDs, not a raw token the
     # resolve-entity seam could look up again - restored directly onto the fetch args
-    # in `fetch.entity_ids_transformer`, never through entity resolution.
-    o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
-    # AC-1132/AC-1138: the location travels too - both the codes the report filters on
-    # and the token its header echoes. Without them the re-run silently widened to every
-    # warehouse and printed `Location: all` under a question about one location.
-    o["outstanding_carried_warehouse_codes"] = filters.get("warehouse_codes") or []
-    o["outstanding_carried_location_token"] = filters.get("location_token")
+    # in `fetch.entity_ids_transformer`, never through entity resolution. AC-1132/AC-1138:
+    # the location travels the same way, both the codes the report filters on and the
+    # token its header echoes, or the re-run silently widens to every warehouse under a
+    # header that says otherwise.
+    #
+    # N2: restored ONLY when this turn named nothing of its own. A turn that names a
+    # customer or a location is choosing a different scope from the one the question was
+    # asked about, and the answer must be about what the customer just said.
+    if not named_entities:
+        o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
+        o["outstanding_carried_warehouse_codes"] = filters.get("warehouse_codes") or []
+        o["outstanding_carried_location_token"] = filters.get("location_token")
 
     if kind == "outstanding_scope":
         if picked is not None:
