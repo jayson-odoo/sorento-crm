@@ -54,24 +54,61 @@ export type BranchKind =
  * the customer's text and never by an LLM (D11). The screen renders them as written; it
  * does not build prose of its own out of `facts`.
  */
+/**
+ * Everything in `trace` that is NOT a stage the turn ran.
+ *
+ * `note` is something that happened TO the turn - today, an operator asking for a retry;
+ * it carries the stage the turn stopped at so the endpoint can file it with the failure.
+ * The other six are sub-events a stage produced (`TurnTrace.add`, backend
+ * `app/services/chatbot/trace.py`): one MCP tool call, one cross-domain rung probe, the
+ * field reveals, and so on. They ride the SAME array as the stage records and carry no
+ * `stage` at all, which is why the split below is on `kind` being absent and not on
+ * `kind !== 'note'` - that read crashed the panel the first time a `tool` event landed.
+ */
+export type TurnTraceKind =
+  | 'note'
+  | 'tool'
+  | 'crossdomain'
+  | 'reveals'
+  | 'decay'
+  | 'focus'
+  | 'open_question';
+
+/**
+ * One entry of `chatbot.turns.trace` - a stage record, a note, or a sub-event.
+ *
+ * Every field past `kind` is optional because a sub-event has none of them. Narrow to a
+ * stage record with `stageRecords()` / `isStageRecord()` before reading `stage`.
+ */
 export interface TurnTraceRecord {
-  /**
-   * `note` is something that happened TO the turn rather than a step it ran - today, an
-   * operator asking for a retry. Absent on every stage record. The timeline renders notes
-   * as footer lines, because a note drawn as a ninth stage row reads as a bug.
-   */
-  kind?: 'note';
+  /** Absent on a stage record. Present, and one of seven values, on everything else. */
+  kind?: TurnTraceKind;
+  stage?: TurnStage;
+  status?: TraceStatus;
+  started_at?: string;
+  ms?: number;
+  summary?: string;
+  why?: string;
+  /** Small flat dict rendered as key/value rows under the sentences. */
+  facts?: Record<string, unknown>;
+  error?: string | null;
+  /** Technical payload for the "Technical details" viewer. Byte-capped by the engine. */
+  raw?: unknown;
+  /** A sub-event spreads its own payload flat beside `kind`. */
+  [extra: string]: unknown;
+}
+
+/** A record `TurnTrace.record` wrote: carries `stage`, never `kind`. The timeline rows. */
+export interface TurnStageRecord extends TurnTraceRecord {
+  kind?: undefined;
   stage: TurnStage;
   status: TraceStatus;
   started_at: string;
   ms: number;
   summary: string;
   why: string;
-  /** Small flat dict rendered as key/value rows under the sentences. */
   facts: Record<string, unknown>;
   error: string | null;
-  /** Technical payload for the "Technical details" viewer. Byte-capped by the engine. */
-  raw: unknown;
 }
 
 /** The answer the turn returned. Null while the turn is still running, or when it failed. */
