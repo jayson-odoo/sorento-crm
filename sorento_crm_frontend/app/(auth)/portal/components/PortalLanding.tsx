@@ -65,7 +65,6 @@ import {
   portalVerifyPath,
 } from '../lib/portal-paths';
 import { useRevisionPolicy } from '../hooks/useRevisions';
-import { BookmarkHint } from './BookmarkHint';
 import { ReviseAction } from './ReviseAction';
 
 // Display order differs from the canonical list: stock inquiry first.
@@ -410,7 +409,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
   if (loading) {
     return (
-      <div className="w-full px-3 pt-4 pb-4 space-y-3">
+      <div className="w-full max-w-3xl mx-auto px-3 pt-4 pb-4 space-y-3">
         <Skeleton className="h-10 w-48" />
         <Skeleton className="h-12 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -420,7 +419,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
   if (error) {
     return (
-      <div className="w-full px-3 pt-4 pb-4 space-y-3">
+      <div className="w-full max-w-3xl mx-auto px-3 pt-4 pb-4 space-y-3">
         <Alert variant="destructive">
           <AlertIcon>
             <AlertCircle />
@@ -440,7 +439,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
   }
 
   return (
-    <div className="w-full px-3 pt-3 pb-4 space-y-3">
+    <div className="w-full max-w-3xl mx-auto px-3 pt-3 pb-4 space-y-3">
       {/* Header - Welcome centered, Log out anchored to top-right. */}
       <div className="relative flex items-center justify-center min-h-[2.75rem]">
         <h1 className="text-lg font-semibold text-center break-words px-12">
@@ -457,9 +456,6 @@ export function PortalLanding({ slug }: { slug?: string }) {
           <LogOut className="h-4 w-4" />
         </Button>
       </div>
-
-      {/* First-visit nudge to bookmark the stable per-contact URL. */}
-      {slug && <BookmarkHint />}
 
       {/* Search input + status-filter icon button on the same row to save
           vertical space. The button gets a primary outline when a non-default
