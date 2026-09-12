@@ -228,6 +228,28 @@ class TestTheOutstandingVocabularyIsTaught:
             f"{token} is not named as a location token anywhere in the prompt"
         )
 
+    @pytest.mark.parametrize(
+        "token", ['"ACTS"', '"BRW-IB"', '"FULLSHUN"']
+    )
+    def test_the_cue_is_bounded_by_length_not_by_case(self, token: str) -> None:
+        """N7 (re-review): the first wording called any 2 to 8 letter upper-case token a
+        location, and FULLSHUN - a real one-word customer on the prod copy, which the
+        console check already saw mis-hinted - is eight letters. The rule is now bounded:
+        a short token (at most 4 characters) or a hyphenated site code (at most 10), and
+        a longer letters-only word is a CUSTOMER. All three examples must be named, so
+        the model sees the boundary from both sides."""
+        assert token in GROWTH_R1_ADDENDUM, (
+            f"{token} is not named in the location-token rule"
+        )
+
+    def test_a_long_one_word_token_is_taught_as_a_customer(self) -> None:
+        cue = GROWTH_R1_ADDENDUM[GROWTH_R1_ADDENDUM.index("A LOCATION") :]
+        fullshun = cue.index('"FULLSHUN"')
+        assert "customer" in cue[fullshun : fullshun + 200].lower(), (
+            "FULLSHUN must be named as a CUSTOMER example inside the location rule, or "
+            "the boundary is stated without the case that crossed it"
+        )
+
     def test_the_cue_says_warehouse_and_rules_out_customer(self) -> None:
         assert 'hint "warehouse"' in GROWTH_R1_ADDENDUM
         assert "NEVER \"customer\"" in GROWTH_R1_ADDENDUM, (
