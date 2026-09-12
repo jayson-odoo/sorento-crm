@@ -448,19 +448,22 @@ class TestWarehouseUnresolvedIsAWarningNotARetry:
 
 # ================================================================== AC-V1-8
 class TestCrossCompanyRefIsRetryable:
-    """Superseded (autocount-brands-ingest AC-19b, BL-056 D15): a ladder ref
-    scoped to another company is invisible under this anchor's `resolve()`,
-    the same as one that was never linked - a sequencing artefact, not a
-    cross-company write attempt, so it is `retryable` and nothing is written,
-    new fields (`customer_code`/`supplier_code`) present or not."""
+    """Superseded (autocount-brands-ingest AC-19b, BL-056 D15, plan D15.3): a
+    ladder ref scoped to another company is simply UNKNOWN under this
+    anchor's `resolve()` - the same as one that was never linked at all.
+    There is no cross-company peek, so sending ONLY the ref is a plain
+    unresolved reference: `retryable`, named in `errors`, nothing written.
 
-    def test_a_customer_ref_into_another_company_is_retryable_with_the_new_fields_present(
-        self, env
-    ):
+    A test that ALSO sends a code is not this case at all - a code makes an
+    unresolved ref fall through to the ordinary code/name rung (AC-V1-3/5),
+    which resolves or back-creates INSIDE this anchor exactly as it would
+    for any other unsynced master with that code. Those two are below,
+    expecting the rung's own verdict instead of `retryable`.
+    """
+
+    def test_a_customer_ref_alone_into_another_company_is_retryable(self, env):
         foreign_customer = env.link_customer(env.company_b)
-        record = _so_record(
-            env, customer_ref=foreign_customer, customer_code=unique_code(MARKER)
-        )
+        record = _so_record(env, customer_ref=foreign_customer)
 
         res = env.post(INGEST_SO, [record])
 
@@ -469,13 +472,9 @@ class TestCrossCompanyRefIsRetryable:
         assert "customer_ref" in entry["errors"]
         assert env.header("sales_orders", record["source_ref"]) is None
 
-    def test_a_supplier_ref_into_another_company_is_retryable_with_the_new_fields_present(
-        self, env
-    ):
+    def test_a_supplier_ref_alone_into_another_company_is_retryable(self, env):
         foreign_supplier = env.link_supplier(env.company_b)
-        record = _po_record(
-            env, supplier_ref=foreign_supplier, supplier_code=unique_code(MARKER)
-        )
+        record = _po_record(env, supplier_ref=foreign_supplier)
 
         res = env.post(INGEST_PO, [record])
 
@@ -483,6 +482,50 @@ class TestCrossCompanyRefIsRetryable:
         assert entry["outcome"] == "retryable", res.text
         assert "supplier_ref" in entry["errors"]
         assert env.header("purchase_orders", record["source_ref"]) is None
+
+    def test_a_customer_ref_into_another_company_plus_a_code_falls_to_the_code_rung(
+        self, env
+    ):
+        """AC-19b + AC-V1-4: the ref is unknown here, so it falls through to
+        the code rung exactly as a bare unsynced `customer_code` would - code
+        only, no name, no match inside A -> `created`, unlinked,
+        `customer_unresolved`. The foreign ref is never consulted again."""
+        foreign_customer = env.link_customer(env.company_b)
+        code = unique_code(MARKER)
+        record = _so_record(env, customer_ref=foreign_customer, customer_code=code)
+
+        res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert "customer_unresolved" in entry.get("warnings", [])
+        header = env.header("sales_orders", record["source_ref"])
+        assert header is not None
+        assert header["customer_id"] is None
+        assert header["debtor_code"] == normalize_debtor_code(code)
+
+    def test_a_supplier_ref_into_another_company_plus_a_code_back_creates(self, env):
+        """AC-19b + AC-V1-5: the ref is unknown here, so it falls through to
+        the code rung exactly as a bare unsynced `supplier_code` would - code
+        only, no match inside A -> back-created, `supplier_created`. The
+        foreign ref is never consulted again."""
+        foreign_supplier = env.link_supplier(env.company_b)
+        code = unique_code(MARKER)
+        record = _po_record(env, supplier_ref=foreign_supplier, supplier_code=code)
+
+        res = env.post(INGEST_PO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert "supplier_created" in entry.get("warnings", [])
+        header = env.header("purchase_orders", record["source_ref"])
+        assert header is not None
+        assert header["supplier_id"] is not None
+        created = env.db.execute(
+            text("SELECT supplier_code FROM suppliers WHERE id = :id"),
+            {"id": header["supplier_id"]},
+        ).mappings().first()
+        assert created["supplier_code"] == code
 
 
 # ================================================================== AC-V1-9
