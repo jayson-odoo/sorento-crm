@@ -664,6 +664,18 @@ _PENDING_KIND_TO_OPEN_QUESTION_KIND: dict[str, str] = {
     "member_offer": "member_offer",
 }
 
+# `selection_context` -> `open_question.kind`, measured against the corpus (coordinator,
+# 13 Sep 2026): a capture's `selection_context` says WHICH question was open far more
+# reliably than "a roster happens to be present" does - `last_result_set` with NO
+# context is the answer's OWN rows (a plain stock/order list), never a roster, so `None`
+# here means no open question at all regardless of what `last_result_set` holds.
+# `disambiguation` covers both a customer roster and a product one; the corpus's own
+# rows say which (`_rows_are_customers`).
+_SELECTION_CONTEXT_TO_KIND: dict[str, str] = {
+    "member_offer": "member_offer",
+    "tier_offer": "tier_pick",
+}
+
 
 def map_expected_variables_to_five_keys(
     expected: dict[str, Any],
@@ -678,32 +690,40 @@ def map_expected_variables_to_five_keys(
     * `entities` -> `focus.products`;
     * `query_brands` -> `focus.brands`; `tier_menu` -> `focus.tier`;
     * `date_filter_start` / `date_filter_end` / `date_mode` -> `focus.date_window`;
-    * `pending` -> `open_question.kind` (via `_PENDING_KIND_TO_OPEN_QUESTION_KIND`) plus
-      `payload.team` from `pending.team`;
+    * `open_question.kind` follows `selection_context` FIRST, `pending.kind` second -
+      `selection_context` says which question a turn actually left open, so it is the
+      more reliable signal than "a roster happens to be present" (measured against the
+      corpus, coordinator, 13 Sep 2026):
+        - `None`, with no `pending` either -> NO open question at all. A capture can
+          carry `last_result_set` with no `selection_context` at all - that is the
+          ANSWER's own rows (a plain stock or order list), never a roster;
+        - `member_offer` -> `member_offer`; `tier_offer` -> `tier_pick`;
+        - `disambiguation` -> `customer_pick` when the roster's own rows are customers
+          (`open_question._rows_are_customers`), `product_pick` otherwise;
+        - no `selection_context` but a `pending.kind` of `escalation_offer` or
+          `team_clarify` -> `team_pick`; `company_clarify` -> `company_pick`; `tier_ask`
+          -> `tier_pick` (`_PENDING_KIND_TO_OPEN_QUESTION_KIND`).
     * `last_result_set` / `dym_last_result_set` (whichever is non-empty, the dym roster
       winning when both are - it is the one the customer was actually shown) ->
-      `open_question.options`, defaulting the kind to `product_pick` when no `pending`
-      marker says otherwise;
+      `open_question.options`, only when a kind above says a question is actually open;
+    * `pending.team` -> `open_question.payload.team`;
     * everything else (`intent_hint`, `routing`, `escalation`, `response`, `match_mode`,
       `requested_attributes`, `picker_*`, `routing_*`, ...) is DROPPED - it is either gone
       from the state entirely (D14's `intent_hint`) or was never part of `focus` /
       `open_question` to begin with.
 
-    Every `FocusSlot` is stamped `set_at_turn=0`, `source="reuse"`: a captured world has no
-    real turn number to date the slot to, and `reuse` is the honest source for a value the
-    mapping inferred rather than one a rule just wrote.
+    Every `FocusSlot` is stamped `set_at_turn=0`, `source="reuse"`, and NOT graded on
+    `set_at_turn`: a captured world has no real turn number to date the slot to, so the
+    zero is a placeholder the caller must not compare, never a claim about when the slot
+    was actually set.
 
-    Unmappable, by name, rather than silently dropped: a `pending.kind` this mapping does
-    not recognise (the vocabulary moved, `OPEN_QUESTION_KINDS` is closed) returns a reason
-    instead of guessing.
+    Unmappable, by name, rather than silently dropped: a `selection_context` this mapping
+    does not recognise, or (with no `selection_context`) a `pending.kind` it does not
+    recognise, returns a reason instead of guessing.
     """
     pending = expected.get("pending")
     pending = pending if isinstance(pending, dict) else None
-    if pending is not None and pending.get("kind") not in _PENDING_KIND_TO_OPEN_QUESTION_KIND:
-        return None, (
-            f"pending.kind {pending.get('kind')!r} has no open_question equivalent in "
-            "_PENDING_KIND_TO_OPEN_QUESTION_KIND"
-        )
+    selection_context = expected.get("selection_context")
 
     def _slot(value: Any) -> dict[str, Any]:
         return {"value": value, "set_at_turn": 0, "set_at": None, "source": "reuse"}
@@ -735,32 +755,43 @@ def map_expected_variables_to_five_keys(
     dym_roster = expected.get("dym_last_result_set")
     plain_roster = expected.get("last_result_set")
     roster = dym_roster if dym_roster else plain_roster
+    roster = roster if isinstance(roster, list) else []
+
+    kind: str | None = None
+    if selection_context is None:
+        kind = None
+    elif selection_context == "disambiguation":
+        from app.services.chatbot.dialogue.open_question import _rows_are_customers
+
+        kind = "customer_pick" if _rows_are_customers(roster) else "product_pick"
+    elif selection_context in _SELECTION_CONTEXT_TO_KIND:
+        kind = _SELECTION_CONTEXT_TO_KIND[selection_context]
+    else:
+        return None, (
+            f"selection_context {selection_context!r} has no open_question equivalent in "
+            "_SELECTION_CONTEXT_TO_KIND"
+        )
+
+    if kind is None and pending is not None:
+        if pending.get("kind") not in _PENDING_KIND_TO_OPEN_QUESTION_KIND:
+            return None, (
+                f"pending.kind {pending.get('kind')!r} has no open_question equivalent in "
+                "_PENDING_KIND_TO_OPEN_QUESTION_KIND"
+            )
+        kind = _PENDING_KIND_TO_OPEN_QUESTION_KIND[pending["kind"]]
 
     open_question: dict[str, Any] | None = None
-    if pending is not None:
-        options = list(roster) if isinstance(roster, list) else []
+    if kind is not None:
         payload: dict[str, Any] = {}
-        if pending.get("team"):
+        if pending is not None and pending.get("team"):
             payload["team"] = pending["team"]
         open_question = {
-            "kind": _PENDING_KIND_TO_OPEN_QUESTION_KIND[pending["kind"]],
-            "options": options,
-            "expects": "pick" if options else "yes_no",
+            "kind": kind,
+            "options": roster,
+            "expects": "pick" if roster else "yes_no",
             "asked_at_turn": 0,
             "asked_at": None,
             "payload": payload,
-        }
-    elif isinstance(roster, list) and roster:
-        # No `pending` marker but a roster is on screen: the ordinary picker shape
-        # (`selection_context: disambiguation` / `suggest_offer`), which is always a
-        # `product_pick` - the legacy corpus never rosters a customer or a tier this way.
-        open_question = {
-            "kind": "product_pick",
-            "options": list(roster),
-            "expects": "pick",
-            "asked_at_turn": 0,
-            "asked_at": None,
-            "payload": {},
         }
 
     mapped = {

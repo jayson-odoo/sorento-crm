@@ -372,7 +372,8 @@ class TestCannedBranchesFinishInTurn:
         assert row.status == "done", row.error
         assert row.branch_kind == kind
         stages = [r["stage"] for r in trace_mod.stage_records(row.trace)]
-        assert stages[:4] == ["received", "understood", "access", "routed"]
+        # L1-S3: `answered` sits between `understood` and `access` on every turn.
+        assert stages[:5] == ["received", "understood", "answered", "access", "routed"]
         assert "replied" in stages
         assert "remembered" in stages
         assert "sent" in stages, "the CRM never sends (D9) - the trace still records the hand-off"
@@ -750,13 +751,24 @@ class TestOfferHold:
         assert result.reply["text"] == OFFER_HOLD_CLARIFY_TEXT
 
         # D14: dry run, so the would-be persist is on `session_patch`, not written.
+        # D8/AC-1019: no `response` / `routing_roster_plan` / `routing_companies` /
+        # `selection_context` / `pending` mirrors - the two company names ride the
+        # COMPOSED TEXT (already asserted above via `result.reply["text"]`); the
+        # persisted state is one `open_question` slot, `member_offer` yes/no, no roster.
         patch = result.session_patch or {}
         variables = patch.get("variables", patch)
-        assert variables.get("response") == OFFER_HOLD_CLARIFY_TEXT
-        assert variables.get("routing_roster_plan") == TWO_COMPANY_ROSTER
-        assert variables.get("routing_companies") == TWO_COMPANY_ROSTER
-        assert variables.get("selection_context") == "member_offer"
-        assert (variables.get("pending") or {}).get("kind") == "member_offer"
+        for legacy_key in (
+            "response",
+            "routing_roster_plan",
+            "routing_companies",
+            "selection_context",
+            "pending",
+        ):
+            assert legacy_key not in variables, legacy_key
+        open_question = variables.get("open_question") or {}
+        assert open_question.get("kind") == "member_offer"
+        assert open_question.get("expects") == "yes_no"
+        assert open_question.get("options") == []
 
     def test_offer_hold_reply_one_company_name(self):
         from app.services.chatbot.lanes import canned

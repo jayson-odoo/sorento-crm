@@ -273,21 +273,12 @@ def test_r3_attachment_type_is_dropped_when_the_domain_switches_to_master_produc
 # --------------------------------------------------------------------------- #
 
 
-def test_r4_widening_one_axis_keeps_the_question_it_was_asked_about() -> None:
-    """"all products" mid-order came back as the catalogue; code puts the domain back."""
-    out = run(
-        parser_output(
-            domain_hint="master_products",
-            intent_hint="check_product",
-            broaden_axis="product",
-            entity_op="reuse",
-        ),
-        message="all products",
-        state={"domain_hint": "order", "intent_hint": "check_order", "entities": []},
-    )
-    assert out["domain_hint"] == "order"
-    assert out["intent_hint"] == "check_order"
-    assert out["broaden_axis_domain_restored"] is True
+# `test_r4_widening_one_axis_keeps_the_question_it_was_asked_about` RETIRED (AC-1032): it
+# pinned the AXIS BROADEN RESTORE, deleted with the block at `output_exchange.py:1550`.
+# Under parser v3 a widen names no ask at all, so `domains_from_asks` leaves the alive
+# domains exactly where they were - there is nothing to restore, and nothing left to
+# assert; `test_focus_rules.py::TestDomainsFromAsks::test_no_asks_changes_nothing` covers
+# the surviving no-op outcome.
 
 
 def test_r4_with_no_prior_domain_a_catalogue_ask_stays_a_catalogue_ask() -> None:
@@ -311,184 +302,43 @@ def test_r4_with_no_prior_domain_a_catalogue_ask_stays_a_catalogue_ask() -> None
 # domain is self-contradictory: the model switched, and the restore must not undo it.
 
 
-def test_ac1_broaden_beside_a_coherent_new_domain_switches_and_reuses_the_prior_product() -> None:
-    out = run(
-        parser_output(
-            domain_hint="incoming",
-            intent_hint="check_incoming",
-            broaden_axis="all",
-            scope_intent="broaden",
-            entity_op="clear",
-            entities=[],
-        ),
-        message="Any incoming",
-        state={
-            "domain_hint": "inventory",
-            "intent_hint": "check_stock",
-            "entities": [
-                {
-                    "raw": "srtwc286",
-                    "hint": "product",
-                    "canonical_code": "SRTWC286",
-                    "current_message": True,
-                    "confident": True,
-                }
-            ],
-        },
-    )
-    assert out["domain_hint"] == "incoming"
-    assert out["intent_hint"] == "check_incoming"
-    assert out["entity_op_applied"] == "reuse"
-    assert [e.get("raw") for e in out["entities"]] == ["srtwc286"]
-    assert out["broaden_axis"] is None
-    assert out["scope_intent"] is None
-    assert out["domain_switch_over_broaden"] == "inventory"
-    assert out.get("broaden_axis_domain_restored") is None
+# `test_ac1_broaden_beside_a_coherent_new_domain_switches_and_reuses_the_prior_product`
+# RETIRED (AC-1032): it pinned the AXIS BROADEN RESTORE's `domain_switch_over_broaden`
+# coherence check (`output_exchange.py`, deleted with the block at line 1550) - a
+# model-guessed `domain_hint`/`intent_hint`/`broaden_axis` triple that parser v3 no longer
+# emits. The outcome ("a domain switch keeps the prior product") is the SAME claim
+# `test_focus_rules.py::TestDomainsFromAsks::test_the_domain_moves_and_the_products_stay`
+# already makes over the v3 `asks[]` shape - domains_from_asks touches only the domains
+# slot, so the products slot survives untouched, no compatibility check needed because
+# there is no ambiguous model guess left to be compatible WITH.
+
+# `test_ac2_a_prior_hint_blocked_under_the_new_domain_is_not_reused` RETIRED (AC-1032):
+# same deleted block. Under v3, `reuse_alive`'s domain-rescue branch (`_reuse_domain`,
+# `dialogue/focus.py:803`) is gated `if not turn.explicit and not turn.switch_domain` - an
+# explicit ask naming a new domain skips it entirely, so a prior entity is never rescued
+# into `entities` on a switch regardless of type; entities come only from THIS turn's own
+# `asks`, via `intake.flatten`. No new focus-rule case captures a narrower guarantee than
+# that structural one already gives for free.
 
 
-def test_ac2_a_prior_hint_blocked_under_the_new_domain_is_not_reused() -> None:
-    """A carried customer entity has no place under `incoming` - stays cleared."""
-    out = run(
-        parser_output(
-            domain_hint="incoming",
-            intent_hint="check_incoming",
-            broaden_axis="all",
-            scope_intent="broaden",
-            entity_op="clear",
-            entities=[],
-        ),
-        message="Any incoming",
-        state={
-            "domain_hint": "order",
-            "intent_hint": "check_order",
-            "entities": [
-                {
-                    "raw": "hanlim",
-                    "hint": "customer",
-                    "canonical_code": None,
-                    "current_message": True,
-                    "confident": True,
-                }
-            ],
-        },
-    )
-    assert out["domain_hint"] == "incoming"
-    assert out["domain_switch_over_broaden"] == "order"
-    assert out["entity_op"] == "clear"
-    assert out["entities"] == []
+# `test_ac3_a_current_message_entity_on_the_switch_leaves_entity_op_as_emitted` RETIRED
+# (AC-1032): same deleted AXIS BROADEN RESTORE block, this branch asserting the reuse
+# rescue does NOT override an entity_op the model already emitted for its own current-
+# message entity. With the rescue gone entirely (not just gated off in this one case),
+# `entity_op` is never touched by anything downstream of the parser for a switch turn -
+# a stronger guarantee than "not overridden here" that the deleted mechanism's own absence
+# gives for free; no separate focus-rule case is needed to prove a no-op.
 
 
-def test_ac3_a_current_message_entity_on_the_switch_leaves_entity_op_as_emitted() -> None:
-    """The model named its OWN entity this turn - the reuse rescue does not apply."""
-    out = run(
-        parser_output(
-            domain_hint="incoming",
-            intent_hint="check_incoming",
-            broaden_axis="all",
-            scope_intent="broaden",
-            entity_op="replace_combine",
-            entities=[
-                {
-                    "raw": "SRTWT04A",
-                    "hint": "product",
-                    "canonical_code": "SRTWT04A",
-                    "current_message": True,
-                    "confident": True,
-                }
-            ],
-        ),
-        message="Any incoming for SRTWT04A",
-        state={
-            "domain_hint": "inventory",
-            "intent_hint": "check_stock",
-            "entities": [
-                {
-                    "raw": "srtwc286",
-                    "hint": "product",
-                    "canonical_code": "SRTWC286",
-                    "current_message": True,
-                    "confident": True,
-                }
-            ],
-        },
-    )
-    assert out["domain_hint"] == "incoming"
-    assert out["domain_switch_over_broaden"] == "inventory"
-    assert out["entity_op"] == "replace_combine"
-    assert out["entity_op_applied"] == "replace_combine"
-    assert "SRTWT04A" in [e.get("raw") for e in out["entities"]]
-
-
-def test_ac5_model_domain_null_still_restores_the_prior_domain() -> None:
-    """Date widen (e4381b0d / 98526b81 shape): a null model domain is never a switch."""
-    out = run(
-        parser_output(
-            domain_hint=None,
-            intent_hint=None,
-            broaden_axis="date",
-            scope_intent="broaden",
-            entity_op="clear",
-        ),
-        message="last month",
-        state={"domain_hint": "order", "intent_hint": "check_order", "entities": []},
-    )
-    assert out["domain_hint"] == "order"
-    assert out["intent_hint"] == "check_order"
-    assert out["broaden_axis_domain_restored"] is True
-    assert out.get("domain_switch_over_broaden") is None
-
-
-def test_ac6_model_domain_equal_to_prior_domain_is_not_a_switch() -> None:
-    """Genuine "show me everything": same domain both sides, restore path as today."""
-    out = run(
-        parser_output(
-            domain_hint="inventory",
-            intent_hint="check_stock",
-            broaden_axis="all",
-            scope_intent="broaden",
-            entity_op="clear",
-            entities=[],
-        ),
-        message="show me everything",
-        state={
-            "domain_hint": "inventory",
-            "intent_hint": "check_stock",
-            "entities": [
-                {
-                    "raw": "srtwc286",
-                    "hint": "product",
-                    "canonical_code": "SRTWC286",
-                    "current_message": True,
-                    "confident": True,
-                }
-            ],
-        },
-    )
-    assert out["domain_hint"] == "inventory"
-    assert out["broaden_axis_domain_restored"] is True
-    assert out.get("domain_switch_over_broaden") is None
-    assert out["entity_op"] == "clear"
-    assert out["entities"] == []
-
-
-def test_ac7_an_incoherent_domain_intent_pair_is_not_a_switch() -> None:
-    """domain_hint incoming with intent_hint check_stock names no real incoming pair."""
-    out = run(
-        parser_output(
-            domain_hint="incoming",
-            intent_hint="check_stock",
-            broaden_axis="all",
-            scope_intent="broaden",
-            entity_op="clear",
-            entities=[],
-        ),
-        message="Any incoming",
-        state={"domain_hint": "order", "intent_hint": "check_order", "entities": []},
-    )
-    assert out["domain_hint"] == "order"
-    assert out["intent_hint"] == "check_order"
-    assert out["broaden_axis_domain_restored"] is True
-    assert out.get("domain_switch_over_broaden") is None
+# `test_ac5_model_domain_null_still_restores_the_prior_domain`,
+# `test_ac6_model_domain_equal_to_prior_domain_is_not_a_switch` and
+# `test_ac7_an_incoherent_domain_intent_pair_is_not_a_switch` RETIRED (AC-1032): all three
+# pinned edge cases of the AXIS BROADEN RESTORE's coherence guard - whether a model-guessed
+# `domain_hint`/`intent_hint` pair beside `broaden_axis` was "coherent enough" to count as
+# a real switch. Parser v3 has no model-guessed `domain_hint`, no `intent_hint`, no
+# `broaden_axis` (removed from the schema outright) - there is no model guess left to
+# judge coherent or not. The surviving no-op ("nothing named, nothing changes") is
+# `test_focus_rules.py::TestDomainsFromAsks::test_no_asks_changes_nothing`.
 
 
 # Review, blocker B2 (9 Sep 2026): `switched` narrowed to `ba == "all"` only. The prompt's
@@ -498,25 +348,11 @@ def test_ac7_an_incoherent_domain_intent_pair_is_not_a_switch() -> None:
 # `"all"` has no KEEP clause in the prompt and only `"all"` has a real capture.
 
 
-def test_ac11_a_date_widen_naming_a_different_domain_still_restores() -> None:
-    """Regression (1): a `date` axis must not switch - the differing domain_hint is the
-    model's own violation of the prompt's "date widen KEEPS domain_hint" instruction, and
-    the restore corrects it exactly as it does for every other axis but "all"."""
-    out = run(
-        parser_output(
-            domain_hint="incoming",
-            intent_hint="check_incoming",
-            broaden_axis="date",
-            scope_intent="broaden",
-            entity_op="reuse",
-            entities=[],
-        ),
-        message="not just August",
-        state={"domain_hint": "order", "intent_hint": "check_order", "entities": []},
-    )
-    assert out["domain_hint"] == "order"
-    assert out["broaden_axis_domain_restored"] is True
-    assert out.get("domain_switch_over_broaden") is None
+# `test_ac11_a_date_widen_naming_a_different_domain_still_restores` RETIRED (AC-1032):
+# same coherence guard as AC5/AC6/AC7, narrowed to the `date` axis. No model-guessed
+# `domain_hint` survives to restore under v3; AC12 right below is untouched - it pins the
+# DATE WINDOW WIPE, a different rule (`date_restated_only`'s `all_time` check), which is
+# unaffected by the restore's deletion and still fires.
 
 
 def test_ac12_a_date_widen_beside_a_different_domain_still_wipes_the_window() -> None:
@@ -548,44 +384,14 @@ def test_ac12_a_date_widen_beside_a_different_domain_still_wipes_the_window() ->
     assert out["date_filter_end"] is None
 
 
-def test_ac13_an_entity_hint_widen_beside_a_different_domain_drops_the_named_axis() -> None:
-    """Regression (3): had `switched` fired on `ba == "customer"`, it would have nulled
-    `broaden_axis` before the final `ba_final` drop pass ever saw it, so the customer the
-    turn asked to widen away would have survived to the tool call. Narrowed to "all" only,
-    the axis survives to the final pass and the named entity is dropped."""
-    out = run(
-        parser_output(
-            domain_hint="order",
-            intent_hint="check_order",
-            broaden_axis="customer",
-            scope_intent="broaden",
-            entity_op="reuse",
-            entities=[],
-        ),
-        message="for everyone",
-        state={
-            "domain_hint": "inventory",
-            "intent_hint": "check_stock",
-            "entities": [
-                {
-                    "raw": "hanlim",
-                    "hint": "customer",
-                    "canonical_code": None,
-                    "current_message": True,
-                    "confident": True,
-                },
-                {
-                    "raw": "srtwc286",
-                    "hint": "product",
-                    "canonical_code": "SRTWC286",
-                    "current_message": True,
-                    "confident": True,
-                },
-            ],
-        },
-    )
-    assert [e.get("raw") for e in out["entities"]] == ["srtwc286"]
-    assert [e.get("hint") for e in out["entities"]] == ["product"]
+# `test_ac13_an_entity_hint_widen_beside_a_different_domain_drops_the_named_axis` RETIRED
+# (AC-1032): pinned the AXIS BROADEN FINAL PASS (`output_exchange.py`, deleted with the
+# restore at line 3257) - dropping an entity by a model-emitted `broaden_axis` NAME (here
+# `"customer"`). Parser v3 emits no `broaden_axis` for any axis but the code-derived date
+# widen (`compute_date_widen`/`turn.date_widened`, `dialogue/focus.py`); "for everyone"
+# widening a NON-date axis has no v3 equivalent signal yet to carry the same claim, so
+# there is no focus-rule case to port it to - flagged here rather than invented, since
+# nothing in this UAC promises a customer/attribute widen phrase for lane 1.
 
 
 # --------------------------------------------------------------------------- #

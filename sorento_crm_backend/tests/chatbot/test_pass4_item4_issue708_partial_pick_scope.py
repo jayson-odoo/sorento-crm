@@ -72,22 +72,27 @@ class TestIssue708ANumberedPickOverASuggestOfferRosterKeepsTheResolvedCode:
         )
         assert head1.status in ("done", "delegated"), head1.error
 
+        # D8/AC-1013/AC-1033: no `selection_context` / `dym_last_result_set` / top-level
+        # `entities` mirror - the offer is one `open_question` slot (`kind: "product_pick"`,
+        # AC-1013's `suggest_offer` -> `product_pick` mapping), and the resolved siblings
+        # ride `focus.products`, not a bare `variables.entities` list.
         stored = _session_of(session_factory)["variables"]
-        # Issue #708's own premise, measured (not assumed): a PARTIAL miss's roster is
-        # NEVER written to `dym_last_result_set` on this lane.
-        assert stored.get("selection_context") == "suggest_offer", stored.get("selection_context")
-        assert stored.get("dym_last_result_set") is None, stored.get("dym_last_result_set")
-        raws = {str(e.get("raw")).upper() for e in stored.get("entities") or []}
+        open_question = stored.get("open_question") or {}
+        assert open_question.get("kind") == "product_pick", open_question
+        products = ((stored.get("focus") or {}).get("products") or {}).get("value") or []
+        raws = {str(e.get("raw")).upper() for e in products}
         assert {_base.RESOLVED, _base.MISSING} <= raws, raws
 
-        roster = stored.get("last_result_set") or []
+        roster = open_question.get("options") or []
         assert roster, f"a numbered pick needs SOME roster to resolve '2' against: {stored!r}"
         position = 2 if len(roster) > 1 else 1
         picked_row = roster[position - 1]
-        picked = picked_row.get("value") or picked_row.get("product") or picked_row.get("label")
+        picked = picked_row.get("code") or picked_row.get("value") or picked_row.get("label")
 
         # -- turn 2: "2". NO `reference_target: "dym"` tag (the bare shape #708 measures),
-        #    and no `dym_last_result_set` seeded - issue #708's exact premise.
+        #    and no `dym_last_result_set` seeded - issue #708's exact premise. ISSUE #708:
+        #    `open_question.py::_product_pick`'s `payload.keep` is what carries the
+        #    already-resolved sibling forward - `dialogue/open_question.py` around line 340.
         head2 = _base._run(
             session_factory,
             monkeypatch,
@@ -102,13 +107,11 @@ class TestIssue708ANumberedPickOverASuggestOfferRosterKeepsTheResolvedCode:
             text_body=str(position),
             msg_id="ZZT-708-t2",
         )
-        qf2 = head2.ctx["parse"]["output"]
-        codes = sorted(
-            str(e.get("canonical_code") or e.get("raw")).upper() for e in (qf2.get("entities") or [])
-        )
+        stored2 = _session_of(session_factory)["variables"]
+        products2 = ((stored2.get("focus") or {}).get("products") or {}).get("value") or []
+        codes = sorted(str(e.get("canonical_code") or e.get("raw")).upper() for e in products2)
         assert codes == sorted([_base.RESOLVED, str(picked).upper()]), (
             f"the scope must be the already-resolved code PLUS the pick, never the pick "
-            f"alone (entity_op {qf2.get('entity_op')!r} must not drop {_base.RESOLVED}): "
-            f"{qf2.get('entities')!r}"
+            f"alone - `payload.keep` must not drop {_base.RESOLVED}: {products2!r}"
         )
         assert head2.branch_kind == "business_query", head2.branch_kind

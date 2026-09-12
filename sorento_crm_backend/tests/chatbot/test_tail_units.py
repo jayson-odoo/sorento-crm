@@ -242,55 +242,13 @@ class TestCsMemberOffer:
 # --------------------------------------------------------------------------- #
 
 
-class TestAnsweredDomainEquivalence:
-    """The port swapped a REGEX for a VALUE, and node replay cannot see the swap.
-
-    `crossdomain-compose.js` decides between its PARTIAL and its TOTAL-MISS branch with
-    `/^Previous turn \\(/` over the state it has just written. The port takes
-    `CompiledState.answered_domain` instead (D11: no reading a reply back), and
-    `test_replay.py`'s compose runner DERIVES `answered` with that same regex off the
-    fixture - which is correct for grading compose, and means the substitution itself is
-    never compared to anything.
-
-    So it is compared here, over every `compile-current-state` capture the corpus holds:
-    the port's `answered_domain is not None` against the JS predicate applied to the
-    variables the port persisted. A single disagreement is a turn where the cross-domain
-    block would land in the wrong half of the reply.
-    """
-
-    def test_the_value_agrees_with_the_regex_on_every_capture(self) -> None:
-        from tests.chatbot import _corpus
-        from tests.chatbot.test_replay import _ctx_of, _execution_id, _ran
-
-        fixtures = list(_corpus.vendored("compile-current-state")) + list(
-            _corpus.full_corpus("compile-current-state")
-        )
-        assert fixtures, "no compile-current-state captures: this test would be vacuous"
-
-        mismatches = []
-        for fixture in fixtures:
-            compiled = compile_current_state(
-                (fixture.input[0] or {}).get("json") or {},
-                _ctx_of(fixture),
-                resolved=_ran(fixture, "resolve-entity"),
-                gate=_ran(fixture, "disallowed-entity-gate"),
-                execution_id=_execution_id(fixture),
-            )
-            response = (
-                (compiled.item["reply"]["session_patch"].get("variables") or {}).get("response")
-            )
-            by_regex = isinstance(response, str) and response.startswith("Previous turn (")
-            by_value = compiled.answered_domain is not None
-            if by_regex != by_value:
-                mismatches.append(
-                    f"{fixture.name}: regex={by_regex} value={by_value} "
-                    f"domain={compiled.answered_domain!r} response={str(response)[:60]!r}"
-                )
-        assert not mismatches, (
-            f"{len(mismatches)} of {len(fixtures)} captures disagree - the cross-domain "
-            "block would land in the wrong half of the reply on each:\n"
-            + "\n".join(mismatches[:10])
-        )
+# `TestAnsweredDomainEquivalence::test_the_value_agrees_with_the_regex_on_every_capture`
+# RETIRED (D8/AC-1001/AC-1033): it read
+# `compiled.item["reply"]["session_patch"]["variables"]["response"]` - one of the 34
+# legacy keys, gone entirely now (`SessionVars` is `extra=forbid` over the five names of
+# AC-1001, and `response` is not one of them). The claim it graded (the port's
+# `answered_domain` agrees with the JS regex over `variables.response`) has no successor:
+# there is no persisted reply text left to regex-match against, by design.
 
 
 # --------------------------------------------------------------------------- #
@@ -444,86 +402,12 @@ class TestThePickResolvedOrderListStatesItsScope:
 # --------------------------------------------------------------------------- #
 
 
-class TestACarriedOfferKeepsTheSubjectItWasMadeAbout:
-    """"promotion 7445" -> a three-tier picker -> "9" -> "all" answered nothing.
-
-    The out-of-range "9" re-prompted correctly and rule 1 kept the tier list, but the
-    session patch it wrote had `entities: []` and `domain_hint: null` - the model reads a
-    bare digit as `casual` with no positions extracted (exec 15445325), and the variables
-    object is built FROM SCRATCH from this turn's parse. So the next reply, a perfectly
-    valid "all", arrived with no product in scope and fell to the generic "I need at least
-    one filter" instead of every tier's promotions for 7445 (exec 15445363).
-
-    An offer whose subject is gone is an offer nobody can answer, so the carry takes the
-    subject with it: when the ladder produced no domain and no entities of its own, the
-    carried ones stand. Narrow by construction - this only runs on the turns
-    `_offer_carry` already carries (the ladder was silent AND the topic did not change),
-    and a turn that names its own domain or entities keeps them.
-    """
-
-    TIERS = [
-        {"idx": 1, "label": "Dealer", "value": "Dealer"},
-        {"idx": 2, "label": "End User", "value": "End User"},
-        {"idx": 3, "label": "Contractor", "value": "Contractor"},
-    ]
-    ENTITY = {
-        "raw": "7445",
-        "hint": "product",
-        "canonical_code": "SRTWC7445",
-        "current_message": False,
-        "confident": True,
-    }
-
-    def _out_of_range_ctx(self):
-        """The "9" turn as the model really emits it: casual, no positions, no entities."""
-        ctx = _ctx(
-            message_type="casual",
-            intent_hint=None,
-            domain_hint=None,
-            entities=[],
-        )
-        ctx["text"] = {"message": {"message": {"text": "9"}}}
-        ctx["session"] = {
-            "session_vars": {
-                "variables": {
-                    "message_type": "business_query",
-                    "domain_hint": "promotion",
-                    "intent_hint": "check_promotion",
-                    "selection_context": "tier_offer",
-                    "last_result_set": self.TIERS,
-                    "entities": [self.ENTITY],
-                    "response": "Which access level?",
-                }
-            }
-        }
-        return ctx
-
-    def test_the_tier_list_survives_an_out_of_range_digit(self) -> None:
-        variables = _compile({"outcome": {}}, self._out_of_range_ctx())["variables"]
-        assert variables["selection_context"] == "tier_offer"
-        assert variables["last_result_set"] == self.TIERS
-
-    def test_the_product_and_the_domain_survive_with_it(self) -> None:
-        variables = _compile({"outcome": {}}, self._out_of_range_ctx())["variables"]
-        assert variables["domain_hint"] == "promotion", (
-            "the next reply resolves against the offer's own domain, and the re-prompt "
-            f"turn named none: {variables!r}"
-        )
-        raws = [str(e.get("raw")) for e in (variables.get("entities") or [])]
-        assert raws == ["7445"], (
-            "the product the offer was made about must ride with it, or the next 'all' "
-            f"has nothing to be all OF: {variables!r}"
-        )
-        assert all(
-            e.get("current_message") is False for e in (variables.get("entities") or [])
-        ), "a carried entity is not one the customer typed this turn"
-
-    def test_a_turn_that_names_its_own_subject_keeps_it(self) -> None:
-        """The guard: the carry FILLS a gap, it never overwrites."""
-        ctx = self._out_of_range_ctx()
-        ctx["parse"]["output"]["domain_hint"] = "promotion"
-        ctx["parse"]["output"]["entities"] = [
-            {"raw": "8899", "hint": "product", "current_message": True, "confident": True}
-        ]
-        variables = _compile({"outcome": {}}, ctx)["variables"]
-        assert [str(e.get("raw")) for e in variables["entities"]] == ["8899"]
+# `TestACarriedOfferKeepsTheSubjectItWasMadeAbout` (3 tests) RETIRED (D8/AC-1019/AC-1033):
+# it seeded `ctx["session"]["session_vars"]["variables"]` in the 34-key legacy shape
+# (`selection_context`, `last_result_set`, `domain_hint`, `response`, ... - the exact
+# vocabulary AC-1019 retires) and asserted `_offer_carry`'s rescue of the tier offer's
+# subject over an out-of-range "9". `_offer_carry` is one of the carry mechanisms this
+# lane deletes outright (`tail/compile_state.py`'s `_offer_carry`/`_picker_carry`, per the
+# plan's L1-S3 scope); the outcome it protected - an open question survives a turn that
+# answers nothing new - is AC-1020's, owned by `dialogue/open_question.py` now, over the
+# five-key `open_question` slot, not a `variables` dict rebuilt from scratch each turn.

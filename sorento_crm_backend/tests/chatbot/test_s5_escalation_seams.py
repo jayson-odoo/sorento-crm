@@ -503,32 +503,25 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
         {"c": contact_id},
     ).scalar()
     variables = stored["variables"]
-    assert variables["selection_context"] == "member_offer"
-    assert variables["last_result_set"] == PRIOR_RESULT_SET
-    assert variables["routing_roster_plan"] == PRIOR_ROSTER_PLAN
-    # `variables.response` deliberately keeps the PREVIOUS turn's text. Faithful, not
-    # tidied: `compile_state`'s clarify block only overwrites it when the fragment carries
-    # `routing_companies` (the escalation sub's OWN this-turn gate ask, B-HB-2) or
-    # `clarify_team`, and this lane's `escalation_context` emits neither. What the customer
-    # is SENT is `user_response`, asserted as `result.reply` above; `response` is the
-    # "what was last offered" state the migration-window offer-open read still uses, and
-    # the offer here is still the one the previous turn made.
-    assert variables["response"] == "Which company should take this?"
-    # The clarify arm's OWN `company_clarify` marker is a TURN-ROW fact, not a session
-    # one, and it is asserted on `row.response` above. What `compile_state` writes into
-    # `variables.pending` comes from `pending_marker.derive`, and since S3 an open member
-    # offer is one of the two kinds it emits - the roster this turn re-persisted is still
-    # on the customer's screen, so the marker says so. The next turn still resolves a
-    # number against `selection_context` + `last_result_set`, which the assertions above
-    # are what protect.
-    # `ttl` 3: the clarify arm RE-PERSISTS the roster, which is the bot asking again, so
-    # the offer's clock starts over rather than continuing to run down (AC-816 rule 1).
-    assert variables.get("pending") == {
-        "kind": "member_offer",
-        "team": "customer_service",
-        "domain": None,
-        "ttl": 3,
-    }
+    # D8/AC-1019: no `selection_context` / `last_result_set` / `routing_roster_plan` /
+    # `response` / `pending` mirrors, and `member_offer`'s TTL of 3 is gone with the rest
+    # (D9, no counter survives an open question - it is cleared only by an answer, a
+    # newer question, or a new ask). The re-offer is one `open_question` slot: the SAME
+    # roster the prior turn showed, re-frozen (AC-1013's `idx` numbering is stable across
+    # a re-offer because the rows carry their own `idx` already), team on the payload.
+    open_question = variables.get("open_question") or {}
+    assert open_question.get("kind") == "member_offer"
+    assert open_question.get("expects") == "yes_no"
+    assert open_question.get("options") == PRIOR_RESULT_SET
+    assert open_question.get("payload", {}).get("team") == "customer_service"
+    for legacy_key in (
+        "selection_context",
+        "last_result_set",
+        "routing_roster_plan",
+        "response",
+        "pending",
+    ):
+        assert legacy_key not in variables, legacy_key
 
 
 def test_a_clarifys_quick_replies_reach_the_persisted_reply(
