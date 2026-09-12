@@ -3346,6 +3346,10 @@ def run_tail(
         compiled.item,
         result=values["result"],
         answered=compiled.answered_domain is not None,
+        # THE ROWS THIS TURN ANSWERED WITH, off the object that carries them. The item's
+        # `variables` is five keys and has held no `last_result_set` since L1-S3, so the
+        # answered branch was reading an absent key and folding nothing in.
+        result_set=compiled.result_set,
     )
     sealed = composed.get("reply") or {}
     # A lane may have composed quick replies of its own before the tail ran: the
@@ -3369,7 +3373,7 @@ def run_tail(
 
     turn_trace.record(
         "replied",
-        summary=trace_mod.replied_summary(sealed, branch_kind),
+        summary=trace_mod.replied_summary(sealed, branch_kind, result_set=compiled.result_set),
         why="The reply is composed from what the lane built, never from the customer's words.",
         facts={
             "lane": branch_kind,
@@ -3453,8 +3457,9 @@ def _send_actions(
       comma-joined string, or null when the turn offered none. Coercing it to a list
       would hand `sub-sendmsg` a type its `quick_reply` input has never been given, and
       the sender is the half of this that did NOT move into the CRM.
-    * `result_set` is `variables.last_result_set`, which is what the send node passes on
-      so a numbered reply's rows travel with the message that numbered them.
+    * `result_set` is THIS TURN's rows (`CompiledState.result_set`), which is what the
+      send node passes on so a numbered reply's rows travel with the message that
+      numbered them. Not a session key: the five-key memory does not carry a roster.
     * `send_attachments` is a SECOND action and only when there is something to send.
       It carries the whole `reply` because `sub-send-attachments` reads more than one
       field off it, and it comes AFTER the message for the same reason n8n wires it that

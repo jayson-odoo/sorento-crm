@@ -61,8 +61,18 @@ def crossdomain_compose(
     *,
     result: Any = None,
     answered: bool = False,
+    result_set: Any = jsc.UNDEFINED,
 ) -> dict[str, Any]:
-    """`{reply}` in, `{reply}` out. `result` is the `build-result` carrier (nullable)."""
+    """`{reply}` in, `{reply}` out. `result` is the `build-result` carrier (nullable).
+
+    `result_set` is THIS TURN's rows - `CompiledState.result_set`, the same list the sender
+    renders. The answered branch below used to read them off `variables.last_result_set` on
+    the patch in hand, and the five-key session does not carry one, so the branch had gone
+    dead in the engine while the node replay - whose captures are the 34-key shape - kept
+    grading it green. `UNDEFINED` is a caller that does not KNOW the rows (the replay
+    runner, which has no `CompiledState`): it asserts nothing about them and the `answered`
+    flag stands on its own.
+    """
     if result is None:
         return dict(item)  # build-result did not run: pass the turn through byte-identical
 
@@ -88,13 +98,19 @@ def crossdomain_compose(
     if answered:
         # PARTIAL turn: some asked products came back empty. Only speak when the turn
         # actually answered something.
-        last_result_set = variables.get("last_result_set")
-        if not jsc.is_array(last_result_set) or len(last_result_set) == 0:
+        if result_set is not jsc.UNDEFINED and not (
+            jsc.is_array(result_set) and len(result_set) > 0
+        ):
             return dict(item)
         out["user_response"] = f"{user_response}\n{jsc.js_string(jsc.get(block, 'block'))}\n\n{phrase}"
-        # BOTH strings: the visible text so the customer can act, the state so the parser
-        # can reconcile the "yes".
-        variables["response"] = f"{jsc.js_string(variables.get('response'))}. {phrase}"
+        # The visible text so the customer can act, and - on a legacy patch only - the
+        # state text the old parser reconciled the "yes" against. `response` is not a
+        # five-key session key and `SessionVars` forbids it outright, so writing it
+        # unconditionally would fail the turn's own session write the moment this branch
+        # came back to life. Written where it already EXISTS, which is the 34-key patch
+        # the node replay feeds and nothing the engine produces.
+        if "response" in variables:
+            variables["response"] = f"{jsc.js_string(variables.get('response'))}. {phrase}"
         existing = out.get("quick_reply")
         out["quick_reply"] = (
             f"{jsc.js_string(existing)},Yes escalate,No it's okay"

@@ -343,9 +343,16 @@ def routed_why(branch_kind: str, qf: dict[str, Any], access_allowed: bool) -> st
     return f"Routed to the {lane_words(branch_kind).lower()}: {access_words}, no escalation asked."
 
 
-def replied_summary(reply: dict[str, Any], branch_kind: str | None) -> str:
-    """"Replied with a 6-row list and 2 quick replies." - what was actually sent."""
-    rows = len((reply.get("session_patch") or {}).get("variables", {}).get("last_result_set") or [])
+def replied_summary(
+    reply: dict[str, Any], branch_kind: str | None, *, result_set: Any = None
+) -> str:
+    """"Replied with a 6-row list and 2 quick replies." - what was actually sent.
+
+    The rows are handed in, not read back out of the session patch: the patch is five keys
+    and has carried no roster since L1-S3, so the count on every trace line said zero
+    however many rows the customer was actually shown.
+    """
+    rows = len(result_set) if isinstance(result_set, list) else 0
     quick = reply.get("quick_replies")
     quick_count = len([q for q in str(quick).split(",") if q.strip()]) if quick else 0
     parts = [f"Replied on the {lane_words(branch_kind).lower()} lane"]
