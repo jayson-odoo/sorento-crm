@@ -20,13 +20,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
-from app.models.integration_reference import IntegrationReference
 from app.models.order import Customer
 from app.models.procurement import Supplier
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.services.integration_reference_service import (
-    DEFAULT_SOURCE_SYSTEM,
     IntegrationReferenceService,
     ReferenceConflict,
 )
@@ -116,25 +114,15 @@ class MasterRefResolver:
         A ref that WAS sent and does not resolve is a sequencing artefact: the
         master push has not drained yet, so the whole document is retryable
         rather than written with the attribution silently dropped. BL-056
-        (D15): that now covers a ref that resolves, just not under THIS
-        company - `self.refs` is scoped to the anchor, so it is invisible here
-        exactly like one that was never linked. The cross-company refusal
-        this used to need (`_require_same_company`) is unreachable through
-        refs now and has been removed.
-
-        AC-19b: a ref that exists in ANOTHER company is marked
-        `unconditional`, a plain existence check against the table itself
-        (never through `self.refs`, which now refuses to search across
-        companies at all - D14, strict) so `_resolve_master` re-raises it
-        even when a code/name was ALSO sent, instead of falling through to
-        them the way a genuinely-unknown ref does (AC-V1-3/5). Origin/main's
-        `_require_same_company` (removed - see the note above) achieved the
-        same end differently: it raised `ReferenceConflict`, a DIFFERENT
-        exception `except MissingReference` below never caught, so a
-        cross-company ref never reached the code/name fallback either. Since
-        BL-056 folds "cross-company" and "genuinely unknown" into the SAME
-        `entity_id is None` signal from one `resolve()` call, this flag is
-        what keeps those two cases as distinct as they always were.
+        (D15.3, no cross-company peek): that now covers a ref that resolves,
+        just not under THIS company - `self.refs` is scoped to the anchor, so
+        it is invisible here exactly like one that was never linked, with no
+        exception: it takes the SAME `MissingReference` path a genuinely
+        unknown ref always did, including the AC-V1-3/5 fall-through to a
+        sent code/name (an unsynced customer with a code sent alongside its
+        ref resolves by that code, cross-company or not). The cross-company
+        refusal this used to need (`_require_same_company`) is unreachable
+        through refs now and has been removed.
         """
         if source_ref is None or source_ref == "":
             return None
@@ -145,17 +133,7 @@ class MasterRefResolver:
             entity_type=model.__tablename__, source_ref=source_ref
         )
         if entity_id is None:
-            known_elsewhere = (
-                self.db.query(IntegrationReference.id)
-                .filter(
-                    IntegrationReference.source_system == DEFAULT_SOURCE_SYSTEM,
-                    IntegrationReference.entity_type == model.__tablename__,
-                    IntegrationReference.source_ref == source_ref,
-                )
-                .first()
-                is not None
-            )
-            raise MissingReference(field, source_ref, unconditional=known_elsewhere)
+            raise MissingReference(field, source_ref)
         # Cached only now that the anchor's own resolve() has vouched for it.
         self._memo[memo_key] = entity_id
         return entity_id
@@ -190,13 +168,7 @@ class MasterRefResolver:
         if ref:
             try:
                 return self._resolve_ref(ref_field, ref, model)
-            except MissingReference as exc:
-                # AC-19b: a ref linked in ANOTHER company re-raises regardless
-                # of a sent code/name - D10's warehouse exemption still wins
-                # (it never raises, cross-company or not), everything else
-                # does not get the AC-V1-3/5 fallback for THIS kind of miss.
-                if exc.unconditional and model is not Warehouse:
-                    raise
+            except MissingReference:
                 # B1 fix: a sent ref that fails falls through to code/name
                 # exactly like every other model - warehouse's ONLY difference
                 # is that it never raises once every avenue is exhausted

@@ -154,22 +154,11 @@ class UnsupportedIngestEntity(ValueError):
 
 
 class MissingReference(Exception):
-    """A referenced master is not present yet. Retryable, not a data error.
+    """A referenced master is not present yet. Retryable, not a data error."""
 
-    ``unconditional`` (autocount-brands-ingest AC-19b, BL-056 D15): a ref that
-    resolves to nothing under THIS anchor because it is linked in a DIFFERENT
-    company is a sequencing artefact regardless of what else the record sent
-    - unlike a ref that is unknown everywhere, sending a code/name ALONGSIDE
-    it must not make the ladder fall through to them (AC-V1-3/5 governs the
-    genuinely-unknown case, not this one). ``master_ref_resolver._resolve_
-    master`` re-raises rather than falling back to the code/name rung when
-    this is set.
-    """
-
-    def __init__(self, field_name: str, code: str, *, unconditional: bool = False):
+    def __init__(self, field_name: str, code: str):
         self.field_name = field_name
         self.code = code
-        self.unconditional = unconditional
         super().__init__(f"{field_name}={code!r} not found")
 
 
