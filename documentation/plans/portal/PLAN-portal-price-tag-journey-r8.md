@@ -1,6 +1,6 @@
 # PLAN - Portal journey round 8: verify card, landing toolbar, price tag request sections
 
-Status: Approved 12 Sep 2026 (owner: "ok good to go"); building
+Status: PR #861 open 13 Sep 2026, reviewed + security re-check ready, browser-verified on lane :3080/:8081
 UAC: `documentation/plans/portal/portal-price-tag-journey-r8-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-r7-request-ux.md` (merged #758)
 Branch: `feat/portal-journey-r8`, worktree `.claude/worktrees/portal-journey-r8`
