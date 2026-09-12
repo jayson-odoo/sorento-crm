@@ -1845,6 +1845,113 @@ def test_compact_keeps_a_product_whose_every_location_is_zero(db):
     assert result["empty"] is False
 
 
+# ================================ AC-9..AC-12 (12 Sep 2026): detailed hide-zero
+# keeps a product that is zero EVERYWHERE, the same "none left, not never
+# found" rule `compact` already applies (finding 5 / D5).
+
+
+def test_detailed_hide_zero_keeps_a_product_zero_at_every_location(db):
+    """AC-9. Two warehouses, both reading 0 - the product is zero EVERYWHERE for
+    this contact, so both rows must still return (today's unconditional
+    `!= 0` filter drops both; this is the regression the plan calls finding 5)."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id}
+    assert result["pagination"]["total"] == 2
+
+
+def test_detailed_hide_zero_still_drops_zero_beside_real_stock(db):
+    """AC-10 (regression pin - passes today already). 5 at BRW, 0 at BRW-BB: the
+    product HAS stock somewhere, so the zero row is still dropped."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=5)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw_bb.id, on_hand=0)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id}
+    assert result["pagination"]["total"] == 1
+
+
+def test_detailed_hide_zero_negative_row_stays_and_the_zero_sibling_still_drops(db):
+    """AC-11 (regression pin - passes today already). -2 at BRW, 0 at BRW-BB: the
+    negative row is never dropped (existing rule), and the product is not zero
+    everywhere (a negative is not zero), so the BRW-BB zero row still drops."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=-2)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw_bb.id, on_hand=0)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id}
+    assert result["pagination"]["total"] == 1
+
+
+def test_detailed_hide_zero_all_zero_ignores_stock_in_an_excluded_warehouse(db):
+    """AC-12 (excluded-warehouse half). The AC-9 product also holds 7 in a
+    warehouse the policy EXCLUDES - that stock must not count as "has stock
+    somewhere" for a contact who can never see it, so the two 0 rows still
+    return. Pins D5's own warning: the zero-everywhere predicate must carry the
+    SAME warehouse criterion as the outer query, explicitly."""
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=dc1.id, on_hand=7)
+    contact = _contact(db)
+    _policy_row(
+        db, mode="detailed", contact=contact, hide_zero_locations=True,
+        excluded_warehouse_ids=[dc1.id],
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id}
+    assert result["pagination"]["total"] == 2
+
+
+def test_detailed_hide_zero_all_zero_ignores_stock_in_another_company(db):
+    """AC-12 (another-company half). A row in ANOTHER company, sharing the SAME
+    `product_id` (a data shape that should never make a product "has stock
+    somewhere" for a DIFFERENT company's contact), must not count either - the
+    two 0 rows still return. Pins issue #832: a correlated EXISTS escaping the
+    do_orm_execute company filter would see this row and wrongly conclude the
+    product has stock somewhere, dropping both 0 rows."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    brw, brw_bb, _ = _three_warehouses(db)
+    mocha_wh = _wh(db, unique_code("MCHWH")[:50], company_id=MOCHA_ID)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    stock(db, company_id=MOCHA_ID, product_id=p.id, warehouse_id=mocha_wh.id, on_hand=7)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id}
+    assert result["pagination"]["total"] == 2
+
+
 def test_availability_ignores_hide_zero_locations(db):
     """B17. The dealer mode has no lines and no numbers to hide, so the flag
     changes nothing about the verdict: the yes/no is still judged on the sum over

@@ -91,14 +91,15 @@ def _row_block(
     *, code: str = "SRTWC8517", qty: Any, po_date: str | None = "2026-05-01",
     location: str | None = "KL-WH",
 ) -> str:
-    """The 11 Sep 2026 ruling's per-row block: one field per line, `PO date:` and
-    `Location:` omitted when null. Matches `_po_row`'s own defaults so a test only names
-    what it overrides."""
-    lines = [f"Product Code: {code}", f"Ordered: {qty}", f"Outstanding: {qty}"]
+    """The 11 Sep 2026 ruling's per-row block, bold-labelled per the 12 Sep 2026
+    ruling (AC-4/AC-5, finding 3): one field per line, `*PO date:*` and
+    `*Location:*` omitted when null. Matches `_po_row`'s own defaults so a test
+    only names what it overrides."""
+    lines = [f"*Product Code:* {code}", f"*Ordered:* {qty}", f"*Outstanding:* {qty}"]
     if po_date not in (None, ""):
-        lines.append(f"PO date: {po_date}")
+        lines.append(f"*PO date:* {po_date}")
     if location not in (None, ""):
-        lines.append(f"Location: {location}")
+        lines.append(f"*Location:* {location}")
     return "\n".join(lines)
 
 
@@ -302,6 +303,56 @@ class TestAC924ThirdCodeNeverDeclaredAbsentWithoutBeingAsked:
         )
         assert out["_xdBlock"]["nothing_codes"] == ["SRTWC8517"]
         assert "UNPROBED-CODE" not in out["_xdBlock"]["block"]
+
+
+class TestOwner12SepNoPhantomAttachmentSentence:
+    """AC-3 (12 Sep 2026, finding 2): the cross-domain block never says "I have
+    attached the file(s) below." - nothing downstream ever sends the file
+    (`tail/compose.crossdomain_compose` folds only `block["block"]` text into the
+    reply, and the send lane reads attachments off the PRIMARY answer alone), so
+    the sentence has never been true. Byte-identical otherwise, attachments or
+    not."""
+
+    _PHRASE = "I have attached the file(s) below."
+
+    def _block(self, *, attachments) -> str:
+        from app.services.chatbot.lanes.business.answer import crossdomain_render
+
+        probe_result: dict[str, Any] = {
+            "items": [
+                {"fields": [
+                    {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                    {"key": "quantity_on_hand", "label": "Quantity On Hand", "value": 5},
+                ]}
+            ],
+            "has_result": True,
+        }
+        if attachments is not None:
+            probe_result["attachments"] = attachments
+        zeroset = {
+            "active": True,
+            "origin_domain": "inventory",
+            "team": "warehouse",
+            "missing": [{"code": "SRTWC8517", "_n": "SRTWC8517", "uuid": "u1"}],
+        }
+        out = crossdomain_render(probe_result, zeroset=zeroset, validator={})
+        return out["_xdBlock"]["block"]
+
+    def test_no_sentence_when_the_probe_carries_attachments_and_rows_render(self) -> None:
+        block = self._block(
+            attachments=[{"url": "https://example.com/x.pdf", "filename": "x.pdf"}]
+        )
+        assert self._PHRASE not in block
+        assert "SRTWC8517" in block
+        assert "*Quantity On Hand:* 5" in block
+
+    def test_the_block_is_byte_identical_with_and_without_attachments(self) -> None:
+        with_files = self._block(
+            attachments=[{"url": "https://example.com/x.pdf", "filename": "x.pdf"}]
+        )
+        without_files = self._block(attachments=None)
+        assert with_files == without_files
+        assert self._PHRASE not in with_files
 
 
 class TestAC911SPOAllocationDomainNoLongerUnsupported:
@@ -522,14 +573,14 @@ class TestOwner11SepTheRungRendersStructuredFieldsPerRow:
         assert "but PO is placed:\n" + _row_block(qty=30, po_date=None) in block
         assert "PO date" not in block
         # the other lines still print
-        assert "Product Code:" in block and "Ordered: 30" in block and "Outstanding: 30" in block
-        assert "Location:" in block  # location still defaults, only po_date is null here
+        assert "*Product Code:*" in block and "*Ordered:* 30" in block and "*Outstanding:* 30" in block
+        assert "*Location:*" in block  # location still defaults, only po_date is null here
 
     def test_a_null_location_omits_the_location_line_only(self) -> None:
         block = self._block([_po_row(30, "2026-08-10", location=None)])
         assert "but PO is placed:\n" + _row_block(qty=30, location=None) in block
         assert "Location" not in block
-        assert "PO date:" in block  # po_date still defaults, only location is null here
+        assert "*PO date:*" in block  # po_date still defaults, only location is null here
 
     def test_an_all_spo_probe_keeps_the_on_order_from_supplier_header_with_no_source_field(self) -> None:
         rows = [
@@ -566,9 +617,47 @@ class TestOwner11SepTheRungRendersStructuredFieldsPerRow:
         }
         block = self._block([item])
         assert (
-            "Product Code: SRTWC8517\nOutstanding: 30\nPO date: 2026-08-10\nLocation: KL-WH"
+            "*Product Code:* SRTWC8517\n*Outstanding:* 30\n*PO date:* 2026-08-10\n*Location:* KL-WH"
         ) in block
         assert "Ordered" not in block
+
+
+class TestOwner12SepBoldRungLabels:
+    """AC-4/AC-5 (12 Sep 2026, finding 3): `_crossdomain_rung_text` bold-labels
+    every field (`*Product Code:*`, `*Ordered:*`, `*Outstanding:*`, `*PO date:*`,
+    `*Location:*`) - direct unit tests of the function itself, pinning the exact
+    string the 11 Sep 2026 ruling already fixed the ORDER/omission/join rules
+    for."""
+
+    def test_a_full_row_is_exactly_this_bold_block(self) -> None:
+        from app.services.chatbot.lanes.business.answer import _crossdomain_rung_text
+
+        row = {
+            "product_code": "SRTWC191-G3", "ordered_qty": 30, "qty": 30,
+            "po_date": "2026-08-10", "location": "BRW",
+        }
+        assert _crossdomain_rung_text([row]) == (
+            "*Product Code:* SRTWC191-G3\n*Ordered:* 30\n*Outstanding:* 30\n"
+            "*PO date:* 2026-08-10\n*Location:* BRW"
+        )
+
+    def test_omitted_fields_never_print_a_placeholder_line(self) -> None:
+        from app.services.chatbot.lanes.business.answer import _crossdomain_rung_text
+
+        row = {
+            "product_code": "X", "ordered_qty": None, "qty": "N",
+            "po_date": None, "location": None,
+        }
+        assert _crossdomain_rung_text([row]) == "*Product Code:* X\n*Outstanding:* N"
+
+    def test_two_rows_are_joined_by_exactly_one_blank_line(self) -> None:
+        from app.services.chatbot.lanes.business.answer import _crossdomain_rung_text
+
+        row_a = {"product_code": "A", "ordered_qty": 1, "qty": 1, "po_date": None, "location": None}
+        row_b = {"product_code": "B", "ordered_qty": 2, "qty": 2, "po_date": None, "location": None}
+        text = _crossdomain_rung_text([row_a, row_b])
+        assert text == "*Product Code:* A\n*Outstanding:* 1\n\n*Product Code:* B\n*Outstanding:* 2"
+        assert "\n\n\n" not in text
 
 
 class TestThePORungGrantKey:
@@ -712,6 +801,120 @@ class TestD7AnIncomingAskClimbsToThePORung:
             po_response={"answers": [], "has_result": False},
         )
         assert "No stock, no incoming and nothing on order for SRTWC8517." in result["render"]["_xdBlock"]["block"]
+
+
+_RESOLVED_PREFIX_FAMILY = {
+    "tokens": ["SRTWT6236"],
+    "intersection": [
+        {"entity_type": "product", "canonical_code": "SRTWT6236-GY", "uuid": "U1", "match_tier": "and"}
+    ],
+}
+_EMPTY_STOCK_ITEM = {"answers": [], "has_result": False}
+
+
+class TestOwner12SepTypedPrefixIsRequested:
+    """AC-6/AC-7 (12 Sep 2026, finding 4): `crossdomain_zeroset`'s non-`resolutions`
+    branch requests an intersection product by `_type_norm` prefix, not only by
+    equality - guarded so a token shorter than 4 characters never prefix-matches
+    (else "SRT" would request every product in the intersection)."""
+
+    def test_ac6_typed_prefix_requests_the_one_family_member(self) -> None:
+        from app.services.chatbot.lanes.business.answer import crossdomain_zeroset
+
+        out = crossdomain_zeroset(
+            _EMPTY_STOCK_ITEM,
+            parser={"domain_hint": "incoming", "message_type": "business_query"},
+            resolved=_RESOLVED_PREFIX_FAMILY,
+            session_block=None,
+        )
+        xd = out["_xd"]
+        assert xd["active"] is True
+        assert xd["requested"] == ["SRTWT6236-GY"]
+        assert xd["missing"][0]["uuid"] == "U1"
+        assert len(xd["probe_entities"]) == 1
+
+    def test_ac6_the_exact_token_case_is_byte_identical_to_today(self) -> None:
+        """Regression pin - passes today already: equality is the existing rule."""
+        from app.services.chatbot.lanes.business.answer import crossdomain_zeroset
+
+        resolved_exact = {
+            "tokens": ["SRTWT6236-GY"],
+            "intersection": _RESOLVED_PREFIX_FAMILY["intersection"],
+        }
+        out = crossdomain_zeroset(
+            _EMPTY_STOCK_ITEM,
+            parser={"domain_hint": "incoming", "message_type": "business_query"},
+            resolved=resolved_exact,
+            session_block=None,
+        )
+        xd = out["_xd"]
+        assert xd["active"] is True
+        assert xd["requested"] == ["SRTWT6236-GY"]
+        assert xd["missing"][0]["uuid"] == "U1"
+        assert len(xd["probe_entities"]) == 1
+
+    def test_ac7_a_token_shorter_than_four_characters_never_prefix_matches(self) -> None:
+        from app.services.chatbot.lanes.business.answer import crossdomain_zeroset
+
+        resolved_short = {
+            "tokens": ["SRT"],
+            "intersection": _RESOLVED_PREFIX_FAMILY["intersection"],
+        }
+        out = crossdomain_zeroset(
+            _EMPTY_STOCK_ITEM,
+            parser={"domain_hint": "incoming", "message_type": "business_query"},
+            resolved=resolved_short,
+            session_block=None,
+        )
+        assert out["_xd"]["active"] is False
+
+
+class TestOwner12SepTypedPrefixEndToEndClimbsToThePORung:
+    """AC-8 (12 Sep 2026): the reproduced live turn, "ETA SRTWT6236" - typed
+    prefix resolves (tier `and`) to SRTWT6236-GY, incoming is empty, stock is
+    empty, and the PO rung finds the open line (202607-S0034, 99 outstanding,
+    BRW) that today's equality-only request skips entirely."""
+
+    def test_the_reply_carries_the_bold_po_block_and_the_purchasing_team(self) -> None:
+        calls: list[tuple[str, dict]] = []
+
+        def mcp_probe(name: str, args: dict) -> dict:
+            calls.append((name, args))
+            if name == _STOCK_TOOL:
+                return {"answers": [], "has_result": False}
+            if name == _PO_TOOL:
+                return {
+                    "answers": [
+                        _po_row(
+                            99, "2026-08-01", code="SRTWT6236-GY",
+                            po_number="202607-S0034", po_date="2026-08-01", location="BRW",
+                        )
+                    ],
+                    "has_result": True,
+                }
+            raise AssertionError(f"unexpected probe tool: {name}")
+
+        services = AnswerServices(mcp_probe=mcp_probe, family_fetch=lambda q: {"data": []})
+        result = run_crossdomain(
+            _EMPTY_STOCK_ITEM,
+            parser=_INCOMING_PARSER,
+            resolved=_RESOLVED_PREFIX_FAMILY,
+            session_block={"session_vars": {"variables": {}}},
+            entities_names=None,
+            services=services,
+            contact_id="164838271",
+            space_id="900001",
+            crossdomain_ladder={"incoming": ["inventory", "purchase_order"]},
+            granted=GRANTED,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL, _PO_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert "No incoming and no stock for SRTWT6236-GY, but PO is placed:" in block
+        assert (
+            "but PO is placed:\n"
+            + _row_block(code="SRTWT6236-GY", qty=99, po_date="2026-08-01", location="BRW")
+        ) in block
+        assert result["render"]["_xdBlock"]["team"] == "purchasing"
 
 
 class TestOwner11SepR1AccessAttributesOnTheFirstProbe:
