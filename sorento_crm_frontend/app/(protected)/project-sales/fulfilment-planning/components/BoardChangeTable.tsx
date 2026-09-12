@@ -13,7 +13,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
  * two columns, Was and Now. A sentence ("delayed 14 days, quantity down 6") reads fine once
  * and cannot be compared against the line beside it; a table can be scanned down a column.
  *
- * A line the book CLOSED reads `Closed` across the Now column and states no quantity or date
+ * A line the book CANCELLED reads `Cancelled` across the Now column and states no quantity or date
  * there: there is nothing to deliver, so a zero would be a quantity somebody could act on.
  *
  * NOT a `DataGrid`. It is three rows of two values inside a 150px grid cell, with no sort, no
@@ -85,7 +85,7 @@ export function BoardChangeTable({
               </th>
               <td className="tabular-nums">{annotation.was.qty ?? '-'}</td>
               <td className="font-medium tabular-nums" data-testid="change-now-qty">
-                {annotation.closed ? 'Closed' : annotation.now.qty ?? '-'}
+                {annotation.closed ? 'Cancelled' : annotation.now.qty ?? '-'}
               </td>
             </tr>
             <tr>
@@ -97,7 +97,7 @@ export function BoardChangeTable({
               </td>
               <td className="font-medium tabular-nums">
                 {annotation.closed
-                  ? 'Closed'
+                  ? 'Cancelled'
                   : annotation.now.date
                     ? formatDateInMalaysia(annotation.now.date)
                     : '-'}
@@ -115,7 +115,7 @@ export function BoardChangeTable({
                 data-testid="change-now-decision"
                 title={annotation.now.decision ?? ''}
               >
-                {annotation.closed ? 'Closed' : annotation.now.decision ?? 'Not decided'}
+                {annotation.closed ? 'Cancelled' : annotation.now.decision ?? 'Not decided'}
               </td>
             </tr>
           </tbody>
