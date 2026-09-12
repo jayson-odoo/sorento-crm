@@ -51,8 +51,11 @@ Postgres only (`session_factory`, blank schema). Every row seeded here.
 """
 from __future__ import annotations
 
+import copy
 import json
+import sys
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -119,16 +122,75 @@ def _resolve_services(matches: dict[str, dict[str, Any]]) -> ResolveGateServices
     )
 
 
+def _present_response():
+    """The REAL MCP presenter, imported the way
+    `tests/chatbot/test_field_reveal_keys_pinned_to_catalog.py` imports the catalogue:
+    append the `sorento_crm_mcp` that sits beside THIS checkout's backend, so a stale
+    editable install in the shared venv cannot win (the "lane backend imports primary
+    MCP catalog" gotcha). Skipped, never failed, where the package is absent - the
+    backend container legitimately does not carry it."""
+    repo_root = Path(__file__).resolve().parents[3]
+    mcp_root = repo_root / "sorento_crm_mcp"
+    if str(mcp_root) not in sys.path:
+        sys.path.append(str(mcp_root))
+    try:
+        from sorento_crm_mcp.presenters import present_response
+    except ImportError:  # pragma: no cover - only where the package is not on disk
+        pytest.skip("sorento_crm_mcp is not importable in this environment")
+    return present_response
+
+
+def _report_route_body(report: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """The body `GET /api/v1/order-management/outstanding-report` returns for `args`.
+
+    The route drops the block of a scope that was not asked (AC-1117), and ECHOES the
+    caller's own `warehouse_codes` / `location_token` / `so_refused` / `detail` onto the
+    body so the presenter can render the header, the refusal line and the detail swap
+    from the response alone. Reproduced here rather than hand-writing a fixture per
+    test, so this double stays the route's shape as the route grows."""
+    body = copy.deepcopy(report)
+    scope = str(args.get("scope") or "both")
+    if scope not in ("so", "both"):
+        body.pop("so", None)
+        body["so_by_location"] = []
+        body["so_by_customer"] = []
+        body["so_rows"] = []
+    if scope not in ("do", "both"):
+        body.pop("do", None)
+        body["do_by_location"] = []
+        body["do_by_customer"] = []
+        body["do_rows"] = []
+    body["warehouse_codes"] = list(args.get("warehouse_codes") or [])
+    body["location_token"] = args.get("location_token")
+    body["so_refused"] = bool(args.get("so_refused"))
+    if args.get("detail") in ("so", "do"):
+        body["detail"] = args["detail"]
+    return body
+
+
 def _capturing_mcp(response: Any = None):
     """A fake `mcp_call(name, args)`. `captured` records every `(name, args)` call; a test
-    asserting "no tool call happened" reads `captured == []`."""
+    asserting "no tool call happened" reads `captured == []`.
+
+    **The production path, not a shortcut** (review S4/S5, 13 Sep 2026): the lane always
+    sends `view=render` (`fetch.entity_ids_transformer`), so what comes back from
+    `crm_outstanding_report` is what `sorento_crm_mcp.presenters.present_response`
+    rendered from the route body - never the route body itself. A double that handed the
+    lane a dict fed the reply composer a shape production never produces, and that is
+    what hid six user-visible defects behind 33 green tests. So a dict `response` here is
+    treated as the ROUTE's payload and pushed through the real presenter; a string is
+    returned verbatim (a caller that wants to pin an exact rendering)."""
     captured: list[tuple[str, dict[str, Any]]] = []
 
     def _call(name: str, args: dict[str, Any]) -> Any:
         captured.append((name, dict(args)))
-        if response is not None:
-            return response if isinstance(response, str) else json.dumps(response)
-        return json.dumps({"has_result": False, "items": []})
+        if response is None:
+            return json.dumps({"has_result": False, "items": []})
+        if isinstance(response, str):
+            return response
+        if name == "crm_outstanding_report":
+            return _present_response()(name, json.dumps(_report_route_body(response, args)))
+        return json.dumps(response)
 
     return _call, captured
 
@@ -268,6 +330,11 @@ def _run_turn(
     return result, captured
 
 
+#: The ROUTE's own body for a product that HAS both an SO backlog and a DO pending
+#: (the shape `OutstandingReportResponse` declares). `_capturing_mcp` renders it through
+#: the real presenter and drops the block of whichever scope was not asked, exactly as
+#: the route does - so a `scope=so` turn in a test sees the same one-block report a
+#: `scope=so` turn sees in production.
 REPORT_HIT = {
     "product_code": PRODUCT_CODE,
     "customer_name": None,
@@ -278,15 +345,42 @@ REPORT_HIT = {
         "ordered_qty": 10, "transferred_qty": 3, "outstanding_qty": 7, "so_count": 1,
         "order_date_min": "2026-01-01", "order_date_max": "2026-01-01",
     },
-    "do": None,
-    "so_by_location": [], "so_by_customer": [], "do_by_location": [], "do_by_customer": [],
+    "do": {
+        "do_qty": 12, "delivered_qty": 5, "pending_qty": 7, "do_count": 1,
+        "do_date_min": "2026-02-03", "do_date_max": "2026-02-03",
+    },
+    "so_by_location": [{"code": "BRW-IB", "ordered_qty": 10, "outstanding_qty": 7}],
+    "so_by_customer": [{"customer_name": CUSTOMER_NAME, "ordered_qty": 10, "outstanding_qty": 7}],
+    "do_by_location": [{"code": "BRW-IB", "do_qty": 12, "pending_qty": 7}],
+    "do_by_customer": [{"customer_name": CUSTOMER_NAME, "do_qty": 12, "pending_qty": 7}],
     "so_rows": [
         {
             "so_number": "SO1", "customer_name": CUSTOMER_NAME, "location": "BRW-IB",
             "ordered_qty": 10, "transferred_qty": 3, "outstanding_qty": 7, "order_date": "2026-01-01",
         }
     ],
-    "do_rows": [],
+    "do_rows": [
+        {
+            "do_number": "DO1", "customer_name": CUSTOMER_NAME, "location": "BRW-IB",
+            "do_qty": 12, "delivered_qty": 5, "pending_qty": 7, "do_date": "2026-02-03",
+        }
+    ],
+}
+
+#: The same body for a product with NOTHING open on either side (AC-1107): both blocks
+#: present, every count zero - the route's answer to a real miss, not an error.
+REPORT_MISS = {
+    **REPORT_HIT,
+    "so": {
+        "ordered_qty": 0, "transferred_qty": 0, "outstanding_qty": 0, "so_count": 0,
+        "order_date_min": None, "order_date_max": None,
+    },
+    "do": {
+        "do_qty": 0, "delivered_qty": 0, "pending_qty": 0, "do_count": 0,
+        "do_date_min": None, "do_date_max": None,
+    },
+    "so_by_location": [], "so_by_customer": [], "do_by_location": [], "do_by_customer": [],
+    "so_rows": [], "do_rows": [],
 }
 
 

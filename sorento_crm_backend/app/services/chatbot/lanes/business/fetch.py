@@ -1365,20 +1365,6 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _outstanding_report_offer(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """S4 point 5/AC-1135: which detail options to offer - only the scopes that are
-    PRESENT and non-empty, SO-then-DO order, the same rule
-    `sorento_crm_mcp.presenters._outstanding_report` uses for its own footer."""
-    rows: list[dict[str, Any]] = []
-    so = result.get("so")
-    if isinstance(so, dict) and so.get("so_count"):
-        rows.append({"idx": len(rows) + 1, "label": "Sales order list", "value": "so"})
-    do = result.get("do")
-    if isinstance(do, dict) and do.get("do_count"):
-        rows.append({"idx": len(rows) + 1, "label": "Delivery order list", "value": "do"})
-    return rows
-
-
 _SO_LIST_OFFER_RE = re.compile(r"(?m)^\d+\.\s*Sales order list\s*$")
 _DO_LIST_OFFER_RE = re.compile(r"(?m)^\d+\.\s*Delivery order list\s*$")
 
@@ -1427,35 +1413,20 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _outstanding_location_line(token: Any, codes: Any) -> str:
-    """S4c (D5, AC-1133/AC-1105): the SAME header rule
-    `sorento_crm_mcp.presenters._outstanding_location_header` renders server-side -
-    `"IB"` resolved to two codes -> `"IB (BRW-IB, MWH-IB)"`; an exact code prints
-    alone; no token, or one that resolved to nothing, prints `"all"`. Duplicated here
-    (not imported) for the same reason `_outstanding_report_output`'s own docstring
-    gives: the backend container does not carry `sorento_crm_mcp`."""
-    token = jsc.js_string(token or "").strip()
-    resolved = [jsc.js_string(c) for c in (codes or []) if jsc.truthy(c)]
-    if not token or not resolved:
-        return "all"
-    if len(resolved) == 1 and resolved[0].casefold() == token.casefold():
-        return resolved[0]
-    return f"{token} ({', '.join(resolved)})"
-
-
 def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     """S4 point 5 (AC-1114b/AC-1135/AC-1138/AC-1141): `crm_outstanding_report` never
     goes through the generic envelope below - the report's shape (two named blocks,
     each with its own By location / By customer subgroup) has no row list to build
     items from.
 
-    `result` is a STRING in production - `sorento_crm_mcp.presenters._outstanding_report`
-    / `_outstanding_detail` already rendered it server-side, the SAME PRESENTER_TOOLS +
-    `view=render` mechanism every other tool uses - and is used verbatim. A DICT means
-    the caller skipped that render step (a test double standing in for the whole MCP
-    round trip); a minimal LOCAL summary substitutes rather than importing
-    `sorento_crm_mcp`, which the backend container does not carry (`CHATBOT_READ_ONLY_
-    TOOLS`'s own docstring above explains why that import is unavailable here).
+    `result` is the ALREADY-RENDERED text - `sorento_crm_mcp.presenters.
+    _outstanding_report` / `_outstanding_detail` built it server-side through the same
+    PRESENTER_TOOLS + `view=render` mechanism every other tool uses (`fetch.py` always
+    sets `view=render`) - and it is used verbatim. There is no second, local rendering
+    of the report body here: a lane that re-derived the header from a raw payload could
+    disagree with the text the customer is reading, and the backend container cannot
+    import `sorento_crm_mcp` to share the presenter (`CHATBOT_READ_ONLY_TOOLS`'s own
+    docstring above explains why).
     """
     semantic_input = ctx.get("semantic_input")
     if isinstance(semantic_input, str):
@@ -1464,41 +1435,9 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
     so_refused = bool(jsc.truthy(semantic_input.get("outstanding_so_refused")))
     refusal = SO_NOT_ENABLED_MESSAGE if so_refused else None
 
-    if isinstance(result, str):
-        text = result
-        offer = _outstanding_offer_from_text(text)
-        has_result = bool(text.strip())
-    else:
-        data = result if isinstance(result, dict) else {}
-        detail = data.get("detail")
-        if detail in ("so", "do"):
-            rows = data.get(f"{detail}_rows") or []
-            text = f"{len(rows)} {detail} row(s)" if rows else f"No {detail} rows"
-            offer = []
-            has_result = bool(rows)
-        else:
-            parts = [
-                f"Product: {data.get('product_code')}",
-                # S4c (D5, AC-1133 pipeline half): the token the customer typed plus
-                # what it resolved to - from `semantic_input`, never `data` (the
-                # report body carries no location echo of its own).
-                "Location: "
-                + _outstanding_location_line(
-                    semantic_input.get("outstanding_location_token"),
-                    semantic_input.get("outstanding_warehouse_codes"),
-                ),
-            ]
-            so_block = data.get("so")
-            do_block = data.get("do")
-            so_hit = isinstance(so_block, dict) and bool(so_block.get("so_count"))
-            do_hit = isinstance(do_block, dict) and bool(do_block.get("do_count"))
-            if so_block is not None:
-                parts.append("Sales order outstanding" if so_hit else "No open sales order.")
-            if do_block is not None:
-                parts.append("Delivery order pending" if do_hit else "No pending delivery order.")
-            text = "\n".join(parts)
-            offer = _outstanding_report_offer(data)
-            has_result = bool(so_hit or do_hit)
+    text = result if isinstance(result, str) else jsc.js_string(result)
+    offer = _outstanding_offer_from_text(text)
+    has_result = bool(text.strip())
 
     if refusal:
         text = f"{refusal}\n\n{text}"
