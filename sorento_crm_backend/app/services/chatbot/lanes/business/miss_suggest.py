@@ -1303,8 +1303,21 @@ def _attach_question(
             if jsc.truthy(value):
                 offered_for.add(_norm(value))
 
+    # FROZEN AS ENTITIES, which is the shape the scope speaks. The gate's rows are
+    # `{uuid, entity_type, code}` and `focus.products` / the entity executor read `hint`
+    # and `canonical_code`, so handing the gate's shape straight through meant the pick
+    # kept a sibling nothing downstream recognised as a product - issue #708 again, one
+    # layer further in. `current_message` is True for the same reason it is on the pick
+    # itself: the pick set IS this turn's scope.
     keep = [
-        entity
+        {
+            "raw": jsc.get(entity, "code"),
+            "hint": jsc.get(entity, "entity_type") or "product",
+            "canonical_code": jsc.get(entity, "code"),
+            "uuid": jsc.get(entity, "uuid") or None,
+            "current_message": True,
+            "confident": True,
+        }
         for entity in jsc.array(jsc.get(gate, "compatible_entities"))
         if jsc.truthy(entity) and _norm(jsc.get(entity, "code")) not in offered_for
     ]
