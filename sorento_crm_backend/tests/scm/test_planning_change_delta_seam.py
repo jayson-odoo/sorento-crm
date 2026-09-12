@@ -215,15 +215,22 @@ def _live_order_rows(db, line_id):
 
 
 def _hold_qty(db, line_id) -> Decimal:
-    """The stock actually held for this line right now - `ProjectSupplyService._hold_rows`'
-    own predicate (project_supply_service.py:7650-7741), restated: a confirmed
+    """The stock actually held for this line right now - `ProjectSupplyService._hold_query`'s
+    own predicate (project_supply_service.py:7696-7767), restated for one line: a confirmed
     `SOLineAllocation` whose `source_type` is NOT `order` (a Buy allocation carries no
-    warehouse and is not a stock hold at all)."""
+    warehouse and is not a stock hold at all) AND whose decision is either unset (every row
+    written before Stage 1C) or ACTIVE - a superseded/challenged revision's rows must stop
+    holding the moment the engine supersedes them. An earlier version of this helper summed
+    every confirmed row with no decision-state filter at all, which double-counted a
+    superseded revision alongside its replacement."""
     rows = (
         db.query(SOLineAllocation)
+        .outerjoin(SOSupplyDecision, SOSupplyDecision.id == SOLineAllocation.decision_id)
         .filter(SOLineAllocation.so_line_id == line_id,
                 SOLineAllocation.confirmed_at.isnot(None),
-                SOLineAllocation.source_type != ALLOC_SOURCE_ORDER)
+                SOLineAllocation.source_type != ALLOC_SOURCE_ORDER,
+                (SOLineAllocation.decision_id.is_(None))
+                | (SOSupplyDecision.state == DECISION_ACTIVE))
         .all()
     )
     return sum((Decimal(str(r.qty)) for r in rows), Decimal("0"))
@@ -512,6 +519,7 @@ def test_advance_that_stays_outside_the_immediate_window_takes_no_partial_pool_s
 def test_qty_up_on_a_held_use_own_takes_more_stock_when_the_group_has_it():
     with blank_session() as db:
         world = _held_reserve_world(db, qty="134")
+        previous_decision_id = _active_decision(db, world["order"].id).id
         # 200 MORE free on top of the 134 already held - 334 on hand in total, enough to
         # cover the whole 234 the line moves up to.
         _add_stock(db, world["product"], world["own"], extra=200)
@@ -542,6 +550,17 @@ def test_qty_up_on_a_held_use_own_takes_more_stock_when_the_group_has_it():
         # AC-B4c folds in here: no window where the line has neither a hold nor an
         # inquiry row - the hold above covers it whole, and Use-own raises no ORDER row.
         assert _live_order_rows(db, world["line"].id) == []
+        # The previous revision's decision must stop holding stock the moment it is
+        # replaced (`_hold_query`'s own reasoning: decision_id IS NULL OR state ==
+        # DECISION_ACTIVE). Observed today as "challenged" (DECISION_CHALLENGED), not
+        # "superseded" - `_confirm_and_apply`'s re-confirm marks the prior decision
+        # CHALLENGED, matching the fulfilment-board "Changed" flow's own naming (a live
+        # decision that a new proposal has now disagreed with). Slice E ("one signal,
+        # challenge_if_drifted removed") may retire this state name; if this assertion
+        # starts failing there, that is the expected place for it to move.
+        previous_decision = db.query(SOSupplyDecision).get(previous_decision_id)
+        assert previous_decision.state != DECISION_ACTIVE, previous_decision.state
+        assert previous_decision.state == "challenged", previous_decision.state
 
 
 # --------------------------------------------------------------------------- #
