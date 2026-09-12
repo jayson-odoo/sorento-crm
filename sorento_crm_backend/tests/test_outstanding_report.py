@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -570,6 +571,54 @@ def test_customer_ids_filters_report(client, db):
         f"customer_ids must filter the report the same way customer_query does: {body}"
     )
     assert {row["customer_name"] for row in body["so_by_customer"]} == {"ZZT Customer Ids Match"}
+
+
+def test_customer_ids_echo_the_resolved_names_in_the_header(client, db):
+    """AC-1136 (review round, 13 Sep 2026): the header prints the response's
+    `customer_name`, and the chatbot sends `customer_ids` (a resolved UUID), never
+    `customer_query`. The echo was set from `customer_query` alone, so a customer ask
+    from WhatsApp printed `Customer: all` over figures that WERE filtered to one
+    customer - the reply contradicted the numbers under it. Several ids join by ", "."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    first = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Echo Customer A")
+    second = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Echo Customer B")
+    _so_line(db, product_id=prod.id, ordered=10, delivered=0, customer_id=first.id)
+    _so_line(db, product_id=prod.id, ordered=4, delivered=0, customer_id=second.id)
+    db.commit()
+
+    one = client.get(
+        BASE, params={"product_code": prod.product_code, "scope": "so", "customer_ids": first.id}
+    )
+    assert one.status_code == 200, one.text
+    assert one.json()["customer_name"] == "ZZT Echo Customer A", one.json()
+
+    both = client.get(
+        BASE,
+        params={
+            "product_code": prod.product_code,
+            "scope": "so",
+            "customer_ids": f"{first.id},{second.id}",
+        },
+    )
+    assert both.status_code == 200, both.text
+    assert both.json()["customer_name"] == "ZZT Echo Customer A, ZZT Echo Customer B", both.json()
+
+
+def test_fractional_quantities_round_to_whole_units(client, db):
+    """`sales_order_lines.qty_ordered` is `Numeric(15,4)`, so a fraction is storable;
+    every quantity on this report is declared `int` (the reply prints whole units with
+    a thousands separator). 2.5 rounds HALF UP to 3 - never Python's bankers' rounding,
+    which would print 2 for 2.5 and 4 for 3.5 in the same reply."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    _so_line(db, product_id=prod.id, ordered=Decimal("2.5000"), delivered=Decimal("0"))
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "so"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["so"]["ordered_qty"] == 3, body["so"]
+    assert body["so"]["outstanding_qty"] == 3, body["so"]
+    assert body["so_rows"][0]["ordered_qty"] == 3, body["so_rows"]
 
 
 # --------------------------------------------------------------------------- AC-1119

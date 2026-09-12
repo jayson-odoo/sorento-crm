@@ -608,6 +608,24 @@ def entity_ids_transformer(
         if detail_pick in ("so", "do"):
             out["detail"] = detail_pick
 
+    # S2 (review round, 13 Sep 2026): a warehouse entity on a PLAIN order ask.
+    # `TYPE_TO_PARAM` maps it to `warehouse_ids`, which NEITHER order-list tool declares
+    # ("any DO for X at BRW" therefore sent a param the MCP dropped, and the answer was
+    # presented as if it had been scoped to BRW). Both tools take `warehouse_codes`
+    # (S3), so the resolved CODE is what travels; the id is removed rather than left to
+    # be dropped somewhere the operator cannot see it.
+    if tool_name in ORDER_TOOLS and "warehouse_ids" in out:
+        out.pop("warehouse_ids", None)
+        codes: list[str] = []
+        for e in jsc.array(entities):
+            if not isinstance(e, dict) or jsc.js_string(e.get("entity_type")) != "warehouse":
+                continue
+            code = e.get("code") or e.get("canonical_code")
+            if jsc.truthy(code) and jsc.js_string(code) not in codes:
+                codes.append(jsc.js_string(code))
+        if codes:
+            out["warehouse_codes"] = codes
+
     # order_status (order tools only): "outstanding" | "delivered" | "so_outstanding"
     # (A3, AC-905); omitted when null.
     if tool_name in ORDER_TOOLS and jsc.get(semantic_input, "order_status") in (

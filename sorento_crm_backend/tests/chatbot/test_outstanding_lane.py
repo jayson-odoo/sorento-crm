@@ -649,6 +649,54 @@ class TestToolPick:
 
 
 # --------------------------------------------------------------------------- #
+# S4 point 7 - a warehouse entity on a PLAIN order ask (no outstanding word)
+# --------------------------------------------------------------------------- #
+
+
+class TestWarehouseOnAPlainOrderAsk:
+    def test_warehouse_entity_becomes_warehouse_codes_on_the_order_list(
+        self, session_factory
+    ) -> None:
+        """`ALLOWED["order"]` admits a warehouse entity (S4 point 7), and
+        `TYPE_TO_PARAM` maps it to `warehouse_ids` - which neither order-list tool
+        declares, so the MCP dropped it silently and the answer was presented as though
+        it had been scoped to that warehouse. Both tools DO take `warehouse_codes`
+        (S3), so the resolved code is what travels."""
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp({"data": [], "has_result": False})
+        payload = {
+            "gate": {
+                "compatible_entities": [
+                    {"uuid": PRODUCT_UUID, "entity_type": "product", "code": PRODUCT_CODE},
+                    {
+                        "uuid": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                        "entity_type": "warehouse",
+                        "code": "BRW",
+                    },
+                ]
+            },
+            "tier_gate": None,
+            "ctx": {
+                "parse": {"output": _qf(order_status=None, entities=[])},
+                "contact": {"id": CONTACT_ID},
+                "access": {"attributes": []},
+            },
+        }
+        run_fetch(payload, services=FetchServices(mcp_call=call))
+        assert captured, "no MCP tool was ever called"
+        name, args = captured[0]
+        assert name == "crm_order_management_orders_list", name
+        assert args.get("warehouse_codes") == ["BRW"], (
+            f"the resolved warehouse must reach the order list as warehouse_codes: {args}"
+        )
+        assert "warehouse_ids" not in args, (
+            f"warehouse_ids is not a param either order-list tool declares - sending it "
+            f"is a silent drop, and the answer then claims a scope it never had: {args}"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # AC-1136 - a resolved customer entity becomes customer_ids on the report call
 # --------------------------------------------------------------------------- #
 

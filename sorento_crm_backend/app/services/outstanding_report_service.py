@@ -14,7 +14,7 @@ defect this route replaces - see the plan's "Why", items 1 and 3).
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Optional
 
 from sqlalchemy import case, func
@@ -27,7 +27,6 @@ from app.services.error_handler import handle_not_found
 from app.services.order_service import (
     _delivered_clause,
     _delivered_status_ids,
-    _plain_number,
     resolve_warehouse_ids,
 )
 
@@ -58,6 +57,15 @@ def _dec(v: Any) -> Decimal:
         return Decimal(0)
 
 
+def _qty(v: Any) -> int:
+    """Every quantity on this report is a WHOLE unit (the schema declares `int` and the
+    reply prints thousands-separated units), but `qty_ordered` / `order_lines.quantity`
+    are `Numeric(15,4)`, so a fraction is storable. Rounded HALF UP - never Python's
+    `round`, whose bankers' rounding would print 2 for 2.5 and 4 for 3.5 in the same
+    reply, which reads as an arithmetic error to whoever checks the column."""
+    return int(_dec(v).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
 def _as_date(v: DateLike) -> Optional[date]:
     if isinstance(v, datetime):
         return v.date()
@@ -73,6 +81,29 @@ def _resolve_product(db: Session, product_code: str) -> Optional[Product]:
         .filter(func.lower(Product.product_code) == code.lower())
         .first()
     )
+
+
+def _customer_echo(
+    db: Session, customer_query: Optional[str], customer_ids: Optional[list]
+) -> Optional[str]:
+    """What the reply's `Customer:` line says (AC-1136).
+
+    The CHATBOT filters by `customer_ids` (the resolved entity), never by
+    `customer_query`, so echoing the query alone printed `Customer: all` over figures
+    that were filtered to one customer. The names are read back and joined by ", ";
+    `customer_query` stays the echo when no ids were given (n8n's own path)."""
+    if customer_ids:
+        names = [
+            row[0]
+            for row in db.query(Customer.customer_name)
+            .filter(Customer.id.in_(customer_ids))
+            .order_by(Customer.customer_name)
+            .all()
+            if row[0]
+        ]
+        if names:
+            return ", ".join(names)
+    return customer_query
 
 
 def outstanding_report(
@@ -95,7 +126,7 @@ def outstanding_report(
 
     result: dict = {
         "product_code": product.product_code,
-        "customer_name": customer_query,
+        "customer_name": _customer_echo(db, customer_query, customer_ids),
         "warehouse_codes": [str(c).strip() for c in (warehouse_codes or []) if str(c).strip()],
         "order_date_from": _as_date(order_date_from),
         "order_date_to": _as_date(order_date_to),
@@ -219,9 +250,9 @@ def _fill_so(
             so_acc["_locations"].add(r.warehouse_code)
 
     result["so"] = {
-        "ordered_qty": _plain_number(ordered_total),
-        "transferred_qty": _plain_number(transferred_total),
-        "outstanding_qty": _plain_number(ordered_total - transferred_total),
+        "ordered_qty": _qty(ordered_total),
+        "transferred_qty": _qty(transferred_total),
+        "outstanding_qty": _qty(ordered_total - transferred_total),
         "so_count": len(per_so),
         "order_date_min": min(dates) if dates else None,
         "order_date_max": max(dates) if dates else None,
@@ -229,16 +260,16 @@ def _fill_so(
     result["so_by_location"] = [
         {
             "code": v["code"],
-            "ordered_qty": _plain_number(v["ordered_qty"]),
-            "outstanding_qty": _plain_number(v["outstanding_qty"]),
+            "ordered_qty": _qty(v["ordered_qty"]),
+            "outstanding_qty": _qty(v["outstanding_qty"]),
         }
         for v in by_location.values()
     ]
     result["so_by_customer"] = [
         {
             "customer_name": v["customer_name"],
-            "ordered_qty": _plain_number(v["ordered_qty"]),
-            "outstanding_qty": _plain_number(v["outstanding_qty"]),
+            "ordered_qty": _qty(v["ordered_qty"]),
+            "outstanding_qty": _qty(v["outstanding_qty"]),
         }
         for v in by_customer.values()
     ]
@@ -249,9 +280,9 @@ def _fill_so(
             "so_number": v["so_number"],
             "customer_name": v["customer_name"],
             "location": ", ".join(sorted(v["_locations"])) if v["_locations"] else None,
-            "ordered_qty": _plain_number(v["ordered_qty"]),
-            "transferred_qty": _plain_number(v["transferred_qty"]),
-            "outstanding_qty": _plain_number(v["outstanding_qty"]),
+            "ordered_qty": _qty(v["ordered_qty"]),
+            "transferred_qty": _qty(v["transferred_qty"]),
+            "outstanding_qty": _qty(v["outstanding_qty"]),
             "order_date": v["order_date"],
         }
         for v in per_so.values()
@@ -362,9 +393,9 @@ def _fill_do(
             do_acc["_locations"].add(r.warehouse_code)
 
     result["do"] = {
-        "do_qty": _plain_number(do_qty_total),
-        "delivered_qty": _plain_number(delivered_total),
-        "pending_qty": _plain_number(pending_total),
+        "do_qty": _qty(do_qty_total),
+        "delivered_qty": _qty(delivered_total),
+        "pending_qty": _qty(pending_total),
         "do_count": len(per_do),
         "do_date_min": min(dates) if dates else None,
         "do_date_max": max(dates) if dates else None,
@@ -372,16 +403,16 @@ def _fill_do(
     result["do_by_location"] = [
         {
             "code": v["code"],
-            "do_qty": _plain_number(v["do_qty"]),
-            "pending_qty": _plain_number(v["pending_qty"]),
+            "do_qty": _qty(v["do_qty"]),
+            "pending_qty": _qty(v["pending_qty"]),
         }
         for v in by_location.values()
     ]
     result["do_by_customer"] = [
         {
             "customer_name": v["customer_name"],
-            "do_qty": _plain_number(v["do_qty"]),
-            "pending_qty": _plain_number(v["pending_qty"]),
+            "do_qty": _qty(v["do_qty"]),
+            "pending_qty": _qty(v["pending_qty"]),
         }
         for v in by_customer.values()
     ]
@@ -390,9 +421,9 @@ def _fill_do(
             "do_number": v["do_number"],
             "customer_name": v["customer_name"],
             "location": ", ".join(sorted(v["_locations"])) if v["_locations"] else None,
-            "do_qty": _plain_number(v["do_qty"]),
-            "delivered_qty": _plain_number(v["delivered_qty"]),
-            "pending_qty": _plain_number(v["pending_qty"]),
+            "do_qty": _qty(v["do_qty"]),
+            "delivered_qty": _qty(v["delivered_qty"]),
+            "pending_qty": _qty(v["pending_qty"]),
             "do_date": v["order_date"],
         }
         for v in per_do.values()

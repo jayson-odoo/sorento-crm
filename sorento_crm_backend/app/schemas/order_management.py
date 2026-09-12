@@ -15,6 +15,11 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
+#: Every quantity below is a WHOLE unit. The columns behind them are `Numeric(15,4)`,
+#: so a fractional quantity is storable; the service rounds it HALF UP before it reaches
+#: these models (`outstanding_report_service._qty`), because the reply prints
+#: thousands-separated units and bankers' rounding would print 2 for 2.5 and 4 for 3.5
+#: in the same message.
 class OutstandingSOBlock(BaseModel):
     ordered_qty: int
     transferred_qty: int
