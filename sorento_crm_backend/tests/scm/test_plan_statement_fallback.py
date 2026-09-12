@@ -27,8 +27,12 @@ pytestmark = requires_pg
 def test_a_stock_plan_whose_rows_matched_nothing_reads_no_holdings():
     """115 stamped rows, none bound: the plan HAS a statement, and it holds nothing of ours.
 
-    The old rule read "no holdings" as "no statement" and fell through to the supplier-wide
-    snapshot, so the plan showed another upload's figures under its own name.
+    AC-U3: the plan's OWN statement is the universe once it is on file - neither the linked
+    product (its sourcing link stays true, but the file does not name it) nor a product that
+    is only in the supplier-wide snapshot this plan does not read is a row. The old rule read
+    "no holdings" as "no statement" and fell through to the supplier-wide snapshot, so the
+    plan showed another upload's figures under its own name; the rewritten rule reads none at
+    all, because the file IS the ask and this file named nothing that bound.
     """
     with pg_session() as db:
         w = World(db)
@@ -37,7 +41,7 @@ def test_a_stock_plan_whose_rows_matched_nothing_reads_no_holdings():
             "A", packed=1, plan_id=str(plan.id), item_code=f"ZZPO-UNKNOWN-{w.tag}", bound=False
         )
         # What the plan must NOT read: the supplier-wide snapshot, and a product that is only
-        # in it. `A` is ours through the sourcing link, so it stays a candidate either way.
+        # in it or only linked - the file is on, and it named nothing.
         w.link("A")
         w.stock_row("A", packed=500, plan_id=None)
         w.stock_row("STRANGER", packed=500, plan_id=None)
@@ -46,13 +50,8 @@ def test_a_stock_plan_whose_rows_matched_nothing_reads_no_holdings():
 
         out = build_svc.build(db, supplier_id=str(w.supplier.id), plan=plan)
 
-        row = _row(out, w.code("A"))
-        assert row["holding_source"] == "none"
-        assert row["holding_qty"] is None
-        assert row["qty_packed"] == 0.0
-        # The universe is links, aliases and drivers only: a product known ONLY to the
-        # snapshot this plan does not read has no business on its grid.
-        assert w.code("STRANGER") not in {r["item_code"] for r in out["rows"]}
+        assert out["rows"] == []
+        assert out["stock_list_as_of"] is not None
 
 
 def test_a_legacy_plan_does_not_double_count_a_newer_plans_stamped_rows():
@@ -88,7 +87,9 @@ def test_a_proforma_plan_whose_lines_matched_nothing_never_falls_back_to_a_stock
     """The worse half: an all-unmatched proforma plan read the supplier's STOCK LIST.
 
     Two different documents answering two different questions - what they promised for one
-    container, and what sits in their warehouse today.
+    container, and what sits in their warehouse today. AC-U3: the invoice IS this plan's
+    statement, so an all-unmatched one leaves zero rows - not the linked, stock-list-only
+    product, and not the snapshot's own `stock_list_as_of` either.
     """
     with pg_session() as db:
         w = World(db)
@@ -108,8 +109,6 @@ def test_a_proforma_plan_whose_lines_matched_nothing_never_falls_back_to_a_stock
 
         out = build_svc.build(db, supplier_id=str(w.supplier.id), plan=plan)
 
-        row = _row(out, w.code("A"))
-        assert row["holding_source"] == "none"
-        assert row["holding_qty"] is None
-        assert row["qty_packed"] == 0.0
+        assert out["rows"] == []
+        assert out["sources"]["stock_list_as_of"] is None
 

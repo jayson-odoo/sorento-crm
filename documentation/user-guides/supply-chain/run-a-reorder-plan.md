@@ -109,4 +109,5 @@ with the tooltip "Decide at least one row first".
 
 * [Upload the data a reorder plan is built from](upload-plan-data.md)
 * [Print the order summary](print-the-order-summary.md)
+* [Loading Plan](loading-plan.md)
 * [Manage products](../product/manage-products.md)

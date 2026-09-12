@@ -1,0 +1,147 @@
+# UAC: "last purchase cost" per product per location, gated per contact
+
+Plan: `PLAN-chatbot-last-purchase-cost.md`.
+
+## Service and route
+
+- AC-1 Latest line per location. Product P with lines at warehouse W1 (issue dates 1 Aug,
+  1 Sep) and W2 (15 Aug): `last_cost_rows(db, product_ids=[P])` returns exactly two rows,
+  W1's from the 1 Sep PO and W2's from the 15 Aug PO.
+- AC-1b Output order. Owner ruling 4 from live verification, 12 Sep 2026, verbatim: "we
+  need to sort by latest PO date first otherwise very confusing, so first sort by the
+  product, then latest PO date first". The windowed branch (`product_ids` given) orders
+  by `product_code` ASC, then `po_date` DESC within that product across its locations,
+  `created_at` DESC breaking a same-date tie - the PICK per `(product, warehouse)` is
+  unchanged, only the output order changes. One product with three warehouses whose
+  latest lines are dated 1 Jun, 1 Sep, 24 Jul returns rows in the order 1 Sep, 24 Jul,
+  1 Jun; two products A and B return ALL of A's rows (newest first) before ALL of B's.
+  The unscoped branch is already newest-first across every product.
+- AC-2 No-warehouse bucket. A cost line with `warehouse_id` NULL answers its own row with
+  `row["warehouse"] is None`; it never displaces a warehouse row and no warehouse row
+  displaces it.
+- AC-3 Cancelled excluded. A newer line with `line_status = 'cancelled'`, and a newer line
+  on a PO with `status = 'cancelled'`, are both skipped; the answer is the newest non
+  cancelled line.
+- AC-4 No cost, no answer. A line with `unit_cost` NULL is never picked, even when it is
+  the newest.
+- AC-5 Ordering. Two lines on the same `(product, warehouse)`: the one whose PO
+  `issue_date` is later answers; on the same date the later `created_at` answers.
+- AC-6 Per-unit discount. qty 19, unit_cost 110.00, discount 1254.00, line_total 836.00
+  answers `unit_cost == 110.0`, `discount_per_unit == 66.0`,
+  `unit_cost_after_discount == 44.0`.
+- AC-6b Money rounds to two decimals. qty 3, unit_cost 110, discount 100, line_total 230
+  answers `discount_per_unit == 33.33` (100/3, half up) and
+  `unit_cost_after_discount == 76.67` (230/3, half up); the route returns the same two
+  decimal place floats, never a raw division result such as 33.333333333333336.
+- AC-7 Discount always shown. Owner ruling from live verification, 12 Sep 2026,
+  verbatim: "we should always show discount even though it is null or 0". discount 0 or
+  NULL answers `discount_per_unit == 0.0` (a NUMBER, never None); `unit_cost_after_discount
+  == unit_cost` is unchanged.
+- AC-8 No line_total. `line_total` NULL answers `unit_cost_after_discount == unit_cost`
+  and `discount_per_unit == 0.0` (never None, same ruling as AC-7) when the line's own
+  discount is NULL too.
+- AC-9 Currency. `row["currency"]` is the line's `currency`.
+- AC-9b Supplier. Second owner ruling, same round: "we should show supplier also".
+  `row["supplier"]` is `suppliers.supplier_name` reached through
+  `purchase_orders.supplier_id` (an outer join): a PO with a supplier answers the name; a
+  PO with `supplier_id` NULL answers `row["supplier"] is None`.
+- AC-10 Warehouse filter narrows before the pick. `warehouse_ids=[W2]` on AC-1's data
+  returns only the W2 row.
+- AC-11 Family, all members. Three products named in `product_ids` with `top_n=1` return
+  three rows (one per member per location); `top_n=2` returns up to two per
+  `(product, warehouse)`, never two overall.
+- AC-12 Unscoped cap. No `product_ids`, `top_n=2` returns exactly two rows, newest first,
+  across every product.
+- AC-13 Company scope. Under a session scoped to company A, a cost line owned by company B
+  on the same product never answers, on both branches.
+- AC-14 Route. `GET /api/v1/procurement/purchase-orders/last-cost?product_ids=P` returns
+  `{data, pagination, empty}` with the AC-1 rows; `top_n=0` and `top_n=51` are 422; the
+  route is reachable with `X-API-Key`.
+
+## Permission
+
+- AC-15 Key exists. `GET field-reveal-keys` lists `purchase_orders.cost` with label
+  "Last purchase cost"; the Contacts > Access > Field reveals card shows it unticked for a
+  contact with no row.
+- AC-16 Default hidden, whole domain. A contact WITHOUT the key asking "last purchase cost
+  for M218" gets the exact reply `Sorry, you are not allowed to access purchase cost` (the
+  existing `access_denied` canned copy, subject "purchase cost" rather than an agent name);
+  no MCP tool is called; the trace carries
+  `{"skipped": "not_granted", "needs": "purchase_orders.cost"}`.
+- AC-17 Granted. The same contact WITH the key gets the answer; the reply contains
+  "Cost / unit" and "Cost after discount / unit" and no UUID.
+- AC-18 Belt and braces. `output_structurer` with a granted set lacking
+  `purchase_orders.cost` drops `unit_cost`, `discount_per_unit` and
+  `unit_cost_after_discount` from the envelope; with it, keeps them.
+- AC-18b Supplier gated independently. `output_structurer` with a granted set holding
+  ONLY `purchase_orders.cost` drops `supplier` and keeps the three money fields; with
+  both `purchase_orders.cost` and `purchase_orders.supplier` granted, keeps all four.
+- AC-19 Catalogue pin. `FIELD_REVEAL_KEYS` equals the union of every
+  `ToolSpec.restricted_fields` pair (existing test stays green with the new pair).
+
+## Presenter and catalogue
+
+- AC-20 Order. For a row carrying every field, `_po_last_cost` renders EXACTLY, in this
+  order: `PO Number`, `Product Code`, `PO Quantity`, `PO Date`, `Cost / unit`,
+  `Discount / unit`, `Cost after discount / unit`, `Warehouse`, `Supplier` (second owner
+  ruling, 12 Sep 2026, "we should show supplier also" - `Supplier` is LAST). Asserted as
+  an exact list.
+- AC-21 If any, discount excepted. Owner ruling from live verification, 12 Sep 2026:
+  "we should always show discount even though it is null or 0" - `Discount / unit`
+  ALWAYS renders, `CNY 0.00` when the line carries none; it is no longer "if any". A row
+  with `warehouse` None renders no `Warehouse` line; a row with `supplier` None renders
+  no `Supplier` line - each is its own independent "if any". Nothing renders with an
+  empty value.
+- AC-22 Money format. `Cost / unit` renders `CNY 110.00`; `Discount / unit` renders
+  `CNY 66.00` (or `CNY 0.00` when the line carries no discount); `Cost after discount /
+  unit` renders `CNY 44.00`.
+- AC-23 Restricted keys. The envelope's `restricted_fields` maps `unit_cost`,
+  `discount_per_unit` and `unit_cost_after_discount` to `purchase_orders.cost`, and
+  `supplier` to `purchase_orders.supplier` (the SAME key `crm_procurement_po_placed_list`
+  already uses for its own `supplier` field).
+- AC-24 Catalogue description names the row order, says the three money figures are per
+  unit and derived from the line amount, and says the answer is restricted to a contact
+  holding `purchase_orders.cost`.
+
+## Chatbot routing
+
+- AC-25 Parser. Under the new prompt version, "last purchase cost for M218", "what did we
+  pay for M218", "上次采购价 M218", "harga belian terakhir M218" emit
+  `domain_hint purchase_cost` / `intent_hint check_po_cost`; "how much do we sell M218
+  for", "how much does it cost" and "berapa harga" do not - those stay `check_stock` /
+  product domains, the everyday words for the SELLING price. `purchase_cost` has NO
+  switch words (`DOMAIN_SPEC["purchase_cost"].switch_words == ()`); the parser prompt
+  alone routes it, the same precedent as `purchase_order`.
+- AC-26 Domain table. `test_domain_spec.py` is green: `purchase_cost` has one intent, one
+  tool, unique switch words, and `CHATBOT_READ_ONLY_TOOLS` includes
+  `crm_procurement_po_last_cost_list`.
+- AC-27 Gate. (a) A `purchase_cost` ask with a product resolves and calls the tool with
+  `product_ids`; with a warehouse named, `warehouse_ids` is passed too; with no entity, the
+  gate asks for a product (no `ALLOWS_EMPTY` row). (b) A resolved warehouse entity passes
+  `warehouse_ids` to the tool. (c) The tool is in
+  `fetch.ENTITY_FILTER_REQUIRED_TOOLS`; a brand-only ask (gate passes - brand is an
+  allowed entity type - but no `*_ids` can be built for it) is refused as `not_found`
+  with ZERO MCP calls, never answered from the unscoped branch.
+- AC-28 top_n passthrough. "last 3 purchase cost for M218" passes `top_n=3` directly (tool
+  is in `TOP_N_DIRECT_TOOLS`), not `limit`.
+- AC-29 Prompt publish. Migration 513 adds one new unlabelled version per body, is
+  idempotent on re-run, and moves no label.
+- AC-33 RAG skip and no key leak. `crm_procurement_po_last_cost_list` is in
+  `mcp_tool_capability_service._EMBEDDING_SKIP_TOOLS` (kept out of the in-app assistant's
+  RAG pick and n8n's cosine pick; the chatbot reaches it via `DOMAIN_SPEC` only, which is
+  the one path with the field-reveal drop). The tool's `ToolIntent.description` does not
+  contain the string `purchase_orders.cost` - the internal key must never reach the
+  customer-visible capability summary.
+
+## Last-in family (pin, D5)
+
+- AC-30 `last_receipt_rows(db, product_ids=[A, B, C], top_n=1)` returns one row per member
+  (three rows); `top_n=2` returns up to two per member, never two overall.
+
+## Live (agent-browser / console, per `documentation/agents/chatbot-verification.md`)
+
+- AC-31 Lane backend + MCP up on the prod copy: the MCP tool called for M218 renders
+  `PO Number: PO-2026/09-0013`, `Cost / unit: CNY 110.00`, `Discount / unit: CNY 66.00`,
+  `Cost after discount / unit: CNY 44.00`, `Warehouse: BRW-SMC`.
+- AC-32 Console case: default contact -> access denied; granted contact -> the AC-31 answer;
+  SRTWC8517 -> one row per family member per location.

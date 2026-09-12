@@ -13,6 +13,19 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, model_validator
 
 
+def require_start_on_or_before_end(start: Optional[date], end: Optional[date]) -> None:
+    """Raises when a stated start falls after a stated end.
+
+    One rule, shared by every `plan_horizon_start`/`plan_horizon_date` pair in the app -
+    `CreateReorderRunRequest` and `ReplanReorderRunRequest` below, and `LoadingPlanCreate` /
+    `LoadingPlanUpdate` in `app/api/v1/scm/fulfilment.py` - so a backwards window reads the
+    same refusal on every screen that asks for one, never a second wording of the same rule.
+    Either side missing is not an error: `None` means unbounded on that side.
+    """
+    if start is not None and end is not None and start > end:
+        raise ValueError("plan_horizon_start must be on or before plan_horizon_date")
+
+
 # --- create / poll ----------------------------------------------------------
 
 class CreateReorderRunRequest(BaseModel):
@@ -40,14 +53,7 @@ class CreateReorderRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def _start_before_end(self):
-        if (
-            self.plan_horizon_start is not None
-            and self.plan_horizon_date is not None
-            and self.plan_horizon_start > self.plan_horizon_date
-        ):
-            raise ValueError(
-                "plan_horizon_start must be on or before plan_horizon_date"
-            )
+        require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
         return self
 
 
@@ -70,14 +76,7 @@ class ReplanReorderRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def _start_before_end(self):
-        if (
-            self.plan_horizon_start is not None
-            and self.plan_horizon_date is not None
-            and self.plan_horizon_start > self.plan_horizon_date
-        ):
-            raise ValueError(
-                "plan_horizon_start must be on or before plan_horizon_date"
-            )
+        require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
         return self
 
 

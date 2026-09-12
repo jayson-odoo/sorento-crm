@@ -72,11 +72,12 @@ class TestAcP43ContractV21:
 
     def test_contract_reports_version_2_1(self, env):
         """Bumped again 2026-09-08 (V5, ingest-contract-2-2-so-links) to
-        "2.2" - this test's own name is now historical, kept as-is so the
-        AC-P4-3 numbering does not shift for an unrelated slice."""
+        "2.2", and again (autocount-brands-ingest, AC-13) to "2.3" - this
+        test's own name is now historical, kept as-is so the AC-P4-3
+        numbering does not shift for an unrelated slice."""
         res = env.client.get(CONTRACT_URL)
         assert res.status_code == 200, res.text
-        assert res.json()["version"] == "2.2"
+        assert res.json()["version"] == "2.3"
 
     def test_contract_lists_fields_added_per_entity(self, env):
         body = env.client.get(CONTRACT_URL).json()

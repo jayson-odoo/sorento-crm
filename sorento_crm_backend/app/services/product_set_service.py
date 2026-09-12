@@ -439,7 +439,7 @@ def driver_members(db: Session, set_ids: list[str]) -> dict[str, ProductSetMembe
     Every tie is broken on a stated value, ending on the product code, so two runs of the
     same plan cannot disagree about whose numbers a row is showing.
 
-    Batched because `container_request_service.build` asks for every set on a supplier's
+    Batched because `container_request_service._set_rows` asks for every set on a supplier's
     statement at once, and a query per set on a page of forty is how a screen gets slow
     without anyone noticing.
     """

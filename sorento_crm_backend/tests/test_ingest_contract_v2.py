@@ -147,7 +147,9 @@ class TestContractEndpoint:
 
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.2"
+        # Bumped again (autocount-brands-ingest, AC-13): "2.3" adds `brands`
+        # as a first-class EntitySpec.
+        assert body["version"] == "2.3"
         entities = set(body["entities"])
         for expected in (
             "sales_orders",

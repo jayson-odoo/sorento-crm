@@ -56,6 +56,7 @@ CHATBOT_TOOL_DOMAINS: dict[str, str] = {
     "crm_resource_attachments_current_stock_list": "resource_attachment",
     "crm_procurement_spo_allocations_last_receipt_list": "spo_allocation",
     "crm_procurement_po_placed_list": "purchase_order",
+    "crm_procurement_po_last_cost_list": "purchase_cost",
 }
 
 

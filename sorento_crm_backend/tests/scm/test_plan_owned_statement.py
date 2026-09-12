@@ -620,27 +620,18 @@ def test_a_no_file_plan_reads_no_statement_at_all():
         assert row["holding_blocks"] == 0
 
 
-def test_a_no_file_plans_universe_is_links_aliases_and_drivers():
-    """AC-E0: membership and placement are separate questions.
+def test_a_no_file_plans_universe_is_the_sourcing_links_alone():
+    """AC-E0, as rewritten by AC-U2 (`PLAN-scm-loading-plan-lines-feedback-12sep.md`).
 
-    A plan with no statement still has a universe - what we buy from this supplier, and what
-    we have ever ruled one of their codes to mean. A product with open demand and neither
-    membership belongs to somebody else's supplier and is not asked of this one.
-
-    S4/AC-D3 widens the alias leg to SETS: a code ruled onto one of our sets joins through the
-    set's DRIVER, exactly as a set named by an actual statement would - the driver's own row
-    is what "membership" resolves to when nothing on file has holdings for the set yet.
+    A plan with no statement still has a universe - what we buy from this supplier. An alias
+    ruled onto a SET (no `product_suppliers` link is possible for a set - only for a product)
+    is no longer a membership leg of its own: the set's driver is not a row until the file
+    actually names the set. A product with open demand and no link belongs to somebody else's
+    supplier and is not asked of this one either.
     """
     with pg_session() as db:
         w = World(db)
         w.link("LINKED")
-        alias_svc.create(
-            db,
-            supplier_id=str(w.supplier.id),
-            supplier_code=f"{MARKER}-THEIRS",
-            product_id=str(w.product("ALIASED").id),
-            actor="Ms Tee",
-        )
         driver = w.product("SET-DRIVER")
         product_set = ProductSet(
             id=_uid(), set_code=f"{MARKER}-SET-{w.tag}", name="Aliased set", is_active=True
@@ -662,16 +653,12 @@ def test_a_no_file_plans_universe_is_links_aliases_and_drivers():
             actor="Ms Tee",
         )
         # Owed to a customer, and this supplier makes none of it - somebody else's product.
-        for key in ("LINKED", "ALIASED", "STRANGER", "SET-DRIVER"):
+        for key in ("LINKED", "STRANGER", "SET-DRIVER"):
             _retail_need(db, w, key, 10)
 
         out = build_svc.build(db, supplier_id=str(w.supplier.id), plan=w.plan("none"))
 
-        codes = _codes(out["rows"])
-        assert w.code("LINKED") in codes
-        assert w.code("ALIASED") in codes
-        assert w.code("SET-DRIVER") in codes
-        assert w.code("STRANGER") not in codes
+        assert _codes(out["rows"]) == [w.code("LINKED")]
 
 
 def test_a_legacy_plan_with_nothing_stamped_still_reads_the_supplier_wide_snapshot():
