@@ -1,0 +1,189 @@
+==== turn 1  branch_kind=business_query ====
+> Srtwt7443 sales order outstanding for IB
+
+Product: SRTWT7443
+Customer: all
+Location: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)
+Order date: all
+
+*Sales order outstanding*
+Ordered: 3,545
+Transferred to DO: 15
+Outstanding: 3,530
+Sales orders: 17
+Order date range: 20/08/2024 to 03/08/2026
+*_By location_*
+BRW-IB: 3,545 (O/S: 3,530)
+*_By customer_*
+PEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)
+CHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)
+EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)
+KENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)
+APEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)
+CMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)
+IDEAL BATH SDN BHD: 497 (O/S: 482)
+
+Reply with a number for detail:
+1. Sales order list
+
+==== turn 2  branch_kind=business_query ====
+> SRTWT7445 outstanding in 2026
+
+Product: SRTWT7445-LV-GM
+Outstanding for which document?
+1. Sales orders (not yet transferred to DO)
+2. Delivery orders (not yet delivered)
+3. Both
+
+==== turn 3  branch_kind=business_query ====
+> 3
+
+Product: SRTWT7445-LV-GM
+Customer: all
+Location: all
+Order date: 01/01/2026 to 31/12/2026
+
+*Sales order outstanding*
+No open sales order.
+
+*Delivery order pending*
+DO qty: 74
+Delivered: 60
+Pending: 14
+Delivery orders: 25
+DO date range: 20/04/2026 to 07/09/2026
+*_By location_*
+BRW: 72 (O/S: 13)
+MKT-D: 2 (O/S: 1)
+*_By customer_*
+J & Y WORLD HARDWARE SDN BHD [A/C I]: 7 (O/S: 0)
+MURO WALL SDN BHD (PROJECT): 6 (O/S: 0)
+PERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ [A/C I]: 1 (O/S: 0)
+HENG SENG HARDWARE SDN BHD [A/C I]: 1 (O/S: 0)
+BEST LIGHT CITY SDN BHD [A/C I]: 1 (O/S: 0)
+WH ELECTRICAL MARKETING (M) SDN BHD [A/C I]: 1 (O/S: 0)
+FULLSHUN SANITARYWARE SDN BHD [A/C I]: 18 (O/S: 0)
+GRAND WATERHOUSE SDN BHD [A/C I]: 1 (O/S: 1)
+1 LIVING DEPOT SDN BHD [A/C I]: 3 (O/S: 0)
+DELUXE HOME CENTRE SDN BHD [A/C I]: 1 (O/S: 0)
+PSM HOME CENTRE SDN BHD [A/C I]: 3 (O/S: 0)
+MIRAGE HARDWARE TRADING (PROJECT-CASH): 1 (O/S: 0)
+KBO LOGISTICS & SUPPLY SDN BHD [A/C I]: 4 (O/S: 0)
+ITOLI CERAMIC SDN BHD [A/C I]: 1 (O/S: 0)
+KIM SENG JAYA SDN BHD [A/C I]: 14 (O/S: 7)
+PERNIAGAAN MOZEK CHIN TAK SDN BHD [A/C I]: 6 (O/S: 6)
+DE BATHLABZ SDN BHD [A/C I]: 1 (O/S: 0)
+TOTAL HOME DIY SDN BHD [A/C I]: 4 (O/S: 0)
+
+Reply with a number for detail:
+1. Delivery order list
+
+Couldn't find these:
+"Both" (order): not found.
+
+Ask again with the correct code.
+
+==== turn 4  branch_kind=business_query ====
+> 1
+
+Customer: list
+Product: all products
+Dates: 01/01/2026 to 31/12/2026
+
+Here are the orders I found.
+
+1. *Order Number:* M2608-0825
+*Customer:* HOME CARE SPECIALIST - [CERAMIC]
+*Order Date:* 12/08/2026
+*Actual Delivery Date:* 14/08/2026
+*Status:* Picked Up / In Transit
+*Pickup Time:* 14:20:00
+*Transporter:* TP TRANSPORT
+*Driver:* JIN LI
+*Lorry Plate:* JRT2701
+*Warehouse:* MWH
+*Products:* MWC7632-SH-S10 (3), MA0120 (3)
+
+2. *Order Number:* M2608-0259
+*Customer:* HOME CARE SPECIALIST - [CERAMIC]
+*Order Date:* 03/08/2026
+*Actual Delivery Date:* 04/08/2026
+*Status:* Picked Up / In Transit
+*Pickup Time:* 10:10:00
+*Transporter:* TP TRANSPORT
+*Driver:* JIN LI
+*Lorry Plate:* JRT2701
+*Warehouse:* MWH
+
+3. *Order Number:* M2607-1462
+*Customer:* HOME CARE SPECIALIST - [CERAMIC]
+*Order Date:* 28/07/2026
+*Actual Delivery Date:* 28/07/2026
+*Status:* Picked Up / In Transit
+*Pickup Time:* 16:29:00
+*Transporter:* TP TRANSPORT
+*Driver:* JIN LI
+*Lorry Plate:* JRT2701
+*Warehouse:* MWH
+
+4. *Order Number:* M2607-0913
+*Customer:* HOME CARE SPECIALIST - [CERAMIC]
+*Order Date:* 14/07/2026
+*Actual Delivery Date:* 16/07/2026
+*Status:* Picked Up / In Transit
+*Pickup Time:* 18:52:00
+*Transporter:* TP TRANSPORT
+*Driver:* JIN LI
+*Lorry Plate:* JRT2701
+*Warehouse:* MWH
+
+_Data last updated: 04/09/2026 17:10:50_
+
+==== turn 5  branch_kind=business_query ====
+> FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI) sales order outstanding SRTWT7445
+
+Product: SRTWT7445
+Customer: FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)
+Location: all
+Order date: all
+
+*Sales order outstanding*
+Ordered: 3
+Transferred to DO: 0
+Outstanding: 3
+Sales orders: 1
+Order date range: 28/08/2026
+*_By location_*
+BRW: 3 (O/S: 3)
+*_By customer_*
+FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI): 3 (O/S: 3)
+
+Reply with a number for detail:
+1. Sales order list
+
+==== turn 6  branch_kind=business_query ====
+> SRTWT02 outstanding both
+
+Product: SRTWT02
+Customer: all
+Location: all
+Order date: all
+
+*Sales order outstanding*
+No open sales order.
+
+*Delivery order pending*
+No pending delivery order.
+
+Would you like me to escalate to *Sorento* customer service team?
+
+Please choose who to route to (reply with the number):
+1. Maryam Ariffin
+2. Cyndi
+3. Aisyah
+4. Balqis
+5. Niki
+6. Nurain
+
+If you have no preference, just reply 'yes' and we'll assign automatically.
+

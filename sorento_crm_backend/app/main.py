@@ -409,6 +409,21 @@ async def startup_event():
 
     try:
         from app.database import SessionLocal
+        from app.services import outstanding_report_bootstrap
+        _db = SessionLocal()
+        try:
+            # Runs after sync_catalog so the crm_outstanding_report row exists:
+            # enables it for the in-app assistant without an admin visiting a
+            # settings screen (same mechanism as project_mcp_bootstrap above).
+            # Additive and idempotent.
+            outstanding_report_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Outstanding report bootstrap failed at startup: {str(e)}", exc_info=True)
+
+    try:
+        from app.database import SessionLocal
         from app.services import project_seed_service
         _db = SessionLocal()
         try:

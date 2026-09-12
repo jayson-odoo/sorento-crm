@@ -10,6 +10,10 @@ from app.api.v1.order_management import (
 router = APIRouter()
 
 router.include_router(orders.router, prefix="/orders", tags=["orders"])
+# No prefix: the plan/UAC pin this path at `/order-management/outstanding-report`,
+# a report over orders, not a row under `/orders/*` (`orders.py` docstring above
+# the router definition).
+router.include_router(orders.outstanding_report_router, tags=["orders"])
 # `customers_select` FIRST. Both mount at `/customers`, and `customers.router` carries
 # `GET /{customer_id}` - so mounted first it matches `/customers/select`, tries to read
 # "select" as a customer id and answers 404 "Customer not found. Someone might have deleted

@@ -1,0 +1,133 @@
+# Console case for the chatbot outstanding report (SO backlog + DO pending).
+#
+# `documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` S4 point 12 /
+# `chatbot-outstanding-report-acceptance-criteria.md` AC-1137 (the "Journey" section,
+# verbatim - six messages, one owner-facing conversation).
+#
+# NOT collected by pytest. Run with `scripts/chatbot_console_check.py` against the lane
+# stack once S4 is green (`documentation/agents/chatbot-verification.md`):
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-13-outstanding-report.yaml --base-url http://127.0.0.1:8085
+#
+# CODES VERIFIED AGAINST THE PROD COPY (`sorento_ai_automation_0907`), 13 Sep 2026, SQL
+# probes below each case. `SRTWT7443` (25 open SO lines at BRW-IB, 3,530 outstanding) and
+# `SRTWT7445` (4 open SO lines including 3 in 2026, plus DO rows spanning 2026) both carry
+# real data; `SRTWT02` carries neither an open SO line nor a DO line, a genuine miss.
+# `FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)` holds an open SO line on SRTWT7445 and
+# is the FULL, exact customer name - `select customer_name from customers where
+# customer_name ilike 'FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)%'` returns exactly
+# one row, so it resolves uniquely (the bare word "FULLSHUN" alone does not: four other
+# customers share that prefix, e.g. "FULLSHUN SANITARYWARE SDN BHD (SRT)" and "FULLSHUN
+# BATH CONCEPT SDN BHD (PROJECT) (SRT)", and answered a customer-disambiguation picker
+# instead of the report in an earlier run - a case-authoring gap, not a code finding).
+#
+# TWO CASES CARRY AN EXPLICIT SCOPE WORD where the plan's own Journey narrative used a bare
+# "outstanding" a second time (steps 5 and 6): measured against the real S4 wiring, AC-1130
+# arms the scope question on EVERY bare "outstanding" from a contact holding the grant, cold
+# turn or not - there is no "same report" carry without a scope word once the turn is fresh.
+# Steps 2-3 already grade the bare-word/scope-question path once; steps 5-6 name their scope
+# explicitly so they grade the customer filter and the miss instead of re-asking the same
+# question. Not a code finding - the Journey prose predates the mechanism S4 shipped.
+#
+# ALL SIX TURNS RUN AS ONE CONTINUOUS CONVERSATION (no per-turn `cold`, only the case's own
+# top-level one) - a new ask (steps 5, 6) must stand on its own filters rather than inherit
+# the previous question's, which is one of the fixes this run grades.
+#
+# The contact must hold `sales_orders.outstanding` (Contacts > Access > Field reveals) for
+# turns 1-6 (granted here, 13 Sep 2026, via `contact_field_reveal_service.set_granted_keys`
+# on the prod copy - left in place).
+#
+# AC-1140/AC-1141'S "NO KEY" CASE IS NOT RUN HERE. Every candidate non-granted contact
+# checked (438930735, 445239409, 445239415, 477071889, 477071892, 477071888, 423755030,
+# 423882401) has a stored `chatbot.turns` envelope missing `contact.custom_fields`, which
+# the engine's `is_human_intervened` read needs - the console script's envelope-borrowing
+# mechanism cannot exercise this case with the contacts available on this prod copy. AC-1140
+# and AC-1141 are covered by the pytest suite instead
+# (`tests/chatbot/test_outstanding_lane.py::TestFieldRevealGateBeforeFetch`), which builds
+# the `ctx.access.attributes` gate directly rather than depending on a real contact's
+# reveal-grant history.
+contact: "437264483"
+
+cases:
+  - name: outstanding report journey - SO direct ask, missing-scope question, both, detail, customer filter, miss
+    cold: true
+    turns:
+      # 1. Direct SO ask with a location suffix and no date - one reply, no question.
+      # SQL: 25 open lines, 3,530 outstanding, all at BRW-IB (the only -IB code this
+      # product has data at; the warehouses table also carries DC1-IB/MWH-IB/RSW-IB/
+      # WH3-IB, so `location_codes` may list all five - only BRW-IB is asserted here).
+      - text: "Srtwt7443 sales order outstanding for IB"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "Product: SRTWT7443"
+            - "Location: IB"
+            - "BRW-IB"
+            - "Order date: all"
+            - "Sales order outstanding"
+            - "Outstanding:"
+            - "1. Sales order list"
+          reply_not_contains: ["Outstanding for which document?", "SRTWT7443-"]
+          no_uuid: true
+
+      # 2. Bare "outstanding" with a year - the scope question, nothing else. Right after
+      # turn 1's hit (which leaves pending = outstanding_detail) - the stale-pending finding
+      # from run 3, expected fixed: this must still ask, not silently run with scope=both.
+      - text: "SRTWT7445 outstanding in 2026"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "Outstanding for which document?"
+            - "1. Sales orders"
+            - "2. Delivery orders"
+            - "3. Both"
+          reply_not_contains: ["Sales order outstanding", "Delivery order pending", "SRTWT7445-"]
+          no_uuid: true
+          pending_kind: outstanding_scope
+
+      # 3. "3" answers the scope question - both blocks, carried dates/product.
+      # SQL: 3 open SO lines in 2026 (2026-07-02/08-04/08-28) and DO rows across 2026,
+      # including an order_date-2026-09-07 row with no actual_delivery_date (pending).
+      - text: "3"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "Product: SRTWT7445"
+            - "01/01/2026 to 31/12/2026"
+            - "Sales order outstanding"
+            - "Delivery order pending"
+            - "1. Sales order list"
+            - "2. Delivery order list"
+          reply_not_contains: ["SRTWT7445-"]
+          no_uuid: true
+          pending_kind: outstanding_detail
+
+      # 4. "1" answers the detail offer - every matching SO, one row per SO.
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SO Number:", "Ordered:", "Transferred to DO:", "Outstanding:", "Order Date:"]
+          reply_not_contains: ["+", "more"]
+          no_uuid: true
+
+      # 5. A fresh ask, customer filter by name, on a DIFFERENT product - must NOT inherit
+      # turns 1-4's carried product/filters (a fix graded here). Explicit scope word (see
+      # header note). SQL: the exact customer name below carries 1 open SO line, 3
+      # outstanding, on SRTWT7445, and resolves uniquely (see header note).
+      - text: "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI) sales order outstanding SRTWT7445"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Product: SRTWT7445", "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)"]
+          reply_not_contains: ["SRTWT7443", "SRTWT7445-"]
+          no_uuid: true
+
+      # 6. A miss - same header shape, one line per empty scope, then the existing
+      # escalate offer (AC-1107). Explicit scope word (see header note); SRTWT02 carries
+      # no open SO line and no DO line at all.
+      - text: "SRTWT02 outstanding both"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Product: SRTWT02", "No open sales order", "No pending delivery order"]
+          reply_not_contains: ["SRTWT02-", "SRTWT7445"]
+          no_uuid: true

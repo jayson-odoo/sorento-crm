@@ -1,0 +1,141 @@
+==== turn 1  branch_kind=business_query ====
+> Srtwt7443 sales order outstanding for IB
+
+Which customer do you mean? Please choose:
+1. BM SALES & SERVICES SDN BHD - [IBORN] (MCH) - no DO
+2. JOO SENG HARDWARE SDN BHD - [IBORN] (MCH) - no DO
+3. WISER MARKETING - [IBORN] (MCH) - no DO
+4. BP EXCEL HARDWARE TRADING SDN BHD - [IBORN] (MCH) - no DO
+5. DILOOMA SDN BHD - [IBORN] (MCH) - no DO
+6. CHIN CHUN HARDWARE SDN BHD - [IBORN] (MCH) - no DO
+7. TOONG STAR SDN BHD - [IBORN] (MCH) - no DO
+8. LTL GLOBAL SDN BHD - [IBORN] (MCH) - no DO
+
+None of these have a recent DO.
+
+==== turn 2  branch_kind=business_query ====
+> SRTWT7445 outstanding in 2026
+
+Customer: all customers
+Product: SRTWT7445
+Dates: 01/01/2026 to 31/12/2026
+
+Product: SRTWT7445
+Customer: all
+Location: all
+Order date: 01/01/2026 to 31/12/2026
+
+*Sales order outstanding*
+Ordered: 11
+Transferred to DO: 0
+Outstanding: 11
+Sales orders: 3
+Order date range: 02/07/2026 to 28/08/2026
+*_By location_*
+BRW: 11 (O/S: 11)
+*_By customer_*
+CHIN CHUN HOMEMART SDN BHD [A/C I]: 2 (O/S: 2)
+CHIN CHUN HOMEMART SDN BHD: 6 (O/S: 6)
+FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI): 3 (O/S: 3)
+
+*Delivery order pending*
+DO qty: 754
+Delivered: 534
+Pending: 220
+Delivery orders: 57
+DO date range: 21/04/2026 to 07/09/2026
+*_By location_*
+BRW-BB: 551 (O/S: 193)
+BRW-IR: 77 (O/S: 0)
+BRW-RSV: 43 (O/S: 0)
+MKT-D: 2 (O/S: 1)
+BRW: 62 (O/S: 26)
+BRW-NTC: 3 (O/S: 0)
+BRW-SMC: 12 (O/S: 0)
+REPAIR: 2 (O/S: 0)
+BRW-HP: 2 (O/S: 0)
+*_By customer_*
+CHIN HOO SDN BHD (PROJECT): 22 (O/S: 7)
+AUSTIN SENIBONG DEVELOPMENT SDN BHD: 1 (O/S: 0)
+OTM GROUP SDN BHD (PROJECT): 31 (O/S: 0)
+OTM GROUP SDN BHD: 74 (O/S: 0)
+HANLIM TRADING SDN BHD [A/C I]: 24 (O/S: 0)
+ZHIN HENG HARDWARE & TRADING SDN BHD [A/C I]: 17 (O/S: 0)
+CHIN CHUN HARDWARE SDN BHD [A/C I]: 8 (O/S: 2)
+CHIN CHUN HOMEMART SDN BHD [A/C I]: 2 (O/S: 0)
+NF CHEONG TRADING SDN BHD [A/C I]: 10 (O/S: 0)
+GRAND WATERHOUSE SDN BHD [A/C I]: 1 (O/S: 1)
+SCR MARKETING (M) SDN BHD [A/C I]: 2 (O/S: 0)
+BEYOND BATH SDN BHD: 186 (O/S: 186)
+SHOPEE -260505M0P171KT: 2 (O/S: 0)
+ZM GLOBAL TRADING (PROJECT-CASH): 3 (O/S: 0)
+DELUXE HOME CENTRE SDN BHD [A/C I]: 1 (O/S: 0)
+MURO WALL SDN BHD (PROJECT): 1 (O/S: 0)
+JADE GRAPHIX SDN BHD (PROJECT): 1 (O/S: 0)
+SETIA-WOOD INDUSTRIES SDN BHD (PROJECT): 173 (O/S: 0)
+A & A CONCEPT DESIGN & CONTRACT SDN BHD (PROJECT-CASH): 1 (O/S: 0)
+HENG SENG HARDWARE SDN BHD [A/C I]: 5 (O/S: 0)
+GLORY MOTION SDN BHD [A/C I]: 7 (O/S: 0)
+PARAMOUNT CONSTRUCTION SDN BHD (PROJECT): 48 (O/S: 0)
+SHOPEE - 260605A02XAKC2: 1 (O/S: 0)
+FULLSHUN SANITARYWARE SDN BHD [A/C I]: 2 (O/S: 0)
+GLOBAL INGRESS SDN BHD (PROJECT): 85 (O/S: 0)
+BUILD ART MARKETING SDN BHD (PROJECT): 8 (O/S: 0)
+PSM HOME CENTRE SDN BHD [A/C I]: 1 (O/S: 0)
+VANTREX DEVELOPMENT SDN BHD (PROJECT): 2 (O/S: 0)
+FIRA VENTURE ENTERPRISE (PROJECT-CASH): 5 (O/S: 5)
+OSAKA HARDWARE SDN BHD [A/C I]: 6 (O/S: 6)
+CHARMANT HARDWARE SDN BHD [A/C I]: 3 (O/S: 3)
+PERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ [A/C I]: 7 (O/S: 7)
+J&Y WORLD HARDWARE SDN BHD [A/C I]: 3 (O/S: 3)
+SUNTHESIS SDN BHD (PROJECT - CASH): 3 (O/S: 0)
+EXACO MARKETING SDN BHD (PROJECT): 2 (O/S: 0)
+GALAK MAJU SDN BHD (POJECT-CASH): 1 (O/S: 0)
+HOME PRODUCT CENTER (MALAYSIA) SDN BHD: 2 (O/S: 0)
+JATI CERAMIC SDN BHD [PROJECT]: 3 (O/S: 0)
+
+Reply with a number for detail:
+1. Sales order list
+2. Delivery order list
+
+==== turn 3  branch_kind=business_query ====
+> 3
+
+That would search every delivery order we have - I need at least one filter to narrow it down. Give me an order number, transporter, customer, or date range, and I can look it up.
+
+==== turn 4  branch_kind=low_signal ====
+> 1
+
+Hi! How can I help today?
+
+==== turn 5  branch_kind=business_query ====
+> FULLSHUN sales order outstanding SRTWT7445
+
+Which customer do you mean? Please choose:
+1. FULLSHUN SANITARYWARE SDN BHD (SRT) - no DO
+2. FULLSHUN BATH CONCEPT SDN BHD (PROJECT) (SRT) - no DO
+
+None of these have a recent DO.
+
+==== turn 6  branch_kind=business_query ====
+> SRTWT02 outstanding both
+
+Customer: all customers
+Product: SRTWT02
+Dates: all dates
+
+Here's what you want:
+• product: SRTWT02 (+1 more)
+
+But no outstanding order matched these. Would you like me to escalate to *Sorento* customer service team?
+
+Please choose who to route to (reply with the number):
+1. Maryam Ariffin
+2. Cyndi
+3. Aisyah
+4. Balqis
+5. Niki
+6. Nurain
+
+If you have no preference, just reply 'yes' and we'll assign automatically.
+

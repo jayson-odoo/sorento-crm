@@ -111,6 +111,26 @@ def _order_status_bucket_filter(db, order_status: Optional[str]):
     return _outstanding_clause(delivered_status_ids)
 
 
+def resolve_warehouse_ids(db, warehouse_codes: Optional[list]) -> Optional[list]:
+    """Case-insensitive `warehouse_code` -> `id` resolution shared by the two
+    order-list routes and the outstanding-report route (AC-1112/AC-1121, one
+    resolver so the three cannot disagree on what a code resolves to).
+
+    `None` = no filter given (caller passed nothing). A list - possibly EMPTY,
+    when every code is unknown - filters to exactly those ids: an unknown code
+    narrows the result to nothing rather than being silently ignored.
+    """
+    codes = [str(c).strip() for c in (warehouse_codes or []) if str(c).strip()]
+    if not codes:
+        return None
+    rows = (
+        db.query(Warehouse.id)
+        .filter(func.lower(Warehouse.warehouse_code).in_([c.lower() for c in codes]))
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
 def _plain_number(v):
     """Decimal/float -> int when integral, else float. None stays None."""
     if v is None:
@@ -657,6 +677,7 @@ class OrderService:
         customer_ids: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         transporter_ids: Optional[list[str]] = None,
+        warehouse_codes: Optional[list[str]] = None,
         ids_only: bool = False,
         include_summary: bool = False,
     ):
@@ -835,6 +856,13 @@ class OrderService:
             filters.append(Order.actual_delivery_date.is_not(None))
         elif hadd == "no":
             filters.append(Order.actual_delivery_date.is_(None))
+
+        # AC-1121: an order qualifies when ANY of its lines sits at one of these
+        # warehouses - the same `.any()` shape `_product_uuid_filter` uses above,
+        # since `q` here is a plain `Order` query (no OrderLine join to filter directly).
+        warehouse_ids = resolve_warehouse_ids(self.db, warehouse_codes)
+        if warehouse_ids is not None:
+            filters.append(Order.lines.any(OrderLine.warehouse_id.in_(warehouse_ids)))
 
         # Date-range clauses are tracked apart from entity/scope clauses so the
         # date-axis relaxation (§3.4) can rebuild a customer-scoped query with the
@@ -1594,6 +1622,7 @@ class OrderService:
         product_ids: Optional[list[str]] = None,
         customer_ids: Optional[list[str]] = None,
         transporter_ids: Optional[list[str]] = None,
+        warehouse_codes: Optional[list[str]] = None,
         order_status: Optional[str] = None,
         include_summary: bool = False,
         include_pipeline: bool = False,
@@ -1660,6 +1689,13 @@ class OrderService:
                     ),
                 )
             )
+
+        # AC-1121: `q` already joins `OrderLine` (via `Order.lines`) to match the
+        # product, so this filters that SAME joined line - "this order's matching
+        # line is also at one of these warehouses" - not just "has some line" there.
+        warehouse_ids = resolve_warehouse_ids(self.db, warehouse_codes)
+        if warehouse_ids is not None:
+            q = q.filter(OrderLine.warehouse_id.in_(warehouse_ids))
 
         entity_buckets: Optional[EntityFilterBuckets] = None
         if entities:

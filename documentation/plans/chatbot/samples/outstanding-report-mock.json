@@ -1,0 +1,61 @@
+{
+  "product_code": "SRTWT7445",
+  "customer_name": null,
+  "location_token": "IB",
+  "warehouse_codes": ["BRW-IB", "MWH-IB"],
+  "order_date_from": "2026-01-01",
+  "order_date_to": "2026-12-31",
+  "so": {
+    "ordered_qty": 2411,
+    "transferred_qty": 0,
+    "outstanding_qty": 2411,
+    "so_count": 12,
+    "order_date_min": "2026-01-05",
+    "order_date_max": "2026-08-28"
+  },
+  "do": {
+    "do_qty": 640,
+    "delivered_qty": 0,
+    "pending_qty": 640,
+    "do_count": 3,
+    "do_date_min": "2026-02-03",
+    "do_date_max": "2026-08-30"
+  },
+  "so_by_location": [
+    {"code": "BRW-IB", "ordered_qty": 1200, "outstanding_qty": 1200},
+    {"code": "MWH-IB", "ordered_qty": 1211, "outstanding_qty": 1211}
+  ],
+  "so_by_customer": [
+    {"customer_name": "Dealer A Sdn Bhd", "ordered_qty": 900, "outstanding_qty": 900},
+    {"customer_name": "Dealer B Trading", "ordered_qty": 811, "outstanding_qty": 811},
+    {"customer_name": "Dealer C Hardware", "ordered_qty": 700, "outstanding_qty": 700}
+  ],
+  "do_by_location": [
+    {"code": "BRW-IB", "do_qty": 640, "pending_qty": 640}
+  ],
+  "do_by_customer": [
+    {"customer_name": "Dealer A Sdn Bhd", "do_qty": 640, "pending_qty": 640}
+  ],
+  "so_rows": [
+    {
+      "so_number": "SO331785",
+      "customer_name": "Dealer A Sdn Bhd",
+      "location": "BRW-BB",
+      "ordered_qty": 410,
+      "transferred_qty": 0,
+      "outstanding_qty": 410,
+      "order_date": "2024-12-20"
+    }
+  ],
+  "do_rows": [
+    {
+      "do_number": "DO220456",
+      "customer_name": "Dealer A Sdn Bhd",
+      "location": "BRW-IB",
+      "do_qty": 640,
+      "delivered_qty": 0,
+      "pending_qty": 640,
+      "do_date": "2026-02-03"
+    }
+  ]
+}

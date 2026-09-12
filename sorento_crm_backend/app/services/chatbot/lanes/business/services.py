@@ -400,6 +400,45 @@ def fetch_space_id(db: Session) -> str | None:
     return default_space_id(db)
 
 
+def resolve_warehouse_token(db: Session, token: str) -> list[str]:
+    """D5 (PLAN-chatbot-outstanding-report.md, S4 point 7): a token equal to a
+    `warehouse_code` (case-insensitive) resolves to that code ONLY (`BRW` -> `BRW`); a
+    token that is the suffix of one or more codes after the LAST `-` resolves to all of
+    them (`IB` -> `BRW-IB`, `MWH-IB`); a token matching neither resolves to nothing.
+    Reads the `warehouses` table, never a hard-coded list - the risk section measured
+    codes with `/` and no `-` at all (`SPARE/P`), which this simply never matches.
+
+    Runs on `db` under the ENGINE's own per-contact scope
+    (`app/services/chatbot/engine.py`'s `_scoped_factory`), same as every other
+    company-scoped read this turn makes (the product/customer resolution the generic
+    resolver runs on the SAME session). `warehouses` is `CompanyScopedMixin` like
+    `products`; there is no narrower argument for widening THIS read past the
+    contact's own company than there would be for widening the product lookup, and a
+    contact with no `respond_contact_companies` row already gets zero rows there too -
+    a genuinely UNMAPPED contact fails closed everywhere in the turn, not selectively.
+    """
+    from sqlalchemy import func
+
+    from app.models.inventory import Warehouse
+
+    word = (token or "").strip()
+    if not word:
+        return []
+    exact = (
+        db.query(Warehouse.warehouse_code)
+        .filter(func.lower(Warehouse.warehouse_code) == word.lower())
+        .first()
+    )
+    if exact:
+        return [exact[0]]
+    suffix = word.lower()
+    return [
+        code
+        for (code,) in db.query(Warehouse.warehouse_code).all()
+        if "-" in code and code.rsplit("-", 1)[-1].lower() == suffix
+    ]
+
+
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:
     """The bundle the engine uses. One session, bound at the call site.
 

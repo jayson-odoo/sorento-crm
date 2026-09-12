@@ -1,0 +1,71 @@
+lane switches before: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']
+lane switches for the run: enabled=True lanes=13
+
+--- turn 1  contact 437264483 ---
+> Srtwt7443 sales order outstanding for IB
+  branch_kind: business_query
+  reply.text: Product: SRTWT7443
+Customer: all
+Location: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)
+Order date: all
+
+*Sales order outstanding*
+Ordered: 3,545
+Transferred to DO: 15
+Outstanding: 3,530
+Sales orders: 17
+Order date range: 20/08/2024 to 03/08/2026
+*_By location_*
+BRW-IB: 3,545 (O/S: 3,530)
+*_By customer_*
+PEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)
+CHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)
+EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)
+KENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)
+APEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)
+CMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)
+IDEAL BATH SDN BHD: 497 (O/S: 482)
+
+Reply with a number for detail:
+1. Sales order list
+  send_message: Product: SRTWT7443
+Customer: all
+Location: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)
+Order date: all
+
+*Sales order outstanding*
+Ordered: 3,545
+Transferred to DO: 15
+Outstanding: 3,530
+Sales orders: 17
+Order date range: 20/08/2024 to 03/08/2026
+*_By location_*
+BRW-IB: 3,545 (O/S: 3,530)
+*_By customer_*
+PEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)
+CHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)
+EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)
+KENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)
+APEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)
+CMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)
+IDEAL BATH SDN BHD: 497 (O/S: 482)
+
+Reply with a number for detail:
+1. Sales order list
+  trace: tool=crm_outstanding_report args={"scope": "so", "date_mode": null, "is_active": null, "product_code": "SRTWT7443", "access_levels": [], "location_token": "IB", "warehouse_codes": ["WH3-IB", "MWH-IB", "DC1-IB", "BRW-IB", "RSW-IB"]}
+
+--- turn 2  contact 437264483 ---
+> SRTWT7445 outstanding in 2026
+  branch_kind: business_query
+  reply.text: Product: SRTWT7445
+Outstanding for which document?
+1. Sales orders (not yet transferred to DO)
+2. Delivery orders (not yet delivered)
+3. Both
+  send_message: Product: SRTWT7445
+Outstanding for which document?
+1. Sales orders (not yet transferred to DO)
+2. Delivery orders (not yet delivered)
+3. Both
+  trace: no tool call
+lane switches restored: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']

@@ -1,0 +1,17 @@
+console-check-1789246556  1 cases against http://127.0.0.1:8085  parser prompt pinned to version 8615d49a-42be-4090-95ea-aa8a6ea0ac81
+lane switches before: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']
+lane switches for the run: enabled=True lanes=13
+FAIL  outstanding report journey - SO direct ask, missing-scope question, both, detail, customer filter, miss branch=business_query  'Product: SRTWT02 Customer: all Location: all Order date: all  *Sales order outstanding* No open sales order.  *Delivery '
+      - turn 2: reply contains 'SRTWT7445-' and must not
+      - turn 2: pending kind is None, expected 'outstanding_scope'
+      - turn 3: reply does not contain '1. Sales order list'
+      - turn 3: reply does not contain '2. Delivery order list'
+      - turn 3: reply contains 'SRTWT7445-' and must not
+      - turn 3: pending kind is None, expected 'outstanding_detail'
+      - turn 4: reply does not contain 'SO Number:'
+      - turn 4: reply does not contain 'Ordered:'
+      - turn 4: reply does not contain 'Transferred to DO:'
+      - turn 4: reply does not contain 'Outstanding:'
+lane switches restored: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']
+
+0 passed, 1 failed  (console-check-1789246556)

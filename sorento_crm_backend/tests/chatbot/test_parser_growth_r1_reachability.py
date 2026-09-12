@@ -203,6 +203,137 @@ class TestBothPublishedBodiesCarryTheVocabulary:
 
 
 # --------------------------------------------------------------------------- #
+# PLAN-chatbot-outstanding-report.md S4 point 1 + the 13 Sep 2026 console check:
+# the outstanding vocabulary and the location cue, TAUGHT and PUBLISHED.
+# --------------------------------------------------------------------------- #
+
+
+class TestTheOutstandingVocabularyIsTaught:
+    @pytest.mark.parametrize("value", ["do_outstanding", "outstanding_both"])
+    def test_both_bodies_name_the_two_new_buckets(self, value: str) -> None:
+        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+            assert value in body, (
+                f"{value} is a bucket the report lane reads, and the model can only emit "
+                "what the published prompt teaches"
+            )
+
+    @pytest.mark.parametrize("token", ['"IB"', '"BB"', '"BRW"', '"BRW-IB"', '"MWH"'])
+    def test_the_location_token_cue_names_the_real_codes(self, token: str) -> None:
+        """Console check finding 1 (13 Sep 2026): the parser hinted "IB" in
+        "Srtwt7443 sales order outstanding for IB" as a CUSTOMER, so the turn ended in
+        the customer-disambiguation picker and never reached the report at all. The
+        order domain has to teach that a short upper-case token beside a product is a
+        location, the way `487_chatbot_warehouse_cue` taught the arrival cue."""
+        assert token in GROWTH_R1_ADDENDUM, (
+            f"{token} is not named as a location token anywhere in the prompt"
+        )
+
+    @pytest.mark.parametrize(
+        "token", ['"ACTS"', '"BRW-IB"', '"FULLSHUN"']
+    )
+    def test_the_cue_is_bounded_by_length_not_by_case(self, token: str) -> None:
+        """N7 (re-review): the first wording called any 2 to 8 letter upper-case token a
+        location, and FULLSHUN - a real one-word customer on the prod copy, which the
+        console check already saw mis-hinted - is eight letters. The rule is now bounded:
+        a short token (at most 4 characters) or a hyphenated site code (at most 10), and
+        a longer letters-only word is a CUSTOMER. All three examples must be named, so
+        the model sees the boundary from both sides."""
+        assert token in GROWTH_R1_ADDENDUM, (
+            f"{token} is not named in the location-token rule"
+        )
+
+    def test_a_long_one_word_token_is_taught_as_a_customer(self) -> None:
+        cue = GROWTH_R1_ADDENDUM[GROWTH_R1_ADDENDUM.index("A LOCATION") :]
+        fullshun = cue.index('"FULLSHUN"')
+        assert "customer" in cue[fullshun : fullshun + 200].lower(), (
+            "FULLSHUN must be named as a CUSTOMER example inside the location rule, or "
+            "the boundary is stated without the case that crossed it"
+        )
+
+    def test_the_cue_says_warehouse_and_rules_out_customer(self) -> None:
+        assert 'hint "warehouse"' in GROWTH_R1_ADDENDUM
+        assert "NEVER \"customer\"" in GROWTH_R1_ADDENDUM, (
+            "the rule has to say what the token is NOT: 'customer' is the hint the model "
+            "chose on its own, on both published prompt versions"
+        )
+
+
+def _alembic_heads_excluding(revision: str) -> set[str]:
+    """The alembic head(s) of the real script directory, computed with `revision`'s own
+    file taken out of the graph - which is what "the head this migration chains onto"
+    means. Read from the scripts on disk (`ScriptDirectory`), never from a literal, so a
+    re-parent onto a newer head keeps this test true."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    backend_root = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    revisions = list(ScriptDirectory.from_config(cfg).walk_revisions())
+
+    referenced: set[str] = set()
+    for rev in revisions:
+        if rev.revision == revision:
+            continue
+        down = rev.down_revision
+        for parent in (down if isinstance(down, (tuple, list)) else [down]):
+            if parent:
+                referenced.add(parent)
+    return {
+        rev.revision
+        for rev in revisions
+        if rev.revision != revision and rev.revision not in referenced
+    }
+
+
+class TestTheOutstandingVocabularyIsPublished:
+    """Console check finding 3: `ai_prompt_registry.render()` reads the PUBLISHED DB
+    row, and none of the 12 `chatbot_semantic_parser` versions carried
+    `do_outstanding` / `outstanding_both` - editing the Python constant reaches a live
+    customer NOWHERE. Publishing is a migration, the way 475 / 480 / 487 / 490 / 513
+    all do it."""
+
+    def _module(self):
+        import importlib.util
+
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "alembic"
+            / "versions"
+            / "514_chatbot_outstanding_vocab.py"
+        )
+        assert path.exists(), (
+            "no migration publishes the outstanding vocabulary, so it reaches no live "
+            "prompt version (console check finding 3)"
+        )
+        spec = importlib.util.spec_from_file_location("zzt_outstanding_vocab_migration", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_migration_publishes_both_bodies(self) -> None:
+        module = self._module()
+        assert callable(module.publish)
+        for text in (module._full_text(), module._slim_text()):
+            assert "do_outstanding" in text
+            assert "outstanding_both" in text
+            assert 'hint "warehouse"' in text
+
+    def test_the_revision_chains_onto_the_current_head(self) -> None:
+        """N3 (re-review): the head is READ, never spelled out. Pinning the literal meant
+        the pre-PR re-parent (`scripts/alembic-reparent.sh`, which flips `down_revision`
+        onto main's newest head) would fail this test for doing exactly its job - main
+        has already merged the two 513 heads since this migration was written."""
+        module = self._module()
+        assert len(module.revision) <= 32, module.revision
+        heads = _alembic_heads_excluding(module.revision)
+        assert module.down_revision in heads, (
+            f"the migration must chain onto a current head; down_revision="
+            f"{module.down_revision!r}, heads without this migration = {sorted(heads)}"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # AC-905: the SO bucket reaches the orders tool.
 # --------------------------------------------------------------------------- #
 

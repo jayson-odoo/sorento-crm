@@ -11,7 +11,7 @@ End-user documentation organised by department. The AI assistant is intended to 
 * `**[project-sales-admin/](./project-sales-admin/)**` - review submitted purchase requests / sponsorship forms and send them for approval.
 * `**[project-sales-manager/](./project-sales-manager/)**` - approve purchase requests / sponsorship forms via emailed token link, flow stock inquiries to purchasing.
 * `**[project-sales-rep/](./project-sales-rep/)**` - portal access (WhatsApp link + OTP) and how to file complaints / stock inquiries / purchase requests / sponsorship forms.
-* `**[system-management/](./system-management/)**` - admin/ops reference: operational logs and configuration tables (imports, integration logs, scheduled tasks, email/WhatsApp delivery, import column mappings), troubleshooting a failed notification, reading/retrying a chatbot turn trace, the chatbot's "last purchase cost" answer and the per-contact Field reveal that gates it, and the AutoCount integration contract.
+* `**[system-management/](./system-management/)**` - admin/ops reference: operational logs and configuration tables (imports, integration logs, scheduled tasks, email/WhatsApp delivery, import column mappings), troubleshooting a failed notification, reading/retrying a chatbot turn trace, the chatbot's "last purchase cost" answer and the per-contact Field reveal that gates it, the chatbot's outstanding report (sales order backlog vs delivery order pending) and its own Field reveal gate, and the AutoCount integration contract.
 * `**[supply-chain/](./supply-chain/)**` - uploading the sales order book, purchase order book, Order Inquiry sheet and reorder-level listing that a reorder plan is built from; running a reorder plan and confirming decisions; printing the order summary sheet; deciding Buy vs Borrow on Fulfilment Planning.
 
 ## Conventions
@@ -36,7 +36,7 @@ UI labels (menu items, page titles, button text, dialog titles) are quoted **ver
 * ✅ Project Sales Admin - drafted (review PR, review Sponsorship Form).
 * ✅ Project Sales Manager - drafted (approve via email, flow stock inquiry).
 * ✅ Project Sales Rep - drafted (portal overview, submit via portal).
-* ✅ System Management - drafted (operational data reference, troubleshoot failed notifications, chatbot turn trace + retry, chatbot "last purchase cost" answer + Field reveal gate, AutoCount integration contract, import column mappings).
+* ✅ System Management - drafted (operational data reference, troubleshoot failed notifications, chatbot turn trace + retry, chatbot "last purchase cost" answer + Field reveal gate, chatbot outstanding report (sales order backlog / delivery order pending) + its Field reveal gate, AutoCount integration contract, import column mappings).
 * ✅ Supply Chain - drafted (upload sales orders / purchase orders / order inquiry sheet / reorder levels; sales & purchase history uploads retired in favour of the AutoCount integration; run a reorder plan; print the order summary; Buy/borrow decisions on Fulfilment Planning, including the Local pill and the borrow-source Location table).
 
 ## Source-of-truth notes

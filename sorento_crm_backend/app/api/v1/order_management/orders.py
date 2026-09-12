@@ -10,7 +10,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
+from app.dependencies import (
+    get_current_user,
+    get_current_user_or_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.services.order_service import OrderService, stamp_so_outstanding_rows
 from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
@@ -279,6 +284,7 @@ from app.schemas.order import (
     BulkDeleteOrderLinesRequest,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, ValidateImportResponse
+from app.schemas.order_management import OutstandingReportResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -331,6 +337,14 @@ async def get_orders(
     transporter_query: Optional[str] = Query(
         None,
         description="Partial transporter filter (matches Order.transporter, case-insensitive).",
+    ),
+    warehouse_codes: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Exact warehouse codes (csv/JSON/repeated), case-insensitive. An order "
+            "qualifies when ANY of its lines sits at one of these warehouses. A code "
+            "that matches no warehouse filters to nothing (AC-1121)."
+        ),
     ),
     customer_id: Optional[str] = Query(None),
     order_status_id: Optional[str] = Query(None),
@@ -513,6 +527,7 @@ async def get_orders(
             customer_ids=_resolved_customer_ids,
             product_ids=_resolved_product_ids,
             transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
+            warehouse_codes=_normalize_entities(warehouse_codes),
             customer_query=customer_query,
             product_query=product_query,
             transporter_query=transporter_query,
@@ -724,6 +739,14 @@ async def get_orders_by_product(
             "Legacy - one or more product_codes/SKUs (still resolves fuzzy). Prefer `product_ids`."
         ),
     ),
+    warehouse_codes: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Exact warehouse codes (csv/JSON/repeated), case-insensitive. Filters to the "
+            "SAME line that matched the product narrower. A code that matches no "
+            "warehouse filters to nothing (AC-1121)."
+        ),
+    ),
     has_actual_delivery_date: Optional[str] = Query(
         None,
         description="Filter by actual delivery date: 'yes' = has date, 'no' = missing date, omit = all",
@@ -830,6 +853,7 @@ async def get_orders_by_product(
             product_ids=parsed_product_ids,
             customer_ids=parse_uuid_list(customer_ids, param_name="customer_ids"),
             transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
+            warehouse_codes=_normalize_entities(warehouse_codes),
             customer_query=customer_query,
             product_query=product_query,
             product_id=product_id,
@@ -1349,3 +1373,151 @@ async def import_delivery_order_detail(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+# ---------------------------------------------------------------------------
+# outstanding report - a SEPARATE router, no prefix (mounted directly by
+# `app/api/v1/order_management/__init__.py`), because the plan/UAC pin the
+# path at `/order-management/outstanding-report`, not
+# `/order-management/orders/outstanding-report` - `router` above is mounted
+# with `prefix="/orders"` and every other endpoint in this file lives under
+# that prefix on purpose (they are order rows; this is a report).
+# ---------------------------------------------------------------------------
+outstanding_report_router = APIRouter()
+
+
+@outstanding_report_router.get("/outstanding-report", response_model=OutstandingReportResponse)
+async def get_outstanding_report(
+    product_code: str = Query(..., description="Exact product code, case-insensitive (AC-1119). No sibling-code expansion."),
+    scope: str = Query(
+        "both",
+        description="Which block(s) to compute: so | do | both (default both).",
+    ),
+    customer_query: Optional[str] = Query(
+        None,
+        description="Partial match on customers.customer_name (ILIKE) ONLY - never debtor/customer code (D7).",
+    ),
+    customer_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical customer UUIDs (csv/JSON/repeated) - the chatbot's resolved "
+            "customer entity (AC-1113b). Intersects with customer_query when both are given."
+        ),
+    ),
+    warehouse_codes: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Exact warehouse codes (csv/JSON/repeated), case-insensitive. Location TOKEN "
+            "resolution (e.g. an 'IB' suffix matching several codes) happens in the caller, "
+            "not here - this route only matches the exact codes it is given."
+        ),
+    ),
+    order_date_from: Optional[str] = Query(
+        None,
+        description=(
+            "Filters SO rows on sales_orders.order_date and DO rows on orders.order_date. "
+            "Same flexible formats as the orders list route. Never actual_delivery_date on "
+            "this route - a pending DO by definition has none."
+        ),
+    ),
+    order_date_to: Optional[str] = Query(None, description="Same flexible formats as order_date_from."),
+    detail: Optional[str] = Query(
+        None,
+        description=(
+            "so | do - MCP-layer directive only (S4 point 5, AC-1114b): when set, "
+            "view=render swaps the two-block report for the numbered detail list of that "
+            "scope. This route's own computation is unchanged by it - the value is only "
+            "echoed onto the response body so the MCP presenter can read it."
+        ),
+    ),
+    location_token: Optional[str] = Query(
+        None,
+        max_length=32,
+        description=(
+            "The raw location word the caller resolved into warehouse_codes (e.g. 'IB'). "
+            "ECHO ONLY (AC-1105): this route never resolves or filters on it - it rides "
+            "back on the body so the rendered header can read 'IB (BRW-IB, MWH-IB)' "
+            "instead of repeating the codes with no word beside them."
+        ),
+    ),
+    so_refused: bool = Query(
+        False,
+        description=(
+            "ECHO ONLY (D13/AC-1141): the caller withheld the SO scope because the "
+            "contact lacks the sales_orders.outstanding field reveal. Echoed onto the "
+            "body so the rendered reply names the withheld half, between the header and "
+            "the DO block. Filtering is unaffected - the caller sends scope=do."
+        ),
+    ),
+    current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
+    db: Session = Depends(get_db),
+):
+    """SO backlog + DO pending for one product (`documentation/plans/chatbot/
+    PLAN-chatbot-outstanding-report.md`, AC-1110 to AC-1119).
+
+    `so` / `do` is omitted from the body entirely when its scope was not asked
+    (AC-1117) - `response_model` is declared for the OpenAPI schema and to
+    validate every other declared field is present, but the actual response is
+    built by hand (bypassing FastAPI's automatic serialization, the same
+    pattern `get_orders` above uses for its `alternatives`/`groups` payloads)
+    so that omission is possible: a null `so_count: 0` and a MISSING `so` key
+    are different states the chatbot presenter must tell apart.
+    """
+    from app.services.error_handler import AppException
+    from app.services.outstanding_report_service import outstanding_report
+
+    scope = (scope or "both").strip().lower()
+    if scope not in ("so", "do", "both"):
+        raise AppException(
+            422,
+            f"Unknown scope value '{scope}'",
+            detail="allowed: so, do, both",
+            code="invalid_scope",
+        )
+
+    # S3 (security review, 13 Sep 2026): `customer_ids` is a UUID param like every
+    # other `<entity>_ids` in this file (`_resolved_customer_ids = parse_uuid_list(...)`
+    # a few routes up) - `_normalize_entities` is for opaque strings (warehouse codes),
+    # and accepted a non-UUID value silently here where `outstanding_report_service`
+    # would then filter on it and just find nothing, rather than 400 on the caller's
+    # own malformed input. Both lists are capped at 50 - an unbounded IN (...) from an
+    # external caller is an easy way to make this route's own two base queries slow.
+    resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+    resolved_warehouse_codes = _normalize_entities(warehouse_codes)
+    for values, name in (
+        (resolved_customer_ids, "customer_ids"),
+        (resolved_warehouse_codes, "warehouse_codes"),
+    ):
+        if values is not None and len(values) > 50:
+            raise AppException(
+                422,
+                f"Too many values for '{name}' (max 50)",
+                detail=f"got {len(values)}",
+                code="too_many_values",
+            )
+
+    data = outstanding_report(
+        db,
+        product_code=product_code,
+        scope=scope,
+        customer_query=customer_query,
+        customer_ids=resolved_customer_ids,
+        warehouse_codes=resolved_warehouse_codes,
+        order_date_from=_parse_flex_date(order_date_from),
+        order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
+    )
+    validated = OutstandingReportResponse(**data)
+    body = validated.model_dump(mode="json")
+    if data.get("so") is None:
+        body.pop("so", None)
+    if data.get("do") is None:
+        body.pop("do", None)
+    if detail in ("so", "do"):
+        body["detail"] = detail
+    # Echo-only, same contract as `detail` above: read by the MCP presenter
+    # (`sorento_crm_mcp/presenters.py::_outstanding_report`), never by this route.
+    if location_token:
+        body["location_token"] = location_token.strip()
+    if so_refused:
+        body["so_refused"] = True
+    return JSONResponse(content=body)

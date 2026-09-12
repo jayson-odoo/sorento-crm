@@ -496,17 +496,33 @@ DIVERGENCES: list[Divergence] = [
     # annotator's message onward, so these two exit-arm captures move on exactly the
     # one field and nothing else (measured - `gate_clarification` is byte-equal,
     # because the whole-sub replay is fed the CAPTURED gate rather than re-running
-    # `run_gate`).
+    # `run_gate`). PLAN-chatbot-outstanding-report.md, S4 point 7, ADDS a second,
+    # unrelated field to the same two captures: `ALLOWED["order"]` gained "warehouse",
+    # so this whole-sub body's four `allowed_lookup` echoes (measured: `gate_debug`,
+    # `gate.gate_debug`, `ctx_resolved.gate_debug`, `ctx_resolved.ctx.gate.gate_debug`)
+    # each list one more type than a capture taken before that change - the same class
+    # AC-1 already registers for the plain node replays, but THIS entry (being
+    # fixture-specific) is the one `find()` returns first for these two names, so it
+    # needs the same four paths added here rather than relying on AC-1's blanket entry
+    # ever being reached.
     *(
         Divergence(
             node="sub-resolve-and-gate",
             fixture=name,
-            hazard="owner ruling A (console pass 3, 6 Sep 2026)",
+            hazard="owner ruling A (console pass 3, 6 Sep 2026) + AC-1 (allowed_lookup)",
             reason=(
                 "the exit arm carries the customer picker's own '- has DO' / '- no DO' "
-                "message. Field-scoped to `escalate_message`."
+                "message (field-scoped to `escalate_message`), and separately "
+                "`ALLOWED['order']` gaining 'warehouse' (S4 point 7) adds one more type "
+                "to every `allowed_lookup` echo in this whole-sub body."
             ),
-            strip_paths=(("escalate_message",),),
+            strip_paths=(
+                ("escalate_message",),
+                ("gate_debug", "allowed_lookup"),
+                ("gate", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+            ),
         )
         for name in ("rg-15114061", "rg-15125764")
     ),
@@ -676,6 +692,18 @@ DIVERGENCES: list[Divergence] = [
             # the carried pair. Same class as the five above - a key no capture can
             # contain, because `sub-resolve-and-gate` has no equivalent arm at all.
             ("output", "bare_member_offer_entity_resolved"),
+            # S4 points 3/4/5 (PLAN-chatbot-outstanding-report.md): the same class again.
+            # `_apply_outstanding_pending` stamps these when it resolves (or fails to
+            # resolve) an OPEN `outstanding_scope` / `outstanding_detail` ask -
+            # `outstanding_scope_ask_candidate` (a bare "outstanding" + product, before
+            # any grant check), `outstanding_reask_filters` (an out-of-range scope
+            # answer), `outstanding_carried_customer_ids` and `outstanding_detail_pick`
+            # (the scope/detail answer's restored filters and pick). n8n has none of
+            # this mechanism, so no capture predating this plan can carry any of them.
+            ("output", "outstanding_scope_ask_candidate"),
+            ("output", "outstanding_reask_filters"),
+            ("output", "outstanding_carried_customer_ids"),
+            ("output", "outstanding_detail_pick"),
         ),
     ),
     # A7 (chatbot-growth-r1, AC-921/AC-922): `crossdomain_render`'s `_xdBlock` gained three

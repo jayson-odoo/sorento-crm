@@ -1,0 +1,7 @@
+console-check-1789248064  1 cases against http://127.0.0.1:8085  parser prompt pinned to version 8615d49a-42be-4090-95ea-aa8a6ea0ac81
+lane switches before: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']
+lane switches for the run: enabled=True lanes=13
+PASS  outstanding report journey - SO direct ask, missing-scope question, both, detail, customer filter, miss branch=business_query  'Product: SRTWT02 Customer: all Location: all Order date: all  *Sales order outstanding* No open sales order.  *Delivery '
+lane switches restored: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']
+
+1 passed, 0 failed  (console-check-1789248064)

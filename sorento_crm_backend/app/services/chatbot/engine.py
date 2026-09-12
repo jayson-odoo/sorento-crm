@@ -1529,6 +1529,12 @@ def _run_stages(  # noqa: PLR0915
                             dry_run=dry_run,
                             space_id=business_services.fetch_space_id(db),
                             trace=turn_trace,
+                            # S4c (PLAN-chatbot-outstanding-report.md): the live Session,
+                            # for `crm_outstanding_report`'s own location resolution
+                            # (D5, AC-1133) - the one thing `FetchServices` does not
+                            # already carry, since every OTHER seam it needs is an
+                            # I/O callable, not a Session.
+                            db=db,
                         )
                     except Exception as fetch_error:  # noqa: BLE001 - shadow, like above
                         logger.exception("chatbot turn %s: fetch step failed", turn_id)
