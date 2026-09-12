@@ -137,10 +137,14 @@ def _link(bind, entity_type: str, entity_id: str, source_ref: str) -> None:
 
 
 def _company_id_of(bind, source_ref: str):
-    return bind.execute(
+    """A `str`, never a `uuid.UUID` - callers compare it with the `str` ids
+    every helper in this file seeds with, and psycopg2 hands raw `uuid`
+    columns back as `uuid.UUID` objects."""
+    value = bind.execute(
         text("SELECT company_id FROM integration_references WHERE source_ref = :r"),
         {"r": source_ref},
     ).scalar()
+    return str(value) if value is not None else None
 
 
 def _ref_exists(bind, source_ref: str) -> bool:

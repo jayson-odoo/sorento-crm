@@ -98,7 +98,8 @@ class TestScopedConstructorAndPredicate:
             ),
             {"r": source_ref},
         ).scalar()
-        assert stored == DEFAULT_COMPANY_ID
+        # Raw SQL comes back a uuid.UUID, not the str this fixture holds.
+        assert str(stored) == DEFAULT_COMPANY_ID
 
     def test_a_shared_sales_agent_link_stores_null_company_id(self, db):
         agent = SalesAgent(sales_agent=f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
@@ -175,7 +176,9 @@ class TestPerCompanyUniqueness:
             ),
             {"r": source_ref},
         ).mappings().all()
-        by_company = {row["company_id"]: row["entity_id"] for row in rows}
+        # company_id comes back a uuid.UUID; key on str() to compare with the
+        # fixture's own str ids.
+        by_company = {str(row["company_id"]): row["entity_id"] for row in rows}
         assert by_company.get(DEFAULT_COMPANY_ID) == str(a_product.id)
         assert by_company.get(company_b) == str(b_product.id)
 

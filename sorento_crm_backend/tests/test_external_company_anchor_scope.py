@@ -293,7 +293,9 @@ def _link_in_company_b(env, code: str):
 
     theirs = env.warehouse(code, env.company_b)
     source_ref = f"{MARKER}-XREF-{uuid.uuid4().hex[:8]}"
-    IntegrationReferenceService(env.db).link(
+    # Anchored to B: plan D14 is strict, so the constructor's own anchor is
+    # what gets stored, never inferred from the row being linked.
+    IntegrationReferenceService(env.db, company_id=env.company_b).link(
         entity_type="warehouses", entity_id=str(theirs.id), source_ref=source_ref
     )
     return theirs, source_ref
@@ -548,9 +550,20 @@ def test_a_source_ref_linked_in_another_company_creates_a_new_row_in_this_one(en
     code = f"{MARKER}-A19-{uuid.uuid4().hex[:6]}"
     theirs = env.product(code, env.company_b)
     source_ref = f"{MARKER}-XREF-{uuid.uuid4().hex[:8]}"
-    IntegrationReferenceService(env.db).link(
+    # Anchored to B: plan D14 is strict, so the constructor's own anchor is
+    # what gets stored, never inferred from the row being linked.
+    IntegrationReferenceService(env.db, company_id=env.company_b).link(
         entity_type="products", entity_id=str(theirs.id), source_ref=source_ref
     )
+
+    # Before the push: under A, this ref resolves to nothing - the same
+    # answer as one that was never linked at all.
+    before_read = env.client.post(
+        "/api/v1/external/read/products",
+        json={"companyCode": env.company_a_code, "source_refs": [source_ref]},
+    )
+    assert before_read.status_code == 200, before_read.text
+    assert source_ref in before_read.json()["not_found"], before_read.text
 
     res = env.client.post(
         INGEST_PRODUCTS,
@@ -589,14 +602,16 @@ def test_a_source_ref_linked_in_another_company_creates_a_new_row_in_this_one(en
     new_id = str(by_company[env.company_a]["id"])
     assert new_id != str(theirs.id)
 
-    # Second half of AC-19: under A, a read for a ref that resolves only in B
-    # is not_found - the same answer as a ref that was never linked at all.
-    read_res = env.client.post(
+    # After the push: the ingest linked this source_ref to the NEW row it
+    # just created in A, so a read under A now finds it - the ref did not
+    # start resolving to B's row, it started resolving to A's own new one.
+    after_read = env.client.post(
         "/api/v1/external/read/products",
         json={"companyCode": env.company_a_code, "source_refs": [source_ref]},
     )
-    assert read_res.status_code == 200, read_res.text
-    assert source_ref in read_res.json()["not_found"], read_res.text
+    assert after_read.status_code == 200, after_read.text
+    assert after_read.json()["not_found"] == [], after_read.text
+    assert after_read.json()["records"][0]["entity_id"] == new_id, after_read.text
 
 
 def test_read_reports_another_companys_row_as_not_found(env):

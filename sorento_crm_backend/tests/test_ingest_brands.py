@@ -98,10 +98,13 @@ class _Env:
     def __init__(self, client: TestClient, db):
         self.client = client
         self.db = db
-        self.refs = IntegrationReferenceService(db)
+        self.company_a = DEFAULT_COMPANY_ID
+        # Anchored to A: every direct `.refs.` call this fixture makes links
+        # or resolves a `brands` reference seeded into company_a - plan D14 is
+        # strict, so an unanchored call on a scoped type now raises ValueError.
+        self.refs = IntegrationReferenceService(db, company_id=self.company_a)
 
         suffix = uuid.uuid4().hex[:8]
-        self.company_a = DEFAULT_COMPANY_ID
         other = Company(id=str(uuid.uuid4()), name=f"{MARKER} B {suffix}", code=f"ZBR{suffix}")
         db.add(other)
         db.flush()
@@ -600,12 +603,16 @@ class TestDeletionsAC12:
         brand_row = env.row(row.id)
         assert brand_row is not None
         assert brand_row["is_active"] is False
-        still_there = env.db.execute(
-            text(
-                "SELECT 1 FROM projects.brands WHERE project_id = :p AND brand_id = :b"
-            ),
-            {"p": str(project.id), "b": str(row.id)},
-        ).first()
+        # ORM, not schema-qualified raw SQL: `projects.brands` in a raw text()
+        # string resolves against the REAL projects schema, not blank_session's
+        # translated scratch one, so a bare-string query would silently read
+        # (and find nothing in) production. The ORM class maps onto whatever
+        # schema the current session's translate map points ProjectBrand at.
+        still_there = (
+            env.db.query(ProjectBrand)
+            .filter_by(project_id=project.id, brand_id=row.id)
+            .first()
+        )
         assert still_there is not None
 
     def test_an_unknown_ref_is_not_found(self, env):

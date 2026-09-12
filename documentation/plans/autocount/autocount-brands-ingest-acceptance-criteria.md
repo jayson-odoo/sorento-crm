@@ -74,10 +74,11 @@ entities and is not re-tested here.
 - **AC-19 [T]** BL-056 end to end: a products ref linked in company B, pushed under company A ->
   `created`, a new row in A, B's row and reference untouched. `POST /external/read/products` under A
   for a ref linked only in B -> `not_found`. (Replaces AC-A1-7 in `test_external_company_anchor_scope.py`.)
-- **AC-19b [T]** A sales-order push under A whose `customer_ref` (or a line's `product_ref`) is linked
-  only in B -> `retryable`, with that field named in `errors`; nothing written. (Replaces the
-  "outside this company anchor" `failed` verdicts in `test_ingest_documents.py:782-800, :883` and
-  `test_ingest_documents_v2_resolution.py:460, :475`.) Deletions under A of a ref linked only in B
+- **AC-19b [T]** Documents: a header `source_ref` linked only in B, pushed under A -> `created` (new
+  header row in A, B untouched; `test_ingest_documents.py:782-800`). A ladder ref (`customer_ref`,
+  `supplier_ref`, a line's `product_ref`) linked only in B -> `retryable`, with that field named in
+  `errors`, nothing written (`test_ingest_documents.py:883`, `test_ingest_documents_v2_resolution.py:460,
+  :475`). All four replace the old "outside this company anchor" `failed` verdicts. Deletions under A of a ref linked only in B
   stay `not_found` (`test_ingest_deletions.py:435` unchanged).
 - **AC-20 [T]** Shared agents: `agent:X` pushed under SRT then under MOCHA -> `created` then `updated`,
   one `sales_agents` row, one reference with NULL `company_id`.

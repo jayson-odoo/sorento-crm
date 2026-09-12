@@ -119,10 +119,14 @@ class _Env:
     def __init__(self, client: TestClient, db):
         self.client = client
         self.db = db
-        self.refs = IntegrationReferenceService(db)
+        self.company_a = DEFAULT_COMPANY_ID
+        # Anchored to A: every seed helper below defaults to company_a, and a
+        # company-scoped `link`/`resolve` with no anchor now raises ValueError
+        # (plan D14, strict). A helper seeding into B constructs its OWN
+        # anchored instance instead of reusing this one - see `_link`.
+        self.refs = IntegrationReferenceService(db, company_id=self.company_a)
 
         suffix = uuid.uuid4().hex[:8]
-        self.company_a = DEFAULT_COMPANY_ID
         other = Company(id=str(uuid.uuid4()), name=f"{MARKER} B {suffix}", code=f"ZD{suffix}")
         db.add(other)
         db.flush()
@@ -153,9 +157,21 @@ class _Env:
         db.commit()
 
     # ------------------------------------------------------------- seed helpers
-    def _link(self, entity_type: str, entity_id: str, stem: str) -> str:
+    def _link(self, entity_type: str, entity_id: str, stem: str, *, company_id: str = None) -> str:
+        """Link through the anchor the row actually belongs to.
+
+        `self.refs` is anchored to company_a; a row seeded into company_b (or
+        any other company) needs its OWN anchored instance - plan D14 is
+        strict, so the constructor's anchor is what gets stored, not the
+        entity's own company (see `_anchor_for_link`).
+        """
         source_ref = _ref(stem)
-        self.refs.link(entity_type=entity_type, entity_id=str(entity_id), source_ref=source_ref)
+        svc = (
+            self.refs
+            if company_id is None or company_id == self.company_a
+            else IntegrationReferenceService(self.db, company_id=company_id)
+        )
+        svc.link(entity_type=entity_type, entity_id=str(entity_id), source_ref=source_ref)
         return source_ref
 
     def link_product(self, company_id: str) -> str:
@@ -169,7 +185,7 @@ class _Env:
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("products", row.id, "ITEM")
+        return self._link("products", row.id, "ITEM", company_id=company_id)
 
     def link_warehouse(self, company_id: str) -> str:
         row = Warehouse(
@@ -181,7 +197,7 @@ class _Env:
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("warehouses", row.id, "LOC")
+        return self._link("warehouses", row.id, "LOC", company_id=company_id)
 
     def link_customer(self, company_id: str) -> str:
         row = Customer(
@@ -191,7 +207,7 @@ class _Env:
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("customers", row.id, "DEBTOR")
+        return self._link("customers", row.id, "DEBTOR", company_id=company_id)
 
     def link_supplier(self, company_id: str) -> str:
         row = Supplier(
@@ -201,7 +217,7 @@ class _Env:
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("suppliers", row.id, "CREDITOR")
+        return self._link("suppliers", row.id, "CREDITOR", company_id=company_id)
 
     def loading_plan_line(self, po_line_id: str) -> str:
         """A `scm.loading_plan_line` pointing at a purchase-order LINE.
@@ -796,7 +812,10 @@ class TestAdoption:
         env.db.add(theirs)
         env.db.flush()
         source_ref = _ref("SO")
-        env.refs.link(
+        # env.refs is anchored to company_a; theirs belongs to company_b, so
+        # linking it through env.refs would store company_a as the anchor
+        # (D14: the constructor's anchor wins, never the entity's own row).
+        IntegrationReferenceService(env.db, company_id=env.company_b).link(
             entity_type="sales_orders", entity_id=str(theirs.id), source_ref=source_ref
         )
 
@@ -813,7 +832,8 @@ class TestAdoption:
             .mappings()
             .all()
         )
-        new_rows = [r for r in rows if r["company_id"] == env.company_a]
+        # company_id comes back a uuid.UUID; compare with str() on both sides.
+        new_rows = [r for r in rows if str(r["company_id"]) == env.company_a]
         assert len(new_rows) == 1, "exactly one new header must land in A"
 
         # B's row is untouched - same id, same status, no lines stolen.
@@ -821,7 +841,7 @@ class TestAdoption:
             text("SELECT company_id, status FROM sales_orders WHERE id = :i"),
             {"i": str(theirs.id)},
         ).mappings().first()
-        assert b_row["company_id"] == env.company_b
+        assert str(b_row["company_id"]) == env.company_b
         assert env.so_lines(theirs.id) == []
 
 
@@ -904,8 +924,8 @@ class TestUnresolvedReferences:
         YET` already gets, so it is `retryable`, named in `errors`, and
         nothing is written.
         """
-        before = env.counts()
         foreign_customer = env.link_customer(env.company_b)
+        before = env.counts()
         record = _so_record(env, customer_ref=foreign_customer)
 
         res = env.post(INGEST_SO, [record])
