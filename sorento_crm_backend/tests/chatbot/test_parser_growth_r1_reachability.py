@@ -236,6 +236,34 @@ class TestTheOutstandingVocabularyIsTaught:
         )
 
 
+def _alembic_heads_excluding(revision: str) -> set[str]:
+    """The alembic head(s) of the real script directory, computed with `revision`'s own
+    file taken out of the graph - which is what "the head this migration chains onto"
+    means. Read from the scripts on disk (`ScriptDirectory`), never from a literal, so a
+    re-parent onto a newer head keeps this test true."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    backend_root = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    revisions = list(ScriptDirectory.from_config(cfg).walk_revisions())
+
+    referenced: set[str] = set()
+    for rev in revisions:
+        if rev.revision == revision:
+            continue
+        down = rev.down_revision
+        for parent in (down if isinstance(down, (tuple, list)) else [down]):
+            if parent:
+                referenced.add(parent)
+    return {
+        rev.revision
+        for rev in revisions
+        if rev.revision != revision and rev.revision not in referenced
+    }
+
+
 class TestTheOutstandingVocabularyIsPublished:
     """Console check finding 3: `ai_prompt_registry.render()` reads the PUBLISHED DB
     row, and none of the 12 `chatbot_semantic_parser` versions carried
@@ -270,9 +298,17 @@ class TestTheOutstandingVocabularyIsPublished:
             assert 'hint "warehouse"' in text
 
     def test_the_revision_chains_onto_the_current_head(self) -> None:
+        """N3 (re-review): the head is READ, never spelled out. Pinning the literal meant
+        the pre-PR re-parent (`scripts/alembic-reparent.sh`, which flips `down_revision`
+        onto main's newest head) would fail this test for doing exactly its job - main
+        has already merged the two 513 heads since this migration was written."""
         module = self._module()
         assert len(module.revision) <= 32, module.revision
-        assert module.down_revision == "513_chatbot_parser_last_cost", module.down_revision
+        heads = _alembic_heads_excluding(module.revision)
+        assert module.down_revision in heads, (
+            f"the migration must chain onto a current head; down_revision="
+            f"{module.down_revision!r}, heads without this migration = {sorted(heads)}"
+        )
 
 
 # --------------------------------------------------------------------------- #
