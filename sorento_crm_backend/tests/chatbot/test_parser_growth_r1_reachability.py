@@ -203,6 +203,79 @@ class TestBothPublishedBodiesCarryTheVocabulary:
 
 
 # --------------------------------------------------------------------------- #
+# PLAN-chatbot-outstanding-report.md S4 point 1 + the 13 Sep 2026 console check:
+# the outstanding vocabulary and the location cue, TAUGHT and PUBLISHED.
+# --------------------------------------------------------------------------- #
+
+
+class TestTheOutstandingVocabularyIsTaught:
+    @pytest.mark.parametrize("value", ["do_outstanding", "outstanding_both"])
+    def test_both_bodies_name_the_two_new_buckets(self, value: str) -> None:
+        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+            assert value in body, (
+                f"{value} is a bucket the report lane reads, and the model can only emit "
+                "what the published prompt teaches"
+            )
+
+    @pytest.mark.parametrize("token", ['"IB"', '"BB"', '"BRW"', '"BRW-IB"', '"MWH"'])
+    def test_the_location_token_cue_names_the_real_codes(self, token: str) -> None:
+        """Console check finding 1 (13 Sep 2026): the parser hinted "IB" in
+        "Srtwt7443 sales order outstanding for IB" as a CUSTOMER, so the turn ended in
+        the customer-disambiguation picker and never reached the report at all. The
+        order domain has to teach that a short upper-case token beside a product is a
+        location, the way `487_chatbot_warehouse_cue` taught the arrival cue."""
+        assert token in GROWTH_R1_ADDENDUM, (
+            f"{token} is not named as a location token anywhere in the prompt"
+        )
+
+    def test_the_cue_says_warehouse_and_rules_out_customer(self) -> None:
+        assert 'hint "warehouse"' in GROWTH_R1_ADDENDUM
+        assert "NEVER \"customer\"" in GROWTH_R1_ADDENDUM, (
+            "the rule has to say what the token is NOT: 'customer' is the hint the model "
+            "chose on its own, on both published prompt versions"
+        )
+
+
+class TestTheOutstandingVocabularyIsPublished:
+    """Console check finding 3: `ai_prompt_registry.render()` reads the PUBLISHED DB
+    row, and none of the 12 `chatbot_semantic_parser` versions carried
+    `do_outstanding` / `outstanding_both` - editing the Python constant reaches a live
+    customer NOWHERE. Publishing is a migration, the way 475 / 480 / 487 / 490 / 513
+    all do it."""
+
+    def _module(self):
+        import importlib.util
+
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "alembic"
+            / "versions"
+            / "514_chatbot_outstanding_vocab.py"
+        )
+        assert path.exists(), (
+            "no migration publishes the outstanding vocabulary, so it reaches no live "
+            "prompt version (console check finding 3)"
+        )
+        spec = importlib.util.spec_from_file_location("zzt_outstanding_vocab_migration", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_migration_publishes_both_bodies(self) -> None:
+        module = self._module()
+        assert callable(module.publish)
+        for text in (module._full_text(), module._slim_text()):
+            assert "do_outstanding" in text
+            assert "outstanding_both" in text
+            assert 'hint "warehouse"' in text
+
+    def test_the_revision_chains_onto_the_current_head(self) -> None:
+        module = self._module()
+        assert len(module.revision) <= 32, module.revision
+        assert module.down_revision == "513_chatbot_parser_last_cost", module.down_revision
+
+
+# --------------------------------------------------------------------------- #
 # AC-905: the SO bucket reaches the orders tool.
 # --------------------------------------------------------------------------- #
 
