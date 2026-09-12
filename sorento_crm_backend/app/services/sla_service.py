@@ -5082,10 +5082,11 @@ class ConversationSLATrackingService:
                 return
 
             state = get_for_contact(self.db, respond_io_id=str(respond_io_id))
-            # The engine stores the dialogue state one level in, under `variables`; a
-            # state written through the external endpoint is flat. Clear whichever shape
-            # is there rather than imposing one, so a close never reshapes a session the
-            # engine is about to read.
+            # The dialogue state lives one level in, under `variables`, and every writer
+            # says so now - the external endpoint included (AC-1034). Clear whichever
+            # shape is THERE rather than imposing one anyway: a contact whose row was
+            # written flat by the old endpoint still has to be closeable, and a close must
+            # never reshape a session the engine is about to read.
             target = state.get("variables") if isinstance(state.get("variables"), dict) else state
             if target.get("focus") is None and target.get("open_question") is None:
                 return  # already clear: nothing to write, and the write is not free
