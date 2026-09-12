@@ -144,6 +144,8 @@ class TestEntityTypeAllowlist:
             "picking_lines",
             "orders",
             "order_lines",
+            # autocount-brands-ingest AC-15: brands joined the ingest surface.
+            "brands",
         }
 
     def test_every_supported_type_names_a_real_table(self, db):
