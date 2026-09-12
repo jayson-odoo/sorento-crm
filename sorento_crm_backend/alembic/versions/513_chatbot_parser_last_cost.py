@@ -24,7 +24,7 @@ unrelated `511_*` files (`511_so_project_label.py`, `511_supplier_country_id.py`
 occupy that number, so this migration chains onto 512 as 513.
 
 Revision ID: 513_chatbot_parser_last_cost
-Revises: 512_hidden_by_default_col
+Revises: 512_integration_ref_company
 """
 import logging
 
@@ -35,7 +35,7 @@ from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
 revision = "513_chatbot_parser_last_cost"
-down_revision = "512_hidden_by_default_col"
+down_revision = "512_integration_ref_company"
 branch_labels = None
 depends_on = None
 
