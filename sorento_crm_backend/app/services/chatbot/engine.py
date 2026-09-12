@@ -1223,6 +1223,24 @@ def _resolve_open_question(
     question = question if isinstance(question, dict) and question.get("kind") else None
     signals = output_exchange_mod.v3_signals(parser_raw, emits_v3=emits_v3)
     answer = signals["answers_open_question"]
+    if question is not None and not answer.get("resolved"):
+        # THE v1 PATH, through the SAME resolver (L1-S3d step 1). A prompt-v1 emission has
+        # no `answers_open_question`; a numbered reply arrives as `reference_positions`.
+        # With a question open, those positions ARE the answer to it - that is what "only
+        # one question is ever open" buys (D6, AC-1014): the numbers cannot collide, so the
+        # roster a position resolves against is never in doubt.
+        #
+        # `reference_target` is deliberately NOT the discriminator, and the file says why a
+        # few hundred lines down: it is the model's DEFAULT and comes back on an ordinary
+        # roster pick too, so the legacy code keyed on which roster happened to be in state
+        # instead. An open question is the honest discriminator and it needs no table.
+        positions = [
+            int(p)
+            for p in jsc.array(jsc.get(parser_raw, "reference_positions"))
+            if isinstance(p, (int, float)) and int(p) >= 1
+        ]
+        if positions:
+            answer = {**answer, "resolved": True, "picks": positions}
     out: dict[str, Any] = {
         "question": question,
         "answer": answer,
