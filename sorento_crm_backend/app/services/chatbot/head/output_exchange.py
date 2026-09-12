@@ -732,30 +732,59 @@ def _ce_keys_of(e: Any) -> list[str]:
     return out or [_ce_key(e)]
 
 
+def open_question_of(state: Any) -> Any:
+    """The question the previous turn left open, or None (L1-S3d step 4).
+
+    One reader, so every rule below asks the session the same way. `kind` is the test
+    rather than mere presence: `decay` writes the key explicitly as `None` when a question
+    ages out, and a shape without a kind is not a question anybody can answer.
+    """
+    question = jsc.get(state, "open_question")
+    return question if isinstance(question, dict) and jsc.truthy(question.get("kind")) else None
+
+
+def picker_rows(state: Any) -> list:
+    """The NUMBERED rows the customer is looking at, frozen when they were shown.
+
+    A `product_pick` / `customer_pick` is the picker the legacy pair
+    `selection_context: disambiguation|suggest_offer` + `dym_last_result_set` described,
+    and the rows travel on the question because the moment they were printed is the only
+    moment the numbering and the rows are known to belong together. Empty for every other
+    kind: a team, a company or a tier question numbers its own options and a stock roster
+    is an ANSWER, not a picker.
+    """
+    question = open_question_of(state)
+    if jsc.get(question, "kind") in ("product_pick", "customer_pick"):
+        return jsc.array(jsc.get(question, "options"))
+    return []
+
+
 def offer_is_open(state: Any) -> bool:
     """R3 / AC-106: is an escalation offer open? BOTH forms, during the migration window.
 
     The JS decided this by matching the frozen phrase "would you like me to escalate"
     against the previous reply - H13's frozen string contract, and D11's own counter
-    example (understanding text is the parser's job). S2 writes `pending.kind =
-    escalation_offer` instead; S8 deletes the regex. Until then a session written by n8n
-    carries only the string and a session written by the CRM carries the marker, so the
-    reader accepts either and neither deployment order strands a customer mid-offer.
+    example (understanding text is the parser's job). The OPEN QUESTION answers it now
+    (L1-S3d step 4); the regex below is the last of H13 and goes with `state.response`,
+    which the five-key session no longer carries either.
     """
-    # BOTH offer kinds. A `member_offer` is an escalation offer with a roster attached -
-    # its reply carries the same frozen phrase - so a reader that only knew the general
-    # kind would go blind on every member-offer turn the day S8 deletes the regex below.
+    # BOTH offer kinds, and only those two. A `member_offer` is an escalation offer with a
+    # roster attached - its reply carries the same frozen phrase - so a reader that knew
+    # only the plain kind would go blind on every member-offer turn.
     #
-    # KIND IS NOT ENOUGH: a member offer has a lifetime (AC-816 rule 1), and this is the
-    # seam the lifetime exists for - "is an offer open?" is what turns a bare "yes" into
-    # `is_escalation_confirmation` twenty lines down. The tail stops writing the marker
-    # once the clock runs out, so an expired offer normally arrives as no marker at all;
-    # the explicit test is here anyway because this function is the one that decides, and
-    # a reader that trusted the kind alone would be one refactor away from the defect.
-    pending = jsc.get(state, "pending")
-    if jsc.get(pending, "kind") in ("escalation_offer", "member_offer"):
-        ttl = jsc.get(pending, "ttl")
-        return True if ttl is None else jsc.js_number(ttl) > 0
+    # `expects: yes_no` is what tells the plain escalate offer from a team CLARIFY, which
+    # is the same `team_pick` kind after D5's fold. A clarify asks "which team", not
+    # "shall I escalate": a "yes" to it means nothing and must never assign anybody, and
+    # this function is what turns a bare "yes" into `is_escalation_confirmation` twenty
+    # lines down.
+    #
+    # NO LIFETIME (D9, AC-1019). The member offer's TTL went with every other counter: the
+    # question is cleared when it is answered, replaced, or asked past, and those are
+    # things that happened rather than a number nobody can see.
+    question = open_question_of(state)
+    kind = jsc.get(question, "kind")
+    if kind == "member_offer" or (kind == "team_pick" and jsc.get(question, "expects") == "yes_no"):
+        return True
     response = jsc.get(state, "response")
     return bool(
         _OFFERED_ESCALATION_RE.search(jsc.js_string(response if jsc.truthy(response) else ""))
@@ -779,80 +808,11 @@ def _is_catalogue_team(team: Any) -> bool:
     return jsc.nullish_str(team).strip().lower() in SUGGESTED_TEAMS
 
 
-def _team_clarify_pick(state: Any, o: Any, llm_team_n: Any, parent_input: Any) -> Any:
-    """The team an OPEN `team_clarify` was just answered with, or None (owner rule R-b).
-
-    `None` when no clarify is open, or when this turn does not answer it - and "does not
-    answer it" has to stay reachable, or every turn after an unanswered ask would be
-    dragged back into the escalation lane.
-
-    Two sources, in order, and BOTH are structured reads (D11):
-
-    1. **The parser's own team for this turn.** An ask is a question; the answer to it is a
-       team word, and reading a team word out of a message is the parser's job. The ONLY
-       thing this rule overrides is the `message_type` gate below, which discards that team
-       when the parser also stamped `casual` - and a bare "marketing product" is precisely
-       what it stamps `casual`.
-    2. **An exact match against the quick replies WE persisted for that ask.** OUR OWN
-       strings, compared with `strip()` + `casefold()` EQUALITY, never a substring or a
-       regex, and never against anything the customer authored. It is the tap: the customer
-       pressed a button whose text this codebase composed, and the parser is free to come
-       back null for it (it did emit the team on the captured turn, but a tap is not a
-       sentence and nothing guarantees the next one parses). Inventoried under D11 in the
-       plan beside `escalation._catalogue_teams`, which is the same class of read.
-
-    A `pending` marker with no options is still a valid open clarify - a session written
-    before this shipped, or by n8n, which has no marker at all - so source 1 stands alone
-    there rather than the whole rule going dark.
-
-    **Lifetime: ONE turn, enforced in `_offer_carry` by an explicit exclusion.** The first
-    cut of this claimed the life was one turn for free, because `_offer_carry` needs a
-    non-empty `last_result_set` and "a clarify has no roster". That was WRONG and the
-    review of #713 measured it: the clarify arm carries the PREVIOUS turn's roster forward
-    (`compile_state` ~:2075) before it stamps the marker, so production dump 0d7d5a23
-    arrives `team_clarify` with fifteen rows behind it, `topic.changed` returns False on a
-    null domain, and the label was carried forever - retyping every later team-naming turn
-    into an escalation and masking any real offer made afterwards. `_offer_carry` now
-    excludes the kind outright, which is what "one question, answered next turn or not at
-    all" actually requires. The member offer's 3-turn ttl is still not copied: a roster
-    stays on the customer's screen, a question does not.
-
-    `offer_is_open` is deliberately not taught this kind either: it answers "is an
-    escalation OFFER open", which is what turns a bare "yes" into an acceptance, and a
-    team clarify is not a yes/no question - a "yes" to it means nothing and must not
-    assign anybody.
-    """
-    pending = jsc.get(state, "pending")
-    if jsc.get(pending, "kind") != "team_clarify" and (
-        jsc.get(state, "selection_context") != "team_clarify"
-    ):
-        return None
-    # A turn that brings its OWN business question is not an answer to "which team",
-    # however many team words it happens to carry (review of #713, B1's sibling). "Which
-    # promotions is marketing running" names a team and asks a question; source 1 alone
-    # would retype it `request_for_help` and escalate the turn the customer wanted
-    # answered. Both signals are the parser's own and neither reads the message: a
-    # `business_query`, or a domain hint, means there is a question here to answer.
-    own_question = jsc.js_string(jsc.get(o, "message_type")) == "business_query" or jsc.truthy(
-        jsc.norm(jsc.get(o, "domain_hint"))
-    )
-    if jsc.truthy(llm_team_n) and not own_question:
-        return llm_team_n
-    reply = _split_reply_to(
-        jsc.get(parent_input, "latest_user_message")
-        if jsc.truthy(jsc.get(parent_input, "latest_user_message"))
-        else jsc.get(parent_input, "user_message")
-    ).strip().casefold()
-    if not reply:
-        return None
-    for option in jsc.array(jsc.get(pending, "options")):
-        team = jsc.norm(jsc.get(option, "team"))
-        label = jsc.nullish_str(jsc.get(option, "label")).strip().casefold()
-        if not jsc.truthy(team):
-            continue
-        if reply == label or reply == team.casefold():
-            return team
-    return None
+# `_team_clarify_pick` is DELETED (AC-1032). It read the previous session's `pending`
+# marker and compared the customer's reply against the team strings the ask had offered -
+# a second resolver, reading state nothing writes any more. `dialogue/open_question.resolve`
+# answers a `team_pick` against its own frozen options, once, in the engine's `answered`
+# stage.
 
 
 def _offered_team(state: Any, prior_routing: Any) -> Any:
@@ -863,8 +823,8 @@ def _offered_team(state: Any, prior_routing: Any) -> Any:
     sentence and no marker, and there the previous turn's routing is the same fact by
     another route - the offer's copy is composed FROM that routing.
     """
-    pending = jsc.get(state, "pending")
-    team = jsc.get(pending, "team") if jsc.truthy(pending) else None
+    question = open_question_of(state)
+    team = jsc.get(jsc.get(question, "payload"), "team") if question is not None else None
     if not jsc.truthy(team):
         team = jsc.get(prior_routing, "suggested_team")
     return jsc.norm(team)
@@ -1245,9 +1205,18 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # not a new turn to be classified. Two structured signals, no text classification:
     # the marker says an ask is open, and the parser's own team (or the customer's tap on a
     # reply WE composed) says which team answers it. See `_team_clarify_pick`.
-    team_clarify_pick = _team_clarify_pick(
-        parent_input.get("previous_conversation_state"), o, llm_team_n, parent_input
-    )
+    # THE TEAM THE CUSTOMER TAPPED, off the resolver rather than re-read here (AC-1013).
+    # `_team_clarify_pick` used to answer this by reading the previous session's `pending`
+    # marker and comparing the reply against the strings the ask offered. The ask is a
+    # `team_pick` now, its options frozen when the question was asked, and the engine's
+    # `answered` stage resolves against them before this function runs - so the answer is
+    # already decided and this only has to read it. One resolver, one answer.
+    answered_outcome = (parent_input.get("_answered") or {}).get("outcome")
+    team_clarify_pick = None
+    if answered_outcome is not None and getattr(answered_outcome, "escalate", False):
+        team_clarify_pick = (getattr(answered_outcome, "routing", {}) or {}).get(
+            "suggested_team"
+        )
     if team_clarify_pick is not None:
         llm_team_n = team_clarify_pick
         req_help = True
@@ -1431,10 +1400,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         # Source candidates from the offer object; fall back to the legacy flat array
         # during the spine/parser promotion window.
         offer = prev.get("dym_offer") if isinstance(prev.get("dym_offer"), dict) else None
+        # `dym_candidates` was a flat READ-ONLY MIRROR of `offer.candidates`, written for
+        # the spine-to-parser promotion window. It is gone with the five-key session and
+        # nothing writes it, so the mirror goes rather than being read forever (step 4).
         cands = (
             offer["candidates"]
             if offer is not None and jsc.is_array(offer.get("candidates"))
-            else jsc.array(prev.get("dym_candidates"))
+            else []
         )
         if not len(cands):
             return
@@ -1760,14 +1732,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     is_all0 = bool(_ALL_EXACT_RE.match(msg_all))
     no_pos = not jsc.is_array(o.get("reference_positions")) or len(o["reference_positions"]) == 0
     # #4: "all" over an ACTIVE did-you-mean offer selects EVERY suggestion. STRUCTURAL gate
-    # (a non-empty dym_last_result_set persisted on the partial-miss turn), no marker regex.
-    dym_active = jsc.is_array(prev_state.get("dym_last_result_set")) and len(
-        prev_state["dym_last_result_set"]
-    ) > 0
-    if is_all0 and no_pos and dym_active:
+    # (an open picker with rows on it), no marker regex.
+    dym_rows = picker_rows(prev_state)
+    if is_all0 and no_pos and len(dym_rows) > 0:
         o["reference_positions"] = [
             n
-            for n in (jsc.js_number(jsc.get(r, "idx")) for r in prev_state["dym_last_result_set"])
+            for n in (jsc.js_number(jsc.get(r, "idx")) for r in dym_rows)
             if jsc.is_integer(n)
         ]
         o["reference_target"] = "dym"  # dymNumberedMultiSelect catches this forced route
@@ -1821,7 +1791,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         positions = jsc.array(o.get("reference_positions"))
         if len(positions) == 0:
             return
-        dym_set = jsc.array(prev_state.get("dym_last_result_set"))
+        dym_set = picker_rows(prev_state)
         if len(dym_set) == 0:
             return  # no dym set -> untouched byIdx (backbone guard)
         offer = prev_state.get("dym_offer") if isinstance(prev_state.get("dym_offer"), dict) else None
@@ -2316,7 +2286,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # `ALLOWED["incoming"]` already carries both `product` and `inbound_shipment`, so the
     # resolver searches both types regardless of which hint survives.
     _incoming_pending_kind = jsc.get(
-        jsc.get(parent_input.get("previous_conversation_state"), "pending"), "kind"
+        open_question_of(parent_input.get("previous_conversation_state")), "kind"
     )
     if (
         jsc.truthy(o.get("entities"))
@@ -2592,9 +2562,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # `reference_target === 'dym'` is NOT the signal - it is the model's DEFAULT and comes
     # back on an ordinary promo-roster pick too. The real discriminator is whether a dym
     # offer was actually PENDING in the previous state.
-    prev_dym = (
-        jsc.is_array(prev5.get("dym_last_result_set")) and len(prev5["dym_last_result_set"]) > 0
-    ) or bool(prev5.get("dym_offer") is not None and isinstance(prev5.get("dym_offer"), dict))
+    prev_dym = len(picker_rows(prev5)) > 0 or bool(
+        prev5.get("dym_offer") is not None and isinstance(prev5.get("dym_offer"), dict)
+    )
     dym_pick = prev_dym or o.get("dym_pick_applied") is True
     # F10: do NOT drop promotion-hinted entities here - Q25 allows a list scoped BY A
     # PROMOTION NAME, and filtering those out left the scope empty.

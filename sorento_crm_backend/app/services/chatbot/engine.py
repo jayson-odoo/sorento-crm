@@ -409,9 +409,16 @@ def _drop_unknown_carried_domain(variables: Any) -> None:
 
 
 def _pending_kind(variables: dict[str, Any]) -> str | None:
-    """R3: the persisted marker, read where the JS matched a frozen reply string."""
-    pending = variables.get("pending")
-    kind = jsc.get(pending, "kind")
+    """WHAT THE BOT IS WAITING FOR, for the one prompt line that names it.
+
+    R3 read the `pending` marker here, where the JS had matched a frozen reply string.
+    The marker is gone (AC-1019) and the open question is the one record of the same
+    fact, so this reads its kind - which is also what the v3 `Open question:` hint block
+    carries, in more detail. The line stays because a v1 / v2 prompt is never sent that
+    block: without it, a contact on the older prompt would lose the only signal the model
+    gets that its next message is an answer to something.
+    """
+    kind = jsc.get(variables.get("open_question"), "kind")
     return str(kind) if kind else None
 
 
@@ -1213,13 +1220,10 @@ def _resolve_open_question(
     normalised answer, the trace entry and the LANE the outcome names - the caller records
     the stage and the post-processor applies the outcome to the emission.
     """
+    # ONE reader, one key. A session written before the five-key shape was converted by
+    # migration `517_chatbot_session_5key` on deploy (DoD gate 2), so there is no legacy
+    # shape left to derive from and no branch here that could quietly outlive it.
     question = variables.get("open_question")
-    if "open_question" not in variables:
-        # A session written BEFORE the five-key shape - by an older build, or by n8n - has
-        # no slot, and the customer looking at that roster must still be able to answer it.
-        # A PRESENT key wins, `None` included: that means the slot was there and was
-        # cleared, and deriving over it would resurrect the question clearing just removed.
-        question = open_question_mod.from_state(variables, asked_at_turn=max(0, turn_no - 1))
     question = question if isinstance(question, dict) and question.get("kind") else None
     signals = output_exchange_mod.v3_signals(parser_raw, emits_v3=emits_v3)
     answer = signals["answers_open_question"]
@@ -3367,7 +3371,7 @@ def run_tail(
         facts={
             "lane": branch_kind,
             "quick_replies": bool(sealed.get("quick_replies")),
-            "rows_offered": len(variables.get("last_result_set") or []),
+            "rows_offered": len(compiled.result_set or []),
             "cross_domain_block": composed is not compiled.item,
         },
         raw={"reply": sealed},
@@ -3425,13 +3429,10 @@ def run_tail(
         "quick_replies": sealed.get("quick_replies"),
         # What `sub-sendmsg` and `send-attachments` reach for by name today, handed
         # back as fields so their expressions become one read each (AC-207). Off the SEAL
-        # now: the rows are this turn's output, and the five-key memory does not carry
-        # them (L1-S3). The patch is still read for a reply sealed by an older build.
-        "result_set": (
-            compiled.result_set
-            if compiled.result_set is not None
-            else variables.get("last_result_set")
-        ),
+        # only: the rows are THIS TURN's output, and the five-key memory does not carry
+        # them (L1-S3). The patch fallback went with the legacy key it read (step 4) -
+        # there is no build left whose patch has one.
+        "result_set": compiled.result_set,
         "attachments_src": _attachments_src(values["answer"]),
     }
     return reply, session_patch

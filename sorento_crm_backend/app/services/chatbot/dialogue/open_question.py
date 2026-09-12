@@ -25,10 +25,10 @@ customer can still see is still answerable, and a counter was only ever a guess 
 they stopped looking.
 
 **WHICH rows, on a partial-miss turn.** Two rosters can be live at once and they are not
-interchangeable: the numbered suggestions the reply printed are `dym_last_result_set` and
-`last_result_set` holds the ANSWER's own rows for the code that DID resolve. `_roster_of`
-picks the one the legacy ladder resolves numbered picks against, by the same
-discriminator.
+interchangeable: the numbered suggestions the reply printed, and the ANSWER's own rows
+for the code that DID resolve. The lane that PRINTED the suggestions is the one that
+freezes them onto the question, so the ambiguity is decided where the rows are, once, and
+no reader downstream has to guess which of two lists a "2" is counting.
 
 **A position means the row the customer SAW.** `options` is frozen when the question is
 asked - uuid, code and label carried verbatim - and `resolve` indexes into it. It is never
@@ -41,19 +41,12 @@ got stock" with a picker for the second code still answers for the first. The al
 resolved entities are frozen into the payload with the options, so the handler returns
 them beside the pick rather than re-deriving which token was answered.
 
-**Direction of the mirror, stated because it is a deviation.** The plan asks for
-`open_question` to be authoritative and the old keys (`pending`, `dym_offer`,
-`selection_context`, `picker_*`) to be derived from it. It is derived from THEM for this
-release, by `from_state` below, and the reason is written into the code that would have to
-be rewritten: `tail/compile_state.py`'s did-you-mean lifecycle is a faithful port of the
-n8n rule whose "eight-rule order is graded against captures", and `topic.py` says in as
-many words that "rewriting it to call this function would be a behaviour change smuggled
-in as a tidy-up". Thirteen registered divergences already pin that ladder. So this slice
-takes the half that changes behaviour where the ACs ask for it - the typed slot, the
-frozen options, one resolver, the trace - and leaves the ladder authoritative until it can
-be replaced against a re-derived corpus. AC-951's stated purpose ("so every existing world
-grades") is met either way; its letter is not, and the plan and the UAC are updated in the
-same change.
+**No mirror, in either direction, as of L1-S3d.** The lanes compose the question with `ask`
+at the moment they show the rows, the tail persists it, and the engine resolves against it.
+The legacy keys it used to be derived from (`pending`, `selection_context`, `dym_offer`, the
+two result sets) are not written and not read: migration `517_chatbot_session_5key` converted
+every stored session on deploy, which is what let the derivation go rather than live forever
+behind an "if the key is absent" branch.
 
 Nothing here calls a model, opens a session or reads the customer's words.
 """
@@ -76,34 +69,12 @@ KIND_SPEC: dict[str, dict[str, Any]] = {
     "member_offer": {"expects": "yes_no"},
 }
 
-# `selection_context` (and, with none, the `pending` marker) says WHICH question the last
-# turn left open. One map, so a kind added to either vocabulary has exactly one place to
-# be joined up.
-KIND_BY_SELECTION_CONTEXT: dict[str, str] = {
-    "disambiguation": "product_pick",
-    "suggest_offer": "product_pick",
-    "member_offer": "member_offer",
-    "tier_offer": "tier_pick",
-    "team_clarify": "team_pick",
-    "company_clarify": "company_pick",
-}
-KIND_BY_PENDING_KIND: dict[str, str] = {
-    # An escalation offer IS a team pick with one team (D5), so the marker maps onto the
-    # kind rather than onto a second one that behaves the same.
-    "escalation_offer": "team_pick",
-    "member_offer": "member_offer",
-    "team_clarify": "team_pick",
-    "company_clarify": "company_pick",
-    "tier_ask": "tier_pick",
-}
-SELECTION_CONTEXT_BY_KIND: dict[str, str] = {
-    "product_pick": "disambiguation",
-    "customer_pick": "disambiguation",
-    "member_offer": "member_offer",
-    "tier_pick": "tier_offer",
-    "team_pick": "team_clarify",
-    "company_pick": "company_clarify",
-}
+# The three legacy JOIN MAPS are gone with `from_state` (L1-S3d step 4):
+# `KIND_BY_SELECTION_CONTEXT`, `KIND_BY_PENDING_KIND` and `SELECTION_CONTEXT_BY_KIND`
+# each translated between a kind and a key nothing writes or reads any more. The one
+# place a legacy capture still has to be translated is the WORLD GRADER
+# (`tests/chatbot/worlds.py`), and it carries its own map next to the corpus evidence
+# that sized it.
 
 
 @dataclass
@@ -206,101 +177,12 @@ def _identities(options: Any) -> list[str]:
     return out
 
 
-def from_state(
-    variables: Any,
-    *,
-    asked_at_turn: int,
-    previous: Any = None,
-    answered: bool = False,
-) -> dict[str, Any] | None:
-    """The MIRROR: the open question the legacy session keys describe.
-
-    `selection_context` says which roster is on screen and `last_result_set` is that
-    roster; with neither, the `pending` marker still says an escalation offer is open. Both
-    are what the lifecycle in `tail/compile_state.py` decided, so this reads its answer
-    rather than second-guessing it (see the module docstring for why that direction).
-
-    **A PRESENT `open_question` key wins, `None` included.** `decay` has already run by the
-    time a reader calls this, and it writes the key explicitly - so `None` means "it was
-    there and it aged out", and falling through to the derivation would resurrect the very
-    question that was just cleared. Only an ABSENT key means "this session predates the
-    slot", and that is the one case the legacy keys answer.
-    """
-    stored = variables if isinstance(variables, dict) else {}
-    if "open_question" in stored:
-        existing = stored.get("open_question")
-        if isinstance(existing, dict) and existing.get("kind") in OPEN_QUESTION_KINDS:
-            return existing
-        return None
-
-    at = max(0, int(asked_at_turn))
-    context = jsc.nullish_str(stored.get("selection_context") or "")
-    rows = _roster_of(stored, context)
-    pending = stored.get("pending") if isinstance(stored.get("pending"), dict) else {}
-    dym_offer = stored.get("dym_offer") if isinstance(stored.get("dym_offer"), dict) else {}
-
-    kind = KIND_BY_SELECTION_CONTEXT.get(context)
-    if kind == "product_pick" and _rows_are_customers(rows):
-        # The same roster label carries both, and the difference is what the pick SETS.
-        kind = "customer_pick"
-    if kind is None:
-        kind = KIND_BY_PENDING_KIND.get(jsc.nullish_str(pending.get("kind") or ""))
-    if kind is None:
-        # THE QUESTION OUTLIVES THE LEGACY MARKER, and that is what makes its TTL real.
-        # `pending.derive` re-emits an escalation offer only on the turn a lane offers one,
-        # so a customer who asks something else instead would otherwise have the question
-        # vanish on the very next turn - answered by nothing, cleared by nothing, and never
-        # traced. AC-945 is explicit that an unanswered offer survives to its TTL and is
-        # then cleared with a `decay` line, so it is carried here and killed by `decay`,
-        # which is the one place that ages anything (D11).
-        #
-        # NOT carried once it has been ANSWERED: the handler consumed it this turn, and
-        # re-arming a question the customer has already replied to is the hazard
-        # `_picker_carry` names - a later bare "yes" assigning a human off an offer that
-        # was closed. Nor is it carried when the legacy keys describe a different question,
-        # because that branch returned above.
-        return None if answered else (previous if isinstance(previous, dict) else None)
-
-    payload = {
-        "domain": stored.get("domain_hint"),
-        "team": pending.get("team"),
-        # ISSUE #708: the siblings that already resolved, and ONLY when the offer records
-        # which token it was made FOR. `dym_offer.candidates` carries `for_raw` /
-        # `for_canonical` on exactly the partial-miss turns the issue is about, and without
-        # that linkage there is nothing that says which token the pick answers - so a keep
-        # list would be a guess, and the guess is what puts the very token the picker was
-        # disambiguating back into scope beside its own answer. `head/output_exchange`'s
-        # own #708 block draws the same line and says so at more length.
-        "keep": _siblings_to_keep(stored, context, dym_offer),
-    }
-    if dym_offer:
-        payload["offer_id"] = dym_offer.get("id")
-        payload["picked"] = list(jsc.array(dym_offer.get("picked")))
-    if kind == "team_pick" and isinstance(pending.get("options"), list):
-        # A team clarify offers a NARROWED set (owner rule R-a), and `selection_context`
-        # alone cannot say which - the marker's own list is the roster.
-        rows = [r for r in pending["options"] if isinstance(r, dict)]
-    # One team offered means the yes/no escalate offer (D5); two or more is the numbered
-    # pick. The SAME kind either way, so `resolve` has one handler to dispatch to.
-    expects = "yes_no" if (kind == "team_pick" and len(rows) <= 1) else None
-    question = ask(
-        kind,
-        options=rows,
-        turn_no=at,
-        expects=expects,
-        payload=payload,
-    )
-    # THE CLOCK DOES NOT RESTART ON A CARRY. The legacy lifecycle keeps `selection_context`
-    # and `last_result_set` alive across turns that build no offer of their own (owner
-    # ruling K rule 1), so re-deriving the mirror stamps a fresh `asked_at_turn` on a
-    # question nobody has answered - and the age is 1 forever. A question is NEW only when
-    # its kind or its rows changed; otherwise it keeps the turn it was actually asked on.
-    if same_question(question, previous):
-        question["asked_at_turn"] = int(
-            previous.get("asked_at_turn", question["asked_at_turn"])
-        )
-    return question
-
+# `from_state` is DELETED (L1-S3d step 4). It derived the open question from the legacy
+# session keys - `pending`, `selection_context`, `dym_offer`, the two result sets - for the
+# release in which both shapes existed. Migration `517_chatbot_session_5key` converted every
+# stored session on deploy, so there is no legacy shape left to read and the DIRECTION of the
+# mirror stops being a question: the lanes compose the question with `ask` and the tail
+# persists it.
 
 def resolve(
     kind: str,
@@ -585,68 +467,13 @@ def _code_key(entity: Any) -> str:
     return jsc.nullish_str(entity.get("canonical_code") or entity.get("raw")).strip().lower()
 
 
-def _roster_of(stored: dict, context: str) -> list[dict[str, Any]]:
-    """WHICH list the customer is looking at, decided the way the legacy ladder decides it.
-
-    On a partial-miss / did-you-mean turn the numbered rows the reply printed are
-    `dym_last_result_set`, and `last_result_set` holds the ANSWER's own rows - the stock
-    lines for the code that DID resolve. `output_exchange`'s `dym_numbered_multi_select`
-    resolves a numbered pick against the dym set on exactly those turns, and the "all over
-    an active offer" block keys on the same array. Freezing `last_result_set` instead would
-    make "2" the second stock line rather than the second suggestion: the wrong product,
-    with no error anywhere.
-
-    Same discriminator as the ladder - a non-empty `dym_last_result_set` under the
-    `suggest_offer` label - and the same one `_siblings_to_keep` below already used, which
-    is what made the mismatch visible: one half of this module was reading the dym shape
-    and the other half was not.
-    """
-    dym_rows = [r for r in jsc.array(stored.get("dym_last_result_set")) if isinstance(r, dict)]
-    if context == "suggest_offer" and dym_rows:
-        return dym_rows
-    return [r for r in jsc.array(stored.get("last_result_set")) if isinstance(r, dict)]
-
-
-def _siblings_to_keep(stored: dict, context: str, dym_offer: dict) -> list[dict[str, Any]]:
-    """The prior entities the pick must not throw away, minus the tokens it answers.
-
-    Issue #708 / AC-1017: "SRTKS6091 and SRTKS8091 got stock?" resolves one code and offers
-    a picker for the other, so the pick's answer is ONE product and the turn's scope is TWO.
-    The sibling that already resolved has to survive, or the reply answers half the
-    question the customer asked.
-
-    WHERE the siblings come from changed with the five-key session (L1-S3): they are
-    `focus.products`, which is what the conversation is about, and the legacy `entities`
-    key is only read for a session written before that shape existed. Both are filtered by
-    the SAME rule - drop the token the picker was raised for, keep the rest - so which
-    source answered cannot change what is kept.
-    """
-    candidates = [c for c in jsc.array(dym_offer.get("candidates")) if isinstance(c, dict)]
-    if context != "suggest_offer" or not candidates:
-        return []
-    source_keys = set()
-    for candidate in candidates:
-        source_keys |= {
-            _code_key({"canonical_code": candidate.get("for_canonical")}),
-            _code_key({"canonical_code": candidate.get("for_raw")}),
-        }
-    source_keys -= {""}
-    prior = _prior_entities(stored)
-    return [e for e in prior if isinstance(e, dict) and _code_key(e) not in source_keys]
-
-
-def _prior_entities(stored: dict) -> list[Any]:
-    """What the conversation was about before this turn: `focus.products` first.
-
-    The legacy `entities` key is the fallback and nothing writes it any more; a session
-    that still carries one was written by an older build or by n8n.
-    """
-    focus = stored.get("focus")
-    slot = focus.get("products") if isinstance(focus, dict) else None
-    value = slot.get("value") if isinstance(slot, dict) else None
-    if isinstance(value, list) and value:
-        return value
-    return jsc.array(stored.get("entities"))
+# `_roster_of`, `_siblings_to_keep` and `_prior_entities` are DELETED with `from_state`
+# (L1-S3d step 4). They each read a legacy roster key off the stored session -
+# `last_result_set`, `dym_last_result_set`, `dym_offer.candidates`, `entities` - to work
+# out which rows the customer was looking at and which siblings a pick must keep. The
+# rows are FROZEN onto the question now, by the lane that printed them, and the #708
+# keep list is frozen with them (`lanes/business/run_miss_lane._attach_question`), so
+# there is nothing left to reconstruct.
 
 
 def _rows_are_customers(rows: list[dict[str, Any]]) -> bool:

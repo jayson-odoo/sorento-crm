@@ -126,21 +126,18 @@ def decide(
                 esc.get("member_reprompt"), str
             ):
                 return False
-            prev = _prev_variables(ctx)
-            if prev.get("selection_context") != "member_offer":
+            question = _prev_variables(ctx).get("open_question")
+            if jsc.get(question, "kind") != "member_offer":
                 return False
-            plan = jsc.array(prev.get("routing_roster_plan"))
-            if len(plan) > 1:
-                return True
             # OWNER RULING K, rule 3 (2026-09-06), and a DIVERGENCE from n8n: live tests
-            # only `_plan.length > 1`, so an out-of-range pick against an ordinary
-            # SINGLE-company roster ("9" on a six-name list) fell past this arm, and
-            # `is_low_signal` then read the bare digit as a content-free casual message
-            # and answered with a clarifier. The roster is on the customer's screen
-            # either way, so the reprompt is owed either way; a multi-company plan is one
-            # reason the offer is live, not the only one.
-            roster = jsc.array(prev.get("last_result_set"))
-            return len(roster) > 0
+            # only `routing_roster_plan.length > 1`, so an out-of-range pick against an
+            # ordinary SINGLE-company roster ("9" on a six-name list) fell past this arm,
+            # and `is_low_signal` then read the bare digit as a content-free casual
+            # message and answered with a clarifier. The roster is on the customer's
+            # screen either way, so the reprompt is owed either way; a multi-company plan
+            # was one reason the offer is live, not the only one - which is why the plan
+            # key is not missed now the offer's own rows are the test (L1-S3d step 4).
+            return len(jsc.array(jsc.get(question, "options"))) > 0
         except Exception:
             return False
 
@@ -240,8 +237,10 @@ def decide(
     # plan's text-sniffing table.
     def _tier_menu() -> list | None:
         try:
-            variables = _prev_variables(ctx)
-            menu = variables.get("tier_menu")
+            question = _prev_variables(ctx).get("open_question")
+            if jsc.get(question, "kind") != "tier_pick":
+                return None
+            menu = jsc.get(question, "options")
             return menu if jsc.is_array(menu) and len(menu) > 0 else None
         except Exception:
             return None
@@ -251,8 +250,14 @@ def decide(
         # intercept: a CS-member pick can fire a real assignment. `suggest_offer` is
         # deliberately NOT here - overriding it with the tier menu is the whole rule.
         try:
-            variables = _prev_variables(ctx)
-            return variables.get("selection_context") in ("member_offer", "disambiguation")
+            question = _prev_variables(ctx).get("open_question")
+            # `product_pick` / `customer_pick` are the two kinds the legacy
+            # `disambiguation` label carried; `member_offer` is the roster that can fire a
+            # real assignment. A `suggest_offer` picker is deliberately still NOT here -
+            # overriding it with the tier menu is the whole rule - and it is a
+            # `product_pick` too, so the miss lane's own question is told apart by the
+            # question it asked, not by a label beside it.
+            return jsc.get(question, "kind") in ("member_offer", "customer_pick")
         except Exception:
             return False
 

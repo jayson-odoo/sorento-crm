@@ -300,7 +300,7 @@ def resolve_bare_reply_under_member_offer(
     from app.services.chatbot.head.output_exchange import offer_is_open
 
     prev = _prev_variables(ctx)
-    if jsc.get(prev, "selection_context") != "member_offer" or not offer_is_open(prev):
+    if jsc.get(jsc.get(prev, "open_question"), "kind") != "member_offer" or not offer_is_open(prev):
         return False
     entities = jsc.array(parser.get("entities"))
     if any(jsc.truthy(e) and jsc.get(e, "current_message") is True for e in entities):

@@ -591,7 +591,13 @@ def crossdomain_zeroset(
     variables = jsc.get(jsc.get(session_block, "session_vars"), "variables")
     if not jsc.truthy(variables):
         variables = jsc.get(session_block, "variables")
-    dym_offer = jsc.get(variables, "dym_offer") if jsc.truthy(variables) else None
+    # THE OFFER IS THE OPEN QUESTION (L1-S3d step 4). `dym_offer` was a session key of
+    # its own and the picks made against it accumulated on a TTL ladder; both went with
+    # the five-key session. What the miss lane freezes onto the question it asks -
+    # `payload.domain` and `payload.picked` - is the same two facts this block reads, and
+    # it is frozen by the lane that showed the rows rather than rebuilt from a mirror.
+    question = jsc.get(variables, "open_question") if jsc.truthy(variables) else None
+    dym_offer = jsc.get(question, "payload") if jsc.truthy(question) else None
     dym_offer = dym_offer if isinstance(dym_offer, dict) else None
     # DOMAIN GUARD (H22 / H23). The offer records WHOSE picks these are, and a pick made
     # under an ORDER or PROMOTION offer is not a requested PRODUCT: carrying it printed
