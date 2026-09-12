@@ -2843,6 +2843,7 @@ def _pool_row_for(
     *,
     taken: Sequence[dict],
     document: Optional[str],
+    pool_words: str,
     so_number: str,
     item_code: Optional[str],
     pool_cache: Dict[str, Optional[str]],
@@ -2912,7 +2913,7 @@ def _pool_row_for(
         [{"po_line_id": share["po_line_id"], "qty": share["qty"]} for share in taken],
         actor_user_id=actor,
     )
-    return f"{_share_words(taken, document)} {qty_text(qty)} to {pool_code}"
+    return f"Reallocate {_share_words(taken, document)} {qty_text(qty)} to {pool_words}"
 
 
 def _redeal_document(
@@ -2945,10 +2946,14 @@ def _redeal_document(
     the batch says the order failed and why, and the pool row it may have written rolls back
     with it - rather than reporting success over a quantity that never moved.
 
-    Returns what it did, in words, for the row's own `result_json`.
+    Returns what it did, in the SENTENCE THE LABEL USED (D5): `Reallocate <document>
+    <qty> to <target>`, with the target that actually received it. Where nothing moved
+    between compose and apply, the two read identically, and where they differ the row
+    records the truth rather than the plan.
     """
     freed = _dec(component.get("qty_now"))
     document = component.get("document")
+    said_code = component.get("item_code")
     if freed <= _ZERO:
         return []
     shares = document_links.get(str(row.id)) or []
@@ -2990,14 +2995,15 @@ def _redeal_document(
                 f"{waiting_row.note}\n{found}" if waiting_row.note else found
             )
             target = _row_target_words(db, waiting_row, took)
-            done.append(f"{words} {qty_text(took)} to {target}")
+            done.append(f"Reallocate {words} {_qty_of(took, said_code)} to {target}")
             remaining -= took
     if remaining > _ZERO:
         taken = _take_document_shares(shares, remaining)
         _unclaim_shares(db, service, row, taken, shares)
         done.append(_pool_row_for(
-            db, service, row, taken=taken, document=document, so_number=so_number,
-            item_code=item_code, pool_cache=pool_cache, actor=actor,
+            db, service, row, taken=taken, document=document,
+            pool_words="dealer pool" if dealer_hot_selling else "pool",
+            so_number=so_number, item_code=item_code, pool_cache=pool_cache, actor=actor,
         ))
     return done
 
@@ -3018,6 +3024,10 @@ def _release_spo_share(
     off, and the allocation reads unallocated on purchasing's incoming list, where somebody
     can put it where it is needed. The suggestion says exactly that, so no instruction is
     recorded that was never carried out.
+
+    Returns the DOCUMENTS it gave back, for `result_json["released_documents"]`: what a
+    reader of the batch page needs from this is which SPO is free again, not a sentence
+    about a move that deliberately did not happen.
     """
     freed = _dec(component.get("qty_now"))
     if freed <= _ZERO or not row.project_line_id:
@@ -3037,6 +3047,7 @@ def _release_spo_share(
         links = [link for link in links if (link.document or "") == document] or links
     remaining = freed
     touched: List[OrderInquiryRow] = []
+    released: List[str] = []
     for link in links:
         if remaining <= _ZERO:
             break
@@ -3048,14 +3059,15 @@ def _release_spo_share(
         else:
             link.qty = qty - remaining
             remaining = _ZERO
+        if link.document and link.document not in released:
+            released.append(link.document)
         if owner is not None:
             touched.append(owner)
     if not touched:
         return []
     db.flush()
     service.refresh_link_state(touched)
-    said = f"{document or 'the SPO'} {qty_text(freed - remaining)} unallocated"
-    return [said]
+    return released or ([document] if document else [])
 
 
 def _move_reserve(
@@ -3190,7 +3202,10 @@ def _move_reserve(
     # remainder is now wholly on a document reads placed, not partly linked.
     service.refresh_link_state([receiving])
     target = _row_target_words(db, receiving, take)
-    return [f"reserve {qty_text(take)} at {location or 'the warehouse'} to {target}"]
+    return [
+        f"Reallocate {qty_text(take)} at {location} to {target}" if location
+        else f"Reallocate {qty_text(take)} to {target}"
+    ]
 
 
 def _settle_receiving_snapshot(
@@ -3255,7 +3270,7 @@ def _execute_reallocations(
     pool_cache: Dict[str, Optional[str]],
     exclude_line_ids: Sequence[str],
     actor: Optional[str],
-) -> Dict[str, List[str]]:
+) -> Dict[str, Dict[str, List[str]]]:
     """Every `reallocate` and `release` of document quantity the confirmed suggestion
     named, carried out (Slice D).
 
@@ -3266,9 +3281,11 @@ def _execute_reallocations(
     rolls back with it. An apply that reports success over quantity that never moved is the
     one outcome this may not have.
 
-    Returns, per planning row id, what it did IN WORDS - the row's `result_json` keeps it,
-    so the batch can say where the quantity went even when a later read of the live world
-    would pick a different row (D5).
+    Returns, per planning row id, what it did IN WORDS (D5):
+    `executed_reallocations` says where each moved quantity actually went, in the sentence
+    the label used, and `released_documents` names an SPO given back. The row's
+    `result_json` keeps both, so the batch page can say what happened even when a later
+    read of the live world would pick a different row.
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
@@ -3296,7 +3313,9 @@ def _execute_reallocations(
     dealer_where, _project_where = _hot_selling_evidence(
         db, {str(pid) for pid in product_by_line.values() if pid}
     )
-    done: Dict[str, List[str]] = defaultdict(list)
+    done: Dict[str, Dict[str, List[str]]] = defaultdict(
+        lambda: {"executed_reallocations": [], "released_documents": []}
+    )
     for row in rows:
         product_id = product_by_line.get(str(row.project_line_id))
         product_id = str(product_id) if product_id else None
@@ -3305,23 +3324,27 @@ def _execute_reallocations(
             source = component.get("source")
             action = component.get("action")
             if action == "release" and source == "spo":
-                done[str(row.id)].extend(
+                done[str(row.id)]["released_documents"].extend(
                     _release_spo_share(db, service, row, component, so_number=so_number)
                 )
             elif source == "reserve":
-                done[str(row.id)].extend(_move_reserve(
+                done[str(row.id)]["executed_reallocations"].extend(_move_reserve(
                     db, service, row, component, so_number=so_number,
                     product_id=product_id, exclude_line_ids=exclude_line_ids, actor=actor,
                 ))
             else:
-                done[str(row.id)].extend(_redeal_document(
+                done[str(row.id)]["executed_reallocations"].extend(_redeal_document(
                     db, service, row, component, so_number=so_number,
                     product_id=product_id, item_code=item_code,
                     dealer_hot_selling=bool(product_id and product_id in dealer_where),
                     pool_cache=pool_cache, document_links=document_links,
                     exclude_line_ids=exclude_line_ids, actor=actor,
                 ))
-    return {row_id: words for row_id, words in done.items() if words}
+    return {
+        row_id: {key: words for key, words in said.items() if words}
+        for row_id, said in done.items()
+        if any(said.values())
+    }
 
 
 def _oi_demand_rows(
@@ -4033,7 +4056,7 @@ def _apply_one_order(
     # line's own row down to what it still needs, so what it released is what there is to
     # re-deal. After the link shift for the same reason - a closed line's placements go to
     # the line that still needs them before anything is offered to a stranger.
-    reallocated: Dict[str, List[str]] = {}
+    reallocated: Dict[str, Dict[str, List[str]]] = {}
     if revised:
         reallocated = _execute_reallocations(
             db, order, so_number, live, document_links, pool_cache,
@@ -4090,9 +4113,9 @@ def _apply_one_order(
             r.result_json = {"board_link": r.board_link, "confirmed": True}
             # WHERE THE QUANTITY WENT, in words (D5). The label said where it was going;
             # this says where it actually went, which can differ - the deal is made against
-            # the world as it is at apply, not as it was when the batch was built.
-            if reallocated.get(str(r.id)):
-                r.result_json["reallocated"] = reallocated[str(r.id)]
+            # the world as it is at apply, not as it was when the batch was built. An SPO
+            # given back is named separately (D7): it moved nowhere, it is simply free.
+            r.result_json.update(reallocated.get(str(r.id)) or {})
         elif r.kind == "cancelled":
             r.result_json = {
                 "board_link": r.board_link,
