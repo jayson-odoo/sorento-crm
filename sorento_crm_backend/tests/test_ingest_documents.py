@@ -299,13 +299,27 @@ class _Env:
             },
         )
 
-    def header(self, table: str, source_ref: str):
+    def refs_for(self, company_id: str) -> IntegrationReferenceService:
+        """A service anchored to ``company_id`` - `self.refs` is fixed to
+        company_a, so a caller reading back a record pushed under company_b
+        needs its own anchored instance (plan D14: resolve() on a scoped type
+        only sees that anchor's own rows)."""
+        if company_id == self.company_a:
+            return self.refs
+        return IntegrationReferenceService(self.db, company_id=company_id)
+
+    def header(self, table: str, source_ref: str, *, company_id: str = None):
         """The header a ref points at, read WITHOUT the ORM scope filter.
 
         Which company the row landed in is one of the things under test, so the
-        filter that hides the answer is not welcome here.
+        filter that hides the answer is not welcome here. ``company_id``
+        defaults to company_a - pass the company the record was actually
+        pushed under (plan D14: `resolve()` on a scoped type only resolves
+        within its own anchor, so reading back a company_b record needs
+        company_id=env.company_b).
         """
-        entity_id = self.refs.resolve(entity_type=table, source_ref=source_ref)
+        refs = self.refs_for(company_id) if company_id is not None else self.refs
+        entity_id = refs.resolve(entity_type=table, source_ref=source_ref)
         if entity_id is None:
             return None
         return (
