@@ -141,6 +141,11 @@ _ZERO = Decimal("0")
 #: `_dispatch_changed_with_links` / `register_order_inquiry_post_commit_dispatch`.
 _CHANGED_WITH_LINKS_PENDING_KEY = "oi_changed_with_links_pending"
 
+#: `Session.info` key for the "order inquiry raised" notifications a purchasing task
+#: queues mid-transaction, fired once the session actually commits - see
+#: `_notify_purchasing` / `register_order_inquiry_post_commit_dispatch`.
+_PURCHASING_NOTIFY_PENDING_KEY = "oi_purchasing_notify_pending"
+
 #: How many purchase orders `relink_to_matching_lines` walks per pass. A purchase-history
 #: upload names thousands of documents in one call, and one `IN` list that long is a bad
 #: plan and, on some drivers, a refused statement.
@@ -1779,20 +1784,36 @@ class ProjectOrderInquiryService:
         row_count: int,
         to_buy: int,
     ) -> None:
-        from app.services.notification_service import NotificationService
+        """QUEUED, never sent from here.
 
+        `NotificationService.create_with_channel_preferences` COMMITS (its own docstring:
+        "never call it from inside a `db.begin_nested()` block"), and this runs deep inside
+        one - `refresh_for_decision` is called from the confirm, and the planning-change
+        apply wraps every order in a savepoint. The commit released that savepoint, so a
+        perfectly written revision came back as "This transaction is closed" the moment a
+        purchasing-role user existed to be notified (measured on `confirm-all` with a batch
+        whose confirmation raised a NEW inquiry - Slice C, where CS confirming a delayed
+        line's re-run does exactly that).
+
+        So the payload is queued on `Session.info` and fired by
+        `register_order_inquiry_post_commit_dispatch`'s `after_commit` listener on a FRESH
+        session - the same pattern `_dispatch_changed_with_links` above already uses, for
+        the same reason, and the same one `planning_change_service.apply` follows when it
+        notifies purchasing after each order's savepoint rather than inside it.
+        """
         reference = order.autocount_doc_no or order.provisional_ref
-        service = NotificationService(self.db)
-        for user_id in self._purchasing_user_ids():
-            service.create_with_channel_preferences(
-                user_id=str(user_id),
-                type="project_order_inquiry_raised",
-                title=f"Order inquiry {reference}",
-                body=(
+        user_ids = self._purchasing_user_ids()
+        if not user_ids:
+            return
+        self.db.info.setdefault(_PURCHASING_NOTIFY_PENDING_KEY, []).append(
+            {
+                "user_ids": [str(user_id) for user_id in user_ids],
+                "title": f"Order inquiry {reference}",
+                "body": (
                     f"{project.title}: {row_count} instruction"
                     f"{'' if row_count == 1 else 's'}, {to_buy} still to buy."
                 ),
-                data={
+                "data": {
                     "project_id": str(project.id),
                     "project_code": project.project_code,
                     "order_inquiry_id": str(inquiry.id),
@@ -1800,15 +1821,9 @@ class ProjectOrderInquiryService:
                     "row_count": row_count,
                     "to_buy": to_buy,
                 },
-                source_entity_type="order_inquiry",
-                source_entity_id=str(inquiry.id),
-                dedup_key=f"{inquiry.id}:order_inquiry_raised",
-                event_type="project_order_inquiry_raised",
-                send_in_app=True,
-                # Deliberately not email. AC-I4 is that this stops being an email: the
-                # task is the record, and a mailbox is the thing it replaces.
-                send_email=False,
-            )
+                "inquiry_id": str(inquiry.id),
+            }
+        )
 
     def _purchasing_user_ids(self) -> List[str]:
         """Everyone holding the `purchasing` role, which is what SCM is granted through."""
@@ -6123,8 +6138,55 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         finally:
             fresh.close()
 
+    @event.listens_for(Session, "after_commit")
+    def _fire_pending_purchasing_notifications(session):  # noqa: ANN001
+        """Tell purchasing an inquiry was raised, once the write it is about has landed.
+
+        Queued by `_notify_purchasing` rather than sent there, because the notification
+        service commits and this runs inside somebody's savepoint. A FRESH session for the
+        same reason the dispatch above takes one: `after_commit` fires before this session
+        has re-begun a usable transaction.
+        """
+        pending = session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
+        if not pending:
+            return
+        from app.database import SessionLocal
+        from app.services.notification_service import NotificationService
+
+        fresh = SessionLocal()
+        try:
+            for item in pending:
+                for user_id in item["user_ids"]:
+                    try:
+                        NotificationService(fresh).create_with_channel_preferences(
+                            user_id=user_id,
+                            type="project_order_inquiry_raised",
+                            title=item["title"],
+                            body=item["body"],
+                            data=item["data"],
+                            source_entity_type="order_inquiry",
+                            source_entity_id=item["inquiry_id"],
+                            dedup_key=f"{item['inquiry_id']}:order_inquiry_raised",
+                            event_type="project_order_inquiry_raised",
+                            send_in_app=True,
+                            # Deliberately not email. AC-I4 is that this stops being an
+                            # email: the task is the record, and a mailbox is what it
+                            # replaces.
+                            send_email=False,
+                        )
+                    except Exception:  # noqa: BLE001 - post-commit work never raises
+                        fresh.rollback()
+                        logger.exception(
+                            "order inquiry %s raised, but purchasing was not notified",
+                            item.get("inquiry_id"),
+                        )
+        finally:
+            fresh.close()
+
     @event.listens_for(Session, "after_soft_rollback")
     def _discard_pending_changed_with_links(session, previous_transaction):  # noqa: ANN001
         session.info.pop(_CHANGED_WITH_LINKS_PENDING_KEY, None)
+        # A write that never landed has nothing to tell purchasing about either.
+        session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
 
     _POST_COMMIT_DISPATCH_REGISTERED = True

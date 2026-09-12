@@ -1,14 +1,16 @@
 /**
- * Phase 1 fixtures for planning changes (`PLAN-so-book-diff-replanning.md`).
+ * Phase 1 fixtures for planning changes
+ * (`documentation/plans/scm/PLAN-scm-change-management-one-engine.md`, Slice C contract).
  *
- * `pcb-1` is the batch under review: one row per rule of the section-0 table, spread across
- * three planned orders, so every reaction and every render state (held, no hold, dealer
- * hot-selling, project hot-selling, discontinued, buy-only, buy-actioned, advance, qty up, qty
- * down, closed, new line) is on screen at once. One order is adopted (mirror of the AutoCount
- * book, SO403765) and two are authored project SOs, so the SO-number link covers both kinds.
- * `pcb-0` is a batch already applied, carrying the two safety states Apply can leave behind
- * (one order that failed, one row a later board edit superseded before Apply ran) plus the
- * `result` Apply wrote.
+ * `pcb-1` is the batch under review: ONE ROW PER SCENARIO S1 to S12 of
+ * `documentation/plans/scm/mockups/so-change-management-grill-v4.html`, carrying the exact
+ * suggestion lines that page gives, spread across three planned orders so every render state
+ * (held, no hold, dealer hot-selling, buy-actioned, advance, qty up, qty down, cancelled,
+ * added, product changed, late, short) is on screen at once. One order is adopted (mirror of
+ * the AutoCount book, SO403765) and two are authored project SOs, so the SO-number link covers
+ * both kinds. `pcb-0` is a batch already applied, carrying the two safety states Apply can
+ * leave behind (one order that failed, one row a later board edit superseded before Apply ran)
+ * plus the `result` Apply wrote.
  *
  * Kept after the backend landed because the component tests read from it: one shape for the
  * prototype and the tests means a test cannot pass against a row the screen never saw.
@@ -16,40 +18,35 @@
 import type {
   BoardContribution,
   BoardTrailStep,
+  ConfirmLine,
 } from '../types/fulfilmentPlanning.types';
 import type {
   PlanningChangeBatch,
   PlanningChangeBatchSummary,
   PlanningChangeBuyActionedFact,
   PlanningChangeEvidencedFact,
-  PlanningChangeReserveWindowFact,
+  PlanningChangeHeld,
+  PlanningChangePlacedFact,
   PlanningChangeRow,
 } from '../types/planningChange.types';
-
-/** One calendar day arithmetic helper, UTC so a date-only string round-trips exactly. */
-function addDays(dateStr: string, days: number): string {
-  const date = new Date(`${dateStr}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
 
 /** A fact with no supporting evidence - `dealer_hot_selling: false` needs no `where`. */
 function evidencedFact(value: boolean, where: string[] = []): PlanningChangeEvidencedFact {
   return { value, where };
 }
 
-/** The 60-day reserve window, measured from the line's previous delivery date. */
-function windowFact(
-  fromDate: string,
-  toDate: string,
-  daysMoved: number,
-): PlanningChangeReserveWindowFact {
-  return {
-    value: Math.abs(daysMoved) <= 60,
-    window_days: 60,
-    new_date: toDate,
-    window_end: addDays(fromDate, 60),
-  };
+/**
+ * What is already ON a document for this line, and when it lands (S2, S12).
+ *
+ * `within_reserve_window` used to sit beside this; Slice C retired it (rule 2) - the
+ * ladder's own step 0 decides whether a line that far out may hold stock.
+ */
+function placedFact(
+  qty = '0',
+  document: string | null = null,
+  arrivalDate: string | null = null,
+): PlanningChangePlacedFact {
+  return { qty, document, arrival_date: arrivalDate };
 }
 
 function buyActionedFact(value: boolean, poNumber: string | null = null): PlanningChangeBuyActionedFact {
@@ -181,399 +178,363 @@ function boardProposal(overrides: {
   };
 }
 
-const ROW_1: PlanningChangeRow = {
-  id: 'pcr-1',
+/** What a line's active decision holds today, spelled the short way for a fixture. */
+function heldOf(over: {
+  reserve?: { location: string; qty: string }[];
+  borrow?: { location: string; qty: string; source?: string }[];
+  buy?: string;
+  spo?: string;
+  revisionNo?: number;
+}): PlanningChangeHeld {
+  return {
+    reserve: (over.reserve ?? []).map((entry) => ({
+      location: entry.location,
+      warehouse_id: `wh-${entry.location}`,
+      qty: entry.qty,
+    })),
+    borrow: (over.borrow ?? []).map((entry) => ({
+      location: entry.location,
+      warehouse_id: `wh-${entry.location}`,
+      qty: entry.qty,
+      source: entry.source ?? 'other_location',
+    })),
+    buy_qty: over.buy ?? '0',
+    timely_spo_qty: over.spo ?? '0',
+    revision_no: over.revisionNo ?? 4,
+  };
+}
+
+/**
+ * What Apply posts for the row: PRE-FILLED at build from the re-run (Slice C contract A), so
+ * Confirm posts it unchanged and Amend opens the board's own dialog on it.
+ */
+function compositionOf(over: {
+  lineId: string;
+  reserve?: { location: string; qty: string }[];
+  borrow?: {
+    location: string;
+    qty: string;
+    donorSoNumber?: string;
+    donorLineNo?: number;
+  }[];
+  buy?: string;
+  spo?: string;
+}): ConfirmLine {
+  return {
+    project_line_id: over.lineId,
+    timely_spo_qty: over.spo ?? '0',
+    reserve: (over.reserve ?? []).map((entry) => ({
+      warehouse_id: `wh-${entry.location}`,
+      qty: entry.qty,
+    })),
+    borrow: (over.borrow ?? []).map((entry) => ({
+      source: 'other_location' as const,
+      warehouse_id: `wh-${entry.location}`,
+      qty: entry.qty,
+      reason: entry.donorSoNumber
+        ? `${entry.donorSoNumber} holds the whole unit on hand and is due later.`
+        : 'The whole unit is on hand at another location.',
+      donor_so_number: entry.donorSoNumber ?? null,
+      donor_line_no: entry.donorLineNo ?? null,
+    })),
+    buy_qty: over.buy ?? '0',
+  };
+}
+
+/**
+ * S1 (AC-B1). Qty up 134 -> 234 on a Buy the line already holds, due outside the immediate
+ * window: the top-up JOINS the held Buy on the same inquiry row rather than splitting the
+ * unit into stock plus a purchase.
+ */
+const ROW_S1: PlanningChangeRow = {
+  id: 'pcr-s1',
+  project_line_id: 'pl-403765-3',
   line_no: 3,
-  item_code: 'CB231SS-NL',
-  product_name: 'Concealed cistern 231SS',
-  kind: 'delayed',
-  from: { required_date: '2026-08-20', qty: '72', status: 'open' },
-  to: { required_date: '2026-09-03', qty: '72', status: 'open' },
-  days_moved: 14,
-  held: {
-    reserve: [{ location: 'BRW-BB', warehouse_id: 'wh-BRW-BB', qty: '66' }],
-    borrow: [],
-    buy_qty: '6',
-    timely_spo_qty: '0',
-    revision_no: 4,
-  },
-  facts: {
-    dealer_hot_selling: evidencedFact(false),
-    project_hot_selling: evidencedFact(false),
-    discontinued: false,
-    days_moved: 14,
-    within_reserve_window: windowFact('2026-08-20', '2026-09-03', 14),
-    buy_actioned: buyActionedFact(false),
-  },
-  suggested: 'keep',
-  why: 'New date is 14 days out and inside the 60-day reserve window; the reserve stays put rather than being released and re-taken.',
-  proposal: null,
-  inquiry_rows: [{ id: 'oi-1', verb: 'ORDER', qty: '6', state: 'raised' }],
-  decision: 'accept',
-  applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=CB231SS-NL|2026-09-03',
-};
-
-const ROW_2: PlanningChangeRow = {
-  id: 'pcr-2',
-  line_no: 4,
-  item_code: 'WESERP10B',
-  product_name: 'Wall hung bidet spray',
-  kind: 'delayed',
-  from: { required_date: '2026-08-25', qty: '40', status: 'open' },
-  to: { required_date: '2027-03-10', qty: '40', status: 'open' },
-  days_moved: 197,
-  held: {
-    reserve: [{ location: 'MWH-IB', warehouse_id: 'wh-MWH-IB', qty: '40' }],
-    borrow: [],
-    buy_qty: '0',
-    timely_spo_qty: '0',
-    revision_no: 4,
-  },
-  facts: {
-    dealer_hot_selling: evidencedFact(false),
-    project_hot_selling: evidencedFact(false),
-    discontinued: false,
-    days_moved: 197,
-    within_reserve_window: windowFact('2026-08-25', '2027-03-10', 197),
-    buy_actioned: buyActionedFact(false),
-  },
-  suggested: 'release',
-  why: 'New date is 197 days out, beyond the 60-day reserve window; the reserve is released back to MWH-IB rather than sitting idle for months.',
-  proposal: null,
-  inquiry_rows: [],
-  decision: 'accept',
-  applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=WESERP10B|2027-03-10',
-};
-
-const ROW_3: PlanningChangeRow = {
-  id: 'pcr-3',
-  line_no: 5,
   item_code: 'B2155-NL-BLUE',
   product_name: 'Basin mixer 2155 blue',
-  kind: 'delayed',
-  from: { required_date: '2026-09-05', qty: '30', status: 'open' },
-  to: { required_date: '2026-09-26', qty: '30', status: 'open' },
-  days_moved: 21,
-  held: {
-    reserve: [{ location: 'BRW', warehouse_id: 'wh-BRW', qty: '30' }],
-    borrow: [],
-    buy_qty: '0',
-    timely_spo_qty: '0',
-    revision_no: 4,
-  },
-  facts: {
-    dealer_hot_selling: evidencedFact(true, ['BRW', 'BRW-IB']),
-    project_hot_selling: evidencedFact(false),
-    discontinued: false,
-    days_moved: 21,
-    within_reserve_window: windowFact('2026-09-05', '2026-09-26', 21),
-    buy_actioned: buyActionedFact(false),
-  },
-  suggested: 'release',
-  why: 'Dealer hot-selling at BRW, BRW-IB: retail needs the pool stock now, so the reserve is released back to the pool whatever the size of the delay.',
-  proposal: null,
-  inquiry_rows: [],
-  decision: 'accept',
-  applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=B2155-NL-BLUE|2026-09-26',
-};
-
-const ROW_4: PlanningChangeRow = {
-  id: 'pcr-4',
-  line_no: 6,
-  item_code: 'CB231SS-NL',
-  product_name: 'Concealed cistern 231SS',
-  kind: 'delayed',
-  from: { required_date: '2026-08-15', qty: '18', status: 'open' },
-  to: { required_date: '2027-05-01', qty: '18', status: 'open' },
-  days_moved: 259,
-  held: {
-    reserve: [{ location: 'MWH-IB', warehouse_id: 'wh-MWH-IB', qty: '18' }],
-    borrow: [],
-    buy_qty: '0',
-    timely_spo_qty: '0',
-    revision_no: 4,
-  },
-  facts: {
-    dealer_hot_selling: evidencedFact(false),
-    project_hot_selling: evidencedFact(false),
-    discontinued: true,
-    days_moved: 259,
-    within_reserve_window: windowFact('2026-08-15', '2027-05-01', 259),
-    buy_actioned: buyActionedFact(false),
-  },
-  suggested: 'keep',
-  why: 'Discontinued: it cannot be bought again, so the reserve is kept whatever the size of the delay.',
-  proposal: null,
-  inquiry_rows: [],
-  decision: 'accept',
-  applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=CB231SS-NL|2027-05-01',
-};
-
-const ROW_5: PlanningChangeRow = {
-  id: 'pcr-5',
-  line_no: 7,
-  item_code: 'WESERP10B',
-  product_name: 'Wall hung bidet spray',
-  kind: 'delayed',
-  from: { required_date: '2026-08-22', qty: '25', status: 'open' },
-  to: { required_date: '2026-09-10', qty: '25', status: 'open' },
-  days_moved: 19,
-  held: {
-    reserve: [],
-    borrow: [],
-    buy_qty: '25',
-    timely_spo_qty: '0',
-    revision_no: 4,
-  },
-  facts: {
-    dealer_hot_selling: evidencedFact(false),
-    project_hot_selling: evidencedFact(false),
-    discontinued: false,
-    days_moved: 19,
-    within_reserve_window: windowFact('2026-08-22', '2026-09-10', 19),
-    buy_actioned: buyActionedFact(false),
-  },
-  suggested: 'keep',
-  why: 'Only a Buy of 25 is held and purchasing has not actioned it yet; the Buy stands and the inquiry row is updated to DELAY with the previous date.',
-  proposal: null,
-  inquiry_rows: [{ id: 'oi-5', verb: 'ORDER', qty: '25', state: 'raised' }],
-  decision: 'accept',
-  applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=WESERP10B|2026-09-10',
-};
-
-const ROW_6: PlanningChangeRow = {
-  id: 'pcr-6',
-  line_no: 8,
-  item_code: 'B2155-NL-BLUE',
-  product_name: 'Basin mixer 2155 blue',
-  kind: 'delayed',
-  from: { required_date: '2026-08-28', qty: '18', status: 'open' },
-  to: { required_date: '2026-09-18', qty: '18', status: 'open' },
-  days_moved: 21,
-  held: {
-    reserve: [],
-    borrow: [],
-    buy_qty: '18',
-    timely_spo_qty: '0',
-    revision_no: 4,
-  },
-  facts: {
-    dealer_hot_selling: evidencedFact(false),
-    project_hot_selling: evidencedFact(false),
-    discontinued: false,
-    days_moved: 21,
-    within_reserve_window: windowFact('2026-08-28', '2026-09-18', 21),
-    buy_actioned: buyActionedFact(true, 'PO2026-0412'),
-  },
-  suggested: 'keep',
-  why: 'The Buy of 18 is already a placed purchase order (PO2026-0412); nothing in the plan changes, and the inquiry row notes the delay.',
-  proposal: null,
-  inquiry_rows: [{ id: 'oi-6', verb: 'ORDER', qty: '18', state: 'actioned' }],
-  decision: 'accept',
-  applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=B2155-NL-BLUE|2026-09-18',
-};
-
-const ROW_7: PlanningChangeRow = {
-  id: 'pcr-7',
-  line_no: 2,
-  item_code: 'CB231SS-NL',
-  product_name: 'Concealed cistern 231SS',
-  kind: 'advanced',
-  from: { required_date: '2027-02-18', qty: '60', status: 'open' },
-  to: { required_date: '2027-02-04', qty: '60', status: 'open' },
-  days_moved: -14,
-  held: {
-    reserve: [{ location: 'BRW-BB', warehouse_id: 'wh-BRW-BB', qty: '20' }],
-    borrow: [],
-    buy_qty: '40',
-    timely_spo_qty: '0',
-    revision_no: 2,
-  },
-  facts: {
-    dealer_hot_selling: evidencedFact(false),
-    project_hot_selling: evidencedFact(true, ['BRW-BB']),
-    discontinued: false,
-    days_moved: -14,
-    within_reserve_window: windowFact('2027-02-18', '2027-02-04', -14),
-    buy_actioned: buyActionedFact(false),
-  },
-  suggested: 'replan',
-  why: 'Advanced 18 Feb -> 04 Feb (-14 d); the line runs the ladder again at the new date now, and the proposal below is what it found.',
-  proposal: boardProposal({
-    key: 'pcb-1-so400875-l2-advance',
-    sales_order_id: 'so-400875',
-    so_number: 'SO400875',
-    line_no: 2,
-    item_code: 'CB231SS-NL',
-    qty: '60',
-    required_date: '2027-02-04',
-    reserveQty: '40',
-    reserveLocation: 'BRW-BB',
-    buyQty: '20',
-  }),
-  inquiry_rows: [{ id: 'oi-7', verb: 'ORDER', qty: '40', state: 'raised' }],
-  // NOTE: the real backend now defaults a `replan` row's decision to `null` ("Leave on the
-  // board") rather than `accept` - `accept` never executed anything for it (the captain's
-  // own fix, 19 August 2026). Left as `accept` here only to avoid perturbing this fixture's
-  // other counts (`BatchMetaStrip`'s "N lines with a decision"), which several existing
-  // Phase 1 tests assert on by exact figure; the FE control itself does not read this value
-  // to decide whether `Confirm`/`Amend`/`Leave on the board` is clickable.
-  decision: 'accept',
-  applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=CB231SS-NL|2027-02-04',
-};
-
-const ROW_8: PlanningChangeRow = {
-  id: 'pcr-8',
-  line_no: 3,
-  item_code: 'WESERP10B',
-  product_name: 'Wall hung bidet spray',
   kind: 'qty_up',
-  from: { required_date: '2027-01-10', qty: '72', status: 'open' },
-  to: { required_date: '2027-01-10', qty: '90', status: 'open' },
+  from: { required_date: '2026-09-04', qty: '134', status: 'open' },
+  to: { required_date: '2026-09-04', qty: '234', status: 'open' },
   days_moved: 0,
-  held: {
-    reserve: [{ location: 'BRW-BB', warehouse_id: 'wh-BRW-BB', qty: '72' }],
-    borrow: [],
-    buy_qty: '0',
-    timely_spo_qty: '0',
-    revision_no: 2,
-  },
+  held: heldOf({ buy: '134' }),
   facts: {
     dealer_hot_selling: evidencedFact(false),
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 0,
-    within_reserve_window: windowFact('2027-01-10', '2027-01-10', 0),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
-  suggested: 'replan',
-  why: 'Qty rose from 72 to 90; the existing 72 stays held, and only the extra 18 runs the ladder.',
+  suggestion: {
+    components: [
+      {
+        action: 'buy',
+        source: 'buy',
+        qty_was: '134',
+        qty_now: '234',
+        label: 'Buy 234 (was 134)',
+      },
+    ],
+  },
   proposal: boardProposal({
-    key: 'pcb-1-so400875-l3-qtyup',
-    sales_order_id: 'so-400875',
-    so_number: 'SO400875',
+    key: 'pcb-1-so403765-l3-qtyup',
+    sales_order_id: 'so-403765',
+    so_number: 'SO403765',
     line_no: 3,
-    item_code: 'WESERP10B',
-    qty: '18',
-    required_date: '2027-01-10',
-    reserveQty: '10',
-    reserveLocation: 'BRW-BB',
-    buyQty: '8',
+    item_code: 'B2155-NL-BLUE',
+    qty: '234',
+    required_date: '2026-09-04',
+    reserveQty: '0',
+    reserveLocation: 'BRW-IB',
+    buyQty: '234',
   }),
-  inquiry_rows: [{ id: 'oi-8', verb: 'ORDER', qty: '8', state: 'raised' }],
-  decision: 'accept',
+  inquiry_rows: [{ id: 'oi-s1', verb: 'ORDER', qty: '134', state: 'raised' }],
+  decision: 'confirm',
+  composition: compositionOf({ lineId: 'pl-403765-3', buy: '234' }),
   applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=WESERP10B|2027-01-10',
+  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=B2155-NL-BLUE|2026-09-04',
 };
 
-const ROW_9: PlanningChangeRow = {
-  id: 'pcr-9',
+/**
+ * S2 (AC-C4). Qty down 234 -> 100 with 134 already placed on PO-A and 100 still raised: the
+ * unplaced row is reduced first, the placed one is kept down to what is still needed, and the
+ * freed 34 of PO-A is re-dealt to an inquiry row that wants it (not dealer hot-selling here,
+ * so the dealer pool does not take it).
+ */
+const ROW_S2: PlanningChangeRow = {
+  id: 'pcr-s2',
+  project_line_id: 'pl-403765-4',
   line_no: 4,
   item_code: 'B2155-NL-BLUE',
   product_name: 'Basin mixer 2155 blue',
   kind: 'qty_down',
-  from: { required_date: '2027-01-15', qty: '72', status: 'open' },
-  to: { required_date: '2027-01-15', qty: '66', status: 'open' },
+  from: { required_date: '2026-09-04', qty: '234', status: 'open' },
+  to: { required_date: '2026-09-04', qty: '100', status: 'open' },
   days_moved: 0,
-  held: {
-    reserve: [{ location: 'BRW-BB', warehouse_id: 'wh-BRW-BB', qty: '66' }],
-    borrow: [],
-    buy_qty: '6',
-    timely_spo_qty: '0',
-    revision_no: 2,
-  },
+  held: heldOf({ buy: '234' }),
   facts: {
     dealer_hot_selling: evidencedFact(false),
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 0,
-    within_reserve_window: windowFact('2027-01-15', '2027-01-15', 0),
-    buy_actioned: buyActionedFact(false),
+    buy_actioned: buyActionedFact(true, 'PO-A'),
+    placed: placedFact('134', 'PO-A', '2026-10-01'),
   },
-  suggested: 'reduce',
-  why: 'Qty dropped from 72 to 66; the reserve of 66 stays, the Buy of 6 is reduced to nothing, and the inquiry row is cancelled for the drop.',
+  suggestion: {
+    components: [
+      {
+        action: 'reduce',
+        source: 'buy',
+        qty_was: '100',
+        qty_now: '0',
+        label: 'Reduce Buy 100 to 0',
+      },
+      {
+        action: 'keep',
+        source: 'po',
+        qty_was: '134',
+        qty_now: '100',
+        document: 'PO-A',
+        label: 'Keep PO-A 100 of 134',
+      },
+      {
+        action: 'reallocate',
+        source: 'po',
+        qty_now: '34',
+        document: 'PO-A',
+        target: 'SO420103 ORDER 50',
+        label: 'Reallocate PO-A 34 to SO420103 ORDER 50',
+      },
+    ],
+  },
   proposal: null,
-  inquiry_rows: [{ id: 'oi-9', verb: 'ORDER', qty: '6', state: 'raised' }],
-  decision: 'accept',
+  inquiry_rows: [
+    { id: 'oi-s2a', verb: 'ORDER', qty: '134', state: 'placed' },
+    { id: 'oi-s2b', verb: 'ORDER', qty: '100', state: 'raised' },
+  ],
+  decision: 'confirm',
+  composition: compositionOf({ lineId: 'pl-403765-4', buy: '100' }),
   applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=B2155-NL-BLUE|2027-01-15',
+  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=B2155-NL-BLUE|2026-09-04',
 };
 
-const ROW_10: PlanningChangeRow = {
-  id: 'pcr-10',
+/**
+ * S3 (AC-D4). Delayed inside the reserve window, but another order's raised row needs the
+ * stock EARLIER: 80 of the reserve moves to it, the rest is freed, and this line is re-sourced
+ * whole for its new date off an SPO that lands in time.
+ */
+const ROW_S3: PlanningChangeRow = {
+  id: 'pcr-s3',
+  project_line_id: 'pl-403765-5',
   line_no: 5,
-  item_code: 'CB231SS-NL',
-  product_name: 'Concealed cistern 231SS',
-  kind: 'closed',
-  from: { required_date: '2027-01-20', qty: '12', status: 'open' },
-  to: { required_date: null, qty: null, status: 'closed' },
-  days_moved: null,
-  held: {
-    reserve: [{ location: 'MWH-IB', warehouse_id: 'wh-MWH-IB', qty: '4' }],
-    borrow: [],
-    buy_qty: '8',
-    timely_spo_qty: '0',
-    revision_no: 2,
-  },
-  facts: {
-    dealer_hot_selling: evidencedFact(false),
-    project_hot_selling: evidencedFact(false),
-    discontinued: false,
-    days_moved: 0,
-    within_reserve_window: windowFact('2027-01-20', '2027-01-20', 0),
-    buy_actioned: buyActionedFact(true, 'PO2026-0398'),
-  },
-  suggested: 'retire',
-  why: 'The line is closed in the book; the reserve and the remaining Buy are released, and the already-actioned inquiry row (PO2026-0398) is kept with a note rather than retired.',
-  proposal: null,
-  inquiry_rows: [{ id: 'oi-10', verb: 'ORDER', qty: '8', state: 'actioned' }],
-  decision: 'accept',
-  applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=CB231SS-NL|2027-01-20',
-};
-
-const ROW_11A: PlanningChangeRow = {
-  id: 'pcr-11a',
-  line_no: 9,
   item_code: 'B2155-NL-BLUE',
   product_name: 'Basin mixer 2155 blue',
-  kind: 'added',
-  from: { required_date: null, qty: null, status: null },
-  to: { required_date: '2026-10-01', qty: '24', status: 'open' },
-  days_moved: null,
-  held: null,
+  kind: 'delayed',
+  from: { required_date: '2026-09-04', qty: '134', status: 'open' },
+  to: { required_date: '2026-11-20', qty: '134', status: 'open' },
+  days_moved: 77,
+  held: heldOf({ reserve: [{ location: 'BRW-IB', qty: '134' }] }),
   facts: {
     dealer_hot_selling: evidencedFact(false),
     project_hot_selling: evidencedFact(false),
     discontinued: false,
-    days_moved: 0,
-    within_reserve_window: windowFact('2026-10-01', '2026-10-01', 0),
+    days_moved: 77,
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
-  suggested: 'replan',
-  why: 'New line on the book; nothing was ever held for it, so it simply enters the board at its new date.',
+  suggestion: {
+    components: [
+      {
+        action: 'reallocate',
+        source: 'reserve',
+        qty_now: '80',
+        location: 'BRW-IB',
+        target: 'SO420100 ORDER 80',
+        label: 'Reallocate 80 at BRW-IB to SO420100 ORDER 80',
+      },
+      {
+        action: 'release',
+        source: 'reserve',
+        qty_now: '54',
+        location: 'BRW-IB',
+        label: 'Release 54, free at BRW-IB',
+      },
+      {
+        action: 'spo',
+        source: 'spo',
+        qty_now: '134',
+        document: 'SPO-77',
+        label: 'SPO 134 on SPO-77 for 20 Nov',
+      },
+    ],
+  },
   proposal: null,
   inquiry_rows: [],
   decision: null,
+  composition: compositionOf({ lineId: 'pl-403765-5', spo: '134' }),
   applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO401220&cell=B2155-NL-BLUE|2026-10-01',
+  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=B2155-NL-BLUE|2026-11-20',
 };
 
-const ROW_11B: PlanningChangeRow = {
-  id: 'pcr-11b',
-  line_no: 10,
-  item_code: 'WESERP10B',
-  product_name: 'Wall hung bidet spray',
+/**
+ * S4. Advanced past what PO-A can land: no half measures, so the whole unit is borrowed from
+ * a later order that holds it on hand, and PO-A follows to that order's own order-back row.
+ */
+const ROW_S4: PlanningChangeRow = {
+  id: 'pcr-s4',
+  project_line_id: 'pl-403765-6',
+  line_no: 6,
+  item_code: 'B2155-NL-BLUE',
+  product_name: 'Basin mixer 2155 blue',
+  kind: 'advanced',
+  from: { required_date: '2026-09-04', qty: '134', status: 'open' },
+  to: { required_date: '2026-08-20', qty: '134', status: 'open' },
+  days_moved: -15,
+  held: heldOf({ buy: '134' }),
+  facts: {
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
+    discontinued: false,
+    days_moved: -15,
+    buy_actioned: buyActionedFact(true, 'PO-A'),
+    placed: placedFact('134', 'PO-A', '2026-09-01'),
+  },
+  suggestion: {
+    components: [
+      {
+        action: 'reallocate',
+        source: 'po',
+        qty_now: '134',
+        document: 'PO-A',
+        target: 'SO419900 ORDER BACK 134',
+        label: 'Reallocate PO-A 134 to SO419900 ORDER BACK 134',
+      },
+      {
+        action: 'borrow',
+        source: 'borrow',
+        qty_now: '134',
+        location: 'BRW-IB',
+        target: 'SO419900',
+        label: 'Borrow 134 from SO419900, order-back raised',
+      },
+    ],
+  },
+  proposal: null,
+  inquiry_rows: [{ id: 'oi-s4', verb: 'ORDER', qty: '134', state: 'placed' }],
+  decision: 'amend',
+  composition: compositionOf({
+    lineId: 'pl-403765-6',
+    borrow: [{ location: 'BRW-IB', qty: '134', donorSoNumber: 'SO419900', donorLineNo: 2 }],
+  }),
+  applied_state: 'pending',
+  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=B2155-NL-BLUE|2026-08-20',
+};
+
+/**
+ * S5 (AC-C5). The line is cancelled: every held component leaves it - the reserve is freed and
+ * the placed PO-B quantity goes to the dealer pool, because the product IS dealer hot-selling
+ * and retail wins over a waiting project row (grill page, decided 3.1).
+ */
+const ROW_S5: PlanningChangeRow = {
+  id: 'pcr-s5',
+  project_line_id: 'pl-403765-7',
+  line_no: 7,
+  item_code: 'B2155-NL-BLUE',
+  product_name: 'Basin mixer 2155 blue',
+  kind: 'cancelled',
+  from: { required_date: '2026-09-04', qty: '134', status: 'open' },
+  to: { required_date: null, qty: null, status: 'closed' },
+  days_moved: null,
+  held: heldOf({ reserve: [{ location: 'BRW-IB', qty: '50' }], buy: '84' }),
+  facts: {
+    dealer_hot_selling: evidencedFact(true, ['BRW', 'BRW-IB']),
+    project_hot_selling: evidencedFact(false),
+    discontinued: false,
+    days_moved: 0,
+    buy_actioned: buyActionedFact(true, 'PO-B'),
+    placed: placedFact('84', 'PO-B', '2026-10-08'),
+  },
+  suggestion: {
+    components: [
+      {
+        action: 'release',
+        source: 'reserve',
+        qty_now: '50',
+        location: 'BRW-IB',
+        target: 'dealer pool',
+        label: 'Release 50 to dealer pool',
+      },
+      {
+        action: 'reallocate',
+        source: 'po',
+        qty_now: '84',
+        document: 'PO-B',
+        target: 'dealer pool',
+        label: 'Reallocate PO-B 84 to dealer pool',
+      },
+    ],
+  },
+  proposal: null,
+  inquiry_rows: [{ id: 'oi-s5', verb: 'ORDER', qty: '84', state: 'placed' }],
+  decision: 'confirm',
+  composition: null,
+  applied_state: 'pending',
+  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=B2155-NL-BLUE|2026-09-04',
+};
+
+/**
+ * S6. A new line on an order that already has held lines: nothing to diff against, so the
+ * suggestion is new sourcing only, one step for the whole 60.
+ */
+const ROW_S6: PlanningChangeRow = {
+  id: 'pcr-s6',
+  project_line_id: null,
+  line_no: 8,
+  item_code: 'B2160-NL-BLUE',
+  product_name: 'Basin mixer 2160 blue',
   kind: 'added',
   from: { required_date: null, qty: null, status: null },
-  to: { required_date: '2026-10-12', qty: '12', status: 'open' },
+  to: { required_date: '2026-09-04', qty: '60', status: 'open' },
   days_moved: null,
   held: null,
   facts: {
@@ -581,16 +542,336 @@ const ROW_11B: PlanningChangeRow = {
     project_hot_selling: evidencedFact(false),
     discontinued: false,
     days_moved: 0,
-    within_reserve_window: windowFact('2026-10-12', '2026-10-12', 0),
     buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
   },
-  suggested: 'replan',
-  why: 'New line on the book; nothing was ever held for it, so it simply enters the board at its new date.',
+  suggestion: {
+    components: [
+      {
+        action: 'use_own',
+        source: 'reserve',
+        qty_now: '60',
+        location: 'BRW-IB',
+        label: 'Use own 60 at BRW-IB',
+      },
+    ],
+  },
   proposal: null,
   inquiry_rows: [],
   decision: null,
+  composition: null,
   applied_state: 'pending',
-  board_link: '/project-sales/fulfilment-planning?orders=SO401220&cell=WESERP10B|2026-10-12',
+  board_link: '/project-sales/fulfilment-planning?orders=SO403765&cell=B2160-NL-BLUE|2026-09-04',
+};
+
+/**
+ * S7 (AC-C5). One product swapped for another on the SAME line: ONE row, never a cancelled
+ * plus an added pair. The old product's hold leaves it; the new product is sourced as a new
+ * line in the same row.
+ */
+const ROW_S7: PlanningChangeRow = {
+  id: 'pcr-s7',
+  project_line_id: 'pl-400875-2',
+  line_no: 2,
+  item_code: 'B2155-NL-WHITE',
+  product_name: 'Basin mixer 2155 white',
+  kind: 'product_changed',
+  from: {
+    required_date: '2026-09-04',
+    qty: '134',
+    status: 'open',
+    item_code: 'B2155-NL-BLUE',
+  },
+  to: {
+    required_date: '2026-09-04',
+    qty: '134',
+    status: 'open',
+    item_code: 'B2155-NL-WHITE',
+  },
+  days_moved: 0,
+  held: heldOf({ reserve: [{ location: 'BRW-IB', qty: '134' }] }),
+  facts: {
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
+    discontinued: false,
+    days_moved: 0,
+    buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
+  },
+  suggestion: {
+    components: [
+      {
+        action: 'release',
+        source: 'reserve',
+        qty_now: '134',
+        location: 'BRW-IB',
+        label: 'Release 134, free at BRW-IB',
+      },
+      {
+        action: 'buy',
+        source: 'buy',
+        qty_now: '134',
+        item_code: 'B2155-NL-WHITE',
+        label: 'Buy 134 for 4 Sep',
+      },
+    ],
+  },
+  proposal: null,
+  inquiry_rows: [],
+  decision: null,
+  composition: compositionOf({ lineId: 'pl-400875-2', buy: '134' }),
+  applied_state: 'pending',
+  board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=B2155-NL-WHITE|2026-09-04',
+};
+
+/**
+ * S8 (AC-C8). A date AND a quantity in one edit: ONE row, one run at (100, 20 Nov), one
+ * composed suggestion. No tie-break decides which half of the edit "wins".
+ */
+const ROW_S8: PlanningChangeRow = {
+  id: 'pcr-s8',
+  project_line_id: 'pl-400875-3',
+  line_no: 3,
+  item_code: 'B2155-NL-BLUE',
+  product_name: 'Basin mixer 2155 blue',
+  kind: 'qty_down',
+  from: { required_date: '2026-09-04', qty: '134', status: 'open' },
+  to: { required_date: '2026-11-20', qty: '100', status: 'open' },
+  days_moved: 77,
+  held: heldOf({ reserve: [{ location: 'BRW-IB', qty: '134' }] }),
+  facts: {
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
+    discontinued: false,
+    days_moved: 77,
+    buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
+  },
+  suggestion: {
+    components: [
+      {
+        action: 'reduce',
+        source: 'reserve',
+        qty_was: '134',
+        qty_now: '100',
+        location: 'BRW-IB',
+        label: 'Reduce reserve 134 to 100',
+      },
+    ],
+  },
+  proposal: null,
+  inquiry_rows: [],
+  decision: 'confirm',
+  composition: compositionOf({
+    lineId: 'pl-400875-3',
+    reserve: [{ location: 'BRW-IB', qty: '100' }],
+  }),
+  applied_state: 'pending',
+  board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=B2155-NL-BLUE|2026-11-20',
+};
+
+/**
+ * S9 (AC-C2). A small delay, still inside the reserve window, and no inquiry row wants the
+ * stock earlier: Keep, and nothing else. One line is the whole suggestion.
+ */
+const ROW_S9: PlanningChangeRow = {
+  id: 'pcr-s9',
+  project_line_id: 'pl-400875-4',
+  line_no: 4,
+  item_code: 'B2155-NL-BLUE',
+  product_name: 'Basin mixer 2155 blue',
+  kind: 'delayed',
+  from: { required_date: '2026-09-04', qty: '134', status: 'open' },
+  to: { required_date: '2026-09-25', qty: '134', status: 'open' },
+  days_moved: 21,
+  held: heldOf({ reserve: [{ location: 'BRW-IB', qty: '134' }] }),
+  facts: {
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
+    discontinued: false,
+    days_moved: 21,
+    buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
+  },
+  suggestion: {
+    components: [
+      {
+        action: 'keep',
+        source: 'reserve',
+        qty_now: '134',
+        location: 'BRW-IB',
+        label: 'Keep 134',
+      },
+    ],
+  },
+  proposal: null,
+  inquiry_rows: [],
+  decision: 'confirm',
+  composition: compositionOf({
+    lineId: 'pl-400875-4',
+    reserve: [{ location: 'BRW-IB', qty: '134' }],
+  }),
+  applied_state: 'pending',
+  board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=B2155-NL-BLUE|2026-09-25',
+};
+
+/**
+ * S10 (AC-C3). A delay past the reserve window: step 0 fires, so no stock is held for a line
+ * that far out - the reserve is freed and the whole unit is bought for its own date. Keeping
+ * it is available as an Amend, never as the suggestion.
+ */
+const ROW_S10: PlanningChangeRow = {
+  id: 'pcr-s10',
+  project_line_id: 'pl-400875-5',
+  line_no: 5,
+  item_code: 'B2155-NL-BLUE',
+  product_name: 'Basin mixer 2155 blue',
+  kind: 'delayed',
+  from: { required_date: '2026-09-04', qty: '134', status: 'open' },
+  to: { required_date: '2027-03-15', qty: '134', status: 'open' },
+  days_moved: 192,
+  held: heldOf({ reserve: [{ location: 'BRW-IB', qty: '134' }] }),
+  facts: {
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
+    discontinued: false,
+    days_moved: 192,
+    buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
+  },
+  suggestion: {
+    components: [
+      {
+        action: 'release',
+        source: 'reserve',
+        qty_now: '134',
+        location: 'BRW-IB',
+        label: 'Release 134, free at BRW-IB',
+      },
+      {
+        action: 'buy',
+        source: 'buy',
+        qty_now: '134',
+        label: 'Buy 134 for 15 Mar',
+      },
+    ],
+  },
+  proposal: null,
+  inquiry_rows: [],
+  decision: null,
+  composition: compositionOf({ lineId: 'pl-400875-5', buy: '134' }),
+  applied_state: 'pending',
+  board_link: '/project-sales/fulfilment-planning?orders=SO400875&cell=B2155-NL-BLUE|2027-03-15',
+};
+
+/**
+ * S11 (AC-B3). Advanced INTO the immediate window, where the pool-share step may cover PART
+ * of the unit: 90 from the pool now, the held Buy reduced to the 44 left, and nothing can
+ * cover that 44 in time - so the board says so rather than promising a date.
+ */
+const ROW_S11: PlanningChangeRow = {
+  id: 'pcr-s11',
+  project_line_id: 'pl-401220-2',
+  line_no: 2,
+  item_code: 'B2155-NL-BLUE',
+  product_name: 'Basin mixer 2155 blue',
+  kind: 'advanced',
+  from: { required_date: '2026-09-04', qty: '134', status: 'open' },
+  to: { required_date: '2026-08-22', qty: '134', status: 'open' },
+  days_moved: -13,
+  held: heldOf({ buy: '134' }),
+  facts: {
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
+    discontinued: false,
+    days_moved: -13,
+    buy_actioned: buyActionedFact(false),
+    placed: placedFact(),
+  },
+  suggestion: {
+    components: [
+      {
+        action: 'buy',
+        source: 'buy',
+        qty_was: '134',
+        qty_now: '44',
+        label: 'Short 44 by 22 Aug',
+      },
+      {
+        action: 'use_own',
+        source: 'pool_share',
+        qty_now: '90',
+        location: 'BRW',
+        label: 'Pool share 90 at BRW',
+      },
+    ],
+    shortfall_qty: '44',
+  },
+  proposal: boardProposal({
+    key: 'pcb-1-so401220-l2-advance',
+    sales_order_id: 'so-401220',
+    so_number: 'SO401220',
+    line_no: 2,
+    item_code: 'B2155-NL-BLUE',
+    qty: '134',
+    required_date: '2026-08-22',
+    reserveQty: '90',
+    reserveLocation: 'BRW',
+    buyQty: '44',
+  }),
+  inquiry_rows: [{ id: 'oi-s11', verb: 'ORDER', qty: '134', state: 'raised' }],
+  decision: null,
+  composition: compositionOf({
+    lineId: 'pl-401220-2',
+    reserve: [{ location: 'BRW', qty: '90' }],
+    buy: '44',
+  }),
+  applied_state: 'pending',
+  board_link: '/project-sales/fulfilment-planning?orders=SO401220&cell=B2155-NL-BLUE|2026-08-22',
+};
+
+/**
+ * S12 (AC-C6). Advanced, but PO-A lands three days after the new date and no donor can lend
+ * the whole unit: the plan stands and the lateness is SAID, so CS can amend or push the PO
+ * date outside the system. A unit kept late is never silently kept.
+ */
+const ROW_S12: PlanningChangeRow = {
+  id: 'pcr-s12',
+  project_line_id: 'pl-401220-3',
+  line_no: 3,
+  item_code: 'B2155-NL-BLUE',
+  product_name: 'Basin mixer 2155 blue',
+  kind: 'advanced',
+  from: { required_date: '2026-09-04', qty: '134', status: 'open' },
+  to: { required_date: '2026-08-25', qty: '134', status: 'open' },
+  days_moved: -10,
+  held: heldOf({ buy: '134' }),
+  facts: {
+    dealer_hot_selling: evidencedFact(false),
+    project_hot_selling: evidencedFact(false),
+    discontinued: false,
+    days_moved: -10,
+    buy_actioned: buyActionedFact(true, 'PO-A'),
+    placed: placedFact('134', 'PO-A', '2026-08-28'),
+  },
+  suggestion: {
+    components: [
+      {
+        action: 'keep',
+        source: 'po',
+        qty_now: '134',
+        document: 'PO-A',
+        label: 'Keep 134, late by 3 days',
+      },
+    ],
+    late_days: 3,
+  },
+  proposal: null,
+  inquiry_rows: [{ id: 'oi-s12', verb: 'ORDER', qty: '134', state: 'placed' }],
+  decision: 'confirm',
+  composition: compositionOf({ lineId: 'pl-401220-3', buy: '134' }),
+  applied_state: 'pending',
+  board_link: '/project-sales/fulfilment-planning?orders=SO401220&cell=B2155-NL-BLUE|2026-08-25',
 };
 
 /** The batch under review: nothing applied yet. */
@@ -617,7 +898,7 @@ export const MOCK_PLANNING_CHANGE_BATCH_PENDING: PlanningChangeBatch = {
       is_adopted: true,
       core_sales_order_id: 'core-403765',
       project_id: null,
-      rows: [ROW_1, ROW_2, ROW_3, ROW_4, ROW_5, ROW_6],
+      rows: [ROW_S1, ROW_S2, ROW_S3, ROW_S4, ROW_S5, ROW_S6],
     },
     {
       project_sales_order_id: 'pso-400875',
@@ -628,7 +909,7 @@ export const MOCK_PLANNING_CHANGE_BATCH_PENDING: PlanningChangeBatch = {
       is_adopted: false,
       core_sales_order_id: null,
       project_id: 'proj-matrix-excelcon',
-      rows: [ROW_7, ROW_8, ROW_9, ROW_10],
+      rows: [ROW_S7, ROW_S8, ROW_S9, ROW_S10],
     },
     {
       project_sales_order_id: 'pso-401220',
@@ -639,7 +920,7 @@ export const MOCK_PLANNING_CHANGE_BATCH_PENDING: PlanningChangeBatch = {
       is_adopted: false,
       core_sales_order_id: null,
       project_id: 'proj-greenfield-suites',
-      rows: [ROW_11A, ROW_11B],
+      rows: [ROW_S11, ROW_S12],
     },
   ],
 };
@@ -703,14 +984,23 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 15,
-            within_reserve_window: windowFact('2026-07-20', '2026-08-04', 15),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
-          suggested: 'keep',
-          why: 'New date is 15 days out and inside the 60-day reserve window; the reserve stays put.',
+          suggestion: {
+            components: [
+              {
+                action: 'keep',
+                source: 'reserve',
+                qty_now: '48',
+                location: 'BRW-BB',
+                label: 'Keep 48',
+              },
+            ],
+          },
           proposal: null,
           inquiry_rows: [],
-          decision: 'accept',
+          decision: 'confirm',
           applied_state: 'applied',
           board_link: '/project-sales/fulfilment-planning?orders=SO398800&cell=CB231SS-NL|2026-08-04',
         },
@@ -735,14 +1025,30 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 0,
-            within_reserve_window: windowFact('2026-08-01', '2026-08-01', 0),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
-          suggested: 'reduce',
-          why: 'Qty dropped from 30 to 22; the reserve of 22 stays and the Buy of 8 is cancelled.',
+          suggestion: {
+            components: [
+              {
+                action: 'keep',
+                source: 'reserve',
+                qty_now: '22',
+                location: 'MWH-IB',
+                label: 'Keep 22',
+              },
+              {
+                action: 'reduce',
+                source: 'buy',
+                qty_was: '8',
+                qty_now: '0',
+                label: 'Reduce Buy 8 to 0',
+              },
+            ],
+          },
           proposal: null,
           inquiry_rows: [{ id: 'oi-a2', verb: 'CANCEL_BALANCE', qty: '8', state: 'actioned' }],
-          decision: 'accept',
+          decision: 'confirm',
           applied_state: 'applied',
           board_link: '/project-sales/fulfilment-planning?orders=SO398800&cell=B2155-NL-BLUE|2026-08-01',
         },
@@ -767,14 +1073,24 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 153,
-            within_reserve_window: windowFact('2026-08-05', '2027-01-05', 153),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
-          suggested: 'release',
-          why: 'New date is 153 days out, beyond the 60-day reserve window; the reserve is released back to MWH-IB.',
+          suggestion: {
+            components: [
+              {
+                action: 'release',
+                source: 'reserve',
+                qty_now: '14',
+                location: 'MWH-IB',
+                label: 'Release 14, free at MWH-IB',
+              },
+              { action: 'buy', source: 'buy', qty_now: '14', label: 'Buy 14 for 5 Jan' },
+            ],
+          },
           proposal: null,
           inquiry_rows: [],
-          decision: 'accept',
+          decision: 'confirm',
           applied_state: 'superseded',
           applied_reason:
             'The board confirmed revision 6 on this line after this batch was built, so this suggestion no longer applies.',
@@ -813,14 +1129,24 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 145,
-            within_reserve_window: windowFact('2026-07-28', '2026-12-20', 145),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
-          suggested: 'release',
-          why: 'New date is 145 days out, beyond the 60-day reserve window; the reserve is released back to BRW-BB.',
+          suggestion: {
+            components: [
+              {
+                action: 'release',
+                source: 'reserve',
+                qty_now: '20',
+                location: 'BRW-BB',
+                label: 'Release 20, free at BRW-BB',
+              },
+              { action: 'buy', source: 'buy', qty_now: '20', label: 'Buy 20 for 20 Dec' },
+            ],
+          },
           proposal: null,
           inquiry_rows: [],
-          decision: 'accept',
+          decision: 'confirm',
           applied_state: 'failed',
           applied_reason: 'Revision 3 was confirmed on the board after this batch was built.',
           board_link: '/project-sales/fulfilment-planning?orders=SO399120&cell=B2155-NL-BLUE|2026-12-20',
@@ -846,14 +1172,24 @@ export const MOCK_PLANNING_CHANGE_BATCH_APPLIED: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 0,
-            within_reserve_window: windowFact('2026-08-02', '2026-08-02', 0),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
-          suggested: 'replan',
-          why: 'Qty rose from 10 to 16; the existing 10 stays held, and only the extra 6 runs the ladder.',
+          suggestion: {
+            components: [
+              {
+                action: 'keep',
+                source: 'reserve',
+                qty_now: '10',
+                location: 'BRW-BB',
+                label: 'Keep 10',
+              },
+              { action: 'buy', source: 'buy', qty_now: '6', label: 'Buy 6 for 2 Aug' },
+            ],
+          },
           proposal: null,
           inquiry_rows: [],
-          decision: 'accept',
+          decision: 'confirm',
           applied_state: 'failed',
           applied_reason: 'Revision 3 was confirmed on the board after this batch was built.',
           board_link: '/project-sales/fulfilment-planning?orders=SO399120&cell=CB231SS-NL|2026-08-02',
@@ -908,6 +1244,71 @@ export const MOCK_PLANNING_CHANGE_BATCHES: PlanningChangeBatchSummary[] = [
 ];
 
 /**
+ * A second pending batch, on a DIFFERENT `so_number` from `MOCK_PLANNING_CHANGE_BATCH_SO_
+ * CHANGE`, for `PLAN-scm-board-picks-up-pending-change.md` (AC-B3: two orders on the board,
+ * each with its own pending batch). One order, one row, so the two-batch board tests stay
+ * about the union rather than about a second copy of the first fixture's shape.
+ */
+export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE_2: PlanningChangeBatch = {
+  id: 'pcb-so381896',
+  created_at: '2026-08-19T09:30:00Z',
+  created_by_name: 'Cyndi Tee',
+  source: {
+    upload_id: 'imp-so381896',
+    file_name: 'Outstanding SO 19 Aug.xlsx',
+    kind: 'so_book_upload',
+    import_job_id: 'imp-so381896',
+  },
+  applied_at: null,
+  applied_by_name: null,
+  orders: [
+    {
+      project_sales_order_id: 'pso-381896',
+      so_number: 'SO381896',
+      customer_name: 'BATHE CODE SDN BHD',
+      project_label: 'Bathe Code HQ Retrofit',
+      revision_no: 1,
+      is_adopted: true,
+      core_sales_order_id: 'so-381896',
+      project_id: null,
+      rows: [
+        {
+          id: 'pcr-381896-1',
+          project_line_id: 'pl-381896-1',
+          line_no: 1,
+          item_code: 'CB231SS-NL',
+          product_name: 'Concealed cistern 231SS',
+          kind: 'delayed',
+          from: { required_date: '2026-08-20', qty: '15', status: 'open' },
+          to: { required_date: '2026-09-03', qty: '15', status: 'open' },
+          days_moved: 14,
+          held: { reserve: [], borrow: [], buy_qty: '15', timely_spo_qty: '0', revision_no: 1 },
+          facts: {
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
+            discontinued: false,
+            days_moved: 14,
+            buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
+          },
+          suggestion: {
+            components: [
+              { action: 'keep', source: 'buy', qty_now: '15', label: 'Keep Buy 15' },
+            ],
+          },
+          proposal: null,
+          inquiry_rows: [{ id: 'oir-381896-1', verb: 'ORDER', qty: '15', state: 'raised' }],
+          decision: 'confirm',
+          applied_state: 'pending',
+          board_link:
+            '/project-sales/fulfilment-planning?orders=SO381896&cell=CB231SS-NL|2026-09-03',
+        },
+      ],
+    },
+  ],
+};
+
+/**
  * Part 3's own case (`PLAN-scm-cs-planning-uat.md`, AC-P3-2): SO381895 re-uploaded with form
  * (3). SRTWCX7405-RL-S-PJ's three instalments - 10 on 25 Aug, 10 on 5 Sep, 5 on 10 Sep -
  * become one line of 25 on 19 Aug, so one row is advanced and two are closed. The closed line
@@ -955,11 +1356,20 @@ export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: -6,
-            within_reserve_window: windowFact('2026-08-25', '2026-08-19', -6),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
-          suggested: 'replan',
-          why: 'Advanced 6 days; the line runs the ladder again at the new date now.',
+          suggestion: {
+            components: [
+              {
+                action: 'buy',
+                source: 'buy',
+                qty_was: '10',
+                qty_now: '25',
+                label: 'Buy 25 (was 10)',
+              },
+            ],
+          },
           proposal: boardProposal({
             key: 'SO381895|1|SRTWCX7405-RL-S-PJ',
             sales_order_id: 'so-381895',
@@ -984,7 +1394,7 @@ export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE: PlanningChangeBatch = {
           line_no: 2,
           item_code: 'SRTWCX7405-RL-S-PJ',
           product_name: 'Floor trap 7405 RL S',
-          kind: 'closed',
+          kind: 'cancelled',
           from: { required_date: '2026-09-05', qty: '10', status: 'open' },
           to: { required_date: null, qty: null, status: 'closed' },
           days_moved: null,
@@ -994,14 +1404,23 @@ export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 0,
-            within_reserve_window: windowFact('2026-09-05', '2026-09-05', 0),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
-          suggested: 'retire',
-          why: 'The line is closed in the book.',
+          suggestion: {
+            components: [
+              {
+                action: 'release',
+                source: 'buy',
+                qty_was: '10',
+                qty_now: '0',
+                label: 'Release Buy 10, line cancelled',
+              },
+            ],
+          },
           proposal: null,
           inquiry_rows: [{ id: 'oir-2', verb: 'ORDER', qty: '10', state: 'placed' }],
-          decision: 'accept',
+          decision: 'confirm',
           applied_state: 'pending',
           moved_transfer: '10 moved BRW -> BRW-IB, line cancelled',
           board_link:
@@ -1013,7 +1432,7 @@ export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE: PlanningChangeBatch = {
           line_no: 3,
           item_code: 'SRTWCX7405-RL-S-PJ',
           product_name: 'Floor trap 7405 RL S',
-          kind: 'closed',
+          kind: 'cancelled',
           from: { required_date: '2026-09-10', qty: '5', status: 'open' },
           to: { required_date: null, qty: null, status: 'closed' },
           days_moved: null,
@@ -1023,14 +1442,23 @@ export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE: PlanningChangeBatch = {
             project_hot_selling: evidencedFact(false),
             discontinued: false,
             days_moved: 0,
-            within_reserve_window: windowFact('2026-09-10', '2026-09-10', 0),
             buy_actioned: buyActionedFact(false),
+            placed: placedFact(),
           },
-          suggested: 'retire',
-          why: 'The line is closed in the book.',
+          suggestion: {
+            components: [
+              {
+                action: 'release',
+                source: 'buy',
+                qty_was: '5',
+                qty_now: '0',
+                label: 'Release Buy 5, line cancelled',
+              },
+            ],
+          },
           proposal: null,
           inquiry_rows: [{ id: 'oir-3', verb: 'ORDER', qty: '5', state: 'raised' }],
-          decision: 'accept',
+          decision: 'confirm',
           applied_state: 'pending',
           board_link:
             '/project-sales/fulfilment-planning?orders=SO381895&cell=SRTWCX7405-RL-S-PJ|2026-09-10',

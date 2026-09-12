@@ -48,7 +48,7 @@ import {
   useLineDraftMutation,
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
-import { usePlanningChangeBatch } from '../../_shared/hooks/usePlanningChanges';
+import { usePlanningChangeBatchesByIds } from '../../_shared/hooks/usePlanningChanges';
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
   annotationsByCell,
@@ -76,6 +76,10 @@ import type {
   BoardRowAxis,
   ConfirmManyOrderResult,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import type {
+  PlanningChangeBatch,
+  PlanningChangeOrder,
+} from '../../_shared/types/planningChange.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { BoardTransfersPanel } from './BoardTransfersPanel';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
@@ -230,15 +234,6 @@ export function FulfilmentBoardPanel({
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [granularity, rowAxis, productSearch, view, pathname, router, searchParams]);
 
-  /**
-   * The batch the board was opened on (AC-P3-1). Undefined `batchId` fetches nothing.
-   *
-   * Read beside the board rather than folded into it: the board is a live read of what is
-   * outstanding and the batch is a record of what an upload did, and one payload carrying
-   * both would have the board refuse to render whenever the batch could not be loaded.
-   */
-  const changeBatch = usePlanningChangeBatch(batchId ?? undefined);
-
   const rawBoard = usePlanningBoard(
     soNumbers,
     granularity,
@@ -250,11 +245,103 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * The batch ids this board needs (`PLAN-scm-board-picks-up-pending-change.md`, AC-B1/AC-B2):
+   * every order's OWN `pending_change_batch_id` the board response names, unioned with the
+   * URL `batchId` - a deep link still wins (AC-B4) even when the board names none for that
+   * order, e.g. an APPLIED batch, which the pending-only helper behind `pending_change_batch_id`
+   * never names.
+   */
+  const boardBatchIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    for (const order of rawBoard.data?.orders ?? []) {
+      if (order.pending_change_batch_id) ids.add(order.pending_change_batch_id);
+    }
+    if (batchId) ids.add(batchId);
+    return Array.from(ids);
+  }, [rawBoard.data, batchId]);
+  const loadedBatches = usePlanningChangeBatchesByIds(boardBatchIds);
+
+  /**
+   * One entry PER SO NUMBER, deduped across every loaded batch (S1, reviewer's pass on
+   * 39a5d8b07): a deep link's URL `?batch=` can name an APPLIED batch for an order the
+   * board's own `pending_change_batch_id` union ALSO names a PENDING one for (the
+   * planning-changes list still links the applied batch after a newer change was raised
+   * for the same order) - unioning both ids in `boardBatchIds` then loads both, and the
+   * order would otherwise appear TWICE: once from each batch. The PENDING batch wins,
+   * because that is the one with something left to decide; between two pending (or two
+   * applied) batches on the same order, the NEWEST `created_at` wins. The other batch's
+   * row for that order is dropped entirely - not merged - so the cell renders once.
+   * Newest-wins is safe here rather than a real conflict: the backend's own
+   * `pending_batch_id_by_sales_order` already returns only the SINGLE newest pending batch
+   * per order, so the only way an OLDER pending batch reaches this map at all is via the
+   * URL deep link, never via the board's own union.
+   */
+  const bySoNumber = React.useMemo(() => {
+    const out = new Map<string, { batch: PlanningChangeBatch; order: PlanningChangeOrder }>();
+    for (const batch of loadedBatches) {
+      for (const order of batch.orders ?? []) {
+        const existing = out.get(order.so_number);
+        if (!existing) {
+          out.set(order.so_number, { batch, order });
+          continue;
+        }
+        const existingPending = !existing.batch.applied_at;
+        const candidatePending = !batch.applied_at;
+        if (existingPending !== candidatePending) {
+          // Exactly one is pending: it wins outright, whichever `created_at` is newer.
+          if (candidatePending) out.set(order.so_number, { batch, order });
+          continue;
+        }
+        // Both pending or both applied: the newer batch is the one still worth reading.
+        if (new Date(batch.created_at).getTime() > new Date(existing.batch.created_at).getTime()) {
+          out.set(order.so_number, { batch, order });
+        }
+      }
+    }
+    return out;
+  }, [loadedBatches]);
+
+  /** The one batch this order belongs to, or null - a `replan`/applied lookup never guesses. */
+  const batchIdBySoNumber = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [soNumber, entry] of bySoNumber) map.set(soNumber, entry.batch.id);
+    return map;
+  }, [bySoNumber]);
+
+  /**
+   * The SURVIVING rows, grouped back by the batch that survived for them - the pre-mark
+   * effect below must read THIS, never the raw `loadedBatches`. An order the dedup above
+   * dropped (an applied batch a pending one superseded for the SAME so_number) still sits
+   * in `loadedBatches`, and seeding a draft from its rows would pre-mark a line the board
+   * no longer has anything pending to decide for.
+   */
+  const survivingOrdersByBatchId = React.useMemo(() => {
+    const map = new Map<string, PlanningChangeOrder[]>();
+    for (const { batch, order } of bySoNumber.values()) {
+      const list = map.get(batch.id);
+      if (list) list.push(order);
+      else map.set(batch.id, [order]);
+    }
+    return map;
+  }, [bySoNumber]);
+
+  /**
    * The board as the CHANGED lines make it: a line the book has moved is no longer covered
    * by the decision taken for it, so it arrives undecided carrying the batch's own fresh
-   * proposal (`uncoverChangedLines`). Identity on every board opened without a batch.
+   * proposal (`uncoverChangedLines`). Identity on every board with no batch loaded.
+   *
+   * Merged across EVERY loaded batch (AC-B3), one row per so_number after the dedup above -
+   * `uncoverChangedLines`, `preMarkedKeys` and `annotationsByCell` all take
+   * `Pick<PlanningChangeBatch, 'orders'>` and never read the batch's own id, so this
+   * flattened `orders[]` reads exactly like one bigger batch to all three.
    */
-  const changeBatchData = changeBatch.data ?? null;
+  const changeBatchData: Pick<PlanningChangeBatch, 'orders'> | null = React.useMemo(
+    () =>
+      bySoNumber.size > 0
+        ? { orders: Array.from(bySoNumber.values(), (entry) => entry.order) }
+        : null,
+    [bySoNumber],
+  );
   const board = React.useMemo(
     () => ({
       ...rawBoard,
@@ -337,28 +424,47 @@ export function FulfilmentBoardPanel({
   );
 
   /**
-   * Every changed line of the batch arrives PRE-MARKED (AC-P3-3).
+   * Every changed line of EVERY loaded batch arrives PRE-MARKED (AC-P3-3, AC-B2, AC-B3) -
+   * no `batchId` prop required any more: a batch the board named for an order pre-marks its
+   * suggestion exactly as a `?batch=` deep link always has.
    *
    * Seeded into the board's own DRAFT, not into a second state: the cell then colours, counts
    * and confirms exactly as a line the planner ticked themselves, and un-ticking one is the
-   * same gesture it always was. Once, on the first board that carries both the batch and its
-   * lines - re-seeding on every render would put back a tick the planner had just cleared.
+   * same gesture it always was. Once PER BATCH, keyed by batch id rather than one board-wide
+   * flag: two orders on two different batches load at different times (`useQueries`), and a
+   * batch that arrives on a later render must still seed its own suggestion once, without
+   * re-seeding a sibling batch's lines the planner has already touched.
    *
    * A verdict the planner has already given is never overwritten.
+   *
+   * Reads `survivingOrdersByBatchId`, never the raw `loadedBatches`: a batch the S1 dedup
+   * dropped for a given order (an applied batch a pending one superseded on the SAME
+   * so_number) must not still seed an approved draft for that order's rows.
+   *
+   * Waits for EVERY id in `boardBatchIds` to have loaded before seeding anything, rather
+   * than reacting to each one as it arrives: two batches for the same so_number can settle
+   * on different renders (`useQueries`, one query per id), and while only one has loaded
+   * it is the sole, unopposed "survivor" the S1 dedup above ever sees - so seeding from
+   * that partial state can mark the STALE batch's rows a moment before the real survivor
+   * is known, and the once-per-batch-id guard below has no way to take an already-seeded
+   * key back once the true survivor turns out to be a different batch.
    */
-  const preMarked = React.useRef(false);
+  const preMarkedBatchIds = React.useRef<Set<string>>(new Set());
   React.useEffect(() => {
-    if (!batchId || preMarked.current) return;
-    if (!changeBatchData || allContributions.length === 0) return;
-    const keys = preMarkedKeys(changeBatchData, allContributions);
-    if (keys.length === 0) return;
-    preMarked.current = true;
-    setDraft((current) => {
-      const next = { ...current };
-      for (const key of keys) if (!next[key]) next[key] = { verdict: 'approved' };
-      return next;
-    });
-  }, [batchId, changeBatchData, allContributions]);
+    if (allContributions.length === 0) return;
+    if (loadedBatches.length < boardBatchIds.length) return;
+    for (const [batchId, orders] of survivingOrdersByBatchId) {
+      if (preMarkedBatchIds.current.has(batchId)) continue;
+      const keys = preMarkedKeys({ orders }, allContributions);
+      if (keys.length === 0) continue;
+      preMarkedBatchIds.current.add(batchId);
+      setDraft((current) => {
+        const next = { ...current };
+        for (const key of keys) if (!next[key]) next[key] = { verdict: 'approved' };
+        return next;
+      });
+    }
+  }, [survivingOrdersByBatchId, allContributions, loadedBatches, boardBatchIds]);
 
   /**
    * Keys whose DELETE is on the wire right now (C1, code review round 3 batch 2): added
@@ -637,22 +743,15 @@ export function FulfilmentBoardPanel({
   }, [board.data, draft]);
 
   /**
-   * Why Confirm is off, when it is (AC-P3-4).
-   *
-   * BOARD-WIDE now that there is one Confirm. It was per order while every order had its own
-   * button; with one press applying the whole batch, the only question left is whether that
-   * batch has already been applied. Stated rather than left as a dead button, and the server
-   * refuses the same case, so the screen and the write cannot disagree.
-   */
-  const batchApplied = changeBatch.data?.applied_at ?? null;
-  /**
-   * The sales orders whose OWN batch rows have all been applied already.
+   * The sales orders whose OWN batch rows have all been applied already (AC-B6).
    *
    * One upload moves many orders and the batch itself only reads applied once the last of
    * them is written, so an order that has already had its change applied would otherwise be
    * posted a second time by the next press - writing another revision of a change that is
    * already in the plan. It is left out of the body and said so in the result, rather than
    * blocking the whole board: the other orders on it still have a change nobody has decided.
+   * Reads `changeBatchData`, the flattened `orders[]` of EVERY loaded batch, so a two-batch
+   * board skips exactly the order whose OWN batch is applied and no other.
    */
   const appliedSoNumbers = React.useMemo(() => {
     const out = new Set<string>();
@@ -663,12 +762,23 @@ export function FulfilmentBoardPanel({
     }
     return out;
   }, [changeBatchData]);
+  /**
+   * Why Confirm is off, board-wide, when it is (AC-P3-4).
+   *
+   * Only makes sense with ONE batch on the board: "this planning change was applied" names A
+   * change, and a board with two orders on two different batches has no single change to
+   * name (AC-B6 - the OTHER order still has something to confirm, so the button must stay
+   * live). The per-order skip in `appliedSoNumbers` above is what actually keeps a
+   * already-applied order out of the body on a multi-batch board; this banner is the single-
+   * batch case's up-front statement of the same fact, unchanged from before this slice.
+   */
+  const singleBatch = loadedBatches.length === 1 ? loadedBatches[0] : null;
   const confirmBlockedReason = React.useMemo<string | null>(() => {
-    if (!batchApplied) return null;
-    return `This planning change was applied ${formatDateTimeInMalaysia(batchApplied)}${
-      changeBatch.data?.applied_by_name ? ` by ${changeBatch.data.applied_by_name}` : ''
+    if (!singleBatch?.applied_at) return null;
+    return `This planning change was applied ${formatDateTimeInMalaysia(singleBatch.applied_at)}${
+      singleBatch.applied_by_name ? ` by ${singleBatch.applied_by_name}` : ''
     }.`;
-  }, [batchApplied, changeBatch.data?.applied_by_name]);
+  }, [singleBatch]);
 
   const confirmMany = useConfirmManyMutation();
   const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
@@ -744,7 +854,11 @@ export function FulfilmentBoardPanel({
           .map((order) => [order.sales_order_id, order.project_sales_order_id as string]),
       );
 
-      const orders: { pso_id: string; lines: ReturnType<typeof confirmLinesFor> }[] = [];
+      const orders: {
+        pso_id: string;
+        lines: ReturnType<typeof confirmLinesFor>;
+        batch_id: string | null;
+      }[] = [];
       // An order whose planning change is already applied is NOT sent again (AC-P3-4). It is
       // reported instead, in the same place a server refusal is reported, so a press that
       // deliberately skipped it does not read as a press that did nothing.
@@ -764,19 +878,34 @@ export function FulfilmentBoardPanel({
           continue;
         }
         const lines = confirmLinesFor(contributions, salesOrderId, draft);
-        if (lines.length > 0) orders.push({ pso_id: psoId, lines });
+        if (lines.length > 0) {
+          // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders
+          // on two different pending batches each answer their own.
+          const orderBatchId = soNumber ? batchIdBySoNumber.get(soNumber) ?? null : null;
+          orders.push({ pso_id: psoId, lines, batch_id: orderBatchId });
+        }
       }
       if (orders.length === 0) {
         if (skipped.length > 0) setBatchResults(skipped);
         return;
       }
 
-      // The batch the board was opened on travels with the press (AC-P3-4). Without it a
-      // Confirm on a `?batch=` board writes an ordinary revision and leaves the planning
-      // change pending for ever - the per-order Confirm carried it before this button
-      // replaced the per-order cards.
+      // Per-order `batch_id` above answers AC-P3-4/AC-B5 on its own. The body-level
+      // `batch_id` is kept ONLY when EVERY order in THIS press carries that SAME id
+      // (backward compatible with a server that has not deployed the per-order field
+      // yet) - reviewer finding B1 (39a5d8b07): `singleBatch` (how many batches the BOARD
+      // loaded) is the wrong question here, because a board can load exactly one batch
+      // while still sending an order that batch names NOTHING for (that order's own
+      // `orderBatchId` is `null`), and a body-level id there would contradict the very
+      // order carrying `null` right beside it. Checked on THIS press's `orders`, not on
+      // `loadedBatches`.
+      const firstOrderBatchId = orders[0]?.batch_id ?? null;
+      const bodyBatchId =
+        firstOrderBatchId && orders.every((order) => order.batch_id === firstOrderBatchId)
+          ? firstOrderBatchId
+          : null;
       const result = await confirmMany.mutateAsync(
-        batchId ? { orders, batch_id: batchId } : { orders },
+        bodyBatchId ? { orders, batch_id: bodyBatchId } : { orders },
       );
       setBatchResults([...skipped, ...result.results]);
 
@@ -829,7 +958,7 @@ export function FulfilmentBoardPanel({
     } finally {
       setConfirmingAll(false);
     }
-  }, [board, allContributions, draft, adopt, confirmMany, batchId, appliedSoNumbers]);
+  }, [board, allContributions, draft, adopt, confirmMany, appliedSoNumbers, batchIdBySoNumber]);
 
   /**
    * The rows on screen, and the rows the selection holds.

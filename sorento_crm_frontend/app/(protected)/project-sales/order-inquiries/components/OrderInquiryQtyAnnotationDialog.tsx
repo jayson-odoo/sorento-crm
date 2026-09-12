@@ -112,6 +112,12 @@ function ChangedSection({
           closed: false,
           was: { qty: previous.qty, date: previous.date, decision: null },
           now: { qty: row.qty, date: row.delivery_date ?? null, decision: null },
+          // A settled amendment is not a planning change: it has no composed suggestion,
+          // nothing to be late or short against, and no product swap behind it.
+          suggestionLines: [],
+          lateDays: null,
+          shortfallQty: null,
+          productChangedFrom: null,
           movedTransfer: null,
           projectLineId: null,
         }}

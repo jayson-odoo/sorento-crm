@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -98,6 +99,7 @@ from app.services.scm.outstanding_diff import (
     CLOSED,
     DATE_AND_QTY_CHANGED,
     DATE_MOVED,
+    PRODUCT_CHANGED,
     QTY_CHANGED,
     Diff,
     states_settled,
@@ -141,131 +143,483 @@ def _as_date(value: Any) -> Optional[date]:
 
 
 # ============================================================================
-# The rule table (section 0), pure. AC-R12 pins one test per row against this.
+# The suggestion: the re-run at the new state, DIFFED against what is held.
+# Pure. `documentation/plans/scm/PLAN-scm-change-management-one-engine.md` rule 3.
 # ============================================================================
 
+#: The four classes a composition is made of, in the order a suggestion states them:
+#: what the line already holds, read the same way `_held_from_frozen` writes it.
+_CLASSES = ("reserve", "borrow", "spo", "buy")
 
-def suggest(kind: str, held: Optional[dict], facts: dict) -> Tuple[str, str]:
-    """`(verb, why)` for one changed planned line. No I/O, no clock, no database.
+#: How a class names itself inside a "Reduce X 100 to 0" sentence. `Buy` is capitalised
+#: because it is the name of the Order Inquiry row a reader is looking at, not a noun.
+_CLASS_WORD = {"reserve": "reserve", "borrow": "borrow", "spo": "SPO", "buy": "Buy"}
 
-    `kind`/`held`/`facts` are the wire shapes (`PlanningChangeKind`,
-    `PlanningChangeHeld | None`, `PlanningChangeFacts`) as plain dicts.
+
+def _day(value: Any) -> str:
+    """`20 Nov` - the date in a sentence a person reads, never an ISO string."""
+    when = _as_date(value)
+    return f"{when.day} {when.strftime('%b')}" if when else ""
+
+
+def _days_word(days: int) -> str:
+    return f"{days} day{'' if days == 1 else 's'}"
+
+
+def _component(
+    action: str,
+    source: Optional[str],
+    qty_now: Decimal,
+    label: str,
+    *,
+    qty_was: Optional[Decimal] = None,
+    location: Optional[str] = None,
+    document: Optional[str] = None,
+    target: Optional[str] = None,
+    item_code: Optional[str] = None,
+) -> dict:
+    """One line of the suggestion, with the sentence the board prints for it.
+
+    The sentence is composed HERE and printed verbatim: only this side knows which rung
+    covered what, against which document, for whose order, so a second composition in the
+    frontend could only drift from it (Slice C contract A).
     """
-    days_moved = facts.get("days_moved") or 0
-    window = facts.get("within_reserve_window") or {}
-    window_days = window.get("window_days", RESERVE_WINDOW_DAYS)
-    dealer = facts.get("dealer_hot_selling") or {}
-    discontinued = bool(facts.get("discontinued"))
-    buy_actioned = facts.get("buy_actioned") or {}
+    return {
+        "action": action,
+        "source": source,
+        "qty_was": qty_text(qty_was) if qty_was is not None else None,
+        "qty_now": qty_text(qty_now),
+        "location": location,
+        "document": document,
+        "target": target,
+        "item_code": item_code,
+        "label": label,
+    }
 
-    # AC-R03: no active decision holds this line, whatever changed on the book. It simply
-    # enters the board at its new date/quantity; no hold or OI row exists to touch.
-    if held is None:
-        if kind == "added":
-            return (
-                "replan",
-                "New line on the book; nothing was ever held for it, so it simply enters "
-                "the board at its new date.",
+
+def _held_classes(held: Optional[dict]) -> Dict[str, List[Tuple[Decimal, Optional[str]]]]:
+    """What the line holds, as `(qty, location)` per class - `held_json`'s own shape."""
+    held = held or {}
+    out: Dict[str, List[Tuple[Decimal, Optional[str]]]] = {c: [] for c in _CLASSES}
+    for entry in held.get("reserve") or []:
+        qty = _dec(entry.get("qty"))
+        if qty > _ZERO:
+            out["reserve"].append((qty, entry.get("location")))
+    for entry in held.get("borrow") or []:
+        qty = _dec(entry.get("qty"))
+        if qty > _ZERO:
+            out["borrow"].append((qty, entry.get("location")))
+    spo = _dec(held.get("timely_spo_qty"))
+    if spo > _ZERO:
+        out["spo"].append((spo, None))
+    buy = _dec(held.get("buy_qty"))
+    if buy > _ZERO:
+        out["buy"].append((buy, None))
+    return out
+
+
+def _proposed_classes(proposal: Optional[dict]) -> Optional[Dict[str, dict]]:
+    """The re-run, per class: how much, and the sources that say where and off what.
+
+    The AGGREGATE is authoritative wherever the contribution carries one - the same rule
+    `composition_from_proposal` follows, and for the same reason: `_apply_placed_offset`
+    moves quantity between rungs and keeps the aggregates in step.
+    """
+    if not proposal:
+        return None
+    sources = proposal.get("sources") or []
+    by_class: Dict[str, List[dict]] = {c: [] for c in _CLASSES}
+    for source in sources:
+        kind = source.get("kind")
+        if kind == RESERVE:
+            by_class["reserve"].append(source)
+        elif kind == BORROW:
+            by_class["borrow"].append(source)
+        elif kind == TIMELY_SPO:
+            by_class["spo"].append(source)
+        elif kind == BUY:
+            by_class["buy"].append(source)
+
+    def total(aggregate_key: Optional[str], klass: str) -> Decimal:
+        if aggregate_key is not None and proposal.get(aggregate_key) is not None:
+            return _dec(proposal.get(aggregate_key))
+        return sum((_dec(s.get("qty")) for s in by_class[klass]), _ZERO)
+
+    return {
+        "reserve": {
+            "qty": total("qty_proposed_reserve", "reserve"),
+            "sources": by_class["reserve"],
+        },
+        # No `qty_proposed_borrow` aggregate exists on a contribution (the two borrow rungs
+        # are newer than that field), so the sources ARE the total - the same read
+        # `composition_from_proposal` makes.
+        "borrow": {"qty": total(None, "borrow"), "sources": by_class["borrow"]},
+        "spo": {"qty": total("qty_proposed_incoming", "spo"), "sources": by_class["spo"]},
+        "buy": {"qty": total("qty_proposed_buy", "buy"), "sources": by_class["buy"]},
+    }
+
+
+def _split_over_sources(
+    total: Decimal, sources: List[dict]
+) -> List[Tuple[Decimal, dict]]:
+    """`total` spread over its own sources, take-until-covered, remainder on the last.
+
+    The same convention `_reserve_components_from_sources` uses, so a suggestion line and
+    the composition it will post name the same warehouses in the same order.
+    """
+    if total <= _ZERO:
+        return []
+    if not sources:
+        return [(total, {})]
+    out: List[Tuple[Decimal, dict]] = []
+    remaining = total
+    for source in sources:
+        if remaining <= _ZERO:
+            break
+        take = min(_dec(source.get("qty")), remaining)
+        if take <= _ZERO:
+            continue
+        out.append((take, source))
+        remaining -= take
+    if remaining > _ZERO:
+        if out:
+            out[-1] = (out[-1][0] + remaining, out[-1][1])
+        else:
+            out.append((remaining, sources[0]))
+    return out
+
+
+def _sourcing_components(
+    klass: str,
+    proposed: dict,
+    facts: dict,
+    *,
+    item_code: Optional[str] = None,
+    shortfall: bool = False,
+    qty_was: Optional[Decimal] = None,
+) -> List[dict]:
+    """New sourcing for quantity the hold does not already cover, one line per source."""
+    new_date = facts.get("new_date")
+    out: List[dict] = []
+    for qty, source in _split_over_sources(proposed["qty"], proposed["sources"]):
+        location = source.get("location")
+        if klass == "reserve":
+            # The pool-share rung is the ONE step allowed to cover part of a unit, and only
+            # inside the immediate window (rule 1), so it is named as itself rather than
+            # folded into "use own" - a reader has to be able to see which one they got.
+            if source.get("rung") == "pool":
+                out.append(_component(
+                    "use_own", "pool_share", qty,
+                    f"Pool share {qty_text(qty)} at {location}" if location
+                    else f"Pool share {qty_text(qty)}",
+                    location=location, item_code=item_code,
+                ))
+            else:
+                out.append(_component(
+                    "use_own", "reserve", qty,
+                    f"Use own {qty_text(qty)} at {location}" if location
+                    else f"Use own {qty_text(qty)}",
+                    location=location, item_code=item_code,
+                ))
+        elif klass == "borrow":
+            donor = source.get("donor_so_number") or source.get("supply_document")
+            whose = donor or location
+            out.append(_component(
+                "borrow", "borrow", qty,
+                f"Borrow {qty_text(qty)} from {whose}, order-back raised" if whose
+                else f"Borrow {qty_text(qty)}, order-back raised",
+                location=location, target=donor, item_code=item_code,
+            ))
+        elif klass == "spo":
+            document = source.get("supply_document")
+            label = f"SPO {qty_text(qty)} on {document}" if document else f"SPO {qty_text(qty)}"
+            if new_date:
+                label = f"{label} for {_day(new_date)}"
+            out.append(_component(
+                "spo", "spo", qty, label, document=document, item_code=item_code,
+            ))
+        else:
+            # Rule 8: inside the immediate window a purchase cannot land in time, so the
+            # remainder is SAID to be short rather than promised as a Buy nobody can keep.
+            label = (
+                f"Short {qty_text(qty)} by {_day(new_date)}"
+                if shortfall
+                else f"Buy {qty_text(qty)} for {_day(new_date)}"
             )
-        return (
-            "replan",
-            "No decision holds this line yet, so it simply enters the board at its new "
-            "date and quantity.",
-        )
+            out.append(_component(
+                "buy", "buy", qty, label, qty_was=qty_was, item_code=item_code,
+            ))
+    return out
 
-    reserve = held.get("reserve") or []
-    has_reserve = bool(reserve)
-    locations = ", ".join(
-        sorted({r.get("location") for r in reserve if r.get("location")})
-    )
 
-    if kind == "closed":
-        return (
-            "retire",
-            "The line is closed in the book; the reserve and the remaining Buy are "
-            "released, and an already-actioned inquiry row is kept with a note rather "
-            "than retired.",
-        )
-    if kind == "advanced":
-        plural = "" if abs(days_moved) == 1 else "s"
-        return (
-            "replan",
-            f"Advanced {abs(days_moved)} day{plural}; the line runs the ladder again at "
-            "the new date now, and the fresh proposal shows in the row and on the board.",
-        )
-    if kind == "qty_up":
-        return (
-            "replan",
-            "Quantity increased; the existing components stay held, and only the extra "
-            "quantity runs the ladder.",
-        )
-    if kind == "qty_down":
-        return (
-            "reduce",
-            "Quantity decreased; the reserve stays, the Buy is reduced for the drop, and "
-            "the inquiry row is cancelled for the drop.",
-        )
+def _release_components(
+    held_by: Dict[str, List[Tuple[Decimal, Optional[str]]]],
+    facts: dict,
+    *,
+    item_code: Optional[str] = None,
+) -> List[dict]:
+    """Every held component leaves the line: the whole hold, released or reallocated.
 
-    # kind == "delayed" from here.
-    if has_reserve:
-        if discontinued:
-            return (
-                "keep",
-                "Discontinued: it cannot be bought again, so the reserve is kept "
-                "whatever the size of the delay.",
-            )
-        if dealer.get("value"):
-            where = ", ".join(dealer.get("where") or []) or locations
-            return (
-                "release",
-                f"Dealer hot-selling at {where}: retail needs the pool stock now; "
-                "the reserve is released and the purchase is for the pool - back on "
-                "the board.",
-            )
-        if window.get("value"):
-            return (
-                "keep",
-                f"New date is {days_moved} days out and inside the {window_days}-day "
-                "reserve window; the reserve stays put rather than being released and "
-                "re-taken.",
-            )
-        return (
-            "release",
-            f"New date is {days_moved} days out, beyond the {window_days}-day reserve "
-            f"window; the reserve is released and the purchase is for the pool - back "
-            "on the board.",
-        )
+    A reserve FREES where it sits (or goes to the dealer pool, which wins over a waiting
+    project row - rule 6); quantity on a document is REALLOCATED, because a purchase
+    somebody already arranged is not given back for nothing.
+    """
+    dealer = bool((facts.get("dealer_hot_selling") or {}).get("value"))
+    target = facts.get("reallocate_to") or "pool"
+    placed = facts.get("placed") or {}
+    placed_qty = _dec(placed.get("qty"))
+    document = placed.get("document")
+    out: List[dict] = []
+    for qty, location in held_by["reserve"]:
+        out.append(_component(
+            "release", "reserve", qty,
+            f"Release {qty_text(qty)} to dealer pool" if dealer
+            else (f"Release {qty_text(qty)}, free at {location}" if location
+                  else f"Release {qty_text(qty)}"),
+            location=location, target="dealer pool" if dealer else None,
+            item_code=item_code,
+        ))
+    for qty, location in held_by["borrow"]:
+        out.append(_component(
+            "release", "borrow", qty,
+            f"Release borrow {qty_text(qty)}, the order-back is cancelled",
+            location=location, item_code=item_code,
+        ))
+    for qty, _location in held_by["spo"]:
+        out.append(_component(
+            "reallocate", "spo", qty,
+            f"Reallocate SPO {qty_text(qty)} to {target}",
+            target=target, item_code=item_code,
+        ))
+    for qty, _location in held_by["buy"]:
+        on_document = min(qty, placed_qty)
+        unplaced = qty - on_document
+        if unplaced > _ZERO:
+            out.append(_component(
+                "reduce", "buy", _ZERO,
+                f"Reduce Buy {qty_text(unplaced)} to 0",
+                qty_was=unplaced, item_code=item_code,
+            ))
+        if on_document > _ZERO:
+            out.append(_component(
+                "reallocate", "po", on_document,
+                f"Reallocate {document} {qty_text(on_document)} to {target}" if document
+                else f"Reallocate {qty_text(on_document)} to {target}",
+                document=document, target=target, item_code=item_code,
+            ))
+    return out
 
-    # No reserve: only Buy (or nothing measurable) is held.
-    #
-    # BEYOND THE WINDOW THIS RELEASES (captain, 26 August 2026, ruling on the dead
-    # `_release_rows` path named in `PLAN-scm-cs-planning-uat.md`'s "Open, found while
-    # building ladder v3"). `release` used to need a reserve AND a Buy on one composition,
-    # which the whole-line rule (AC-L5) abolished - so a wholly bought line delayed 197
-    # days suggested `keep` and purchasing was told nothing worth acting on. A purchase
-    # for a line that has moved most of a year out is a purchase for the POOL, and that is
-    # what a release says. Checked BEFORE `buy_actioned`, because a row already sitting on
-    # a document is exactly the case the ruling is about: it keeps its links and moves to
-    # the pool (AC-P3-10), rather than reading as "nothing to undo".
-    if not window.get("value"):
-        return (
-            "release",
-            f"New date is {days_moved} days out, beyond the {window_days}-day reserve "
-            "window; the purchase is for the pool rather than for this line.",
+
+def _keep_components(
+    held_by: Dict[str, List[Tuple[Decimal, Optional[str]]]],
+) -> List[dict]:
+    """The hold stands as it is - what a row with no re-run to diff against can say."""
+    out: List[dict] = []
+    for klass in _CLASSES:
+        total = sum((qty for qty, _ in held_by[klass]), _ZERO)
+        if total <= _ZERO:
+            continue
+        label = (
+            f"Keep {qty_text(total)}"
+            if klass in ("reserve", "buy")
+            # A borrow and an SPO share name a debt and a document, so they say which one
+            # is being kept; a reserve and a Buy are the line's own and need no qualifier.
+            else f"Keep {_CLASS_WORD[klass]} {qty_text(total)}"
         )
-    if buy_actioned.get("value"):
-        po_number = buy_actioned.get("po_number")
-        po_text = f" ({po_number})" if po_number else ""
-        return (
-            "keep",
-            f"The Buy this line holds is already a placed purchase order{po_text}; "
-            "nothing in the plan changes, and the inquiry row notes the delay.",
+        out.append(_component(
+            "keep", "po" if klass == "buy" else klass, total, label,
+            location=held_by[klass][0][1] if held_by[klass] else None,
+        ))
+    return out
+
+
+def compose_suggestion(
+    kind: str, held: Optional[dict], proposal: Optional[dict], facts: dict
+) -> dict:
+    """The suggestion for one changed line: the re-run DIFFED against what is held.
+
+    No I/O, no clock, no database - `kind` / `held` / `proposal` / `facts` are the wire
+    shapes (`PlanningChangeKind`, `held_json`, a `BoardContribution`, `facts_json`) as
+    plain dicts, and everything the diff needs that is not in the first three (what is on
+    a document, where freed quantity would go, whether the new date is inside the immediate
+    window) is a FACT the caller measured.
+
+    Per held class: Keep it, Reduce it, Release it or Reallocate it; then new sourcing for
+    whatever the hold does not cover (rule 3). Held components come first, in held order.
+
+    Replaces `suggest()` and its rule table: a verb the row agreed with executed nothing,
+    which is why an "accept" decision had to exist at all.
+    """
+    facts = facts or {}
+    held_by = _held_classes(held)
+    proposed = _proposed_classes(proposal)
+    new_date = facts.get("new_date")
+    late_days: Optional[int] = None
+    shortfall_qty: Optional[str] = None
+
+    # The line is gone, or the product on it is: the whole hold leaves, whatever it was.
+    if kind == "cancelled":
+        return {
+            "components": _release_components(held_by, facts),
+            "late_days": None,
+            "shortfall_qty": None,
+        }
+    if kind == "product_changed":
+        # ONE row, never a cancelled plus an added pair (rule 5): the OLD product's hold
+        # is released and the NEW product is sourced as a new line in the same row, each
+        # component saying which product it is about.
+        components = _release_components(
+            held_by, facts, item_code=facts.get("item_code_was")
         )
-    return (
-        "keep",
-        "Only a Buy is held and purchasing has not actioned it yet; the Buy stands and "
-        "the inquiry row is updated to DELAY with the previous date.",
-    )
+        if proposed:
+            for klass in _CLASSES:
+                components.extend(_sourcing_components(
+                    klass, proposed[klass], facts, item_code=facts.get("item_code_now"),
+                ))
+        return {"components": components, "late_days": None, "shortfall_qty": None}
+
+    if proposed is None:
+        # No re-run to diff against (the board could walk nothing for this line), so the
+        # honest answer is that the plan stands - not a blank, and not a guess.
+        return {
+            "components": _keep_components(held_by),
+            "late_days": None,
+            "shortfall_qty": None,
+        }
+
+    placed = facts.get("placed") or {}
+    placed_qty = _dec(placed.get("qty"))
+    document = placed.get("document")
+    target = facts.get("reallocate_to") or "pool"
+    dealer = bool((facts.get("dealer_hot_selling") or {}).get("value"))
+    # Rule 8: a purchase cannot land inside the immediate window, so whatever the ladder
+    # leaves as a Buy for a line due that soon is a SHORTFALL, stated as one.
+    immediate = bool(facts.get("immediate"))
+
+    components: List[dict] = []
+    sourced: set = set()
+    for klass in _CLASSES:
+        held_total = sum((qty for qty, _ in held_by[klass]), _ZERO)
+        wanted = proposed[klass]["qty"]
+        if held_total <= _ZERO:
+            continue
+        sourced.add(klass)
+
+        if klass == "buy":
+            on_document = min(held_total, placed_qty)
+            unplaced = held_total - on_document
+            if immediate and wanted > _ZERO:
+                # The remainder stays a Buy and the board says how short the line is,
+                # rather than promising a date nobody can keep.
+                shortfall_qty = qty_text(wanted)
+                components.extend(_sourcing_components(
+                    klass, proposed[klass], facts, shortfall=True, qty_was=held_total,
+                ))
+                continue
+            if wanted > held_total:
+                # Rule 4: a top-up JOINS the held Buy, on the same inquiry row.
+                components.append(_component(
+                    "buy", "buy", wanted,
+                    f"Buy {qty_text(wanted)} (was {qty_text(held_total)})",
+                    qty_was=held_total, document=document,
+                ))
+                continue
+            cut = held_total - wanted
+            # Reduce the UNPLACED quantity first: what purchasing has not arranged yet is
+            # what costs nothing to drop (S2).
+            cut_unplaced = min(unplaced, cut)
+            if cut_unplaced > _ZERO:
+                components.append(_component(
+                    "reduce", "buy", unplaced - cut_unplaced,
+                    f"Reduce Buy {qty_text(unplaced)} to {qty_text(unplaced - cut_unplaced)}",
+                    qty_was=unplaced,
+                ))
+            cut_placed = cut - cut_unplaced
+            kept_placed = on_document - cut_placed
+            if kept_placed > _ZERO:
+                late_days = _late_days(facts, kept_placed)
+                label = (
+                    f"Keep {document} {qty_text(kept_placed)} of {qty_text(on_document)}"
+                    if cut_placed > _ZERO and document
+                    else f"Keep {qty_text(kept_placed)}"
+                )
+                if late_days:
+                    label = f"{label}, late by {_days_word(late_days)}"
+                components.append(_component(
+                    "keep", "po", kept_placed, label,
+                    qty_was=on_document if cut_placed > _ZERO else None,
+                    document=document,
+                ))
+            elif cut_unplaced <= _ZERO and wanted == held_total:
+                # Nothing is placed and nothing moved: the Buy stands as it is.
+                components.append(_component(
+                    "keep", "buy", held_total, f"Keep {qty_text(held_total)}",
+                ))
+            if cut_placed > _ZERO:
+                components.append(_component(
+                    "reallocate", "po", cut_placed,
+                    f"Reallocate {document} {qty_text(cut_placed)} to {target}" if document
+                    else f"Reallocate {qty_text(cut_placed)} to {target}",
+                    document=document, target=target,
+                ))
+            continue
+
+        if wanted == held_total:
+            components.extend(_keep_components({
+                k: (held_by[k] if k == klass else []) for k in _CLASSES
+            }))
+            continue
+        if wanted > held_total:
+            # A top-up of a stock hold joins the same source, the same way a Buy's does.
+            components.extend(_sourcing_components(klass, proposed[klass], facts))
+            continue
+        if wanted > _ZERO:
+            components.append(_component(
+                "reduce", klass, wanted,
+                f"Reduce {_CLASS_WORD[klass]} {qty_text(held_total)} to {qty_text(wanted)}",
+                qty_was=held_total,
+                location=held_by[klass][0][1],
+            ))
+            continue
+        # The class leaves the line entirely.
+        components.extend(_release_components(
+            {k: (held_by[k] if k == klass else []) for k in _CLASSES}, facts,
+        ))
+
+    # Whatever the hold never covered at all is new sourcing, after the held components.
+    for klass in _CLASSES:
+        if klass in sourced or proposed[klass]["qty"] <= _ZERO:
+            continue
+        shortfall = klass == "buy" and immediate
+        if shortfall:
+            shortfall_qty = qty_text(proposed[klass]["qty"])
+        components.extend(_sourcing_components(
+            klass, proposed[klass], facts, shortfall=shortfall,
+        ))
+
+    return {
+        "components": components,
+        "late_days": late_days,
+        "shortfall_qty": shortfall_qty,
+    }
+
+
+def _late_days(facts: dict, kept_qty: Decimal) -> Optional[int]:
+    """How many days after the line's NEW date the quantity it keeps actually lands.
+
+    Measured against the placed supply's own arrival (the PO line's expected date, else
+    the purchase order's, else the date the inquiry row was raised against), because that
+    is when the goods exist. `None` when the line is on time or nothing is placed - a unit
+    kept late is shown as late (rule 8), never silently kept, and never flagged when it is
+    not.
+    """
+    placed = facts.get("placed") or {}
+    arrival = _as_date(placed.get("arrival_date"))
+    new_date = _as_date(facts.get("new_date"))
+    if kept_qty <= _ZERO or arrival is None or new_date is None:
+        return None
+    days = (arrival - new_date).days
+    return days if days > 0 else None
 
 
 def _is_null_anchored_date_move(c) -> bool:
@@ -288,9 +642,11 @@ def _is_null_anchored_date_move(c) -> bool:
 
 def _map_kind(c) -> str:
     if c.kind == CLOSED:
-        return "closed"
+        return "cancelled"
     if c.kind == ADDED:
         return "added"
+    if c.kind == PRODUCT_CHANGED:
+        return "product_changed"
     if c.kind == QTY_CHANGED:
         return "qty_up" if c.qty_delta > 0 else "qty_down"
     days = c.days_moved or 0
@@ -311,9 +667,12 @@ def _from_to(c) -> Tuple[dict, dict]:
         else None,
         "qty": qty_text(_dec(before.qty)) if before else None,
         "status": "open" if before else None,
+        # The OLD product, on a `product_changed` row only - `None` everywhere else, same
+        # as the fields above (Slice A rule 5, "carrying the old and the new product").
+        "item_code": before.item_code if (before and c.kind == PRODUCT_CHANGED) else None,
     }
     if c.kind == CLOSED:
-        to_ = {"required_date": None, "qty": None, "status": "closed"}
+        to_ = {"required_date": None, "qty": None, "status": "closed", "item_code": None}
     else:
         to_ = {
             "required_date": after.required_date.isoformat()
@@ -321,6 +680,7 @@ def _from_to(c) -> Tuple[dict, dict]:
             else None,
             "qty": qty_text(_dec(after.qty)) if after else None,
             "status": "open" if after else None,
+            "item_code": after.item_code if (after and c.kind == PRODUCT_CHANGED) else None,
         }
     return from_, to_
 
@@ -345,8 +705,12 @@ def build_batch(
     import_job_id: Optional[str],
     file_name: Optional[str],
 ) -> Optional[PlanningChangeBatch]:
-    """One row per PLANNED line the upload changed (AC-R01). `None` when nothing planned
-    changed - the caller shows nothing for such an upload.
+    """One row per changed line that is HELD by the order's ACTIVE supply decision or has a
+    non-cancelled Order Inquiry row (`PLAN-scm-planning-change-gate-held-or-inquiry.md`,
+    AC-G1). Being adopted onto `projects.sales_orders` is not, by itself, enough: an
+    undecided line is silent, whatever changed. `None` when no changed line clears that
+    gate - the caller shows nothing for such an upload - for all three triggers that call
+    this function (SO book re-upload, ESB ingest, manual SO edit).
 
     `applied_line_ids` / `order_ids` are `outstanding_import_service.apply()`'s own local
     state, passed in because an ADDED change's `row_ref` is a source ROW NUMBER, not a
@@ -454,20 +818,23 @@ def build_batch(
     for e in entries:
         by_order[str(e["order"].id)].append(e)
 
+    # The id is generated here, not left to the column default, so a kept `PlanningChangeRow`
+    # can carry `batch_id` before the batch itself is ever added to the session - the empty
+    # case (1,307 of 1,308 changed lines on the 10 Sep live measurement) is the COMMON path
+    # under the held-or-inquiry gate, so it must not pay for an INSERT it then has to DELETE.
     batch = PlanningChangeBatch(
+        id=str(uuid.uuid4()),
         import_job_id=import_job_id,
         upload_file_name=file_name,
         created_by=actor,
-        order_count=len(by_order),
-        line_count=len(entries),
     )
-    db.add(batch)
-    db.flush()
 
     supply = ProjectSupplyService(db)
     # Keyed `(so_number, project_line_id)`, not just `so_number` - see `_proposal_for`.
     board_cache: Dict[Tuple[str, Optional[str]], dict] = {}
 
+    kept_orders: set = set()
+    kept_rows: List[PlanningChangeRow] = []
     for pso_id, group in by_order.items():
         order = group[0]["order"]
         active_decision = supply.active_decision(pso_id)
@@ -479,6 +846,14 @@ def build_batch(
         )
         frozen = supply.frozen_lines_of(active_decision)
         so_number = _so_number(order)
+        # Only asked when the group actually carries an `added` change - the order-level
+        # half of the gate a new line needs (rule 5: "an ADDED change... is raised when the
+        # ORDER has at least one held or inquiry line"), and most groups have none.
+        order_has_held_or_inquiry = (
+            _order_has_held_or_inquiry(db, pso_id, frozen)
+            if any(e["change"].kind == ADDED for e in group)
+            else False
+        )
         for e in group:
             row = _build_row(
                 db,
@@ -494,14 +869,101 @@ def build_batch(
                 board_cache,
                 so_number,
                 moved_transfers,
+                order_has_held_or_inquiry,
             )
-            db.add(row)
+            if row is None:
+                # AC-G1/AC-G4: the line is neither held nor inquired, so it stays off the
+                # batch entirely - not a row worth counting.
+                continue
+            kept_orders.add(pso_id)
+            kept_rows.append(row)
+
+    if not kept_rows:
+        # Every changed line on this upload/edit failed the held-or-inquiry gate: there is
+        # nothing to re-decide, so no batch is ever written for the pill to point at.
+        return None
+
+    batch.order_count = len(kept_orders)
+    batch.line_count = len(kept_rows)
+    db.add(batch)
+    for row in kept_rows:
+        db.add(row)
     db.flush()
     return batch
 
 
+def pending_batch_id_by_sales_order(
+    db: Session, sales_order_ids: Sequence[str],
+) -> Dict[str, str]:
+    """The newest PENDING planning-change batch per core `sales_orders.id`, one query.
+
+    `PLAN-scm-board-picks-up-pending-change.md` change 1: the body `SalesOrderService
+    .with_planning_changes` used to keep for itself, lifted out here so the fulfilment
+    board and the fulfilment-planning list can name the same batch the SCM Sales Orders
+    list already does - one rule, three readers. "Pending" means the batch itself is
+    unapplied (`applied_at IS NULL`) AND the row is `applied_state == 'pending'`
+    (`PLAN-scm-planning-change-gate-held-or-inquiry.md`, AC-G5): a batch left open but
+    whose only rows were superseded by the held-or-inquiry gate has nothing left to
+    decide either. `{}` for an empty `sales_order_ids`; an id with nothing pending is
+    simply absent from the returned dict (never a `None` value), so a caller uses
+    `.get(so_id)`.
+    """
+    if not sales_order_ids:
+        return {}
+
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+
+    found = (
+        db.query(ProjectSalesOrder.so_id, PlanningChangeBatch.id)
+        .join(PlanningChangeRow,
+              PlanningChangeRow.project_sales_order_id == ProjectSalesOrder.id)
+        .join(PlanningChangeBatch,
+              PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+        .filter(
+            ProjectSalesOrder.so_id.in_(list(sales_order_ids)),
+            PlanningChangeBatch.applied_at.is_(None),
+            PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+        )
+        .order_by(PlanningChangeBatch.created_at.desc())
+        .all()
+    )
+    result: Dict[str, str] = {}
+    for so_id, batch_id in found:
+        # The NEWEST pending batch wins: rows arrive newest-batch-first, and a second
+        # pass for the same order must not overwrite it with an older one.
+        result.setdefault(str(so_id), str(batch_id))
+    return result
+
+
 def _so_number(order: ProjectSalesOrder) -> str:
     return order.autocount_doc_no or order.provisional_ref or str(order.id)
+
+
+def _order_has_held_or_inquiry(
+    db: Session, pso_id: str, frozen: Dict[str, dict]
+) -> bool:
+    """Whether ANY line on this order is held by its active decision or carries a
+    non-cancelled Order Inquiry row.
+
+    A new line (`added`) has no mirror line of its own yet, so the per-line held-or-inquiry
+    gate `_build_row` asks every other kind can never pass it - it is asked of the ORDER
+    instead (Slice A rule 5): a line added to an order nobody has decided anything on is
+    silent, exactly like any other change to an undecided order, but a line added to an
+    order that already carries a commitment is exactly the kind of exception the gate exists
+    to surface.
+    """
+    if frozen:
+        return True
+    return (
+        db.query(OrderInquiryRow.id)
+        .join(ProjectSalesOrderLine, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
+        .filter(
+            ProjectSalesOrderLine.project_sales_order_id == pso_id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .first()
+        is not None
+    )
 
 
 def _hot_selling_evidence(
@@ -653,6 +1115,161 @@ def _inquiry_rows_and_buy_actioned(
         "po_number": (actioned_buy.po_ref or actioned_buy.spo_ref) if actioned_buy else None,
         "qty": qty_text(placed_qty),
     }
+
+
+def _placed_links(db: Session, project_line_id: Optional[str]) -> dict:
+    """The quantity of this line's demand that is already ON a document, and which one.
+
+    Read off `OrderInquiryLink` rather than off the row's own state, because a row placed
+    for PART of its quantity reads `partly_linked` and keeps its full demand (S2's own
+    shape: 234 raised, 134 on a purchase order, 100 still unlinked) - a state check would
+    see nothing placed there and the suggestion would offer to drop a real purchase order.
+
+    `arrival_date` is when that supply is expected: the purchase order LINE's own date,
+    else the order's, else the date the inquiry row was raised against - the date the
+    purchase was placed to meet. It is what "late by N days" is measured from.
+    """
+    empty = {"qty": qty_text(_ZERO), "document": None, "arrival_date": None}
+    if not project_line_id:
+        return empty
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == project_line_id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+            OrderInquiryRow.verb.in_((IV_ORDER, IV_RESERVE_AND_ORDER)),
+        )
+        .all()
+    )
+    row_ids = [str(r.id) for r in rows]
+    if not row_ids:
+        return empty
+    links = (
+        db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.row_id.in_(row_ids))
+        .order_by(OrderInquiryLink.linked_at.asc())
+        .all()
+    )
+    if not links:
+        return empty
+    total = sum((_dec(link.qty) for link in links), _ZERO)
+    document = next((link.document for link in links if link.document), None)
+    po_line_ids = [str(link.po_line_id) for link in links if link.po_line_id]
+    arrivals: List[date] = []
+    if po_line_ids:
+        for line_date, order_date in (
+            db.query(PurchaseOrderLine.expected_date, PurchaseOrder.expected_date)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(PurchaseOrderLine.id.in_(po_line_ids))
+            .all()
+        ):
+            when = line_date or order_date
+            if when:
+                arrivals.append(when)
+    if not arrivals:
+        # Nothing on the document says when: the purchase was placed to meet the date the
+        # row asked for, so that is the honest expectation.
+        arrivals = [r.delivery_date for r in rows if r.delivery_date]
+    return {
+        "qty": qty_text(total),
+        "document": document,
+        # The LATEST, because the line is only whole when the last of it lands.
+        "arrival_date": max(arrivals).isoformat() if arrivals else None,
+    }
+
+
+def _reallocation_target(
+    db: Session,
+    project_line_id: Optional[str],
+    product_id: Optional[str],
+    dealer_hot_selling: bool,
+) -> str:
+    """Where freed stock or freed document quantity would go, IN WORDS (rule 6, AC-D6).
+
+    Naming only - Slice D is what actually moves it - so this answers the same question the
+    linking engine will, in the same order: the dealer pool if the product is dealer
+    hot-selling (retail wins over a waiting project row, the grill page's own 3.1); else
+    the raised or partly-linked ORDER row with unlinked quantity that the linking engine
+    would deal to first (`_rank_raised_rows`, the one priority policy); else the pool.
+    """
+    if dealer_hot_selling:
+        return "dealer pool"
+    if not product_id:
+        return "pool"
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    candidates = (
+        db.query(OrderInquiryRow)
+        .join(
+            ProjectSalesOrderLine,
+            ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+        )
+        .filter(
+            ProjectSalesOrderLine.product_id == product_id,
+            OrderInquiryRow.so_line_id != project_line_id,
+            OrderInquiryRow.verb.in_((IV_ORDER, IV_RESERVE_AND_ORDER)),
+            OrderInquiryRow.state.in_(("raised", INQUIRY_PARTLY_LINKED)),
+        )
+        .order_by(
+            OrderInquiryRow.delivery_date.asc().nullslast(),
+            OrderInquiryRow.created_at.asc(),
+        )
+        .all()
+    )
+    if not candidates:
+        return "pool"
+    linked_by_row: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+    for row_id, qty in (
+        db.query(OrderInquiryLink.row_id, OrderInquiryLink.qty)
+        .filter(OrderInquiryLink.row_id.in_([str(r.id) for r in candidates]))
+        .all()
+    ):
+        linked_by_row[str(row_id)] += _dec(qty)
+    open_rows = [
+        (r, _dec(r.qty) - linked_by_row[str(r.id)])
+        for r in candidates
+    ]
+    open_rows = [(r, unlinked) for r, unlinked in open_rows if unlinked > _ZERO]
+    if not open_rows:
+        return "pool"
+    try:
+        ranked = ProjectOrderInquiryService(db)._rank_raised_rows([r for r, _ in open_rows])
+        best = ranked[0] if ranked else open_rows[0][0]
+    except Exception:  # noqa: BLE001 - naming a target is a nicety, never a build blocker
+        logger.exception("planning change: ranking reallocation candidates failed")
+        best = open_rows[0][0]
+    unlinked = next((q for r, q in open_rows if str(r.id) == str(best.id)), _ZERO)
+    so_number = (
+        db.query(ProjectSalesOrder)
+        .join(
+            ProjectSalesOrderLine,
+            ProjectSalesOrderLine.project_sales_order_id == ProjectSalesOrder.id,
+        )
+        .filter(ProjectSalesOrderLine.id == best.so_line_id)
+        .with_entities(ProjectSalesOrder.autocount_doc_no, ProjectSalesOrder.provisional_ref)
+        .first()
+    )
+    label = (so_number[0] or so_number[1]) if so_number else None
+    verb = "ORDER BACK" if best.verb == IV_ORDER_BACK else "ORDER"
+    return f"{label} {verb} {qty_text(unlinked)}" if label else "pool"
+
+
+def _is_immediate(new_date: Optional[date]) -> bool:
+    """Is the line due inside the ladder's own immediate window?
+
+    The window is the LADDER's (`DEFAULT_IMMEDIATE_WINDOW_DAYS`), read from it rather than
+    restated here: rule 2 retired this service's own `RESERVE_WINDOW_DAYS` for exactly the
+    reason a second constant would disagree with the engine that decides.
+    """
+    from app.services.scm.front_planning_engine import DEFAULT_IMMEDIATE_WINDOW_DAYS
+
+    if new_date is None:
+        return False
+    from datetime import timedelta
+
+    return new_date <= date.today() + timedelta(days=DEFAULT_IMMEDIATE_WINDOW_DAYS)
 
 
 def _proposal_for(
@@ -917,7 +1534,8 @@ def _build_row(
     board_cache: Dict[Tuple[str, Optional[str]], dict],
     so_number: str,
     moved_transfers: Optional[Dict[str, str]] = None,
-) -> PlanningChangeRow:
+    order_has_held_or_inquiry: bool = False,
+) -> Optional[PlanningChangeRow]:
     c = entry["change"]
     project_line: Optional[ProjectSalesOrderLine] = entry["project_line"]
     product_id = entry.get("product_id")
@@ -931,18 +1549,27 @@ def _build_row(
 
     new_date = _as_date(to_json.get("required_date")) or _as_date(from_json.get("required_date"))
     old_date = _as_date(from_json.get("required_date"))
-    window_end = None
-    if old_date:
-        from datetime import timedelta
-
-        window_end = old_date + timedelta(days=RESERVE_WINDOW_DAYS)
-    within_window = bool(days_moved is not None and abs(days_moved) <= RESERVE_WINDOW_DAYS)
 
     inquiry_rows, buy_actioned = _inquiry_rows_and_buy_actioned(db, project_line_id)
 
+    if held is None and not inquiry_rows:
+        # `PLAN-scm-planning-change-gate-held-or-inquiry.md`, AC-G1: a change to a line
+        # nobody has decided on invalidates nothing a person committed to, so it raises no
+        # row. Checked before any of the expensive work below (`_proposal_for` walks the
+        # fulfilment board's ladder) since most changed lines take this exit.
+        #
+        # `added` is the one exception (`PLAN-scm-change-management-one-engine.md` Slice A
+        # rule 5): a new line has no mirror line to hold or inquire about YET, so the gate
+        # is asked of the ORDER instead - an order with a held or inquired line already
+        # carries a commitment the new line changes the shape of.
+        if not (c.kind == ADDED and order_has_held_or_inquiry):
+            return None
+
+    dealer_hot_selling = bool(product_id and product_id in dealer_where)
+    placed = _placed_links(db, project_line_id)
     facts = {
         "dealer_hot_selling": {
-            "value": bool(product_id and product_id in dealer_where),
+            "value": dealer_hot_selling,
             "where": dealer_where.get(product_id, []) if product_id else [],
         },
         "project_hot_selling": {
@@ -951,14 +1578,26 @@ def _build_row(
         },
         "discontinued": bool(product_id and product_id in discontinued_ids),
         "days_moved": days_moved or 0,
-        "within_reserve_window": {
-            "value": within_window,
-            "window_days": RESERVE_WINDOW_DAYS,
-            "new_date": new_date.isoformat() if new_date else None,
-            "window_end": window_end.isoformat() if window_end else None,
-        },
         "buy_actioned": buy_actioned,
+        # What is already on a purchase order for this line, and when it lands (S2, S12).
+        "placed": placed,
+        # The three the DIFF needs that are not on the line itself. Stored on `facts_json`
+        # rather than passed around, so a row can be re-read later and say what its own
+        # suggestion was composed against; not on the wire (like `moved_transfer`, which
+        # `row_out` lifts out of here), because nothing on screen compares them.
+        "new_date": new_date.isoformat() if new_date else None,
+        "old_date": old_date.isoformat() if old_date else None,
+        "immediate": _is_immediate(new_date),
     }
+    if _dec(placed.get("qty")) > _ZERO or _dec((held or {}).get("timely_spo_qty")) > _ZERO:
+        # Only asked when something could actually be freed - it ranks every waiting row
+        # for the product, and most changed lines free nothing.
+        facts["reallocate_to"] = _reallocation_target(
+            db, project_line_id, product_id, dealer_hot_selling
+        )
+    if kind == "product_changed":
+        facts["item_code_was"] = from_json.get("item_code")
+        facts["item_code_now"] = to_json.get("item_code") or c.item_code
 
     # AC-P3-9: stock that has already physically moved for this line. On `facts_json`
     # rather than a column of its own - it is a fact the row states, exactly like the
@@ -967,13 +1606,14 @@ def _build_row(
     moved = (moved_transfers or {}).get(str(entry["core_line_id"]))
     if moved:
         facts["moved_transfer"] = (
-            f"{moved}, line cancelled" if kind == "closed" else moved
+            f"{moved}, line cancelled" if kind == "cancelled" else moved
         )
 
-    suggested, why = suggest(kind, held, facts)
-
+    # THE RE-RUN, for every kind on a line that still exists (rule 3): the suggestion is
+    # the diff of it against the hold, so a row without it has nothing to diff. Skipped for
+    # `cancelled` alone - the line is gone, so there is nothing to walk the ladder for.
     proposal = None
-    if suggested == "replan" and project_line_id:
+    if kind != "cancelled":
         proposal = _json_safe(
             _proposal_for(db, board_cache, so_number, entry["core_line_id"], project_line_id)
         )
@@ -981,6 +1621,12 @@ def _build_row(
             proposal = _apply_placed_offset(
                 proposal, _dec(buy_actioned.get("qty")), buy_actioned.get("po_number")
             )
+
+    suggestion = compose_suggestion(kind, held, proposal, facts)
+    # PRE-FILLED (Slice C contract A): Confirm posts this unchanged and Amend edits it, so
+    # the composition a row shows is the one it will actually post. `set_row_decision`
+    # still validates it against the line's open quantity when the decision is taken.
+    composition = composition_from_proposal(proposal) or None
 
     board_link = _board_link(so_number, c.item_code, new_date or old_date)
 
@@ -999,13 +1645,12 @@ def _build_row(
         held_json=held,
         facts_json=facts,
         inquiry_rows_json=inquiry_rows,
-        suggested=suggested,
-        why=why,
+        suggestion_json=suggestion,
         proposal_json=proposal,
-        # A `replan` row (it always carries a `proposal`) defaults to undecided - `Leave on
-        # the board` - not `accept`: `accept` alone never executed anything for it (the
-        # captain's own fix); the planner picks `Confirm as proposed` or `Amend` instead.
-        decision=(None if held is None or suggested == "replan" else "accept"),
+        composition_json=composition,
+        # UNDECIDED until CS says otherwise (AC-C7). There is no default agreement any
+        # more: a row is Confirmed or Amended by a person, and nothing else applies it.
+        decision=None,
         applied_state=PLANNING_CHANGE_STATE_PENDING,
         board_link=board_link,
     )
@@ -1094,8 +1739,7 @@ def row_out(db: Session, row: PlanningChangeRow) -> dict:
         "days_moved": row.days_moved,
         "held": row.held_json,
         "facts": row.facts_json,
-        "suggested": row.suggested,
-        "why": row.why,
+        "suggestion": row.suggestion_json,
         "moved_transfer": (row.facts_json or {}).get("moved_transfer"),
         "proposal": row.proposal_json,
         "inquiry_rows": row.inquiry_rows_json or [],
@@ -1327,20 +1971,47 @@ def composition_from_proposal(proposal: Optional[dict]) -> dict:
             qty_text(reserve_qty),
             proposal.get("key") or project_line_id,
         )
+    # No `qty_proposed_borrow` aggregate exists on `BoardContribution` (unlike reserve and
+    # incoming) - LADDER V7.1's `order_borrow`/`supply_borrow` rungs are newer than that
+    # field, and every reader of a whole-unit Borrow sums `sources` itself (`rank_score`
+    # sources, `_group_sibling_warehouses`). Summed over the SAME filtered list
+    # `_borrow_components_from_sources` builds from (a source without a `warehouse_id`
+    # cannot be addressed as a component), so the two never disagree about how much borrow
+    # the sources themselves account for.
+    borrow_sources_all = [s for s in sources if s.get("kind") == "borrow"]
+    borrow_qty = sum(
+        (_dec(s.get("qty")) for s in borrow_sources_all if s.get("warehouse_id")), _ZERO
+    )
+    sources_borrow_total = sum((_dec(s.get("qty")) for s in borrow_sources_all), _ZERO)
+    if sources_borrow_total != borrow_qty:
+        logger.warning(
+            "planning change composition: sources borrow total %s disagrees with the "
+            "addressable borrow %s on row %s - a borrow source is missing its "
+            "warehouse_id; trusting the addressable total.",
+            qty_text(sources_borrow_total),
+            qty_text(borrow_qty),
+            proposal.get("key") or project_line_id,
+        )
     owed = _dec(
         proposal.get("qty_outstanding")
         if proposal.get("qty_outstanding") is not None
         else proposal.get("qty")
     )
     buy_raw = proposal.get("qty_proposed_buy")
-    buy = _dec(buy_raw) if buy_raw is not None else max(owed - incoming - reserve_qty, _ZERO)
+    buy = (
+        _dec(buy_raw) if buy_raw is not None
+        else max(owed - incoming - reserve_qty - borrow_qty, _ZERO)
+    )
     return {
         "project_line_id": project_line_id,
         "timely_spo_qty": qty_text(incoming),
         "reserve": _reserve_components_from_sources(sources, reserve_qty),
-        # The board never proposes a Borrow (it allocates per product/location only); one
-        # composed by hand takes the `amend` path, which posts what the planner built.
-        "borrow": [],
+        # LADDER V7.1's `order_borrow` rung (S1/AC-B2) DOES propose a whole-unit Borrow
+        # off a later donor's own committed stock - built the same way Reserve is, from
+        # the proposal's own `sources`. An amendment still takes the `amend` path and
+        # posts whatever the planner composed by hand; this is only the "take the
+        # proposal as it stands" (`confirm`) reading of it.
+        "borrow": _borrow_components_from_sources(sources, borrow_qty),
         "buy_qty": qty_text(buy),
         "buy_reason": None,
         "amend_reason": None,
@@ -1367,6 +2038,56 @@ def _reserve_components_from_sources(sources: List[dict], reserve_qty: Decimal) 
     # Whatever the sources could not address (the proposal rounded, or asked for more than
     # any one source stated) lands on the last addressable warehouse - the only one this
     # side can name it against.
+    if remaining > _ZERO and out:
+        out[-1]["qty"] = qty_text(_dec(out[-1]["qty"]) + remaining)
+    return out
+
+
+def _borrow_components_from_sources(sources: List[dict], borrow_qty: Decimal) -> List[dict]:
+    """A `ConfirmBorrowComponent`-shaped dict per borrow source, in the same take-until-
+    covered order `_reserve_components_from_sources` uses.
+
+    `donor_core_line_id` (plus the display-only `donor_so_number`/`donor_line_no`/
+    `donor_agent_code`/`same_agent`/`donor_required_date`) is what makes this a Borrow the
+    confirm mechanics can actually act on - `ProjectSupplyService._check_line` only takes
+    the "another order's own committed quantity" branch when it is present
+    (`item.source == ALLOC_SOURCE_OTHER_LOCATION and donor_core_line_id`), and
+    `_borrow_shortfalls` reads the SAME attribute to raise the donor's ORDER_BACK row.
+    `source` is always `ALLOC_SOURCE_OTHER_LOCATION` here: every rung the board proposes a
+    Borrow on today (`order_borrow`, the pool's borrow half, `supply_borrow`) takes stock
+    already committed to, or moving for, a NAMED sales-order line or document, never a
+    cross-project claim (`ALLOC_SOURCE_OTHER_PROJECT`, which only the `amend` dialog's own
+    hand-built composition uses) - and `_check_line`'s `supply_key` branch (step 3) returns
+    before ever reading `source` at all, so the value is inert there.
+    """
+    borrow_sources = [s for s in sources if s.get("kind") == "borrow" and s.get("warehouse_id")]
+    out: List[dict] = []
+    remaining = borrow_qty
+    for s in borrow_sources:
+        if remaining <= _ZERO:
+            break
+        take = min(_dec(s.get("qty")), remaining)
+        if take <= _ZERO:
+            continue
+        out.append({
+            "source": ALLOC_SOURCE_OTHER_LOCATION,
+            "warehouse_id": s["warehouse_id"],
+            "donor_project_id": None,
+            "qty": qty_text(take),
+            "reason": s.get("reason") or "",
+            "donor_core_line_id": s.get("donor_core_line_id"),
+            "donor_so_number": s.get("donor_so_number"),
+            "donor_line_no": s.get("donor_line_no"),
+            "donor_agent_code": s.get("donor_agent_code"),
+            "same_agent": bool(s.get("same_agent", False)),
+            "donor_required_date": s.get("donor_required_date"),
+            "supply_key": s.get("supply_key"),
+            "supply_document": s.get("supply_document"),
+            "arrival_date": s.get("arrival_date"),
+        })
+        remaining -= take
+    # Same rounding carry `_reserve_components_from_sources` does - whatever the sources
+    # could not address lands on the last addressable one.
     if remaining > _ZERO and out:
         out[-1]["qty"] = qty_text(_dec(out[-1]["qty"]) + remaining)
     return out
@@ -1429,6 +2150,20 @@ def _validate_composition_shape(
                 "donor_project_id": i.get("donor_project_id"),
                 "qty": qty_text(_dec(i.get("qty"))),
                 "reason": i.get("reason") or "",
+                # Round-tripped, not re-derived (`ConfirmBorrowComponent`'s own docstring:
+                # "display only; never validated") - `donor_core_line_id` is what the
+                # confirm mechanics act ON (`_check_line`'s group-borrow branch,
+                # `_borrow_shortfalls`'s order-back), so dropping it here would store a
+                # composition the confirm path cannot execute the way it was proposed.
+                "donor_core_line_id": i.get("donor_core_line_id"),
+                "donor_so_number": i.get("donor_so_number"),
+                "donor_line_no": i.get("donor_line_no"),
+                "donor_agent_code": i.get("donor_agent_code"),
+                "same_agent": bool(i.get("same_agent", False)),
+                "donor_required_date": i.get("donor_required_date"),
+                "supply_key": i.get("supply_key"),
+                "supply_document": i.get("supply_document"),
+                "arrival_date": i.get("arrival_date"),
             }
             for i in borrow
         ],
@@ -1463,19 +2198,16 @@ def set_row_decision(
             message="This row could not be found.",
             code="planning_change_row_not_found",
         )
-    # `accept`/`keep`/`board` act on an EXISTING decision (AC-R04); `confirm`/`amend`
-    # compose a fresh one from the proposal, which a row with no active decision (AC-R03,
-    # always `replan`) has just as much as a covered one advancing/qty_up (section 0).
-    if decision in ("accept", "keep", "board") and row.held_json is None:
+    # Confirm or Amend, and nothing else (AC-C7). The route's own Literal refuses any
+    # other word with a 422 before this is ever reached; this is the service-level half of
+    # the same rule, for the callers that are not the route.
+    if decision is not None and decision not in ("confirm", "amend"):
         raise AppException(
             status_code=422,
-            message=(
-                "This row has no active decision to act on; it enters the board on its "
-                "own."
-            ),
-            code="planning_change_row_no_decision",
+            message="A planning change row is either confirmed or amended.",
+            code="planning_change_decision_invalid",
         )
-    if decision in ("accept", "confirm", "amend") and _row_is_superseded(db, row):
+    if decision in ("confirm", "amend") and _row_is_superseded(db, row):
         raise AppException(
             status_code=409,
             message=(
@@ -1486,6 +2218,15 @@ def set_row_decision(
         )
 
     if decision in ("confirm", "amend"):
+        if row.kind == "cancelled":
+            # A cancelled line has nothing to compose FOR - the line is gone from the book
+            # - and Apply retires it off the kind, not off a composition. Confirming it is
+            # still allowed (the board pre-marks every changed line it shows), it simply
+            # records the decision and posts no composition.
+            row.decision = decision
+            row.composition_json = None
+            db.flush()
+            return row_out(db, row)
         if not row.project_line_id:
             raise AppException(
                 status_code=422,
@@ -1524,6 +2265,13 @@ def set_row_decision(
 
 
 def _confirm_payload(project_line_id: str, frozen_entry: dict) -> dict:
+    """One covered line's FROZEN composition, in the shape a `ConfirmLine` is built from.
+
+    No caller in the apply path since Slice C - a row is applied from the composition CS
+    confirmed, never from a verb Apply re-decided off the snapshot - but kept as the one
+    place that reads a frozen entry back into confirm shape;
+    `tests/scm/test_ladder_v7_supply_borrow_fixes.py` pins its donor-field handling.
+    """
     components = frozen_entry.get("components") or []
     reserve = [
         {"warehouse_id": c.get("source_warehouse_id"), "qty": _dec(c.get("qty"))}
@@ -1575,45 +2323,6 @@ def _released_reserve(held: Optional[dict]) -> dict:
     return {"location": ", ".join(locations) or None, "qty": qty_text(qty)}
 
 
-def _confirm_payload_reduce(project_line_id: str, frozen_entry: dict, new_qty: Decimal) -> dict:
-    """AC-R08's "Reduce": the drop comes off Buy first, then Reserve, then Borrow."""
-    payload = _confirm_payload(project_line_id, frozen_entry)
-    reserve_total = sum((c["qty"] for c in payload["reserve"]), _ZERO)
-    borrow_total = sum((c["qty"] for c in payload["borrow"]), _ZERO)
-    total = payload["timely_spo_qty"] + reserve_total + borrow_total + payload["buy_qty"]
-    drop = total - new_qty
-    if drop < _ZERO:
-        drop = _ZERO
-
-    take = min(drop, payload["buy_qty"])
-    payload["buy_qty"] -= take
-    drop -= take
-
-    if drop > _ZERO and payload["reserve"]:
-        kept = []
-        for c in sorted(payload["reserve"], key=lambda item: -item["qty"]):
-            if drop > _ZERO:
-                take = min(drop, c["qty"])
-                c["qty"] -= take
-                drop -= take
-            if c["qty"] > _ZERO:
-                kept.append(c)
-        payload["reserve"] = kept
-
-    if drop > _ZERO and payload["borrow"]:
-        kept = []
-        for c in sorted(payload["borrow"], key=lambda item: -item["qty"]):
-            if drop > _ZERO:
-                take = min(drop, c["qty"])
-                c["qty"] -= take
-                drop -= take
-            if c["qty"] > _ZERO:
-                kept.append(c)
-        payload["borrow"] = kept
-
-    return payload
-
-
 def _to_confirm_line(payload: dict):
     from app.schemas.project_supply import (
         ConfirmBorrowComponent,
@@ -1635,6 +2344,16 @@ def _to_confirm_line(payload: dict):
                 donor_project_id=c.get("donor_project_id"),
                 qty=c["qty"],
                 reason=c.get("reason") or "",
+                # Same fields `_validate_composition_shape` stores - dropped here, an
+                # apply built off a `confirm`/`amend` decision would post a Borrow that
+                # takes free stock rather than a NAMED donor line's committed quantity,
+                # and `_borrow_shortfalls` would raise no ORDER_BACK row for it at all.
+                donor_core_line_id=c.get("donor_core_line_id"),
+                donor_so_number=c.get("donor_so_number"),
+                donor_line_no=c.get("donor_line_no"),
+                donor_agent_code=c.get("donor_agent_code"),
+                same_agent=bool(c.get("same_agent", False)),
+                donor_required_date=c.get("donor_required_date"),
                 supply_key=c.get("supply_key"),
                 supply_document=c.get("supply_document"),
                 arrival_date=c.get("arrival_date"),
@@ -1739,81 +2458,6 @@ def _apply_placed_redirect(
     return count
 
 
-def _release_note(so_number: str, line_no: Optional[int], from_date, to_date, pool_code) -> str:
-    moved = (
-        f"delivery moved {from_date} -> {to_date}"
-        if (from_date and to_date)
-        else "delivery date moved"
-    )
-    note = f"Released from {so_number} line {line_no or '?'} ({moved})"
-    return f"{note}; buy for {pool_code}" if pool_code else note
-
-
-def _release_inquiry_rows(
-    db: Session, project_line_id: Optional[str], note: str, pool_code: Optional[str]
-) -> int:
-    """Move the released line's still-live rows to the pool, and say how many moved.
-
-    AC-P3-10, and this REVERSES what this function used to do to a linked row. It used to
-    leave a `placed` / `partly_linked` row exactly where it was, on the grounds that the
-    row is tagged to a purchase order for a specific warehouse - which read the tag as an
-    instruction about the row rather than the other way round. The captain's ruling of 26
-    August is the opposite one: the delay is real, the purchase is no longer for this
-    line, and the row moves to the pool WITH ITS LINKS. The buyer's arrangement is kept
-    whole; only who it is for changes.
-
-    An `actioned` row still keeps its location and gets the note only: that state is a
-    person's word that purchasing dealt with it, and a plan does not overrule one.
-
-    The count is what the caller decides on: a line whose rows all moved needs no DELAY
-    row beside them, and a line with none left (the confirmation cancelled the unlinked
-    one) is exactly the case that does.
-    """
-    if not project_line_id:
-        return 0
-    rows = (
-        db.query(OrderInquiryRow)
-        .filter(
-            OrderInquiryRow.so_line_id == project_line_id,
-            OrderInquiryRow.state != INQUIRY_CANCELLED,
-        )
-        .all()
-    )
-    count = 0
-    for row in rows:
-        row.note = f"{row.note}\n{note}" if row.note else note
-        if row.state == INQUIRY_ACTIONED or not pool_code:
-            continue
-        row.stock_location = pool_code
-        count += 1
-    return count
-
-
-def _has_unlinked_row(db: Session, project_line_id: Optional[str]) -> bool:
-    """Does this line still have an inquiry row nobody has put on a document?
-
-    The question a release turns on (AC-P3-10). Read over `raised`, `placed` and
-    `partly_linked` - never `actioned`, which is purchasing's own word, and never
-    `cancelled`: a row somebody cancelled months ago is not a row purchasing is holding,
-    and counting it made a released line whose live rows all moved to the pool hand
-    purchasing a DELAY on top of the move.
-    """
-    if not project_line_id:
-        return False
-    rows = (
-        db.query(OrderInquiryRow.id)
-        .outerjoin(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
-        .filter(
-            OrderInquiryRow.so_line_id == project_line_id,
-            OrderInquiryRow.state.notin_((INQUIRY_ACTIONED, INQUIRY_CANCELLED)),
-            OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER)),
-            OrderInquiryLink.id.is_(None),
-        )
-        .first()
-    )
-    return rows is not None
-
-
 def _oi_demand_rows(
     db: Session,
     live_rows: Sequence[PlanningChangeRow],
@@ -1859,59 +2503,6 @@ def _oi_demand_rows(
         if reserve:
             location = reserve[0].get("location")
         product_id = product_by_core.get(r.core_line_id or "")
-
-        if r.suggested == "release":
-            # A released line's claim is given up entirely (module docstring, section 6):
-            # the reserve simply frees, no OI row for that; the Buy it held is no longer
-            # bought FOR THIS LINE.
-            #
-            # WHAT HAPPENS TO THE BUY DEPENDS ON WHETHER A BUYER ALREADY ARRANGED IT
-            # (captain, 26 August 2026, ruling the open question in section "Open, found
-            # while building ladder v3"; AC-P3-10):
-            #
-            # * a row that CARRIES LINKS keeps every one of them and moves to the pool
-            #   location, with the note naming the delay. The quantity is on a real
-            #   purchase order; it is simply no longer for this line, and unlinking it
-            #   would give a buyer's arrangement back for nothing;
-            # * a row that carries none is what the confirmation has already cancelled
-            #   (the line left the revision), so purchasing is handed a DELAY carrying the
-            #   previous date - the same row shape a `keep` on a delayed line produces.
-            #
-            # A RELEASE verb row is never raised: it said "this is for the pool now" in a
-            # row of its own, beside the row it was about, which is the duplicate
-            # instruction one-row-per-line exists to stop.
-            if r.kind not in ("delayed", "advanced") or not r.inquiry_rows_json:
-                continue
-            pool_code = _pool_code_for_core_line(db, r.core_line_id, pool_cache)
-            from_date = (r.from_json or {}).get("required_date")
-            to_date = (r.to_json or {}).get("required_date")
-            note = _release_note(so_number, r.line_no, from_date, to_date, pool_code)
-            _release_inquiry_rows(db, r.project_line_id, note, pool_code)
-            # A row a buyer already put on a document keeps it and is now for the pool -
-            # nothing further to tell purchasing. A row with none is the case that needs
-            # saying out loud, and a DELAY carrying the previous date is how this feature
-            # already says it.
-            if not _has_unlinked_row(db, r.project_line_id):
-                continue
-            qty = _dec((r.to_json or {}).get("qty")) or _dec(held.get("buy_qty"))
-            if qty <= _ZERO:
-                continue
-            out.append(
-                {
-                    "line_id": r.project_line_id,
-                    "product_id": product_id,
-                    "item_code": r.item_code,
-                    "qty": qty,
-                    "delivery_date": _as_date(to_date),
-                    "stock_location": pool_code or location,
-                    "change": CHANGE_DATE_LATER if r.kind == "delayed" else CHANGE_DATE_EARLIER,
-                    "note": f"Was {from_date}" if from_date else "No previous delivery date",
-                }
-            )
-            counts["DELAY" if r.kind == "delayed" else "ADVANCE"] = (
-                counts.get("DELAY" if r.kind == "delayed" else "ADVANCE", 0) + 1
-            )
-            continue
 
         # The row itself now says what moved (AC-P3-5), so nothing more is raised for it.
         if str(r.project_line_id) in settled:
@@ -2250,6 +2841,58 @@ def _bystander_returned_to_review(
     ]
 
 
+def _record_lateness(
+    db: Session, supply, pso_id: str, live_rows: Sequence[PlanningChangeRow]
+) -> None:
+    """A unit kept LATE is recorded as late, on both things a person reads it from.
+
+    Rule 8's second half: "a unit kept late (S12) is shown as late, never silently kept".
+    The board warned before Confirm; after it, the revision itself carries `late_days` on
+    the line's own snapshot (so the next reader of the decision sees it without recomputing
+    an arrival) and purchasing's row says it in words. Both are records of what was
+    decided, so neither is derived again later.
+    """
+    late_by_line = {
+        str(r.project_line_id): int((r.suggestion_json or {}).get("late_days") or 0)
+        for r in live_rows
+        if r.project_line_id and (r.suggestion_json or {}).get("late_days")
+    }
+    if not late_by_line:
+        return
+    decision = supply.active_decision(pso_id)
+    if decision is not None and decision.line_snapshots:
+        snapshots = list(decision.line_snapshots)
+        touched = False
+        for index, snapshot in enumerate(snapshots):
+            days = late_by_line.get(str(snapshot.get("project_line_id")))
+            if not days:
+                continue
+            snapshots[index] = dict(snapshot, late_days=days)
+            touched = True
+        if touched:
+            from sqlalchemy.orm.attributes import flag_modified
+
+            decision.line_snapshots = snapshots
+            flag_modified(decision, "line_snapshots")
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id.in_(list(late_by_line)),
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .all()
+    )
+    for row in rows:
+        days = late_by_line.get(str(row.so_line_id))
+        if not days:
+            continue
+        phrase = f"Kept, late by {_days_word(days)}"
+        if row.note and phrase in row.note:
+            continue
+        row.note = f"{row.note}; {phrase}" if row.note else phrase
+    db.flush()
+
+
 def _apply_one_order(
     db: Session,
     supply,
@@ -2286,10 +2929,12 @@ def _apply_one_order(
     previous_frozen_for_report = supply.frozen_lines_of(latest_decision)
     previous_decision_id_for_report = str(latest_decision.id) if latest_decision else None
 
+    # Confirm or Amend, and a line the book CANCELLED - nothing else is applied (AC-C7).
+    # A row still undecided is simply left pending: the batch waits for CS.
     accepted = [
         r
         for r in order_rows
-        if r.decision in ("accept", "confirm", "amend")
+        if (r.decision in ("confirm", "amend") or r.kind == "cancelled")
         and r.applied_state == PLANNING_CHANGE_STATE_PENDING
     ]
     empty_result = {
@@ -2356,9 +3001,11 @@ def _apply_one_order(
             # 20 August 2026).
             continue
         handled_line_ids.add(line_id)
-        # A `confirm`/`amend` decision composes the line NOW, whatever `suggested` says -
-        # the captain's own fix: `accept` on a `replan` row used to record a decision Apply
-        # never executed. `composition_json` is what `set_row_decision` already validated.
+        # TWO THINGS APPLY A ROW, and nothing else (Slice C contract D): the composition
+        # CS confirmed or amended, and the book having CANCELLED the line. The rule
+        # table's own verbs used to fork here five ways - keep, reduce, replan, release,
+        # retire - and every one of them was Apply re-deciding the line for itself off a
+        # verb nobody composed.
         if row.decision in ("confirm", "amend") and row.composition_json:
             confirm_lines.append(row.composition_json)
             settle_line_ids.append(line_id)
@@ -2366,26 +3013,14 @@ def _apply_one_order(
             if row.decision == "confirm":
                 _apply_placed_redirect(db, row, batch, so_number, pool_cache)
             continue
-        if row.suggested in ("replan", "release"):
-            # AC-R06 (release): the WHOLE line returns to the board, not just the reserve
-            # portion - `_check_line` permits no partial cover (module docstring). Its
-            # Reserve hold is gone the moment it is absent from this revision; its
-            # incoming/Buy parts are simply re-proposed when the line is next confirmed.
-            replanned += 1
-            uncover_line_ids.append(line_id)
-            continue
-        if row.suggested == "retire":
+        if row.kind == "cancelled":
+            # The line is gone from the book: it leaves the revision entirely and its
+            # inquiry rows are cancelled below. Nothing to compose - there is no line left
+            # to compose for.
             retired += 1
             uncover_line_ids.append(line_id)
             retired_line_ids.append(line_id)
             continue
-        if row.suggested == "reduce":
-            new_qty = _dec((row.to_json or {}).get("qty"))
-            confirm_lines.append(_confirm_payload_reduce(line_id, frozen_entry, new_qty))
-            settle_line_ids.append(line_id)
-            continue
-        confirm_lines.append(_confirm_payload(line_id, frozen_entry))  # keep
-        settle_line_ids.append(line_id)
 
     # A `confirm`/`amend` row whose line NO active decision covers - AC-R03's "Not
     # decided", the common case a `replan` row starts in - never appears in `frozen`
@@ -2400,10 +3035,10 @@ def _apply_one_order(
             if row.decision == "confirm":
                 _apply_placed_redirect(db, row, batch, so_number, pool_cache)
 
-    # A retired line whose order has NO active decision covering it never reached the loop
-    # above; the book still closed it, and its rows still have to be cancelled.
+    # A cancelled line whose order has NO active decision covering it never reached the
+    # loop above; the book still closed it, and its rows still have to be cancelled.
     for row in live:
-        if row.suggested != "retire" or not row.project_line_id:
+        if row.kind != "cancelled" or not row.project_line_id:
             continue
         if row.project_line_id in retired_line_ids:
             continue
@@ -2487,6 +3122,10 @@ def _apply_one_order(
             auto_place_products, actor_user_id=actor
         )
 
+    # What the suggestion warned about, recorded on what it decided (rule 8).
+    if revised:
+        _record_lateness(db, supply, pso_id, live)
+
     # A press whose batch rows were only `release` / `retire` composes nothing: those lines
     # LEAVE the revision (`supersede_for_material_change`) rather than being confirmed into
     # one. It still applied - rows moved to the pool, rows were cancelled, links shifted -
@@ -2531,7 +3170,7 @@ def _apply_one_order(
         r.applied_state = PLANNING_CHANGE_STATE_APPLIED
         if r.decision in ("confirm", "amend") and r.composition_json:
             r.result_json = {"board_link": r.board_link, "confirmed": True}
-        elif r.suggested == "release":
+        elif r.kind == "cancelled":
             r.result_json = {
                 "board_link": r.board_link,
                 "released": _released_reserve(r.held_json),
@@ -2540,7 +3179,11 @@ def _apply_one_order(
         else:
             r.result_json = {"board_link": r.board_link}
 
-    notified = _notify_purchasing(db, order, so_number, batch)
+    # Purchasing is notified by `apply()`, AFTER this order's savepoint has committed, not
+    # here: `NotificationService.create_with_channel_preferences` commits on its own, and
+    # calling it while still inside `db.begin_nested()` closes that savepoint's transaction,
+    # so the caller's `savepoint.commit()` then raises `ResourceClosedError` ("This
+    # transaction is closed") and a perfectly applied order is reported as failed.
 
     return {
         "revised": revised,
@@ -2548,7 +3191,7 @@ def _apply_one_order(
         "lines_replanned": replanned,
         "lines_confirmed": confirmed,
         "inquiry_counts": inquiry_counts,
-        "notified": notified,
+        "notified": False,
         "returned_to_review": returned_to_review,
         # What `ProjectSupplyService.confirm` itself answered, kept whole: the board's own
         # Confirm posts through here now (AC-P3-4) and its caller needs the revision, the
@@ -2706,6 +3349,14 @@ def apply(
             )
             continue
 
+        # Notified AFTER `savepoint.commit()` has returned, never inside the savepoint:
+        # `NotificationService.create_with_channel_preferences` commits on its own, and that
+        # commit closes the savepoint's transaction out from under us if it runs first, so
+        # `savepoint.commit()` raises `ResourceClosedError` and an order that applied cleanly
+        # gets reported as failed. Still best-effort - a notify failure here cannot undo the
+        # order, which is already committed by this point.
+        notified = _notify_purchasing(db, order, so_number, batch)
+
         applied_orders.append(so_number)
         outcomes[pso_id] = outcome
         if outcome["revised"]:
@@ -2714,7 +3365,7 @@ def apply(
         lines_confirmed += outcome["lines_confirmed"]
         for verb, count in outcome["inquiry_counts"].items():
             inquiry_counts[verb] = inquiry_counts.get(verb, 0) + count
-        purchasing_notified = purchasing_notified or outcome["notified"]
+        purchasing_notified = purchasing_notified or notified
         returned_to_review.extend(outcome["returned_to_review"])
 
     # A batch is DONE only once it has written something. Stamping `applied_at` when

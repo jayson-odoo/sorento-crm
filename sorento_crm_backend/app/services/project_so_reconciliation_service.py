@@ -71,6 +71,7 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
+from app.services import planning_change_service
 from app.services.error_handler import AppException
 from app.services.scm.demand import PROJECT_CLASS, demand_qty, is_open_demand
 
@@ -1297,6 +1298,17 @@ class ProjectSOReconciliationService:
         data = []
         for row in window:
             data.append(self._worklist_row(row, outcomes, headers))
+        # AC-B7: the same `Changed` pill the SCM Sales Orders list and the fulfilment
+        # board show, off the SAME rule
+        # (`planning_change_service.pending_batch_id_by_sales_order`,
+        # `PLAN-scm-board-picks-up-pending-change.md`) - one query for the page, not one
+        # per row.
+        page_so_ids = list({r["sales_order_id"] for r in data if r.get("sales_order_id")})
+        pending_by_so = planning_change_service.pending_batch_id_by_sales_order(
+            self.db, page_so_ids,
+        )
+        for r in data:
+            r["planning_change_batch_id"] = pending_by_so.get(r.get("sales_order_id"))
         return {
             "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},

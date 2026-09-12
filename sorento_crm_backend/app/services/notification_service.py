@@ -246,6 +246,11 @@ class NotificationService:
         TCK-29). A whatsapp delivery is created ONLY when the recipient also has
         notify_whatsapp on AND a resolvable RespondContact - otherwise it is skipped
         silently so other channels still fire.
+
+        This method commits (see below). Never call it from inside a `db.begin_nested()`
+        block: the commit closes the enclosing savepoint's transaction, so the caller's own
+        `savepoint.commit()` then raises `ResourceClosedError` ("This transaction is
+        closed"). Notify after the savepoint has already committed.
         """
         # Gate WhatsApp on the recipient's opt-in + reachability.
         if send_whatsapp:

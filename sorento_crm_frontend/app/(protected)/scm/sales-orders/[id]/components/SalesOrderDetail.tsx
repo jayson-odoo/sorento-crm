@@ -291,6 +291,18 @@ function seedDraft(row: SalesOrderLine): LineDraft {
 }
 
 /**
+ * A removal or a qty-to-zero edit ends a line as `line_status: 'cancelled'` on the CORE
+ * row rather than deleting it (`PLAN-scm-change-management-one-engine.md`, Slice A rule 5)
+ * - the backend writes nothing for such a row, so an edit made here would silently revert
+ * on save. It can still arrive on THIS order's next load, inside an edit session, sitting
+ * beside lines that are still open - it renders read-only there (the same cells view mode
+ * already renders) rather than as another line the planner can edit or remove again.
+ */
+function isCancelledLine(row: SalesOrderLine): boolean {
+  return (row.line_status ?? 'open') === 'cancelled';
+}
+
+/**
  * What a line is worth: the total the source document stated, or the arithmetic its parts
  * support. The SAME rule the backend's own `total_amount` follows, so the column, the
  * footer and the header total cannot disagree - and `null` rather than 0 when nobody
@@ -606,7 +618,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorKey: 'sku',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = lineDrafts[row.original.id];
             const selectId = `so-edit-line-${row.original.id}-product`;
             return (
@@ -667,7 +679,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorFn: (line) => Number(line.qty_ordered),
         header: ({ column }) => <DataGridColumnHeader title="Qty ordered" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = lineDrafts[row.original.id];
             return (
               <Input
@@ -767,7 +779,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorFn: (line) => Number(line.unit_price ?? 0),
         header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
               <Input
@@ -803,7 +815,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorFn: (line) => Number(line.discount ?? 0),
         header: ({ column }) => <DataGridColumnHeader title="Discount" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
               <Input
@@ -854,7 +866,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorKey: 'warehouse_code',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             const selectId = `so-edit-line-${row.original.id}-warehouse`;
             return (
@@ -895,7 +907,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorFn: (line) => line.required_date ?? undefined,
         header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
               <Input
@@ -924,7 +936,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorKey: 'uom',
         header: ({ column }) => <DataGridColumnHeader title="UoM" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             const selectId = `so-edit-line-${row.original.id}-uom`;
             return (
@@ -1107,19 +1119,22 @@ export function SalesOrderDetail({ id }: { id: string }) {
               header: () => null,
               enableSorting: false,
               enableHiding: false,
-              cell: ({ row }: { row: { original: SalesOrderLine } }) => (
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
-                  aria-label="Remove line"
-                  title="Remove line"
-                  onClick={() => handleRemoveLine(row.original)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              ),
+              // A cancelled line cannot be removed again - it already ended, and the
+              // backend has nothing left to do with a second removal of the same row.
+              cell: ({ row }: { row: { original: SalesOrderLine } }) =>
+                isCancelledLine(row.original) ? null : (
+                  <Button
+                    type="button"
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Remove line"
+                    title="Remove line"
+                    onClick={() => handleRemoveLine(row.original)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                ),
               size: 56,
             } as ColumnDef<SalesOrderLine>,
           ]

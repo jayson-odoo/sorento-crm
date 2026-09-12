@@ -8,11 +8,15 @@
  *
  * TWO RULES THIS FILE EXISTS TO HOLD:
  *
- * 1. **The batch's own vocabulary never reaches the screen.** `keep` / `release` / `replan` /
- *    `reduce` / `retire` are how the rule table names a reaction to itself; a planner reads
- *    supply in six words and no others (`supplyVocabulary.ts`). So the Decision row is built
- *    from the line's HELD composition on the Was side and its fresh PROPOSAL on the Now side,
- *    through the same `partsBreakdown` the Suggestion and Decision cards are built from.
+ * 1. **The batch's own machinery never reaches the screen.** `replan` / `retire` / `accept`
+ *    named a reaction the row took to itself, and agreeing with a verb executed nothing; they
+ *    are retired with the rule table (Slice C,
+ *    `documentation/plans/scm/PLAN-scm-change-management-one-engine.md`). What a planner reads
+ *    instead is the SUGGESTION the engine composed - one sentence per component, Keep /
+ *    Reduce / Release / Reallocate on what is held and Use own / Borrow / SPO / Buy for new
+ *    quantity (AC-C1) - printed verbatim, plus a Decision row built from the line's HELD
+ *    composition on the Was side and what Apply would post on the Now side, through the same
+ *    `partsBreakdown` the Suggestion and Decision cards are built from.
  * 2. **A closed line still has to be visible.** It contributes nothing to the board any more -
  *    the book closed it - so it has no cell of its own, and dropping it would make two thirds
  *    of the fixture's change invisible. It is annotated on the surviving cell of the SAME
@@ -34,7 +38,13 @@ import type {
 export interface BoardChangeSide {
   qty: string | null;
   date: string | null;
-  /** The supply decision in board words, e.g. `Buy 25` or `Use own location 40 from BRW-BB`. */
+  /**
+   * The supply decision in board words, e.g. `Buy 25` or `Use own location 40 from BRW-BB`.
+   *
+   * Was = what the line HELD. Now = what Apply would post: the row's own pre-filled
+   * `composition` first (Slice C fills it at build, so Confirm posts it unchanged), then the
+   * re-run `proposal`, then the hold. Never a reaction verb - the row no longer carries one.
+   */
   decision: string | null;
 }
 
@@ -51,6 +61,18 @@ export interface BoardChangeAnnotation {
   closed: boolean;
   was: BoardChangeSide;
   now: BoardChangeSide;
+  /**
+   * The composed suggestion, one server-written sentence per component, in the engine's own
+   * order: held components first, then new sourcing (AC-C1). Printed verbatim - the board
+   * does not re-phrase it, so the words on screen are the words the engine chose.
+   */
+  suggestionLines: string[];
+  /** The unit is kept but lands N days late (S12, AC-C6). `null` when it is on time. */
+  lateDays: number | null;
+  /** Quantity nothing covers in time (S11, AC-B3). `null` when the unit is covered. */
+  shortfallQty: string | null;
+  /** The product this line used to be, on a `product_changed` row only (S7, AC-C5). */
+  productChangedFrom: string | null;
   /** `10 moved BRW -> BRW-IB, line cancelled` (AC-P3-9), or null. */
   movedTransfer: string | null;
   /** Which line the change is about, when the batch knows it. Used to match a cell's lines. */
@@ -96,18 +118,16 @@ export function decisionWords(
 }
 
 /**
- * The Now side's decision: what the batch proposes for the line at its new date.
+ * The Now side's decision: what Apply would post for the line at its new state.
  *
- * The row's own frozen `proposal` when it carries one (a `replan` / `qty_up` row always does),
- * else the composition the row was decided with, else what it held - a line whose reaction
- * changes nothing about its supply reads the same decision on both sides, which is the honest
- * answer rather than a blank.
+ * The row's own `composition` FIRST. Slice C pre-fills it at build from the re-run, so it is
+ * what Confirm posts unchanged and what Amend edited if CS has been here - reading the
+ * `proposal` ahead of it would print the engine's first answer over the planner's own. Then
+ * the `proposal` (a row the engine could compose nothing for still ran the ladder), then what
+ * the line held - a change that leaves supply alone reads the same decision on both sides,
+ * which is the honest answer rather than a blank.
  */
 function proposedParts(row: PlanningChangeRow): SupplyPart[] {
-  if (row.proposal) {
-    const proposal = row.proposal as BoardContribution;
-    return proposal.proposed?.components ?? proposal.sources ?? [];
-  }
   if (row.composition) {
     const parts: SupplyPart[] = [];
     for (const reserve of row.composition.reserve ?? []) {
@@ -124,7 +144,18 @@ function proposedParts(row: PlanningChangeRow): SupplyPart[] {
     }
     return parts;
   }
+  if (row.proposal) {
+    const proposal = row.proposal as BoardContribution;
+    return proposal.proposed?.components ?? proposal.sources ?? [];
+  }
   return heldParts(row.held);
+}
+
+/** The sentences the engine composed for this row, in its own order. */
+function suggestionLinesOf(row: PlanningChangeRow): string[] {
+  return (row.suggestion?.components ?? [])
+    .map((component) => (component.label ?? '').trim())
+    .filter((label) => label.length > 0);
 }
 
 /** One batch row turned into what its cell reads. */
@@ -133,7 +164,9 @@ export function annotationOf(
   soNumber: string,
   ownLocation?: string | null,
 ): BoardChangeAnnotation {
-  const closed = row.kind === 'closed';
+  // `cancelled`, renamed from `closed` (Slice A,
+  // `documentation/plans/scm/PLAN-scm-change-management-one-engine.md` rule 5).
+  const closed = row.kind === 'cancelled';
   const proposal = (row.proposal ?? null) as BoardContribution | null;
   const location = ownLocation ?? proposal?.fulfilment_location ?? null;
   const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
@@ -154,6 +187,13 @@ export function annotationOf(
       date: closed ? null : row.to?.required_date ?? null,
       decision: closed ? null : decisionWords(proposedParts(row), location),
     },
+    suggestionLines: suggestionLinesOf(row),
+    lateDays: row.suggestion?.late_days ?? null,
+    shortfallQty: row.suggestion?.shortfall_qty ?? null,
+    // The row's own `item_code` is already the NEW product (Slice A: `Change.item_code` is
+    // built from the after side), so the product that CHANGED is the one on the from side.
+    productChangedFrom:
+      row.kind === 'product_changed' ? row.from?.item_code ?? null : null,
     movedTransfer: row.moved_transfer ?? null,
     projectLineId: lineId,
   };
@@ -197,10 +237,10 @@ export function annotationsByCell(
     for (const row of order.rows ?? []) {
       const proposal = (row.proposal ?? null) as BoardContribution | null;
       // The ROW's own line first, exactly as `annotationOf` and `proposalsByLine` read it.
-      // Only a `replan` row carries a proposal, so reading the proposal alone sent every
-      // other changed line to the (SO, item) fallback - which is the FIRST cell of that
-      // product on that order, so the second instalment of a product landed its Was / Now
-      // table on the first instalment's cell instead of its own.
+      // A row the engine could compose nothing for carries no proposal, so reading the
+      // proposal alone sent such a line to the (SO, item) fallback - which is the FIRST cell
+      // of that product on that order, so the second instalment of a product landed its
+      // Was / Now table on the first instalment's cell instead of its own.
       const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
       const pair = `${order.so_number} ${row.item_code}`;
       const key =
@@ -301,10 +341,10 @@ function changedLineIds(
 /**
  * The decision every changed line arrives PRE-MARKED with (AC-P3-3).
  *
- * A row whose reaction leaves the line's own supply alone is approved as it stands; a row
+ * A row whose suggestion leaves the line's own supply alone is approved as it stands; a row
  * carrying a fresh proposal is approved against that proposal, which is exactly what the
- * board's own Approve does to an undecided cell. Nothing is written: this seeds the board's
- * DRAFT, and Confirm is still the only write.
+ * board's own Approve does to an undecided cell. Confirm (AC-C7) is this pre-marked path.
+ * Nothing is written here: this seeds the board's DRAFT, and Confirm is still the only write.
  */
 export function preMarkedKeys(
   batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined,

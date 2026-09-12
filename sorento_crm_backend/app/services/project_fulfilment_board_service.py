@@ -73,7 +73,7 @@ from app.models.project_so import (
 )
 from app.models.sales_agent import SalesAgent
 from app.models.user import User
-from app.services import project_line_draft_service
+from app.services import planning_change_service, project_line_draft_service
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     LADDER_VERSION,
@@ -2379,12 +2379,14 @@ class FulfilmentBoardService:
     def _apply_frozen(self, row: _Row) -> None:
         """A covered line states what was decided for it, and nothing else (13.4).
 
-        The sources are the FROZEN composition, including a Borrow - the engine proposes none,
-        but a person did, and printing it as anything else would describe a decision nobody
-        took. There is no trail because no ladder was walked, no contest because a decided line
-        is not competing, and no share of the queue because it is not in the queue: `null`
-        there, never `0`, which would be a claim about a contest it left. Its donors are the
-        one thing still read for it, by `_allocate`, because it can still be amended.
+        The sources are the FROZEN composition, including a Borrow - the engine's own ladder
+        (`order_borrow`/`supply_borrow`) can propose one too, but a decided line prints what was
+        actually confirmed for it, not what the ladder would propose if walked again today, and
+        printing anything else would describe a decision nobody took. There is no trail because
+        no ladder was walked, no contest because a decided line is not competing, and no share
+        of the queue because it is not in the queue: `null` there, never `0`, which would be a
+        claim about a contest it left. Its donors are the one thing still read for it, by
+        `_allocate`, because it can still be amended.
         """
         decision = row.decision or {}
         reserve = sum((_dec(c["qty"]) for c in decision.get("reserve") or []), _ZERO)
@@ -4717,9 +4719,19 @@ class FulfilmentBoardService:
                     "line_count": 0,
                     "decided_count": 0,
                     "unplannable_count": 0,
+                    "pending_change_batch_id": None,
                 },
             )
             standing["line_count"] += 1
             if row.unplannable:
                 standing["unplannable_count"] += 1
+        # AC-B1: the newest pending planning-change batch per order, keyed the same way
+        # the SCM Sales Orders list and the fulfilment-planning list are - one query, one
+        # rule, so the board never has to be TOLD `?batch=` to draw a change it already
+        # knows about (`PLAN-scm-board-picks-up-pending-change.md`).
+        pending_by_so = planning_change_service.pending_batch_id_by_sales_order(
+            self.db, list(by_order),
+        )
+        for sales_order_id, standing in by_order.items():
+            standing["pending_change_batch_id"] = pending_by_so.get(sales_order_id)
         return sorted(by_order.values(), key=lambda s: s["so_number"] or "")

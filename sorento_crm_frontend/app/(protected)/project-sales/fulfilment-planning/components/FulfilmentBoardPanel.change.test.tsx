@@ -207,14 +207,14 @@ describe('the changed cell', () => {
     expect(screen.getByTestId('board-change-pcr-381895-3')).toBeInTheDocument();
   });
 
-  it('reads Closed in the Now column of a line the book closed', async () => {
+  it('reads Cancelled in the Now column of a line the book closed', async () => {
     renderPanel();
     const closed = await screen.findByTestId('board-change-pcr-381895-2');
     expect(within(closed).getByTestId('change-now-qty')).toHaveTextContent(
-      'Closed',
+      'Cancelled',
     );
     expect(within(closed).getByTestId('change-now-decision')).toHaveTextContent(
-      'Closed',
+      'Cancelled',
     );
   });
 
@@ -224,13 +224,17 @@ describe('the changed cell', () => {
     expect(moved).toHaveTextContent('10 moved BRW -> BRW-IB, line cancelled');
   });
 
-  it('never prints the batch reaction vocabulary on screen', async () => {
+  it('never prints a retired reaction word, and does print the composed suggestion', async () => {
     renderPanel();
     await screen.findByTestId('board-change-pcr-381895-1');
     const printed = document.body.textContent ?? '';
-    for (const verb of ['Retire', 'Replan', 'Reduce', 'Release']) {
+    // Retired with the rule table (Slice C): a verb the row agreed with executed nothing.
+    // Keep / Reduce / Release / Reallocate are now the SUGGESTION's own words, so they are
+    // expected on screen - printed verbatim from the server's own sentence (AC-C1).
+    for (const verb of ['Retire', 'Replan', 'Accept']) {
       expect(printed).not.toContain(verb);
     }
+    expect(printed).toContain('Buy 25 (was 10)');
   });
 
   it('shows no table at all on a board opened without a batch', async () => {

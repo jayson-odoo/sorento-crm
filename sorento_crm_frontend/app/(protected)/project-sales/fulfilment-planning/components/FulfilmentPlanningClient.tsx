@@ -263,19 +263,41 @@ export function FulfilmentPlanningClient() {
           // the row keeps its own meaning: `stopPropagation` so following the link does not
           // also open the planning sheet behind it. A row with nothing to open renders plain
           // text rather than a link that 404s.
-          return href ? (
-            <Link
-              href={href}
-              onClick={(event) => event.stopPropagation()}
-              title={reference}
-              className="block truncate font-medium tabular-nums text-primary hover:underline"
-            >
-              {reference}
-            </Link>
-          ) : (
-            <span className="block truncate font-medium tabular-nums" title={reference}>
-              {reference}
-            </span>
+          const { so_number: soNumber, planning_change_batch_id: pendingChangeBatchId } =
+            row.original;
+          return (
+            <div className="flex flex-col">
+              {href ? (
+                <Link
+                  href={href}
+                  onClick={(event) => event.stopPropagation()}
+                  title={reference}
+                  className="block truncate font-medium tabular-nums text-primary hover:underline"
+                >
+                  {reference}
+                </Link>
+              ) : (
+                <span className="block truncate font-medium tabular-nums" title={reference}>
+                  {reference}
+                </span>
+              )}
+              {/* AC-B7 (`PLAN-scm-board-picks-up-pending-change.md`): the same `Changed` pill
+                  the SCM Sales Orders list shows (`SalesOrdersGrid.tsx`), off the same
+                  `planning_change_batch_id` - it opens the board on this order and that
+                  batch, which is where the change is decided. */}
+              {soNumber && pendingChangeBatchId ? (
+                <Link
+                  data-testid={`so-changed-${soNumber}`}
+                  href={`/project-sales/fulfilment-planning?orders=${encodeURIComponent(
+                    soNumber,
+                  )}&batch=${encodeURIComponent(pendingChangeBatchId)}`}
+                  onClick={(event) => event.stopPropagation()}
+                  className="mt-0.5 w-fit rounded bg-amber-100 px-1 text-2xs font-medium text-amber-800 hover:underline"
+                >
+                  Changed
+                </Link>
+              ) : null}
+            </div>
           );
         },
         size: 140,

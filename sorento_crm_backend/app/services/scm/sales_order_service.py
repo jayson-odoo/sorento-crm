@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
@@ -24,8 +25,10 @@ from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderL
 from app.models.planning_change import PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT
 from app.models.product import Product, UnitOfMeasure
 from app.models.project_so import (
+    INQUIRY_CANCELLED,
     SO_STATUS_ADOPTED,
     AllocationClaim,
+    OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -35,30 +38,23 @@ from app.models.project_so import (
 )
 from app.models.sales_agent import SalesAgent
 from app.models.scm import OrderLinkClaim
+from app.services.document_ingest_service import CANCELLED
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm.demand import is_open_demand
 from app.services.scm.demand_class import DEMAND_CLASSES, class_of
 from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE
-from app.services.scm.outstanding_diff import (
-    DATE_AND_QTY_CHANGED,
-    DATE_MOVED,
-    QTY_CHANGED,
-    Change,
-    Diff,
-    Line,
-)
+from app.services.scm.outstanding_diff import UNCHANGED, Diff, Line, diff_lines
 
 logger = logging.getLogger(__name__)
 
 # Upper bound on suffix retries when reserving a unique DO number under contention.
 _DO_NUMBER_MAX_TRIES = 50
 
-# A quantity difference below this is noise, not an edit - same threshold and same reason
-# `outstanding_diff._QTY_EPSILON` exists: two figures a decimal place apart on export must
-# not read as a planner's decision. Duplicated here rather than imported (that name is
-# private to that module) - `outstanding_import_service` does the same.
-_QTY_EPSILON = 0.0005
+# For the `order_inquiries` sort key in `list()`: the CORE `Table` objects, not the ORM
+# classes - see the comment beside their use for why.
+_ORDER_INQUIRIES_SORT_TABLE = OrderInquiry.__table__
+_ORDER_INQUIRIES_SORT_PSO = ProjectSalesOrder.__table__.alias("order_inquiries_sort_pso")
 
 
 #: Where a sales order came from, as one word a buyer can filter on. `inquiry` is separate
@@ -122,8 +118,14 @@ def _line_amount(ln: SalesOrderLine) -> Optional[Decimal]:
 
 
 def _order_amount(lines: list[SalesOrderLine]) -> Optional[Decimal]:
-    """The order's own total, or None when not one of its lines carries money."""
-    amounts = [a for a in (_line_amount(ln) for ln in lines) if a is not None]
+    """The order's own total, or None when not one of its lines carries money.
+
+    A CANCELLED line (review round, R-S3) contributes nothing - it never shipped and is
+    not part of what the order still owes, the same reason `total_qty` in `serialize()`
+    excludes it.
+    """
+    open_lines = [ln for ln in lines if (ln.line_status or "open") != CANCELLED]
+    amounts = [a for a in (_line_amount(ln) for ln in open_lines) if a is not None]
     if not amounts:
         return None
     return sum(amounts, Decimal(0)).quantize(_MONEY_PLACES, rounding=ROUND_HALF_UP)
@@ -166,6 +168,28 @@ def _order_by(sort_cols: dict, sort: Optional[str], direction: str) -> list:
     if direction == "asc":
         return [col.asc().nullslast(), SalesOrder.id.asc()]
     return [col.desc().nullslast(), SalesOrder.id.desc()]
+
+
+@dataclass
+class _LineUpsertResult:
+    """`_upsert_lines`'s own before/after state, for `_propagate_planning_change` to diff
+    against - one shape covering all three ways a line can change on this screen.
+
+    `matched`: `(line, old_qty, old_required_date, old_item_code, old_location)` per line the
+    payload reconciled to an existing row - its state as it was before this method touched
+    it. `removed`: the same facts for a line the payload dropped, by CORE line id, whether
+    that line ends up cancelled or deleted (`_upsert_lines` decides which). `added`: the
+    freshly-inserted `SalesOrderLine` objects a payload line matched nothing existing.
+    """
+
+    matched: list[tuple[SalesOrderLine, float, Optional[date], str, str]] = field(
+        default_factory=list
+    )
+    removed: list[dict] = field(default_factory=list)
+    added: list[SalesOrderLine] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.matched or self.removed or self.added)
 
 
 class SalesOrderService:
@@ -413,7 +437,11 @@ class SalesOrderService:
             # page catching up with `scm.committed_v`, the netting engine and the planning
             # board rather than a new one.
             outstanding = 0.0 if (ln.line_status or "open") != "open" else max(qo - qd, 0.0)
-            total_qty += qo
+            # A CANCELLED line (review round, R-S3) is not part of the order's own total -
+            # it never shipped and nothing about it is still owed, so it reads the same as
+            # a line that was never there rather than inflating "Total qty".
+            if (ln.line_status or "open") != CANCELLED:
+                total_qty += qo
             committed += outstanding
             if ln.line_status == "open" and outstanding > 0:
                 open_lines += 1
@@ -1000,44 +1028,26 @@ class SalesOrderService:
         return rows
 
     def with_planning_changes(self, rows: list[dict]) -> list[dict]:
-        """The PENDING planning-change batch each order is in, in ONE query for the page.
+        """The PENDING planning-change batch each order is in, for the SCM Sales Orders list.
 
         AC-P3-1: a re-uploaded book that moved a planned line puts a "Changed" badge on the
         order, and the badge opens the board on that order and that batch - which is where
         the change is decided. Pending only: an applied batch is history, and a badge for
-        it would send the reader to a board with nothing left to confirm.
+        it would send the reader to a board with nothing left to confirm. Pending rows only,
+        too (`PLAN-scm-planning-change-gate-held-or-inquiry.md`, AC-G5): a batch left open
+        but whose rows were all superseded by the held-or-inquiry gate has nothing left to
+        decide either, even before `applied_at` is stamped.
 
-        The chain is `sales_orders.id` -> `projects.sales_orders.so_id` ->
-        `projects.planning_change_rows.project_sales_order_id`. `None` on every order with
-        nothing outstanding, which is nearly all of them.
+        The actual query lives in `planning_change_service.pending_batch_id_by_sales_order`
+        (`PLAN-scm-board-picks-up-pending-change.md` change 1) - the fulfilment board and
+        the fulfilment-planning list read the SAME rule off that one helper, so all three
+        surfaces can never name a different batch for the same order.
         """
-        by_id = {r["id"]: r for r in rows}
+        from app.services.planning_change_service import pending_batch_id_by_sales_order
+
+        by_so_id = pending_batch_id_by_sales_order(self.db, [r["id"] for r in rows])
         for row in rows:
-            row["planning_change_batch_id"] = None
-        if not by_id:
-            return rows
-
-        from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
-
-        found = (
-            self.db.query(ProjectSalesOrder.so_id, PlanningChangeBatch.id)
-            .join(PlanningChangeRow,
-                  PlanningChangeRow.project_sales_order_id == ProjectSalesOrder.id)
-            .join(PlanningChangeBatch,
-                  PlanningChangeBatch.id == PlanningChangeRow.batch_id)
-            .filter(
-                ProjectSalesOrder.so_id.in_(list(by_id)),
-                PlanningChangeBatch.applied_at.is_(None),
-            )
-            .order_by(PlanningChangeBatch.created_at.desc())
-            .all()
-        )
-        for so_id, batch_id in found:
-            row = by_id.get(str(so_id))
-            # The NEWEST pending batch wins: the order is sorted newest first and a second
-            # pass would only overwrite it with an older one.
-            if row is not None and row["planning_change_batch_id"] is None:
-                row["planning_change_batch_id"] = str(batch_id)
+            row["planning_change_batch_id"] = by_so_id.get(row["id"])
         return rows
 
     def _get_or_404(self, so_id: str) -> SalesOrder:
@@ -1206,6 +1216,34 @@ class SalesOrderService:
                 .correlate(SalesOrder)
                 .scalar_subquery()
             ),
+            # "Who has purchasing been told about, and who has not" - the question the
+            # column is scanned for. Counts the SAME `projects.order_inquiries` rows
+            # `with_order_inquiries` prints below, so the header's order and the cell
+            # cannot come apart. Built off the CORE `Table` objects (`.__table__`), not
+            # the ORM classes: `projects.sales_orders` (`ProjectSalesOrder`) shares its
+            # bare table NAME with the core `sales_orders` this correlates against, and
+            # going through the ORM class here hits two different failures in turn - an
+            # unaliased join makes SQLAlchemy silently re-alias the correlated reference
+            # to something the query never declares (`UndefinedTable: sales_orders_1`),
+            # and aliasing the ORM class then confuses the company-scope listener's
+            # loader-criteria rewrite (`app/services/company_scope.py`) into stamping the
+            # scope predicate onto the UNALIASED occurrence instead. A plain `Table`
+            # reference carries neither problem, and needs no scope predicate of its own:
+            # the join only ever reaches a `ProjectSalesOrder` row whose `so_id` IS the
+            # already-scoped outer `SalesOrder.id`, so it cannot cross a company line.
+            "order_inquiries": (
+                select(func.count(_ORDER_INQUIRIES_SORT_TABLE.c.id))
+                .select_from(
+                    _ORDER_INQUIRIES_SORT_TABLE.join(
+                        _ORDER_INQUIRIES_SORT_PSO,
+                        _ORDER_INQUIRIES_SORT_PSO.c.id
+                        == _ORDER_INQUIRIES_SORT_TABLE.c.project_sales_order_id,
+                    )
+                )
+                .where(_ORDER_INQUIRIES_SORT_PSO.c.so_id == SalesOrder.id)
+                .correlate(SalesOrder)
+                .scalar_subquery()
+            ),
         }
         q = q.order_by(*_order_by(sort_cols, sort, direction))
         total = q.count()
@@ -1298,17 +1336,18 @@ class SalesOrderService:
                 self._parse_date(data.requested_delivery_date, "requested_delivery_date")
                 if data.requested_delivery_date else None
             )
-        line_changes: list[tuple[SalesOrderLine, float, Optional[date]]] = []
+        upsert_result: Optional[_LineUpsertResult] = None
         if data.lines is not None:
-            line_changes = self._upsert_lines(so, data.lines)
+            upsert_result = self._upsert_lines(so, data.lines)
         self.db.commit()
-        # PLAN-so-book-diff-replanning.md section 2's own reaction (Order Inquiry
-        # suggestions off a changed planned line), triggered by a MANUAL edit rather than
-        # a re-uploaded book - see `_propagate_planning_change`. Strictly AFTER the commit
-        # above: the edit has already succeeded, and this must never turn that success
-        # into a 500 (CLAUDE.md: post-commit side effects are best-effort).
+        # PLAN-scm-change-management-one-engine.md, Slice A: the SAME before/after diff an
+        # uploaded book raises, triggered by a MANUAL edit rather than a re-upload - see
+        # `_propagate_planning_change`. Strictly AFTER the commit above: the edit has
+        # already succeeded, and this must never turn that success into a 500 (CLAUDE.md:
+        # post-commit side effects are best-effort).
         planning_change_batch = (
-            self._propagate_planning_change(so, line_changes, user_id) if line_changes else None
+            self._propagate_planning_change(so, upsert_result, user_id)
+            if upsert_result else None
         )
         result = self.serialize(self._get_or_404(so_id))
         result["planning_change_batch"] = planning_change_batch
@@ -1317,67 +1356,95 @@ class SalesOrderService:
     def _propagate_planning_change(
         self,
         so: SalesOrder,
-        line_changes: list[tuple[SalesOrderLine, float, Optional[date]]],
+        upsert: _LineUpsertResult,
         actor: Optional[str],
     ) -> Optional[dict]:
-        """A hand-edited qty/date raises the SAME reaction an uploaded book raises.
+        """A hand-edited SO raises the SAME reaction an uploaded book raises.
 
-        `line_changes` is `_upsert_lines`'s own before-state, one `(line, old_qty,
-        old_required_date)` per MATCHED existing line (never a newly-added one - there is
-        no "before" for a line that did not exist). Classified into the identical
-        `outstanding_diff` kinds a re-upload would produce, then handed to
-        `planning_change_service.build_batch` exactly the way
-        `outstanding_import_service.apply()` does - a planner correcting one line by hand
-        on this screen must not get a silently different outcome than the identical
-        correction arriving in next week's book.
+        `upsert` is `_upsert_lines`'s own before/after state: a MATCHED line's old and new
+        qty/date/product, a REMOVED line's state before it left the order (whether it ends
+        up cancelled or deleted), and an ADDED line's own new state. Built into
+        `outstanding_diff.Line` pairs keyed by the CORE line id (`line_id`) and run through
+        the SAME `diff_lines` an uploaded book runs through
+        (`documentation/plans/scm/PLAN-scm-change-management-one-engine.md`, Slice A rule
+        5): a planner correcting one line by hand on this screen must not get a silently
+        different outcome than the identical correction arriving in next week's book - qty
+        up/down, a delay/advance, a removed line as `cancelled`, a new line as `added`, a
+        product swap on the same line as one `product_changed` row rather than a `cancelled`
+        plus an unrelated `added`.
 
-        Best-effort, mirroring that same call site: this runs after `update()`'s own
-        commit, so a defect here must cost the project a batch, never the edit that
-        already saved.
+        Best-effort, mirroring the pre-Slice-A call site: this runs after `update()`'s own
+        commit, so a defect here must cost the project a batch, never the edit that already
+        saved.
         """
-        changes: list[Change] = []
-        applied_line_ids: dict[int, str] = {}
-        for line, old_qty, old_date in line_changes:
-            new_qty = float(line.qty_ordered or 0)
-            new_date = line.required_date
-            qty_changed = abs(new_qty - old_qty) > _QTY_EPSILON
-            # A date "change" where either endpoint is `None` is not a schedule move - a
-            # line getting its FIRST-EVER date, or one just cleared, is not a delay/advance
-            # (mirrors `planning_change_service._is_null_anchored_date_move`). That guard
-            # lives downstream in `build_batch` and would drop such a change ENTIRELY,
-            # including a real qty change riding on the same line - so it is decided HERE
-            # instead, folding a null-anchored date into a plain qty comparison rather than
-            # depending on the downstream guard alone to catch it.
-            date_changed = (
-                old_date is not None and new_date is not None and old_date != new_date
-            )
-            if date_changed and qty_changed:
-                kind = DATE_AND_QTY_CHANGED
-            elif date_changed:
-                kind = DATE_MOVED
-            elif qty_changed:
-                kind = QTY_CHANGED
-            else:
-                continue  # unchanged - not material, never reaches the batch builder
+        before_lines: list[Line] = []
+        after_lines: list[Line] = []
+
+        for line, old_qty, old_date, old_item_code, old_location in upsert.matched:
+            # No CANCELLED-before-this-edit guard here, deliberately: `_upsert_lines`
+            # already guarantees `upsert.matched` never holds a line that was cancelled
+            # BEFORE this call started (the SKU fallback excludes one, and the id-match
+            # "reopens nothing" branch records no snapshot for one at all) - so `line`
+            # here was open a moment ago even when THIS SAME edit just settled it to 0
+            # and cancelled it (R-S5). A status guard keyed on `line.line_status` would
+            # read that POST-mutation value and wrongly drop the very qty-to-zero change
+            # this diff exists to raise - the bug review round R-B2's fix actually needed
+            # lived in `_upsert_lines`'s `removed` computation instead (below), which is
+            # keyed on the line's status at read time, before any mutation this call makes.
+            lid = str(line.id)
+            before_lines.append(Line(
+                doc_number=so.so_number, item_code=old_item_code, location=old_location,
+                qty=old_qty, required_date=old_date, row_ref=lid, line_id=lid,
+            ))
             item_code = line.product.product_code if line.product else ""
             location = line.warehouse.warehouse_code if line.warehouse is not None else ""
-            before = Line(
+            after_lines.append(Line(
                 doc_number=so.so_number, item_code=item_code, location=location,
-                qty=old_qty, required_date=old_date, row_ref=str(line.id),
-            )
-            after = Line(
-                doc_number=so.so_number, item_code=item_code, location=location,
-                qty=new_qty, required_date=new_date, row_ref=str(line.id),
-            )
-            change = Change(
-                kind=kind, doc_number=so.so_number, item_code=item_code, location=location,
-                before=before, after=after,
-            )
-            changes.append(change)
-            applied_line_ids[id(change)] = str(line.id)
+                qty=float(line.qty_ordered or 0), required_date=line.required_date,
+                row_ref=lid, line_id=lid,
+            ))
 
+        for removed in upsert.removed:
+            lid = str(removed["id"])
+            before_lines.append(Line(
+                doc_number=so.so_number, item_code=removed["item_code"],
+                location=removed["location"], qty=removed["qty"],
+                required_date=removed["required_date"], row_ref=lid, line_id=lid,
+            ))
+
+        for line in upsert.added:
+            lid = str(line.id)
+            item_code = line.product.product_code if line.product else ""
+            location = line.warehouse.warehouse_code if line.warehouse is not None else ""
+            after_lines.append(Line(
+                doc_number=so.so_number, item_code=item_code, location=location,
+                qty=float(line.qty_ordered or 0), required_date=line.required_date,
+                row_ref=lid, line_id=lid,
+            ))
+
+        if not before_lines and not after_lines:
+            return None
+
+        # `scope_documents` pinned to this order explicitly - a removal that empties the
+        # order leaves `after_lines` with nothing at all, and the derived-from-incoming
+        # scope `diff_lines` uses for an extract would then read the whole order as
+        # untouched rather than wholly closed.
+        changes = [
+            c for c in diff_lines(
+                before_lines, after_lines, scope_documents=(so.so_number,),
+            ).changes
+            if c.kind != UNCHANGED
+        ]
         if not changes:
             return None
+
+        # A change built via `line_id` identity always carries a `row_ref` on whichever
+        # side exists (the after side for `added`, either side otherwise, both the SAME
+        # core line id for a matched pair) - the CORE line id `build_batch` needs to find
+        # the row's mirror project line.
+        applied_line_ids: dict[int, str] = {
+            id(c): (c.after or c.before).row_ref for c in changes
+        }
 
         diff = Diff(scope_documents=(so.so_number,), changes=changes)
         try:
@@ -1411,9 +1478,7 @@ class SalesOrderService:
             self.db.rollback()
             return None
 
-    def _upsert_lines(
-        self, so: SalesOrder, incoming: list
-    ) -> list[tuple[SalesOrderLine, float, Optional[date]]]:
+    def _upsert_lines(self, so: SalesOrder, incoming: list) -> _LineUpsertResult:
         """Reconcile ``so.lines`` against the payload IN PLACE, never delete + recreate.
 
         A delete-and-reinsert (the previous behaviour) resets `qty_delivered` to 0, forces
@@ -1450,14 +1515,28 @@ class SalesOrderService:
         not in that list on purpose - it is what the source document charged, and rewriting
         it from an edited price would replace the invoice with our own arithmetic.
 
-        Returns one `(line, old_qty_ordered, old_required_date)` per MATCHED existing line -
-        its state as it was before this method touched it - for `_propagate_planning_change`
-        to diff against the line's now-written values. Newly-added lines carry no "before"
-        and are not returned.
+        A removed line still gets special treatment when its mirror project line has an
+        Order Inquiry row or is a component of the order's ACTIVE held decision
+        (`documentation/plans/scm/PLAN-scm-change-management-one-engine.md`, Slice A rule
+        5): an inquiry row or a held decision is exactly the "already planned" fact the
+        FIVE-table dependent check above used to fold an inquiry row into, refusing the
+        whole update on it - but a removal is never refused for that reason any more (rule
+        5, "removal is never refused because an inquiry row exists"). Instead the CORE line
+        is set `line_status = "cancelled"` rather than deleted, so the mirror line, its
+        inquiry row and the `PlanningChangeRow.core_line_id` this raises all survive; a line
+        that clears the dependent check with NEITHER an inquiry row NOR a held component is
+        deleted exactly as before.
+
+        Returns `_LineUpsertResult`: `matched` carries `(line, old_qty_ordered,
+        old_required_date, old_item_code, old_location)` per MATCHED existing line - its
+        state as it was before this method touched it - `removed` the same facts for every
+        line the payload dropped, `added` the freshly-inserted `SalesOrderLine` objects -
+        all for `_propagate_planning_change` to diff against the now-written values.
         """
         existing_lines = list(so.lines)
         matched_ids: set[str] = set()
-        line_changes: list[tuple[SalesOrderLine, float, Optional[date]]] = []
+        line_changes: list[tuple[SalesOrderLine, float, Optional[date], str, str]] = []
+        added_lines: list[SalesOrderLine] = []
 
         for ln in incoming:
             ln_id = getattr(ln, "id", None)
@@ -1470,6 +1549,11 @@ class SalesOrderService:
                     (
                         l for l in existing_lines
                         if l.id not in matched_ids
+                        # A CANCELLED row is never re-matched by SKU (review round,
+                        # R-B1): the same product re-added after a cancellation is a
+                        # NEW open line, not a silent write onto the ended one - an id
+                        # match below can still name it explicitly.
+                        and (l.line_status or "open") != CANCELLED
                         and l.product is not None
                         and l.product.product_code.lower() == sku_norm
                     ),
@@ -1495,15 +1579,43 @@ class SalesOrderService:
                 for col in ("unit_price", "discount")
                 if col in fields_set
             }
+            if target is not None and (target.line_status or "open") == CANCELLED:
+                # Named explicitly by id (the SKU fallback above never re-matches a
+                # cancelled row) - a payload line naming a cancelled row's own id
+                # reopens nothing. Matched, so `removed` below does not read it as
+                # dropped-again, but otherwise untouched: no snapshot, no write, no
+                # diff. Chosen over silently reopening it - nothing today sends an id
+                # this deliberately, and reopening on a bare id match would undo a
+                # Slice A cancellation by surprise rather than by an explicit edit.
+                matched_ids.add(target.id)
+                continue
             if target is not None:
                 matched_ids.add(target.id)
                 # Snapshotted BEFORE any of the mutations below - the only place this
-                # line's prior qty/date exist once they are overwritten.
-                line_changes.append(
-                    (target, float(target.qty_ordered or 0), target.required_date)
+                # line's prior qty/date/product/location exist once they are overwritten
+                # (a product swap needs the OLD item code, not what `target.product` reads
+                # once `product_id` is reassigned two lines down).
+                old_item_code = target.product.product_code if target.product else ""
+                old_location = (
+                    target.warehouse.warehouse_code if target.warehouse is not None else ""
                 )
+                old_qty = float(target.qty_ordered or 0)
+                line_changes.append((
+                    target, old_qty, target.required_date, old_item_code, old_location,
+                ))
                 target.product_id = prod.id
                 target.qty_ordered = ln.qty_ordered
+                if old_qty > 0 and float(ln.qty_ordered or 0) <= 0:
+                    # Settling a held line's qty to 0 ends it exactly like a removal does
+                    # (review round, R-S5) - one shape, `line_status = CANCELLED`, for both
+                    # gestures, so a later reader (the SKU fallback above, the removed-line
+                    # dependents check, `_order_amount`/`total_qty`) has one thing to check
+                    # rather than two. Gated on the TRANSITION, not the new value alone
+                    # (round 2, R2-N1): an AutoCount line already at 0 (25,738 open on the
+                    # prod copy, most carrying money) is resent unchanged whenever another
+                    # line on the same order is edited, and `qty_ordered=0` alone would
+                    # cancel it as a side effect of an edit that never touched it.
+                    target.line_status = CANCELLED
                 if "warehouse_code" in fields_set:
                     target.warehouse_id = warehouse_id
                 if "required_date" in fields_set:
@@ -1513,7 +1625,7 @@ class SalesOrderService:
                 for col, value in money.items():
                     setattr(target, col, value)
             else:
-                self.db.add(SalesOrderLine(
+                new_line = SalesOrderLine(
                     sales_order_id=so.id,
                     product_id=prod.id,
                     qty_ordered=ln.qty_ordered,
@@ -1525,29 +1637,55 @@ class SalesOrderService:
                     required_date=required_date,
                     uom=uom,
                     **money,
-                ))
+                )
+                self.db.add(new_line)
+                added_lines.append(new_line)
 
-        removed = [l for l in existing_lines if l.id not in matched_ids]
+        # A line ALREADY cancelled (review round, R-B2) is not "removed" again on a later
+        # save that simply never named it - it left the payload once, the first save that
+        # dropped it already raised the cancellation, and re-reading it here would raise a
+        # second batch (or a second delete attempt) for a fact already recorded. Excluded
+        # here, not by filtering `existing_lines` itself, so R-B1's payload-with-id match
+        # above still finds it (and `matched_ids` still counts it out of BOTH lists).
+        removed = [
+            l for l in existing_lines
+            if l.id not in matched_ids and (l.line_status or "open") != CANCELLED
+        ]
+        removed_before: list[dict] = []
         if removed:
             removed_ids = [l.id for l in removed]
-            # One query for every referencing mirror line, not N+1: the dependent check is
-            # five EXISTS subqueries (one per FK onto `projects.sales_order_lines.id` in
-            # `app/models/project_so.py`) folded into the same SELECT as the referrer's own
-            # `ProjectSalesOrder` header, rather than a round trip per removed line.
-            has_dependents = or_(
+            # Three EXISTS subqueries, not five - `OrderInquiryRow` moved OUT of this check
+            # (Slice A rule 5): an inquiry row alone no longer refuses the removal, it earns
+            # the CANCEL treatment below instead. `SOLineAllocation` is split out on its own
+            # (review round, R-S2): confirming a decision (even a pure Buy) always writes
+            # the line ITS OWN `SOLineAllocation` row, so a held line always has one - that
+            # one alone is bypassed for a held-or-inquired line, never the other three (a
+            # draft finding, an ALLOCATION CLAIM, a divergence line), each of which is proof
+            # of planning arithmetic a cancel-in-place cannot safely leave dangling
+            # regardless of whether this line is also held.
+            has_other_dependents = or_(
                 exists().where(SODraftFinding.line_id == ProjectSalesOrderLine.id),
-                exists().where(OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id),
-                exists().where(SOLineAllocation.so_line_id == ProjectSalesOrderLine.id),
                 exists().where(AllocationClaim.so_line_id == ProjectSalesOrderLine.id),
                 exists().where(ProjectSODivergenceLine.so_line_id == ProjectSalesOrderLine.id),
+            )
+            has_allocation = exists().where(
+                SOLineAllocation.so_line_id == ProjectSalesOrderLine.id
+            )
+            has_inquiry = exists().where(
+                OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id,
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
             )
             referrers = (
                 self.db.query(
                     ProjectSalesOrderLine.id,
+                    ProjectSalesOrderLine.core_sales_order_line_id,
+                    ProjectSalesOrder.id.label("pso_id"),
                     ProjectSalesOrder.project_id,
                     ProjectSalesOrder.status,
                     ProjectSalesOrder.provisional_ref,
-                    has_dependents.label("has_dependents"),
+                    has_other_dependents.label("has_other_dependents"),
+                    has_allocation.label("has_allocation"),
+                    has_inquiry.label("has_inquiry"),
                 )
                 .join(
                     ProjectSalesOrder,
@@ -1557,6 +1695,8 @@ class SalesOrderService:
                 .all()
             )
             prunable_mirror_line_ids: list[str] = []
+            cancel_core_ids: set[str] = set()
+            frozen_by_pso: dict[str, dict] = {}
             for referrer in referrers:
                 is_authored = (
                     referrer.project_id is not None or referrer.status != SO_STATUS_ADOPTED
@@ -1568,15 +1708,51 @@ class SalesOrderService:
                         f"{referrer.provisional_ref}",
                         code="SO_LINE_LINKED_TO_PROJECT",
                     )
-                if referrer.has_dependents:
+                if referrer.has_other_dependents:
+                    # Unconditional - a draft finding, an allocation claim (another
+                    # project's, say) or a divergence line blocks whether or not this
+                    # line is ALSO held (R-S2): only `SOLineAllocation` is the decision's
+                    # own bookkeeping a held line is expected to carry.
                     raise AppException(
                         409,
                         "Cannot remove a line that fulfilment planning has already "
                         f"allocated (project sales order {referrer.provisional_ref})",
                         code="SO_LINE_LINKED_TO_PROJECT",
                     )
-                # Adopted, project_id NULL, nothing hanging off it - an addressing shim
-                # nobody has used, pruned rather than blocking the removal.
+                # Held-or-inquiry is asked BEFORE `has_allocation`: confirming a decision
+                # (even a pure Buy) writes the line its own `SOLineAllocation` row
+                # (`ProjectSupplyService._write_decision_lines`'s `buy > 0` branch), so a
+                # held line always has one - checking `has_allocation` first would 409 the
+                # exact removal Slice A rule 5 says must be accepted. A line with NEITHER a
+                # held component nor an inquiry row still answers to the unchanged
+                # allocation / claim checks.
+                pso_id = str(referrer.pso_id)
+                if pso_id not in frozen_by_pso:
+                    from app.services.project_supply_service import ProjectSupplyService
+
+                    supply = ProjectSupplyService(self.db)
+                    frozen_by_pso[pso_id] = supply.frozen_lines_of(
+                        supply.active_decision(pso_id)
+                    )
+                is_held = str(referrer.id) in frozen_by_pso[pso_id]
+                if referrer.has_inquiry or is_held:
+                    # Held, or already asked purchasing for it - the mirror line, its
+                    # inquiry row and the change row this removal raises must all survive
+                    # (Slice A rule 5), so the CORE line is cancelled rather than deleted
+                    # and its mirror is left alone entirely (not eligible for pruning).
+                    if referrer.core_sales_order_line_id:
+                        cancel_core_ids.add(referrer.core_sales_order_line_id)
+                    continue
+                if referrer.has_allocation:
+                    raise AppException(
+                        409,
+                        "Cannot remove a line that fulfilment planning has already "
+                        f"allocated (project sales order {referrer.provisional_ref})",
+                        code="SO_LINE_LINKED_TO_PROJECT",
+                    )
+                # Adopted, project_id NULL, nothing hanging off it and nothing held or
+                # inquired - an addressing shim nobody has used, pruned rather than
+                # blocking the removal.
                 prunable_mirror_line_ids.append(referrer.id)
             claim = (
                 self.db.query(OrderLinkClaim)
@@ -1607,9 +1783,22 @@ class SalesOrderService:
                     len(prunable_mirror_line_ids), prunable_mirror_line_ids, removed_ids,
                 )
             for l in removed:
-                self.db.delete(l)
+                # Snapshotted BEFORE cancel/delete - the only place this line's state
+                # exists once it is gone or its status changed.
+                removed_before.append({
+                    "id": l.id,
+                    "item_code": l.product.product_code if l.product else "",
+                    "location": l.warehouse.warehouse_code if l.warehouse is not None else "",
+                    "qty": float(l.qty_ordered or 0),
+                    "required_date": l.required_date,
+                })
+                if l.id in cancel_core_ids:
+                    l.line_status = CANCELLED
+                else:
+                    self.db.delete(l)
 
-        return line_changes
+        self.db.flush()
+        return _LineUpsertResult(matched=line_changes, removed=removed_before, added=added_lines)
 
     def delete(self, so_id: str) -> None:
         so = self._get_or_404(so_id)
