@@ -685,11 +685,17 @@ def map_expected_variables_to_five_keys(
     `mapped` is the five-key shape (`focus`, `open_question`, `ideation`, `access_levels`,
     `contains_flyer`) built out of the legacy capture:
 
-    * `domain_hint` -> `focus.domains` (a ONE-entry list: a legacy capture never named two
-      domains, D3/D11 is what lets a dealer do that now);
-    * `entities` -> `focus.products`;
-    * `query_brands` -> `focus.brands`; `tier_menu` -> `focus.tier`;
-    * `date_filter_start` / `date_filter_end` / `date_mode` -> `focus.date_window`;
+    * `focus` is `dialogue.focus.from_session(expected, turn_no=0)` - the SAME projection
+      the engine itself runs over a session that predates the five keys, not a second,
+      hand-rolled translation. It splits the legacy `entities` list by hint onto
+      `products` / `customer` / `transporter` / `warehouse` (a legacy capture dumped every
+      entity into one list regardless of type; the port keeps them apart), reads
+      `domain_hint` into a ONE-entry `domains` list (D3/D11 is what lets a dealer name two
+      now), `date_filter_start` / `date_filter_end` / `date_mode` into `date_window`,
+      `requested_attributes` into `attributes`, `query_brands` into `brands`, and
+      `access_levels` into `tier` (the legacy field doing double duty: the SAME list is
+      also copied verbatim onto the five-key `access_levels` below, since a capture never
+      told the two apart);
     * `open_question.kind` follows `selection_context` FIRST, `pending.kind` second -
       `selection_context` says which question a turn actually left open, so it is the
       more reliable signal than "a roster happens to be present" (measured against the
@@ -725,32 +731,17 @@ def map_expected_variables_to_five_keys(
     pending = pending if isinstance(pending, dict) else None
     selection_context = expected.get("selection_context")
 
-    def _slot(value: Any) -> dict[str, Any]:
-        return {"value": value, "set_at_turn": 0, "set_at": None, "source": "reuse"}
+    # The legacy `entities` / `domain_hint` / `date_filter_*` / `requested_attributes` /
+    # `access_levels` / `query_brands` keys are projected through the SAME function the
+    # engine itself uses to read a session that predates the five-key shape
+    # (`dialogue/focus.from_session`) - not re-derived here by hand. It is what splits a
+    # legacy `entities` list by hint onto `products` / `customer` / `transporter` /
+    # `warehouse` instead of dumping every entity into `products` regardless of type, and
+    # it is the one place that translation is allowed to live (its own docstring: "the
+    # tester's world grader depends on that class of translation").
+    from app.services.chatbot.dialogue.focus import from_session as _focus_from_session
 
-    focus: dict[str, Any] = {}
-
-    domain_hint = expected.get("domain_hint")
-    if domain_hint:
-        focus["domains"] = _slot([domain_hint])
-
-    entities = expected.get("entities")
-    if entities:
-        focus["products"] = _slot(entities)
-
-    query_brands = expected.get("query_brands")
-    if query_brands:
-        focus["brands"] = _slot(query_brands)
-
-    tier_menu = expected.get("tier_menu")
-    if tier_menu:
-        focus["tier"] = _slot(tier_menu)
-
-    date_start = expected.get("date_filter_start")
-    date_end = expected.get("date_filter_end")
-    date_mode = expected.get("date_mode")
-    if date_start or date_end or date_mode:
-        focus["date_window"] = _slot({"start": date_start, "end": date_end, "mode": date_mode})
+    focus = _focus_from_session(expected, turn_no=0)
 
     dym_roster = expected.get("dym_last_result_set")
     plain_roster = expected.get("last_result_set")
@@ -802,6 +793,104 @@ def map_expected_variables_to_five_keys(
         "contains_flyer": bool(expected.get("contains_flyer")),
     }
     return mapped, None
+
+
+def _entity_code(entity: Any) -> str:
+    """The one identifying string an entity dict carries - `canonical_code` where the
+    resolver filled one in, the raw token otherwise. Same pair `dialogue/intake.py`'s
+    `_identity` compares on, upper-cased so a capture's lower-case raw and the engine's
+    upper-cased canonical code are the same value, not a false difference."""
+    if not isinstance(entity, dict):
+        return ""
+    code = entity.get("canonical_code") or entity.get("raw") or entity.get("code") or ""
+    return str(code).strip().upper()
+
+
+def _entity_codes(entities: Any) -> set[str]:
+    """A code set off a `products`-shaped LIST slot or a `customer`/`transporter`/
+    `warehouse`-shaped SINGLE entity dict - `dialogue/focus.py::from_session`'s `put`
+    stores the single-value axes as one dict, not a one-item list, so both shapes have
+    to be accepted or every real `customer` slot projects to an empty set."""
+    if isinstance(entities, dict):
+        entities = [entities]
+    if not isinstance(entities, list):
+        return set()
+    return {_entity_code(e) for e in entities if isinstance(e, dict) and _entity_code(e)}
+
+
+def project_variables_for_comparison(variables: dict[str, Any]) -> dict[str, Any]:
+    """AC-1033 (revised 13 Sep 2026): grade what the engine WROTE, not its own bookkeeping.
+
+    Applied identically to BOTH sides of the comparison - the mapped legacy expectation
+    and the real `session_vars` a turn persisted - so the grader stops failing worlds on
+    fields neither side can agree on and was never asking a real question about:
+    `set_at_turn` / `set_at` / `source` (a captured world has no real turn number to date
+    a slot to, AC-1033's own mapping docstring already says so), `asked_at` /
+    `asked_at_turn` on `open_question`, an option's `team` / `domain` / `uuid` / `idx`, a
+    `payload` beyond `keep`, and every entity field but its own code
+    (`confident` / `hint` / `raw` / `current_message` included).
+
+    Per focus slot, only `value` survives, and three slots get a further, VALUE-level
+    projection because their raw shape still carries positional or type noise the kind of
+    fact this grades does not care about: `products` / `customer` / `transporter` /
+    `warehouse` (entity lists) project to a CODE SET, `brands` to a set, `date_window` to
+    exactly `{start, end, mode}`. `tier` (and every other slot: `domains`, `attributes`)
+    keeps its value as-is - a list of names IS the fact, in the order the customer named
+    them or not, and nothing about it is bookkeeping.
+
+    `open_question` projects to `kind`, `expects` - RE-DERIVED from
+    `dialogue.open_question.KIND_SPEC` by `kind` rather than compared as stored, which is
+    what makes a `member_offer` grade as `yes_no` whether or not a roster happens to ride
+    beside it - and the options' `code` / `label` pairs, in order (the order a `product_
+    pick` numbers by). `payload.keep`, when present, projects to its own code set (issue
+    #708's siblings, frozen as entities per `open_question.py::_product_pick`).
+    """
+    from app.services.chatbot.dialogue.open_question import KIND_SPEC
+
+    focus = variables.get("focus") or {}
+    projected_focus: dict[str, Any] = {}
+    if isinstance(focus, dict):
+        for slot_name, slot in focus.items():
+            if not isinstance(slot, dict):
+                continue
+            value = slot.get("value")
+            if slot_name in ("products", "customer", "transporter", "warehouse"):
+                value = _entity_codes(value)
+            elif slot_name == "brands":
+                value = set(value) if isinstance(value, list) else value
+            elif slot_name == "date_window" and isinstance(value, dict):
+                value = {
+                    "start": value.get("start"),
+                    "end": value.get("end"),
+                    "mode": value.get("mode"),
+                }
+            projected_focus[slot_name] = value
+
+    open_question = variables.get("open_question")
+    projected_open_question: dict[str, Any] | None = None
+    if isinstance(open_question, dict):
+        kind = open_question.get("kind")
+        options = open_question.get("options")
+        projected_open_question = {
+            "kind": kind,
+            "expects": (KIND_SPEC.get(kind) or {}).get("expects"),
+            "options": [
+                {"code": o.get("code"), "label": o.get("label")}
+                for o in (options if isinstance(options, list) else [])
+                if isinstance(o, dict)
+            ],
+        }
+        keep = (open_question.get("payload") or {}).get("keep")
+        if keep:
+            projected_open_question["keep"] = _entity_codes(keep)
+
+    return {
+        "focus": projected_focus,
+        "open_question": projected_open_question,
+        "ideation": variables.get("ideation"),
+        "access_levels": variables.get("access_levels") or [],
+        "contains_flyer": bool(variables.get("contains_flyer")),
+    }
 
 
 # --------------------------------------------------------------------------- #

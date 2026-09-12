@@ -134,8 +134,14 @@ class TestTraceLegibilityAcrossBranchKinds:
         _set_session_vars(
             session_factory,
             {
-                "selection_context": "member_offer",
-                "routing_roster_plan": [{"id": "a"}, {"id": "b"}],
+                "open_question": {
+                    "kind": "member_offer",
+                    "options": [],
+                    "expects": "yes_no",
+                    "asked_at_turn": 1,
+                    "asked_at": None,
+                    "payload": {"companies": [{"id": "a"}, {"id": "b"}]},
+                },
             },
         )
         stub_parser(

@@ -75,7 +75,7 @@ class TestMapExpectedVariablesToFiveKeys:
             "entities": [{"raw": "SRTWC8517", "hint": "product", "current_message": True}],
             "routing": {"suggested_team": "customer_service", "suggested_agent": None},
             "query_brands": ["cabana"],
-            "tier_menu": ["dealer", "office"],
+            "access_levels": ["dealer", "office"],
             "date_filter_start": "2026-08-01",
             "date_filter_end": "2026-08-31",
             "date_mode": "range",
@@ -88,7 +88,11 @@ class TestMapExpectedVariablesToFiveKeys:
         assert mapped["focus"]["domains"]["value"] == ["inventory"]
         assert mapped["focus"]["products"]["value"] == expected["entities"]
         assert mapped["focus"]["brands"]["value"] == ["cabana"]
+        # `dialogue/focus.from_session` reads legacy `access_levels` for BOTH `focus.tier`
+        # (the constraint on the asker) and the five-key `access_levels` itself - the one
+        # legacy field doing double duty, since a capture never told the two apart.
         assert mapped["focus"]["tier"]["value"] == ["dealer", "office"]
+        assert mapped["access_levels"] == ["dealer", "office"]
         assert mapped["focus"]["date_window"]["value"] == {
             "start": "2026-08-01",
             "end": "2026-08-31",
@@ -195,3 +199,268 @@ class TestMapExpectedVariablesToFiveKeys:
         assert mapped is None
         assert reason is not None
         assert "from_a_future_build" in reason
+
+
+class TestProjectVariablesForComparison:
+    """AC-1033 (revised 13 Sep 2026): `worlds_mod.project_variables_for_comparison`
+    grades VALUES, applied identically to both the mapped expectation and the real
+    `session_vars` before the world grader compares them."""
+
+    def test_focus_slot_metadata_is_dropped_down_to_value(self) -> None:
+        variables = {
+            "focus": {
+                "domains": {"value": ["order"], "set_at_turn": 4, "set_at": None, "source": "reuse"},
+            },
+            "open_question": None,
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+
+        projected = worlds_mod.project_variables_for_comparison(variables)
+
+        assert projected["focus"]["domains"] == ["order"]
+
+    def test_entity_slots_project_to_a_code_set_not_the_entity_dicts(self) -> None:
+        variables = {
+            "focus": {
+                "products": {
+                    "value": [
+                        {
+                            "raw": "srtwc286",
+                            "hint": "product",
+                            "canonical_code": "SRTWC286",
+                            "current_message": True,
+                            "confident": True,
+                        },
+                        {"raw": "srtws8091", "hint": "product", "canonical_code": None},
+                    ],
+                    "set_at_turn": 1,
+                    "set_at": None,
+                    "source": "current_message",
+                },
+                "customer": {
+                    "value": {"raw": "hanlim", "hint": "customer", "canonical_code": None},
+                    "set_at_turn": 1,
+                    "set_at": None,
+                    "source": "current_message",
+                },
+            },
+            "open_question": None,
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+
+        projected = worlds_mod.project_variables_for_comparison(variables)
+
+        assert projected["focus"]["products"] == {"SRTWC286", "SRTWS8091"}
+        # `customer` is a single entity dict, not a list - still projects to its own code.
+        assert projected["focus"]["customer"] == {"HANLIM"}
+
+    def test_brands_projects_to_a_set_tier_keeps_its_value(self) -> None:
+        variables = {
+            "focus": {
+                "brands": {"value": ["cabana", "cabana"], "set_at_turn": 1, "set_at": None, "source": "reuse"},
+                "tier": {"value": ["dealer", "office"], "set_at_turn": 1, "set_at": None, "source": "reuse"},
+            },
+            "open_question": None,
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+
+        projected = worlds_mod.project_variables_for_comparison(variables)
+
+        assert projected["focus"]["brands"] == {"cabana"}
+        assert projected["focus"]["tier"] == ["dealer", "office"]
+
+    def test_date_window_projects_to_exactly_start_end_mode(self) -> None:
+        variables = {
+            "focus": {
+                "date_window": {
+                    "value": {"start": "2026-08-01", "end": "2026-08-31", "mode": "range", "extra": "junk"},
+                    "set_at_turn": 1,
+                    "set_at": None,
+                    "source": "current_message",
+                },
+            },
+            "open_question": None,
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+
+        projected = worlds_mod.project_variables_for_comparison(variables)
+
+        assert projected["focus"]["date_window"] == {
+            "start": "2026-08-01",
+            "end": "2026-08-31",
+            "mode": "range",
+        }
+
+    def test_expects_is_re_derived_from_kind_spec_not_compared_as_stored(self) -> None:
+        """A `member_offer` grades `yes_no` whether or not a roster rides beside it -
+        `expects` is recomputed from `KIND_SPEC`, never read off the stored value."""
+        with_rows = {
+            "focus": {},
+            "open_question": {
+                "kind": "member_offer",
+                "expects": "pick",  # stored wrong on purpose - must not survive
+                "options": [{"code": None, "label": "Alpha Corp", "team": "ignored"}],
+                "asked_at_turn": 3,
+                "asked_at": None,
+                "payload": {"team": "customer_service", "domain": None},
+            },
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+        without_rows = {
+            "focus": {},
+            "open_question": {
+                "kind": "member_offer",
+                "expects": "yes_no",
+                "options": [],
+                "asked_at_turn": 1,
+                "asked_at": None,
+                "payload": {},
+            },
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+
+        projected_with = worlds_mod.project_variables_for_comparison(with_rows)
+        projected_without = worlds_mod.project_variables_for_comparison(without_rows)
+
+        assert projected_with["open_question"]["expects"] == "yes_no"
+        assert projected_without["open_question"]["expects"] == "yes_no"
+
+    def test_options_project_to_code_and_label_only(self) -> None:
+        variables = {
+            "focus": {},
+            "open_question": {
+                "kind": "team_pick",
+                "expects": "pick",
+                "options": [
+                    {
+                        "idx": 1,
+                        "code": None,
+                        "label": "Warehouse",
+                        "team": "warehouse",
+                        "domain": "incoming",
+                        "uuid": None,
+                    },
+                    {
+                        "idx": 2,
+                        "code": None,
+                        "label": "Customer Service",
+                        "team": "customer_service",
+                        "domain": None,
+                    },
+                ],
+                "asked_at_turn": 2,
+                "asked_at": None,
+                "payload": {"team": None, "domain": "incoming"},
+            },
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+
+        projected = worlds_mod.project_variables_for_comparison(variables)
+
+        assert projected["open_question"]["options"] == [
+            {"code": None, "label": "Warehouse"},
+            {"code": None, "label": "Customer Service"},
+        ]
+
+    def test_payload_keep_projects_to_a_code_set_payload_otherwise_dropped(self) -> None:
+        variables = {
+            "focus": {},
+            "open_question": {
+                "kind": "product_pick",
+                "expects": "pick",
+                "options": [{"idx": 1, "code": "SRTKS8091-B", "label": "SRTKS8091-B"}],
+                "asked_at_turn": 5,
+                "asked_at": None,
+                "payload": {
+                    "keep": [
+                        {"raw": "srtks6091", "hint": "product", "canonical_code": "SRTKS6091"}
+                    ],
+                    "team": "should not survive",
+                    "domain": "should not survive",
+                },
+            },
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+
+        projected = worlds_mod.project_variables_for_comparison(variables)
+
+        assert projected["open_question"]["keep"] == {"SRTKS6091"}
+        assert "team" not in projected["open_question"]
+        assert "domain" not in projected["open_question"]
+        assert "payload" not in projected["open_question"]
+        assert "asked_at_turn" not in projected["open_question"]
+        assert "asked_at" not in projected["open_question"]
+
+    def test_no_open_question_projects_to_none(self) -> None:
+        variables = {
+            "focus": {},
+            "open_question": None,
+            "ideation": {"draft_id": "d1"},
+            "access_levels": ["dealer"],
+            "contains_flyer": True,
+        }
+
+        projected = worlds_mod.project_variables_for_comparison(variables)
+
+        assert projected["open_question"] is None
+        assert projected["ideation"] == {"draft_id": "d1"}
+        assert projected["access_levels"] == ["dealer"]
+        assert projected["contains_flyer"] is True
+
+    def test_the_mapped_expectation_and_a_real_session_project_to_the_same_shape(self) -> None:
+        """End to end: a legacy capture, mapped then projected, equals a real turn's
+        session_vars, projected, when the underlying fact is the same - the whole point
+        of the revision."""
+        expected_legacy = {
+            "message_type": "business_query",
+            "domain_hint": "inventory",
+            "entities": [
+                {"raw": "srtwc8517", "hint": "product", "canonical_code": "SRTWC8517", "current_message": True}
+            ],
+        }
+        mapped, reason = worlds_mod.map_expected_variables_to_five_keys(expected_legacy)
+        assert reason is None
+
+        real_session_vars = {
+            "focus": {
+                "domains": {"value": ["inventory"], "set_at_turn": 7, "set_at": None, "source": "current_message"},
+                "products": {
+                    "value": [
+                        {
+                            "raw": "SRTWC8517",
+                            "hint": "product",
+                            "canonical_code": "SRTWC8517",
+                            "current_message": True,
+                            "confident": True,
+                        }
+                    ],
+                    "set_at_turn": 7,
+                    "set_at": None,
+                    "source": "current_message",
+                },
+            },
+            "open_question": None,
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+
+        assert worlds_mod.project_variables_for_comparison(
+            mapped
+        ) == worlds_mod.project_variables_for_comparison(real_session_vars)

@@ -251,8 +251,14 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
             OwnerTurn(
                 message="2",
                 arm={
-                    "selection_context": "disambiguation",
-                    "last_result_set": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                        "expects": "pick",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {},
+                    },
                 },
                 emission={
                     "message_type": "casual",
@@ -300,7 +306,16 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
         turns=(
             OwnerTurn(
                 message="I need a human",
-                arm={"pending": {"kind": "escalation_offer", "team": "warehouse"}},
+                arm={
+                    "open_question": {
+                        "kind": "team_pick",
+                        "options": [],
+                        "expects": "yes_no",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {"team": "warehouse"},
+                    },
+                },
                 emission={
                     "message_type": "casual",
                     "domain_hint": None,
@@ -324,7 +339,16 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
         turns=(
             OwnerTurn(
                 message="I need a human",
-                arm={"pending": {"kind": "escalation_offer", "team": "warehouse"}},
+                arm={
+                    "open_question": {
+                        "kind": "team_pick",
+                        "options": [],
+                        "expects": "yes_no",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {"team": "warehouse"},
+                    },
+                },
                 emission={
                     "message_type": "casual",
                     "domain_hint": None,
@@ -357,7 +381,16 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
         turns=(
             OwnerTurn(
                 message="I need a human",
-                arm={"pending": {"kind": "escalation_offer", "team": "warehouse"}},
+                arm={
+                    "open_question": {
+                        "kind": "team_pick",
+                        "options": [],
+                        "expects": "yes_no",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {"team": "warehouse"},
+                    },
+                },
                 emission={
                     "message_type": "business_query",
                     "domain_hint": "inventory",
@@ -396,8 +429,14 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "topic_reset": False,
                 },
                 arm={
-                    "selection_context": "disambiguation",
-                    "last_result_set": _roster("SRTKS8091-A", "SRTKS8091-B"),
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": _roster("SRTKS8091-A", "SRTKS8091-B"),
+                        "expects": "pick",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {},
+                    },
                 },
                 expect={"focus_domains": ["inventory"]},
             ),
@@ -537,7 +576,7 @@ def test_focus_world(world, owner_stubs, session_factory, monkeypatch) -> None:
                 SimpleNamespace(respond_contact_id=contact_id, id="ZZT-owner-world-ticket")
             )
         elif turn.arm:
-            _patch_owner_session(session_factory, turn.arm, drop=("open_question",))
+            _patch_owner_session(session_factory, turn.arm)
         owner_stubs(_owner_emission(turn.emission), emits_v3=world.emits_v3)
         envelope = _owner_envelope(turn.message, index)
         lane_calls.clear()
