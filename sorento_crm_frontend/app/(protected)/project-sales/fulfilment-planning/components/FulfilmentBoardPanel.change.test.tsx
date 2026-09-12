@@ -207,14 +207,14 @@ describe('the changed cell', () => {
     expect(screen.getByTestId('board-change-pcr-381895-3')).toBeInTheDocument();
   });
 
-  it('reads Closed in the Now column of a line the book closed', async () => {
+  it('reads Cancelled in the Now column of a line the book closed', async () => {
     renderPanel();
     const closed = await screen.findByTestId('board-change-pcr-381895-2');
     expect(within(closed).getByTestId('change-now-qty')).toHaveTextContent(
-      'Closed',
+      'Cancelled',
     );
     expect(within(closed).getByTestId('change-now-decision')).toHaveTextContent(
-      'Closed',
+      'Cancelled',
     );
   });
 
