@@ -35,7 +35,7 @@ chain and no `_source` field to say which column answered.
 """
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 
 from sqlalchemy import func
@@ -48,10 +48,17 @@ from app.models.product import Product
 from app.services.company_scope import build_company_predicate
 
 
+_CENTS = Decimal("0.01")
+
+
 def _money(v: Any) -> Optional[float]:
+    """Round to 2 dp, half up, before the float conversion (review S1) - a derived
+    per-unit figure (`discount / qty_ordered`, `line_total / qty_ordered`) is a Decimal
+    division and carries far more than two digits until this rounds it: qty 3,
+    discount 100 must answer 33.33, never 33.333333333333333333333333333."""
     if v is None:
         return None
-    return float(Decimal(str(v)))
+    return float(Decimal(str(v)).quantize(_CENTS, rounding=ROUND_HALF_UP))
 
 
 def _plain_number(v: Any) -> Any:
