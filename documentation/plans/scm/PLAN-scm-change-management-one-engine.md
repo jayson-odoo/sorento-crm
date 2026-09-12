@@ -583,14 +583,21 @@ predicate counts. The receiving order's ACTIVE decision has its `line_snapshots`
 that line (the component becomes `reserve <qty>` where it read `buy <qty>`), so the carry
 keeps the reserve rather than re-proposing the buy it no longer needs.
 
+**And the next confirm does not hold it twice.** A hold that belongs to no revision IS the
+reserve a later revision names at that warehouse, so `_write_allocations` nets each reserve
+component against the line's standing unowned holds and writes only the excess. Without it
+the receiving line read 80 held plus 80 written again, and the floor was short by that
+quantity for every other order, permanently.
+
 **D4. `exclude_line_ids` is threaded into apply.** The lines this same batch is re-deciding
 are not candidates to receive what it frees - otherwise a reallocation hands quantity to a
 line that is about to be uncovered in the next breath.
 
-**D5. What actually happened is recorded in words.** Every executed target lands in the
-row's `result_json` under `reallocated`, because a later read of the live world can pick a
-different row than the one that received it - the record is what the row says it did, not
-what a re-query would guess.
+**D5. What actually happened is recorded in words.** Every executed move lands in the row's
+`result_json` under `executed_reallocations`, one sentence each, in the SHAPE THE LABEL USED
+("Reallocate <document> <qty> to <target>") with the target that actually received it. Where
+nothing changed between compose and apply the two read identically; where they differ, the
+record is what the row did, not what a re-query would guess.
 
 **D6. The receiving row's state is refreshed after it is reduced**, through the service's own
 `refresh_link_state`, so a row whose unlinked remainder reaches zero reads `placed` instead of
@@ -600,8 +607,9 @@ staying `partly_linked`.
 SPO allocation (`place_on_po_allocations`'s own rule), so there is no waiting ORDER row and no
 pool-location row that could receive one: there is nowhere to re-deal it TO. The suggestion
 therefore reads "Release SPO <n> <qty>, unallocated for purchasing", apply removes the
-allocation link so the incoming list shows the share unallocated, and `result_json` records
-that. NEVER RECORD AN INSTRUCTION NOT CARRIED OUT is the rule this serves, and it is why the
+allocation link so the incoming list shows the share unallocated, and
+`result_json["released_documents"]` names the SPO that is free again - not a move sentence,
+because there was no move. NEVER RECORD AN INSTRUCTION NOT CARRIED OUT is the rule this serves, and it is why the
 old "Reallocate SPO" wording is gone.
 
 **Left alone, named.** `_purchasing_user_ids` has no company filter. It is pre-existing, it
