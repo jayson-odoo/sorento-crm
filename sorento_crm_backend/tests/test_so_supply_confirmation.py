@@ -791,9 +791,19 @@ def test_publishing_an_amendment_supersedes_the_active_decision(api):
 
 
 def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
-    """AC-C06 (reconciliation leg, PLAN 5.3): `_persist` re-linking a Project line to a
-    different core line must also supersede an active decision built against the old
-    link."""
+    """AC-C06 (reconciliation leg, PLAN 5.3; Slice E one signal, issue #860): `_persist`
+    re-linking a Project line to a DIFFERENT core line is the one thing a reconciliation
+    run supersedes an active decision for. The old core line closes (AutoCount split/
+    replaced it) so it drops out of the candidate pool, and a fresh core line at the same
+    product/date is the only remaining candidate -- the line relinks to it, `_persist`'s
+    `relinked` list is non-empty, and `ProjectSupplyService.supersede_for_material_change`
+    fires with its exact reason text. A plain fact drift with no mapping change (the
+    non-relink case) is covered elsewhere by AC-E1c
+    (`tests/scm/test_one_signal.py::test_reconciliation_without_a_relink_leaves_the_decision_active`),
+    which asserts the decision stays active -- this test is the other branch, the actual
+    relink. Was `test_a_reconciliation_link_change_supersedes_the_active_decision`
+    asserting a bare quantity drift with no relink and tolerating the retired `challenged`
+    outcome."""
     from app.models.project_so import SOSupplyDecision
 
     client, world = api
@@ -801,8 +811,10 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
     _stock(db, world.product, world.own_wh, on_hand=50)
     core_so = _core_so(db, world.company_id)
     order = _project_so(db, world.project, so_id=core_so.id)
-    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
-    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    old_core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(
+        db, order, line_no=10, product=world.product, core_line=old_core_line
+    )
     db.commit()
 
     decision = SOSupplyDecision(
@@ -812,7 +824,7 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
             {
                 "line_no": 10,
                 "project_line_id": line.id,
-                "core_line_id": core_line.id,
+                "core_line_id": old_core_line.id,
                 "open_qty": "50",
             }
         ],
@@ -821,9 +833,13 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
     db.add(decision)
     db.commit()
 
-    # A material change on the CORE side: the line now needs a different quantity, which
-    # reconciliation would relink or flag on its next run.
-    core_line.qty_ordered = Decimal("80")
+    # The AutoCount line mapping changes: the old core line closes (no longer a
+    # candidate) and a new one appears at the same product/required date, so the
+    # matching pass relinks the Project line to it instead of leaving it missing.
+    old_core_line.line_status = "closed"
+    new_core_line = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="50"
+    )
     db.commit()
 
     from app.services.project_so_reconciliation_service import ProjectSOReconciliationService
@@ -832,8 +848,15 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
     db.commit()
 
     db.expire_all()
+    db.refresh(line)
+    assert str(line.core_sales_order_line_id) == str(new_core_line.id)
+
     refreshed = db.get(SOSupplyDecision, decision.id)
-    assert refreshed.state in ("superseded", "challenged")
+    assert refreshed.state == "superseded"
+    assert (
+        refreshed.superseded_reason
+        == "The AutoCount line mapping changed after this revision was confirmed."
+    )
 
 
 def test_a_fact_drift_on_read_leaves_the_active_decision_active(api):
