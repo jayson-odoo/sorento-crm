@@ -326,9 +326,16 @@ class DeletionService:
     def _in_anchor_company(self, entity_type: str, entity_id: str) -> bool:
         """Whether the resolved row belongs to the company this call anchored to.
 
-        `integration_references` is global, so a ref finds its row whatever
-        company the caller named. A shared master (`sales_agents`) carries no
-        company at all and belongs to every anchor.
+        Defence in depth, not the primary guard: `integration_references` has
+        carried a `company_id` since migration 512 (BL-056), and `self.refs`
+        is constructed with this call's own anchor, so `_delete_one`'s
+        `self.refs.resolve(...)` already cannot return an id belonging to a
+        different company - this cannot fire through a reference any more.
+        It stays for the entity-keyed paths this service also reads (the
+        `_hard_delete`/`_deactivate` row loads have no anchor check of their
+        own), and as a second check if the anchor scoping above were ever
+        bypassed. A shared master (`sales_agents`) carries no company at all
+        and belongs to every anchor.
         """
         if not _is_company_scoped(entity_type):
             return True

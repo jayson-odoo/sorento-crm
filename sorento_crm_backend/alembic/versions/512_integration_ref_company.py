@@ -119,11 +119,27 @@ def apply(bind) -> None:
     # Orphans: a scoped reference still NULL points at a row that no longer
     # exists (the entity was deleted after the reference was created, before
     # this migration ever ran) - removed rather than left un-scoped forever.
+    # Self-verifying (security review): a bare `company_id IS NULL` delete
+    # trusts the backfill UPDATE above to have matched every live row - if
+    # the unqualified table name ever resolved to the WRONG same-named table
+    # (the `projects` schema carries its own `sales_orders`, `purchase_
+    # orders` and `brands`), that UPDATE would silently match nothing and
+    # this would then delete every reference of that entity type, live rows
+    # included. The `NOT EXISTS` re-checks the SAME unqualified name the
+    # backfill just joined against, so the delete can only ever remove a row
+    # this migration itself has just proven has no matching entity - it
+    # cannot compound a wrong-table backfill into data loss.
     for entity_type in _COMPANY_SCOPED_ENTITY_TYPES:
         result = bind.execute(
             sa.text(
-                "DELETE FROM integration_references "
-                "WHERE entity_type = :entity_type AND company_id IS NULL"
+                f"""
+                DELETE FROM integration_references r
+                WHERE r.entity_type = :entity_type
+                  AND r.company_id IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {entity_type} x WHERE x.id::text = r.entity_id
+                  )
+                """
             ),
             {"entity_type": entity_type},
         )
