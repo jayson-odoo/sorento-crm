@@ -1077,8 +1077,16 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # THE CLOCK DOES NOT RESTART ON A CARRY. A question the customer can still see is the
     # same question: re-stamping it every turn would make its age permanently zero, and the
     # trace would say the bot asked it again when it did not.
-    previous = jsc.get(jsc.get(ctx, "parse"), "_open_question_before") or jsc.get(
-        prev, "open_question"
+    # A PRESENT `_open_question_before` WINS, `None` included. The head stamps it on every
+    # turn, and `None` there means "there was one and this message cleared it" (AC-1020) -
+    # falling through to the stored session would resurrect the very question intake just
+    # removed, because `ctx.session` is the state as it was READ. Only an ABSENT key means
+    # the caller never ran the clearing step, and that is the one case the session answers.
+    parse_block = jsc.get(ctx, "parse")
+    previous = (
+        jsc.get(parse_block, "_open_question_before")
+        if jsc.has(parse_block, "_open_question_before")
+        else jsc.get(prev, "open_question")
     )
     if isinstance(asked, dict) and asked.get("kind"):
         turn_no = int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0)

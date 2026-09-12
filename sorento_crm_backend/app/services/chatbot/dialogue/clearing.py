@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from app.services.chatbot.contracts import FOCUS_SLOTS
+from app.services.chatbot.dialogue import intake
 from app.services.chatbot.dialogue.focus import RESET_KEEPS, _SLOT_BY_HINT
 
 
@@ -223,12 +224,36 @@ def _slot_of(entity: dict[str, Any]) -> str | None:
 def _is_a_new_ask(emission: dict[str, Any]) -> bool:
     """Does this message carry an ask of its own - a domain, or an entity?
 
-    `asks` is the whole test. A casual or low-signal message has none by construction
-    under prompt v3, which is exactly why the clearing rule can be stated in terms of it
-    rather than in terms of `message_type` (a lane could relabel that; the asks are what
-    the customer said).
+    Asked of the FLATTENED emission, never of the raw `asks` key. `asks` is a v3 shape and
+    a v1 / v2 emission has none by construction, so keying on it meant every turn under the
+    PROMOTED prompt answered "no": a customer who typed "SRTWC8517 stock?" over an open
+    escalate offer had their question left armed, and the next bare "yes" - about anything -
+    assigned them a human. `intake.flatten` is the one place that reads either shape, and it
+    maps a v1 `domain_hint` / `entities` onto the same `domains` / `entities` a v3 ask
+    flattens to.
+
+    A CARRIED entity is not an ask. `current_message is False` is the head's own flag for a
+    token this turn did not type, and a continuation that merely keeps the prior scope must
+    not clear a question the customer can still see. A v3 ask's entities carry no such flag
+    - they are what the message named - so the test is "not explicitly carried", not
+    "explicitly current".
+
+    A DOMAIN ALONE IS NOT AN ASK OF ITS OWN, and the corpus is what says so: "which one
+    has stock" over an open product picker flattens to `{domains: ["inventory"], entities:
+    []}` and is a question ABOUT the rows on screen - clearing there leaves the customer's
+    very next "1" with nothing to resolve
+    (`test_focus_worlds.py::focus-pick-reruns-the-alive-domain`). What makes a message a new
+    ask is that it names a SUBJECT of its own, which is the same thing
+    `focus.replace_same_axis` treats as replacing a slot.
+
+    A casual or low-signal message names none, which is why the rule can be stated in terms
+    of what the customer SAID rather than in terms of `message_type` (a lane could relabel
+    that).
     """
-    return any(isinstance(ask, dict) for ask in (emission.get("asks") or []))
+    return any(
+        isinstance(entity, dict) and entity.get("current_message") is not False
+        for entity in intake.flatten(emission)["entities"]
+    )
 
 
 def _answers_it(emission: dict[str, Any]) -> bool:
