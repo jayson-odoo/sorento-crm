@@ -37,7 +37,7 @@ import pytest
 
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import Envelope
-from app.services.chatbot.dialogue import decay as decay_mod
+from app.services.chatbot.dialogue import clearing as clearing_mod
 from app.services.chatbot.head import parser as parser_mod
 
 FIXTURE = (
@@ -144,17 +144,18 @@ def test_a_session_WITH_focus_state_still_sends_the_same_bytes_under_v1(turn6) -
         "ttl_turns": 3,
         "payload": {},
     }
-    hints = decay_mod.apply(variables, turn_no=41, ttl_turns=3)
-    assert hints.focus_hints, "the fixture must actually carry focus for this to prove anything"
-    assert hints.open_question_hint is not None
+    focus_hints = clearing_mod.focus_hints(variables.get("focus"))
+    open_question_hint = clearing_mod.open_question_hint(variables.get("open_question"))
+    assert focus_hints, "the fixture must actually carry focus for this to prove anything"
+    assert open_question_hint is not None
 
     crm = parser_mod.build_user_block(
         previous_response=variables.get("response"),
         latest_user_message=engine_mod.build_latest_user_message(envelope, session_block),
         pending_kind=engine_mod._pending_kind(variables),
         emits_v3=False,
-        focus_hints=hints.focus_hints,
-        open_question_hint=hints.open_question_hint,
+        focus_hints=focus_hints,
+        open_question_hint=open_question_hint,
     )
 
     assert crm == _n8n_user_block(turn6["baseline_workflow_inputs"])
@@ -168,15 +169,16 @@ def test_the_same_session_DOES_get_the_hints_under_v3(turn6) -> None:
     variables["focus"] = {
         "domain": {"value": "inventory", "set_at_turn": 40, "source": "current_message"}
     }
-    hints = decay_mod.apply(variables, turn_no=41, ttl_turns=3)
+    focus_hints = clearing_mod.focus_hints(variables.get("focus"))
+    open_question_hint = clearing_mod.open_question_hint(variables.get("open_question"))
 
     crm = parser_mod.build_user_block(
         previous_response=variables.get("response"),
         latest_user_message="stock?",
         pending_kind=None,
         emits_v3=True,
-        focus_hints=hints.focus_hints,
-        open_question_hint=hints.open_question_hint,
+        focus_hints=focus_hints,
+        open_question_hint=open_question_hint,
     )
 
     assert 'Focus: {"domain": "inventory"}' in crm

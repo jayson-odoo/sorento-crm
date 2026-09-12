@@ -36,7 +36,7 @@ from sqlalchemy import text
 from app.services.chatbot import engine as engine_mod
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
-from tests.chatbot.test_r3_pending_end_to_end import _stub_parser
+from tests.chatbot._shared_turn_helpers import _stub_parser
 
 
 @pytest.fixture()
@@ -139,7 +139,7 @@ class TestABareMarketingWordClarifiesOverOnlyTheThreeMarketingTeams:
 # --------------------------------------------------------------------------- #
 
 from app.services.chatbot.contracts import SUGGESTED_TEAMS  # noqa: E402
-from tests.chatbot.test_r3_pending_end_to_end import _session_of  # noqa: E402
+from tests.chatbot._shared_turn_helpers import _session_of  # noqa: E402
 from tests.chatbot.test_s5_escalation_lane import _services  # noqa: E402
 
 

@@ -307,6 +307,12 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 # that carries the key already disagreeing with the port.
 CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
     "disallowed-entity-gate": ("specific_options", "display_name", "incompatible_only"),
+    # `construct-user-prompt`'s `focus_hints` / `open_question` (AC-1024, S2 clarifier
+    # ruling, 12 Sep 2026): the dialogue module's hints replace the raw `session_vars`
+    # echo unconditionally, so every one of the 8 `sub-casual-llm-live` captures (and the
+    # vendored subset) predates both keys the same way a gate capture predates
+    # `incompatible_only`.
+    "construct-user-prompt": ("focus_hints", "open_question"),
     "tier-gate": ("tier_pick_domain",),
     # S8a, AC-808: the ten entries that used to sit in `STALE_FIXTURES` are graded here
     # instead of skipped. Both groups are the same class as the two keys above - a key

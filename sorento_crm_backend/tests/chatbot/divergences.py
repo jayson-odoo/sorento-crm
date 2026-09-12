@@ -469,10 +469,13 @@ DIVERGENCES: list[Divergence] = [
     # agreeing on the turn the ruling is about, where the pick's candidate type
     # differs from the source token's hint and `replace_combine` puts the replaced
     # token back. Field-scoped to the op and its diagnostic; the entities, the
-    # domain, the dates and everything else still grade byte for byte. Pinned by
-    # test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer
-    # and the real two-turn chain in
-    # test_r3_pending_end_to_end.py::TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode.
+    # domain, the dates and everything else still grade byte for byte. Was pinned by
+    # test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer and
+    # the real two-turn chain in
+    # tests/chatbot/_shared_turn_helpers.py::TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode
+    # (retired / moved uncollected, AC-1033) - this Divergence itself stays: the
+    # capture/port disagreement it registers is unaffected by where the pinning test
+    # lives, and grep in review is what the retirement note asks for.
     *(
         Divergence(
             node="output_exchange",

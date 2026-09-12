@@ -35,9 +35,6 @@ CHAINS = worlds_mod.multi_turn_worlds(WORLDS)
 # quieter table.
 WORLD_FLOOR = 100
 
-# See `_graded_variables`.
-_PORT_ONLY_KEYS = frozenset({"pending", "focus", "open_question"})
-
 
 @pytest.fixture()
 def world_db(session_factory):
@@ -96,30 +93,37 @@ def _run(world: worlds_mod.World, session_factory) -> Any:
 
 
 def _graded_variables(world: worlds_mod.World, actual: dict) -> tuple[dict, dict]:
-    """Both sides, with the two allowed differences removed from each.
+    """Both sides, through AC-1033's grader mapping.
 
-    `pending` is the R3 marker the JS had no equivalent of (the same field-scoped
-    divergence the node replay registers), `focus` is growth r1 slice B3's dialogue state
-    and `open_question` is slice B4's (both registered the same way, for the same reason:
-    no capture predates the code that writes them), and `dym_offer.id` is `$execution.id`
-    becoming the CRM turn id. Nothing
-    else is excused: a world that differs anywhere else is either a defect or a NAMED body
-    difference, and a body difference SKIPS the world rather than quietly ignoring the key.
-
-    `entities`, `domain_hint`, `date_filter_*`, `requested_attributes`, `access_levels`
-    and `query_brands` are deliberately NOT in the list. They are what the six focus rules
-    decide, so grading them is the proof that slice B3 moved those decisions without
-    changing any of them.
+    `world.expected_variables` is the 34(+3)-key legacy shape every capture predates
+    `focus` / `open_question` in; `worlds_mod.map_expected_variables_to_five_keys`
+    translates it into the five keys lane 1 persists (`_grade_or_skip` has already
+    skipped, by name, any world that mapping cannot shape at all - AC-1033 says never a
+    silent skip). `actual` is compared UNFILTERED: while the coder's S3 still writes the
+    legacy keys alongside the five, this fails loudly on every world rather than quietly
+    passing a comparison that only looks at five of the many keys `actual` still carries;
+    once S3 lands `actual` narrows to the same five keys and the comparison is exact.
     """
-    expected = worlds_mod.drop_paths(
-        {k: v for k, v in world.expected_variables.items() if k not in _PORT_ONLY_KEYS}
-    )
-    got = worlds_mod.drop_paths({k: v for k, v in actual.items() if k not in _PORT_ONLY_KEYS})
+    mapped, reason = worlds_mod.map_expected_variables_to_five_keys(world.expected_variables)
+    assert reason is None, f"{world.world_id}: {reason}"  # _grade_or_skip already filtered these
+    expected = worlds_mod.drop_paths(mapped)
+    got = worlds_mod.drop_paths(actual)
     return expected, got
 
 
 def _grade_or_skip(world: worlds_mod.World, head, session_patch: dict) -> None:
-    """Skip with a NAMED reason when the capture came from a different node body."""
+    """Skip with a NAMED reason - AC-1033's mapping first, then a differing node body.
+
+    The mapping check runs FIRST: a world whose legacy `expected_variables` the grader
+    cannot even shape into the five keys (an unrecognised `pending.kind`) is not worth
+    asking `body_difference` about, and skipping it here is the "registered divergence,
+    never a silent skip" AC-1033 asks for.
+    """
+    _, unmappable_reason = worlds_mod.map_expected_variables_to_five_keys(world.expected_variables)
+    if unmappable_reason is not None:
+        pytest.skip(
+            f"{world.world_id}: cannot be mapped to the five-key shape - {unmappable_reason}"
+        )
     parse_output = ((head.ctx or {}).get("parse") or {}).get("output") or {}
     reason = worlds_mod.body_difference(
         world,
@@ -235,7 +239,10 @@ def test_multi_turn_world_replay(chain, world_db, stub_world, session_factory, m
         done = engine_mod.complete_turn(result.turn_id, world.fragments, session_factory=session_factory)
         stored = _stored_session(session_factory, world.contact_id)
         parse_output = ((result.ctx or {}).get("parse") or {}).get("output") or {}
-        reason = worlds_mod.body_difference(
+        _, unmappable_reason = worlds_mod.map_expected_variables_to_five_keys(
+            world.expected_variables
+        )
+        reason = unmappable_reason or worlds_mod.body_difference(
             world,
             parse_output=parse_output,
             actual_variables=(stored or {}).get("variables") or {},
@@ -509,9 +516,9 @@ def _assert_owner_expectations(
         slot = focus.get("products") or {}
         got = _codes(slot.get("value"))
         assert got == expect["focus_products"], f"{where}: focus.products"
-    if "focus_domain" in expect:
-        assert (focus.get("domain") or {}).get("value") == expect["focus_domain"], (
-            f"{where}: focus.domain"
+    if "focus_domains" in expect:
+        assert (focus.get("domains") or {}).get("value") == expect["focus_domains"], (
+            f"{where}: focus.domains"
         )
     if "focus_customer" in expect:
         slot = (focus.get("customer") or {}).get("value") or {}
@@ -683,6 +690,10 @@ class TestTheOwnerWorldsCoverWhatTheOwnerAskedFor:
             assert len(world.turns) >= 2, f"{world.world_id} is not multi-turn"
 
     def test_the_criteria_the_plan_names_are_all_covered(self) -> None:
+        # AC-940 and AC-941 dropped here: their two worlds (the TTL ones) retired under
+        # D9 (12 Sep 2026, no counter no TTL anywhere), and the plan's own supersession
+        # map moves AC-940 to AC-1006 and AC-941 to AC-1010 / AC-1003 - both graded by
+        # `tests/chatbot/test_focus_worlds.py` instead, not by an OwnerWorld here.
         covered = {ac for world in worlds_mod.OWNER_WORLDS for ac in world.acs}
 
-        assert {"AC-940", "AC-941", "AC-942", "AC-944", "AC-945", "AC-946", "AC-947"} <= covered
+        assert {"AC-942", "AC-944", "AC-945", "AC-946", "AC-947"} <= covered

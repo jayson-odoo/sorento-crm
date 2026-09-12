@@ -1,20 +1,22 @@
-"""R3, end to end: the tail WRITES `pending`, a later turn's head READS it (AC-201, D2).
+"""Retired `test_r3_pending_end_to_end.py`, kept UNCOLLECTED for its reusable classes.
 
-`test_r3_dual_read.py` proves the head's reader (`output_exchange.offer_is_open`)
-accepts the marker shape in isolation - a hand-built `previous_conversation_state` dict,
-never anything the CRM itself persisted. `test_tail_units.py::TestPendingMarker` proves
-the tail WRITES that shape - a hand-built `ctx`, never a real session round trip. Neither
-proves the two halves actually agree once a real turn writes what a real later turn
-reads off `respond_contacts.session_vars` - that is what only `run_turn -> complete_turn
--> run_turn` on the SAME contact, against the real (blank-schema) database, can show.
+AC-1033 (owner 12 Sep 2026: no persisted mirrors) retires this file's own subject - the
+tail WRITES `pending`, a later turn's head READS it, proven end to end through a real
+`run_turn -> complete_turn -> run_turn` chain. `pending` is one of the 34 legacy keys
+`SessionVars` no longer declares, so every test below that asserts on it directly is
+pinning a marker that no longer exists; none of them are collected from here (the
+leading underscore keeps this out of pytest's `test_*.py` discovery).
 
-Turn 1: the tail composes an escalation offer (`branch_kind = "escalate_offer"`) and
-`complete_turn` persists `pending = {kind: escalation_offer, team, domain}`.
-Turn 2: the customer's raw parser output carries `is_affirmative = True` and NOTHING
-about escalation being confirmed - `is_escalation_confirmation` starts False, exactly as
-a real LLM emission would for a bare "yes". The head's own `post_process` step, reading
-the persisted `pending` off turn 1's real database row, is what has to flip it, with no
-hand-built previous-state and no direct assignment by this test.
+**Why the file survives at all, renamed rather than deleted.** Two classes here -
+`TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode` and
+`TestAPartialDidYouMeanPickReplacesOnlyTheMissingToken` - are reused by COMPOSITION (a
+bare instance, never a subclass) from `test_pass4_item4_issue708_partial_pick_scope.py`,
+which measures a *different*, still-live finding (issue #708) through this chain's own
+seed/wiring helpers. Deleting the file wholesale breaks that import along with
+`_stub_parser` / `_session_of` / `seeded`, which five other still-live files import too.
+Moving instead of deleting keeps every dependent green; the price is that this file's
+OWN test methods (the `pending`-marker ones this docstring used to describe) no longer
+run from anywhere, which is the correct outcome for retired coverage.
 """
 from __future__ import annotations
 

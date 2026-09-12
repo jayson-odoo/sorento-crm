@@ -326,16 +326,16 @@ class TestATopicResetActuallySticks:
         assert turn.o["domain_cleared_on_topic_reset"] is True
 
     def test_a_reset_that_names_its_own_domain_keeps_that_one(self) -> None:
-        """"别的, any promotions?" is a reset AND a new subject."""
+        """"别的, any promotions?" is a reset AND a new subject. Under parser v3 the
+        domain comes from `asks[]` (`domains_from_asks`), not a `domain_hint` word."""
         turn = self._reset_turn(
-            o={"domain_hint": "promotion", "intent_hint": "check_promotion"},
-            parser_raw={"domain_hint": "promotion"},
+            o={"asks": [{"domain": "promotion", "entities": []}]},
         )
 
         out = fr.apply(self._focus(), turn)
 
         assert turn.o["domain_hint"] == "promotion"
-        assert fr.value_of(out.focus, "domain") == "promotion"
+        assert fr.value_of(out.focus, "domains") == ["promotion"]
 
     def test_owner_ruling_k2_never_clears_the_domain(self) -> None:
         """K2 fires on an EXPLICIT new-domain query, where the domain is the new one."""
@@ -548,40 +548,48 @@ class TestReuseAlive:
 
 
 # --------------------------------------------------------------------------- #
-# 4. domain_from_switch_word
+# 4. domains_from_asks
 # --------------------------------------------------------------------------- #
 
 
-class TestDomainFromSwitchWord:
-    """AC-942: "incoming?" after a stock answer keeps the products and switches the domain."""
+class TestDomainsFromAsks:
+    """AC-942 / AC-1012: "incoming?" after a stock answer keeps the products and
+    switches the domain. Ported from `TestDomainFromSwitchWord` (D3): under parser v3
+    the domain comes from `asks[]`, not a keyword read out of `domain_hint`."""
 
     def test_the_domain_moves_and_the_products_stay(self) -> None:
-        focus = {"domain": _slot("inventory"), "products": _slot([_entity("SRTWC8517")])}
+        focus = {"domains": _slot(["inventory"]), "products": _slot([_entity("SRTWC8517")])}
         out = fr.Outputs(focus=focus)
-        o = {"domain_hint": "inventory", "intent_hint": "check_stock"}
+        o = {"domain_hint": "inventory", "asks": [{"domain": "incoming", "entities": []}]}
 
-        fr.domain_from_switch_word(focus, _turn(o, switch_domain="incoming"), out)
+        fr.domains_from_asks(focus, _turn(o), out)
 
         assert o["domain_hint"] == "incoming"
-        assert o["domain_switched_by_keyword"] == "incoming"
+        assert fr.value_of(focus, "domains") == ["incoming"]
         assert [e["raw"] for e in fr.value_of(focus, "products")] == ["SRTWC8517"]
 
-    def test_the_intent_is_nulled_so_downstream_rederives_it(self) -> None:
-        """Keeping the old one routes a shipment question through the stock intent."""
-        focus = {"domain": _slot("inventory")}
+    def test_the_domain_hint_is_freshly_derived_not_carried(self) -> None:
+        """Keeping the OLD domain_hint / intent would route a shipment question
+        through the stock intent - `domains_from_asks` always derives `domain_hint`
+        fresh from this turn's own `asks`, never from what was there before."""
+        focus = {"domains": _slot(["inventory"])}
         out = fr.Outputs(focus=focus)
-        o = {"domain_hint": "inventory", "intent_hint": "check_stock"}
+        o = {
+            "domain_hint": "inventory",
+            "intent_hint": "check_stock",
+            "asks": [{"domain": "incoming", "entities": []}],
+        }
 
-        fr.domain_from_switch_word(focus, _turn(o, switch_domain="incoming"), out)
+        fr.domains_from_asks(focus, _turn(o), out)
 
-        assert o["intent_hint"] is None
+        assert o["domain_hint"] == "incoming"
 
-    def test_no_switch_word_changes_nothing(self) -> None:
-        focus = {"domain": _slot("inventory")}
+    def test_no_asks_changes_nothing(self) -> None:
+        focus = {"domains": _slot(["inventory"])}
         out = fr.Outputs(focus=focus)
-        o = {"domain_hint": "inventory", "intent_hint": "check_stock"}
+        o = {"domain_hint": "inventory", "intent_hint": "check_stock", "asks": []}
 
-        fr.domain_from_switch_word(focus, _turn(o, switch_domain=None), out)
+        fr.domains_from_asks(focus, _turn(o), out)
 
         assert o["domain_hint"] == "inventory"
         assert o["intent_hint"] == "check_stock"
@@ -735,7 +743,7 @@ class TestApplyRunsThemInThePlansOrder:
             "replace_same_axis",
             "reset_on_topic",
             "reuse_alive",
-            "domain_from_switch_word",
+            "domains_from_asks",
             "date_restated_only",
             "anaphora_reuses",
         ):
@@ -760,7 +768,7 @@ class TestApplyRunsThemInThePlansOrder:
             "replace_same_axis",
             "reset_on_topic",
             "reuse_alive",
-            "domain_from_switch_word",
+            "domains_from_asks",
             "date_restated_only",
             "anaphora_reuses",
         ]
@@ -785,7 +793,7 @@ class TestFromSessionProjectsALegacySession:
         assert set(projected) == {
             "products",
             "customer",
-            "domain",
+            "domains",
             "date_window",
             "attributes",
             "tier",
@@ -811,13 +819,13 @@ class TestFromSessionProjectsALegacySession:
         )
 
     def test_a_focus_that_lost_ONE_slot_keeps_the_rest_and_projects_nothing(self) -> None:
-        stored = {"domain": _slot("inventory", turn=8)}
+        stored = {"domains": _slot(["inventory"], turn=8)}
 
         projected = fr.from_session(
             {"focus": stored, "entities": [_entity("SRTWC8517")]}, turn_no=9
         )
 
-        assert set(projected) == {"domain"}, "the dead products slot is NOT rebuilt"
+        assert set(projected) == {"domains"}, "the dead products slot is NOT rebuilt"
 
     def test_a_stored_focus_wins_over_the_projection(self) -> None:
         stored = {"products": _slot([_entity("SRTKS6091")], turn=9)}
@@ -977,7 +985,7 @@ class TestTheRulesAreGoneFromOutputExchange:
             "replace_same_axis",
             "reset_on_topic",
             "reuse_alive",
-            "domain_from_switch_word",
+            "domains_from_asks",
             "date_restated_only",
             "anaphora_reuses",
         ],

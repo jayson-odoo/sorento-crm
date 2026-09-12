@@ -6,11 +6,13 @@ that registry version of the parser through a SECOND, fake provider and stores a
 write, no send. A shadow failure never touches the live turn. When the setting is null,
 nothing extra runs.
 
-RED: nothing in `engine.py` reads `chatbot_parser_shadow_version` or enqueues a shadow
-job yet - the column does not exist on `SystemSetting` either, so this test monkeypatches
-the CLASS attribute (a plain Python class attribute is a legitimate stand-in for a column
-that is not there yet: `getattr(row, "chatbot_parser_shadow_version", None)` reads through
-to it) rather than depending on a migration this lane has not written.
+S2/S4 flip: the column exists now (`system_settings.chatbot_parser_shadow_version`) and
+the engine reads it off the settings ROW, so `shadow_enabled` seeds a real row instead of
+monkeypatching a class attribute. The value is `chatbot_semantic_parser@<version>` - the
+format the coder's engine reads, matching `chatbot_semantic_parser` (the registry key) at
+a specific label/version. The shadow row's `message_id` is the live id suffixed
+`-shadow`: the unique index is `(contact_respond_id, message_id, attempt, is_test)` with
+no `ingress` column in it, so an identical message_id would collide with the live row.
 
 Uses the same seam as `tests/chatbot/test_engine.py`: `run_turn` then `complete_turn`
 against the blank Postgres schema, with the provider stubbed.
@@ -47,8 +49,14 @@ def seeded(session_factory):
 
 
 @pytest.fixture()
-def shadow_enabled(monkeypatch):
-    monkeypatch.setattr(SystemSetting, "chatbot_parser_shadow_version", SHADOW_VERSION, raising=False)
+def shadow_enabled(session_factory):
+    db = session_factory()
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting()
+        db.add(row)
+    row.chatbot_parser_shadow_version = SHADOW_VERSION
+    db.commit()
     return SHADOW_VERSION
 
 
@@ -89,6 +97,10 @@ class TestShadowParseRunsAlongsideTheLiveTurn:
         )
         shadow = shadow_rows[0]
         assert shadow.shadow_of == "ZZT-shadow-1"
+        assert shadow.message_id == "ZZT-shadow-1-shadow", (
+            "the unique index has no ingress column, so the shadow row's message_id "
+            "must not collide with the live row's"
+        )
         assert shadow.response is None
 
         live_row = (

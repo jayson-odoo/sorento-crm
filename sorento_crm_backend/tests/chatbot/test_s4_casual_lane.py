@@ -38,7 +38,8 @@ one shape, not a guess):
   via a name bound inside `casual.py`, matching this package's existing lazy-import
   convention (`head/access.py`, `head/parser.py`) so a lazy import inside the function
   stays patchable at the source.
-- `construct_user_prompt(ctx, resolved)` - pure, the six-field dict.
+- `construct_user_prompt(ctx, resolved)` - pure, the eight-field dict (AC-1024 added
+  `focus_hints` and `open_question`).
   `central_exchange(item)` - pure, the fence-stripping parse.
 - `resolve_clarifier_config(db)` / `call_clarifier(config, user_prompt)` - the SAME
   session-bound-config / no-session-call split `head/parser.py` already uses for the
@@ -248,7 +249,7 @@ class TestResolveForPrompt:
 
 
 # --------------------------------------------------------------------------- #
-# AC-401 / AC-402 - construct_user_prompt: the six fields, verbatim.
+# AC-401 / AC-402 / AC-1024 - construct_user_prompt: the eight fields, verbatim.
 # --------------------------------------------------------------------------- #
 
 
@@ -270,7 +271,10 @@ class TestConstructUserPrompt:
             "text": {"message": {"message": {"text": text}}},
         }
 
-    def test_builds_exactly_the_six_fields(self):
+    def test_builds_exactly_the_eight_fields(self):
+        """AC-1024: two fields joined the original six - `focus_hints` and
+        `open_question` (D15, the dialogue module's hints replace the raw `session_vars`
+        echo)."""
         casual = _casual()
         ctx = self._ctx(message_type="clarification")
         resolved = {
@@ -295,6 +299,8 @@ class TestConstructUserPrompt:
             "session_vars",
             "entities",
             "user_goal",
+            "focus_hints",
+            "open_question",
         }
         # Only entity_type / canonical_code survive - the flatMap in the node body.
         assert out["entities"] == [{"entity_type": "product", "canonical_code": "SRTSCBD402"}]
@@ -390,6 +396,14 @@ def test_s4_vendored_subset_is_present(node: str) -> None:
 def _replay(fixture: _corpus.Fixture) -> None:
     actual = _corpus.json_round_trip(_REPLAY_RUNNERS[fixture.node](fixture))
     expected = _corpus.json_round_trip(fixture.expected)
+    # AC-1024: `focus_hints` / `open_question` are new, unconditional additions to
+    # `construct_user_prompt`'s output - every capture predates them the same way the
+    # gate's `incompatible_only` predates PR #735 (`tests/chatbot/_corpus.py`'s
+    # `CAPTURE_BODY_ADDITIONS`). Stripped from BOTH sides, and only where `expected`
+    # genuinely lacks the key, so a future capture that disagrees on it still fails.
+    stripped = _corpus.keys_to_strip(fixture.node, expected)
+    actual = _corpus.strip_keys(actual, stripped)
+    expected = _corpus.strip_keys(expected, stripped)
     assert actual == expected, (
         f"{fixture.node}/{fixture.name} diverges from the captured n8n output\n"
         f"fixture: {fixture.path}"

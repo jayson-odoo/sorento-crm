@@ -32,7 +32,7 @@ from tests._pg_fixture import unique_code
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope
 from tests.chatbot.test_engine_company_scope import _seed_product
-from tests.chatbot.test_r3_pending_end_to_end import _stub_parser
+from tests.chatbot._shared_turn_helpers import _stub_parser
 
 
 @pytest.fixture()

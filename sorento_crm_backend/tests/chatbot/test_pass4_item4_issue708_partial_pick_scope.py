@@ -6,7 +6,7 @@ code from scope.
 did-you-mean offer; the turn persists `selection_context: suggest_offer` with
 `dym_last_result_set` null (the miss is claimed by `build-suggest-offer` before the tail runs,
 so `_partial_dym_block` never writes the dym roster - the SAME premise
-`test_r3_pending_end_to_end.py::TestAPartialDidYouMeanPickReplacesOnlyTheMissingToken` measures
+`tests/chatbot/_shared_turn_helpers.py::TestAPartialDidYouMeanPickReplacesOnlyTheMissingToken` measures
 and explicitly declines to grade: "Without [`reference_target: 'dym'`] the STOCK positional arm
 resolves the digit over `last_result_set` instead (measured: that arm came back
 `replace_combine` with only the pick in scope and the resolved SRTKS6091 dropped - a separate
@@ -26,11 +26,11 @@ Expected (AC-818's own visible contract, extended to this roster shape): the res
 from __future__ import annotations
 
 from tests.chatbot.test_engine import _parser_output
-from tests.chatbot.test_r3_pending_end_to_end import (
+from tests.chatbot._shared_turn_helpers import (
     TestAPartialDidYouMeanPickReplacesOnlyTheMissingToken as _PartialDymChain,
 )
-from tests.chatbot.test_r3_pending_end_to_end import _session_of
-from tests.chatbot.test_r3_pending_end_to_end import seeded  # noqa: F401 - re-exported fixture
+from tests.chatbot._shared_turn_helpers import _session_of
+from tests.chatbot._shared_turn_helpers import seeded  # noqa: F401 - re-exported fixture
 
 _base = _PartialDymChain()
 
