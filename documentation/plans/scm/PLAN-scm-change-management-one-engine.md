@@ -1,6 +1,6 @@
 # PLAN: managing a sales-order change after planning, one engine
 
-**Status:** Slices A, B and C built (C's Phase 1 and Phase 2 both). Same lane/scm-change-a-diff-parity, ONE PR
+**Status:** Slices A, B and C built (C's Phase 1 and Phase 2 both); Slice E built. Same lane/scm-change-a-diff-parity, ONE PR
 (#855) for all slices per the owner, 13 Sep 2026. Grilled with the owner across four rounds
 on 12 and 13
 September 2026; the agreed page is versioned at
@@ -78,7 +78,7 @@ S1 to S12 on the versioned grill page are the specification by example; the UAC 
 | B. Delta seam | Own-hold carve-out, whole-unit top-up (S1) and pool-share-inside-the-window (S11) already existed, now guarded by tests; the real gap was AC-B2's Borrow - the ladder's `order_borrow` rung was proposed but never composed, confirmed or given an ORDER_BACK on the donor's own line | `planning_change_service.composition_from_proposal` (`_borrow_components_from_sources`, new), `_validate_composition_shape`, `_to_confirm_line`, `project_supply_service._borrow_shortfalls` (donor-line resolution) |
 | C. Recompute-and-diff | `suggest()` and the rule table replaced by the diff of the re-run against the held composition; vocabulary Keep / Reduce / Release / Reallocate; Confirm / Amend only on the board; `BoardChangeTable` shows the composed suggestion | `planning_change_service.suggest`, `_build_row`, `apply`, `boardChangeAnnotations.ts`, `BoardChangeTable.tsx` |
 | D. Reallocation | Freed PO / SPO quantity: unlink then re-deal through the linking engine with the hot-selling gate; freed reserve moves to the receiving decision (S3); pool-location row for the leftover; `redirected_to_pool` retired | `project_order_inquiry_service.unplace`, `auto_place_for_products`, `_classification` (hot-selling), a hold-move between `SOSupplyDecision`s |
-| E. One signal | `challenge_if_drifted` removed from `proposal_for`, `confirm`, reconcile; "Needs CS review" retired from the sheet | `project_supply_service.py:3910-3992, 1037, 4126`, `project_so_reconciliation_service.py:562` |
+| E. One signal (built) | `challenge_if_drifted` deleted; a drift is never flipped to `challenged` on its own again, on the sheet read, on confirm, or on reconciliation's non-relink branch - the change batch is the only signal. Its borrow-hold release carries into batch apply instead; a per-line drift check replaces the whole-decision flip inside the carry-forward | `project_supply_service.py` (`proposal_for`, `confirm`, `_carried_lines`/`_carry_snapshot_has_drifted`), `project_so_reconciliation_service.py` (`_persist`), `planning_change_service.py` (`_apply_one_order`) |
 
 Slice A first because every later slice needs all kinds to arrive. B before C because C's
 suggestion text is only honest once the delta run exists. D last among the engine slices
@@ -399,3 +399,68 @@ S3, S4, S9, S10, S12 likewise), `decision` null / confirm / amend only.
    ORDER BACK arm removed, two unused locals dropped, and the prose naming a deleted
    function corrected. `PLANNING_CHANGE_REACTION_*` stays: `tests/test_project_so_unpublish
    .py` still writes `suggested=PLANNING_CHANGE_REACTION_KEEP` when it builds a row.
+
+## Slice E contract (captain, 13 September 2026, issue #860, AC-E1/AC-E2; AC-X1, issue #854)
+
+1. `challenge_if_drifted` (`project_supply_service.py`) loses every caller and is deleted
+   outright, not left dead: `proposal_for` no longer challenges an active decision on the
+   sheet read, `confirm` no longer challenges it on its way to `_write_decision`, and
+   `project_so_reconciliation_service.py`'s `_persist` non-relink branch no longer calls it
+   either (the relink branch's `supersede_for_material_change` is untouched - AC-C06 stays,
+   only the SECOND signal a re-mapping never needed goes). A drift against a confirmed
+   revision's frozen snapshot is never a signal of its own again; the change batch a re-run
+   or manual edit raises is the only thing that supersedes an active revision now.
+   `_release_supply_borrow_holds` stays a standalone method (`supersede_for_material_change`
+   still calls it on a relink), and the legacy `DECISION_CHALLENGED` constant and
+   `challenged_reason` serialisation stay for rows a pre-Slice-E confirm already left in that
+   state.
+2. Retiring the whole-decision flip uncovered a real per-line gap it had been covering for:
+   `_carried_lines` carries every previously-covered, unnamed line into a fresh confirmation
+   verbatim, and used to rely on `challenge_if_drifted` having already flipped the WHOLE
+   decision to `challenged` (so `active_decision()` read `None` and nothing was left to
+   carry) whenever any one covered line's facts had moved. With that flip gone, a line whose
+   frozen link, open quantity or required date has since drifted would otherwise be carried
+   on a stale snapshot. `_carry_snapshot_has_drifted` reads the same three facts `challenge_
+   if_drifted` used to compare, per line, so only the drifted line goes back to undecided -
+   the lines a confirmation DOES name still commit exactly as before.
+3. The borrow-hold release `challenge_if_drifted` used to perform as a side effect moves to
+   batch apply: `_apply_one_order` (`planning_change_service.py`), immediately before the
+   order's own `confirm()` call, retires the previous active revision's step-3 supply-borrow
+   placements on every line THIS BATCH has a row for (`ProjectOrderInquiryService.
+   retire_supply_borrow_rows(pso_id, reason=f"Planning change {batch.id}", line_ids=list(
+   by_line_id.keys()))`). `confirm()`'s own retirement of a re-decided line's old placement
+   (`_retire_supply_borrows`) only reaches a line that is actually CHECKED (named in the
+   payload, or carried) - a line this batch UNCOVERS or RETIRES is neither, so without this
+   call its old placement would keep a document pinned to a revision that no longer covers
+   it. A composition that still carries the same document is re-placed by `confirm()`
+   moments later at the new quantity (one live link, never two); one that drops it leaves
+   nothing pinned.
+4. AC-X1 (issue #854): `_purchasing_user_ids` (`project_order_inquiry_service.py`) matches
+   every role slug STARTING WITH `purchasing` (`UserRole.slug.like("purchasing%")`) rather
+   than the single literal slug, so `purchasing_manager` and `purchasing_executive` are
+   notified alongside `purchasing` itself; a role that merely contains the word elsewhere in
+   its slug is not matched (prefix, not substring).
+
+**Two pre-existing tests reported, not touched (captain's own instruction - no test edits;
+these predate this slice and are not among the tester's rewrites):**
+
+- `tests/test_so_supply_confirmation.py::test_a_reconciliation_link_change_supersedes_the_
+  active_decision` is the OLDER AC-C06 test (`STAGE1C-scm-front-planning-promising.md`, a
+  different, earlier plan) that this slice's own `test_reconciliation_without_a_relink_
+  leaves_the_decision_active` (`tests/scm/test_one_signal.py`, AC-E1c) directly supersedes:
+  its scenario is a quantity drift on the SAME core line, no relink, and its assertion
+  (`state in ("superseded", "challenged")`) accepted the retired `challenged` outcome as one
+  of two valid branches. Under AC-E1 ("no decision is set to `challenged`... the change batch
+  is the only signal") that branch cannot fire and the scenario never reaches `supersede_
+  for_material_change` either (nothing relinked), so the decision now correctly reads
+  `active` - the exact behaviour AC-E1c pins. Measured directly: fails today with `active`
+  where it asserts `superseded`/`challenged`.
+- `tests/test_planning_changes.py::test_apply_returns_a_dropped_bystander_in_returned_to_
+  review` and `::test_apply_of_an_already_challenged_revision_still_reports_its_bystanders`
+  are fix-cluster tests from 20 August 2026 built entirely around `challenge_if_drifted`'s
+  side effects inside `confirm()` (one calls `supply.challenge_if_drifted(order)` directly
+  and asserts the row it leaves `challenged`; the other relies on `confirm()`'s internal
+  call to it superseding a sibling line mid-request). Both fail now - one with
+  `AttributeError: 'ProjectSupplyService' object has no attribute 'challenge_if_drifted'`,
+  confirming the method the retired flip removed is exactly what they exercise - and neither
+  can pass again without the mechanism AC-E2 explicitly retires.

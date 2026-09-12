@@ -3165,6 +3165,18 @@ def _apply_one_order(
     settled_in_place: List[str] = []
     auto_place_products: List[str] = []
     if confirm_lines:
+        if active_decision is not None:
+            # AC-E2 (Slice E, one signal): the borrow-hold release `challenge_if_drifted`
+            # used to perform for the WHOLE decision now has to be earned per line here -
+            # `confirm()`'s own retirement of a re-decided line's old placement only
+            # reaches a line that is actually CHECKED (named or carried), so a line this
+            # batch UNCOVERS or RETIRES, which is neither, would otherwise keep its old
+            # step-3 placement pinned to a revision that no longer covers it.
+            ProjectOrderInquiryService(db).retire_supply_borrow_rows(
+                pso_id,
+                reason=f"Planning change {batch.id}",
+                line_ids=list(by_line_id.keys()),
+            )
         body = ConfirmSupplyBody(lines=[_to_confirm_line(p) for p in confirm_lines])
         result = supply.confirm(
             order, body, actor_user_id=actor, uncover_line_ids=uncover_line_ids,
