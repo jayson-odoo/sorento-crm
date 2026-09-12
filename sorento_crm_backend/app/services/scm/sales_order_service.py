@@ -44,7 +44,7 @@ from app.services.numbering_service import NumberingService
 from app.services.scm.demand import is_open_demand
 from app.services.scm.demand_class import DEMAND_CLASSES, class_of
 from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE
-from app.services.scm.outstanding_diff import Diff, Line, diff_lines
+from app.services.scm.outstanding_diff import UNCHANGED, Diff, Line, diff_lines
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +118,14 @@ def _line_amount(ln: SalesOrderLine) -> Optional[Decimal]:
 
 
 def _order_amount(lines: list[SalesOrderLine]) -> Optional[Decimal]:
-    """The order's own total, or None when not one of its lines carries money."""
-    amounts = [a for a in (_line_amount(ln) for ln in lines) if a is not None]
+    """The order's own total, or None when not one of its lines carries money.
+
+    A CANCELLED line (review round, R-S3) contributes nothing - it never shipped and is
+    not part of what the order still owes, the same reason `total_qty` in `serialize()`
+    excludes it.
+    """
+    open_lines = [ln for ln in lines if (ln.line_status or "open") != CANCELLED]
+    amounts = [a for a in (_line_amount(ln) for ln in open_lines) if a is not None]
     if not amounts:
         return None
     return sum(amounts, Decimal(0)).quantize(_MONEY_PLACES, rounding=ROUND_HALF_UP)
@@ -431,7 +437,11 @@ class SalesOrderService:
             # page catching up with `scm.committed_v`, the netting engine and the planning
             # board rather than a new one.
             outstanding = 0.0 if (ln.line_status or "open") != "open" else max(qo - qd, 0.0)
-            total_qty += qo
+            # A CANCELLED line (review round, R-S3) is not part of the order's own total -
+            # it never shipped and nothing about it is still owed, so it reads the same as
+            # a line that was never there rather than inflating "Total qty".
+            if (ln.line_status or "open") != CANCELLED:
+                total_qty += qo
             committed += outstanding
             if ln.line_status == "open" and outstanding > 0:
                 open_lines += 1
@@ -1371,6 +1381,16 @@ class SalesOrderService:
         after_lines: list[Line] = []
 
         for line, old_qty, old_date, old_item_code, old_location in upsert.matched:
+            # No CANCELLED-before-this-edit guard here, deliberately: `_upsert_lines`
+            # already guarantees `upsert.matched` never holds a line that was cancelled
+            # BEFORE this call started (the SKU fallback excludes one, and the id-match
+            # "reopens nothing" branch records no snapshot for one at all) - so `line`
+            # here was open a moment ago even when THIS SAME edit just settled it to 0
+            # and cancelled it (R-S5). A status guard keyed on `line.line_status` would
+            # read that POST-mutation value and wrongly drop the very qty-to-zero change
+            # this diff exists to raise - the bug review round R-B2's fix actually needed
+            # lived in `_upsert_lines`'s `removed` computation instead (below), which is
+            # keyed on the line's status at read time, before any mutation this call makes.
             lid = str(line.id)
             before_lines.append(Line(
                 doc_number=so.so_number, item_code=old_item_code, location=old_location,
@@ -1413,7 +1433,7 @@ class SalesOrderService:
             c for c in diff_lines(
                 before_lines, after_lines, scope_documents=(so.so_number,),
             ).changes
-            if c.kind != "unchanged"
+            if c.kind != UNCHANGED
         ]
         if not changes:
             return None
@@ -1529,6 +1549,11 @@ class SalesOrderService:
                     (
                         l for l in existing_lines
                         if l.id not in matched_ids
+                        # A CANCELLED row is never re-matched by SKU (review round,
+                        # R-B1): the same product re-added after a cancellation is a
+                        # NEW open line, not a silent write onto the ended one - an id
+                        # match below can still name it explicitly.
+                        and (l.line_status or "open") != CANCELLED
                         and l.product is not None
                         and l.product.product_code.lower() == sku_norm
                     ),
@@ -1554,6 +1579,16 @@ class SalesOrderService:
                 for col in ("unit_price", "discount")
                 if col in fields_set
             }
+            if target is not None and (target.line_status or "open") == CANCELLED:
+                # Named explicitly by id (the SKU fallback above never re-matches a
+                # cancelled row) - a payload line naming a cancelled row's own id
+                # reopens nothing. Matched, so `removed` below does not read it as
+                # dropped-again, but otherwise untouched: no snapshot, no write, no
+                # diff. Chosen over silently reopening it - nothing today sends an id
+                # this deliberately, and reopening on a bare id match would undo a
+                # Slice A cancellation by surprise rather than by an explicit edit.
+                matched_ids.add(target.id)
+                continue
             if target is not None:
                 matched_ids.add(target.id)
                 # Snapshotted BEFORE any of the mutations below - the only place this
@@ -1570,6 +1605,13 @@ class SalesOrderService:
                 ))
                 target.product_id = prod.id
                 target.qty_ordered = ln.qty_ordered
+                if float(ln.qty_ordered or 0) <= 0:
+                    # Settling a held line's qty to 0 ends it exactly like a removal does
+                    # (review round, R-S5) - one shape, `line_status = CANCELLED`, for both
+                    # gestures, so a later reader (the SKU fallback above, the removed-line
+                    # dependents check, `_order_amount`/`total_qty`) has one thing to check
+                    # rather than two.
+                    target.line_status = CANCELLED
                 if "warehouse_code" in fields_set:
                     target.warehouse_id = warehouse_id
                 if "required_date" in fields_set:
@@ -1595,21 +1637,35 @@ class SalesOrderService:
                 self.db.add(new_line)
                 added_lines.append(new_line)
 
-        removed = [l for l in existing_lines if l.id not in matched_ids]
+        # A line ALREADY cancelled (review round, R-B2) is not "removed" again on a later
+        # save that simply never named it - it left the payload once, the first save that
+        # dropped it already raised the cancellation, and re-reading it here would raise a
+        # second batch (or a second delete attempt) for a fact already recorded. Excluded
+        # here, not by filtering `existing_lines` itself, so R-B1's payload-with-id match
+        # above still finds it (and `matched_ids` still counts it out of BOTH lists).
+        removed = [
+            l for l in existing_lines
+            if l.id not in matched_ids and (l.line_status or "open") != CANCELLED
+        ]
         removed_before: list[dict] = []
         if removed:
             removed_ids = [l.id for l in removed]
-            # Four EXISTS subqueries, not five - `OrderInquiryRow` moved OUT of this check
+            # Three EXISTS subqueries, not five - `OrderInquiryRow` moved OUT of this check
             # (Slice A rule 5): an inquiry row alone no longer refuses the removal, it earns
-            # the CANCEL treatment below instead. The remaining four (a draft finding, an
-            # allocation, a claim, a divergence line) still block: proof real planning
-            # arithmetic already ran against this line, which a cancel-in-place cannot
-            # safely leave dangling the way an inquiry row or a held decision can.
-            has_dependents = or_(
+            # the CANCEL treatment below instead. `SOLineAllocation` is split out on its own
+            # (review round, R-S2): confirming a decision (even a pure Buy) always writes
+            # the line ITS OWN `SOLineAllocation` row, so a held line always has one - that
+            # one alone is bypassed for a held-or-inquired line, never the other three (a
+            # draft finding, an ALLOCATION CLAIM, a divergence line), each of which is proof
+            # of planning arithmetic a cancel-in-place cannot safely leave dangling
+            # regardless of whether this line is also held.
+            has_other_dependents = or_(
                 exists().where(SODraftFinding.line_id == ProjectSalesOrderLine.id),
-                exists().where(SOLineAllocation.so_line_id == ProjectSalesOrderLine.id),
                 exists().where(AllocationClaim.so_line_id == ProjectSalesOrderLine.id),
                 exists().where(ProjectSODivergenceLine.so_line_id == ProjectSalesOrderLine.id),
+            )
+            has_allocation = exists().where(
+                SOLineAllocation.so_line_id == ProjectSalesOrderLine.id
             )
             has_inquiry = exists().where(
                 OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id,
@@ -1623,7 +1679,8 @@ class SalesOrderService:
                     ProjectSalesOrder.project_id,
                     ProjectSalesOrder.status,
                     ProjectSalesOrder.provisional_ref,
-                    has_dependents.label("has_dependents"),
+                    has_other_dependents.label("has_other_dependents"),
+                    has_allocation.label("has_allocation"),
                     has_inquiry.label("has_inquiry"),
                 )
                 .join(
@@ -1647,13 +1704,24 @@ class SalesOrderService:
                         f"{referrer.provisional_ref}",
                         code="SO_LINE_LINKED_TO_PROJECT",
                     )
-                # Held-or-inquiry is asked BEFORE `has_dependents`: confirming a decision
+                if referrer.has_other_dependents:
+                    # Unconditional - a draft finding, an allocation claim (another
+                    # project's, say) or a divergence line blocks whether or not this
+                    # line is ALSO held (R-S2): only `SOLineAllocation` is the decision's
+                    # own bookkeeping a held line is expected to carry.
+                    raise AppException(
+                        409,
+                        "Cannot remove a line that fulfilment planning has already "
+                        f"allocated (project sales order {referrer.provisional_ref})",
+                        code="SO_LINE_LINKED_TO_PROJECT",
+                    )
+                # Held-or-inquiry is asked BEFORE `has_allocation`: confirming a decision
                 # (even a pure Buy) writes the line its own `SOLineAllocation` row
                 # (`ProjectSupplyService._write_decision_lines`'s `buy > 0` branch), so a
-                # held line always has a dependent in the four-table sense below - checking
-                # `has_dependents` first would 409 the exact removal Slice A rule 5 says
-                # must be accepted. A line with NEITHER a held component nor an inquiry row
-                # still answers to the unchanged four-table / claim checks.
+                # held line always has one - checking `has_allocation` first would 409 the
+                # exact removal Slice A rule 5 says must be accepted. A line with NEITHER a
+                # held component nor an inquiry row still answers to the unchanged
+                # allocation / claim checks.
                 pso_id = str(referrer.pso_id)
                 if pso_id not in frozen_by_pso:
                     from app.services.project_supply_service import ProjectSupplyService
@@ -1671,7 +1739,7 @@ class SalesOrderService:
                     if referrer.core_sales_order_line_id:
                         cancel_core_ids.add(referrer.core_sales_order_line_id)
                     continue
-                if referrer.has_dependents:
+                if referrer.has_allocation:
                     raise AppException(
                         409,
                         "Cannot remove a line that fulfilment planning has already "
