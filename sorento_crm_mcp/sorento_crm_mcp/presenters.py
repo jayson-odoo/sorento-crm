@@ -1660,3 +1660,219 @@ def present_response(tool_name: str, raw: str) -> str:
             envelope["groups"] = rendered_groups
     _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)
+
+
+# --------------------------------------------------------------------------
+# outstanding report (SO backlog / DO pending) - PLAN-chatbot-outstanding-report.md
+# --------------------------------------------------------------------------
+# These two functions render the WHOLE WhatsApp reply directly as a string, not an
+# envelope: the report's shape (two named blocks, each with its own By location /
+# By customer subgroup, D6) does not fit the generic item/field envelope every
+# other tool builds above, and `present_response` never dispatches to them. The
+# chatbot business lane (S4) calls `_outstanding_report` / `_outstanding_detail`
+# straight, the same way `fetch.py`'s comments already describe this module as the
+# row->item mapping other lane code reuses.
+#
+# `report` is the shape `GET /api/v1/order-management/outstanding-report` returns
+# (S2), plus two header-only keys the CHATBOT LANE resolves before calling in -
+# the route itself never sees the raw word:
+#   - `location_token`: the raw location word from the message (`"IB"`), or `None`.
+#   - `location_codes`: what it resolved to (`["BRW-IB", "MWH-IB"]`), or `[]`.
+# `so` / `do` is `None` when that scope was not asked (D1); present with
+# `so_count`/`do_count` == 0 collapses the whole block to one miss line (AC-1107)
+# and drops that scope from the detail offer, so a miss never advertises a list
+# with nothing in it.
+
+
+def _outstanding_fmt_int(v: Any) -> str:
+    """Thousands-separated integer (D8): ``2411`` -> ``"2,411"``. A value that is not
+    a clean int passes through as its plain string - a hostile mock must never crash
+    the reply."""
+    try:
+        return f"{int(v):,}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _outstanding_ddmmyyyy(iso: Any) -> str:
+    """``"2026-01-05"`` -> ``"05/01/2026"`` - the ONLY date form this report ever
+    prints (D8/AC-1104)."""
+    return datetime.strptime(str(iso), "%Y-%m-%d").strftime("%d/%m/%Y")
+
+
+def _outstanding_date_range(from_iso: Any, to_iso: Any) -> str:
+    """No window -> ``"all"``; a single day prints once; otherwise ``"dd/mm/yyyy to
+    dd/mm/yyyy"``. Never "oldest" / "newest" / "since" (AC-1104)."""
+    if not _filled(from_iso) and not _filled(to_iso):
+        return "all"
+    if _filled(from_iso) and _filled(to_iso):
+        if from_iso == to_iso:
+            return _outstanding_ddmmyyyy(from_iso)
+        return f"{_outstanding_ddmmyyyy(from_iso)} to {_outstanding_ddmmyyyy(to_iso)}"
+    return _outstanding_ddmmyyyy(from_iso or to_iso)
+
+
+def _outstanding_location_label(code: Any) -> str:
+    """NULL warehouse renders as ``Unassigned`` (D8 transparency) - never hidden,
+    never elided."""
+    return str(code) if _filled(code) else "Unassigned"
+
+
+def _outstanding_location_header(token: Any, codes: Any) -> str:
+    """``"IB"`` resolved to two codes -> ``"IB (BRW-IB, MWH-IB)"``; an exact code
+    prints alone (the token already equals the one code - brackets would only
+    repeat it, AC-1105); no token, or a token that resolved to nothing (AC-1133,
+    the lane's job, not this function's), prints ``"all"``."""
+    resolved = [c for c in (codes or []) if _filled(c)]
+    if not _filled(token) or not resolved:
+        return "all"
+    if len(resolved) == 1 and str(resolved[0]).casefold() == str(token).casefold():
+        return str(resolved[0])
+    return f"{token} ({', '.join(str(c) for c in resolved)})"
+
+
+def _outstanding_so_block(so: dict, by_location: list, by_customer: list) -> str:
+    lines = [
+        "*Sales order outstanding*",
+        f"Ordered: {_outstanding_fmt_int(so.get('ordered_qty'))}",
+        f"Transferred to DO: {_outstanding_fmt_int(so.get('transferred_qty'))}",
+        f"Outstanding: {_outstanding_fmt_int(so.get('outstanding_qty'))}",
+        f"Sales orders: {_outstanding_fmt_int(so.get('so_count'))}",
+        f"Order date range: {_outstanding_date_range(so.get('order_date_min'), so.get('order_date_max'))}",
+        "*_By location_*",
+    ]
+    for row in by_location:
+        lines.append(
+            f"{_outstanding_location_label(row.get('code'))}: "
+            f"{_outstanding_fmt_int(row.get('ordered_qty'))} "
+            f"(O/S: {_outstanding_fmt_int(row.get('outstanding_qty'))})"
+        )
+    lines.append("*_By customer_*")
+    for row in by_customer:
+        lines.append(
+            f"{row.get('customer_name')}: {_outstanding_fmt_int(row.get('ordered_qty'))} "
+            f"(O/S: {_outstanding_fmt_int(row.get('outstanding_qty'))})"
+        )
+    return "\n".join(lines)
+
+
+def _outstanding_do_block(do: dict, by_location: list, by_customer: list) -> str:
+    lines = [
+        "*Delivery order pending*",
+        f"DO qty: {_outstanding_fmt_int(do.get('do_qty'))}",
+        f"Delivered: {_outstanding_fmt_int(do.get('delivered_qty'))}",
+        f"Pending: {_outstanding_fmt_int(do.get('pending_qty'))}",
+        f"Delivery orders: {_outstanding_fmt_int(do.get('do_count'))}",
+        f"DO date range: {_outstanding_date_range(do.get('do_date_min'), do.get('do_date_max'))}",
+        "*_By location_*",
+    ]
+    for row in by_location:
+        lines.append(
+            f"{_outstanding_location_label(row.get('code'))}: "
+            f"{_outstanding_fmt_int(row.get('do_qty'))} "
+            f"(O/S: {_outstanding_fmt_int(row.get('pending_qty'))})"
+        )
+    lines.append("*_By customer_*")
+    for row in by_customer:
+        lines.append(
+            f"{row.get('customer_name')}: {_outstanding_fmt_int(row.get('do_qty'))} "
+            f"(O/S: {_outstanding_fmt_int(row.get('pending_qty'))})"
+        )
+    return "\n".join(lines)
+
+
+def _outstanding_report(report: dict) -> str:
+    """The SO backlog / DO pending reply (PLAN-chatbot-outstanding-report.md, "The
+    reply (contract for Phase 1)"). See the module-level note above for the
+    `report` shape."""
+    lines = [
+        f"Product: {report.get('product_code')}",
+        f"Customer: {report.get('customer_name') if _filled(report.get('customer_name')) else 'all'}",
+        f"Location: {_outstanding_location_header(report.get('location_token'), report.get('location_codes'))}",
+        f"Order date: {_outstanding_date_range(report.get('order_date_from'), report.get('order_date_to'))}",
+    ]
+
+    blocks: list[str] = []
+    offer: list[str] = []
+
+    so = report.get("so")
+    if so is not None:
+        if not so.get("so_count"):
+            blocks.append("No open sales order.")
+        else:
+            blocks.append(
+                _outstanding_so_block(
+                    so, report.get("so_by_location") or [], report.get("so_by_customer") or []
+                )
+            )
+            offer.append("Sales order list")
+
+    do = report.get("do")
+    if do is not None:
+        if not do.get("do_count"):
+            blocks.append("No pending delivery order.")
+        else:
+            blocks.append(
+                _outstanding_do_block(
+                    do, report.get("do_by_location") or [], report.get("do_by_customer") or []
+                )
+            )
+            offer.append("Delivery order list")
+
+    text = "\n".join(lines)
+    if blocks:
+        text += "\n\n" + "\n\n".join(blocks)
+    if offer:
+        options = "\n".join(f"{i + 1}. {label}" for i, label in enumerate(offer))
+        text += "\n\n" + "Reply with a number for detail:\n" + options
+    return text
+
+
+# field order fixed by scope (AC-1106); `kind` picks the value formatter below.
+_OUTSTANDING_SO_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("SO Number", "so_number", "text"),
+    ("Customer", "customer_name", "text"),
+    ("Location", "location", "location"),
+    ("Ordered", "ordered_qty", "qty"),
+    ("Transferred to DO", "transferred_qty", "qty"),
+    ("Outstanding", "outstanding_qty", "qty"),
+    ("Order Date", "order_date", "date"),
+)
+_OUTSTANDING_DO_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("DO Number", "do_number", "text"),
+    ("Customer", "customer_name", "text"),
+    ("Location", "location", "location"),
+    ("DO Qty", "do_qty", "qty"),
+    ("Delivered", "delivered_qty", "qty"),
+    ("Pending", "pending_qty", "qty"),
+    ("DO Date", "do_date", "date"),
+)
+
+
+def _outstanding_detail(report: dict, scope: str) -> str:
+    """Numbered SO (``scope="so"``) or DO (``scope="do"``) list (AC-1106), served
+    from the SAME report the presenter already rendered - no second fetch, no
+    re-parse (D10). Every row renders, in whatever order `so_rows` / `do_rows`
+    already carry (the route sorts them, per the backend contract); "no `+N
+    more`" - D8 - falls out of this loop never truncating."""
+    if scope == "so":
+        rows = report.get("so_rows") or []
+        field_defs = _OUTSTANDING_SO_FIELDS
+    else:
+        rows = report.get("do_rows") or []
+        field_defs = _OUTSTANDING_DO_FIELDS
+
+    items: list[str] = []
+    for i, row in enumerate(rows, start=1):
+        field_lines = []
+        for label, key, kind in field_defs:
+            value = row.get(key)
+            if kind == "qty":
+                value = _outstanding_fmt_int(value)
+            elif kind == "location":
+                value = _outstanding_location_label(value)
+            elif kind == "date" and _filled(value):
+                value = _outstanding_ddmmyyyy(value)
+            field_lines.append(f"*{label}:* {value}")
+        items.append(f"{i}. " + "\n".join(field_lines))
+    return "\n\n".join(items)

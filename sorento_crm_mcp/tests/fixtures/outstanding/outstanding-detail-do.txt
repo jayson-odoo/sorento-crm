@@ -1,0 +1,7 @@
+1. *DO Number:* DO220456
+*Customer:* Dealer A Sdn Bhd
+*Location:* BRW-IB
+*DO Qty:* 640
+*Delivered:* 0
+*Pending:* 640
+*DO Date:* 03/02/2026

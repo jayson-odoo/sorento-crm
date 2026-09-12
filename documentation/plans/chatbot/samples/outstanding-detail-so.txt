@@ -1,0 +1,7 @@
+1. *SO Number:* SO331785
+*Customer:* Dealer A Sdn Bhd
+*Location:* BRW-BB
+*Ordered:* 410
+*Transferred to DO:* 0
+*Outstanding:* 410
+*Order Date:* 20/12/2024

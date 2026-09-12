@@ -1,0 +1,18 @@
+Product: SRTWT7445
+Customer: all
+Location: IB (BRW-IB, MWH-IB)
+Order date: 01/01/2026 to 31/12/2026
+
+*Delivery order pending*
+DO qty: 640
+Delivered: 0
+Pending: 640
+Delivery orders: 3
+DO date range: 03/02/2026 to 30/08/2026
+*_By location_*
+BRW-IB: 640 (O/S: 640)
+*_By customer_*
+Dealer A Sdn Bhd: 640 (O/S: 640)
+
+Reply with a number for detail:
+1. Delivery order list

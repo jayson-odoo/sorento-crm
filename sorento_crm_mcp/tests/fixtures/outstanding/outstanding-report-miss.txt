@@ -1,0 +1,8 @@
+Product: SRTWT9999
+Customer: all
+Location: all
+Order date: all
+
+No open sales order.
+
+No pending delivery order.
