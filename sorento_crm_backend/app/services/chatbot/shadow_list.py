@@ -66,27 +66,78 @@ def parse_domains(turn: Any) -> list[str] | None:
     return None
 
 
-def _live_rows(db: Session, shadow_rows: Iterable[ChatbotTurn]) -> dict[str, ChatbotTurn]:
-    """The live turn each shadow row names, keyed by `shadow_of`.
+# The six columns either side of the comparison is made of. SELECTED BY NAME, never as a
+# whole ORM row: `envelope` and `response` are the two biggest columns in the table and a
+# summary reads thousands of rows, so fetching them would move megabytes to answer a
+# question about a branch kind and a list of domains - and would put every one of those
+# rows in the session's identity map on the way past. `trace` is here because it is where
+# the parse is, which is what `parse_domains` reads; it is the one JSON column the answer
+# actually needs.
+_COMPARISON_COLUMNS = (
+    ChatbotTurn.id,
+    ChatbotTurn.contact_respond_id,
+    ChatbotTurn.message_id,
+    ChatbotTurn.shadow_of,
+    ChatbotTurn.branch_kind,
+    ChatbotTurn.created_at,
+    ChatbotTurn.trace,
+)
 
-    One query for the page, not one per row. A shadow row whose live turn has since been
-    deleted simply has no entry, and every reader treats that as "nothing to compare".
+
+def _pair_key(contact_respond_id: Any, message_id: Any) -> tuple[str, str]:
+    """WHICH live turn a shadow row is the shadow OF.
+
+    The message id alone is not it. `message_id` is unique per CONTACT, not globally -
+    the unique index is `(contact_respond_id, message_id, attempt, is_test)` - so two
+    contacts whose upstream handed out the same id would pair with each other's turns and
+    the window would report drift that never happened.
+    """
+    return (str(contact_respond_id), str(message_id))
+
+
+def _newer(left: Any, right: Any) -> bool:
+    """`left.created_at` is strictly newer, with NULL treated as oldest.
+
+    `created_at or 0` compared a datetime with an int the moment either side was null,
+    which is a `TypeError` on the one row that has no timestamp rather than a comparison.
+    """
+    a = getattr(left, "created_at", None)
+    b = getattr(right, "created_at", None)
+    if a is None:
+        return False
+    if b is None:
+        return True
+    return a > b
+
+
+def _live_rows(db: Session, shadow_rows: Iterable[Any]) -> dict[tuple[str, str], Any]:
+    """The live turn each shadow row names, keyed by `(contact, shadow_of)`.
+
+    One query for the page, not one per row, and six columns rather than the whole row.
+    A shadow row whose live turn has since been deleted simply has no entry, and every
+    reader treats that as "nothing to compare".
     """
     wanted = {row.shadow_of for row in shadow_rows if row.shadow_of}
-    if not wanted:
+    contacts = {row.contact_respond_id for row in shadow_rows if row.contact_respond_id}
+    if not wanted or not contacts:
         return {}
     rows = (
-        db.query(ChatbotTurn)
-        .filter(ChatbotTurn.message_id.in_(wanted), ChatbotTurn.ingress != "shadow")
+        db.query(*_COMPARISON_COLUMNS)
+        .filter(
+            ChatbotTurn.message_id.in_(wanted),
+            ChatbotTurn.contact_respond_id.in_(contacts),
+            ChatbotTurn.ingress != "shadow",
+        )
         .all()
     )
-    out: dict[str, ChatbotTurn] = {}
+    out: dict[tuple[str, str], Any] = {}
     for row in rows:
         # Newest wins on a message answered twice (a retry writes a second row): the live
         # answer the customer last got is the one the shadow is being judged against.
-        current = out.get(str(row.message_id))
-        if current is None or (row.created_at or 0) > (current.created_at or 0):
-            out[str(row.message_id)] = row
+        key = _pair_key(row.contact_respond_id, row.message_id)
+        current = out.get(key)
+        if current is None or _newer(row, current):
+            out[key] = row
     return out
 
 
@@ -143,7 +194,11 @@ def decorate(db: Session, items: list[Any], rows: list[ChatbotTurn]) -> None:
         item.domains = parse_domains(row)
         item.contact_display = labels.get(str(row.contact_respond_id))
         item.message = _message_text(row)
-        live = live_by_message.get(str(row.shadow_of)) if row.shadow_of else None
+        live = (
+            live_by_message.get(_pair_key(row.contact_respond_id, row.shadow_of))
+            if row.shadow_of
+            else None
+        )
         item.live = (
             ShadowTurnLiveSide(
                 id=str(live.id),
@@ -158,14 +213,28 @@ def decorate(db: Session, items: list[Any], rows: list[ChatbotTurn]) -> None:
 def summarise(db: Session, query: Query) -> Any:
     """AC-1030: how many shadow turns the range holds, and how often the two agreed.
 
+    `query` is the WHOLE FILTERED RANGE, never the cursor-narrowed page query: the caller
+    asks "is the new parser safe yet", which no single page can answer, and a summary that
+    silently shrank as the reader paged would be a different number every screen.
+
     Parity is over the rows that could be PAIRED with a live turn, not over every shadow
     row: a shadow of a turn whose live row has gone says nothing about the new parser, and
     counting it as a disagreement would make the number worse the older the range gets.
     Null when nothing could be paired, which the screen says in words.
+
+    NEWEST FIRST and capped at `SUMMARY_SCAN_LIMIT`, both explicit. Without the order the
+    cap takes whatever rows the plan happened to reach, so a truncated window would answer
+    with an arbitrary sample rather than the most recent one; `count` is what the cap
+    reached, which is what the screen reports.
     """
     from app.schemas.chatbot_turn import ShadowTurnSummary
 
-    rows = query.limit(SUMMARY_SCAN_LIMIT).all()
+    rows = (
+        query.with_entities(*_COMPARISON_COLUMNS)
+        .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.id.desc())
+        .limit(SUMMARY_SCAN_LIMIT)
+        .all()
+    )
     if not rows:
         return ShadowTurnSummary(count=0)
     try:
@@ -176,7 +245,11 @@ def summarise(db: Session, query: Query) -> Any:
 
     paired = branch_same = asks_same = 0
     for row in rows:
-        live = live_by_message.get(str(row.shadow_of)) if row.shadow_of else None
+        live = (
+            live_by_message.get(_pair_key(row.contact_respond_id, row.shadow_of))
+            if row.shadow_of
+            else None
+        )
         if live is None:
             continue
         paired += 1

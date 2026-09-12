@@ -212,6 +212,11 @@ def list_turns(
         )
     if not include_test:
         query = query.filter(ChatbotTurn.is_test.is_(False))
+    # THE RANGE, before the cursor narrows it. `summarise` is asked about the whole window
+    # and not about this page, so it must not inherit the page's own "older than the last
+    # row I sent" filter - a parity that shrank every time the reader paged would be a
+    # different answer to the same question on every screen.
+    range_query = query
     if cursor:
         cursor_created_at, cursor_id = _decode_cursor(cursor)
         # Strictly AFTER the last row in newest-first order: older, or same instant with
@@ -238,7 +243,7 @@ def list_turns(
         # over the whole filtered range, not over the page, because that is the question
         # being asked.
         shadow_list.decorate(db, items, page)
-        summary = shadow_list.summarise(db, query)
+        summary = shadow_list.summarise(db, range_query)
     return ChatbotTurnListResponse(
         items=items,
         next_cursor=_encode_cursor(page[-1]) if has_more and page else None,
