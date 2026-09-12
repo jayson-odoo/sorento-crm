@@ -155,10 +155,12 @@ Backend (`sorento_crm_backend/`):
    the phrasing ("last purchase cost", "last cost", "what did we pay", "buying price",
    "成本", "上次采购价", "harga belian terakhir"), and that "how much do we sell it for" is
    NOT this domain. Extend the literal `domain_hint = ONE of:` list and the intent list.
-10. `alembic/versions/511_chatbot_parser_last_cost.py`: publishes both bodies as the next
+10. `alembic/versions/513_chatbot_parser_last_cost.py`: publishes both bodies as the next
     `chatbot_semantic_parser` versions, NO label, idempotent, `publish(session)` callable
-    outside alembic, exactly as 490. `down_revision` = current main head at cut time
-    (`./scripts/alembic-reparent.sh` before PR).
+    outside alembic, exactly as 490. Numbered 513, not 511: main's own head is already
+    `512_hidden_by_default_col`, and two unrelated `511_*` files already occupy that
+    number. `down_revision` = `512_hidden_by_default_col` (re-verify against the current
+    main head with `./scripts/alembic-reparent.sh` before PR).
 11. `app/services/mcp_tool_capability_service.py`: `ToolIntent` for the new tool
     (category `general_enquiries.procurement`, typical questions in en / zh / ms).
 

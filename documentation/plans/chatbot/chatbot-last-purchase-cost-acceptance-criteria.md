@@ -84,7 +84,7 @@ Plan: `PLAN-chatbot-last-purchase-cost.md`.
   gate asks for a product (no `ALLOWS_EMPTY` row).
 - AC-28 top_n passthrough. "last 3 purchase cost for M218" passes `top_n=3` directly (tool
   is in `TOP_N_DIRECT_TOOLS`), not `limit`.
-- AC-29 Prompt publish. Migration 511 adds one new unlabelled version per body, is
+- AC-29 Prompt publish. Migration 513 adds one new unlabelled version per body, is
   idempotent on re-run, and moves no label.
 
 ## Last-in family (pin, D5)

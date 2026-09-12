@@ -108,7 +108,7 @@ GROWTH_R1_ADDENDUM = "\n\n━━━━━━━━━━━━━━━━━━
 # n8n message and a second interleaved content edit would need a second slice-out.
 #
 # Published as a new UNLABELLED version of `chatbot_semantic_parser` by migration
-# `511_chatbot_parser_last_cost`, same immutable-versions-plus-movable-labels split as
+# `513_chatbot_parser_last_cost`, same immutable-versions-plus-movable-labels split as
 # 475 / 480 / 487 / 490. Nothing reaches a customer until the owner moves the
 # `production` label.
 LAST_COST_ADDENDUM = "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nLAST PURCHASE COST\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n== LAST PURCHASE COST: intent_hint \"check_po_cost\", domain_hint \"purchase_cost\" ==\n\"what did we pay a supplier for this, last time\" is a COST question, never a\nselling-price question - it is what WE PAID, not what WE CHARGE. Add it to\ndomain_hint = ONE of: ... as a valid value, and to the intent_hint list, alongside\nevery other domain already declared above.\n  - \"last purchase cost\", \"last cost\", \"what did we pay\", \"what did we pay for\",\n    \"buying price\", \"purchase price\", \"cost price\", \"上次采购价\", \"成本\",\n    \"harga belian terakhir\", \"harga beli\" -> intent_hint \"check_po_cost\",\n    domain_hint \"purchase_cost\"\n  - \"last 3 purchase cost\" sets top_n = 3 as well; \"by warehouse\" / \"by location\" sets\n    group_by \"warehouse\".\n\"how much do we sell it for\", \"selling price\", \"what do we charge\" are NEVER\npurchase_cost: those stay domain_hint \"master_products\" (list price) or \"promotion\"\n(a promo price), exactly as PRICE TERMINOLOGY already states.\nThe same code-is-the-product rule as PO / SPO applies: \"last purchase cost for\nSRTWC8517\" names a PRODUCT, never an order.\n"

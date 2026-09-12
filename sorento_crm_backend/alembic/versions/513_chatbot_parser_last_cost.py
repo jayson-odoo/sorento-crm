@@ -19,7 +19,11 @@ migration, and each publish is skipped when a version already carries that templ
 The insert logic lives in module-level `publish(session)` so it can be called outside
 alembic (e.g. to publish against the shared dev database without an `alembic upgrade`).
 
-Revision ID: 511_chatbot_parser_last_cost
+Numbered 513, not 511: main's own head is already `512_hidden_by_default_col`, and two
+unrelated `511_*` files (`511_so_project_label.py`, `511_supplier_country_id.py`) already
+occupy that number, so this migration chains onto 512 as 513.
+
+Revision ID: 513_chatbot_parser_last_cost
 Revises: 512_hidden_by_default_col
 """
 import logging
@@ -30,7 +34,7 @@ from sqlalchemy.orm import Session
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
-revision = "511_chatbot_parser_last_cost"
+revision = "513_chatbot_parser_last_cost"
 down_revision = "512_hidden_by_default_col"
 branch_labels = None
 depends_on = None
