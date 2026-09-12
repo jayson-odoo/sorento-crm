@@ -6285,6 +6285,27 @@ class ProjectSupplyService:
         # on the pile's own availability triple.
         order_backs: List[Dict[str, Any]] = []
         reference = order.autocount_doc_no or order.provisional_ref or ""
+        # AC-B2: "an ORDER_BACK row FOR THE DONOR" - a group borrow's hole is raised on the
+        # DONOR's own project line, not the asker's (which is what every OTHER row this
+        # method writes hangs off - the location-pile shortfall below has no single line to
+        # name it against). One batch query for every `donor_core_line_id` this
+        # confirmation's borrows name, rather than one lookup per component.
+        donor_core_line_ids = {
+            str(getattr(item, "donor_core_line_id", None))
+            for _line, entry, _fact in checked
+            for item in (entry.borrow or [])
+            if getattr(item, "donor_core_line_id", None) and _dec(item.qty) > _ZERO
+        }
+        donor_project_line_by_core: Dict[str, ProjectSalesOrderLine] = {}
+        if donor_core_line_ids:
+            for donor_line in (
+                self.db.query(ProjectSalesOrderLine)
+                .filter(
+                    ProjectSalesOrderLine.core_sales_order_line_id.in_(donor_core_line_ids)
+                )
+                .all()
+            ):
+                donor_project_line_by_core[str(donor_line.core_sales_order_line_id)] = donor_line
         for line, entry, fact in checked:
             for item in entry.borrow or []:
                 qty = _dec(item.qty)
@@ -6323,9 +6344,14 @@ class ProjectSupplyService:
                 code = warehouse.warehouse_code if warehouse else ""
                 line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
                 agent_text = f" (agent {donor_agent_code})" if donor_agent_code else ""
+                # The DONOR's own project line when it has one - AC-B2's "for the donor".
+                # Falls back to the asking line only for a donor core line with no project
+                # mirror (never adopted onto `projects.sales_orders`), which has nowhere
+                # else to hang the row and is the pre-existing behaviour for that edge case.
+                donor_line = donor_project_line_by_core.get(str(donor_core_line_id), line)
                 order_backs.append(
                     {
-                        "line": line,
+                        "line": donor_line,
                         "item_code": fact.item_code,
                         "qty": qty,
                         "required_date": (
