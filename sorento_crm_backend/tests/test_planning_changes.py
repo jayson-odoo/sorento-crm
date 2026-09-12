@@ -1932,15 +1932,15 @@ def test_apply_confirms_only_the_batchs_own_line_leaving_an_unconfirmable_siblin
 
 
 def test_apply_returns_a_dropped_bystander_in_returned_to_review(api):
-    """B1 (code review, 20 Aug 2026): the case the test above deliberately dodges. A real
-    `qty_up` diff (12 -> 14) on the batch's own line moves that line's OWN live open
-    quantity off what rev 1 froze, so `challenge_if_drifted` supersedes the whole order's
-    active decision the moment Apply calls `confirm()` - "nothing is carried from a
-    challenged revision; the lines it covered are undecided again" (module docstring).
-    That is documented doctrine, not a bug: an unrelated sibling line the batch never named
-    falls back to undecided too, and its raised Buy row is retired exactly like any other
-    line dropped from the revision. The defect this pins is SILENCE - the apply result must
-    say so, not just report `applied_orders`."""
+    """B1 (code review, 20 Aug 2026) is superseded by Slice E's one signal (rule 9) plus
+    the coder's own b40eafce0 rule: "a line the batch changed and nobody decided is
+    uncovered, not carried forward; a true bystander is carried". `challenge_if_drifted`
+    (and the whole-order-undecided side effect it used to trigger) is retired - measured
+    directly rather than assumed: confirming the batch's own qty_up row now writes a new
+    revision (2) that STILL covers the unrelated sibling line the batch never named - the
+    old revision reads SUPERSEDED, the sibling is carried into the new one (present in
+    `frozen_lines_of`, its Buy re-raised at its original qty rather than left uncovered),
+    and nothing is silently dropped, so `returned_to_review` is empty."""
     client, world = api
     db = world.db
     core_so = _core_so(db, world.company_id)
@@ -1997,15 +1997,21 @@ def test_apply_returns_a_dropped_bystander_in_returned_to_review(api):
     assert result["failed_orders"] == [], result["failed_orders"]
     assert result["applied_orders"] == [core_so.so_number]
 
-    # The silence this finding fixes: apply's own result names the bystander it dropped.
-    assert len(result["returned_to_review"]) == 1
-    returned = result["returned_to_review"][0]
-    assert returned["so_number"] == core_so.so_number
-    assert returned["line_count"] == 1
-    assert returned["line_nos"] == [2]
-    assert returned["reason"]  # a real reason derived off the decision, not a guess
+    # Nothing is silently dropped any more - the sibling is carried, not returned.
+    assert result["returned_to_review"] == [], result["returned_to_review"]
 
     from app.models.project_so import SOSupplyDecision
+
+    old_decision_id = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.revision_no == 1)
+        .one()
+        .id
+    )
+    db.expire_all()
+    old_decision = db.get(SOSupplyDecision, old_decision_id)
+    assert old_decision.state == "superseded", old_decision.state
 
     decision = (
         db.query(SOSupplyDecision)
@@ -2020,19 +2026,30 @@ def test_apply_returns_a_dropped_bystander_in_returned_to_review(api):
     target_components = snapshots[str(line_target.id)]["components"]
     target_buy = sum(Decimal(c["qty"]) for c in target_components if c["kind"] == "buy")
     assert target_buy == Decimal("14")
-    # ...the untouched sibling is undecided again - dropped, not carried, exactly as an
-    # unrelated `replan`/`release`/`retire` row would be.
-    assert str(line_sibling.id) not in snapshots
+    # ...and the untouched sibling is CARRIED into the new revision too (one signal, rule
+    # 9 / b40eafce0): a true bystander the batch never named is not dropped.
+    assert str(line_sibling.id) in snapshots
 
     from app.services.project_supply_service import ProjectSupplyService
 
     supply = ProjectSupplyService(db)
     frozen = supply.frozen_lines_of(supply.active_decision(str(order.id)))
-    assert str(line_sibling.id) not in frozen
+    assert str(line_sibling.id) in frozen
 
-    # Its raised Buy row is retired, same as any other line the revision no longer covers.
+    # Its Buy is re-raised at its original qty rather than left uncovered - the ORIGINAL
+    # row is cancelled ("Superseded by revision 2") and a fresh one takes its place, the
+    # same cancel-and-reraise every covered line not itself confirmed gets on a new
+    # revision; what matters is a LIVE row still covers it.
     db.refresh(buy_row_sibling)
     assert buy_row_sibling.state == INQUIRY_CANCELLED
+    live_sibling_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_sibling.id,
+                OrderInquiryRow.state != INQUIRY_CANCELLED)
+        .all()
+    )
+    assert len(live_sibling_rows) == 1, [(r.state, str(r.qty)) for r in live_sibling_rows]
+    assert live_sibling_rows[0].qty == Decimal("8")
 
 
 def test_apply_of_an_already_challenged_revision_still_reports_its_bystanders(api):
@@ -2067,22 +2084,24 @@ def test_apply_of_an_already_challenged_revision_still_reports_its_bystanders(ap
     core_line_target.qty_ordered = Decimal("14")
     db.flush()
 
-    # The drift challenge runs BEFORE the batch exists at all - exactly what a CS user
-    # opening the supply page would trigger, days before a book upload is even imported.
-    from app.services.project_supply_service import ProjectSupplyService
+    # `challenge_if_drifted` is retired (Slice E, one signal - `4f012b34b`): the legacy
+    # state it used to write is seeded directly instead - a revision already CHALLENGED
+    # before Apply runs, exactly what a GET on the supply page or an earlier apply leaves
+    # behind, days before a book upload is even imported.
+    from app.models.project_so import DECISION_CHALLENGED, SOSupplyDecision
+    from datetime import datetime as _datetime
 
-    supply = ProjectSupplyService(db)
-    expected_reason = supply.challenge_if_drifted(order)
-    assert expected_reason, "the qty drift on the target line must be caught"
-    db.commit()
-
-    from app.models.project_so import SOSupplyDecision
-
+    expected_reason = f"{MARKER} qty drift on the target line, ZZT-TARGET 12 -> 14"
     challenged = (
         db.query(SOSupplyDecision)
         .filter(SOSupplyDecision.project_sales_order_id == order.id)
         .one()
     )
+    challenged.state = DECISION_CHALLENGED
+    challenged.superseded_at = _datetime.utcnow()
+    challenged.superseded_reason = expected_reason
+    db.commit()
+
     assert challenged.state == "challenged"  # confirmed: apply enters with NO active decision
 
     changed_target = _diff_change(

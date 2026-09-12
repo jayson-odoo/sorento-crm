@@ -321,7 +321,6 @@ def test_a_proposed_amendment_does_not_block_unpublish(api):
 def test_an_applied_planning_change_row_blocks_unpublish(api):
     from app.models.planning_change import (
         PLANNING_CHANGE_KIND_DELAYED,
-        PLANNING_CHANGE_REACTION_KEEP,
         PLANNING_CHANGE_STATE_APPLIED,
         PlanningChangeBatch,
         PlanningChangeRow,
@@ -341,7 +340,6 @@ def test_an_applied_planning_change_row_blocks_unpublish(api):
             project_sales_order_id=order.id,
             kind=PLANNING_CHANGE_KIND_DELAYED,
             facts_json={},
-            suggested=PLANNING_CHANGE_REACTION_KEEP,
             why=f"{MARKER} why",
             applied_state=PLANNING_CHANGE_STATE_APPLIED,
         )

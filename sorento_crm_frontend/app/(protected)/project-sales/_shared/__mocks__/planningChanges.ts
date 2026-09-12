@@ -605,14 +605,15 @@ const ROW_S7: PlanningChangeRow = {
         source: 'reserve',
         qty_now: '134',
         location: 'BRW-IB',
-        label: 'Release 134, free at BRW-IB',
+        item_code: 'B2155-NL-BLUE',
+        label: 'Release 134 B2155-NL-BLUE, free at BRW-IB',
       },
       {
         action: 'buy',
         source: 'buy',
         qty_now: '134',
         item_code: 'B2155-NL-WHITE',
-        label: 'Buy 134 for 4 Sep',
+        label: 'Buy 134 B2155-NL-WHITE for 4 Sep',
       },
     ],
   },
@@ -791,18 +792,18 @@ const ROW_S11: PlanningChangeRow = {
   suggestion: {
     components: [
       {
-        action: 'buy',
-        source: 'buy',
-        qty_was: '134',
-        qty_now: '44',
-        label: 'Short 44 by 22 Aug',
-      },
-      {
         action: 'use_own',
         source: 'pool_share',
         qty_now: '90',
         location: 'BRW',
         label: 'Pool share 90 at BRW',
+      },
+      {
+        action: 'buy',
+        source: 'buy',
+        qty_was: '134',
+        qty_now: '44',
+        label: 'Short 44 by 22 Aug (was Buy 134)',
       },
     ],
     shortfall_qty: '44',

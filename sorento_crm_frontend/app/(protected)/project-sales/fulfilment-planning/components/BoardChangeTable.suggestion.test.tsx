@@ -80,8 +80,12 @@ describe('the composed suggestion on the board', () => {
 
   it('S11: what the pool can cover now is stated, and the rest is shown short', () => {
     // The held Buy IS the shortfall line (rule 8: "the remainder stays a Buy"), so it is
-    // one component saying both what is left and that it cannot land in time.
-    expect(linesOf('pcr-s11')).toEqual(['Short 44 by 22 Aug', 'Pool share 90 at BRW']);
+    // one component saying both what is left and that it cannot land in time. Pool share
+    // first, the shortfall last, and the shortfall names what it was bought as.
+    expect(linesOf('pcr-s11')).toEqual([
+      'Pool share 90 at BRW',
+      'Short 44 by 22 Aug (was Buy 134)',
+    ]);
     expect(screen.getByTestId('board-change-short-pcr-s11').textContent).toBe('Short 44');
     expect(screen.queryByTestId('board-change-late-pcr-s11')).toBeNull();
   });
@@ -94,9 +98,13 @@ describe('the composed suggestion on the board', () => {
     );
     expect(
       screen.getAllByTestId('board-change-suggestion-line').map((line) => line.textContent),
-      // Which product each half is about is `item_code` on the component, not words in
-      // the sentence - the row's own "Product changed, was ..." line carries that.
-    ).toEqual(['Release 134, free at BRW-IB', 'Buy 134 for 4 Sep']);
+      // Review round C4/C5: which product each half is about is now ALSO in the label
+      // itself, not only `item_code` on the component - the released half names the OLD
+      // product, the sourced half the NEW one.
+    ).toEqual([
+      'Release 134 B2155-NL-BLUE, free at BRW-IB',
+      'Buy 134 B2155-NL-WHITE for 4 Sep',
+    ]);
   });
 
   it('S5: a cancelled line reads Cancelled in Now and still says where its hold went', () => {
