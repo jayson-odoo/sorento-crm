@@ -24,6 +24,7 @@ import { useReducedMotion } from '@/lib/motion';
 
 export function FormSection({
   title,
+  titleId,
   summary,
   open,
   onOpenChange,
@@ -31,6 +32,12 @@ export function FormSection({
   className,
 }: {
   title: string;
+  /**
+   * Id on the rendered title text, for a control inside the section (e.g. a
+   * radiogroup) to reference via `aria-labelledby` instead of repeating the
+   * section's own name as a second, visible label.
+   */
+  titleId?: string;
   /** One-line description shown only while collapsed (AC-P9); omitted when empty. */
   summary?: string | null;
   open: boolean;
@@ -49,7 +56,9 @@ export function FormSection({
             className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <span className="min-w-0">
-              <span className="block text-base font-semibold">{title}</span>
+              <span id={titleId} className="block text-base font-semibold">
+                {title}
+              </span>
               {!open && summary && (
                 <span
                   className="block truncate text-xs text-muted-foreground"

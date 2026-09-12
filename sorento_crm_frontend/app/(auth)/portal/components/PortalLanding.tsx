@@ -492,6 +492,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
         isSettling={searchSettling}
         placeholder="Search..."
         aria-label="Search submissions"
+        className="w-full"
         inputClassName="h-12 text-base"
       />
 

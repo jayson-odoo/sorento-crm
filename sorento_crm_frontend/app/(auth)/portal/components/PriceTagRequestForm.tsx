@@ -730,6 +730,27 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       product_class: null,
     }));
 
+  // AC-P10: a failed Submit opens the first offending section, top to bottom,
+  // so the inline error it just set is visible rather than sitting inside a
+  // section still collapsed from a moment ago. `toggleSection` (not
+  // `openSectionOnce`) because this must fire every time, even for a section
+  // the reader already closed by hand.
+  const openSectionForProblems = useCallback(
+    (
+      fields: { debtor?: string; neededBy?: string; lines?: string },
+      hasRowProblems: boolean,
+    ) => {
+      if (fields.debtor) {
+        toggleSection('customer', true);
+      } else if (fields.lines || hasRowProblems) {
+        toggleSection('sales_order', true);
+      } else if (fields.neededBy) {
+        toggleSection('need_by', true);
+      }
+    },
+    [toggleSection],
+  );
+
   /** The keys the form and the server both use to place a message. A server
    *  refusal answers with the same vocabulary (`line:<index>` for a row), so
    *  one mapping serves both. */
@@ -758,9 +779,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           })),
         );
       }
+      openSectionForProblems(next, rows.size > 0);
       return Object.keys(next).length + rows.size;
     },
-    [],
+    [openSectionForProblems],
   );
 
   /** Everything Submit can see wrong from here, reported at once. Need by is
@@ -940,6 +962,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           guard_error: emptyRows.includes(index) ? EMPTY_LINE : null,
         })),
       );
+      openSectionForProblems(next, emptyRows.length > 0);
       scrollToFirstProblem();
       return;
     }
@@ -990,7 +1013,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectProblems, applyFieldErrors, effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
@@ -1503,15 +1526,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           Information (AC-P8). */}
       <FormSection
         title="Price"
+        titleId="price-section-title"
         summary={sectionSummaries.price}
         open={sectionOpen.price}
         onOpenChange={(next) => toggleSection('price', next)}
       >
         <div className="space-y-1.5">
-          <Label id="price-mode-label">Price</Label>
+          {/* No repeated "Price" label here - the section title already
+              says it (review round 1). */}
           <div
             role="radiogroup"
-            aria-labelledby="price-mode-label"
+            aria-labelledby="price-section-title"
             className="inline-flex items-center rounded-md border p-0.5"
           >
             <button

@@ -544,7 +544,7 @@ function UploadedRow({
         {onExtract && (
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={onExtract}
             disabled={disabled}
@@ -552,6 +552,7 @@ function UploadedRow({
             title={`Extract with AI from ${attachment.filename || 'this file'}`}
           >
             <Sparkles className="h-4 w-4 text-primary" />
+            <span className="hidden md:inline">Extract with AI</span>
           </Button>
         )}
         {canUnlink && (
@@ -633,7 +634,7 @@ function PendingRow({
         {onExtract && (
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={onExtract}
             disabled={disabled}
@@ -641,6 +642,7 @@ function PendingRow({
             title={`Extract with AI from ${file.name}`}
           >
             <Sparkles className="h-4 w-4 text-primary" />
+            <span className="hidden md:inline">Extract with AI</span>
           </Button>
         )}
         {onRemove && (
