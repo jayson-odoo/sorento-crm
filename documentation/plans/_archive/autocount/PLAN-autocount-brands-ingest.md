@@ -1,6 +1,6 @@
 # PLAN - AutoCount `brands` ingest entity (contract 2.3)
 
-**Status:** PR #840 OPEN 2026-09-12 (owner go; grilled x2 on Opus; reviewer + security review clean; 340 tests green). Awaiting owner merge.
+**Status:** DEPLOYED 2026-09-12 (PR #840 merged 62e911e2f, deploy green). Archived.
 
 **UAC:** `autocount-brands-ingest-acceptance-criteria.md` (alongside).
 **Origin:** cross-session brief from foundryx-shared-service-57, their plan
