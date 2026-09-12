@@ -123,6 +123,13 @@ export interface FulfilmentPlanningRow {
   earliest_required_date?: string | null;
   review_state: ReviewState;
   updated_at?: string | null;
+  /**
+   * The newest PENDING planning-change batch on this order's core sales order, or null/absent
+   * (`PLAN-scm-board-picks-up-pending-change.md`, AC-B7). Same id the SCM Sales Orders list
+   * and the fulfilment board name off `planning_change_service.pending_batch_id_by_sales_order`
+   * - the `Changed` pill here links to the board with that batch already loaded.
+   */
+  planning_change_batch_id?: string | null;
 }
 
 export interface ReconciliationHeader {
@@ -1690,6 +1697,12 @@ export interface BoardOrderStanding {
   carried_count?: number;
   /** Lines that can never be decided here because their sales order states no location. */
   unplannable_count: number;
+  /**
+   * The newest PENDING planning-change batch on this order, or null/absent
+   * (`PLAN-scm-board-picks-up-pending-change.md`, AC-B1). Lets the board load and draw a
+   * change's Was/Now table and pre-marked suggestion without a `?batch=` URL param.
+   */
+  pending_change_batch_id?: string | null;
 }
 
 /**
@@ -2263,15 +2276,22 @@ export interface PlanListEnvelope {
 export interface ConfirmManyOrderBody {
   pso_id: string;
   lines: ConfirmLine[];
+  /**
+   * This order's OWN planning-change batch (`PLAN-scm-board-picks-up-pending-change.md`,
+   * AC-B5/AC-B6): a board can show two orders on two different pending batches, so the
+   * batch an order answers travels WITH that order. `null`/absent when the order has none.
+   * Falls back to `ConfirmManyBody.batch_id` server-side when absent.
+   */
+  batch_id?: string | null;
 }
 
 export interface ConfirmManyBody {
   orders: ConfirmManyOrderBody[];
   /**
-   * The planning-change batch this press is answering (AC-P3-4). One per board: it is opened
-   * at `?orders=...&batch=<id>` and every order on it belongs to that batch. Absent on an
-   * ordinary Confirm; set, each order APPLIES its half of the batch rather than writing a
-   * plain revision beside it.
+   * DEPRECATED as the primary shape (change 4): the board-wide fallback for a single-batch
+   * press, kept so a caller that has not moved to `orders[].batch_id` still works. One per
+   * board: it was opened at `?orders=...&batch=<id>` and every order on it belonged to that
+   * batch. Absent on an ordinary Confirm.
    */
   batch_id?: string | null;
 }

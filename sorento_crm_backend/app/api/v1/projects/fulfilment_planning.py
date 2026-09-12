@@ -396,32 +396,35 @@ def confirm_all(
     in the body gets a result - there is no silent partial success. `orders: []` answers with
     an empty result rather than a refusal; a board with nothing approved yet is not an error.
 
-    `batch_id` on the BODY (part 3, AC-P3-4): the board is opened at `?orders=...&batch=<id>`
-    and every order on it belongs to that batch, so one press answers one planning change.
-    Each order then takes the same apply the per-order Confirm takes - one press, one call,
-    one revision per order - rather than an ordinary revision that would leave the batch
-    pending for ever.
+    `batch_id` travels PER ORDER now (`PLAN-scm-board-picks-up-pending-change.md`, change 4,
+    AC-B5/AC-B6): a board can show two orders on two different pending batches, so each
+    order resolves `entry.batch_id or payload.batch_id` on its own - the body-level id is
+    only the fallback a caller that has not moved to the per-order shape still sends. An
+    order that resolves to a batch takes the same apply the per-order Confirm takes for a
+    `?batch=` board (one press, one call, one revision, batch rows marked applied); an
+    order with neither confirms as an ordinary revision beside it.
     """
     try:
         if not payload.orders:
             return {"results": []}
         actor_id = current_user["id"]
-        batch_id = payload.batch_id
+        supply = ProjectSupplyService(db)
 
-        def apply_the_batch(order, entry):
-            return _confirm_a_planning_change(
-                db, order, _BatchedEntry(list(entry.lines), batch_id), actor_id
-            )
+        def write_one(order, entry):
+            resolved_batch_id = entry.batch_id or payload.batch_id
+            if resolved_batch_id:
+                return _confirm_a_planning_change(
+                    db, order, _BatchedEntry(list(entry.lines), resolved_batch_id), actor_id
+                )
+            return supply.confirm(order, entry, actor_user_id=actor_id)
 
-        results = ProjectSupplyService(db).confirm_many(
+        results = supply.confirm_many(
             payload.orders,
             actor_user_id=actor_id,
             assert_can_act=lambda session, order: _assert_can_act_on(
                 session, order, current_user
             ),
-            # `None` is the ordinary press: `confirm_many` writes each order the way the
-            # per-order Confirm does.
-            write=apply_the_batch if batch_id else None,
+            write=write_one,
         )
         return {"results": results}
     except Exception as exc:

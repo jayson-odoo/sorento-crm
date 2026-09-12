@@ -908,6 +908,68 @@ export const MOCK_PLANNING_CHANGE_BATCHES: PlanningChangeBatchSummary[] = [
 ];
 
 /**
+ * A second pending batch, on a DIFFERENT `so_number` from `MOCK_PLANNING_CHANGE_BATCH_SO_
+ * CHANGE`, for `PLAN-scm-board-picks-up-pending-change.md` (AC-B3: two orders on the board,
+ * each with its own pending batch). One order, one row, so the two-batch board tests stay
+ * about the union rather than about a second copy of the first fixture's shape.
+ */
+export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE_2: PlanningChangeBatch = {
+  id: 'pcb-so381896',
+  created_at: '2026-08-19T09:30:00Z',
+  created_by_name: 'Cyndi Tee',
+  source: {
+    upload_id: 'imp-so381896',
+    file_name: 'Outstanding SO 19 Aug.xlsx',
+    kind: 'so_book_upload',
+    import_job_id: 'imp-so381896',
+  },
+  applied_at: null,
+  applied_by_name: null,
+  orders: [
+    {
+      project_sales_order_id: 'pso-381896',
+      so_number: 'SO381896',
+      customer_name: 'BATHE CODE SDN BHD',
+      project_label: 'Bathe Code HQ Retrofit',
+      revision_no: 1,
+      is_adopted: true,
+      core_sales_order_id: 'so-381896',
+      project_id: null,
+      rows: [
+        {
+          id: 'pcr-381896-1',
+          project_line_id: 'pl-381896-1',
+          line_no: 1,
+          item_code: 'CB231SS-NL',
+          product_name: 'Concealed cistern 231SS',
+          kind: 'delayed',
+          from: { required_date: '2026-08-20', qty: '15', status: 'open' },
+          to: { required_date: '2026-09-03', qty: '15', status: 'open' },
+          days_moved: 14,
+          held: { reserve: [], borrow: [], buy_qty: '15', timely_spo_qty: '0', revision_no: 1 },
+          facts: {
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
+            discontinued: false,
+            days_moved: 14,
+            within_reserve_window: windowFact('2026-08-20', '2026-09-03', 14),
+            buy_actioned: buyActionedFact(false),
+          },
+          suggested: 'keep',
+          why: 'New date is 14 days out and inside the 60-day reserve window; the Buy stands.',
+          proposal: null,
+          inquiry_rows: [{ id: 'oir-381896-1', verb: 'ORDER', qty: '15', state: 'raised' }],
+          decision: 'accept',
+          applied_state: 'pending',
+          board_link:
+            '/project-sales/fulfilment-planning?orders=SO381896&cell=CB231SS-NL|2026-09-03',
+        },
+      ],
+    },
+  ],
+};
+
+/**
  * Part 3's own case (`PLAN-scm-cs-planning-uat.md`, AC-P3-2): SO381895 re-uploaded with form
  * (3). SRTWCX7405-RL-S-PJ's three instalments - 10 on 25 Aug, 10 on 5 Sep, 5 on 10 Sep -
  * become one line of 25 on 19 Aug, so one row is advanced and two are closed. The closed line

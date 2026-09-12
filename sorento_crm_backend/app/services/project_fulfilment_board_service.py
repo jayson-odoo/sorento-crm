@@ -73,7 +73,7 @@ from app.models.project_so import (
 )
 from app.models.sales_agent import SalesAgent
 from app.models.user import User
-from app.services import project_line_draft_service
+from app.services import planning_change_service, project_line_draft_service
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     LADDER_VERSION,
@@ -4717,9 +4717,19 @@ class FulfilmentBoardService:
                     "line_count": 0,
                     "decided_count": 0,
                     "unplannable_count": 0,
+                    "pending_change_batch_id": None,
                 },
             )
             standing["line_count"] += 1
             if row.unplannable:
                 standing["unplannable_count"] += 1
+        # AC-B1: the newest pending planning-change batch per order, keyed the same way
+        # the SCM Sales Orders list and the fulfilment-planning list are - one query, one
+        # rule, so the board never has to be TOLD `?batch=` to draw a change it already
+        # knows about (`PLAN-scm-board-picks-up-pending-change.md`).
+        pending_by_so = planning_change_service.pending_batch_id_by_sales_order(
+            self.db, list(by_order),
+        )
+        for sales_order_id, standing in by_order.items():
+            standing["pending_change_batch_id"] = pending_by_so.get(sales_order_id)
         return sorted(by_order.values(), key=lambda s: s["so_number"] or "")

@@ -524,6 +524,49 @@ def build_batch(
     return batch
 
 
+def pending_batch_id_by_sales_order(
+    db: Session, sales_order_ids: Sequence[str],
+) -> Dict[str, str]:
+    """The newest PENDING planning-change batch per core `sales_orders.id`, one query.
+
+    `PLAN-scm-board-picks-up-pending-change.md` change 1: the body `SalesOrderService
+    .with_planning_changes` used to keep for itself, lifted out here so the fulfilment
+    board and the fulfilment-planning list can name the same batch the SCM Sales Orders
+    list already does - one rule, three readers. "Pending" means the batch itself is
+    unapplied (`applied_at IS NULL`) AND the row is `applied_state == 'pending'`
+    (`PLAN-scm-planning-change-gate-held-or-inquiry.md`, AC-G5): a batch left open but
+    whose only rows were superseded by the held-or-inquiry gate has nothing left to
+    decide either. `{}` for an empty `sales_order_ids`; an id with nothing pending is
+    simply absent from the returned dict (never a `None` value), so a caller uses
+    `.get(so_id)`.
+    """
+    if not sales_order_ids:
+        return {}
+
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+
+    found = (
+        db.query(ProjectSalesOrder.so_id, PlanningChangeBatch.id)
+        .join(PlanningChangeRow,
+              PlanningChangeRow.project_sales_order_id == ProjectSalesOrder.id)
+        .join(PlanningChangeBatch,
+              PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+        .filter(
+            ProjectSalesOrder.so_id.in_(list(sales_order_ids)),
+            PlanningChangeBatch.applied_at.is_(None),
+            PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+        )
+        .order_by(PlanningChangeBatch.created_at.desc())
+        .all()
+    )
+    result: Dict[str, str] = {}
+    for so_id, batch_id in found:
+        # The NEWEST pending batch wins: rows arrive newest-batch-first, and a second
+        # pass for the same order must not overwrite it with an older one.
+        result.setdefault(str(so_id), str(batch_id))
+    return result
+
+
 def _so_number(order: ProjectSalesOrder) -> str:
     return order.autocount_doc_no or order.provisional_ref or str(order.id)
 

@@ -1119,6 +1119,12 @@ class BoardOrderStanding(BaseModel):
     #: Always 0 from the server: the verdicts live in the board's client draft (13.4).
     decided_count: int = 0
     unplannable_count: int = 0
+    #: The newest PENDING planning-change batch on this order, or null
+    #: (`PLAN-scm-board-picks-up-pending-change.md`, AC-B1). Lets the board fetch and draw a
+    #: change's Was/Now table and pre-marked suggestion without a `?batch=` URL param - the
+    #: fulfilment-planning list and the SCM Sales Orders list name the same id off the same
+    #: `planning_change_service.pending_batch_id_by_sales_order`.
+    pending_change_batch_id: Optional[str] = None
 
 
 class BoardPolicy(BaseModel):

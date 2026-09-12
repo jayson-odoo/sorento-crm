@@ -1217,3 +1217,48 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     );
   });
 });
+
+/**
+ * AC-B7 (`PLAN-scm-board-picks-up-pending-change.md`): the worklist shows the same
+ * `Changed` pill the SCM Sales Orders list shows, copied from `SalesOrdersGrid.tsx:499-509`,
+ * in the `so_number` cell - linking to the board on that order and batch, no `batch=`
+ * required by anything else, but present here since it is a known one.
+ */
+describe('FulfilmentPlanningClient: the Changed pill (AC-B7)', () => {
+  it('shows a Changed pill linking to the board+batch for a row with a pending batch', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([
+        row({
+          id: 'pso-changed',
+          so_number: 'SO381895',
+          // Not yet on `FulfilmentPlanningRow` (frontend type) - the whole point of this
+          // being red until the type/plumbing lands.
+          ...( { planning_change_batch_id: 'pcb-so381895' } as Partial<FulfilmentPlanningRow>),
+        }),
+      ]),
+    );
+
+    renderClient();
+    await screen.findByText('SO381895');
+
+    const pill = screen.queryByTestId('so-changed-SO381895');
+    expect(pill).toBeInTheDocument();
+    expect(pill?.getAttribute('href')).toEqual(
+      expect.stringContaining('orders=SO381895'),
+    );
+    expect(pill?.getAttribute('href')).toEqual(
+      expect.stringContaining('batch=pcb-so381895'),
+    );
+  });
+
+  it('shows no Changed pill for a row with no pending batch', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([row({ id: 'pso-unchanged', so_number: 'SO381896' })]),
+    );
+
+    renderClient();
+    await screen.findByText('SO381896');
+
+    expect(screen.queryByTestId('so-changed-SO381896')).not.toBeInTheDocument();
+  });
+});
