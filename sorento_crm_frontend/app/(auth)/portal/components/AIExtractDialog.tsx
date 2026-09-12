@@ -69,6 +69,14 @@ interface Props {
    *  when provided. Kept minimal rather than forking the dialog for the one
    *  caller (price tag requests) that needs a match state per row. */
   renderRowStatus?: (product: AIExtractedProductLine, index: number) => ReactNode;
+  /**
+   * Extract-per-file (D-P3): when given, the dialog skips the upload stage
+   * entirely and runs extraction on these files as soon as it opens, landing
+   * straight on Review for that file's own results. `alsoAttach` is forced
+   * false - the caller's files are already attached, so re-attaching them
+   * would be a second copy.
+   */
+  initialFiles?: File[];
 }
 
 type Stage = 'upload' | 'review';
@@ -88,7 +96,9 @@ export function AIExtractDialog({
   onApply,
   onExtracted,
   renderRowStatus,
+  initialFiles,
 }: Props) {
+  const isPerFileMode = Boolean(initialFiles && initialFiles.length > 0);
   const [stage, setStage] = useState<Stage>('upload');
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
@@ -96,6 +106,9 @@ export function AIExtractDialog({
   const [extractError, setExtractError] = useState<string | null>(null);
   const [result, setResult] = useState<AIExtractResult | null>(null);
   const [discarded, setDiscarded] = useState<Set<string>>(new Set());
+  // D-P4: a removed product row never reaches Confirm and prefill. Indexed
+  // against `result.products`, same shape as `discarded` for field entries.
+  const [discardedProducts, setDiscardedProducts] = useState<Set<number>>(new Set());
   const [alsoAttach, setAlsoAttach] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -138,6 +151,7 @@ export function AIExtractDialog({
     setExtractError(null);
     setResult(null);
     setDiscarded(new Set());
+    setDiscardedProducts(new Set());
     setAlsoAttach(true);
     setPreviewOpen(false);
     setPreviewIndex(0);
@@ -255,23 +269,41 @@ export function AIExtractDialog({
     }
   }, [addFiles]);
 
-  const handleExtract = async () => {
-    if (!files.length) return;
-    setBusy(true);
-    setExtractError(null);
-    try {
-      const formKey = AI_EXTRACT_FORM_KEYS[kind];
-      const r = await aiExtractFromFiles(formKey, files);
-      setResult(r);
-      setDiscarded(new Set());
-      setStage('review');
-      onExtracted?.(r.products ?? []);
-    } catch (e) {
-      setExtractError(e instanceof Error ? e.message : 'AI extract failed.');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const runExtract = useCallback(
+    async (filesToExtract: File[]) => {
+      if (!filesToExtract.length) return;
+      setBusy(true);
+      setExtractError(null);
+      try {
+        const formKey = AI_EXTRACT_FORM_KEYS[kind];
+        const r = await aiExtractFromFiles(formKey, filesToExtract);
+        setResult(r);
+        setDiscarded(new Set());
+        setDiscardedProducts(new Set());
+        setStage('review');
+        onExtracted?.(r.products ?? []);
+      } catch (e) {
+        setExtractError(e instanceof Error ? e.message : 'AI extract failed.');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [kind, onExtracted],
+  );
+
+  const handleExtract = () => void runExtract(files);
+
+  // D-P3: per-file mode skips the upload stage - the file is already
+  // attached, so extraction runs the moment the dialog opens.
+  useEffect(() => {
+    if (!open || !initialFiles || initialFiles.length === 0) return;
+    setFiles(initialFiles);
+    setAlsoAttach(false);
+    void runExtract(initialFiles);
+    // Only `open` re-arms this - a fresh open with the same or different
+    // `initialFiles` should always re-run, a mid-session prop churn should not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const fieldsByName = useMemo(() => {
     const out: Record<string, FieldDef> = {};
@@ -298,14 +330,18 @@ export function AIExtractDialog({
     [filledFieldEntries, discarded],
   );
 
+  // D-P4: removed rows never reach Confirm and prefill or the row count below.
+  const remainingProducts = useMemo(
+    () => (result?.products ?? []).filter((_, i) => !discardedProducts.has(i)),
+    [result, discardedProducts],
+  );
+
   // A form with NO header fields (price_tag_request: fieldDefs=[]) still has
   // something to apply when there are line items - the "nothing extractable"
   // state and the Confirm button's disabled state both have to look past
   // fieldDefs alone or a fields-less form could never confirm anything.
   const hasApplicableProductLines =
-    KINDS_WITH_LINE_ITEMS.includes(kind) &&
-    !!result?.products &&
-    result.products.length > 0;
+    KINDS_WITH_LINE_ITEMS.includes(kind) && remainingProducts.length > 0;
 
   const handleConfirm = () => {
     if (!result) return;
@@ -317,7 +353,7 @@ export function AIExtractDialog({
       values: out,
       files,
       alsoAttach,
-      productLines: hasApplicableProductLines ? (result.products ?? []) : [],
+      productLines: hasApplicableProductLines ? remainingProducts : [],
     });
     const parts: string[] = [];
     if (remainingFieldEntries.length > 0) {
@@ -326,7 +362,7 @@ export function AIExtractDialog({
       );
     }
     if (hasApplicableProductLines) {
-      const n = result.products?.length ?? 0;
+      const n = remainingProducts.length;
       parts.push(`${n} line${n === 1 ? '' : 's'}`);
     }
     toast.success(parts.length > 0 ? `Applied ${parts.join(' and ')}.` : 'Applied.');
@@ -346,7 +382,39 @@ export function AIExtractDialog({
           </DialogTitle>
         </DialogHeader>
 
-        {stage === 'upload' && (
+        {stage === 'upload' && isPerFileMode && extractError && (
+          // Review round 2: a rejected per-file extract used to leave the
+          // spinner above showing forever - stage never left 'upload' on
+          // failure, and that block had no error branch of its own. No
+          // separate Cancel button here - the Dialog's own close control
+          // already offers that, and a second one of the same name is
+          // ambiguous to anything querying by role.
+          <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+            <p className="text-sm text-destructive" data-testid="ai-extract-error">
+              {extractError}
+            </p>
+            <Button
+              onClick={() => void runExtract(initialFiles ?? [])}
+              data-testid="ai-extract-retry"
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {stage === 'upload' && isPerFileMode && !extractError && (
+          <div
+            className="flex flex-col items-center justify-center gap-3 py-10"
+            data-testid="ai-extract-per-file-loading"
+          >
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">
+              Reading {initialFiles?.[0]?.name ?? 'the file'}...
+            </p>
+          </div>
+        )}
+
+        {stage === 'upload' && !isPerFileMode && (
           <>
             <div
               className="space-y-3 flex-1 min-h-0 overflow-y-auto -mx-1 px-1"
@@ -515,7 +583,7 @@ export function AIExtractDialog({
               {hasApplicableProductLines && (
                 <div className="rounded-md border border-border">
                   <div className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
-                    Line items ({result.products.length}) - will be applied to the items list
+                    Line items ({remainingProducts.length}) - will be applied to the items list
                   </div>
                   <ScrollArea>
                     <table
@@ -537,32 +605,54 @@ export function AIExtractDialog({
                           {renderRowStatus && (
                             <th className="px-3 py-1.5 text-left font-normal">Match</th>
                           )}
+                          <th className="px-3 py-1.5" />
                         </tr>
                       </thead>
                       <tbody>
-                        {result.products.map((p, i) => (
-                          <tr
-                            key={i}
-                            className="border-b border-border last:border-b-0"
-                            data-testid={`ai-extract-product-row-${i}`}
-                          >
-                            <td className="px-3 py-2 align-top break-words">{p.product_code ?? '-'}</td>
-                            <td className="px-3 py-2 align-top break-words">{p.product_name ?? '-'}</td>
-                            <td className="px-3 py-2 align-top text-right">{p.quantity ?? '-'}</td>
-                            {kind !== 'complaint' && (
-                              <>
-                                <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '-'}</td>
-                                <td className="px-3 py-2 align-top text-right">{p.total ?? '-'}</td>
-                                <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
-                              </>
-                            )}
-                            {renderRowStatus && (
-                              <td className="px-3 py-2 align-top break-words">
-                                {renderRowStatus(p, i)}
+                        {result.products.map((p, i) => {
+                          if (discardedProducts.has(i)) return null;
+                          return (
+                            <tr
+                              key={i}
+                              className="border-b border-border last:border-b-0"
+                              data-testid={`ai-extract-product-row-${i}`}
+                            >
+                              <td className="px-3 py-2 align-top break-words">{p.product_code ?? '-'}</td>
+                              <td className="px-3 py-2 align-top break-words">{p.product_name ?? '-'}</td>
+                              <td className="px-3 py-2 align-top text-right">{p.quantity ?? '-'}</td>
+                              {kind !== 'complaint' && (
+                                <>
+                                  <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '-'}</td>
+                                  <td className="px-3 py-2 align-top text-right">{p.total ?? '-'}</td>
+                                  <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
+                                </>
+                              )}
+                              {renderRowStatus && (
+                                <td className="px-3 py-2 align-top break-words">
+                                  {renderRowStatus(p, i)}
+                                </td>
+                              )}
+                              <td className="px-3 py-2 align-top">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  aria-label={`Remove row ${i + 1}`}
+                                  onClick={() =>
+                                    setDiscardedProducts((prev) => {
+                                      const next = new Set(prev);
+                                      next.add(i);
+                                      return next;
+                                    })
+                                  }
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
                               </td>
-                            )}
-                          </tr>
-                        ))}
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                     <ScrollBar orientation="horizontal" />
@@ -570,30 +660,39 @@ export function AIExtractDialog({
                 </div>
               )}
 
-              <div className="flex items-center gap-2 pt-1">
-                <Checkbox
-                  id="ai-extract-also-attach"
-                  checked={alsoAttach}
-                  onCheckedChange={(v) => setAlsoAttach(v === true)}
-                  data-testid="ai-extract-attach"
-                />
-                <Label htmlFor="ai-extract-also-attach" className="cursor-pointer">
-                  Also attach these {files.length} file{files.length === 1 ? '' : 's'} to my{' '}
-                  {kind === 'complaint' ? 'complaint' : 'submission'}
-                </Label>
-              </div>
+              {/* D-P3: files in per-file mode are already attached (the
+                  caller's dropzone put them there) - re-attaching would be a
+                  second copy, so the checkbox has nothing to offer here. */}
+              {!isPerFileMode && (
+                <div className="flex items-center gap-2 pt-1">
+                  <Checkbox
+                    id="ai-extract-also-attach"
+                    checked={alsoAttach}
+                    onCheckedChange={(v) => setAlsoAttach(v === true)}
+                    data-testid="ai-extract-attach"
+                  />
+                  <Label htmlFor="ai-extract-also-attach" className="cursor-pointer">
+                    Also attach these {files.length} file{files.length === 1 ? '' : 's'} to my{' '}
+                    {kind === 'complaint' ? 'complaint' : 'submission'}
+                  </Label>
+                </div>
+              )}
             </div>
 
             <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setStage('upload');
-                  setExtractError(null);
-                }}
-              >
-                Back
-              </Button>
+              {/* Back would return to an upload stage that, in per-file mode,
+                  was never shown - there is nothing to go back to. */}
+              {!isPerFileMode && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setStage('upload');
+                    setExtractError(null);
+                  }}
+                >
+                  Back
+                </Button>
+              )}
               <Button
                 onClick={handleConfirm}
                 disabled={remainingFieldEntries.length === 0 && !hasApplicableProductLines}

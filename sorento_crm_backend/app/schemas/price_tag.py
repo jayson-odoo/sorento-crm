@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +96,13 @@ class PriceTagRequestCreate(BaseModel):
     price_mode: Literal["list", "selling"] = "list"
     lines: list[PriceTagRequestLineCreate] = Field(default_factory=list)
 
+    # Review round 2: the date input clears to "", not omission - Optional[date]
+    # rejects that outright with a 422 instead of treating it as "no date".
+    @field_validator("needed_by_date", mode="before")
+    @classmethod
+    def _blank_needed_by_is_none(cls, v):
+        return None if v == "" else v
+
 
 class PriceTagRequestUpdate(BaseModel):
     """A draft edit. ``lines`` omitted leaves the lines alone; ``lines`` given
@@ -114,6 +121,12 @@ class PriceTagRequestUpdate(BaseModel):
     # now a 422, same as any other unknown price_mode value.
     price_mode: Literal["list", "selling"] = "list"
     lines: Optional[list[PriceTagRequestLineCreate]] = None
+
+    # Review round 2: same "" -> None coercion as PriceTagRequestCreate.
+    @field_validator("needed_by_date", mode="before")
+    @classmethod
+    def _blank_needed_by_is_none(cls, v):
+        return None if v == "" else v
 
 
 class PriceTagRequestAttachment(BaseModel):
@@ -195,6 +208,13 @@ class PriceTagRequestResponse(BaseModel):
     # undeclared field is dropped by ``response_model`` without a word
     # (PLAN-price-tag-feedback-r2 S2).
     has_completed_export: bool = False
+
+    # D-P6/AC-B6: whether a post-submit edit is currently allowed - True for
+    # a draft, or a submitted request at New / Changes requested; False at
+    # every other status. Filled by ``response_with_resolved_lines`` for the
+    # same reason as the fields above it. The FE Edit button reads this,
+    # never the status list.
+    is_editable: bool = False
 
 
 class PriceTagRequestListItem(BaseModel):

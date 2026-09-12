@@ -80,6 +80,13 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
    *  read-only header's gear reads to enable/disable Download PDF without a
    *  second round trip. */
   has_completed_export?: boolean;
+  /**
+   * D-P6/AC-B6: true while a post-submit edit is allowed (status `new` or
+   * `changes_requested`, not a draft - a draft is already editable via
+   * `portal_draft_at`). The FE Edit button reads this, never the status
+   * list directly. Sent by the server since S8.
+   */
+  is_editable?: boolean;
 }
 
 export interface DebtorOption {
@@ -327,6 +334,8 @@ export async function getRequest(id: string): Promise<PriceTagRequestDetail | nu
     `${BASE}/${encodeURIComponent(id)}`,
   );
   if (res.status === 404) return null;
+  // D-P6/S8: `is_editable` is the server's own field now (AC-B6) - true for a
+  // draft, or a submitted request at New / Changes requested. No FE mock left.
   return unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
 }
 

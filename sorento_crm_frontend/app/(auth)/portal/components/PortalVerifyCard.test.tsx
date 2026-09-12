@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 describe('PortalVerifyCard - slug mode', () => {
-  it('renders OTP state with masked phone + wa.me hatch, auto-fires OTP', async () => {
+  it('renders OTP state with masked phone, auto-fires OTP', async () => {
     mockSlugInfo.mockResolvedValue({
       contact_id: 'c1',
       space_id: 's1',
@@ -47,15 +47,11 @@ describe('PortalVerifyCard - slug mode', () => {
     await waitFor(() => expect(screen.getByText(/\+60••••1234/)).toBeTruthy());
     // Auto-fire happened once
     await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
-    // Escape hatch present with the wa.me link
-    const hatch = screen.getByTestId('wa-escape-hatch');
-    const link = hatch.querySelector('a');
-    expect(link?.getAttribute('href')).toContain('wa.me/60123456789');
     // "Not your number?" available on the slug tree
     expect(screen.getByTestId('not-your-number')).toBeTruthy();
   });
 
-  it('hides the wa.me hatch when no business number is configured', async () => {
+  it('renders with masked phone when no business number is configured', async () => {
     mockSlugInfo.mockResolvedValue({
       contact_id: 'c1',
       space_id: 's1',

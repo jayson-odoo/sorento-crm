@@ -17,7 +17,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -124,6 +124,14 @@ beforeEach(() => {
   });
 });
 
+// The lines table (where "Quantity for line N" / "Remarks for line N" render)
+// lives inside the "Sales Order & Lines" section (D-P1), collapsed by
+// default - no customer is picked in these tests, so it never auto-opens
+// (AC-P3), and Radix's Collapsible unmounts its content while closed.
+function openSalesOrderSection() {
+  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+}
+
 /** Runs the extraction resolve pass (per-code lookup) and waits for every
  *  code's match to settle before Apply reads them off the ref. */
 async function extractAndSettle(products: Record<string, unknown>[]) {
@@ -141,6 +149,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('a matched product row becomes a line with qty defaulted to 1 and remarks from notes', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [
       {
@@ -166,6 +175,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('quantity from the extracted row is rounded and floored at 1, not defaulted', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [
       {
@@ -186,6 +196,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('a matched SET row becomes a line too, same as a matched product', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [{ product_code: MATCHED_SET.code, quantity: 1, notes: 'set note' }];
     await extractAndSettle(products);
@@ -220,6 +231,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('a mixed batch appends only the matched rows, in order, and reports the rest', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [
       { product_code: MATCHED_PRODUCT.code, quantity: 2, notes: 'first' },
@@ -245,6 +257,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
   it('honours alsoAttach: the extracted files join the Sales Order pending files (review fix)', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    openSalesOrderSection();
 
     const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }];
     await extractAndSettle(products);
@@ -277,5 +290,39 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     await screen.findByLabelText('Customer');
 
     expect(captured.fieldDefs).toEqual([]);
+  });
+
+  it('removing a row in the dialog does not shift the index-based match mapping (review round 2)', async () => {
+    // handleAIExtractApply reads `aiMatchesRef.current[index]` using the
+    // INDEX INTO WHATEVER ARRAY THE DIALOG HANDS BACK on Apply - but that
+    // ref was built by handleAIExtracted off the ORIGINAL, unfiltered
+    // extraction result. Removing a row in the dialog (D-P4) shortens the
+    // array Apply sends without shortening the ref, so every match after the
+    // removed row reads the WRONG entry.
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    openSalesOrderSection();
+
+    const extracted = [
+      { product_code: MATCHED_PRODUCT.code, quantity: 1, notes: 'first' },
+      { product_code: 'GHOST-CODE', quantity: 1, notes: 'not found' },
+      { product_code: MATCHED_SET.code, quantity: 5, notes: 'set of five' },
+    ];
+    await extractAndSettle(extracted);
+
+    // The dialog removes row 2 (GHOST-CODE, an "x" per D-P4) locally, then
+    // Confirm and prefill calls onApply with only the remaining rows.
+    const afterRemovingGhostRow = [extracted[0], extracted[2]];
+
+    await act(async () => {
+      captured.onApply?.({ productLines: afterRemovingGhostRow });
+    });
+
+    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(1);
+    expect(screen.getByLabelText('Remarks for line 1')).toHaveValue('first');
+    expect(screen.getByLabelText('Quantity for line 2')).toHaveValue(5);
+    expect(screen.getByLabelText('Remarks for line 2')).toHaveValue('set of five');
+    expect(screen.queryByLabelText('Quantity for line 3')).toBeNull();
+    expect(toasts.error).not.toHaveBeenCalled();
   });
 });

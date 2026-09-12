@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  Copy,
   FileText,
   History,
   Info,
@@ -43,6 +44,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -87,6 +90,7 @@ import {
 } from '../lib/portal-client';
 import {
   portalDetailPath,
+  portalDuplicatePath,
   portalHomePath,
   portalVerifyPath,
 } from '../lib/portal-paths';
@@ -591,34 +595,84 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [neighbours, kind, slug, router]);
 
+  // Shared by the revision-draft resume (below) and Duplicate's `?from=`
+  // prefill (D-D1): both copy fields + lines from an already-fetched source,
+  // sourced from the same field keys the form itself reads/writes.
+  const applySourceToForm = (source: Record<string, unknown>) => {
+    const next: Record<string, string | string[]> = {};
+    for (const f of fieldDefs) {
+      const v = source[f.name];
+      if (f.widget === 'do-multi-filter') {
+        if (Array.isArray(v)) {
+          next[f.name] = v.map((x) => String(x).trim()).filter(Boolean);
+        } else if (v == null || v === '') {
+          next[f.name] = [];
+        } else {
+          next[f.name] = String(v)
+            .split(/[,\n]/)
+            .map((x) => x.trim())
+            .filter(Boolean);
+        }
+      } else {
+        next[f.name] = v == null ? '' : String(v);
+      }
+    }
+    setFields(next);
+    if (showLines) {
+      const lines = (source as { products?: ProductLine[] }).products ?? [];
+      setProducts(lines.map((l) => ({ ...l })));
+    }
+    if (kind === 'complaint') {
+      const pls =
+        (
+          source as {
+            product_lines?: {
+              product_code?: string | null;
+              product_type?: string | null;
+              quantity?: string | null;
+            }[];
+          }
+        ).product_lines ?? [];
+      setComplaintLines(
+        pls
+          .filter((l) => (l.product_code ?? '').trim())
+          .map((l) => ({
+            product_code: (l.product_code ?? '').trim(),
+            product_type: (l.product_type ?? '').trim(),
+            quantity: (l.quantity ?? '').trim(),
+          })),
+      );
+    }
+  };
+
   useEffect(() => {
     if (!submissionId) {
       let cancelledNew = false;
-      const next: Record<string, string | string[]> = {};
-      const lookupFields: FieldDef[] = [];
-      for (const f of fieldDefs) {
-        if (f.widget === 'do-multi-filter') {
-          next[f.name] = [];
-          continue;
+      const seedEmptyForm = async () => {
+        const next: Record<string, string | string[]> = {};
+        const lookupFields: FieldDef[] = [];
+        for (const f of fieldDefs) {
+          if (f.widget === 'do-multi-filter') {
+            next[f.name] = [];
+            continue;
+          }
+          if (f.defaultFromContact === 'fullname') {
+            next[f.name] = defaultsFromContact.fullname;
+          } else if (f.defaultFromContact === 'first_name') {
+            next[f.name] = defaultsFromContact.first_name;
+          } else if (f.defaultFromContact === 'contact_id') {
+            next[f.name] = defaultsFromContact.contactId;
+          } else if (f.defaultToday) {
+            next[f.name] = new Date().toISOString().slice(0, 10);
+          } else {
+            next[f.name] = '';
+          }
+          if (f.widget === 'lookup-select' && f.setKey) lookupFields.push(f);
         }
-        if (f.defaultFromContact === 'fullname') {
-          next[f.name] = defaultsFromContact.fullname;
-        } else if (f.defaultFromContact === 'first_name') {
-          next[f.name] = defaultsFromContact.first_name;
-        } else if (f.defaultFromContact === 'contact_id') {
-          next[f.name] = defaultsFromContact.contactId;
-        } else if (f.defaultToday) {
-          next[f.name] = new Date().toISOString().slice(0, 10);
-        } else {
-          next[f.name] = '';
-        }
-        if (f.widget === 'lookup-select' && f.setKey) lookupFields.push(f);
-      }
-      // Seed each lookup field's binding default (Default (new forms) in the lookup
-      // admin) so the portal pre-selects it just like the system form. Must happen
-      // HERE, not in the widget: this init does a full setFields replace that would
-      // otherwise wipe a widget-applied value.
-      void (async () => {
+        // Seed each lookup field's binding default (Default (new forms) in the lookup
+        // admin) so the portal pre-selects it just like the system form. Must happen
+        // HERE, not in the widget: this init does a full setFields replace that would
+        // otherwise wipe a widget-applied value.
         await Promise.all(
           lookupFields.map((f) =>
             lookupSet(f.setKey as string)
@@ -634,7 +688,33 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           setComplaintLines([]);
           setLoading(false);
         }
-      })();
+      };
+
+      // Duplicate (D-D1): `?from=<id>` copies fields + lines from a submission
+      // this contact owns; attachments stay empty and nothing is saved until
+      // Save draft / Submit. An owned-by-someone-else or missing source falls
+      // back to a plain empty form with a toast, rather than a dead end.
+      const fromId =
+        typeof window !== 'undefined'
+          ? new URL(window.location.href).searchParams.get('from')
+          : null;
+      if (fromId && fromId.trim()) {
+        void (async () => {
+          try {
+            const source = await fetchSubmission(kind, fromId.trim());
+            if (cancelledNew) return;
+            applySourceToForm(source as unknown as Record<string, unknown>);
+            setAttachments([]);
+            setLoading(false);
+          } catch {
+            if (cancelledNew) return;
+            toast.error('Could not copy that submission.');
+            await seedEmptyForm();
+          }
+        })();
+      } else {
+        void seedEmptyForm();
+      }
       return () => {
         cancelledNew = true;
       };
@@ -648,57 +728,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         // Resume a saved-but-unsent revision (UAC: revision drafts): a stored,
         // non-stale draft prefills the form OVER the saved values, sourced from
         // the same field keys the saved submission itself is read from - so
-        // merging the draft's flat dict onto `data` and reading through the one
-        // block below covers fields, `products` and `product_lines` alike.
+        // merging the draft's flat dict onto `data` and reading through
+        // applySourceToForm covers fields, `products` and `product_lines` alike.
         const draft = data.revision_draft ?? null;
         const resumeDraft = Boolean(draft && !draft.stale);
         const source = resumeDraft
           ? { ...data, ...(draft!.fields || {}) }
           : data;
-        const next: Record<string, string | string[]> = {};
-        for (const f of fieldDefs) {
-          const v = (source as Record<string, unknown>)[f.name];
-          if (f.widget === 'do-multi-filter') {
-            if (Array.isArray(v)) {
-              next[f.name] = v.map((x) => String(x).trim()).filter(Boolean);
-            } else if (v == null || v === '') {
-              next[f.name] = [];
-            } else {
-              next[f.name] = String(v)
-                .split(/[,\n]/)
-                .map((x) => x.trim())
-                .filter(Boolean);
-            }
-          } else {
-            next[f.name] = v == null ? '' : String(v);
-          }
-        }
-        setFields(next);
-        if (showLines) {
-          const lines = (source as { products?: ProductLine[] }).products ?? [];
-          setProducts(lines.map((l) => ({ ...l })));
-        }
-        if (kind === 'complaint') {
-          const pls =
-            (
-              source as {
-                product_lines?: {
-                  product_code?: string | null;
-                  product_type?: string | null;
-                  quantity?: string | null;
-                }[];
-              }
-            ).product_lines ?? [];
-          setComplaintLines(
-            pls
-              .filter((l) => (l.product_code ?? '').trim())
-              .map((l) => ({
-                product_code: (l.product_code ?? '').trim(),
-                product_type: (l.product_type ?? '').trim(),
-                quantity: (l.quantity ?? '').trim(),
-              })),
-          );
-        }
+        applySourceToForm(source as unknown as Record<string, unknown>);
         setAttachments((data.attachments as PortalAttachment[]) ?? []);
         if (resumeDraft && draft) {
           setReason(draft.reason ?? '');
@@ -1943,6 +1980,21 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             <span className="text-xs text-muted-foreground/70">
               {neighbours.position} / {neighbours.total}
             </span>
+          )}
+          {/* View-page gear (D-D1): today's only item is Duplicate. Read-only
+              view only - the form itself (new or editing) has nothing to
+              duplicate FROM yet. */}
+          {detail && !editing && (
+            <DetailActionsMenu ariaLabel={`${SUBMISSION_LABELS[kind]} actions`}>
+              <DropdownMenuItem
+                onSelect={() => {
+                  router.push(portalDuplicatePath(kind, detail.id, slug));
+                }}
+              >
+                <Copy className="h-4 w-4" />
+                Duplicate
+              </DropdownMenuItem>
+            </DetailActionsMenu>
           )}
         </div>
       </div>
