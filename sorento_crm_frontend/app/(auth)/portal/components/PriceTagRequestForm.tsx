@@ -40,8 +40,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { FormSection } from './FormSection';
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -98,6 +98,10 @@ type AIMatchStatus = 'loading' | 'matched_product' | 'matched_set' | 'not_found'
 // ---------------------------------------------------------------------------
 // Draft line (client-side, before persisting)
 // ---------------------------------------------------------------------------
+
+// D-P1: the four sections, top to bottom, on both the edit form and the
+// read-only view.
+type SectionKey = 'customer' | 'sales_order' | 'price' | 'need_by';
 
 interface DraftLine {
   key: string; // client-side key for React
@@ -318,6 +322,82 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // whatever a create call in THIS session already answered with.
   const effectiveId = requestId ?? createdRequestId ?? undefined;
 
+  // ---- Sections (D-P1): Customer open by default, everything else opens
+  // progressively as the form gains the value the next section needs. A rule
+  // fires once per section per form load; a section the user collapsed by
+  // hand (tracked in the same ref) is never reopened by a rule.
+  const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>({
+    customer: true,
+    sales_order: false,
+    price: false,
+    need_by: false,
+  });
+  const sectionSettledRef = useRef<Set<SectionKey>>(new Set());
+  // Whether the price mode reflects a real pick (a click, or a prefilled/
+  // loaded value) rather than just its 'list' default at mount - the default
+  // must not itself open Additional Information on a blank new form.
+  const priceModeChosenRef = useRef(false);
+
+  const openSectionOnce = useCallback((key: SectionKey) => {
+    if (sectionSettledRef.current.has(key)) return;
+    sectionSettledRef.current.add(key);
+    setSectionOpen((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
+  }, []);
+
+  const toggleSection = useCallback((key: SectionKey, next: boolean) => {
+    sectionSettledRef.current.add(key);
+    setSectionOpen((prev) => ({ ...prev, [key]: next }));
+  }, []);
+
+  // Picking a customer opens Sales Order & Lines (AC-P3).
+  useEffect(() => {
+    if (debtorCode) openSectionOnce('sales_order');
+  }, [debtorCode, openSectionOnce]);
+
+  // The first line (AI or Add line) opens Price (AC-P7).
+  useEffect(() => {
+    if (lines.length > 0) openSectionOnce('price');
+  }, [lines.length, openSectionOnce]);
+
+  // A chosen price mode opens Additional Information (AC-P8); Selling only
+  // counts once it and a promotion are both there is not required - Selling
+  // alone is enough (D-P2, submit works with no promotion).
+  useEffect(() => {
+    if (!priceModeChosenRef.current) return;
+    if (priceMode === 'list' || priceMode === 'selling') {
+      openSectionOnce('need_by');
+    }
+  }, [priceMode, openSectionOnce]);
+
+  const selectedDebtorName = useMemo(
+    () => debtors.find((d) => d.code === debtorCode)?.name ?? null,
+    [debtors, debtorCode],
+  );
+  const selectedPromotionName = useMemo(
+    () => promotions.find((p) => p.id === promotionId)?.name ?? null,
+    [promotions, promotionId],
+  );
+  const fileCount = attachments.length + pendingFiles.length;
+
+  // Collapsed-header one-liners (AC-P9); empty sections show none.
+  const sectionSummaries: Record<SectionKey, string | null> = {
+    customer: selectedDebtorName,
+    sales_order:
+      lines.length > 0 || fileCount > 0
+        ? `${lines.length} line${lines.length === 1 ? '' : 's'}, ${fileCount} file${fileCount === 1 ? '' : 's'}`
+        : null,
+    price:
+      priceMode === 'selling'
+        ? `Selling price${selectedPromotionName ? ` - ${selectedPromotionName}` : ''}`
+        : 'List price',
+    need_by:
+      neededByDate || notes.trim()
+        ? [neededByDate || null, notes.trim() ? 'notes' : null]
+            .filter(Boolean)
+            .join(' - ')
+        : null,
+  };
+
   // ---- Load lookups ----
   useEffect(() => {
     // The debtor list is scoped to the sales agent this portal account is linked
@@ -353,11 +433,21 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setDebtorCode(data.debtor_code ?? '');
         setPromotionId(data.promotion_id ?? '');
         setPriceMode(data.price_mode ?? 'list');
+        // A loaded request already has a real price mode, not the blank
+        // form's resting default - so a later mode click is free to act on
+        // it (AC-P8). Also open every section that already holds a value
+        // directly (AC-P11): a `setPriceMode('list')` here is a no-op when
+        // the mode was already 'list' at mount, so the reactive rule alone
+        // would never see it change and never fire.
+        priceModeChosenRef.current = true;
         // Both are nullable on a draft (D48a): an empty input, not a crash.
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
         setLines(data.lines.map(lineToDraft));
         setAttachments(data.attachments ?? []);
+        if (data.debtor_code) openSectionOnce('sales_order');
+        if (data.lines.length > 0) openSectionOnce('price');
+        openSectionOnce('need_by');
       })
       .catch(() => {
         if (!cancelled) toast.error('Failed to load request');
@@ -368,7 +458,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [requestId, router]);
+    // router.back() only fires on a 404, and Next's router is stable across
+    // renders regardless; omitted so a fresh-object router mock cannot force
+    // an unrelated re-render into a refetch loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestId]);
 
   // ---- Duplicate (D-D1): `?from=<id>` copies header fields + lines into a
   // NEW draft. Attachments stay empty (Sales Order files are not copied);
@@ -388,9 +482,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setDebtorCode(data.debtor_code ?? '');
         setPromotionId(data.promotion_id ?? '');
         setPriceMode(data.price_mode ?? 'list');
+        priceModeChosenRef.current = true;
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
         setLines(data.lines.map(lineToDraft));
+        // AC-D3: Customer, Sales Order & Lines and Price open because they
+        // hold values; Additional Information opens too (same no-op-state
+        // reasoning as the load-existing-request effect above).
+        if (data.debtor_code) openSectionOnce('sales_order');
+        if (data.lines.length > 0) openSectionOnce('price');
+        openSectionOnce('need_by');
       })
       .catch(() => {
         if (!cancelled) toast.error('Could not copy that submission.');
@@ -398,7 +499,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [isNew]);
+  }, [isNew, openSectionOnce]);
 
   // ---- Debtor options ----
   const debtorOptions = useMemo<SearchableSelectOption[]>(
@@ -649,17 +750,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [],
   );
 
-  /** Everything Submit can see wrong from here, reported at once. */
+  /** Everything Submit can see wrong from here, reported at once. Need by is
+   *  optional (D-P2b) - only a server refusal can still name it, until the
+   *  backend rule drops too. */
   const collectProblems = useCallback(() => {
     const next: { debtor?: string; neededBy?: string; lines?: string } = {};
     if (!debtorCode) next.debtor = MISSING_DEBTOR;
-    if (!neededByDate) next.neededBy = MISSING_DEADLINE;
     if (lines.length === 0) next.lines = MISSING_LINES;
     const emptyRows = lines
       .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
       .filter((index) => index >= 0);
     return { next, emptyRows };
-  }, [debtorCode, neededByDate, lines]);
+  }, [debtorCode, lines]);
 
   /** How many things the form is currently complaining about, for the one line
    *  above the actions. */
@@ -679,12 +781,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     });
   }, [debtorCode, neededByDate, lines.length]);
 
-  // Selling price only means something with a promotion behind it (D5):
-  // clearing the promotion while Selling is chosen flips the control back to
-  // List rather than leaving it pointed at a price that no longer resolves.
-  useEffect(() => {
-    if (!promotionId && priceMode === 'selling') setPriceMode('list');
-  }, [promotionId, priceMode]);
+  // D-P2 (owner ruling): Selling with no promotion is a valid end state now -
+  // clearing the promotion no longer flips the mode back to List. Switching
+  // TO List is the only thing that clears the promotion (in the button's own
+  // onClick below), so an emptied field never leaves a stale id behind.
 
   // ---- PO attachments: buffer pre-draft, flush once the draft exists ----
   //
@@ -971,56 +1071,66 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </p>
         </div>
 
-        {/* Customer - same field, same position as the edit form, value swapped in. */}
-        <div className="space-y-1.5">
-          <Label>Customer</Label>
-          <p className="text-sm font-medium py-2">{request.debtor_name ?? '-'}</p>
-        </div>
+        {/* Same four sections as the edit form, same order, all open by
+            default (AC-P11) - headers still toggle, there is just no rule
+            here to reopen one a reader collapses. */}
+        <FormSection
+          title="Customer"
+          summary={sectionSummaries.customer}
+          open={sectionOpen.customer}
+          onOpenChange={(next) => toggleSection('customer', next)}
+        >
+          <div className="space-y-1.5">
+            <Label>Customer</Label>
+            <p className="text-sm font-medium py-2">
+              {request.debtor_name ?? '-'}
+            </p>
+          </div>
+        </FormSection>
 
-        {/* Promotion */}
-        <div className="space-y-1.5">
-          <Label>Promotion</Label>
-          <p className="text-sm font-medium py-2">
-            {request.promotion_name ?? '-'}
-          </p>
-        </div>
-
-        {/* Price mode (D5) */}
-        <div className="space-y-1.5">
-          <Label>Price</Label>
-          <p className="text-sm font-medium py-2">
-            {(request.price_mode ?? 'list') === 'selling'
-              ? 'Selling price'
-              : 'List price'}
-          </p>
-        </div>
-
-        {/* Need by date */}
-        <div className="space-y-1.5">
-          <Label>Need by</Label>
-          <p className="text-sm font-medium py-2">
-            {request.needed_by_date ?? '-'}
-          </p>
-        </div>
-
-        {/* Notes */}
-        <div className="space-y-1.5">
-          <Label>Notes</Label>
-          <p className="text-sm py-2">
-            {request.notes || (
-              <span className="text-muted-foreground">No notes.</span>
+        <FormSection
+          title="Sales Order & Lines"
+          summary={sectionSummaries.sales_order}
+          open={sectionOpen.sales_order}
+          onOpenChange={(next) => toggleSection('sales_order', next)}
+        >
+          {/* Sales Order - the files the salesperson attached, openable in
+              place. Always rendered, empty state when there are none, so a
+              reader never wonders whether the section has one at all. */}
+          <div className="space-y-1.5">
+            <Label>Sales Order</Label>
+            {attachments.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No sales order files attached.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {attachments.map((att, idx) => (
+                  <button
+                    key={att.link_id}
+                    type="button"
+                    onClick={() => {
+                      setPreviewIndex(idx);
+                      setPreviewOpen(true);
+                    }}
+                    className="flex w-full items-center text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition-colors text-left"
+                  >
+                    <FileText className="size-3.5 mr-2 text-muted-foreground shrink-0" />
+                    <span
+                      className="truncate"
+                      title={att.filename ?? undefined}
+                    >
+                      {att.filename || 'Attachment'}
+                    </span>
+                  </button>
+                ))}
+              </div>
             )}
-          </p>
-        </div>
+          </div>
 
-        {/* Lines: same table the edit form uses, cells read-only. */}
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-base">
-              Lines ({request.lines.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 px-4 pb-4">
+          {/* Lines: same table the edit form uses, cells read-only. */}
+          <div className="space-y-1.5">
+            <Label>Lines ({request.lines.length})</Label>
             {request.lines.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">
                 No lines.
@@ -1072,43 +1182,54 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 </table>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </FormSection>
 
-        {/* Sales Order - same section as the edit form's dropzone, without
-            upload controls: the files the salesperson attached, openable in
-            place. Always rendered, empty state when there are none, so a
-            reader never wonders whether the form has a Sales Order section at
-            all. */}
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-base">Sales Order</CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4 space-y-1">
-            {attachments.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                No sales order files attached.
+        <FormSection
+          title="Price"
+          summary={sectionSummaries.price}
+          open={sectionOpen.price}
+          onOpenChange={(next) => toggleSection('price', next)}
+        >
+          <div className="space-y-1.5">
+            <Label>Price</Label>
+            <p className="text-sm font-medium py-2">
+              {(request.price_mode ?? 'list') === 'selling'
+                ? 'Selling price'
+                : 'List price'}
+            </p>
+          </div>
+          {(request.price_mode ?? 'list') === 'selling' && (
+            <div className="space-y-1.5">
+              <Label>Promotion</Label>
+              <p className="text-sm font-medium py-2">
+                {request.promotion_name ?? '-'}
               </p>
-            ) : (
-              attachments.map((att, idx) => (
-                <button
-                  key={att.link_id}
-                  type="button"
-                  onClick={() => {
-                    setPreviewIndex(idx);
-                    setPreviewOpen(true);
-                  }}
-                  className="flex w-full items-center text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition-colors text-left"
-                >
-                  <FileText className="size-3.5 mr-2 text-muted-foreground shrink-0" />
-                  <span className="truncate" title={att.filename ?? undefined}>
-                    {att.filename || 'Attachment'}
-                  </span>
-                </button>
-              ))
-            )}
-          </CardContent>
-        </Card>
+            </div>
+          )}
+        </FormSection>
+
+        <FormSection
+          title="Additional Information"
+          summary={sectionSummaries.need_by}
+          open={sectionOpen.need_by}
+          onOpenChange={(next) => toggleSection('need_by', next)}
+        >
+          <div className="space-y-1.5">
+            <Label>Need by</Label>
+            <p className="text-sm font-medium py-2">
+              {request.needed_by_date ?? '-'}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Notes</Label>
+            <p className="text-sm py-2">
+              {request.notes || (
+                <span className="text-muted-foreground">No notes.</span>
+              )}
+            </p>
+          </div>
+        </FormSection>
 
         <AttachmentPreviewModal
           open={previewOpen}
@@ -1216,149 +1337,83 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
       </h1>
 
-      {/* Customer */}
-      <div
-        className="space-y-1.5"
-        {...(fieldErrors.debtor ? { 'data-error-anchor': 'debtor' } : {})}
+      {/* Customer - open by default; picking one opens Sales Order & Lines
+          (AC-P3). */}
+      <FormSection
+        title="Customer"
+        summary={sectionSummaries.customer}
+        open={sectionOpen.customer}
+        onOpenChange={(next) => toggleSection('customer', next)}
       >
-        <Label htmlFor="debtor">Customer *</Label>
-        {debtorsLoaded && debtorOptions.length === 0 ? (
-          <p
-            className="text-sm rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-            data-testid="no-debtors-notice"
-          >
-            No customers available. Your portal account is not linked to a
-            sales agent yet. Ask your Sorento contact to link it.
-          </p>
-        ) : (
-          <SearchableSelect
-            id="debtor"
-            value={debtorCode}
-            onChange={setDebtorCode}
-            options={debtorOptions}
-            placeholder="Select a dealer..."
-          />
-        )}
-        {fieldErrors.debtor && (
-          <p className="text-xs text-destructive">{fieldErrors.debtor}</p>
-        )}
-      </div>
-
-      {/* Promotion */}
-      <div className="space-y-1.5">
-        <Label htmlFor="promotion">Promotion</Label>
-        <SearchableSelect
-          id="promotion"
-          value={promotionId}
-          onChange={setPromotionId}
-          options={promotionOptions}
-          placeholder="Select a promotion (optional)..."
-          clearable
-        />
-      </div>
-
-      {/* Price mode (D5): List price by default, Selling price only once a
-          promotion is picked - it has nothing to sell against otherwise. */}
-      <div className="space-y-1.5">
-        <Label id="price-mode-label">Price</Label>
         <div
-          role="radiogroup"
-          aria-labelledby="price-mode-label"
-          className="inline-flex items-center rounded-md border p-0.5"
+          className="space-y-1.5"
+          {...(fieldErrors.debtor ? { 'data-error-anchor': 'debtor' } : {})}
         >
-          <button
-            type="button"
-            role="radio"
-            aria-checked={priceMode === 'list'}
-            className={cn(
-              'rounded px-3 py-1.5 text-sm transition-colors',
-              priceMode === 'list'
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:bg-muted',
-            )}
-            onClick={() => setPriceMode('list')}
-          >
-            List price
-          </button>
-          {promotionId ? (
-            <button
-              type="button"
-              role="radio"
-              aria-checked={priceMode === 'selling'}
-              className={cn(
-                'rounded px-3 py-1.5 text-sm transition-colors',
-                priceMode === 'selling'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-muted',
-              )}
-              onClick={() => setPriceMode('selling')}
+          <Label htmlFor="debtor">Customer *</Label>
+          {debtorsLoaded && debtorOptions.length === 0 ? (
+            <p
+              className="text-sm rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+              data-testid="no-debtors-notice"
             >
-              Selling price
-            </button>
+              No customers available. Your portal account is not linked to a
+              sales agent yet. Ask your Sorento contact to link it.
+            </p>
           ) : (
-            // A native `disabled` button fires no mouse/focus events in real
-            // browsers, so a Tooltip watching it never opens. The SPAN is the
-            // trigger instead - focusable and hoverable - and the button
-            // inside it is merely inert (aria-disabled, no-op click,
-            // pointer-events-none so hover always reaches the span).
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span tabIndex={0} className="inline-block">
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={false}
-                    aria-disabled="true"
-                    tabIndex={-1}
-                    onClick={(e) => e.preventDefault()}
-                    className="pointer-events-none cursor-not-allowed rounded px-3 py-1.5 text-sm text-muted-foreground opacity-50"
-                  >
-                    Selling price
-                  </button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>Select a promotion first</TooltipContent>
-            </Tooltip>
+            <SearchableSelect
+              id="debtor"
+              value={debtorCode}
+              onChange={setDebtorCode}
+              options={debtorOptions}
+              placeholder="Select a dealer..."
+            />
+          )}
+          {fieldErrors.debtor && (
+            <p className="text-xs text-destructive">{fieldErrors.debtor}</p>
           )}
         </div>
-      </div>
+      </FormSection>
 
-      {/* Need by date */}
-      <div
-        className="space-y-1.5"
-        {...(fieldErrors.neededBy ? { 'data-error-anchor': 'needed_by' } : {})}
+      {/* Sales Order & Lines - the AI extract / dropzone and the lines table
+          share one section (D-P1): the first line lands here from either one,
+          and opens Price (AC-P7). */}
+      <FormSection
+        title="Sales Order & Lines"
+        summary={sectionSummaries.sales_order}
+        open={sectionOpen.sales_order}
+        onOpenChange={(next) => toggleSection('sales_order', next)}
       >
-        <Label htmlFor="needed_by_date">Need by *</Label>
-        <Input
-          id="needed_by_date"
-          type="date"
-          value={neededByDate}
-          onChange={(e) => setNeededByDate(e.target.value)}
-          min={nextBusinessDay()}
-        />
-        {fieldErrors.neededBy && (
-          <p className="text-xs text-destructive">{fieldErrors.neededBy}</p>
-        )}
-      </div>
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label>Sales Order</Label>
+            {/* Always shown, not gated on an attachment already existing here
+               (review fix): the dialog takes the file itself and, with
+               alsoAttach checked, stores it into this same section - gating
+               on an attachment first meant dropping the file in TWICE. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAiExtractOpen(true)}
+            >
+              <Sparkles className="size-3.5 mr-1" />
+              Extract lines with AI
+            </Button>
+          </div>
+          {/* The shared portal dropzone (D2/D3): a file dropped before the draft
+              exists is buffered and shown here as pending; once the draft exists
+              (this request already has an id) a drop uploads immediately. */}
+          <AttachmentDropzone
+            kind="price_tag_request"
+            submissionId={effectiveId ?? null}
+            attachments={attachments}
+            onChange={setAttachments}
+            disabled={saving || submitting || deleting}
+            pendingFiles={pendingFiles}
+            onPendingFilesChange={setPendingFiles}
+          />
+        </div>
 
-      {/* Notes */}
-      <div className="space-y-1.5">
-        <Label htmlFor="notes">Notes</Label>
-        <Textarea
-          id="notes"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Any additional notes..."
-          rows={3}
-        />
-      </div>
-
-      {/* Lines: one table, one Add button, one Item dropdown (D47) */}
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Lines</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 px-4 pb-4">
+        <div className="space-y-1.5">
+          <Label>Lines</Label>
           {lines.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">
               No lines yet.
@@ -1410,41 +1465,118 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <Button size="sm" variant="outline" onClick={addLine}>
             <Plus className="size-3.5 mr-1" /> Add line
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </FormSection>
 
-      {/* Sales Order upload */}
-      <Card>
-        <CardHeader className="py-3 px-4 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-          <CardTitle className="text-base">Sales Order</CardTitle>
-          {/* Always shown, not gated on an attachment already existing here
-             (review fix): the dialog takes the file itself and, with
-             alsoAttach checked, stores it into this same section - gating
-             on an attachment first meant dropping the file in TWICE. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setAiExtractOpen(true)}
+      {/* Price - mode first, promotion second (D-P2, owner ruling): Selling
+          is never disabled, and its optional Promotion picker lives here,
+          not in its own section. Choosing either mode opens Additional
+          Information (AC-P8). */}
+      <FormSection
+        title="Price"
+        summary={sectionSummaries.price}
+        open={sectionOpen.price}
+        onOpenChange={(next) => toggleSection('price', next)}
+      >
+        <div className="space-y-1.5">
+          <Label id="price-mode-label">Price</Label>
+          <div
+            role="radiogroup"
+            aria-labelledby="price-mode-label"
+            className="inline-flex items-center rounded-md border p-0.5"
           >
-            <Sparkles className="size-3.5 mr-1" />
-            Extract lines with AI
-          </Button>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          {/* The shared portal dropzone (D2/D3): a file dropped before the draft
-              exists is buffered and shown here as pending; once the draft exists
-              (this request already has an id) a drop uploads immediately. */}
-          <AttachmentDropzone
-            kind="price_tag_request"
-            submissionId={effectiveId ?? null}
-            attachments={attachments}
-            onChange={setAttachments}
-            disabled={saving || submitting || deleting}
-            pendingFiles={pendingFiles}
-            onPendingFilesChange={setPendingFiles}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={priceMode === 'list'}
+              className={cn(
+                'rounded px-3 py-1.5 text-sm transition-colors',
+                priceMode === 'list'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+              onClick={() => {
+                priceModeChosenRef.current = true;
+                setPriceMode('list');
+                // Switching to List hides Promotion and clears it (D-P2).
+                setPromotionId('');
+              }}
+            >
+              List price
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={priceMode === 'selling'}
+              className={cn(
+                'rounded px-3 py-1.5 text-sm transition-colors',
+                priceMode === 'selling'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+              onClick={() => {
+                priceModeChosenRef.current = true;
+                setPriceMode('selling');
+              }}
+            >
+              Selling price
+            </button>
+          </div>
+        </div>
+
+        {priceMode === 'selling' && (
+          <div className="space-y-1.5">
+            <Label htmlFor="promotion">Promotion (optional)</Label>
+            <SearchableSelect
+              id="promotion"
+              value={promotionId}
+              onChange={setPromotionId}
+              options={promotionOptions}
+              placeholder="Select a promotion (optional)..."
+              clearable
+            />
+          </div>
+        )}
+      </FormSection>
+
+      {/* Additional Information - Need by and Notes, both optional
+          (D-P2b): neither blocks Submit. */}
+      <FormSection
+        title="Additional Information"
+        summary={sectionSummaries.need_by}
+        open={sectionOpen.need_by}
+        onOpenChange={(next) => toggleSection('need_by', next)}
+      >
+        <div
+          className="space-y-1.5"
+          {...(fieldErrors.neededBy
+            ? { 'data-error-anchor': 'needed_by' }
+            : {})}
+        >
+          <Label htmlFor="needed_by_date">Need by</Label>
+          <Input
+            id="needed_by_date"
+            type="date"
+            value={neededByDate}
+            onChange={(e) => setNeededByDate(e.target.value)}
+            min={nextBusinessDay()}
           />
-        </CardContent>
-      </Card>
+          {fieldErrors.neededBy && (
+            <p className="text-xs text-destructive">{fieldErrors.neededBy}</p>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="notes">Notes</Label>
+          <Textarea
+            id="notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Any additional notes..."
+            rows={3}
+          />
+        </div>
+      </FormSection>
 
       <AIExtractDialog
         open={aiExtractOpen}
