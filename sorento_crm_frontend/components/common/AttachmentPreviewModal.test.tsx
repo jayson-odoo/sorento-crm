@@ -286,5 +286,121 @@ describe('AttachmentPreviewModal', () => {
       expect(screen.getByText('RPACC')).toBeTruthy();
       expect(screen.getByText('CWCY605')).toBeTruthy();
     });
+
+    // Reviewer round: assert on the ELEMENT, not its classes - the coder is changing the
+    // highlight's classes to `bg-amber-300 px-0.5 text-zinc-900`, and a class assertion here
+    // would pin the wrong thing and break on the very next styling pass.
+    it('wraps the matched text in a <mark> element', async () => {
+      mockSheet();
+      render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[sheetXlsx]} />);
+      await waitFor(() => expect(screen.getByText('RPACC')).toBeTruthy());
+
+      fireEvent.change(screen.getByPlaceholderText('Search in sheet'), {
+        target: { value: 'rpacc' },
+      });
+
+      const highlighted = document.querySelector('mark');
+      expect(highlighted).not.toBeNull();
+      expect(highlighted?.textContent).toBe('RPACC');
+    });
+
+    it('searches every loaded row, not only the 200 displayed', async () => {
+      apiFetchMock.mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+      });
+      // 205 physical rows, "NEEDLE" only on row 203 (index 202) - past the 200-row display
+      // slice, so a search over `rows` instead of `allRows` would find nothing.
+      const rows205 = Array.from({ length: 205 }, (_, i) => [i === 202 ? 'NEEDLE' : `row-${i}`]);
+      vi.doMock('xlsx', () => ({
+        read: () => ({ SheetNames: ['Sheet1'], Sheets: { Sheet1: {} } }),
+        utils: { sheet_to_json: () => rows205 },
+      }));
+      const bigXlsx: AttachmentPreviewItem = {
+        id: 'g',
+        name: 'big.xlsx',
+        url: 'https://cdn.example.com/big.xlsx',
+        downloadUrl: '/api/v1/resource-management/attachments/g/download',
+      };
+      render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[bigXlsx]} />);
+      await waitFor(() => expect(screen.getByText('row-0')).toBeTruthy());
+
+      fireEvent.change(screen.getByPlaceholderText('Search in sheet'), {
+        target: { value: 'needle' },
+      });
+
+      expect(screen.getByText('1 of 205 rows')).toBeTruthy();
+      expect(document.querySelectorAll('tbody tr').length).toBe(1);
+      expect(screen.getByText('NEEDLE')).toBeTruthy();
+    });
+
+    it('caps more than 200 matches at 200 rows, and the footnote says matches', async () => {
+      apiFetchMock.mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+      });
+      const rows250 = Array.from({ length: 250 }, (_, i) => [`COMMON-${i}`]);
+      vi.doMock('xlsx', () => ({
+        read: () => ({ SheetNames: ['Sheet1'], Sheets: { Sheet1: {} } }),
+        utils: { sheet_to_json: () => rows250 },
+      }));
+      const manyXlsx: AttachmentPreviewItem = {
+        id: 'h',
+        name: 'many.xlsx',
+        url: 'https://cdn.example.com/many.xlsx',
+        downloadUrl: '/api/v1/resource-management/attachments/h/download',
+      };
+      render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[manyXlsx]} />);
+      await waitFor(() => expect(screen.getByText('COMMON-0')).toBeTruthy());
+
+      fireEvent.change(screen.getByPlaceholderText('Search in sheet'), {
+        target: { value: 'common' },
+      });
+
+      expect(screen.getByText('250 of 250 rows')).toBeTruthy();
+      expect(document.querySelectorAll('tbody tr').length).toBe(200);
+      expect(
+        screen.getByText('Showing first 200 matches. Download for the full sheet.'),
+      ).toBeTruthy();
+    });
+
+    it('keeps the query across a sheet switch, and re-applies it to the new sheet', async () => {
+      apiFetchMock.mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+      });
+      vi.doMock('xlsx', () => ({
+        read: () => ({
+          SheetNames: ['Sheet1', 'Sheet2'],
+          Sheets: { Sheet1: { tag: 'one' }, Sheet2: { tag: 'two' } },
+        }),
+        utils: {
+          sheet_to_json: (ws: { tag: string }) =>
+            ws.tag === 'two' ? [['ONLY-ON-TWO']] : [['ONLY-ON-ONE']],
+        },
+      }));
+      const twoSheetXlsx: AttachmentPreviewItem = {
+        id: 'i',
+        name: 'two-sheets.xlsx',
+        url: 'https://cdn.example.com/two-sheets.xlsx',
+        downloadUrl: '/api/v1/resource-management/attachments/i/download',
+      };
+      render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[twoSheetXlsx]} />);
+      await waitFor(() => expect(screen.getByText('ONLY-ON-ONE')).toBeTruthy());
+
+      fireEvent.change(screen.getByPlaceholderText('Search in sheet'), {
+        target: { value: 'only-on-two' },
+      });
+      // Sheet1 names nothing matching the typed term.
+      expect(screen.getByText('No cell matches')).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sheet2' }));
+
+      // The query survived the switch and is re-applied against Sheet2's own rows.
+      expect(await screen.findByText('ONLY-ON-TWO')).toBeTruthy();
+      expect((screen.getByPlaceholderText('Search in sheet') as HTMLInputElement).value).toBe(
+        'only-on-two',
+      );
+    });
   });
 });

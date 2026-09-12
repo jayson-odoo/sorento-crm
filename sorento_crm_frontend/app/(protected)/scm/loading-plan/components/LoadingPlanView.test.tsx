@@ -503,13 +503,15 @@ describe('LoadingPlanView (the record)', () => {
     expect(from.value).toBe('2026-10-01');
     expect(to.value).toBe('2026-10-31');
 
-    fireEvent.change(from, { target: { value: '2026-11-01' } });
+    // A valid window: the new From stays before the existing To (2026-10-31) - a backwards
+    // window disables Save (review round, 12 Sep) rather than being sent at all.
+    fireEvent.change(from, { target: { value: '2026-09-01' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Save cut-off' })[0]);
 
     await waitFor(() =>
       expect(changeCutOff).toHaveBeenCalledWith(
         expect.objectContaining({
-          plan_horizon_start: '2026-11-01',
+          plan_horizon_start: '2026-09-01',
           plan_horizon_date: '2026-10-31',
         }),
         expect.anything(),

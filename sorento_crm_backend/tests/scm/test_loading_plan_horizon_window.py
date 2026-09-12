@@ -189,3 +189,33 @@ def test_a_valid_window_is_created_and_then_changed(scm_app):
     assert changed.status_code == 200, changed.text
     assert changed.json()["plan_horizon_start"] == "2026-11-01"
     assert changed.json()["plan_horizon_date"] == "2026-11-30"
+
+
+def test_changing_only_the_end_leaves_an_existing_start_untouched(scm_app):
+    """Reviewer round: both dialogs send the pair together, but a caller that PATCHes the end
+    date alone (or any other future caller) must not null out a start nobody asked to touch -
+    the route reads `model_fields_set`, not "key present with a None default", so an omitted
+    key leaves the column exactly as it was."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+
+    created = _create(
+        client,
+        str(w.supplier.id),
+        plan_horizon_start="2026-10-01",
+        plan_horizon_date="2026-10-31",
+    )
+    assert created.status_code == 201, created.text
+    plan_id = created.json()["id"]
+
+    # `plan_horizon_start` is not in this body at all - not even as null.
+    changed = client.patch(
+        f"{PLANS_URL}/{plan_id}", json={"plan_horizon_date": "2026-11-30"}
+    )
+
+    assert changed.status_code == 200, changed.text
+    body = changed.json()
+    assert body["plan_horizon_start"] == "2026-10-01"
+    assert body["plan_horizon_date"] == "2026-11-30"

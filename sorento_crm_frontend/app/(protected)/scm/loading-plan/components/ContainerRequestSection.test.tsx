@@ -1209,6 +1209,66 @@ describe('ContainerRequestSection - search (AC-N3)', () => {
 
     expect(screen.getByText('No product matches')).toBeInTheDocument();
   });
+
+  it('filters the Schedule view to the searched product too, and clearing restores it', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({ product_id: 'p1', item_code: 'ABC123' }),
+        row({ product_id: 'p2', item_code: 'XYZ999' }),
+      ],
+      sources: EMPTY_SOURCES,
+      lines: [
+        {
+          product_id: 'p1',
+          item_code: 'ABC123',
+          so_number: 'SO-1',
+          customer_label: 'Acme Sdn Bhd',
+          project_title: null,
+          agent_label: null,
+          unit_price: null,
+          demand_class: 'retail',
+          order_date: '2026-05-01',
+          required_date: null,
+          qty: 5,
+        },
+        {
+          product_id: 'p2',
+          item_code: 'XYZ999',
+          so_number: 'SO-2',
+          customer_label: 'Beta Trading',
+          project_title: null,
+          agent_label: null,
+          unit_price: null,
+          demand_class: 'retail',
+          order_date: '2026-05-01',
+          required_date: null,
+          qty: 8,
+        },
+      ],
+    };
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Schedule$/ }));
+    expect(
+      within(screen.getByTestId('container-request-schedule-matrix')).getByText('ABC123'),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('container-request-schedule-matrix')).getByText('XYZ999'),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search product'), { target: { value: 'abc' } });
+
+    const matrixAfterSearch = screen.getByTestId('container-request-schedule-matrix');
+    expect(within(matrixAfterSearch).getByText('ABC123')).toBeInTheDocument();
+    expect(within(matrixAfterSearch).queryByText('XYZ999')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search product'), { target: { value: '' } });
+
+    const matrixAfterClear = screen.getByTestId('container-request-schedule-matrix');
+    expect(within(matrixAfterClear).getByText('ABC123')).toBeInTheDocument();
+    expect(within(matrixAfterClear).getByText('XYZ999')).toBeInTheDocument();
+  });
 });
 
 // AC-N5: every column header is sortable by clicking it.
