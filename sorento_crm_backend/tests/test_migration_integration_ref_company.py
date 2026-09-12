@@ -213,10 +213,18 @@ class TestDDLShape:
     """
 
     def _indexes(self, bind) -> dict[str, str]:
+        # schemaname = current_schema(): pg_indexes is catalog-wide, and this
+        # SAME index name exists a second time in whatever scratch schema
+        # `blank_session` built earlier in the run (the model now declares
+        # these partial indexes too, per D12) - unfiltered, that schema's
+        # copy answers this query regardless of what `revert()` just did to
+        # the REAL table, and never goes away (that scratch schema lives for
+        # the whole pytest session).
         rows = bind.execute(
             text(
                 "SELECT indexname, indexdef FROM pg_indexes "
-                "WHERE tablename = 'integration_references'"
+                "WHERE tablename = 'integration_references' "
+                "AND schemaname = current_schema()"
             )
         ).all()
         return {row[0]: row[1] for row in rows}
@@ -225,13 +233,22 @@ class TestDDLShape:
         return bind.execute(
             text(
                 "SELECT is_nullable FROM information_schema.columns "
-                "WHERE table_name = 'integration_references' AND column_name = :c"
+                "WHERE table_name = 'integration_references' AND column_name = :c "
+                "AND table_schema = current_schema()"
             ),
             {"c": column},
         ).scalar()
 
     def _fk_delete_rule(self, bind, column: str) -> str:
-        """`confdeltype` for the FK on ``column`` - 'c' is CASCADE."""
+        """`confdeltype` for the FK on ``column`` - 'c' is CASCADE.
+
+        `'integration_references'::regclass` already resolves through THIS
+        connection's own `search_path` (`current_schema()` first), so it
+        cannot pick up a leaked scratch schema's table the way the two
+        unqualified catalog queries above could - but the namespace is
+        pinned explicitly anyway, so this helper reads the same regardless
+        of how the cast is ever changed.
+        """
         return bind.execute(
             text(
                 """
@@ -239,7 +256,10 @@ class TestDDLShape:
                 FROM pg_constraint con
                 JOIN pg_attribute att
                   ON att.attrelid = con.conrelid AND att.attnum = ANY(con.conkey)
-                WHERE con.conrelid = 'integration_references'::regclass
+                JOIN pg_class cls ON cls.oid = con.conrelid
+                JOIN pg_namespace ns ON ns.oid = cls.relnamespace
+                WHERE cls.relname = 'integration_references'
+                  AND ns.nspname = current_schema()
                   AND con.contype = 'f'
                   AND att.attname = :c
                 """
