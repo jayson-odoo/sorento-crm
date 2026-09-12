@@ -433,30 +433,41 @@ def _diff_change(kind, core_line, *, doc_number, item_code, location, old_date, 
     return Change(kind, doc_number, item_code, location, before=before, after=after)
 
 
-def test_build_batch_covers_only_planned_lines_and_is_none_when_nothing_planned_changed(api):
-    _client, world = api
+def test_build_batch_covers_only_held_lines_and_is_none_when_nothing_held_changed(api):
+    """Supersedes the old 'covers only planned/adopted lines' rule
+    (`PLAN-scm-planning-change-gate-held-or-inquiry.md`, AC-G1/AC-G4): being adopted onto
+    `projects.sales_orders` is no longer enough to keep a changed line in the batch. Only a
+    line frozen in the order's ACTIVE decision (or carrying an open inquiry) stays in -
+    `held_line` here is confirmed with a full Buy before the diff runs; `undecided_line` is
+    adopted the same way but never confirmed, and never makes the batch."""
+    client, world = api
     db = world.db
     core_so = _core_so(db, world.company_id)
-    planned_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="72",
-                               required_date=date(2026, 8, 20))
-    unplanned_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+    held_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="72",
+                            required_date=date(2026, 8, 20))
+    undecided_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
                                  required_date=date(2026, 8, 20))
     order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
-    _project_line(db, order, line_no=1, product=world.product, core_line=planned_line)
+    held_project_line = _project_line(db, order, line_no=1, product=world.product,
+                                       core_line=held_line)
+    _project_line(db, order, line_no=2, product=world.product, core_line=undecided_line)
     db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(held_project_line.id, buy_qty="72", buy_reason="ZZT no stock anywhere"),
+    ]})
 
     changed = _diff_change(
-        DATE_MOVED, planned_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
+        DATE_MOVED, held_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 20),
         new_date=date(2026, 9, 3), old_qty="72", new_qty="72",
     )
-    unplanned_changed = _diff_change(
-        DATE_MOVED, unplanned_line, doc_number=core_so.so_number, item_code="ZZT-ITEM-2",
+    undecided_changed = _diff_change(
+        DATE_MOVED, undecided_line, doc_number=core_so.so_number, item_code="ZZT-ITEM-2",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 20),
         new_date=date(2026, 9, 3), old_qty="10", new_qty="10",
     )
-    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed, unplanned_changed])
-    applied_line_ids = {id(changed): str(planned_line.id), id(unplanned_changed): str(unplanned_line.id)}
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed, undecided_changed])
+    applied_line_ids = {id(changed): str(held_line.id), id(undecided_changed): str(undecided_line.id)}
     order_ids = {core_so.so_number: str(core_so.id)}
 
     batch = planning_change_service.build_batch(
@@ -466,11 +477,11 @@ def test_build_batch_covers_only_planned_lines_and_is_none_when_nothing_planned_
     db.commit()
     assert batch is not None
     assert batch.order_count == 1
-    assert batch.line_count == 1  # the unplanned line is not in the batch
+    assert batch.line_count == 1  # the undecided line is not in the batch
 
-    only_unplanned_diff = Diff(scope_documents=(core_so.so_number,), changes=[unplanned_changed])
+    only_undecided_diff = Diff(scope_documents=(core_so.so_number,), changes=[undecided_changed])
     no_batch = planning_change_service.build_batch(
-        db, only_unplanned_diff, applied_line_ids=applied_line_ids, order_ids=order_ids,
+        db, only_undecided_diff, applied_line_ids=applied_line_ids, order_ids=order_ids,
         actor=world.actor, import_job_id=None, file_name="test.xlsx",
     )
     assert no_batch is None
@@ -537,15 +548,23 @@ def test_build_batch_skips_a_date_move_anchored_on_a_null_date(api):
     assert batch.line_count == 1
 
 
-def test_build_batch_row_shape_has_facts_and_why_and_ac_r03_no_decision(api):
-    _client, world = api
+def test_build_batch_row_shape_has_facts_and_why_for_a_held_line(api):
+    """AC-R03 ('no decision, no acceptance offered') is superseded
+    (`PLAN-scm-planning-change-gate-held-or-inquiry.md`): a changed line with no decision and
+    no inquiry now raises nothing at all, so there is no row left to shape-test on that
+    path. This shape-tests a HELD line's row instead, and keeps the gate itself explicit:
+    the identical change on a sibling order's undecided line still raises no batch."""
+    client, world = api
     db = world.db
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="72",
                             required_date=date(2026, 8, 20))
     order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
-    _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    project_line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
     db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(project_line.id, buy_qty="72", buy_reason="ZZT no stock anywhere"),
+    ]})
 
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
@@ -566,10 +585,32 @@ def test_build_batch_row_shape_has_facts_and_why_and_ac_r03_no_decision(api):
     assert len(out["orders"]) == 1
     row = out["orders"][0]["rows"][0]
     assert row["kind"] == "delayed"
-    assert row["held"] is None
-    assert row["decision"] is None  # AC-R03: no decision, no acceptance offered
-    assert row["suggested"] == "replan"
+    assert row["held"] is not None  # the row exists BECAUSE the line is held
+    assert row["decision"] == "accept"
+    assert row["suggested"] == "keep"  # only a Buy is held, 14 days is inside the window
     assert row["facts"]["days_moved"] == 14
+
+    # The gate itself, explicit: the identical change on an undecided line (adopted, never
+    # confirmed) on a sibling order raises no batch at all.
+    undecided_so = _core_so(db, world.company_id)
+    undecided_line = _core_line(db, undecided_so, world.product, world.own_wh, qty_ordered="72",
+                                 required_date=date(2026, 8, 20))
+    undecided_order = _project_so(db, world.project, so_id=undecided_so.id,
+                                   autocount_doc_no=undecided_so.so_number)
+    _project_line(db, undecided_order, line_no=1, product=world.product, core_line=undecided_line)
+    db.commit()
+    undecided_change = _diff_change(
+        DATE_MOVED, undecided_line, doc_number=undecided_so.so_number, item_code="ZZT-ITEM-2",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 20),
+        new_date=date(2026, 9, 3), old_qty="72", new_qty="72",
+    )
+    no_batch = planning_change_service.build_batch(
+        db, Diff(scope_documents=(undecided_so.so_number,), changes=[undecided_change]),
+        applied_line_ids={id(undecided_change): str(undecided_line.id)},
+        order_ids={undecided_so.so_number: str(undecided_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    assert no_batch is None
 
 
 # ============================================================================
