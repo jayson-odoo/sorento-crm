@@ -640,7 +640,88 @@ def body_difference(
             "on a turn that built an offer of its own, which is the defect the shipping "
             "body fixes and `tests/chatbot/test_tail_units.py` pins"
         )
-    return None
+    return _focus_carry_reason(world, actual_variables)
+
+
+# The axes `dialogue/focus.py::reuse_alive` keeps alive across a turn that did not name
+# them. The legacy bag had no equivalent of any of them: `compile_current_state` builds
+# `variables` FROM SCRATCH out of THIS TURN's parse ("the output object, built FROM
+# SCRATCH"), so a capture records what the customer said on that one turn and can say
+# nothing at all about what was still alive from the turn before.
+_CARRYING_AXES: frozenset[str] = frozenset(
+    {"products", "customer", "transporter", "warehouse", "domains", "date_window",
+     "attributes", "tier", "brands"}
+)
+
+
+def _focus_carry_reason(world: World, actual_variables: dict[str, Any]) -> str | None:
+    """The ONE thing a capture structurally cannot record: a CARRIED focus axis.
+
+    Growth r1 slice B3 / L1-S3 (AC-943, AC-1008, AC-1026, D6/D11): `focus` ages per axis
+    and carries what is still alive, where the 34-key bag was rebuilt from the turn's own
+    parse. So a world whose engine focus is the mapped one PLUS a carried axis is not a
+    disagreement - it is the capture having nowhere to put the answer.
+
+    DELIBERATELY NARROW, and this is what makes it a skip rather than an excuse:
+
+    * only EXTRA slots are forgiven, and only slots `reuse_alive` actually carries. A world
+      where the engine DROPS a slot the capture recorded still FAILS - which is how the
+      missing `focus.brands` writer was found in the first place;
+    * `open_question`, `ideation`, `access_levels` and `contains_flyer` must already agree,
+      so a question the engine armed wrongly is still a failure;
+    * the one value-level allowance is a BRAND WORD: the capture kept it on the product
+      axis (its parser hinted "Mocha" as a product AND listed it in `query_brands`) and the
+      engine keeps a brand on the brand axis only, so the mapped products may exceed the
+      engine's by exactly the brands both sides agree on.
+    """
+    mapped, reason = map_expected_variables_to_five_keys(world.expected_variables)
+    if reason is not None or mapped is None:
+        return None
+    expected = project_variables_for_comparison(mapped)
+    got = project_variables_for_comparison(actual_variables or {})
+    if any(got.get(k) != expected.get(k) for k in ("open_question", "ideation", "access_levels", "contains_flyer")):
+        return None
+
+    got_focus = got.get("focus") or {}
+    expected_focus = expected.get("focus") or {}
+    carried = sorted(set(got_focus) - set(expected_focus))
+    if not set(carried) <= _CARRYING_AXES:
+        return None
+
+    brands = {str(b).strip().lower() for b in (got_focus.get("brands") or set())}
+    brand_word = False
+    for name, value in expected_focus.items():
+        if got_focus.get(name) == value:
+            continue
+        if name != "products" or not isinstance(value, set):
+            return None
+        surplus = {str(v).strip().lower() for v in value - (got_focus.get("products") or set())}
+        if not surplus or not surplus <= brands:
+            return None
+        brand_word = True
+
+    if not carried and not brand_word:
+        return None
+
+    why = []
+    if carried:
+        why.append(
+            "the engine's focus is the mapped one plus "
+            + ", ".join(f"`{name}`" for name in carried)
+        )
+    if brand_word:
+        why.append(
+            "a BRAND WORD the capture's parser hinted as a product AND listed in "
+            "`query_brands` is on the brand axis only here"
+        )
+    return (
+        "captured before growth r1 slice B3: the 34-key bag was rebuilt from THIS turn's "
+        "parse, so it cannot record a focus axis carried from an earlier turn - "
+        + "; ".join(why)
+        + " (AC-943 / AC-1008 / AC-1026, D6/D11). Every other key already agrees and a "
+        "slot the engine DROPPED would still fail here. The rules themselves are pinned "
+        "by tests/chatbot/test_focus_rules.py and the focus worlds"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -771,11 +852,35 @@ def map_expected_variables_to_five_keys(
             )
         kind = _PENDING_KIND_TO_OPEN_QUESTION_KIND[pending["kind"]]
 
+    # THE ESCALATE OFFER, off the only place a capture could record it. `pending` is the
+    # R3 marker the PORT introduced (AC-202) and n8n never wrote one, so a capture whose
+    # turn ended "Would you like me to escalate to warehouse team?" carries the offer in
+    # its frozen REPLY and nowhere else - which is exactly what `offer_is_open`'s H13
+    # regex was for, and why the same regex is the honest translation here. Without it
+    # every escalate-offer world graded the engine's `team_pick` against a mapped `None`
+    # and failed on a key the legacy shape had no room for.
+    #
+    # ONE option, the team the offer named: that is `_ask_for_turn`'s own shape for the
+    # plain offer (D5), and `routing.suggested_team` is the same value it composes the
+    # sentence from.
+    offered_team = None
+    if kind is None:
+        from app.services.chatbot.head.output_exchange import _OFFERED_ESCALATION_RE
+
+        response = expected.get("response")
+        if isinstance(response, str) and _OFFERED_ESCALATION_RE.search(response):
+            offered_team = (expected.get("routing") or {}).get("suggested_team")
+            if offered_team:
+                kind = "team_pick"
+
     open_question: dict[str, Any] | None = None
     if kind is not None:
         payload: dict[str, Any] = {}
         if pending is not None and pending.get("team"):
             payload["team"] = pending["team"]
+        if offered_team is not None:
+            roster = [{"idx": 1, "team": offered_team, "label": offered_team}]
+            payload["team"] = offered_team
         open_question = {
             "kind": kind,
             "options": roster,
@@ -992,6 +1097,31 @@ def _answers(**kw: Any) -> dict[str, Any]:
     return {"resolved": False, "picks": [], "yes_no": None, "free_text": None, **kw}
 
 
+def _armed(kind: str, **kw: Any) -> dict[str, Any]:
+    """An `arm=` seed in the FIVE-KEY shape, built by the engine's own constructor.
+
+    An owner world seeds the state its turn starts from. Those seeds were written in the
+    legacy shape - `selection_context` + `last_result_set`, or the `pending` marker - and
+    L1-S3d step 4 deleted every read of them, so a seed in that shape now arms nothing at
+    all. `open_question.ask` is what a real lane leaves behind, so it is what a seed says.
+    The world's MESSAGES and its `expect` are untouched: this is the same fact, written the
+    way the engine writes it.
+    """
+    from app.services.chatbot.dialogue.open_question import ask
+
+    return {"open_question": ask(kind, turn_no=1, **kw)}
+
+
+def _escalate_offer(team: str) -> dict[str, Any]:
+    """The one-team escalate offer: a `team_pick` answered yes or no (D5)."""
+    return _armed(
+        "team_pick",
+        options=[{"idx": 1, "team": team, "label": team}],
+        expects="yes_no",
+        payload={"team": team},
+    )
+
+
 OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     OwnerWorld(
         world_id="owner-pick-then-next-pick",
@@ -1025,10 +1155,10 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
             ),
             OwnerTurn(
                 message="2",
-                arm={
-                    "selection_context": "disambiguation",
-                    "last_result_set": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
-                },
+                arm=_armed(
+                    "product_pick",
+                    options=_roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                ),
                 emission={
                     "message_type": "casual",
                     "domain_hint": None,
@@ -1091,7 +1221,7 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
             ),
             OwnerTurn(
                 message="no",
-                arm={"pending": {"kind": "escalation_offer", "team": "warehouse"}},
+                arm=_escalate_offer("warehouse"),
                 emission={
                     "message_type": "casual",
                     "domain_hint": None,
@@ -1140,7 +1270,7 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
             ),
             OwnerTurn(
                 message="yes please",
-                arm={"pending": {"kind": "escalation_offer", "team": "warehouse"}},
+                arm=_escalate_offer("warehouse"),
                 emission={
                     "message_type": "casual",
                     "domain_hint": None,
@@ -1329,30 +1459,18 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
             ),
             OwnerTurn(
                 message="2",
-                arm={
-                    "selection_context": "suggest_offer",
-                    # The ANSWER's own rows for the code that resolved. Freezing these
-                    # would make "2" a stock line.
-                    "last_result_set": [
-                        {"idx": 1, "label": "SRTKS6091 - 12 in KL", "entity_type": "product"}
+                # The rows the reply actually NUMBERED are the question's options - never
+                # the answer's own stock lines for the code that resolved, which would
+                # make "2" a stock line. `payload.keep` is the sibling that already
+                # resolved (issue #708), frozen as an entity by the miss lane.
+                arm=_armed(
+                    "product_pick",
+                    options=[
+                        {**row, "for_raw": "SRTKS8091", "for_canonical": "SRTKS8091"}
+                        for row in _roster("SRTKS8091-A", "SRTKS8091-B")
                     ],
-                    # The rows the reply actually numbered.
-                    "dym_last_result_set": _roster("SRTKS8091-A", "SRTKS8091-B"),
-                    "dym_offer": {
-                        "candidates": [
-                            {
-                                "code": "SRTKS8091-A",
-                                "for_raw": "SRTKS8091",
-                                "for_canonical": "SRTKS8091",
-                            },
-                            {
-                                "code": "SRTKS8091-B",
-                                "for_raw": "SRTKS8091",
-                                "for_canonical": "SRTKS8091",
-                            },
-                        ]
-                    },
-                },
+                    payload={"keep": [_product("SRTKS6091")]},
+                ),
                 emission={
                     "message_type": "casual",
                     "asks": [],
@@ -1395,10 +1513,7 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
             ),
             OwnerTurn(
                 message="2",
-                arm={
-                    "selection_context": "disambiguation",
-                    "last_result_set": _roster("NEW-1", "NEW-2", "NEW-3"),
-                },
+                arm=_armed("product_pick", options=_roster("NEW-1", "NEW-2", "NEW-3")),
                 quoted_rows=_roster("OLD-1", "OLD-2", "OLD-3"),
                 emission={
                     "message_type": "casual",

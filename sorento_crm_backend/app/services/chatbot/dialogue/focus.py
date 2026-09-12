@@ -258,6 +258,25 @@ def replace_same_axis(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
     it replaces one through a PICKER (the customer chose from rows we showed them); against
     an alive slot with no picker it is dropped and the alive value stands.
     """
+    source = "pick" if turn.answered_by_pick else "current_message"
+
+    # THE THREE CONSTRAINT AXES the message can name WITHOUT naming an entity: the brand
+    # ("any sorento basin?"), the attributes asked for ("when does it arrive") and the
+    # tier the dealer says they are on. `reuse_alive` below carries each of them forward
+    # and `RESET_KEEPS` protects two of them from a topic reset - but until here NOTHING
+    # ever SET them from the current message, so under the five-key session they were born
+    # empty and stayed empty: a contact stated a brand and the focus recorded none, which
+    # `reuse_alive` then had nothing to carry. Set BEFORE the entity block returns, because
+    # a message may name a constraint and no entity at all.
+    for key, name in (
+        ("query_brands", "brands"),
+        ("requested_attributes", "attributes"),
+        ("access_levels", "tier"),
+    ):
+        named = [v for v in jsc.array(turn.o.get(key)) if jsc.truthy(v)]
+        if named:
+            _set(focus, name, named, turn, out, rule="replace_same_axis", source=source)
+
     current = [
         e
         for e in jsc.array(turn.o.get("entities"))
@@ -265,8 +284,6 @@ def replace_same_axis(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
     ]
     if not current:
         return
-
-    source = "pick" if turn.answered_by_pick else "current_message"
     products = _confident_enough(
         focus, "products", [e for e in current if _is_product(e)], turn
     )
