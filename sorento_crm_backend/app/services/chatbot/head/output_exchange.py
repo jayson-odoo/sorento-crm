@@ -139,6 +139,12 @@ def derive_routing(out: dict) -> dict:
     # no captured turn can carry it and no fixture's routing can move.
     if domain == "purchase_order":
         return {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
+    # PLAN-chatbot-last-purchase-cost.md: same team as every other purchasing read
+    # (`master_products`, `incoming`, `purchase_order`) - a purchase cost is a
+    # purchasing question. Replay-safe by construction: `purchase_cost` is a domain
+    # this plan invents, so no captured turn can carry it.
+    if domain == "purchase_cost":
+        return {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
     # ideate: no CS team (an idea is captured, never escalated) but its OWN access agent.
     # This is the SINGLE source of truth for the ideate agent: check-access keys on
     # suggested_agent and the no-access message renders from the SAME field.

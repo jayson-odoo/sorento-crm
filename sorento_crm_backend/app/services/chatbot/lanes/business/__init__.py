@@ -304,6 +304,29 @@ def run_fetch(
     # turns in the 7 Sep 2026 prod copy, the vector search this replaced chose the domain's
     # first-listed tool on every one of them.
     domain = parse_output.get("domain_hint") or (tier_gate or {}).get("tier_pick_domain")
+
+    # -- whole-domain grant gate (D6, PLAN-chatbot-last-purchase-cost.md) --------
+    # A domain in `DOMAIN_GRANT_REQUIRED` is refused OUTRIGHT without the grant, before
+    # any tool is picked or called: a PO row with its cost stripped is a different
+    # answer from the one asked, so the per-field drop `output_structurer` already does
+    # is not enough on its own (belt and braces, AC-18). Checked here, not in the
+    # per-field drop, because "the tool ran and came back empty" and "the tool never ran"
+    # read differently on the trace an operator sees.
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    need = answer_mod.DOMAIN_GRANT_REQUIRED.get(jsc.js_string(domain) if domain else "")
+    if need:
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, list) else set()
+        if need not in granted:
+            if trace is not None:
+                trace.add("domain_grant", {"domain": domain, "skipped": "not_granted", "needs": need})
+            return _error_fragment(
+                f"{domain} needs the {need} grant, which this contact does not hold",
+                outcome="access_denied",
+            )
+
     candidates = fetch_mod.select_tool(domain)
 
     has_product = (
@@ -539,6 +562,34 @@ def complete_answer(
         # tests/chatbot/test_s6c_engine_paths.py::TestOfferArmSkipsBuildSuggestOfferSafely
         lane_item = {**dict(payload), "branch_kind": "not_found"}
         fragments["incoming_picker"] = lane_item
+
+    elif fetch_arm == "error" and fetch.get("outcome") == "access_denied":
+        # D6 (PLAN-chatbot-last-purchase-cost.md): the whole-domain grant gate in
+        # `run_fetch` refused the turn before any tool ran. The customer gets the SAME
+        # canned copy the head-level agent-denial answers with, reused rather than
+        # invented - `outcome_fragment["escalate-catalog"]` overrides `build-outcome`'s
+        # own key VERBATIM (RS-6.1c's mechanism, the same one `lanes/ideate.py` uses),
+        # so the tail's compile ladder renders this response with NO branch_kind of its
+        # own and therefore no catalog switch to teach a tenth arm to.
+        from app.services.chatbot import copy as copy_mod
+        from app.services.chatbot.lanes import canned as canned_lanes
+
+        db_session = session_factory()
+        try:
+            canned = copy_mod.resolve(db_session)
+        finally:
+            db_session.close()
+        denial_text = canned_lanes.access_denied_text(ctx, canned)
+        lane_item = {
+            "outcome_fragment": {
+                "escalate-catalog": {
+                    "response": denial_text,
+                    "manualResponse": True,
+                    "includeResponse": True,
+                    "is_escalate_offer": False,
+                }
+            }
+        }
 
     elif fetch_arm == "error" and fetch.get("outcome") != "not_found":
         # An INFRASTRUCTURE failure, not an absence: the MCP call raised or the tool

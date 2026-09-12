@@ -64,6 +64,10 @@ ALLOWED: dict[str, list[str]] = {
     # through unscoped, as it used to. Per the plan, the owner accepted this matrix as
     # written; not adding an `ALLOWS_EMPTY` row is deliberate, not an oversight.
     "spo_allocation": ["product", "warehouse", "category", "brand"],
+    # PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026: same shape as `spo_allocation`
+    # above, and the same "no ALLOWS_EMPTY row" ruling - a bare "last purchase cost"
+    # with no product fails the gate and asks, same as `spo_allocation`.
+    "purchase_cost": ["product", "warehouse", "category", "brand"],
 }
 
 # S1 (promotion-picker): a promotion cannot be answered by a general search. Flipping

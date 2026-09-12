@@ -275,6 +275,19 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
         tools=("crm_procurement_po_placed_list",),
         escalation_team="purchasing",
     ),
+    "purchase_cost": DomainSpec(
+        intents=("check_po_cost",),
+        # No bare-entity row: a bare code under this domain has answered no measured turn
+        # yet, same reasoning as `purchase_order`'s own row.
+        bare_entity_type=None,
+        # "cost" / "成本" / "harga belian" (PLAN-chatbot-last-purchase-cost.md). Only
+        # "cost" can ever fire through `_TOKEN_RE` (ascii `[a-z0-9]+`, no spaces) - the
+        # CJK and Malay phrases are the parser prompt's to teach (AC-25), not this
+        # table's; they are named here anyway so the vocabulary is visible in one place.
+        switch_words=("cost",),
+        tools=("crm_procurement_po_last_cost_list",),
+        escalation_team="purchasing",
+    ),
 }
 
 # Tools the chatbot MAY call that no domain answers FROM. Two kinds, and neither is an

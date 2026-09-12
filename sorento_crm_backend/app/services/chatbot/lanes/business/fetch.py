@@ -399,7 +399,13 @@ GROUP_BY_TOOLS: frozenset[str] = frozenset(
 # A6: the one tool with its OWN `top_n` param (default 1, "last 3 in"); every
 # other GROUP_BY_TOOLS/ORDER_TOOLS member aliases `top_n` to `limit` instead
 # (above), since it has no `top_n` param of its own.
-TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset({"crm_procurement_spo_allocations_last_receipt_list"})
+TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_procurement_spo_allocations_last_receipt_list",
+        # PLAN-chatbot-last-purchase-cost.md: this tool has its own `top_n` too.
+        "crm_procurement_po_last_cost_list",
+    }
+)
 
 # n8n hard-codes this and OVERRIDES the `semantic_input` value with it (which carried the
 # identical string in all 24 sampled executions). D5 says the respond.io space id comes

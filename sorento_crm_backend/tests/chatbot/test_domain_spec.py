@@ -83,6 +83,8 @@ DOMAIN_SWITCH_WORDS_BEFORE = {
     # bd6eacf4 / 796957f4).
     "po": "purchase_order",
     "spo": "spo_allocation",
+    # 12 Sep 2026 (PLAN-chatbot-last-purchase-cost.md): the same measured-trigger rule.
+    "cost": "purchase_cost",
 }
 
 DEFAULT_UNSUPPORTED_DOMAINS_BEFORE = ("goods_receive",)
@@ -101,6 +103,7 @@ DOMAIN_HINTS_BEFORE = (
     "spo_allocation",
     "ideate",
     "purchase_order",
+    "purchase_cost",
 )
 
 INTENT_HINTS_BEFORE = (
@@ -117,6 +120,7 @@ INTENT_HINTS_BEFORE = (
     "check_spo",
     "submit_idea",
     "check_po",
+    "check_po_cost",
 )
 
 CHATBOT_READ_ONLY_TOOLS_BEFORE = frozenset(
@@ -145,6 +149,7 @@ CHATBOT_READ_ONLY_TOOLS_BEFORE = frozenset(
         "crm_order_management_orders_list",
         "crm_portal_link_get",
         "crm_procurement_po_placed_list",
+        "crm_procurement_po_last_cost_list",
         "crm_procurement_spo_allocations_last_receipt_list",
         "crm_project_detail",
         "crm_project_forecast",
