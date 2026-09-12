@@ -776,10 +776,17 @@ class TestAdoption:
         assert "source_ref" in entry["errors"]
         assert env.counts()["so"] == 1
 
-    def test_a_ref_linked_to_another_company_is_failed(self, env):
-        """The document mirror of AC-A1-7. `integration_references` is global, so
-        the ref finds its row whatever company asked; updating it here would be a
-        cross-company write wearing the clothes of a re-sync."""
+    def test_a_header_ref_linked_to_another_company_creates_a_new_row_here(self, env):
+        """AC-19b (autocount-brands-ingest BL-056, D15) - was the document
+        mirror of AC-A1-7 ('failed', 'outside this company anchor').
+
+        BL-056 scopes `integration_references` by `company_id`, so a ref
+        linked only under B is invisible to a `resolve()` scoped to A - the
+        same answer as a ref that was never linked at all. The push under A
+        therefore proceeds through the ordinary adopt-by-number/create path
+        and lands a brand NEW header row in A; B's row and its own reference
+        stay exactly as they were.
+        """
         theirs = SalesOrder(
             id=str(uuid.uuid4()),
             so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:8]}",
@@ -796,8 +803,25 @@ class TestAdoption:
         res = env.post(INGEST_SO, [_so_record(env, ref=source_ref)])
 
         entry = res.json()["records"][0]
-        assert entry["outcome"] == "failed", res.text
-        assert "outside this company anchor" in entry["errors"]["source_ref"]
+        assert entry["outcome"] == "created", res.text
+
+        rows = (
+            env.db.execute(
+                text("SELECT id, company_id, so_number FROM sales_orders WHERE id != :b"),
+                {"b": str(theirs.id)},
+            )
+            .mappings()
+            .all()
+        )
+        new_rows = [r for r in rows if r["company_id"] == env.company_a]
+        assert len(new_rows) == 1, "exactly one new header must land in A"
+
+        # B's row is untouched - same id, same status, no lines stolen.
+        b_row = env.db.execute(
+            text("SELECT company_id, status FROM sales_orders WHERE id = :i"),
+            {"i": str(theirs.id)},
+        ).mappings().first()
+        assert b_row["company_id"] == env.company_b
         assert env.so_lines(theirs.id) == []
 
 
@@ -869,19 +893,27 @@ class TestUnresolvedReferences:
         assert "customer_ref" in entry["errors"]
         assert env.counts() == before
 
-    def test_a_master_ref_pointing_into_another_company_is_failed(self, env):
-        """A resolvable ref is not automatically a usable one: the row it names
-        may belong to the other company, and binding this order to it would move
-        demand across the partition."""
+    def test_a_master_ref_pointing_into_another_company_is_retryable(self, env):
+        """AC-19b (autocount-brands-ingest BL-056, D15) - was 'failed', 'outside
+        this company anchor'.
+
+        A ladder ref (customer_ref here) scoped to B is invisible to a
+        `resolve()` scoped to A - not a usable row and not a cross-company
+        write either, just a ref that resolves to nothing under this anchor.
+        That is exactly the sequencing shape `customer_ref: DEBTOR:NOT-SYNCED-
+        YET` already gets, so it is `retryable`, named in `errors`, and
+        nothing is written.
+        """
+        before = env.counts()
         foreign_customer = env.link_customer(env.company_b)
         record = _so_record(env, customer_ref=foreign_customer)
 
         res = env.post(INGEST_SO, [record])
 
         entry = res.json()["records"][0]
-        assert entry["outcome"] == "failed", res.text
-        assert "outside this company anchor" in str(entry["errors"])
-        assert env.counts()["so"] == 0
+        assert entry["outcome"] == "retryable", res.text
+        assert "customer_ref" in entry["errors"]
+        assert env.counts() == before
 
 
 # =============================================================== status (AC-A3-6)

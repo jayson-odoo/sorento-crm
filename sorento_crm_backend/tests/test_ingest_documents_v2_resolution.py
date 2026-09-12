@@ -8,7 +8,10 @@
   AC-V1-6   sales-order agent_code ladder: sales_agents.sales_agent, back-create
   AC-V1-7   line product_code ladder; a miss on a SENT code stays retryable
   AC-V1-7b  a sent-but-unresolved warehouse lands NULL with a warning (v2 deviation)
-  AC-V1-8   a ref into another company still fails, new fields present or not
+  AC-V1-8   superseded (autocount-brands-ingest AC-19b, BL-056 D15): a ladder
+            ref (customer_ref/supplier_ref) scoped to another company is
+            invisible under this anchor, same as an unresolved one - so it is
+            `retryable`, not `failed`, new fields present or not
   AC-V1-9   PO currency defaults to CNY on header and line when unstated
   AC-V1-10  dry_run creates no master; the verdict still reports what would happen
 
@@ -444,8 +447,14 @@ class TestWarehouseUnresolvedIsAWarningNotARetry:
 
 
 # ================================================================== AC-V1-8
-class TestCrossCompanyRefStillFails:
-    def test_a_customer_ref_into_another_company_still_fails_with_the_new_fields_present(
+class TestCrossCompanyRefIsRetryable:
+    """Superseded (autocount-brands-ingest AC-19b, BL-056 D15): a ladder ref
+    scoped to another company is invisible under this anchor's `resolve()`,
+    the same as one that was never linked - a sequencing artefact, not a
+    cross-company write attempt, so it is `retryable` and nothing is written,
+    new fields (`customer_code`/`supplier_code`) present or not."""
+
+    def test_a_customer_ref_into_another_company_is_retryable_with_the_new_fields_present(
         self, env
     ):
         foreign_customer = env.link_customer(env.company_b)
@@ -456,11 +465,11 @@ class TestCrossCompanyRefStillFails:
         res = env.post(INGEST_SO, [record])
 
         entry = res.json()["records"][0]
-        assert entry["outcome"] == "failed", res.text
-        assert "outside this company anchor" in entry["errors"].get("customer_ref", "")
+        assert entry["outcome"] == "retryable", res.text
+        assert "customer_ref" in entry["errors"]
         assert env.header("sales_orders", record["source_ref"]) is None
 
-    def test_a_supplier_ref_into_another_company_still_fails_with_the_new_fields_present(
+    def test_a_supplier_ref_into_another_company_is_retryable_with_the_new_fields_present(
         self, env
     ):
         foreign_supplier = env.link_supplier(env.company_b)
@@ -471,8 +480,8 @@ class TestCrossCompanyRefStillFails:
         res = env.post(INGEST_PO, [record])
 
         entry = res.json()["records"][0]
-        assert entry["outcome"] == "failed", res.text
-        assert "outside this company anchor" in entry["errors"].get("supplier_ref", "")
+        assert entry["outcome"] == "retryable", res.text
+        assert "supplier_ref" in entry["errors"]
         assert env.header("purchase_orders", record["source_ref"]) is None
 
 
