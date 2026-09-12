@@ -771,6 +771,31 @@ DIVERGENCES: list[Divergence] = [
             "sub-resolve-and-gate",
         )
     ),
+    # D4 (chatbot-answer-polish, 12 Sep 2026, finding 4): `crossdomain_zeroset`'s
+    # non-`resolutions` branch now requests an intersection product when a typed token
+    # PREFIXES its normalised code (>= 4 chars), not only on equality - n8n's node only
+    # ever compared for equality, so a typed prefix like "MMC544" never requested its
+    # family member "MMC544-AL-BL" at all (owner finding: "ETA SRTWT6236" never probed
+    # SRTWT6236-GY's open PO line). Both captures below are real intersections where a
+    # typed token is a >= 4 character prefix of a canonical_code the n8n capture treated
+    # as unrequested; this port now requests them, which is the deliberate point of D4.
+    # Field-scoped to `_xd`, the one key this branch touches; every other key of the
+    # validator item still grades byte for byte. Behaviour pinned by
+    # tests/chatbot/test_crossdomain_ladder.py::TestOwner12SepTypedPrefixIsRequested.
+    *(
+        Divergence(
+            node="crossdomain-zeroset",
+            fixture=fixture,
+            hazard="D4 (chatbot-answer-polish, 12 Sep 2026, finding 4)",
+            reason=(
+                "a typed token that PREFIXES an intersection product's canonical_code "
+                "(>= 4 chars) now requests it, where n8n's node only matched on equality. "
+                "Field-scoped to `_xd`."
+            ),
+            strip_paths=(("_xd",),),
+        )
+        for fixture in ("exec-13479632", "exec-13481094")
+    ),
 ]
 
 

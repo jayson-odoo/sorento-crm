@@ -1075,7 +1075,6 @@ _PRODUCT_IDENTITY_LABELS: frozenset[str] = frozenset(
 )
 
 _SPEC_KEY_PREFIX = "spec:"
-_SPEC_SUMMARY_CAP = 8
 
 
 def _normalize_spec_word(v: Any) -> str:
@@ -1125,8 +1124,9 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
     reusing that gate would delete the very thing this function exists to add.
 
     No requested_attributes: every item keeps its base fields, plus ONE synthetic
-    "Specs:" field summarising up to `_SPEC_SUMMARY_CAP` populated keys ("and N
-    more" beyond that). Byte-identical to before item 8.
+    "Specs:" field naming EVERY populated spec key, in registry order (D1, 12 Sep
+    2026 owner finding: "and N more" left no way to see the rest, so there is no
+    cap and no truncation - the field lists all of them).
 
     With requested_attributes (item 8 / D12, 8 Sep 2026), every item ALWAYS keeps its
     base fields (`_PRODUCT_IDENTITY_LABELS`: Product Code, Product Name, Description,
@@ -1211,13 +1211,10 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         ]
 
         if not asked:
-            # No attribute asked: base fields untouched, plus the compact summary.
+            # No attribute asked: base fields untouched, plus the compact summary -
+            # EVERY populated spec key, in registry order, no cap (D1).
             if spec_fields:
-                shown = spec_fields[:_SPEC_SUMMARY_CAP]
-                remainder = len(spec_fields) - len(shown)
-                summary = ", ".join(f"{f.get('label')}: {f.get('value')}" for f in shown)
-                if remainder > 0:
-                    summary += f" and {remainder} more"
+                summary = ", ".join(f"{f.get('label')}: {f.get('value')}" for f in spec_fields)
                 it["fields"] = base + [{"key": "specs_summary", "label": "Specs", "value": summary}]
             continue
 
