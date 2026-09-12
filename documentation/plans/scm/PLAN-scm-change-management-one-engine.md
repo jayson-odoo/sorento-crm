@@ -1,7 +1,8 @@
 # PLAN: managing a sales-order change after planning, one engine
 
-**Status:** Slice A in progress on lane/scm-change-a-diff-parity; ONE PR (#855) for all
-slices per the owner, 13 Sep 2026. Grilled with the owner across four rounds on 12 and 13
+**Status:** Slice A built, Slice B in progress. Same lane/scm-change-a-diff-parity, ONE PR
+(#855) for all slices per the owner, 13 Sep 2026. Grilled with the owner across four rounds
+on 12 and 13
 September 2026; the agreed page is versioned at
 `documentation/plans/scm/mockups/so-change-management-grill-v4.html` (twelve worked
 scenarios). This plan is the contract; the UAC is
@@ -74,7 +75,7 @@ S1 to S12 on the versioned grill page are the specification by example; the UAC 
 | Slice | What | Main files |
 |---|---|---|
 | A. Diff parity | Manual edit builds the same before / after diff as ESB (`outstanding_diff`), including removed, added, product changed (new kind), qty-to-zero as cancelled; removal no longer refused on an inquiry row | `sales_order_service._propagate_planning_change`, `_upsert_lines`, `outstanding_diff` identity by line id, `planning_change_service._map_kind` |
-| B. Delta seam | The engine can be asked for a unit whose held components are Keep candidates; whole-unit top-up (S1); pool share partial only inside the immediate window (S11) | `project_supply_service.demand_facts` / `compose_lines` (`exclude_line_ids` today un-nets a hold; the seam keeps it as a candidate), `planning_change_service._proposal_for` |
+| B. Delta seam | Own-hold carve-out, whole-unit top-up (S1) and pool-share-inside-the-window (S11) already existed, now guarded by tests; the real gap was AC-B2's Borrow - the ladder's `order_borrow` rung was proposed but never composed, confirmed or given an ORDER_BACK on the donor's own line | `planning_change_service.composition_from_proposal` (`_borrow_components_from_sources`, new), `_validate_composition_shape`, `_to_confirm_line`, `project_supply_service._borrow_shortfalls` (donor-line resolution) |
 | C. Recompute-and-diff | `suggest()` and the rule table replaced by the diff of the re-run against the held composition; vocabulary Keep / Reduce / Release / Reallocate; Confirm / Amend only on the board; `BoardChangeTable` shows the composed suggestion | `planning_change_service.suggest`, `_build_row`, `apply`, `boardChangeAnnotations.ts`, `BoardChangeTable.tsx` |
 | D. Reallocation | Freed PO / SPO quantity: unlink then re-deal through the linking engine with the hot-selling gate; freed reserve moves to the receiving decision (S3); pool-location row for the leftover; `redirected_to_pool` retired | `project_order_inquiry_service.unplace`, `auto_place_for_products`, `_classification` (hot-selling), a hold-move between `SOSupplyDecision`s |
 | E. One signal | `challenge_if_drifted` removed from `proposal_for`, `confirm`, reconcile; "Needs CS review" retired from the sheet | `project_supply_service.py:3910-3992, 1037, 4126`, `project_so_reconciliation_service.py:562` |
@@ -165,3 +166,75 @@ is the source of truth once code diverges from the table above:
    nothing dangles; the change row still raises. Line id is identity for every trigger. A
    re-keyed AutoCount line (new DtlKey, same product) reads `cancelled` + `added`, not one
    moved line; counted on the first ESB run after deploy.
+
+## Slice B contract (captain, 13 September 2026, issue #857)
+
+`tests/scm/test_planning_change_delta_seam.py` (the tester's own red-test pass, 10 cases)
+found that AC-B1, AC-B3 and AC-B4's own-hold arithmetic already worked - the ladder's
+`walk_line` already carves out an own hold as a Keep candidate (rule 1), a Buy line's top-up
+already re-runs the whole unit and posts one row ("Was <old>") through the existing
+settle-in-place seam (`ProjectSupplyService.confirm`'s `settle_in_place_line_ids`,
+`ProjectOrderInquiryService.refresh_for_decision`), and pool-share partial cover is already
+gated to the immediate window (`DEFAULT_IMMEDIATE_WINDOW_DAYS`) with whole-or-nothing outside
+it (rule 10). Those are guarded by tests now, unchanged by this slice. **The only real gap
+was AC-B2's Borrow:**
+
+1. `app/services/planning_change_service.py`: `composition_from_proposal` used to hardcode
+   `"borrow": []` on the stated (and false) belief that "the board never proposes a Borrow" -
+   LADDER V7.1's `order_borrow` rung (step 2) already does, whole-unit, off a later donor's
+   own committed stock (`BoardSource.donor_core_line_id`/`donor_so_number`/`donor_line_no`/
+   `donor_required_date`). Comment removed; a new `_borrow_components_from_sources` builds
+   the Borrow list off `proposal["sources"]` the same way `_reserve_components_from_sources`
+   already builds Reserve, `source` always `ALLOC_SOURCE_OTHER_LOCATION` (every rung the
+   board proposes a Borrow on today names a committed line or a moving document, never a
+   cross-project claim). The donor identity fields had to be carried through TWO further
+   places that would otherwise have silently dropped them - `_validate_composition_shape`
+   (the PUT-time shape check, which used to keep only 5 of `ConfirmBorrowComponent`'s
+   fields) and `_to_confirm_line` (apply's own composition -> `ConfirmLine` translation,
+   which built `ConfirmBorrowComponent` without `donor_core_line_id` at all) - without both,
+   `ProjectSupplyService._check_line`'s group-borrow branch and `_borrow_shortfalls`'s
+   order-back both read `donor_core_line_id` as `None` and the Borrow would either refuse at
+   Apply or raise nothing back to the donor.
+2. `app/services/project_supply_service.py`: `_borrow_shortfalls`'s group-borrow order-back
+   hung its `OrderInquiryRow` off the ASKING line (`entry["line"]`, literally the row
+   variable from `checked`) for EVERY shortfall, including a NAMED donor
+   (`donor_core_line_id` set) - AC-B2's own wording, "an ORDER_BACK row FOR THE DONOR",
+   needs it on the donor's own project line instead. Fixed with one batch lookup
+   (`ProjectSalesOrderLine.core_sales_order_line_id.in_(...)`) resolving the donor's mirror
+   line before the loop; falls back to the asking line only for a donor core line with no
+   project mirror (never adopted), the pre-existing shape for that edge case. The
+   location-pile shortfall (no named donor line) is unaffected - it never had
+   `donor_core_line_id` to resolve.
+3. Verified through the EXISTING confirm mechanics end to end (apply -> `confirm()` ->
+   `refresh_for_decision` -> `_borrow_shortfalls`), not a parallel path: the asking line's
+   Buy row is cancelled, the donor's own line gets a live `ORDER_BACK` row for the full
+   borrowed quantity, and `test_ladder_v7_supply_borrow.py` / `test_supply_group_borrow_carry.py`
+   / `test_project_supply_borrow_row_ack.py` (the existing step-2/step-3 borrow suites) stay
+   green - the donor-line resolution only changes WHICH line an already-correct row lands on.
+
+**Suspected-wrong test helper, reported not fixed (captain's own instruction on the AC-B4
+red tests):** `test_qty_up_on_a_held_use_own_takes_more_stock_when_the_group_has_it` and
+`test_qty_up_on_a_held_use_own_moves_the_whole_unit_to_the_next_step_when_stock_is_short`
+both fail on their own `_hold_qty` helper reading a stale hold (368 instead of 234; 134
+instead of 0) after a qty-up settle-in-place re-confirm. Measured directly (both through
+`planning_change_service.apply` and through a bare `ProjectSupplyService.confirm()` call on
+the same fixture, bypassing planning-change apply entirely): the PREVIOUS revision's
+`SOLineAllocation` row is never deleted (by design - `_carry_allocations`'s own docstring:
+"a hold is an allocation row under an ACTIVE decision... the superseded revision's rows stop
+holding the moment it is superseded"), and its `SOSupplyDecision` correctly flips away from
+`DECISION_ACTIVE` (`challenge_if_drifted`, called at the top of every `confirm()`) the moment
+the core line's own qty no longer matches what that revision froze. `_hold_rows` - the
+predicate the real ladder/free-stock arithmetic actually uses - already scopes to `decision
+.state == DECISION_ACTIVE OR decision_id IS NULL` (`project_supply_service.py`'s
+`_hold_query`) and reads 234 / 0 correctly on the SAME fixtures. The test's own `_hold_qty`
+helper claims to restate that predicate but omits the decision-active join/filter, so it
+sums the stale non-active row back in. This reproduces identically with NO planning-change
+code involved (a bare `ProjectSupplyService(db).confirm()` call on a plain qty-bumped line
+shows the same non-active-decision-holds-the-old-row shape), so it is not something "the
+apply path skips" - it is `confirm()`'s standing, documented design. Slice E's own AC-E2
+("the borrow-hold release `challenge_if_drifted` performed happens on apply of the batch
+instead") is the plan's own acknowledgement that this exact mechanism is scheduled to move,
+in a LATER slice - implementing that here would be scope creep on Slice B and risks the many
+existing tests that depend on `challenge_if_drifted`'s current wiring into `confirm()`. Not
+touched, per the captain's standing instruction not to edit tests or fix an AC-B4 test until
+told to.
