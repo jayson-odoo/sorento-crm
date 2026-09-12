@@ -2256,7 +2256,7 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_is_cancelled_and_un
     )
     db.add(row)
     db.commit()
-    po, _po_line = _place_row_on_a_real_po(db, world, row, qty_ordered="5")
+    po, po_line = _place_row_on_a_real_po(db, world, row, qty_ordered="5")
 
     core_line.qty_ordered = Decimal("10")
     db.commit()
@@ -2323,6 +2323,20 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_is_cancelled_and_un
     links = ProjectOrderInquiryService(db)._links_of(all_rows[0].id)
     assert links == [], "the PO link is removed - purchasing's own PO history is untouched"
     assert "the book left nothing to buy" in (all_rows[0].note or "")
+
+    # D2 (review round, blocker): rule 6 says a freed document quantity always follows
+    # the linking engine, on THIS line's own row or not - unlinking it here must not leave
+    # it unclaimed forever. It should land on a pool-location row (not hot-selling, nobody
+    # needs it) or a raised row of another order.
+    from app.models.project_so import OrderInquiryLink
+
+    all_links_on_po_line = (
+        db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == po_line.id).all()
+    )
+    linked_total = sum(Decimal(str(l.qty)) for l in all_links_on_po_line)
+    assert po_line.qty_ordered - linked_total == Decimal("0"), (
+        po_line.qty_ordered, linked_total, all_links_on_po_line
+    )
 
 
 def test_apply_advance_with_pool_available_redirects_the_freed_placed_qty_to_a_pool_row(api):
@@ -2489,6 +2503,15 @@ def test_apply_advance_with_pool_available_redirects_the_freed_placed_qty_to_a_p
     assert pool_rows[0].qty == Decimal("432")
     assert pool_rows[0].redirected_to_pool is not True
     assert pool_rows[0].state != INQUIRY_CANCELLED
+
+    # D1 (review round): a pool row carries the links it was created for, or it is not
+    # created at all - a row that exists but claims nothing is a silent orphan, and the
+    # two PO lines it was meant to cover would read unclaimed forever.
+    pool_links = ProjectOrderInquiryService(db)._links_of(pool_rows[0].id)
+    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("432"), pool_links
+    linked_by_po_line = {str(l.po_line_id): Decimal(str(l.qty)) for l in pool_links}
+    assert po_line_a.qty_ordered - linked_by_po_line.get(str(po_line_a.id), Decimal("0")) == Decimal("0")
+    assert po_line_b.qty_ordered - linked_by_po_line.get(str(po_line_b.id), Decimal("0")) == Decimal("0")
 
     # No informational ADVANCE row: the pool covers the whole need before the ladder logs
     # a date-change instruction that has nothing left to say.

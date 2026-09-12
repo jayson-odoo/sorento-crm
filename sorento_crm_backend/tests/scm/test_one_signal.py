@@ -44,6 +44,7 @@ from app.schemas.scm_orders import SalesOrderUpdate
 from app.services import planning_change_service
 from app.services.project_so_reconciliation_service import ProjectSOReconciliationService
 from app.services.project_supply_service import ProjectSupplyService
+from app.services.scm.outstanding_diff import CLOSED, Change, Diff, Line
 from app.services.scm.sales_order_service import SalesOrderService
 
 from tests._pg_fixture import blank_session
@@ -308,6 +309,84 @@ def test_apply_retires_a_step_3_supply_borrow_placement_the_new_composition_drop
         # then finds nothing ACTIVE left to supersede, it stays stuck there forever.
         first_decision = db.get(SOSupplyDecision, first_decision_id)
         assert first_decision.state == DECISION_SUPERSEDED, first_decision.state
+
+
+def test_apply_retires_the_step_3_placement_of_a_line_the_batch_cancels():
+    """E1 (review round): the existing regression above does not guard
+    `ProjectOrderInquiryService.retire_supply_borrow_rows` at all - the line is NAMED in
+    the confirm payload (a qty/date change), so `confirm()`'s own per-line retirement
+    already runs regardless of the dedicated call at planning_change_service.py
+    ~3625-3629. This test's premise was that a batch whose ONLY row CANCELS the line
+    (kind `cancelled`, never named in `confirm_lines`) would skip that same-gated call
+    entirely - `retire_supply_borrow_rows` only runs `if confirm_lines:`, and a lone
+    cancellation never populates it.
+
+    VERIFIED empirically, per the brief: `ProjectOrderInquiryService.retire_supply_borrow
+    _rows` was monkeypatched to a no-op for this exact scenario, and the assertions below
+    still passed. The step-3 placement is retired anyway, by a DIFFERENT and older
+    mechanism - `_retire_inquiry_rows`/`_shift_links_off_retired_lines` (AC-P3-6, part 3),
+    which runs unconditionally whenever a batch cancels a row's line, regardless of
+    `confirm_lines`, and frees (or shifts) every link a cancelled row carried, an SPO
+    placement included. So this is NOT a red: `retire_supply_borrow_rows`'s `confirm_lines`
+    guard has no live gap on the cancel path specifically - it would only matter for a line
+    that leaves an ACTIVE decision's coverage WITHOUT its own row being cancelled (a bystander
+    uncovered by a diff naming only OTHER lines), a different shape from this one. Kept as a
+    real regression test of the correct, already-working cancel-path behavior."""
+    asker_day = date.today() + timedelta(days=20)
+    late_arrival = date.today() + timedelta(days=25)
+    with blank_session() as db:
+        world = _held_buy_world(db, qty="134", required_date=asker_day)
+        _lead_time(db, world["product"], 30)
+        donor_bin = _warehouse(db, f"ZZT-SPB-{_uid()[:4]}")
+        allocation = _spo(db, world["product"], donor_bin, qty=234, arrives=late_arrival)
+
+        first_batch = _change_and_batch(db, world, new_qty="234")
+        first_result = _confirm_and_apply(db, world, first_batch)
+        assert first_result["failed_orders"] == [], first_result["failed_orders"]
+
+        db.expire_all()
+        links_before = (
+            db.query(OrderInquiryLink)
+            .filter(OrderInquiryLink.spo_allocation_id == str(allocation.id))
+            .all()
+        )
+        assert [str(l.qty) for l in links_before] == ["234.0000"], links_before
+
+        # The book closes the line entirely - a `cancelled` kind row, never a qty/date
+        # change, so it is never named in `confirm_lines`.
+        core_so = world["core_so"]
+        core_line = world["core_line"]
+        item_code = world["product"].product_code
+        location = world["own"].warehouse_code
+        before = Line(
+            doc_number=core_so.so_number, item_code=item_code, location=location,
+            qty=234.0, required_date=core_line.required_date, row_ref=str(core_line.id),
+        )
+        change = Change(CLOSED, core_so.so_number, item_code, location, before=before, after=None)
+        core_line.line_status = "closed"
+        db.flush()
+        diff = Diff(scope_documents=(core_so.so_number,), changes=[change])
+        second_batch = planning_change_service.build_batch(
+            db, diff, applied_line_ids={id(change): str(core_line.id)},
+            order_ids={core_so.so_number: str(core_so.id)}, actor=world["actor"],
+            import_job_id=None, file_name="book.xlsx",
+        )
+        db.commit()
+        second_row = _only_row(db, second_batch)
+        assert second_row.kind == "cancelled", second_row.kind
+
+        second_result = _confirm_and_apply(db, world, second_batch)
+        assert second_result["failed_orders"] == [], second_result["failed_orders"]
+
+        db.expire_all()
+        links_after = (
+            db.query(OrderInquiryLink)
+            .filter(OrderInquiryLink.spo_allocation_id == str(allocation.id))
+            .all()
+        )
+        assert links_after == [], (
+            "the step-3 placement of a line the batch cancels must not stay pinned"
+        )
 
 
 def test_apply_keeps_a_step_3_supply_borrow_the_new_composition_still_carries():

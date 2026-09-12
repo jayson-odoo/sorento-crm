@@ -32,7 +32,12 @@ from decimal import Decimal
 from app.models.project_so import (
     DECISION_ACTIVE,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
+    INQUIRY_PLACED,
+    INQUIRY_RAISED,
     IV_ORDER,
+    IV_ORDER_BACK,
+    OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRow,
     SOLineAllocation,
@@ -40,7 +45,7 @@ from app.models.project_so import (
 )
 from app.services import planning_change_service
 from app.services.project_supply_service import ProjectSupplyService
-from app.services.scm.outstanding_diff import QTY_CHANGED, Diff
+from app.services.scm.outstanding_diff import DATE_MOVED, QTY_CHANGED, Diff
 
 from tests._pg_fixture import blank_session
 from tests.test_planning_changes import (  # noqa: F401  (api is the fixture)
@@ -53,6 +58,7 @@ from tests.test_planning_changes import (  # noqa: F401  (api is the fixture)
     _line_payload,
     _project_line,
     _project_so,
+    _uid,
 )
 from tests.scm.test_planning_change_recompute_and_diff import (
     _only_row,
@@ -65,7 +71,8 @@ from tests.scm.test_planning_change_delta_seam import (
     _seed_order,
 )
 from tests.scm.test_planning_change_delta_seam import _only_row as _seam_only_row
-from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
+from tests.scm.test_ladder_v7_supply_borrow import _spo
+from app.schemas.project_supply import ConfirmLine, ConfirmReserveComponent, ConfirmSupplyBody
 
 MARKER = "zzt-realloc"
 
@@ -322,6 +329,46 @@ def test_freed_po_qty_nobody_needs_lands_on_a_pool_row_and_counts_as_cover(api):
     assert po_line.qty_ordered - total_linked == Decimal("0")
 
 
+def test_a_reallocation_failure_is_loud_and_leaves_no_orphan_pool_row(api, monkeypatch):
+    """D1 (review round, blocker): a reallocation failure must be loud, never a silent
+    wrong row. `_execute_reallocations` catches every exception per component and only
+    logs it, so a refusal from `place_on_po_allocations` (AppException 409 - a race on
+    the PO line, say) is swallowed today: `_pool_row_for` has already flushed the pool
+    row before the refusing call, the order's savepoint still commits, and apply reports
+    success while that pool row sits in the database claiming nothing - exactly the
+    orphan AC-D1 exists to forbid."""
+    world, core_so, core_line, order, line, po, batch = _drop_line_to_100(api)
+    db = world.db
+
+    from app.services.error_handler import AppException
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    def _refuse(self, row_id, allocations, *, actor_user_id=None, auto_trigger=None):
+        raise AppException(409, "ZZT another process already claimed this PO line")
+
+    monkeypatch.setattr(ProjectOrderInquiryService, "place_on_po_allocations", _refuse)
+
+    row = _only_row(db, batch)
+    planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "confirm")
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+
+    assert result["failed_orders"], (
+        "the refusal must surface as a failed order, not a silent success: "
+        f"{result}"
+    )
+    assert core_so.so_number not in (result["applied_orders"] or [])
+
+    db.expire_all()
+    orphans = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
+        .all()
+    )
+    assert orphans == [], orphans
+
+
 # --------------------------------------------------------------------------- #
 # AC-D4 (S3): a reserve moves to an earlier unlinked order row, and the line
 # giving it up is re-sourced whole
@@ -415,6 +462,98 @@ def test_reserve_moves_to_the_earlier_order_row_and_the_line_is_resourced_whole(
         assert a_live_rows[0].delivery_date == a_new
 
 
+def test_a_reallocated_reserve_survives_the_receiving_orders_next_confirm():
+    """D3 (review round, blocker): the S3 shape (AC-D4's own world), one step further -
+    order B, the RECEIVER of the reallocated reserve, gets re-confirmed afterwards (a
+    planner touching an unrelated line on the same order, say). `_move_reserve` writes
+    the reallocated hold with `decision_id` set to whatever decision is active on B AT
+    THAT MOMENT - the shape `_hold_query` uses for a hold belonging to A SPECIFIC
+    revision, meant to stop counting the moment that revision is superseded. But this
+    hold was never decided by B's revision; it was handed to B by A's change. Tied to a
+    revision id, it is one re-confirm away from a decision that superseded it, and would
+    read gone. It must be `None`: the shape `_hold_query` reserves for a hold belonging
+    to no revision, so it survives every future revision B ever gets."""
+    today = date.today()
+    a_required = today + timedelta(days=20)
+    a_new = today + timedelta(days=45)  # inside the reserve window
+    b_required = today + timedelta(days=30)  # earlier than A's new date
+
+    with blank_session() as db:
+        world = _held_reserve_world(db, qty="134", required_date=a_required)
+        order_b, line_b, core_so_b, core_line_b = _seed_order(
+            db, world["company_id"], world["project"], world["product"], world["own"],
+            qty="80", required_date=b_required,
+        )
+        ProjectSupplyService(db).confirm(
+            order_b,
+            ConfirmSupplyBody(lines=[ConfirmLine(
+                project_line_id=line_b.id, buy_qty="80", buy_reason="ZZT no stock anywhere",
+            )]),
+            actor_user_id=world["actor"],
+        )
+        db.commit()
+
+        batch = _change_and_batch(db, world, new_required_date=a_new)
+        row = _seam_only_row(db, batch)
+        planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "confirm")
+        result = planning_change_service.apply(db, str(batch.id), world["actor"])
+        db.commit()
+        assert result["failed_orders"] == [], result["failed_orders"]
+
+        db.expire_all()
+        moved_allocation = (
+            db.query(SOLineAllocation)
+            .filter(SOLineAllocation.so_line_id == line_b.id, SOLineAllocation.confirmed_at.isnot(None))
+            .one()
+        )
+        assert moved_allocation.decision_id is None, (
+            "a reallocated hold belongs to no revision - tied to B's CURRENT decision it "
+            "is one supersede away from reading gone"
+        )
+
+        # B is re-confirmed for an unrelated reason (the planner touching the same order
+        # again); the reserve stands exactly as it settled - the frozen snapshot for this
+        # product now reads a reserve component, not a fresh Buy.
+        ProjectSupplyService(db).confirm(
+            order_b,
+            ConfirmSupplyBody(lines=[ConfirmLine(
+                project_line_id=line_b.id,
+                reserve=[ConfirmReserveComponent(warehouse_id=str(world["own"].id), qty="80")],
+                buy_qty="0",
+            )]),
+            actor_user_id=world["actor"],
+        )
+        db.commit()
+
+        db.expire_all()
+        assert _hold_qty(db, line_b.id) == Decimal("80"), (
+            "the reallocated reserve must survive B's next confirm, not read gone"
+        )
+        assert db.get(SOLineAllocation, moved_allocation.id).decision_id is None
+
+        b_live_order_rows = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == line_b.id, OrderInquiryRow.verb == IV_ORDER,
+                    OrderInquiryRow.state != INQUIRY_CANCELLED)
+            .all()
+        )
+        assert b_live_order_rows == [], (
+            "fully covered by the settled reserve - nothing raised again"
+        )
+
+        b_active_decision = (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == order_b.id,
+                    SOSupplyDecision.state == DECISION_ACTIVE)
+            .one()
+        )
+        snapshot = next(
+            s for s in b_active_decision.line_snapshots if str(s.get("project_line_id")) == str(line_b.id)
+        )
+        assert snapshot["buy_qty"] == "0", snapshot
+        assert snapshot.get("reserve_qty") == "80", snapshot
+
+
 # --------------------------------------------------------------------------- #
 # AC-D5: `_apply_placed_redirect` is gone, `redirected_to_pool` never written
 # --------------------------------------------------------------------------- #
@@ -437,3 +576,361 @@ def test_apply_placed_redirect_is_gone_and_redirected_to_pool_is_never_written(a
         .count()
     )
     assert redirected == 0
+
+
+# --------------------------------------------------------------------------- #
+# D4 (review round): a line the same batch re-decides is not a waiting need
+# --------------------------------------------------------------------------- #
+
+
+def test_a_line_the_same_batch_re_decides_never_receives_a_reallocation(api):
+    """D4 (review round): `_waiting_rows` already carries an `exclude_line_ids` param
+    with exactly this doctrine in its own docstring ("a line the same change is
+    re-deciding is not a waiting need - its rows are in flux this very apply") - but
+    neither `_redeal_document` nor `_move_reserve` ever passes it, so the exclusion is
+    dead code. Two lines of the same product, one order, one batch: line 1 frees 34 of
+    its placed PO qty (qty_down); line 2 carries an OLDER raised, unlinked ORDER row for
+    the same product, due earlier, and is ALSO re-decided in this same batch (its own
+    date moved). Line 1's own composed suggestion already says the freed 34 goes to the
+    POOL (nothing waits for it once line 2 is properly excluded) - but at apply, line 2's
+    row is still live when the redeal runs and gets linked to line 1's document instead,
+    which is a different target than the one composed and confirmed."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="234",
+                             required_date=date(2027, 3, 1))
+    core_line2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50",
+                             required_date=date(2027, 2, 1))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line1 = _project_line(db, order, line_no=1, product=world.product, core_line=core_line1)
+    line2 = _project_line(db, order, line_no=2, product=world.product, core_line=core_line2)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line1.id, buy_qty="234", buy_reason="ZZT no stock anywhere"),
+        _line_payload(line2.id, buy_qty="50", buy_reason="ZZT no stock anywhere"),
+    ]})
+    raised_row1 = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line1.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    raised_row2 = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line2.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    supplier = Supplier(
+        id=_uid(), company_id=world.company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} supplier",
+    )
+    po = PurchaseOrder(
+        id=_uid(), company_id=world.company_id, po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([supplier, po])
+    db.flush()
+    po_line = PurchaseOrderLine(
+        id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+        product_id=world.product.id, warehouse_id=world.own_wh.id,
+        qty_ordered=Decimal("134"), qty_received=Decimal("0"), line_status="open",
+    )
+    db.add(po_line)
+    db.commit()
+    ProjectOrderInquiryService(db).place_on_po_allocations(
+        raised_row1.id, [{"po_line_id": po_line.id, "qty": "134"}], actor_user_id=world.actor,
+    )
+    db.commit()
+
+    # Write-first: line 1 drops (frees 34 of the placed 134); line 2 also changes in the
+    # SAME batch (its date moves a little later, still earlier than line 1's).
+    core_line1.qty_ordered = Decimal("100")
+    line1.qty = Decimal("100")
+    new_line2_date = date(2027, 2, 10)
+    core_line2.required_date = new_line2_date
+    line2.delivery_date = new_line2_date
+    db.flush()
+
+    changed1 = _diff_change(
+        QTY_CHANGED, core_line1, doc_number=core_so.so_number,
+        item_code=world.product.product_code, location=world.own_wh.warehouse_code,
+        old_date=date(2027, 3, 1), new_date=date(2027, 3, 1), old_qty="234", new_qty="100",
+    )
+    changed2 = _diff_change(
+        DATE_MOVED, core_line2, doc_number=core_so.so_number,
+        item_code=world.product.product_code, location=world.own_wh.warehouse_code,
+        old_date=date(2027, 2, 1), new_date=new_line2_date, old_qty="50", new_qty="50",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed1, changed2])
+    batch = planning_change_service.build_batch(
+        db, diff,
+        applied_line_ids={id(changed1): str(core_line1.id), id(changed2): str(core_line2.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    rows_out = out["orders"][0]["rows"]
+    row1_out = next(r for r in rows_out if r["line_no"] == 1)
+    reallocate = next(
+        c for c in row1_out["suggestion"]["components"] if c["action"] == "reallocate"
+    )
+    assert reallocate["target"] == "pool", reallocate
+
+    for r in rows_out:
+        planning_change_service.set_row_decision(db, str(batch.id), str(r["id"]), "confirm")
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    # Line 2's own row (the same batch is re-deciding it right now) must carry no link
+    # from line 1's document - it is not a waiting need, its rows are in flux this apply.
+    row2_links = ProjectOrderInquiryService(db)._links_of(raised_row2.id)
+    assert not any(str(l.po_line_id) == str(po_line.id) for l in row2_links), row2_links
+
+    # The executed target equals the composed one: the freed 34 lands on a pool row.
+    pool_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
+        .all()
+    )
+    assert len(pool_rows) == 1, pool_rows
+    assert pool_rows[0].qty == Decimal("34")
+    pool_links = ProjectOrderInquiryService(db)._links_of(pool_rows[0].id)
+    assert {str(l.po_line_id) for l in pool_links} == {str(po_line.id)}
+
+
+def test_the_batch_records_where_the_quantity_went(api):
+    """D5 (review round): `PlanningChangeRow.result_json` is documented on the model
+    itself as "what Apply wrote for this row alone ... read back beside `applied_reason`
+    on the batch page after Apply" - the field the coder's own comment names for exactly
+    this. Measured directly: today it is only `{"board_link": ..., "confirmed": True}` -
+    it names nothing about where a reallocated quantity actually went, so the batch page
+    cannot say what happened to it. This asserts `result_json` gets an
+    `executed_reallocations` list of plain-English strings, one per `reallocate`
+    component, equal to the SAME text the composed suggestion used (`component["label"]`)
+    when nothing in the world changed between compose and apply - "the executed target
+    equals the label's target"."""
+    from app.models.planning_change import PlanningChangeRow
+
+    world, core_so, core_line, order, line, po, batch = _drop_line_to_100(api)
+    db = world.db
+    composed_row = _only_row(db, batch)
+    reallocate = next(
+        c for c in composed_row.suggestion_json["components"] if c["action"] == "reallocate"
+    )
+    composed_label = reallocate["label"]
+
+    row, result = _confirm_row_and_apply(db, batch, world.actor)
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    fresh = db.get(PlanningChangeRow, row.id)
+    executed = (fresh.result_json or {}).get("executed_reallocations") or []
+    assert composed_label in executed, (composed_label, fresh.result_json)
+
+
+def test_a_receiving_row_covered_exactly_reads_placed_not_partly_linked():
+    """D6 (review round): `_move_reserve` reduces the receiving row's `qty` by what it
+    takes but never recomputes its `state` - `ProjectOrderInquiryService._coverage_state`
+    is the one formula every other writer uses ("linked + bundled >= qty reads placed"),
+    and `_move_reserve` is not one of its callers. A receiving row of 80 already
+    partly-linked 46 elsewhere, that then receives a reserve move of exactly 34 (the
+    giver's whole hold), settles its qty to 46 - now EXACTLY what is already linked - and
+    must read `placed`, not the stale `partly_linked` from before the move."""
+    today = date.today()
+    a_required = today + timedelta(days=20)
+    a_new = today + timedelta(days=45)  # inside the reserve window
+    b_required = today + timedelta(days=30)  # earlier than A's new date
+
+    with blank_session() as db:
+        world = _held_reserve_world(db, qty="34", required_date=a_required)
+        order_b, line_b, core_so_b, core_line_b = _seed_order(
+            db, world["company_id"], world["project"], world["product"], world["own"],
+            qty="80", required_date=b_required,
+        )
+        ProjectSupplyService(db).confirm(
+            order_b,
+            ConfirmSupplyBody(lines=[ConfirmLine(
+                project_line_id=line_b.id, buy_qty="80", buy_reason="ZZT no stock anywhere",
+            )]),
+            actor_user_id=world["actor"],
+        )
+        db.commit()
+        b_row = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == line_b.id, OrderInquiryRow.verb == IV_ORDER)
+            .one()
+        )
+
+        from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        supplier = Supplier(
+            id=_uid(), company_id=world["company_id"], supplier_code=f"ZZT-{_uid()[:8]}",
+            supplier_name=f"{MARKER} supplier",
+        )
+        po = PurchaseOrder(
+            id=_uid(), company_id=world["company_id"], po_number=f"ZZT-PO-{_uid()[:8]}",
+            supplier_id=supplier.id,
+        )
+        db.add_all([supplier, po])
+        db.flush()
+        po_line = PurchaseOrderLine(
+            id=_uid(), company_id=world["company_id"], purchase_order_id=po.id,
+            product_id=world["product"].id, warehouse_id=world["own"].id,
+            qty_ordered=Decimal("46"), qty_received=Decimal("0"), line_status="open",
+        )
+        db.add(po_line)
+        db.commit()
+        ProjectOrderInquiryService(db).place_on_po_allocations(
+            b_row.id, [{"po_line_id": po_line.id, "qty": "46"}], actor_user_id=world["actor"],
+        )
+        db.commit()
+        db.expire_all()
+        b_row = db.get(OrderInquiryRow, b_row.id)
+        assert b_row.state == INQUIRY_PARTLY_LINKED
+        assert b_row.qty == Decimal("80")
+
+        batch = _change_and_batch(db, world, new_required_date=a_new)
+        row = _seam_only_row(db, batch)
+        planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "confirm")
+        result = planning_change_service.apply(db, str(batch.id), world["actor"])
+        db.commit()
+        assert result["failed_orders"] == [], result["failed_orders"]
+
+        db.expire_all()
+        b_row = db.get(OrderInquiryRow, b_row.id)
+        assert b_row.qty == Decimal("46")
+        links = ProjectOrderInquiryService(db)._links_of(b_row.id)
+        assert sum(Decimal(str(l.qty)) for l in links) == Decimal("46")
+        assert b_row.state == INQUIRY_PLACED, b_row.state
+
+
+def test_a_freed_spo_share_is_unlinked_and_named_unallocated(api):
+    """D7 (review round): `_release_components`'s "spo" branch always says "Reallocate
+    SPO {qty} to {target}" - an instruction promising a redeal - but `_redeal_document`
+    can never carry one out (its own comment: "an SPO share has no purchase-order line to
+    re-deal ... left for a person"). Measured directly: apply leaves the SPO link exactly
+    as it was, the order-back row stays `placed`, and nothing about it appears anywhere
+    in `result_json` - the suggestion said "Reallocate ... to pool" and NOTHING happened,
+    which is the rule this test names: never record an instruction that is not carried
+    out. The held SPO 100 delayed past its window must instead compose a `release`
+    (never `reallocate`) naming no target, and reading "unallocated for purchasing" - and
+    apply must actually unlink it, freeing the SPOAllocation for purchasing to see."""
+    from app.models.planning_change import PlanningChangeRow
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    near = date.today() + timedelta(days=10)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="100",
+                            required_date=near)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    # A real held SPO share: an ORDER_BACK row linked to a real SPOAllocation, exactly
+    # the shape `place_on_po_allocations` writes for one (AC-I6's own rule: only an
+    # ORDER_BACK row may name an allocation). Seeded directly rather than driven through
+    # `confirm()`'s live ladder, which would need a whole buying-group world to offer 100
+    # of real water - the FROZEN state is what this test is about, not how it got there.
+    spo = _spo(db, world.product, world.own_wh, qty="100", arrives=near)
+    inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        amendment_id=None, state=INQUIRY_RAISED, raised_by=world.actor,
+    )
+    db.add(inquiry)
+    db.flush()
+    order_back_row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, qty=Decimal("100"), verb=IV_ORDER_BACK, state=INQUIRY_PLACED,
+        stock_location=world.own_wh.warehouse_code,
+    )
+    db.add(order_back_row)
+    db.flush()
+    link = OrderInquiryLink(
+        id=_uid(), company_id=world.company_id, row_id=order_back_row.id,
+        spo_allocation_id=spo.id, document=spo.spo_number, qty=Decimal("100"),
+    )
+    db.add(link)
+    db.commit()
+
+    decision = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state=DECISION_ACTIVE,
+        line_snapshots=[{
+            "project_line_id": str(line.id), "line_no": 1,
+            "item_code": world.product.product_code,
+            "buy_qty": "0", "reserve_qty": "0", "borrow_qty": "0",
+            "timely_spo_qty": "100", "timely_spo_refs": [spo.spo_number],
+            "required_date": near.isoformat(), "product_id": str(world.product.id),
+            "core_line_id": str(core_line.id),
+            "components": [{
+                "kind": "timely_spo", "qty": "100",
+                "source_location": world.own_wh.warehouse_code,
+            }],
+        }],
+        confirmed_by=world.actor, confirmed_at=None,
+    )
+    db.add(decision)
+    db.commit()
+
+    # Write-first: the book delays this line far past the window - the water it held no
+    # longer applies, and the re-run proposes none for the new date.
+    far = date.today() + timedelta(days=400)
+    core_line.required_date = far
+    db.commit()
+
+    changed = _diff_change(
+        DATE_MOVED, core_line, doc_number=core_so.so_number,
+        item_code=world.product.product_code, location=world.own_wh.warehouse_code,
+        old_date=near, new_date=far, old_qty="100", new_qty="100",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row_out = out["orders"][0]["rows"][0]
+    spo_component = next(
+        c for c in row_out["suggestion"]["components"] if c.get("source") == "spo"
+    )
+    assert spo_component["action"] == "release", spo_component
+    assert not spo_component.get("target"), spo_component
+    assert "Reallocate" not in spo_component["label"], spo_component
+    assert "unallocated for purchasing" in spo_component["label"], spo_component
+
+    row = _only_row(db, batch)
+    planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "confirm")
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    remaining_links = ProjectOrderInquiryService(db)._links_of(order_back_row.id)
+    assert remaining_links == [], (
+        "the SPO link must be removed - never record an instruction (Reallocate) that "
+        "is not carried out"
+    )
+    spo_links = db.query(OrderInquiryLink).filter(OrderInquiryLink.spo_allocation_id == spo.id).all()
+    linked_total = sum(Decimal(str(l.qty)) for l in spo_links)
+    assert spo.allocated_quantity - linked_total == Decimal("100"), (
+        "the incoming list's unallocated quantity for this SPO line must read 100 again"
+    )
+
+    fresh = db.get(PlanningChangeRow, row.id)
+    released = (fresh.result_json or {}).get("released_documents") or []
+    assert spo.spo_number in released, fresh.result_json
