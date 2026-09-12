@@ -75,6 +75,7 @@ from app.models.planning_change import (
 )
 from app.models.product import Product
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
     ALLOC_SOURCE_ORDER,
     ALLOC_SOURCE_OTHER_LOCATION,
     ALLOC_SOURCE_OWN,
@@ -405,10 +406,18 @@ def _release_components(
             location=location, item_code=item_code,
         ))
     for qty, _location in held_by["spo"]:
+        # NOT a reallocation (review round D7): only an ORDER BACK row may carry an SPO
+        # allocation, so there is no waiting ORDER row and no pool row that could receive
+        # one. What the line can honestly do is give it back - the link comes off and the
+        # allocation reads unallocated on purchasing's incoming list. The sentence says
+        # that, so the row never records an instruction nobody carried out.
+        document = (facts.get("placed") or {}).get("document")
         out.append(_component(
-            "reallocate", "spo", qty,
-            f"Reallocate SPO {_qty_of(qty, item_code)} to {target}",
-            target=target, item_code=item_code,
+            "release", "spo", qty,
+            f"Release SPO {document} {_qty_of(qty, item_code)}, unallocated for purchasing"
+            if document
+            else f"Release SPO {_qty_of(qty, item_code)}, unallocated for purchasing",
+            document=document, item_code=item_code,
         ))
     for qty, _location in held_by["buy"]:
         on_document = min(qty, placed_qty)
@@ -649,6 +658,21 @@ def compose_suggestion(
         components.extend(_release_components(
             {k: (held_by[k] if k == klass else []) for k in _CLASSES}, facts,
         ))
+
+    # A line NOBODY HAS DECIDED can still have quantity on a document (review round D2).
+    # The old redirect covered exactly this case and went with the rule table: a placed
+    # purchase order on an undecided line whose fresh answer draws on stock instead is
+    # quantity the line no longer needs, and rule 6 says where it goes. Only what the new
+    # answer does not need as a Buy: what it does still buy stays exactly where it is.
+    if not held_by["buy"] and placed_qty > _ZERO:
+        spare = placed_qty - proposed["buy"]["qty"]
+        if spare > _ZERO:
+            components.append(_component(
+                "reallocate", "po", spare,
+                f"Reallocate {document} {qty_text(spare)} to {target}" if document
+                else f"Reallocate {qty_text(spare)} to {target}",
+                document=document, target=target,
+            ))
 
     # Whatever the hold never covered at all is new sourcing, after the held components.
     for klass in _CLASSES:
@@ -2630,46 +2654,186 @@ def _pool_code_for_core_line(
 # ============================================================================
 
 
-def _reallocate_components(row: PlanningChangeRow) -> List[dict]:
+def _moving_components(row: PlanningChangeRow) -> List[dict]:
+    """The components that MOVE something at apply: a reallocation, and a released SPO
+    share (which gives its allocation back rather than re-dealing it - D7). A released
+    reserve frees where it stands and a reduced Buy is the confirm's own work, so neither
+    is here."""
     return [
         component
         for component in ((row.suggestion_json or {}).get("components") or [])
         if component.get("action") == "reallocate"
+        or (component.get("action") == "release" and component.get("source") == "spo")
     ]
 
 
 def _document_links_by_row(
     db: Session, rows: Sequence[PlanningChangeRow]
-) -> Dict[Tuple[str, str], str]:
-    """`(planning row id, document) -> purchase-order line id`, read BEFORE the confirm.
+) -> Dict[str, List[dict]]:
+    """`planning row id -> [{po_line_id, document, qty}]`, read BEFORE the confirm.
 
     The confirm settles each line's own inquiry row, which is where the freed quantity is
     actually released: the link is trimmed to what the line still needs, or removed. Read
     afterwards, a wholly freed document has no link left to say which line it was on - so
     the address is taken while it is still there, and used after.
+
+    PER PURCHASE-ORDER LINE, not per document: one line's placed quantity routinely sits on
+    several purchase-order lines (the G2 cascade splits a 432 across a 300 and a 132), and
+    each of those lines only has its own quantity to give. Addressing the whole freed amount
+    at the first one refuses with `order_inquiry_po_line_short` and moves nothing. What is
+    kept is the share each line carried, so the freed quantity is re-dealt off exactly the
+    purchase-order lines it came off, in the order they were linked.
     """
     line_ids = [str(r.project_line_id) for r in rows if r.project_line_id]
     if not line_ids:
         return {}
-    out: Dict[Tuple[str, str], str] = {}
-    pairs = (
-        db.query(OrderInquiryLink.document, OrderInquiryLink.po_line_id, OrderInquiryRow.so_line_id)
+    rows_links = (
+        db.query(
+            OrderInquiryLink.document,
+            OrderInquiryLink.po_line_id,
+            OrderInquiryLink.qty,
+            OrderInquiryRow.so_line_id,
+        )
         .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
-        .filter(OrderInquiryRow.so_line_id.in_(line_ids))
+        .filter(
+            OrderInquiryRow.so_line_id.in_(line_ids),
+            OrderInquiryLink.po_line_id.isnot(None),
+        )
+        .order_by(OrderInquiryLink.linked_at.asc())
         .all()
     )
-    by_line: Dict[Tuple[str, str], str] = {}
-    for document, po_line_id, so_line_id in pairs:
-        if not document or not po_line_id:
-            continue
-        by_line.setdefault((str(so_line_id), str(document)), str(po_line_id))
+    by_line: Dict[str, List[dict]] = defaultdict(list)
+    for document, po_line_id, qty, so_line_id in rows_links:
+        by_line[str(so_line_id)].append({
+            "po_line_id": str(po_line_id),
+            "document": document,
+            "qty": _dec(qty),
+        })
+    out: Dict[str, List[dict]] = {}
     for row in rows:
         if not row.project_line_id:
             continue
-        for (line_id, document), po_line_id in by_line.items():
-            if line_id == str(row.project_line_id):
-                out[(str(row.id), document)] = po_line_id
+        shares = by_line.get(str(row.project_line_id))
+        if shares:
+            out[str(row.id)] = [dict(share) for share in shares]
     return out
+
+
+def _take_document_shares(shares: List[dict], want: Decimal) -> List[dict]:
+    """Draw `want` off the purchase-order lines this planning row's quantity sits on.
+
+    Consumes the shares in place, so two reallocations on the same row do not both try to
+    spend the same purchase-order line. Returns `[{po_line_id, document, qty}]` - what is
+    left when the shares run out is the caller's problem to name.
+    """
+    taken: List[dict] = []
+    remaining = want
+    for share in shares:
+        if remaining <= _ZERO:
+            break
+        available = _dec(share.get("qty"))
+        if available <= _ZERO:
+            continue
+        take = min(available, remaining)
+        share["qty"] = available - take
+        taken.append({
+            "po_line_id": share["po_line_id"],
+            "document": share.get("document"),
+            "qty": take,
+        })
+        remaining -= take
+    return taken
+
+
+def _unclaim_shares(
+    db: Session,
+    service,
+    row: PlanningChangeRow,
+    taken: Sequence[dict],
+    shares: Sequence[dict],
+) -> None:
+    """Give this line's own claim on those purchase-order lines up, before re-dealing it.
+
+    The confirm frees a claim only where the line's need SHRANK. Rule 7's case is the other
+    one: the line needs the SAME quantity at a much later date, so the confirm settles the
+    row in place and its link stays on, while the suggestion says that document goes
+    elsewhere and this line buys again. Re-dealing it without giving it up first refuses
+    with `order_inquiry_po_line_short` ("every unit of it is already linked to another
+    row") and nothing moves. So the claim comes off here and the row's state is refreshed:
+    it reads raised again, which is exactly the Buy the suggestion named beside the move.
+
+    ONLY WHAT IS OVER-CLAIMED comes off. What the line should still hold on a
+    purchase-order line is what is left of its share after this take (`shares` is consumed
+    as the quantity is dealt), so where the confirm has ALREADY released the freed units -
+    the reduce case, 134 trimmed to 100 with 34 to re-deal - this finds the line claiming
+    exactly what it should and touches nothing. Taking the units off twice there would
+    strip the line of cover it still needs.
+    """
+    if not taken or not row.project_line_id:
+        return
+    keep: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+    for share in shares:
+        keep[str(share["po_line_id"])] += _dec(share.get("qty"))
+    claimed: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+    po_line_ids = {str(share["po_line_id"]) for share in taken}
+    for po_line_id, qty in (
+        db.query(OrderInquiryLink.po_line_id, OrderInquiryLink.qty)
+        .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+        .filter(
+            OrderInquiryRow.so_line_id == row.project_line_id,
+            OrderInquiryLink.po_line_id.in_(list(po_line_ids)),
+        )
+        .all()
+    ):
+        claimed[str(po_line_id)] += _dec(qty)
+    wanted: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+    for po_line_id in po_line_ids:
+        over = claimed[po_line_id] - keep[po_line_id]
+        if over > _ZERO:
+            wanted[po_line_id] = over
+    if not wanted:
+        return
+    links = (
+        db.query(OrderInquiryLink)
+        .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+        .filter(
+            OrderInquiryRow.so_line_id == row.project_line_id,
+            OrderInquiryLink.po_line_id.in_(list(wanted.keys())),
+        )
+        .order_by(OrderInquiryLink.linked_at.asc())
+        .all()
+    )
+    touched: Dict[str, OrderInquiryRow] = {}
+    for link in links:
+        remaining = wanted.get(str(link.po_line_id), _ZERO)
+        if remaining <= _ZERO:
+            continue
+        qty = _dec(link.qty)
+        owner = db.get(OrderInquiryRow, link.row_id)
+        if qty <= remaining:
+            db.delete(link)
+            wanted[str(link.po_line_id)] = remaining - qty
+        else:
+            link.qty = qty - remaining
+            wanted[str(link.po_line_id)] = _ZERO
+        if owner is not None:
+            touched[str(owner.id)] = owner
+    if not touched:
+        return
+    db.flush()
+    service.refresh_link_state(list(touched.values()))
+
+
+def _share_words(taken: Sequence[dict], fallback: Optional[str]) -> str:
+    """The documents a take actually came off, named once each, in the order used."""
+    seen: List[str] = []
+    for share in taken:
+        document = share.get("document")
+        if document and document not in seen:
+            seen.append(document)
+    if not seen:
+        return fallback or "the document"
+    return " and ".join(seen)
 
 
 def _pool_row_for(
@@ -2677,53 +2841,78 @@ def _pool_row_for(
     service,
     row: PlanningChangeRow,
     *,
-    qty: Decimal,
-    po_line_id: str,
+    taken: Sequence[dict],
     document: Optional[str],
     so_number: str,
+    item_code: Optional[str],
     pool_cache: Dict[str, Optional[str]],
     actor: Optional[str],
-) -> bool:
+) -> str:
     """Freed document quantity that no line needs: a POOL-LOCATION row carries it.
+
+    ONE row for the whole freed quantity, however many purchase-order lines it came off: it
+    is one demand at the pool, and the links underneath it say which documents cover it.
 
     A row of the same order inquiry with NO sales-order line of its own (AC-D3): it is not
     for anybody's order any more, it is stock coming to the pool, and the reorder engine
     counts it as cover the moment it is linked to the document. Nothing is unlinked and
     re-bought - a buyer's arrangement is kept, it simply belongs to the pool now.
+
+    `item_code` is THE PRODUCT'S OWN CODE, resolved from the line, never the change row's
+    (review round D1): `place_on_po_allocations` resolves a row with no line through
+    `products.product_code`, and a book that names the item anything else - which a
+    planning-change row copies verbatim - refuses the link with `order_inquiry_no_product`.
+    That refusal used to leave an unlinked raised row at the pool, which reads as NEW
+    demand, while the quantity it was supposed to carry sat unclaimed.
+
+    Born acknowledged and company-stamped, the same way `_borrow_shortfalls` raises the
+    donor's order-back: this row is the plan's own work, not something purchasing has to
+    say yes to.
     """
+    qty = sum((_dec(share["qty"]) for share in taken), _ZERO)
     pool_code = _pool_code_for_core_line(db, row.core_line_id, pool_cache)
-    if not pool_code:
-        logger.warning(
-            "planning change: no pool location for %s line %s, %s of %s left on the line",
-            so_number, row.line_no, qty_text(qty), document or "the document",
-        )
-        return False
     giving = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.so_line_id == row.project_line_id)
         .order_by(OrderInquiryRow.created_at.asc())
         .first()
     )
-    if giving is None:
-        return False
+    if not pool_code or giving is None:
+        # Nowhere to put it and no inquiry to put it in. Raised rather than logged (D1):
+        # the suggestion promised this quantity would move, and an apply that reports
+        # success while it did not is the failure this rule exists to stop.
+        raise AppException(
+            status_code=409,
+            message=(
+                f"{so_number} line {row.line_no or '?'}: {qty_text(qty)} of "
+                f"{document or 'the document'} could not be reallocated - "
+                + ("this line has no order inquiry to carry it." if giving is not None
+                   else "no pool location for this line.")
+            ),
+            code="planning_change_reallocation_no_pool",
+        )
     pool_row = OrderInquiryRow(
+        company_id=giving.company_id,
         order_inquiry_id=giving.order_inquiry_id,
         so_line_id=None,
-        item_code=row.item_code or giving.item_code,
+        item_code=item_code or giving.item_code,
         qty=qty,
         delivery_date=giving.delivery_date,
         stock_location=pool_code,
         verb=IV_ORDER,
         note=f"Reallocated from {so_number} line {row.line_no or '?'}",
+        ack_state=ACK_ACKNOWLEDGED,
+        acknowledged_by=actor,
+        acknowledged_at=datetime.utcnow(),
     )
     db.add(pool_row)
     db.flush()
     service.place_on_po_allocations(
         str(pool_row.id),
-        [{"po_line_id": po_line_id, "qty": qty}],
+        [{"po_line_id": share["po_line_id"], "qty": share["qty"]} for share in taken],
         actor_user_id=actor,
     )
-    return True
+    return f"{_share_words(taken, document)} {qty_text(qty)} to {pool_code}"
 
 
 def _redeal_document(
@@ -2734,129 +2923,212 @@ def _redeal_document(
     *,
     so_number: str,
     product_id: Optional[str],
+    item_code: Optional[str],
     dealer_hot_selling: bool,
     pool_cache: Dict[str, Optional[str]],
-    document_links: Dict[Tuple[str, str], str],
+    document_links: Dict[str, List[dict]],
+    exclude_line_ids: Sequence[str],
     actor: Optional[str],
-) -> int:
+) -> List[str]:
     """One `reallocate` of document quantity, executed in rule 6's own order.
 
     Dealer hot-selling wins outright (AC-D1): retail needs the pool stock, and a waiting
     project row does not get to outbid it. The verdict is the LIVE one, not the one the row
     was built with: a batch may sit for days, and where a quantity goes is decided by what
     is selling when it actually moves - the same reason the waiting rows are re-ranked here
-    rather than addressed by an id the suggestion froze. Otherwise the linking engine's own priority
-    decides which waiting row receives it (AC-D2), and whatever nobody needs goes to the
-    pool (AC-D3). The receiving order is NOT re-planned: its row says "Found", its board
-    reads the new state next time it opens (the grill page's decided 3.2).
+    rather than addressed by an id the suggestion froze. Otherwise the linking engine's own
+    priority decides which waiting row receives it (AC-D2), and whatever nobody needs goes
+    to the pool (AC-D3). The receiving order is NOT re-planned: its row says "Found", its
+    board reads the new state next time it opens (the grill page's decided 3.2).
+
+    NOTHING IS SWALLOWED (review round D1). A refusal here fails the order's savepoint, so
+    the batch says the order failed and why, and the pool row it may have written rolls back
+    with it - rather than reporting success over a quantity that never moved.
+
+    Returns what it did, in words, for the row's own `result_json`.
     """
     freed = _dec(component.get("qty_now"))
     document = component.get("document")
     if freed <= _ZERO:
-        return 0
-    po_line_id = document_links.get((str(row.id), str(document))) if document else None
-    if not po_line_id:
-        # An SPO share has no purchase-order line to re-deal, and only an ORDER BACK row
-        # may carry an SPO allocation (`place_on_po_allocations`'s own rule), so a pool row
-        # cannot hold one either. Said out loud rather than half-done: the quantity stays
-        # where it is until somebody links it by hand.
-        logger.warning(
-            "planning change: %s line %s freed %s of %s with no purchase-order line to "
-            "re-deal - left for a person",
-            so_number, row.line_no, qty_text(freed), document or "a document",
+        return []
+    shares = document_links.get(str(row.id)) or []
+    available = sum((_dec(share["qty"]) for share in shares), _ZERO)
+    if available < freed:
+        raise AppException(
+            status_code=409,
+            message=(
+                f"{so_number} line {row.line_no or '?'}: {qty_text(freed)} of "
+                f"{document or 'a document'} has no purchase-order line to re-deal."
+            ),
+            code="planning_change_reallocation_no_document",
         )
-        return 0
 
-    moved = 0
+    done: List[str] = []
     remaining = freed
     if not dealer_hot_selling:
-        for waiting_row, unlinked in _waiting_rows(db, str(row.project_line_id), product_id):
+        for waiting_row, unlinked in _waiting_rows(
+            db, str(row.project_line_id), product_id, exclude_line_ids=exclude_line_ids
+        ):
             if remaining <= _ZERO:
                 break
-            take = min(remaining, unlinked)
-            if take <= _ZERO:
+            want = min(remaining, unlinked)
+            if want <= _ZERO:
                 continue
-            try:
-                service.place_on_po_allocations(
-                    str(waiting_row.id),
-                    [{"po_line_id": po_line_id, "qty": take}],
-                    actor_user_id=actor,
-                )
-            except Exception:  # noqa: BLE001 - one refusal must not sink the reallocation
-                logger.exception(
-                    "planning change: could not link %s %s to row %s",
-                    document, qty_text(take), waiting_row.id,
-                )
-                continue
-            found = f"Found: {document} {qty_text(take)}"
+            taken = _take_document_shares(shares, want)
+            if not taken:
+                break
+            took = sum((_dec(share["qty"]) for share in taken), _ZERO)
+            _unclaim_shares(db, service, row, taken, shares)
+            service.place_on_po_allocations(
+                str(waiting_row.id),
+                [{"po_line_id": share["po_line_id"], "qty": share["qty"]} for share in taken],
+                actor_user_id=actor,
+            )
+            words = _share_words(taken, document)
+            found = f"Found: {words} {qty_text(took)}"
             waiting_row.note = (
                 f"{waiting_row.note}\n{found}" if waiting_row.note else found
             )
-            remaining -= take
-            moved += 1
-    if remaining > _ZERO and _pool_row_for(
-        db, service, row, qty=remaining, po_line_id=po_line_id, document=document,
-        so_number=so_number, pool_cache=pool_cache, actor=actor,
-    ):
-        moved += 1
-    return moved
+            target = _row_target_words(db, waiting_row, took)
+            done.append(f"{words} {qty_text(took)} to {target}")
+            remaining -= took
+    if remaining > _ZERO:
+        taken = _take_document_shares(shares, remaining)
+        _unclaim_shares(db, service, row, taken, shares)
+        done.append(_pool_row_for(
+            db, service, row, taken=taken, document=document, so_number=so_number,
+            item_code=item_code, pool_cache=pool_cache, actor=actor,
+        ))
+    return done
+
+
+def _release_spo_share(
+    db: Session,
+    service,
+    row: PlanningChangeRow,
+    component: dict,
+    *,
+    so_number: str,
+) -> List[str]:
+    """A freed SPO share is UNALLOCATED, not re-dealt (review round D7).
+
+    Only an ORDER BACK row may carry an SPO allocation (`place_on_po_allocations`'s own
+    rule), so no waiting ORDER row and no pool-location row can receive one - there is
+    nowhere to re-deal it TO. What the line can honestly do is give it back: the link comes
+    off, and the allocation reads unallocated on purchasing's incoming list, where somebody
+    can put it where it is needed. The suggestion says exactly that, so no instruction is
+    recorded that was never carried out.
+    """
+    freed = _dec(component.get("qty_now"))
+    if freed <= _ZERO or not row.project_line_id:
+        return []
+    document = component.get("document")
+    links = (
+        db.query(OrderInquiryLink)
+        .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+        .filter(
+            OrderInquiryRow.so_line_id == row.project_line_id,
+            OrderInquiryLink.spo_allocation_id.isnot(None),
+        )
+        .order_by(OrderInquiryLink.qty.desc())
+        .all()
+    )
+    if document:
+        links = [link for link in links if (link.document or "") == document] or links
+    remaining = freed
+    touched: List[OrderInquiryRow] = []
+    for link in links:
+        if remaining <= _ZERO:
+            break
+        qty = _dec(link.qty)
+        owner = db.get(OrderInquiryRow, link.row_id)
+        if qty <= remaining:
+            db.delete(link)
+            remaining -= qty
+        else:
+            link.qty = qty - remaining
+            remaining = _ZERO
+        if owner is not None:
+            touched.append(owner)
+    if not touched:
+        return []
+    db.flush()
+    service.refresh_link_state(touched)
+    said = f"{document or 'the SPO'} {qty_text(freed - remaining)} unallocated"
+    return [said]
 
 
 def _move_reserve(
     db: Session,
+    service,
     row: PlanningChangeRow,
     component: dict,
     *,
     so_number: str,
     product_id: Optional[str],
+    exclude_line_ids: Sequence[str],
     actor: Optional[str],
-) -> int:
+) -> List[str]:
     """AC-D4 (S3): the stock this line gives up is held for the row that needed it earlier.
 
     A hold, written where the board reads one - an allocation on the RECEIVING mirror line,
-    at the warehouse the giver held it in. The receiving order is not re-planned and its
-    decision's own snapshots are left alone: its board reads live holds, so it sees this
-    the moment it opens. Its ORDER row is cancelled (or reduced) because the thing it asked
+    at the warehouse the giver held it in. Two things the review round measured and this
+    now does (D3):
+
+    * `decision_id` is NULL. A hold pinned to the receiving order's CURRENT revision stops
+      counting the moment that revision is superseded (`_hold_query` takes ACTIVE or NULL),
+      and the next confirm on that order would buy the quantity all over again. A hold that
+      belongs to no revision survives every revision, which is what this one is.
+    * the receiving decision's own snapshot for that line is SETTLED - its Buy becomes the
+      Reserve it now has - so `confirm`'s carry-forward keeps it. The snapshot is what the
+      carry copies; leaving it saying "Buy 80" is leaving the order's own record disagreeing
+      with the stock standing in the warehouse for it.
+
+    Its ORDER row is cancelled (or reduced and re-stated) because the thing it asked
     purchasing for is now covered by stock, and it says where the stock came from.
     """
     from app.services.project_supply_service import ProjectSupplyService
 
     moved_qty = _dec(component.get("qty_now"))
     if moved_qty <= _ZERO or not row.project_line_id:
-        return 0
+        return []
     held_reserve = ((row.held_json or {}).get("reserve") or [])
     warehouse_id = next(
         (entry.get("warehouse_id") for entry in held_reserve if entry.get("warehouse_id")),
         None,
     )
+    location = next(
+        (entry.get("location") for entry in held_reserve if entry.get("location")), None
+    )
     if not warehouse_id:
-        logger.warning(
-            "planning change: %s line %s has no warehouse on its reserve - nothing to move",
-            so_number, row.line_no,
+        raise AppException(
+            status_code=409,
+            message=(
+                f"{so_number} line {row.line_no or '?'}: the reserve it gives up names no "
+                "warehouse, so there is nothing to move."
+            ),
+            code="planning_change_reallocation_no_warehouse",
         )
-        return 0
     waiting = _waiting_rows(
         db,
         str(row.project_line_id),
         product_id,
         due_before=_as_date((row.facts_json or {}).get("new_date")),
+        exclude_line_ids=exclude_line_ids,
     )
     if not waiting:
-        return 0
+        # Nobody is waiting for it any more - it simply frees where it stands, which is
+        # what the released reserve already does. Nothing to record, nothing refused.
+        return []
     receiving, unlinked = waiting[0]
     take = min(moved_qty, unlinked)
     if take <= _ZERO:
-        return 0
+        return []
     receiving_line_id = str(receiving.so_line_id)
     receiving_order_id = (
         db.query(ProjectSalesOrderLine.project_sales_order_id)
         .filter(ProjectSalesOrderLine.id == receiving_line_id)
         .scalar()
-    )
-    decision = (
-        ProjectSupplyService(db).active_decision(str(receiving_order_id))
-        if receiving_order_id
-        else None
     )
     reason = f"Reallocated from {so_number} line {row.line_no or '?'}"
     db.add(
@@ -2865,16 +3137,16 @@ def _move_reserve(
             source_type=ALLOC_SOURCE_OWN,
             warehouse_id=warehouse_id,
             qty=take,
-            decision_id=str(decision.id) if decision is not None else None,
+            # NULL, deliberately: see the docstring. This hold belongs to no revision.
+            decision_id=None,
             reason=reason,
             confirmed_by=actor,
             confirmed_at=datetime.utcnow(),
         )
     )
     # The Buy the receiving line was holding is covered by this stock now, so the decision
-    # must stop saying it has to be bought. Only the `order` component goes - it holds
-    # nothing, it is a statement that a quantity still needs buying, and it has stopped
-    # being true. Every STOCK allocation on that line is untouched.
+    # must stop saying it has to be bought - in BOTH places it says it: the allocation
+    # ledger and the revision's own snapshot.
     buy_allocations = (
         db.query(SOLineAllocation)
         .filter(
@@ -2896,14 +3168,82 @@ def _move_reserve(
         else:
             allocation.qty = qty - left
             left = _ZERO
+    _settle_receiving_snapshot(
+        db,
+        ProjectSupplyService(db).active_decision(str(receiving_order_id))
+        if receiving_order_id
+        else None,
+        receiving_line_id,
+        take=take,
+        warehouse_id=str(warehouse_id),
+        location=location,
+        reason=reason,
+    )
     found = f"Found: reserve {qty_text(take)} from {so_number}"
     receiving.note = f"{receiving.note}\n{found}" if receiving.note else found
-    if take >= _dec(receiving.qty) - _ZERO:
+    if take >= _dec(receiving.qty):
         receiving.state = INQUIRY_CANCELLED
     else:
         receiving.qty = _dec(receiving.qty) - take
     db.flush()
-    return 1
+    # The row's quantity moved, so what its links cover moved with it (D6): a row whose
+    # remainder is now wholly on a document reads placed, not partly linked.
+    service.refresh_link_state([receiving])
+    target = _row_target_words(db, receiving, take)
+    return [f"reserve {qty_text(take)} at {location or 'the warehouse'} to {target}"]
+
+
+def _settle_receiving_snapshot(
+    db: Session,
+    decision: Optional[SOSupplyDecision],
+    line_id: str,
+    *,
+    take: Decimal,
+    warehouse_id: str,
+    location: Optional[str],
+    reason: str,
+) -> None:
+    """The receiving revision's own snapshot now says Reserve where it said Buy.
+
+    `confirm`'s carry-forward copies a covered line's snapshot verbatim into the next
+    revision (13.4, "the union is the server's"), so a snapshot left saying "Buy 80" is what
+    would buy the quantity a second time. The components are edited in place - the Buy is
+    reduced by what the stock now covers, and a Reserve component for it is added - and
+    nothing else about that revision is touched: it is not superseded, not re-confirmed, and
+    its own decision id does not change.
+    """
+    if decision is None or not decision.line_snapshots:
+        return
+    snapshots = list(decision.line_snapshots)
+    for index, snapshot in enumerate(snapshots):
+        if str(snapshot.get("project_line_id") or "") != str(line_id):
+            continue
+        components = [dict(c) for c in (snapshot.get("components") or [])]
+        left = take
+        kept: List[dict] = []
+        for component in components:
+            if component.get("kind") == BUY and left > _ZERO:
+                qty = _dec(component.get("qty"))
+                if qty <= left:
+                    left -= qty
+                    continue
+                component["qty"] = qty_text(qty - left)
+                left = _ZERO
+            kept.append(component)
+        kept.append({
+            "kind": RESERVE,
+            "qty": qty_text(take),
+            "source_location": location,
+            "source_warehouse_id": warehouse_id,
+            "reason": reason,
+            "rung": None,
+        })
+        snapshots[index] = dict(snapshot, components=kept)
+        from sqlalchemy.orm.attributes import flag_modified
+
+        decision.line_snapshots = snapshots
+        flag_modified(decision, "line_snapshots")
+        return
 
 
 def _execute_reallocations(
@@ -2911,65 +3251,77 @@ def _execute_reallocations(
     order: ProjectSalesOrder,
     so_number: str,
     live_rows: Sequence[PlanningChangeRow],
-    document_links: Dict[Tuple[str, str], str],
+    document_links: Dict[str, List[dict]],
     pool_cache: Dict[str, Optional[str]],
+    exclude_line_ids: Sequence[str],
     actor: Optional[str],
-) -> int:
-    """Every `reallocate` the confirmed suggestion named, carried out (Slice D).
+) -> Dict[str, List[str]]:
+    """Every `reallocate` and `release` of document quantity the confirmed suggestion
+    named, carried out (Slice D).
 
     Runs AFTER the confirm, because the confirm is what frees the quantity: it settles the
     line's own inquiry row down to what the line still needs, and what that releases is
-    exactly what this re-deals. Best-effort per component - a reallocation that cannot be
-    made is logged and the plan still stands, since the quantity simply stays where it is.
+    exactly what this re-deals. NOTHING IS SWALLOWED (review round D1): a refusal fails this
+    order's savepoint, the batch names the order and the reason, and every row it wrote
+    rolls back with it. An apply that reports success over quantity that never moved is the
+    one outcome this may not have.
+
+    Returns, per planning row id, what it did IN WORDS - the row's `result_json` keeps it,
+    so the batch can say where the quantity went even when a later read of the live world
+    would pick a different row (D5).
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     rows = [
         r for r in live_rows
-        if r.decision in ("confirm", "amend") and _reallocate_components(r)
+        if r.decision in ("confirm", "amend") and _moving_components(r)
     ]
     if not rows:
-        return 0
+        return {}
     service = ProjectOrderInquiryService(db)
+    line_ids = [str(r.project_line_id) for r in rows if r.project_line_id]
     product_by_line = dict(
         db.query(ProjectSalesOrderLine.id, ProjectSalesOrderLine.product_id)
-        .filter(
-            ProjectSalesOrderLine.id.in_(
-                [str(r.project_line_id) for r in rows if r.project_line_id]
-            )
-        )
+        .filter(ProjectSalesOrderLine.id.in_(line_ids))
         .all()
-    )
+    ) if line_ids else {}
+    # The PRODUCT'S own code, which is what a row with no sales-order line is matched by -
+    # never the change row's `item_code`, which is whatever the book called it (D1).
+    code_by_product = dict(
+        db.query(Product.id, Product.product_code)
+        .filter(Product.id.in_([str(p) for p in product_by_line.values() if p]))
+        .all()
+    ) if product_by_line else {}
     # Read once, live: which of these products retail is selling hard right now.
     dealer_where, _project_where = _hot_selling_evidence(
         db, {str(pid) for pid in product_by_line.values() if pid}
     )
-    moved = 0
+    done: Dict[str, List[str]] = defaultdict(list)
     for row in rows:
         product_id = product_by_line.get(str(row.project_line_id))
         product_id = str(product_id) if product_id else None
-        for component in _reallocate_components(row):
+        item_code = code_by_product.get(product_id) if product_id else None
+        for component in _moving_components(row):
             source = component.get("source")
-            try:
-                if source == "reserve":
-                    moved += _move_reserve(
-                        db, row, component, so_number=so_number, product_id=product_id,
-                        actor=actor,
-                    )
-                else:
-                    moved += _redeal_document(
-                        db, service, row, component, so_number=so_number,
-                        product_id=product_id,
-                        dealer_hot_selling=bool(product_id and product_id in dealer_where),
-                        pool_cache=pool_cache,
-                        document_links=document_links, actor=actor,
-                    )
-            except Exception:  # noqa: BLE001 - a redeal never sinks a written plan
-                logger.exception(
-                    "planning change: reallocation failed for %s line %s (%s)",
-                    so_number, row.line_no, component.get("label"),
+            action = component.get("action")
+            if action == "release" and source == "spo":
+                done[str(row.id)].extend(
+                    _release_spo_share(db, service, row, component, so_number=so_number)
                 )
-    return moved
+            elif source == "reserve":
+                done[str(row.id)].extend(_move_reserve(
+                    db, service, row, component, so_number=so_number,
+                    product_id=product_id, exclude_line_ids=exclude_line_ids, actor=actor,
+                ))
+            else:
+                done[str(row.id)].extend(_redeal_document(
+                    db, service, row, component, so_number=so_number,
+                    product_id=product_id, item_code=item_code,
+                    dealer_hot_selling=bool(product_id and product_id in dealer_where),
+                    pool_cache=pool_cache, document_links=document_links,
+                    exclude_line_ids=exclude_line_ids, actor=actor,
+                ))
+    return {row_id: words for row_id, words in done.items() if words}
 
 
 def _oi_demand_rows(
@@ -3481,6 +3833,18 @@ def _apply_one_order(
     by_line_id = {r.project_line_id: r for r in live if r.project_line_id}
     # Read BEFORE the confirm trims them (see `_document_links_by_row`).
     document_links = _document_links_by_row(db, live)
+    # Every line THIS BATCH is re-deciding, whichever order it sits on: a reallocation
+    # never deals to one of them (`_waiting_rows`), because their rows are in flux this
+    # very apply. The same set compose used when it named the target (D4).
+    batch_line_ids = [
+        str(line_id)
+        for (line_id,) in db.query(PlanningChangeRow.project_line_id)
+        .filter(
+            PlanningChangeRow.batch_id == batch.id,
+            PlanningChangeRow.project_line_id.isnot(None),
+        )
+        .all()
+    ]
     # Every line THIS batch changed and nobody has decided yet. Not the same thing as a
     # bystander: the book moved it, so its frozen composition is about a line that no
     # longer exists, and `confirm()`'s carry-forward rule (13.4, "the union is the
@@ -3669,9 +4033,11 @@ def _apply_one_order(
     # line's own row down to what it still needs, so what it released is what there is to
     # re-deal. After the link shift for the same reason - a closed line's placements go to
     # the line that still needs them before anything is offered to a stranger.
+    reallocated: Dict[str, List[str]] = {}
     if revised:
-        _execute_reallocations(
-            db, order, so_number, live, document_links, pool_cache, actor,
+        reallocated = _execute_reallocations(
+            db, order, so_number, live, document_links, pool_cache,
+            batch_line_ids, actor,
         )
 
     # What the suggestion warned about, recorded on what it decided (rule 8).
@@ -3722,6 +4088,11 @@ def _apply_one_order(
         r.applied_state = PLANNING_CHANGE_STATE_APPLIED
         if r.decision in ("confirm", "amend") and r.composition_json:
             r.result_json = {"board_link": r.board_link, "confirmed": True}
+            # WHERE THE QUANTITY WENT, in words (D5). The label said where it was going;
+            # this says where it actually went, which can differ - the deal is made against
+            # the world as it is at apply, not as it was when the batch was built.
+            if reallocated.get(str(r.id)):
+                r.result_json["reallocated"] = reallocated[str(r.id)]
         elif r.kind == "cancelled":
             r.result_json = {
                 "board_link": r.board_link,
