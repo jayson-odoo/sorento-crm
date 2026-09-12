@@ -6809,10 +6809,23 @@ class ProjectSupplyService:
         reserve_locations = self._reserve_ladder_locations(fact)
         by_id = {str(w.id): code for code, w in reserve_locations.items()}
         siblings = self._group_sibling_warehouses(fact)
+        unowned = self._unowned_holds(line)
         for item in entry.reserve or []:
             qty = _dec(item.qty)
             if qty <= _ZERO:
                 continue
+            # A hold this line already has that belongs to NO revision is this reserve,
+            # not a second one: a reallocation handed it over (Slice D, AC-D4) precisely so
+            # it would survive every future revision, and writing a fresh row beside it
+            # would hold the same physical units twice - the floor would read short by
+            # that quantity for everybody else, for good.
+            standing = unowned.get(str(item.warehouse_id), _ZERO)
+            if standing > _ZERO:
+                adopted = min(standing, qty)
+                unowned[str(item.warehouse_id)] = standing - adopted
+                qty -= adopted
+                if qty <= _ZERO:
+                    continue
             location = self._warehouse_of(fact, str(item.warehouse_id)) or by_id.get(
                 str(item.warehouse_id)
             )
@@ -6912,6 +6925,31 @@ class ProjectSupplyService:
                     confirmed_at=now,
                 )
             )
+
+    def _unowned_holds(self, line: ProjectSalesOrderLine) -> Dict[str, Decimal]:
+        """What this line already holds under NO revision, by warehouse.
+
+        Only a reallocation writes one (`planning_change_service._move_reserve`): a reserve
+        another order gave this line, deliberately tied to no decision so that superseding
+        one cannot make it read gone. Every later revision that names the same reserve is
+        naming THAT hold.
+        """
+        rows = (
+            self.db.query(SOLineAllocation.warehouse_id, SOLineAllocation.qty)
+            .filter(
+                SOLineAllocation.so_line_id == line.id,
+                SOLineAllocation.decision_id.is_(None),
+                SOLineAllocation.confirmed_at.isnot(None),
+                SOLineAllocation.warehouse_id.isnot(None),
+                SOLineAllocation.source_type != ALLOC_SOURCE_ORDER,
+            )
+            .all()
+        )
+        held: Dict[str, Decimal] = {}
+        for warehouse_id, qty in rows:
+            key = str(warehouse_id)
+            held[key] = held.get(key, _ZERO) + _dec(qty)
+        return held
 
     def _carry_allocations(
         self,
