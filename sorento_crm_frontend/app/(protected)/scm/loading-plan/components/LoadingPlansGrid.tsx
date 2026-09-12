@@ -130,6 +130,8 @@ export function LoadingPlansGrid() {
         // subtitle use (`describeWindow`), so this list never states the end alone while a
         // plan also carries a start.
         id: 'plan_horizon_date',
+        // Sorts on the END date only - same shape as ReorderRunsGrid's own window column;
+        // the start has no independent order worth a second sort key.
         accessorFn: (row) => row.plan_horizon_date ?? '',
         header: ({ column }) => (
           <DataGridColumnHeader title="Sales orders needed" visibility column={column} />

@@ -33,7 +33,7 @@ Fix per symptom (captain asked for the mapping on the markup round):
 | Match vanishes | S3: row stays with Undo; Dismiss same. |
 | Memory: where | S3 Remembered list; S4 "Their code" on the product's Suppliers tab + product-supplier link on a manual match. |
 | ROYAL MIRROR stale snapshot | S6 plan-owned statement (No-file plan = no codes); S7 codes header names the plan's statement. |
-| What populates the list | S6 universe (WHO is a candidate) = links ∪ plan's statement ∪ aliases (S4) ∪ drivers. Demand decides WHERE, not whether: Lines table = candidates with open demand, ranked; fold (S5) = candidates with no open demand. A product with demand but none of the four memberships is not asked of this supplier. S8 documents it. |
+| What populates the list | S6 universe (WHO is a candidate) = links ∪ plan's statement ∪ aliases (S4) ∪ drivers. **Superseded 12 Sep 2026 (`PLAN-scm-loading-plan-lines-feedback-12sep.md`): the plan's statement when one is on file, else links alone.** Demand decides WHERE, not whether: Lines table = candidates with open demand, ranked; fold (S5) = candidates with no open demand. A product with demand but none of the four memberships is not asked of this supplier. S8 documents it. |
 | Same file, different rows | S6 all blocks bound and summed; S7 verdict counts + letterhead warning; S8 format doc. |
 | Need differs by cut-off | No fix; S8 documents the rule. |
 

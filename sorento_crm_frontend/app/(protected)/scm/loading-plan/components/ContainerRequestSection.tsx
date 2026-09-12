@@ -555,6 +555,10 @@ export function ContainerRequestSection({
       },
       {
         id: 'suggested_qty',
+        // Captain's call, review round 12 Sep: sortable on the row's own suggested quantity
+        // (not the live-typed override) - "what am I asking most of" is a real question over
+        // 60 rows. `remark` stays unsortable, a free-text field with no natural order.
+        accessorFn: (row) => row.suggested_qty,
         header: ({ column }) => (
           <span className="flex items-center gap-1">
             <DataGridColumnHeader title="Suggested qty" column={column} />
@@ -576,7 +580,7 @@ export function ContainerRequestSection({
         ),
         cell: renderQtyCell,
         size: 140,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Suggested qty' },
       },
       {
@@ -854,6 +858,11 @@ export function ContainerRequestSection({
   // supplier who has never sent a stock list still gets a table; "They hold" reads their
   // newest proforma, or a dash.
   if (!build.data || rows.length === 0) {
+    // Review round (12 Sep): a statement on file that named nothing of ours is a MATCHING
+    // gap, not an empty universe - the file-or-links rule (slice 1) means a file with real
+    // rows on it produced zero rows here, and "start a new plan" told her to redo work the
+    // Supplier codes tab already exists to finish.
+    const hasStatement = Boolean(build.data?.stock_list_as_of);
     return (
       <div className="space-y-4">
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
@@ -861,11 +870,20 @@ export function ContainerRequestSection({
             <PackageSearch className="size-5" />
           </span>
           <p className="text-sm font-medium">
-            Nothing to ask {supplierName} for right now.
+            {hasStatement
+              ? 'This file named nothing in our catalogue yet.'
+              : `Nothing to ask ${supplierName} for right now.`}
           </p>
           <p className="text-2xs text-muted-foreground">
-            No open customer demand on what they supply, and nothing of theirs on file. Start a
-            new plan from the loading plans list to hand over a newer stock list or proforma.
+            {hasStatement ? (
+              'Match its codes on the Supplier codes tab.'
+            ) : (
+              <>
+                No open customer demand on what they supply, and nothing of theirs on file.
+                Start a new plan from the loading plans list to hand over a newer stock list
+                or proforma.
+              </>
+            )}
           </p>
         </Card>
       </div>
@@ -873,16 +891,18 @@ export function ContainerRequestSection({
   }
 
 
+  // AC-N7 (review round, 12 Sep): the window, both ends, ONE string - the heading and the
+  // Outstanding card's sub-label read the same `describeWindow` call so they cannot say two
+  // different things about what this build was worked out against.
+  const windowLabel = describeWindow(build.data.plan_horizon_start, build.data.plan_horizon_date);
+
   return (
     <div className="space-y-4">
       {/* The cards carry the swatches, which is why there is no legend row under them (r4). */}
       <ContainerRequestStatCards
         summary={summary}
-        horizonDate={
-          build.data.plan_horizon_date
-            ? formatDateInMalaysia(build.data.plan_horizon_date)
-            : null
-        }
+        planHorizonStart={build.data.plan_horizon_start}
+        planHorizonDate={build.data.plan_horizon_date}
       />
 
       <DataGrid
@@ -901,14 +921,7 @@ export function ContainerRequestSection({
           <CardHeader className="py-3">
             <h3 className="text-sm font-semibold">
               What to ask {supplierName}
-              {/* AC-N7: the window, both ends, the same wording the record's own header and
-                  the plans list use (`describeWindow`). */}
-              {(() => {
-                const window = describeWindow(
-                  build.data.plan_horizon_start, build.data.plan_horizon_date,
-                );
-                return window === 'every open order' ? ' for' : ` to cover ${window}`;
-              })()}
+              {windowLabel === 'every open order' ? ' for' : ` to cover ${windowLabel}`}
             </h3>
           </CardHeader>
 

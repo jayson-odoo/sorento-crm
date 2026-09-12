@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission
 from app.models.scm import ContainerSize, LoadingPlan
+from app.schemas.scm_reorder import require_start_on_or_before_end
 from app.services.error_handler import AppException
 from app.services.scm import (
     allocation_suggestion_service,
@@ -511,19 +512,9 @@ class LoadingPlanCreate(BaseModel):
     #: list". Optional: the retain is itself best-effort, and a plan without it is still a plan.
     source_attachment_id: Optional[str] = None
 
-    # Same validator, same message, as `CreateReorderRunRequest._start_before_end`
-    # (`app/schemas/scm_reorder.py`) - one rule, so the two screens cannot disagree about
-    # what a backwards window means.
     @model_validator(mode="after")
     def _start_before_end(self):
-        if (
-            self.plan_horizon_start is not None
-            and self.plan_horizon_date is not None
-            and self.plan_horizon_start > self.plan_horizon_date
-        ):
-            raise ValueError(
-                "plan_horizon_start must be on or before plan_horizon_date"
-            )
+        require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
         return self
 
 
@@ -559,14 +550,7 @@ class LoadingPlanUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _start_before_end(self):
-        if (
-            self.plan_horizon_start is not None
-            and self.plan_horizon_date is not None
-            and self.plan_horizon_start > self.plan_horizon_date
-        ):
-            raise ValueError(
-                "plan_horizon_start must be on or before plan_horizon_date"
-            )
+        require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
         return self
 
 
@@ -584,8 +568,13 @@ def update_loading_plan(
     """
     plan = _plan_or_404(db, plan_id)
     _refuse_cancelled(plan)
-    plan.plan_horizon_start = body.plan_horizon_start
-    plan.plan_horizon_date = body.plan_horizon_date
+    # Only a key the caller actually sent moves the row (`model_fields_set`): both dialogs
+    # send the pair together, but a caller that PATCHes the end date alone must not null out
+    # a start nobody asked to touch.
+    if "plan_horizon_start" in body.model_fields_set:
+        plan.plan_horizon_start = body.plan_horizon_start
+    if "plan_horizon_date" in body.model_fields_set:
+        plan.plan_horizon_date = body.plan_horizon_date
     db.flush()
     out = loading_plan_service.record_dict(db, plan)
     db.commit()

@@ -52,7 +52,9 @@ See the plan's Journey section. AC-U* trace to step 1 (what the table lists), AC
 - **AC-N5** `[FE][T]` Every column of the Lines table is sortable by clicking its header
   (`DataGridColumnHeader`), including Rank, Product, Need, Project, Retail, On hand, SPO,
   Incoming PL, Total supply, PO, Packed; numeric columns sort numerically. Default order stays
-  rank ascending. Vitest: clicking "Need" reorders rows by `open_so_need`.
+  rank ascending. Vitest: clicking "Need" reorders rows by `open_so_need`. Suggested qty also
+  sorts on its own numeric value ("what am I asking most of", captain's call, review round 12
+  Sep); Remarks stays unsortable, a free-text field with no natural order.
 - **AC-N6** `[FE][T]` The Excel/CSV preview in `components/common/AttachmentPreviewModal.tsx`
   carries a search box ("Search in sheet") above the table. Typing filters to rows where any
   cell contains the text (case-insensitive substring), over every row the sheet loaded (the

@@ -115,15 +115,13 @@ OPEN_PO_SQL = (
     + ") AND pol.line_status = 'open' AND pol.qty_ordered > pol.qty_received"
 )
 
-#: What is still to land on one packing-list line, floored at zero.
-PL_REMAINING_SQL = (
-    "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.quantity_received, 0), 0)"
-)
-
-#: R6 (purchasing consolidation, 6 Sep): the part of one line still to land that has NOT
-#: already been turned into an SPO. Always <= `PL_REMAINING_SQL` (an allocated unit is also
-#: a received-or-not-yet unit), which is why filtering rows on `PL_REMAINING_SQL > 0` never
-#: drops a line this figure would otherwise count.
+#: R6 (purchasing consolidation, 6 Sep), widened to every reader by AC-N2 (12 Sep): the part
+#: of one packing-list line still to land that has NOT already been turned into an SPO -
+#: shipped, less whatever of it is already allocated and less whatever is already received,
+#: floored at zero. The dead sibling this used to sit beside (`PL_REMAINING_SQL`, "shipped
+#: less received" alone, with no allocation cut) is gone: AC-N2 moved every reader - the
+#: netting formula, the cell, the shipment list, the drill - onto this one figure, so there
+#: is no longer a second, gross reading of "still to land" anywhere in this file.
 #: `l.spo_allocated_quantity` is per LINE since S4 (AC-D5): `refresh_shipment_line_statuses`
 #: apportions the product's allocated total across that product's own lines on the shipment
 #: in `(created_at, id)` order rather than stamping the product total onto each of them, so
@@ -483,8 +481,8 @@ def _project_open_need(
     a requirement somebody has already bought cannot make the product rank as urgent.
 
     No company predicate of its own: `product_ids` was resolved company-scoped upstream
-    (`_linked_products` / `_stock_list` / `_standin_proforma`), and a product id belongs to
-    exactly one company, so filtering on it IS the scope.
+    (`_linked_products` / `_stock_list` / `_plan_stock_list` / `_standin_proforma`), and a
+    product id belongs to exactly one company, so filtering on it IS the scope.
     """
     if not product_ids:
         return {}

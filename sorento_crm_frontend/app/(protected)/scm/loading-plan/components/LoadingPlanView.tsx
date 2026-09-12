@@ -450,6 +450,12 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     plan.document_label,
   ].join(' · ');
 
+  // Review round, 12 Sep: same guard as reorder planning's own Start Plan dialog
+  // (RunPlanningModal.tsx:142-147) - a backwards window nets nothing either.
+  const cutOffWindowInvalid = Boolean(
+    cutOffStartDraft && cutOffDraft && cutOffDraft < cutOffStartDraft,
+  );
+
   // R11: the SAME merge backs the plan table's Remarks column and the preview's own qty /
   // remark inputs - a remark typed on one shows on the other before either is saved (AC-E4).
   const handleQtyChange = (rowKey: string, qty: number) =>
@@ -728,13 +734,18 @@ export function LoadingPlanView({ planId }: { planId: string }) {
               </div>
             </div>
             <p className="text-2xs text-muted-foreground">Empty = every open order counts.</p>
+            {cutOffWindowInvalid ? (
+              <p className="text-2xs text-destructive">
+                The To date cannot be before the From date.
+              </p>
+            ) : null}
           </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCutOffOpen(false)}>
               Cancel
             </Button>
             <Button
-              disabled={changeCutOff.isPending || save.isPending}
+              disabled={changeCutOff.isPending || save.isPending || cutOffWindowInvalid}
               onClick={() => (editedCount > 0 ? setCutOffDropOpen(true) : void applyCutOff())}
             >
               {changeCutOff.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}

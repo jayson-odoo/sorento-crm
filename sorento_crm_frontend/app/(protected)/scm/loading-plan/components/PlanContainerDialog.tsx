@@ -230,9 +230,15 @@ export function PlanContainerDialog({
 
   const needsFile = docKind !== 'none';
   const busy = starting || applying || previewing || upload.testing || create.isPending;
+  // Same class of mistake RunPlanningModal.tsx:142-147 guards - a To before From nets
+  // nothing, silently, rather than refusing outright.
+  const windowInvalid = Boolean(
+    planHorizonStart && planHorizonDate && planHorizonDate < planHorizonStart,
+  );
   const canStart =
     !!supplierId &&
     !busy &&
+    !windowInvalid &&
     (needsFile ? upload.canConfirm && (!proformaVerdict || proformaVerdict.valid) : true);
 
   return (
@@ -306,6 +312,13 @@ export function PlanContainerDialog({
             <p className="mt-1 text-2xs text-muted-foreground">
               Empty = every open order counts.
             </p>
+            {/* Review round, 12 Sep: same guard as reorder planning's own Start Plan dialog
+                (RunPlanningModal.tsx) - a backwards window nets nothing either. */}
+            {windowInvalid ? (
+              <p className="mt-1 text-2xs text-destructive">
+                The To date cannot be before the From date.
+              </p>
+            ) : null}
           </div>
 
           <div>

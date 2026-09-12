@@ -28,6 +28,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { apiFetch } from '@/lib/api';
+import { splitHighlightSegments } from '@/lib/textHighlight';
 import { toast } from '@/lib/toast';
 
 /**
@@ -485,21 +486,17 @@ const MAX_COLS = 40;
  */
 const SCAN_ROWS = 2000;
 
-/** Every occurrence of `query` inside `text`, wrapped in `<mark>` (AC-N6). Case-insensitive;
- *  an empty query returns the text plain, so the common (non-searching) render path never
- *  builds a regex it does not need. */
+/** Every occurrence of `query` inside `text`, wrapped in `<mark>` (AC-N6). Same helper and
+ *  the same mark classes as the chat transcript's own highlight (`RespondChatList.tsx`), so
+ *  a search match reads the same wherever this app marks one. */
 function highlightCell(text: string, query: string) {
-  if (!query) return text;
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
-  if (parts.length === 1) return text;
-  return parts.map((part, i) =>
-    part.toLowerCase() === query.toLowerCase() ? (
-      <mark key={i} className="rounded-sm bg-yellow-200 px-0.5 text-inherit">
-        {part}
+  return splitHighlightSegments(text, query).map((segment, i) =>
+    segment.match ? (
+      <mark key={i} className="rounded-sm bg-amber-300 px-0.5 text-zinc-900">
+        {segment.text}
       </mark>
     ) : (
-      part
+      <span key={i}>{segment.text}</span>
     ),
   );
 }
