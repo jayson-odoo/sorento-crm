@@ -212,29 +212,26 @@ was AC-B2's Borrow:**
    / `test_project_supply_borrow_row_ack.py` (the existing step-2/step-3 borrow suites) stay
    green - the donor-line resolution only changes WHICH line an already-correct row lands on.
 
-**Suspected-wrong test helper, reported not fixed (captain's own instruction on the AC-B4
-red tests):** `test_qty_up_on_a_held_use_own_takes_more_stock_when_the_group_has_it` and
-`test_qty_up_on_a_held_use_own_moves_the_whole_unit_to_the_next_step_when_stock_is_short`
-both fail on their own `_hold_qty` helper reading a stale hold (368 instead of 234; 134
-instead of 0) after a qty-up settle-in-place re-confirm. Measured directly (both through
-`planning_change_service.apply` and through a bare `ProjectSupplyService.confirm()` call on
-the same fixture, bypassing planning-change apply entirely): the PREVIOUS revision's
-`SOLineAllocation` row is never deleted (by design - `_carry_allocations`'s own docstring:
-"a hold is an allocation row under an ACTIVE decision... the superseded revision's rows stop
-holding the moment it is superseded"), and its `SOSupplyDecision` correctly flips away from
-`DECISION_ACTIVE` (`challenge_if_drifted`, called at the top of every `confirm()`) the moment
-the core line's own qty no longer matches what that revision froze. `_hold_rows` - the
-predicate the real ladder/free-stock arithmetic actually uses - already scopes to `decision
-.state == DECISION_ACTIVE OR decision_id IS NULL` (`project_supply_service.py`'s
-`_hold_query`) and reads 234 / 0 correctly on the SAME fixtures. The test's own `_hold_qty`
-helper claims to restate that predicate but omits the decision-active join/filter, so it
-sums the stale non-active row back in. This reproduces identically with NO planning-change
-code involved (a bare `ProjectSupplyService(db).confirm()` call on a plain qty-bumped line
-shows the same non-active-decision-holds-the-old-row shape), so it is not something "the
-apply path skips" - it is `confirm()`'s standing, documented design. Slice E's own AC-E2
-("the borrow-hold release `challenge_if_drifted` performed happens on apply of the batch
-instead") is the plan's own acknowledgement that this exact mechanism is scheduled to move,
-in a LATER slice - implementing that here would be scope creep on Slice B and risks the many
-existing tests that depend on `challenge_if_drifted`'s current wiring into `confirm()`. Not
-touched, per the captain's standing instruction not to edit tests or fix an AC-B4 test until
-told to.
+**AC-B4, resolved (the tester's own `_hold_qty` fix, commit `2b769e294`; both tests pass,
+`test_planning_change_delta_seam.py` is 10/10):** the earlier read of these two tests as a
+backend bug was itself wrong - the helper, not the engine, was unscoped. Recorded here so the
+reasoning travels with the code:
+
+1. A superseded revision's `SOLineAllocation` rows are never deleted - they are an immutable
+   ledger (`_carry_allocations`'s own docstring). The engine counts holds through `_hold_rows`
+   (`project_supply_service.py`'s `_hold_query`), which scopes to `decision.state ==
+   DECISION_ACTIVE OR decision_id IS NULL`; a superseded row simply stops counting, it does not
+   need to disappear.
+2. On a qty-up apply the OLD decision reads `challenged`, not `superseded`, only because
+   `confirm()` calls `challenge_if_drifted` (which flips a stale active decision to
+   `challenged`) before `_write_decision` supersedes it moments later. Either state is already
+   outside `_hold_query`'s `DECISION_ACTIVE OR NULL` scope, so holds read right regardless of
+   which of the two the old decision ends up carrying.
+3. Slice E must carry `_release_supply_borrow_holds` (today called only from
+   `challenge_if_drifted` at line ~3990 and `supersede_active` at line ~3906, never from
+   `_write_decision`) into batch apply, or a step-3 supply-borrow placement made under an old
+   decision stays pinned once that decision stops being active - the state flip alone frees the
+   HOLD accounting but not the placement itself.
+4. Slice B is also the first place a step-3 `supply_borrow` composition reaches `confirm()`
+   through the planning-change apply path at all (a test the tester added alongside the AC-B4
+   fix) - earlier borrow coverage only exercised step-2 `order_borrow` through this seam.
