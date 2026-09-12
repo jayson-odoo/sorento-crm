@@ -37,7 +37,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -201,6 +201,15 @@ def list_turns(
         query = query.filter(ChatbotTurn.status == turn_status)
     if ingress is not None:
         query = query.filter(ChatbotTurn.ingress == ingress)
+    else:
+        # A SHADOW ROW IS NOT A TURN OF THE CONVERSATION (S6). It is a second parse of a
+        # message the live turn already answered, so listing it beside the real turns
+        # invites an operator to explain a conversation from a row that never spoke to
+        # anybody - the same reason `is_test` is defaulted away below. Defaulted, not
+        # hidden: `?ingress=shadow` is the promotion watch and surfaces exactly these.
+        query = query.filter(
+            or_(ChatbotTurn.ingress.is_(None), ChatbotTurn.ingress != "shadow")
+        )
     if not include_test:
         query = query.filter(ChatbotTurn.is_test.is_(False))
     if cursor:
@@ -269,7 +278,14 @@ def failed_contacts(
     if from_ is None and to is None:
         from_ = datetime.now(timezone.utc) - timedelta(days=FAILED_CONTACTS_DEFAULT_DAYS)
 
-    window = [ChatbotTurn.status == "failed"]
+    window = [
+        ChatbotTurn.status == "failed",
+        # A failed SHADOW row is a failed second parse, never a customer whose message
+        # went unanswered - the live turn beside it replied. This list is the operator's
+        # "who needs attention" filter, so a shadow failure would send them after a
+        # contact who is perfectly fine (S3).
+        or_(ChatbotTurn.ingress.is_(None), ChatbotTurn.ingress != "shadow"),
+    ]
     if not include_test:
         # H57: a contact whose only failed turn is a DRY RUN has nothing wrong with it. The
         # list this feeds is the operator's "who needs attention" filter, and a test turn
@@ -382,6 +398,24 @@ def retry_turn(
                     "This is a test turn. Retry re-posts the original message at the live "
                     "ingress, so it would answer a real contact; run the test again from "
                     "where it was started instead."
+                ),
+            },
+        )
+
+    if row.ingress == "shadow":
+        # The same reasoning the test refusal above carries, for the same action. A shadow
+        # row is a second PARSE of a message the live turn already answered; re-posting its
+        # message at the live ingress would answer the contact a second time, about a
+        # message they sent once. The live row beside it is the one that can be retried.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "shadow_turn_not_retryable",
+                "message": (
+                    "This is a shadow turn - a second parse of a message the live turn "
+                    "already answered. Retry re-posts the original message at the live "
+                    "ingress, so it would answer the contact twice; retry the live turn "
+                    "instead."
                 ),
             },
         )

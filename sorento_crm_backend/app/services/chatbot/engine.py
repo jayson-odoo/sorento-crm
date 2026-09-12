@@ -426,6 +426,14 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
 # Reads (session-bound, short)
 # --------------------------------------------------------------------------- #
 
+# A SHADOW ROW IS NOT A TURN OF THE CONVERSATION. It is a second parse of a message the
+# live turn already answered, written so the two prompts can be compared (`shadow.py`), and
+# it carries the same contact and the same `created_at` window as the row it shadows. Every
+# read that walks a contact's history therefore has to exclude it, or the shadow doubles the
+# turn counter and - measured - a `done` shadow row wins the newest-first order below and
+# blanks the v1 prompt's `Previous response:` line with its own parse.
+_NOT_SHADOW = or_(ChatbotTurn.ingress.is_(None), ChatbotTurn.ingress != "shadow")
+
 
 def _turn_no(db: Session, *, contact_respond_id: str, row: ChatbotTurn) -> int:
     """WHICH turn of this conversation this is - the counter focus decay ages in (D11).
@@ -486,6 +494,7 @@ def _turn_no(db: Session, *, contact_respond_id: str, row: ChatbotTurn) -> int:
             ChatbotTurn.attempt == 1,
             not_this_message,
             world,
+            _NOT_SHADOW,
             tuple_(anchor, ChatbotTurn.id) < tuple_(*mine),
         )
         .scalar()
@@ -527,6 +536,7 @@ def _previous_response(
             ChatbotTurn.status == "done",
             ChatbotTurn.attempt == 1,
             world,
+            _NOT_SHADOW,
             tuple_(anchor, ChatbotTurn.id) < tuple_(*mine),
         )
         .order_by(anchor.desc(), ChatbotTurn.id.desc())

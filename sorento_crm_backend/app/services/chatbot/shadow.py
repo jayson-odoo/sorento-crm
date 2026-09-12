@@ -228,10 +228,32 @@ def _write_row(
     from app.services.chatbot.engine import _session
 
     with _session(session_factory) as db:
+        # ONE SHADOW PER MESSAGE, checked rather than caught. A RETRY of a live turn writes
+        # `attempt = 2` for the live row, but the shadow's id is derived from the MESSAGE,
+        # not from the attempt, so the second shadow collides with the first on
+        # `(contact_respond_id, message_id, attempt, is_test)`. Letting that land as an
+        # IntegrityError would roll back a transaction the caller did not know was at risk
+        # and log a database error for something that is not one: a message parsed twice
+        # under the same version has nothing new to say. The row that is already there is
+        # the measurement; this one is skipped.
+        shadow_id = shadow_message_id(live_message_id)
+        if shadow_id is not None:
+            already = (
+                db.query(ChatbotTurn.id)
+                .filter(
+                    ChatbotTurn.contact_respond_id == contact_respond_id,
+                    ChatbotTurn.message_id == shadow_id,
+                    ChatbotTurn.attempt == 1,
+                    ChatbotTurn.is_test.is_(bool(envelope.dry_run)),
+                )
+                .first()
+            )
+            if already is not None:
+                return
         db.add(
             ChatbotTurn(
                 contact_respond_id=contact_respond_id,
-                message_id=shadow_message_id(live_message_id),
+                message_id=shadow_id,
                 ingress="shadow",
                 envelope=trace_mod.cap_document(envelope.model_dump(mode="json")),
                 is_test=envelope.dry_run,
