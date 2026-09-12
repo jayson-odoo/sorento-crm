@@ -2614,7 +2614,11 @@ def _apply_one_order(
         else:
             r.result_json = {"board_link": r.board_link}
 
-    notified = _notify_purchasing(db, order, so_number, batch)
+    # Purchasing is notified by `apply()`, AFTER this order's savepoint has committed, not
+    # here: `NotificationService.create_with_channel_preferences` commits on its own, and
+    # calling it while still inside `db.begin_nested()` closes that savepoint's transaction,
+    # so the caller's `savepoint.commit()` then raises `ResourceClosedError` ("This
+    # transaction is closed") and a perfectly applied order is reported as failed.
 
     return {
         "revised": revised,
@@ -2622,7 +2626,7 @@ def _apply_one_order(
         "lines_replanned": replanned,
         "lines_confirmed": confirmed,
         "inquiry_counts": inquiry_counts,
-        "notified": notified,
+        "notified": False,
         "returned_to_review": returned_to_review,
         # What `ProjectSupplyService.confirm` itself answered, kept whole: the board's own
         # Confirm posts through here now (AC-P3-4) and its caller needs the revision, the
@@ -2780,6 +2784,14 @@ def apply(
             )
             continue
 
+        # Notified AFTER `savepoint.commit()` has returned, never inside the savepoint:
+        # `NotificationService.create_with_channel_preferences` commits on its own, and that
+        # commit closes the savepoint's transaction out from under us if it runs first, so
+        # `savepoint.commit()` raises `ResourceClosedError` and an order that applied cleanly
+        # gets reported as failed. Still best-effort - a notify failure here cannot undo the
+        # order, which is already committed by this point.
+        notified = _notify_purchasing(db, order, so_number, batch)
+
         applied_orders.append(so_number)
         outcomes[pso_id] = outcome
         if outcome["revised"]:
@@ -2788,7 +2800,7 @@ def apply(
         lines_confirmed += outcome["lines_confirmed"]
         for verb, count in outcome["inquiry_counts"].items():
             inquiry_counts[verb] = inquiry_counts.get(verb, 0) + count
-        purchasing_notified = purchasing_notified or outcome["notified"]
+        purchasing_notified = purchasing_notified or notified
         returned_to_review.extend(outcome["returned_to_review"])
 
     # A batch is DONE only once it has written something. Stamping `applied_at` when
