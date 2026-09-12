@@ -542,3 +542,220 @@ class TestIsEditableMatrix:
             )
             body = c.get(f"{_BASE}/{req_body['id']}").json()
             assert body["is_editable"] is False, (locked_status, body)
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 findings (r8): PUT date serialization, audit row shape,
+# submit validators on the post-submit path, marketing override survival,
+# promotion audience gate, and empty-string needed_by_date on a draft.
+# ---------------------------------------------------------------------------
+
+
+class TestPostSubmitEditNeededByDateSerializes:
+    def test_put_post_submit_with_needed_by_date_200(self, client):
+        """A post-submit PUT that sets needed_by_date must not 500 writing
+        the audit row: ``new_values`` carries a raw ``date`` object today,
+        and ``AuditLog.new_values`` is JSONB - the DB adapter cannot
+        serialize a ``datetime.date`` and the flush raises."""
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = _create_draft(c, product_id)
+        _force_status(db, created["id"], status="new", portal_draft_at=None)
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={"needed_by_date": "2026-10-20"},
+        )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["needed_by_date"] == "2026-10-20"
+
+        from app.models.audit import AuditLog
+
+        rows = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_type == "price_tag_request",
+                AuditLog.entity_id == created["id"],
+            )
+            .all()
+        )
+        assert len(rows) == 1, rows
+
+
+class TestPostSubmitEditAuditRowShape:
+    def test_put_post_submit_audit_row_has_old_values_lines_company(self, client):
+        """The audit row must hold the PRE-edit snapshot (old_values), the
+        lines in new_values too (not just the header), the entity's own
+        company_id, action UPDATE, and a description naming the portal edit.
+        Today's row: no old_values, new_values missing lines (popped before
+        the audit call), action 'PORTAL_EDIT' not 'UPDATE', no company_id."""
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = _create_draft(c, product_id, debtor_name="ZZT Original")
+        _force_status(db, created["id"], status="new", portal_draft_at=None)
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={
+                "debtor_name": "ZZT Edited",
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product_id,
+                        "quantity": 2,
+                    }
+                ],
+            },
+        )
+        assert res.status_code == 200, res.text
+
+        from app.models.audit import AuditLog
+
+        row = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_type == "price_tag_request",
+                AuditLog.entity_id == created["id"],
+            )
+            .one()
+        )
+        assert row.action == "UPDATE", row.action
+        assert row.old_values is not None
+        assert row.old_values.get("debtor_name") == "ZZT Original"
+        assert "lines" in (row.old_values or {})
+        assert "lines" in (row.new_values or {})
+        assert row.company_id == _SORENTO_COMPANY_ID
+        assert row.description and "portal edit" in row.description.lower()
+
+
+class TestPostSubmitEditRunsSubmitValidators:
+    def test_put_post_submit_zero_lines_422(self, client):
+        """A post-submit PUT is a Save on a request marketing already treats
+        as complete - it must run the same completeness check Submit does.
+        Today the PUT route never calls ``validate_submittable``, so this
+        lands a request with zero lines at 200."""
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = _create_draft(c, product_id)
+        _force_status(db, created["id"], status="new", portal_draft_at=None)
+
+        res = c.put(f"{_BASE}/{created['id']}", json={"lines": []})
+
+        assert res.status_code == 422, res.text
+
+    def test_put_post_submit_set_guard_422(self, client):
+        """Same reasoning for the ala-carte set guard: today the PUT route
+        never calls ``validate_set_guard``, so a Bathroom Furniture line
+        lands as an individual product at 200."""
+        c, db, _contact_id = client
+        ok_product = _seed_product(db)
+        bad_product = _seed_product(db, class_label="Bathroom Furniture")
+        created = _create_draft(c, ok_product)
+        _force_status(db, created["id"], status="new", portal_draft_at=None)
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={"lines": [{"line_type": "product", "product_id": bad_product}]},
+        )
+
+        assert res.status_code == 422, res.text
+        assert res.json()["code"] == "SET_GUARD_VIOLATION"
+
+
+class TestPostSubmitEditKeepsMarketingOverride:
+    def test_put_post_submit_keeps_marketing_override(self, client):
+        """``replace_lines`` -> ``_add_lines`` never carries
+        ``marketing_price_override`` / ``marketing_override_reason`` off the
+        old row onto the new one it builds for the same product - a re-save
+        with just a new remark silently wipes marketing's own override."""
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = _create_draft(c, product_id)
+        _force_status(db, created["id"], status="new", portal_draft_at=None)
+
+        from app.models.price_tag import PriceTagRequestLine
+
+        line = (
+            db.query(PriceTagRequestLine)
+            .filter(PriceTagRequestLine.request_id == created["id"])
+            .one()
+        )
+        line.marketing_price_override = 88.50
+        line.marketing_override_reason = "Marketing discount ZZT"
+        db.flush()
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product_id,
+                        "remarks": "Updated remark",
+                    }
+                ]
+            },
+        )
+
+        assert res.status_code == 200, res.text
+
+        rows = (
+            db.query(PriceTagRequestLine)
+            .filter(PriceTagRequestLine.request_id == created["id"])
+            .all()
+        )
+        assert len(rows) == 1, rows
+        assert float(rows[0].marketing_price_override or 0) == pytest.approx(88.50)
+        assert rows[0].marketing_override_reason == "Marketing discount ZZT"
+
+
+class TestPromotionAudienceGateOnWrite:
+    def test_put_promotion_outside_audience_422(self, client):
+        """``lookup_promotions`` gates the dropdown by the contact's access
+        codes, but nothing gates a raw ``promotion_id`` on save - a promotion
+        whose ``access_levels`` exclude this contact's codes is accepted
+        today (200)."""
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+
+        from app.models.marketing import Promotion
+
+        promo = Promotion(
+            id=str(uuid.uuid4()),
+            description="ZZT Dealer Only Promo",
+            is_active=True,
+            access_levels=["dealer"],
+        )
+        db.add(promo)
+        db.flush()
+
+        created = _create_draft(c, product_id)
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={"price_mode": "selling", "promotion_id": promo.id},
+        )
+
+        assert res.status_code == 422, res.text
+
+
+class TestDraftNeededByEmptyString:
+    def test_submit_needed_by_empty_string_treated_as_null(self, client):
+        """An empty-string ``needed_by_date`` from the form must be treated
+        as "clear the field", not a malformed date. Today pydantic's
+        ``Optional[date]`` rejects "" outright with a 422."""
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = _create_draft(c, product_id, debtor_name="ZZT Dealer")
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={"needed_by_date": ""},
+        )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["needed_by_date"] is None
+
+        submit_res = c.post(f"{_BASE}/{created['id']}/submit")
+        assert submit_res.status_code == 200, submit_res.text

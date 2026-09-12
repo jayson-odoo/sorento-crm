@@ -291,4 +291,38 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
 
     expect(captured.fieldDefs).toEqual([]);
   });
+
+  it('removing a row in the dialog does not shift the index-based match mapping (review round 2)', async () => {
+    // handleAIExtractApply reads `aiMatchesRef.current[index]` using the
+    // INDEX INTO WHATEVER ARRAY THE DIALOG HANDS BACK on Apply - but that
+    // ref was built by handleAIExtracted off the ORIGINAL, unfiltered
+    // extraction result. Removing a row in the dialog (D-P4) shortens the
+    // array Apply sends without shortening the ref, so every match after the
+    // removed row reads the WRONG entry.
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    openSalesOrderSection();
+
+    const extracted = [
+      { product_code: MATCHED_PRODUCT.code, quantity: 1, notes: 'first' },
+      { product_code: 'GHOST-CODE', quantity: 1, notes: 'not found' },
+      { product_code: MATCHED_SET.code, quantity: 5, notes: 'set of five' },
+    ];
+    await extractAndSettle(extracted);
+
+    // The dialog removes row 2 (GHOST-CODE, an "x" per D-P4) locally, then
+    // Confirm and prefill calls onApply with only the remaining rows.
+    const afterRemovingGhostRow = [extracted[0], extracted[2]];
+
+    await act(async () => {
+      captured.onApply?.({ productLines: afterRemovingGhostRow });
+    });
+
+    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(1);
+    expect(screen.getByLabelText('Remarks for line 1')).toHaveValue('first');
+    expect(screen.getByLabelText('Quantity for line 2')).toHaveValue(5);
+    expect(screen.getByLabelText('Remarks for line 2')).toHaveValue('set of five');
+    expect(screen.queryByLabelText('Quantity for line 3')).toBeNull();
+    expect(toasts.error).not.toHaveBeenCalled();
+  });
 });

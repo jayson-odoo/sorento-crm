@@ -243,3 +243,44 @@ describe('AIExtractDialog staged-file preview', () => {
     expect(props.items[0].downloadUrl).toBeUndefined();
   });
 });
+
+/**
+ * Per-file mode (D-P3): `initialFiles` skips the upload stage and runs
+ * extraction the moment the dialog opens (review round 2 - a rejected
+ * extract here).
+ */
+describe('AIExtractDialog per-file mode error handling (review round 2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('a rejected extract in per-file mode shows an error and a Cancel/Close, not an endless spinner', async () => {
+    (aiExtractFromFiles as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('AI provider call failed: 502'),
+    );
+    const onApply = vi.fn();
+    const onOpenChange = vi.fn();
+
+    render(
+      <AIExtractDialog
+        open
+        onOpenChange={onOpenChange}
+        kind="price_tag_request"
+        fieldDefs={[]}
+        onApply={onApply}
+        initialFiles={[makeFile('so.pdf', 'application/pdf')]}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('ai-extract-error')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('ai-extract-error').textContent).toContain(
+      'AI provider call failed',
+    );
+    expect(screen.queryByTestId('ai-extract-per-file-loading')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /cancel|close/i }),
+    ).toBeInTheDocument();
+  });
+});

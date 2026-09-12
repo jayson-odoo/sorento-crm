@@ -248,4 +248,37 @@ describe('PriceTagRequestForm - collapsed-header summaries (AC-P9)', () => {
       'Additional Information',
     );
   });
+
+  it("a fresh form's Price header shows no summary until a mode is chosen (review round 2)", async () => {
+    // priceMode defaults to 'list' as component STATE, but nobody has
+    // CHOSEN it yet on a blank form - the collapsed-header summary must
+    // stay empty until a click sets `priceModeChosenRef`, the same rule
+    // Additional Information's own summary already follows.
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+
+    expect(sectionButton('Price').textContent).toBe('Price');
+  });
+});
+
+describe('PriceTagRequestForm - price mode auto-open (AC-P8, review round 2)', () => {
+  it('choosing List price on a fresh form opens Additional Information, even though List was already the resting default', async () => {
+    // The List price button's onClick calls `setPriceMode('list')`
+    // unconditionally - on a fresh form priceMode is ALREADY 'list', so
+    // React bails out of re-rendering on an unchanged primitive and the
+    // auto-open effect (keyed on the `priceMode` dependency) never reruns,
+    // even though `priceModeChosenRef.current` was just set to true.
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    fireEvent.click(screen.getByRole('button', { name: /^Price/ }));
+
+    fireEvent.click(screen.getByRole('radio', { name: 'List price' }));
+
+    await waitFor(() =>
+      expect(sectionButton('Additional Information')).toHaveAttribute(
+        'aria-expanded',
+        'true',
+      ),
+    );
+  });
 });

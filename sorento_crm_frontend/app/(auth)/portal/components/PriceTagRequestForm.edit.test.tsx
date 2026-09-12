@@ -193,3 +193,98 @@ describe('PriceTagRequestForm - Edit / Save / Cancel (AC-P13)', () => {
     expect(screen.queryByText('A change about to be discarded')).toBeNull();
   });
 });
+
+describe('PriceTagRequestForm - edit layout parity, save failure and validation (review round 2)', () => {
+  it('edit mode keeps the SAME layout as read mode: status badge and Created line, alongside Save/Cancel', async () => {
+    // D-P6 / PRINCIPLES "View and Edit are the SAME layout" - the edit
+    // form's own header today is just a bare `<h1>Edit ...</h1>`, dropping
+    // the status pill and the "Created ..." metadata line the read view
+    // shows right above the same sections.
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', is_editable: true }),
+    );
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.getByText('New')).toBeInTheDocument();
+    expect(screen.getByText(/^Created/)).toBeInTheDocument();
+  });
+
+  it('Save with a 500 from PUT shows an error toast and stays in edit mode', async () => {
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({
+        status: 'new',
+        is_editable: true,
+        lines: [
+          {
+            id: 'line-1',
+            line_type: 'product',
+            product_id: 'prod-1',
+            product_set_id: null,
+            name: 'ZZT Kitchen Sink',
+            code: 'CBF-1234',
+            show_promo_price: false,
+            quantity: 1,
+            alternatives: [],
+            included_accessories: null,
+            remarks: null,
+            sort_order: 0,
+          },
+        ],
+      }),
+    );
+    asMock(updateRequest).mockRejectedValue(new Error('Internal Server Error'));
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(toasts.error).toHaveBeenCalledWith('Internal Server Error'),
+    );
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  });
+
+  it('Save with zero lines does not call PUT and shows the inline "Add at least one line." error', async () => {
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', is_editable: true, lines: [] }),
+    );
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Add at least one line.')).toBeInTheDocument();
+    expect(updateRequest).not.toHaveBeenCalled();
+  });
+
+  it('Cancel after an upload re-fetches the request instead of restoring the first snapshot', async () => {
+    // An attachment drop persists immediately (its own upload call), not on
+    // Save - so a Cancel that only replays the ORIGINAL `getRequest` snapshot
+    // (today's `applyRequestFieldsFrom(request)`, no round trip) shows the
+    // reader a form missing the file that is already sitting on the server.
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', is_editable: true, notes: 'Original note' }),
+    );
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+    expect(getRequest).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(getRequest).toHaveBeenCalledTimes(2));
+  });
+});

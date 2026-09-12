@@ -178,4 +178,21 @@ describe('PortalLanding - list view rows (AC-L7)', () => {
     expect(rowEl).toHaveClass('items-center');
     expect(rowEl?.querySelectorAll(':scope > div')).toHaveLength(0);
   });
+
+  it('formats needed_by_date like the created date (toLocaleDateString), not raw ISO (review round 2)', async () => {
+    (fetchSubmissions as ReturnType<typeof vi.fn>).mockImplementation(
+      async (kind: string) =>
+        kind === 'stock_inquiry' ? [{ ...ROW, needed_by_date: '2026-09-15' }] : [],
+    );
+    window.localStorage.setItem('sorento.portalView', 'list');
+    render(<PortalLanding slug="darren" />);
+    await screen.findByText('SI-26-0184');
+
+    const expected = new Date('2026-09-15').toLocaleDateString(undefined, {
+      dateStyle: 'medium',
+    });
+    expect(screen.getByTitle(expected)).toBeInTheDocument();
+    expect(screen.queryByTitle('2026-09-15')).toBeNull();
+    expect(screen.queryByText('2026-09-15')).toBeNull();
+  });
 });
