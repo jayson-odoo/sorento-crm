@@ -33,7 +33,7 @@ into the REAL `projects` tables of whichever database the test happens to run ag
 translate map is a no-op.
 
 Revision ID: 513_planning_gate_backfill
-Revises: 512_hidden_by_default_col
+Revises: 512_integration_ref_company
 Create Date: 2026-09-12
 """
 import sqlalchemy as sa
@@ -43,7 +43,7 @@ from sqlalchemy import func
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 
 revision = "513_planning_gate_backfill"
-down_revision = "512_hidden_by_default_col"
+down_revision = "512_integration_ref_company"
 branch_labels = None
 depends_on = None
 
