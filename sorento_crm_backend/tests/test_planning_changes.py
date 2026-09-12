@@ -399,7 +399,7 @@ def test_rule_9_qty_down_reduces():
 
 def test_rule_10_closed_retires():
     verb, why = planning_change_service.suggest(
-        "closed", _held(reserve=[{"location": "MWH-IB", "qty": "4"}], buy_qty="8"), _facts(),
+        "cancelled", _held(reserve=[{"location": "MWH-IB", "qty": "4"}], buy_qty="8"), _facts(),
     )
     assert verb == "retire"
 
@@ -413,7 +413,7 @@ def test_rule_11_new_line_on_planned_order_replans_not_decided():
 def test_ac_r03_no_decision_always_replans_whatever_the_kind():
     verb, why = planning_change_service.suggest("delayed", None, _facts(days_moved=90))
     assert verb == "replan"
-    verb2, _ = planning_change_service.suggest("closed", None, _facts())
+    verb2, _ = planning_change_service.suggest("cancelled", None, _facts())
     assert verb2 == "replan"
 
 

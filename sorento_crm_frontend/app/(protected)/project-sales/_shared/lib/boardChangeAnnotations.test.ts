@@ -130,7 +130,7 @@ describe('the Was / Now table of a changed line', () => {
         id: 'pcr-2',
         project_line_id: 'pl-2',
         line_no: 2,
-        kind: 'closed',
+        kind: 'cancelled',
         from: { required_date: '2026-09-05', qty: '10', status: 'open' },
         to: { required_date: null, qty: null, status: 'closed' },
         suggested: 'retire',
@@ -169,7 +169,7 @@ describe('the Was / Now table of a changed line', () => {
 
   it('carries the moved-transfer phrase when the batch flagged one', () => {
     const annotation = annotationOf(
-      row({ kind: 'closed', moved_transfer: '10 moved BRW -> BRW-IB, line cancelled' }),
+      row({ kind: 'cancelled', moved_transfer: '10 moved BRW -> BRW-IB, line cancelled' }),
       'SO381895',
     );
     expect(annotation.movedTransfer).toBe('10 moved BRW -> BRW-IB, line cancelled');
@@ -207,8 +207,8 @@ describe('annotationsByCell', () => {
     const map = annotationsByCell(
       batchOf([
         row({}),
-        row({ id: 'pcr-2', project_line_id: 'pl-2', line_no: 2, kind: 'closed' }),
-        row({ id: 'pcr-3', project_line_id: 'pl-3', line_no: 3, kind: 'closed' }),
+        row({ id: 'pcr-2', project_line_id: 'pl-2', line_no: 2, kind: 'cancelled' }),
+        row({ id: 'pcr-3', project_line_id: 'pl-3', line_no: 3, kind: 'cancelled' }),
       ]),
       [surviving],
     );
