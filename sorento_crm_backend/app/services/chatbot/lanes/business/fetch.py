@@ -320,9 +320,9 @@ TYPE_TO_PARAM: dict[str, str] = {
     "attachment_type": "attachment_type_ids",
     "attachment": "attachment_ids",
     "certificate": "certificate_ids",
-    # Three tools accept it: `crm_inventory_stock_balance_list`,
-    # `crm_inventory_warehouses_list` and
-    # `crm_procurement_spo_allocations_last_receipt_list`.
+    # Four tools accept it: `crm_inventory_stock_balance_list`,
+    # `crm_inventory_warehouses_list`, `crm_procurement_spo_allocations_last_receipt_list`
+    # and `crm_procurement_po_last_cost_list`.
     "warehouse": "warehouse_ids",
 }
 
@@ -337,7 +337,17 @@ _UUID_RE = re.compile(
 # transformer is uuid-only, so an entity it could not resolve contributes no `*_ids` key at
 # all, and the call went out carrying `view` / `contact_id` / `space_id` only - a listing of
 # every attachment the contact is entitled to, which is a directory dump, not an answer.
-ENTITY_FILTER_REQUIRED_TOOLS: frozenset[str] = frozenset({"crm_resource_attachments_list"})
+#
+# SF6 (security review, PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026):
+# `crm_procurement_po_last_cost_list` joins for the same reason - a brand/category-only ask
+# builds no `*_ids` at all (neither hint maps to a `TYPE_TO_PARAM` entry) and a
+# warehouse-only ask builds `warehouse_ids` with no `product_ids`, so without this either
+# would fall through to the service's UNSCOPED branch: every product's cost at that
+# warehouse, or across the whole table, none of them named by the customer. Refused as an
+# absence instead, same as an unfiltered document ask.
+ENTITY_FILTER_REQUIRED_TOOLS: frozenset[str] = frozenset(
+    {"crm_resource_attachments_list", "crm_procurement_po_last_cost_list"}
+)
 
 # What counts as narrowing on those tools: every entity-id param the transformer can emit,
 # plus the document-type filters the tool takes by name.
@@ -351,11 +361,26 @@ NARROWING_PARAMS: frozenset[str] = frozenset(TYPE_TO_PARAM.values()) | frozenset
     }
 )
 
+# SF6: tools in `ENTITY_FILTER_REQUIRED_TOOLS` for which `warehouse_ids` alone is NOT
+# enough narrowing. `NARROWING_PARAMS` above treats `warehouse_ids` as a valid filter
+# for `crm_resource_attachments_list` (a warehouse-scoped document list is a real
+# answer), but `crm_procurement_po_last_cost_list`'s unscoped branch is a plain top_n
+# cap over EVERY product at that warehouse - a warehouse named with no product is still
+# an unnamed-product leak, so this tool needs `product_ids` specifically.
+PRODUCT_ID_REQUIRED_TOOLS: frozenset[str] = frozenset({"crm_procurement_po_last_cost_list"})
 
-def has_narrowing_filter(args: Any) -> bool:
-    """True when the built args carry at least one non-empty narrowing key."""
+
+def has_narrowing_filter(args: Any, *, tool_name: str | None = None) -> bool:
+    """True when the built args carry at least one non-empty narrowing key.
+
+    `tool_name` in `PRODUCT_ID_REQUIRED_TOOLS` narrows the bar to `product_ids`
+    specifically (SF6) - every other `ENTITY_FILTER_REQUIRED_TOOLS` member keeps the
+    generic "any narrowing param" rule.
+    """
     if not isinstance(args, dict):
         return False
+    if tool_name in PRODUCT_ID_REQUIRED_TOOLS:
+        return jsc.truthy(args.get("product_ids"))
     return any(jsc.truthy(args.get(key)) for key in NARROWING_PARAMS)
 
 
