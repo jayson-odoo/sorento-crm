@@ -108,35 +108,15 @@ class TestTheThreeClearingCauses:
         for line in trace_lines:
             assert set(line) >= {"slot", "reason"}
 
-    def test_conversation_closed_marker_clears_everything_and_traces(self):
-        """(c): the Respond.io "conversation closed" marker clears every focus slot AND
-        the open question, and writes one trace line per cleared slot."""
-        from app.services.chatbot.dialogue import clearing
-
-        session = {
-            "focus": _full_focus(),
-            "open_question": {
-                "kind": "product_pick",
-                "options": [{"idx": 1, "label": "ZZT product", "code": "ZZT-1", "domain": "inventory"}],
-                "expects": "pick",
-                "asked_at_turn": 1,
-                "asked_at": None,
-                "payload": {},
-            },
-        }
-        parse = _casual_parse()
-
-        new_session, trace_lines = clearing.apply(session, parse, conversation_closed=True)
-
-        focus = new_session["focus"]
-        assert all(
-            (focus.get(name) is None or focus.get(name) == {}) for name in _full_focus()
-        ), focus
-        assert new_session["open_question"] is None
-        assert len(trace_lines) >= 1, "a conversation-closed clear must be traced, per slot"
-        for line in trace_lines:
-            assert set(line) >= {"slot", "reason"}
-            assert "closed" in str(line["reason"]).lower() or "conversation" in str(line["reason"]).lower()
+    # `test_conversation_closed_marker_clears_everything_and_traces` DELETED (coordinator,
+    # review fix round): `clearing.apply`'s `conversation_closed` arm is retired by the
+    # coder - the SLA path's own eager clear
+    # (`ConversationSLATrackingService._clear_chatbot_dialogue_state_best_effort`, called
+    # directly from ticket resolve, under the last-open-sibling gate) is the design, and
+    # it is what the AC-1006 world
+    # (`test_focus_worlds.py`, the SLA-close turn) already covers end to end - a second,
+    # pure-function test of a marker `clearing.apply` no longer reads would just pin the
+    # deleted arm back in place.
 
     def test_no_ttl_anywhere(self):
         """No counter, no TTL, anywhere: not in the dialogue module, not on
