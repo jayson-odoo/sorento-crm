@@ -17,7 +17,9 @@ from pydantic import BaseModel, Field
 from app.schemas.project_board import BoardContribution
 from app.schemas.project_supply import ConfirmLine
 
-PlanningChangeKind = Literal["delayed", "advanced", "qty_up", "qty_down", "closed", "added"]
+PlanningChangeKind = Literal[
+    "delayed", "advanced", "qty_up", "qty_down", "cancelled", "added", "product_changed",
+]
 PlanningChangeReaction = Literal["keep", "release", "replan", "reduce", "retire"]
 #: `confirm`/`amend` apply only to a row carrying a `proposal` (`replan`/`qty_up`), the
 #: captain's "I can't really amend also right to set the borrow, clicking accept here has
@@ -35,6 +37,9 @@ class PlanningChangeFromTo(BaseModel):
     required_date: Optional[str] = None
     qty: Optional[str] = None
     status: Optional[str] = None
+    #: The old/new product on a `product_changed` row (Slice A, rule 5's "carrying the old
+    #: and the new product") - `None` on every other kind, same as the fields above.
+    item_code: Optional[str] = None
 
 
 class PlanningChangeHeldReserve(BaseModel):

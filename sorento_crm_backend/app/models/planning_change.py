@@ -62,14 +62,18 @@ PLANNING_CHANGE_STATE_APPLIED = "applied"
 PLANNING_CHANGE_STATE_FAILED = "failed"
 PLANNING_CHANGE_STATE_SUPERSEDED = "superseded"
 
-# `PlanningChangeRow.kind` - exactly the AutoCount book's own diff, restated as the six
-# words AC-R02 names.
+# `PlanningChangeRow.kind` - the AutoCount book's own diff, restated as the words AC-R02
+# names. `CANCELLED` renamed from `CLOSED` and `PRODUCT_CHANGED` added
+# (`documentation/plans/scm/PLAN-scm-change-management-one-engine.md`, Slice A rule 5):
+# "closed" read as a delivery outcome, not a change kind, and a product swap on the same
+# line used to fall apart into a closed row plus an unrelated added row.
 PLANNING_CHANGE_KIND_DELAYED = "delayed"
 PLANNING_CHANGE_KIND_ADVANCED = "advanced"
 PLANNING_CHANGE_KIND_QTY_UP = "qty_up"
 PLANNING_CHANGE_KIND_QTY_DOWN = "qty_down"
-PLANNING_CHANGE_KIND_CLOSED = "closed"
+PLANNING_CHANGE_KIND_CANCELLED = "cancelled"
 PLANNING_CHANGE_KIND_ADDED = "added"
+PLANNING_CHANGE_KIND_PRODUCT_CHANGED = "product_changed"
 
 # `PlanningChangeRow.suggested` - the verb the planner already knows from the board
 # (section 0's rule table).
