@@ -464,8 +464,8 @@ def test_build_batch_row_shape_has_facts_and_why_for_a_held_line(api):
     row = out["orders"][0]["rows"][0]
     assert row["kind"] == "delayed"
     assert row["held"] is not None  # the row exists BECAUSE the line is held
-    assert row["decision"] == "accept"
-    assert row["suggested"] == "keep"  # only a Buy is held, 14 days is inside the window
+    assert row["decision"] is None  # never auto-decided (rule 2)
+    assert row["suggestion"]["components"], row["suggestion"]
     assert row["facts"]["days_moved"] == 14
 
     # The gate itself, explicit: the identical change on an undecided line (adopted, never
@@ -503,9 +503,15 @@ def _confirm(client, order_id, payload):
 
 
 def test_apply_release_returns_the_whole_line_to_the_board_with_no_buy_and_no_oi_change(api):
-    """AC-R06 as corrected 19 Aug 2026 (PLAN section 6): release excludes the whole line
-    from the new revision - the hold is gone, the line is undecided, nothing is bought for
-    it, and no Order Inquiry row is touched (release is not a purchase)."""
+    """AC-R06 as corrected 19 Aug 2026 (PLAN section 6) is superseded by Slice C rule 10:
+    Release is no longer "the whole line back on the board, nothing bought" - it is the
+    inquiry row cancelled/settled and a NEW Buy raised for the new date, the same as any
+    other Reduce/Reallocate branch. Measured directly: a wholly-reserved line delayed past
+    the window composes [release reserve, buy for the new date]; confirming it raises a
+    fresh ORDER row for the Buy (purchasing demand DOES exist now) and a DELAY-verb row at
+    the reserve's own pool location documents the released claim - neither the "no OI
+    change" nor the "back on the board, no active decision" halves of the old title hold
+    any more, so both are replaced with what the code actually does."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=100)
@@ -521,10 +527,15 @@ def test_apply_release_returns_the_whole_line_to_the_board_with_no_buy_and_no_oi
         _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]),
     ]})
 
+    new_date = date(2027, 3, 10)
+    # Write-first: production always writes the book before building the batch off it.
+    core_line.required_date = new_date
+    line.delivery_date = new_date
+    db.flush()
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
-        new_date=date(2027, 3, 10), old_qty="40", new_qty="40",
+        new_date=new_date, old_qty="40", new_qty="40",
     )
     diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
     batch = planning_change_service.build_batch(
@@ -536,34 +547,30 @@ def test_apply_release_returns_the_whole_line_to_the_board_with_no_buy_and_no_oi
     assert batch is not None
     out = planning_change_service.get_batch(db, str(batch.id))
     row = out["orders"][0]["rows"][0]
-    assert row["suggested"] == "release"
-    assert row["why"].endswith("- back on the board.")
+    components = row["suggestion"]["components"]
+    assert any(c["action"] == "release" and c["source"] == "reserve" for c in components), (
+        components
+    )
+    assert any(c["action"] == "buy" for c in components), components
 
+    planning_change_service.set_row_decision(db, str(batch.id), row["id"], "confirm")
     result = planning_change_service.apply(db, str(batch.id), world.actor)
     db.commit()
     assert result["failed_orders"] == []
     assert result["applied_orders"] == [core_so.so_number]
 
-    from app.models.project_so import SOSupplyDecision
-
-    # The hold is gone: this was the order's only covered line, so it has NO active
-    # decision left at all - undecided, back on the board, not a revision that still
-    # carries an empty reserve.
-    active = (
-        db.query(SOSupplyDecision)
-        .filter(SOSupplyDecision.project_sales_order_id == order.id,
-                SOSupplyDecision.state == "active")
-        .one_or_none()
-    )
-    assert active is None
-
-    # No Buy was raised for the released quantity - a release is not a purchase.
+    db.expire_all()
     order_rows = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.so_line_id == line.id)
         .all()
     )
-    assert order_rows == []
+    live_order_rows = [r for r in order_rows if r.verb == IV_ORDER]
+    assert len(live_order_rows) == 1, [
+        (r.verb, r.state, str(r.qty)) for r in order_rows
+    ]
+    assert live_order_rows[0].qty == Decimal("40")
+    assert live_order_rows[0].delivery_date == new_date
 
     from app.models.planning_change import PlanningChangeRow as PlanningChangeRowModel
 
@@ -571,15 +578,15 @@ def test_apply_release_returns_the_whole_line_to_the_board_with_no_buy_and_no_oi
         PlanningChangeRowModel.id == row["id"]
     ).one()
     assert row_model.applied_state == "applied"
-    assert row_model.result_json["back_on_board"] is True
-    assert row_model.result_json["released"]["qty"] == "40"
-    assert row_model.result_json["released"]["location"] == world.pool_wh.warehouse_code
 
 
 def test_apply_release_gives_up_a_reserved_lines_whole_claim_and_asks_purchasing_for_nothing(api):
-    """Captain, 19 August 2026 (correcting the first cut of AC-R08): a release gives up
-    the project's claim ENTIRELY - the reserve goes back to the pool and a RELEASE change
-    row makes that visible in the worklist the way a DELAY row does.
+    """Captain, 19 August 2026 (correcting the first cut of AC-R08), superseded again by
+    Slice C rule 10: a release is no longer silent on Order Inquiry - it cancels/settles
+    the row and raises a fresh Buy for the new date, exactly like the other reaction
+    branches. "asks purchasing for nothing" no longer holds once the line is delayed past
+    the reserve window: releasing the reserve is a real purchasing demand now, measured
+    directly the same way as the sibling test above.
 
     The line is wholly reserved (AC-L5: a line is met entirely from stock or entirely
     bought), which is also the only shape a release can now find a reserve on."""
@@ -597,7 +604,8 @@ def test_apply_release_gives_up_a_reserved_lines_whole_claim_and_asks_purchasing
         _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "150"}]),
     ]})
 
-    # A reserved line asks purchasing for nothing, so it raises no ORDER row at all.
+    # A reserved line asks purchasing for nothing UNTIL it changes - before the delay, it
+    # still raises no ORDER row at all.
     assert (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
@@ -605,10 +613,15 @@ def test_apply_release_gives_up_a_reserved_lines_whole_claim_and_asks_purchasing
         == 0
     )
 
+    new_date = date(2027, 3, 10)
+    # Write-first: production always writes the book before building the batch off it.
+    core_line.required_date = new_date
+    line.delivery_date = new_date
+    db.flush()
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
-        new_date=date(2027, 3, 10), old_qty="150", new_qty="150",
+        new_date=new_date, old_qty="150", new_qty="150",
     )
     diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
     batch = planning_change_service.build_batch(
@@ -619,46 +632,29 @@ def test_apply_release_gives_up_a_reserved_lines_whole_claim_and_asks_purchasing
     db.commit()
     out = planning_change_service.get_batch(db, str(batch.id))
     row = out["orders"][0]["rows"][0]
-    assert row["suggested"] == "release"
-    assert row["why"].endswith("- back on the board.")
+    components = row["suggestion"]["components"]
+    assert any(c["action"] == "release" and c["source"] == "reserve" for c in components), (
+        components
+    )
+    assert any(c["action"] == "buy" for c in components), components
 
+    planning_change_service.set_row_decision(db, str(batch.id), row["id"], "confirm")
     result = planning_change_service.apply(db, str(batch.id), world.actor)
     db.commit()
     assert result["failed_orders"] == []
 
-    from app.models.planning_change import PlanningChangeBatch as PlanningChangeBatchModel
-
-    batch_model = db.query(PlanningChangeBatchModel).filter(
-        PlanningChangeBatchModel.id == batch.id
-    ).one()
-    # A reserved line held no purchase, so releasing it asks purchasing for nothing at all
-    # - the stock simply frees. Under AC-L5 a line can no longer hold both a reserve and a
-    # Buy, so the "move the Buy to the pool" half of a release only ever applies to
-    # revisions frozen before that rule.
-    assert batch_model.result_json["inquiry_rows_changed"] == []
-    assert (
+    # The release IS a real purchasing demand now - one live ORDER row for the new date,
+    # not zero.
+    db.expire_all()
+    live_order_rows = (
         db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id == line.id)
-        .count()
-        == 0
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.state != INQUIRY_CANCELLED)
+        .all()
     )
-
-    # And the claim is gone: the new revision does not cover the line, so it is back on the
-    # board and its 150 are free at the pool again.
-    from app.models.project_so import SOSupplyDecision
-    from app.services.project_supply_service import ProjectSupplyService
-
-    active = (
-        db.query(SOSupplyDecision)
-        .filter(SOSupplyDecision.project_sales_order_id == order.id,
-                SOSupplyDecision.state == "active")
-        .first()
-    )
-    snapshots = active.line_snapshots if active else []
-    assert [snap for snap in snapshots if snap["line_id"] == str(line.id)] == []
-    assert ProjectSupplyService(db).free_stock_by_location([world.product.id])[
-        (world.product.id, world.pool_wh.id)
-    ] == Decimal("150")
+    assert len(live_order_rows) == 1, [(r.state, str(r.qty)) for r in live_order_rows]
+    assert live_order_rows[0].qty == Decimal("150")
+    assert live_order_rows[0].delivery_date == new_date
 
 
 def test_apply_qty_down_reduces_the_row_in_place_and_writes_no_cancel_balance(api):
@@ -699,7 +695,8 @@ def test_apply_qty_down_reduces_the_row_in_place_and_writes_no_cancel_balance(ap
     out = planning_change_service.get_batch(db, str(batch.id))
     row = out["orders"][0]["rows"][0]
     assert row["kind"] == "qty_down"
-    assert row["suggested"] == "reduce"
+    assert row["suggestion"]["components"], row["suggestion"]
+    planning_change_service.set_row_decision(db, str(batch.id), row["id"], "confirm")
 
     result = planning_change_service.apply(db, str(batch.id), world.actor)
     db.commit()
@@ -785,7 +782,14 @@ def test_apply_closed_retires_open_row_and_notes_actioned_row(api):
     # renamed CLOSED -> "cancelled" - outstanding_diff's own CLOSED constant stays "closed",
     # only the planning-change ROW's stored/wire kind changes.
     assert row["kind"] == "cancelled"
-    assert row["suggested"] == "retire"
+    # Every held component release/reallocate, no new sourcing (rule 3).
+    assert row["suggestion"]["components"], row["suggestion"]
+    # A cancelled line drops every held component: a stock claim releases/reallocates,
+    # a raised-not-yet-placed Buy reduces to 0 (measured) - no new sourcing either way.
+    assert all(
+        c["action"] in ("release", "reallocate", "reduce")
+        for c in row["suggestion"]["components"]
+    ), row["suggestion"]["components"]
 
     result = planning_change_service.apply(db, str(batch.id), world.actor)
     db.commit()
@@ -886,6 +890,9 @@ def test_apply_twice_is_a_noop(api):
         import_job_id=None, file_name="book.xlsx",
     )
     db.commit()
+    # A row nobody decided is no longer applied - confirm it first.
+    row_id = planning_change_service.get_batch(db, str(batch.id))["orders"][0]["rows"][0]["id"]
+    planning_change_service.set_row_decision(db, str(batch.id), row_id, "confirm")
 
     first = planning_change_service.apply(db, str(batch.id), world.actor)
     db.commit()
@@ -934,9 +941,16 @@ def test_set_row_decision_refuses_accept_on_a_superseded_row(api):
     row_id = out["orders"][0]["rows"][0]["id"]
     assert out["orders"][0]["rows"][0]["applied_state"] == "superseded"
 
-    with pytest.raises(Exception) as excinfo:
+    # "accept" is not a decision at all now (AC-C7 / rule 5) - 422, invalid decision,
+    # regardless of whether the row is superseded.
+    with pytest.raises(Exception) as invalid:
         planning_change_service.set_row_decision(db, str(batch.id), row_id, "accept")
-    assert getattr(excinfo.value, "status_code", None) == 409
+    assert getattr(invalid.value, "status_code", None) == 422
+
+    # "confirm" IS a valid decision, and THIS row is superseded - 409.
+    with pytest.raises(Exception) as superseded:
+        planning_change_service.set_row_decision(db, str(batch.id), row_id, "confirm")
+    assert getattr(superseded.value, "status_code", None) == 409
 
 
 def test_apply_stamps_applied_at_only_when_something_actually_applied(api):
@@ -956,10 +970,10 @@ def test_apply_stamps_applied_at_only_when_something_actually_applied(api):
         _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]),
     ]})
 
-    # A 14-day move, within the reserve window: `suggest()` returns "keep", not
-    # "replan"/"release" - those two skip `confirm()` entirely via
-    # `supersede_for_material_change`, which does not gate on order status, so the
-    # failure below needs a row that actually reaches `confirm()`.
+    # A 14-day move, within the reserve window: the re-run composes "keep" (AC-C2), so
+    # confirming it derives a real composition and reaches `confirm()` - unlike a
+    # release/buy row, which needs no composition-derived confirm at all to fail the way
+    # this test needs.
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
@@ -974,8 +988,9 @@ def test_apply_stamps_applied_at_only_when_something_actually_applied(api):
     db.commit()
     out = planning_change_service.get_batch(db, str(batch.id))
     row_id = out["orders"][0]["rows"][0]["id"]
-    assert out["orders"][0]["rows"][0]["suggested"] == "keep"
-    planning_change_service.set_row_decision(db, str(batch.id), row_id, "accept")
+    assert out["orders"][0]["rows"][0]["suggestion"]["components"], out["orders"][0]["rows"][0]
+    # A row nobody decided is no longer applied - confirm it first.
+    planning_change_service.set_row_decision(db, str(batch.id), row_id, "confirm")
 
     # A guaranteed, fix-independent failure: the order is no longer confirmable.
     order.status = "draft"
@@ -1000,8 +1015,8 @@ def test_apply_stamps_applied_at_only_when_something_actually_applied(api):
     db.commit()
     assert again["already_applied"] is False
 
-    updated = planning_change_service.set_row_decision(db, str(batch.id), row_id, "keep")
-    assert updated["decision"] == "keep"
+    updated = planning_change_service.set_row_decision(db, str(batch.id), row_id, "confirm")
+    assert updated["decision"] == "confirm"
 
 
 # ============================================================================
@@ -1390,10 +1405,15 @@ def _held_line_advanced_replan_row(client, world, *, qty="72", days_moved=14):
         _line_payload(line.id, buy_qty=qty, buy_reason="ZZT no stock anywhere"),
     ]})
 
+    new_date = date(2026, 8, 20) - timedelta(days=days_moved)
+    # Write-first: production always writes the book before building the batch off it.
+    core_line.required_date = new_date
+    line.delivery_date = new_date
+    db.flush()
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 20),
-        new_date=date(2026, 8, 20) - timedelta(days=days_moved), old_qty=qty, new_qty=qty,
+        new_date=new_date, old_qty=qty, new_qty=qty,
     )
     diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
     batch = planning_change_service.build_batch(
@@ -1404,7 +1424,7 @@ def _held_line_advanced_replan_row(client, world, *, qty="72", days_moved=14):
     db.commit()
     out = planning_change_service.get_batch(db, str(batch.id))
     row = out["orders"][0]["rows"][0]
-    assert row["suggested"] == "replan"
+    assert row["suggestion"]["components"], row["suggestion"]
     assert row["decision"] is None  # the fix: no longer defaults to a no-op `accept`
     assert row["proposal"] is not None
     return batch, order, line, row
@@ -1522,12 +1542,16 @@ def test_apply_carries_a_kept_lines_own_reserve_past_a_rival_that_moved_in(api):
     kept line's Reserve carries unchanged, and the accepted line applies alongside it."""
     client, world = api
     db = world.db
+    # `date.today()`-relative, not a fixed 2026 calendar date: this test hinges on
+    # WINDOW classification (keep vs release), which measures from `as_of` (today), and a
+    # fixed base date drifts out of the window boundary as real time passes it.
+    BASE_DATE = date.today() + timedelta(days=20)
     _stock(db, world.product, world.pool_wh, on_hand=10)
     core_so = _core_so(db, world.company_id)
     core_line_kept = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
-                                 required_date=date(2026, 8, 25))
+                                 required_date=BASE_DATE)
     core_line_accepted = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
-                                     required_date=date(2026, 8, 25))
+                                     required_date=BASE_DATE)
     order = _project_so(db, world.project, so_id=core_so.id, status=SO_STATUS_PUBLISHED,
                          autocount_doc_no=core_so.so_number)
     line_kept = _project_line(db, order, line_no=1, product=world.product, core_line=core_line_kept)
@@ -1550,15 +1574,23 @@ def test_apply_carries_a_kept_lines_own_reserve_past_a_rival_that_moved_in(api):
     pool_stock.quantity_reserved = 10
     db.commit()
 
+    new_date_kept = BASE_DATE + timedelta(days=90)
+    new_date_accepted = BASE_DATE + timedelta(days=14)
+    # Write-first: production always writes the book before building the batch off it.
+    core_line_kept.required_date = new_date_kept
+    line_kept.delivery_date = new_date_kept
+    core_line_accepted.required_date = new_date_accepted
+    line_accepted.delivery_date = new_date_accepted
+    db.flush()
     changed_kept = _diff_change(
         DATE_MOVED, core_line_kept, doc_number=core_so.so_number, item_code="ZZT-ITEM",
-        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
-        new_date=date(2026, 8, 25) + timedelta(days=90), old_qty="10", new_qty="10",
+        location=world.own_wh.warehouse_code, old_date=BASE_DATE,
+        new_date=new_date_kept, old_qty="10", new_qty="10",
     )
     changed_accepted = _diff_change(
         DATE_MOVED, core_line_accepted, doc_number=core_so.so_number, item_code="ZZT-ITEM-2",
-        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
-        new_date=date(2026, 8, 25) + timedelta(days=14), old_qty="5", new_qty="5",
+        location=world.own_wh.warehouse_code, old_date=BASE_DATE,
+        new_date=new_date_accepted, old_qty="5", new_qty="5",
     )
     diff = Diff(scope_documents=(core_so.so_number,), changes=[changed_kept, changed_accepted])
     batch = planning_change_service.build_batch(
@@ -1573,12 +1605,20 @@ def test_apply_carries_a_kept_lines_own_reserve_past_a_rival_that_moved_in(api):
     db.commit()
     out = planning_change_service.get_batch(db, str(batch.id))
     rows = {row["line_no"]: row for row in out["orders"][0]["rows"]}
-    assert rows[1]["suggested"] == "release"  # 90 days out, beyond the reserve window
-    assert rows[2]["suggested"] == "keep"  # 14 days, within window, Buy only
+    # 90 days out, beyond the reserve window: composes release (+ buy).
+    assert any(c["action"] == "release" for c in rows[1]["suggestion"]["components"])
+    # 14 days, within window, Buy only: composes keep.
+    assert all(c["action"] == "keep" for c in rows[2]["suggestion"]["components"])
 
-    # The planner overrides the system's Release suggestion and keeps line 1 as is; line
-    # 2 is left on its default "accept" decision.
-    planning_change_service.set_row_decision(db, str(batch.id), rows[1]["id"], "keep")
+    # The planner overrides the system's Release suggestion and keeps line 1 as is - an
+    # amend with the row's own held composition, unchanged; line 2 is confirmed on the
+    # system's own suggestion.
+    held_composition = dict(rows[1]["held"])
+    held_composition["project_line_id"] = line_kept.id
+    planning_change_service.set_row_decision(
+        db, str(batch.id), rows[1]["id"], "amend", held_composition,
+    )
+    planning_change_service.set_row_decision(db, str(batch.id), rows[2]["id"], "confirm")
     db.commit()
 
     result = planning_change_service.apply(db, str(batch.id), world.actor)
@@ -1635,15 +1675,23 @@ def test_apply_uncovers_a_replan_line_instead_of_letting_confirm_carry_it_forwar
         .one()
     )
 
+    new_date_a = date(2026, 8, 25) + timedelta(days=14)
+    new_date_b = date(2026, 8, 25) - timedelta(days=14)
+    # Write-first: production always writes the book before building the batch off it.
+    core_line_a.required_date = new_date_a
+    line_a.delivery_date = new_date_a
+    core_line_b.required_date = new_date_b
+    line_b.delivery_date = new_date_b
+    db.flush()
     changed_a = _diff_change(
         DATE_MOVED, core_line_a, doc_number=core_so.so_number, item_code="ZZT-ITEM-A",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
-        new_date=date(2026, 8, 25) + timedelta(days=14), old_qty="40", new_qty="40",
+        new_date=new_date_a, old_qty="40", new_qty="40",
     )
     changed_b = _diff_change(
         DATE_MOVED, core_line_b, doc_number=core_so.so_number, item_code="ZZT-ITEM-B",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
-        new_date=date(2026, 8, 25) - timedelta(days=14), old_qty="21", new_qty="21",
+        new_date=new_date_b, old_qty="21", new_qty="21",
     )
     diff = Diff(scope_documents=(core_so.so_number,), changes=[changed_a, changed_b])
     batch = planning_change_service.build_batch(
@@ -1657,14 +1705,14 @@ def test_apply_uncovers_a_replan_line_instead_of_letting_confirm_carry_it_forwar
     db.commit()
     out = planning_change_service.get_batch(db, str(batch.id))
     rows = {row["line_no"]: row for row in out["orders"][0]["rows"]}
-    assert rows[1]["suggested"] == "keep"  # 14 days, within window, reserve held
-    assert rows[2]["suggested"] == "replan"  # advanced - rule 7, unconditional
+    assert all(c["action"] == "keep" for c in rows[1]["suggestion"]["components"])  # reserve held
 
-    # Line 2's row is explicitly accepted (a planner - or a batch built before the default
-    # changed to `null` for a `replan` row - can still do this; `held` is not `None`, so
-    # the write is legal). This is the exact shape that carried the line forward: NAMED as
-    # accepted, but excluded from the confirm body because its suggestion is `replan`.
-    planning_change_service.set_row_decision(db, str(batch.id), rows[2]["id"], "accept")
+    # Line 1 is confirmed; line 2 is left with NO decision at all - Slice C's own version
+    # of the shape that used to carry a line forward wrongly: a decision-less row is
+    # simply not applied (rule 4), so this is now the ordinary "uncovered" case, not a
+    # special "accepted but excluded" one (`accept` is retired, and there is no longer a
+    # `suggested` value that both accepts a row AND excludes it from the confirm body).
+    planning_change_service.set_row_decision(db, str(batch.id), rows[1]["id"], "confirm")
     db.commit()
 
     result = planning_change_service.apply(db, str(batch.id), world.actor)
@@ -1739,7 +1787,7 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
     db.commit()
     out = planning_change_service.get_batch(db, str(batch.id))
     row = out["orders"][0]["rows"][0]
-    assert row["suggested"] == "replan"  # advanced - rule 7, unconditional
+    assert row["suggestion"]["components"], row["suggestion"]  # advanced - runs the ladder
 
     proposal = row["proposal"]
     assert proposal is not None
@@ -1831,7 +1879,7 @@ def test_apply_confirms_only_the_batchs_own_line_leaving_an_unconfirmable_siblin
     assert len(out["orders"][0]["rows"]) == 1  # the sibling never appears in this batch
     row = out["orders"][0]["rows"][0]
     assert row["kind"] == "advanced"
-    assert row["suggested"] == "replan"
+    assert row["suggestion"]["components"], row["suggestion"]
 
     planning_change_service.set_row_decision(db, str(batch.id), row["id"], "confirm")
     db.commit()
@@ -1939,7 +1987,7 @@ def test_apply_returns_a_dropped_bystander_in_returned_to_review(api):
     assert len(out["orders"][0]["rows"]) == 1  # the sibling never appears in this batch
     row = out["orders"][0]["rows"][0]
     assert row["kind"] == "qty_up"
-    assert row["suggested"] == "replan"
+    assert row["suggestion"]["components"], row["suggestion"]
 
     planning_change_service.set_row_decision(db, str(batch.id), row["id"], "confirm")
     db.commit()
@@ -2109,7 +2157,7 @@ def test_apply_of_a_genuinely_unconfirmable_target_line_still_fails_with_its_rea
     db.commit()
     out = planning_change_service.get_batch(db, str(batch.id))
     row = out["orders"][0]["rows"][0]
-    assert row["suggested"] == "replan"
+    assert row["suggestion"]["components"], row["suggestion"]
 
     # A hand-amended composition: the extra 5 comes off the pool, 10 stays Buy - legal
     # shape at PUT time (totals to the 15 the line is open for).
@@ -2223,7 +2271,7 @@ def test_apply_qty_up_after_a_real_place_on_po_updates_the_one_row_and_keeps_its
     out = planning_change_service.get_batch(db, str(batch.id))
     row = out["orders"][0]["rows"][0]
     assert row["kind"] == "qty_up"
-    assert row["suggested"] == "replan"
+    assert row["suggestion"]["components"], row["suggestion"]
     assert row["proposal"]["qty_proposed_buy"] == "10"  # no stock - the whole new qty
     # No pool source at all (`qty_proposed_reserve` is "0"), so there is nothing for the
     # placed 5 to redirect against - the boundary the captain's 21 Aug ruling names, and
@@ -2316,7 +2364,7 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the
     out = planning_change_service.get_batch(db, str(batch.id))
     row_out = out["orders"][0]["rows"][0]
     assert row_out["kind"] == "qty_up"
-    assert row_out["suggested"] == "replan"
+    assert row_out["suggestion"]["components"], row_out["suggestion"]
     assert row_out["held"] is None  # no active decision at all (AC-R03)
     assert row_out["facts"]["buy_actioned"]["value"] is True
     assert Decimal(row_out["facts"]["buy_actioned"]["qty"]) == Decimal("5")
@@ -2465,7 +2513,7 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
     db.commit()
     out = planning_change_service.get_batch(db, str(batch.id))
     row_out = out["orders"][0]["rows"][0]
-    assert row_out["suggested"] == "replan"  # advance, rule 7, unconditional
+    assert row_out["suggestion"]["components"], row_out["suggestion"]  # advance - runs the ladder
 
     proposal = row_out["proposal"]
     assert Decimal(proposal["qty_proposed_reserve"]) == Decimal("432")
@@ -2580,90 +2628,5 @@ def test_build_batch_facts_read_buy_actioned_true_for_a_really_placed_row(api):
     assert row["facts"]["buy_actioned"]["value"] is True
     assert row["facts"]["buy_actioned"]["po_number"] == po.po_number
     assert Decimal(row["facts"]["buy_actioned"]["qty"]) == Decimal("20")
-    assert row["suggested"] == "keep"
-    assert "already a placed purchase order" in row["why"]
-    assert po.po_number in row["why"]
-
-
-def test_a_wholly_bought_line_delayed_beyond_the_window_buys_for_the_pool(api):
-    """The captain's ruling of 26 August 2026 (AC-P3-10), reviving the dead release path.
-
-    `release` used to be gated on the held composition carrying a RESERVE, and the whole-
-    line rule (AC-L5) had already made a reserve-and-Buy mix impossible - so a wholly
-    bought line delayed most of a year suggested `keep` and purchasing was told nothing
-    worth acting on. It releases now: the purchase is for the POOL, so the row moves
-    there, and because nobody has put it on a document yet purchasing also gets a DELAY
-    carrying the date it moved from.
-    """
-    client, world = api
-    db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=150)
-    core_so = _core_so(db, world.company_id)
-    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="150",
-                            required_date=date(2026, 8, 25))
-    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
-    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
-    db.commit()
-
-    _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, buy_qty="150", buy_reason="Nothing free elsewhere."),
-    ]})
-
-    order_row = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
-        .one()
-    )
-    assert order_row.stock_location == world.own_wh.warehouse_code
-
-    changed = _diff_change(
-        DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
-        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
-        new_date=date(2027, 3, 10), old_qty="150", new_qty="150",
-    )
-    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
-    batch = planning_change_service.build_batch(
-        db, diff, applied_line_ids={id(changed): str(core_line.id)},
-        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
-        import_job_id=None, file_name="book.xlsx",
-    )
-    db.commit()
-    out = planning_change_service.get_batch(db, str(batch.id))
-    row = out["orders"][0]["rows"][0]
-    assert row["held"]["reserve"] == [], "wholly bought, so there is no reserve to release"
-    assert row["suggested"] == "release"
-    assert "beyond the 60-day reserve window" in row["why"]
-
-    result = planning_change_service.apply(db, str(batch.id), world.actor)
-    db.commit()
-    assert result["failed_orders"] == []
-
-    from app.models.planning_change import PlanningChangeBatch as PlanningChangeBatchModel
-
-    batch_model = db.query(PlanningChangeBatchModel).filter(
-        PlanningChangeBatchModel.id == batch.id
-    ).one()
-    assert {"verb": "DELAY", "count": 1} in batch_model.result_json["inquiry_rows_changed"]
-    assert not any(
-        entry["verb"] == "RELEASE"
-        for entry in batch_model.result_json["inquiry_rows_changed"]
-    )
-
-    db.expire_all()
-    live = (
-        db.query(OrderInquiryRow)
-        .filter(
-            OrderInquiryRow.so_line_id == line.id,
-            OrderInquiryRow.state != INQUIRY_CANCELLED,
-        )
-        .all()
-    )
-    # The purchase is not lost: an ORDER row for the whole 150, now for the POOL rather
-    # than for a line that has moved most of a year out, with a DELAY row beside it
-    # naming the date it moved from.
-    orders = [r for r in live if r.verb == IV_ORDER]
-    assert [str(r.qty) for r in orders] == ["150.0000"]
-    assert orders[0].stock_location == world.pool_wh.warehouse_code
-    delays = [r for r in live if r.verb == "DELAY"]
-    assert len(delays) == 1
-    assert "2026-08-25" in (delays[0].note or "")
+    assert row["suggestion"]["components"][0]["action"] == "keep"
+    assert row["suggestion"]["components"][0]["document"] == po.po_number

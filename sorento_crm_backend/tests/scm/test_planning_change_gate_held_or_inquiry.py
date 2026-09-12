@@ -103,8 +103,15 @@ def test_ac_g2_held_line_raises_one_row_with_held_json(api):
         _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]),
     ]})
 
+    new_date = date(2027, 3, 10)
+    # Write-first (production always writes the book before building the batch off it):
+    # the core line AND its mirror, or the walk runs at the OLD date and honestly says
+    # Keep - not a Slice C defect, a fixture ordering bug.
+    core_line.required_date = new_date
+    line.delivery_date = new_date
+    db.flush()
     change = _change(DATE_MOVED, core_so, core_line, old_qty="40", new_qty="40",
-                     new_date=date(2027, 3, 10))
+                     new_date=new_date)
     batch = _build(db, world, core_so, [(change, core_line)])
     db.commit()
     assert batch is not None

@@ -71,6 +71,9 @@ def test_ac_b1_board_names_pending_batch_null_when_none_or_applied(api):
     c_so, _c_core, _c_order, _c_line, c_batch, _c_payload = _held_release_batch(
         client, world, qty="20",
     )
+    # A row nobody decided is no longer applied (Slice C) - confirm it first.
+    c_row_id = planning_change_service.get_batch(db, str(c_batch.id))["orders"][0]["rows"][0]["id"]
+    planning_change_service.set_row_decision(db, str(c_batch.id), c_row_id, "confirm")
     planning_change_service.apply(db, str(c_batch.id), world.actor)
     db.commit()
 
@@ -196,6 +199,9 @@ def test_pending_batch_id_by_sales_order_returns_newest_pending_and_omits_the_re
     c_so, _c_core, _c_order, _c_line, c_batch, _c_payload = _held_release_batch(
         client, world, qty="20",
     )
+    # A row nobody decided is no longer applied (Slice C) - confirm it first.
+    c_row_id = planning_change_service.get_batch(db, str(c_batch.id))["orders"][0]["rows"][0]["id"]
+    planning_change_service.set_row_decision(db, str(c_batch.id), c_row_id, "confirm")
     planning_change_service.apply(db, str(c_batch.id), world.actor)
     db.commit()
 

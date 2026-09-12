@@ -584,51 +584,78 @@ def _released_line(api, *, linked: bool):
             "core_so": core_so, "batch": batch, "row": row, "far": far}
 
 
-def test_release_of_a_wholly_bought_line_is_suggested_beyond_the_window(api):
-    fixture = _released_line(api, linked=True)
-    out = planning_change_service.get_batch(fixture["world"].db, str(fixture["batch"].id))
-    row = out["orders"][0]["rows"][0]
-    assert row["suggested"] == "release", (
-        "the dead release path: a wholly-Buy line delayed past the window releases"
-    )
+# `test_release_of_a_wholly_bought_line_is_suggested_beyond_the_window` deleted: its whole
+# premise (`suggested == "release"`, "the dead release path: a wholly-Buy line delayed
+# past the window releases") is retired again by Slice C's `compose_suggestion` - measured
+# directly, a wholly-bought line delayed past the window composes "keep" unconditionally
+# (source `po` when placed, `buy` when only raised), never "release": release is reserved
+# for an actual stock CLAIM (a reserve) being given up, and a Buy is a purchase commitment,
+# not a claim. AC-C6's "Keep, late by N days" (`test_planning_change_recompute_and_diff.py`)
+# is the shape that now covers this territory.
 
 
 def test_release_moves_a_linked_row_to_the_pool_with_its_links_and_raises_nothing(api):
+    """Renamed in spirit, not in name (the title's own premise - "moves to the pool" - is
+    retired): a linked Buy delayed past the window composes "keep" (source `po`), and
+    confirming it settles the SAME row in place rather than moving it anywhere. Measured
+    directly: `stock_location` stays the line's own bin, the row id is unchanged, its
+    links are kept, and the note documents what it was."""
     fixture = _released_line(api, linked=True)
     world = fixture["world"]
     line = fixture["line"]
     row_id = str(fixture["row"].id)
 
+    row_out = planning_change_service.get_batch(world.db, str(fixture["batch"].id))[
+        "orders"
+    ][0]["rows"][0]
+    planning_change_service.set_row_decision(
+        world.db, str(fixture["batch"].id), row_out["id"], "confirm",
+    )
     result = planning_change_service.apply(world.db, str(fixture["batch"].id), world.actor)
     world.db.commit()
     assert result["failed_orders"] == []
 
+    world.db.expire_all()
     row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).one()
     assert row.state != INQUIRY_CANCELLED
-    assert row.stock_location == world.pool_wh.warehouse_code, (
-        "the purchase is for the pool now, not for this line"
+    assert row.stock_location == world.own_wh.warehouse_code, (
+        "settled in place - still for THIS line's own bin, never moved to the pool"
     )
     assert ProjectOrderInquiryService(world.db)._links_of(row.id), "its links are kept"
-    assert "2027-03-10" in (row.note or ""), "the note names the delay"
+    assert row.note and "2026-08-25" in row.note, "the note names what it was"
     raised = [
         r for r in _rows_of(world, line)
         if r.state != INQUIRY_CANCELLED and str(r.id) != row_id
     ]
-    assert raised == [], "a release raises no new order inquiry row"
+    assert raised == [], "settled in place - no second order inquiry row"
 
 
 def test_release_of_an_unlinked_row_hands_purchasing_a_delay_with_the_previous_date(api):
+    """Renamed in spirit, not in name (no separate DELAY row exists any more): an unlinked
+    Buy delayed past the window ALSO composes "keep" (source `buy`) and settles the SAME
+    ORDER row in place - never relabelled to verb DELAY. The previous date the title
+    promises still reaches purchasing, in that row's own note."""
     fixture = _released_line(api, linked=False)
     world = fixture["world"]
     line = fixture["line"]
+    row_id = str(fixture["row"].id)
 
+    row_out = planning_change_service.get_batch(world.db, str(fixture["batch"].id))[
+        "orders"
+    ][0]["rows"][0]
+    planning_change_service.set_row_decision(
+        world.db, str(fixture["batch"].id), row_out["id"], "confirm",
+    )
     result = planning_change_service.apply(world.db, str(fixture["batch"].id), world.actor)
     world.db.commit()
     assert result["failed_orders"] == []
 
-    delays = [r for r in _rows_of(world, line) if r.verb == "DELAY"]
-    assert len(delays) == 1, "an unlinked release reads as a delay to purchasing"
-    assert "2026-08-25" in (delays[0].note or ""), "with the previous date"
+    world.db.expire_all()
+    live = [r for r in _rows_of(world, line) if r.state != INQUIRY_CANCELLED]
+    assert len(live) == 1, [(r.verb, r.state) for r in live]
+    assert str(live[0].id) == row_id, "settled in place, not a new row"
+    assert live[0].verb == "ORDER"
+    assert live[0].note and "2026-08-25" in live[0].note, "with the previous date"
 
 
 # ---------------------------------------------------------------------------
@@ -1362,42 +1389,14 @@ def test_a_second_press_on_an_order_already_applied_from_the_batch_is_refused(ap
     assert again.json().get("code") == "planning_change_batch_applied", again.text
 
 
-# ---------------------------------------------------------------------------
-# Review S5: a release row confirmed FROM THE BOARD takes the release path
-# ---------------------------------------------------------------------------
-
-
-def test_a_release_row_confirmed_from_the_board_reaches_the_pool_path(api):
-    """AC-P3-10 through the board's own Confirm. The board pre-marks every changed line
-    and posts it, and the route used to record each as an `amend` - which sent a `release`
-    row down the confirm branch, so the RELEASE rule never fired from the screen it is
-    decided on. A release is "yes, do what the book did", not an amendment of the line's
-    supply."""
-    fixture = _released_line(api, linked=True)
-    client = fixture["client"]
-    world = fixture["world"]
-    line = fixture["line"]
-    row_id = str(fixture["row"].id)
-
-    response = _confirm(
-        client, fixture["order"].id, [_line_payload(line.id, buy_qty="40")],
-        batch_id=str(fixture["batch"].id),
-    )
-    assert response.status_code == 200, response.text
-    world.db.commit()
-
-    row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).one()
-    assert row.state != INQUIRY_CANCELLED
-    assert row.stock_location == world.pool_wh.warehouse_code, (
-        "the purchase is for the pool now, not for this line"
-    )
-    assert ProjectOrderInquiryService(world.db)._links_of(row.id), "its links are kept"
-    assert "2027-03-10" in (row.note or ""), "the note names the delay"
-    raised = [
-        r for r in _rows_of(world, line)
-        if r.state != INQUIRY_CANCELLED and str(r.id) != row_id
-    ]
-    assert raised == [], "a release raises no new order inquiry row"
+# `test_a_release_row_confirmed_from_the_board_reaches_the_pool_path` (Review S5) deleted:
+# `_released_line` is always a wholly-bought line, and Slice C's `compose_suggestion`
+# never answers "release" for one (measured above - it is always "keep", whatever the
+# delay and whether the Buy is placed on a document or only raised). The fixture this
+# test needed - a line whose held composition is a genuine stock claim (a reserve) - has
+# no equivalent in this file; `test_apply_release_gives_up_a_reserved_lines_whole_claim_
+# and_asks_purchasing_for_nothing` (tests/test_planning_changes.py) covers a release
+# through the direct `apply()` path with that shape instead.
 
 
 # ---------------------------------------------------------------------------

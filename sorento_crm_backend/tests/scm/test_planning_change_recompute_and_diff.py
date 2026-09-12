@@ -150,10 +150,14 @@ def test_row_carries_a_composed_suggestion_and_no_reaction_words(api):
 # --------------------------------------------------------------------------- #
 
 def test_small_delay_inside_the_window_suggests_keep_only():
+    # NOT `NON_IMMEDIATE`: it is already past the 60-day reserve window on its own, so a
+    # further 21-day delay off it correctly answers Release+Buy (AC-C3), not Keep. A date
+    # inside the window to start with is what this scenario is actually about.
+    starting_date = date.today() + timedelta(days=20)
     with blank_session() as db:
-        world = _held_reserve_world(db, qty="134", required_date=NON_IMMEDIATE)
+        world = _held_reserve_world(db, qty="134", required_date=starting_date)
         batch = _change_and_batch(
-            db, world, new_required_date=NON_IMMEDIATE + timedelta(days=21),
+            db, world, new_required_date=starting_date + timedelta(days=21),
         )
         assert batch is not None
         row = _only_row(db, batch)
@@ -166,9 +170,17 @@ def test_small_delay_inside_the_window_suggests_keep_only():
         assert components[0]["qty_now"] == "134"
         assert components[0]["label"] == "Keep 134"
         composition = planning_change_service.composition_from_proposal(row.proposal_json)
-        assert composition.get("reserve") == row.held_json.get("reserve"), (
-            composition, row.held_json,
-        )
+        # qty + warehouse only: `held_json`'s reserve items also carry `location`, which
+        # `composition_from_proposal`'s do not.
+        composed_reserve = [
+            {"warehouse_id": r["warehouse_id"], "qty": r["qty"]}
+            for r in composition.get("reserve") or []
+        ]
+        held_reserve = [
+            {"warehouse_id": r["warehouse_id"], "qty": r["qty"]}
+            for r in row.held_json.get("reserve") or []
+        ]
+        assert composed_reserve == held_reserve, (composition, row.held_json)
 
 
 # --------------------------------------------------------------------------- #
@@ -283,6 +295,13 @@ def test_qty_down_with_a_placed_po_and_a_raised_buy(api):
     world, core_so, core_line, order, line, po = _qty_down_with_po_world(api)
     db = world.db
 
+    # Write-first (production always writes the book before building the batch off it):
+    # the core line AND its mirror, or compose_suggestion re-reads the still-234 row and
+    # answers "Keep 134" - not a Slice C defect, a fixture ordering bug.
+    core_line.qty_ordered = Decimal("100")
+    line.qty = Decimal("100")
+    db.flush()
+
     changed = _diff_change(
         QTY_CHANGED, core_line, doc_number=core_so.so_number,
         item_code=world.product.product_code, location=world.own_wh.warehouse_code,
@@ -323,6 +342,12 @@ def test_qty_down_reallocate_targets_another_raised_order_row(api):
     other_line = _project_line(db, other_order, line_no=1, product=world.product,
                                 core_line=other_core_line)
     db.commit()
+
+    # Write-first: the core line AND its mirror, before build_batch runs.
+    core_line.qty_ordered = Decimal("100")
+    line.qty = Decimal("100")
+    db.flush()
+
     from tests.test_planning_changes import _client, _restore
     other_client, originals = _client(db, world.actor)
     try:

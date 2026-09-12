@@ -105,7 +105,7 @@ def test_migration_515_adds_the_suggestion_json_column(world):
     _run_apply(db)
 
     value = db.execute(
-        text("select suggestion_json from projects.planning_change_rows where id = :id"),
+        text("select suggestion_json from planning_change_rows where id = :id"),
         {"id": row.id},
     ).scalar()
     assert value is None
@@ -163,7 +163,6 @@ def test_migration_515_downgrade_drops_the_column_and_leaves_decisions_as_they_a
 
     with pytest.raises(Exception):
         db.execute(
-            text("select suggestion_json from projects.planning_change_rows where id = :id"),
+            text("select suggestion_json from planning_change_rows where id = :id"),
             {"id": row.id},
         )
-        db.connection().commit()
