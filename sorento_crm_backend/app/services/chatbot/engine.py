@@ -1093,28 +1093,6 @@ def run_turn(
         # the one that gave up waiting (AC-710) - it is the one whose predecessor may be
         # dead - and a `finally` on the stages alone would be the only one to skip it.
         #
-        # AC-1027. THE SHADOW PARSE STARTS HERE, at the very end of the turn, after the
-        # answer and its send action have been composed and are on their way back to the
-        # caller. It used to fire immediately after the row insert, which put a second
-        # parser call - and, with the worker off or redis down, a SYNCHRONOUS one - in
-        # front of the customer's reply. The window the owner is watching is worth
-        # nothing measured that way: it would be measuring the reply it delayed.
-        #
-        # In the same `finally` as the ticket release and for a related reason: a turn
-        # that failed is still a turn the new prompt should have been asked about, and
-        # the observation must not be the thing that is skipped when something goes wrong.
-        # Fire-and-forget, and it cannot fail this turn - `shadow.fire` catches
-        # everything, including its own enqueue.
-        if turn_id:
-            shadow.fire(
-                envelope,
-                session_factory=session_factory,
-                shadow_version=switches.chatbot_parser_shadow_version,
-                contact_respond_id=contact_respond_id,
-                live_message_id=message_id,
-                offloaded=bool(getattr(settings, "chatbot_turn_on_worker", False)),
-            )
-
         # `mark_done` is monotone, so releasing out of order can never rewind the counter.
         if ticket is not None:
             try:
@@ -1129,6 +1107,32 @@ def run_turn(
                     contact_respond_id,
                     exc_info=True,
                 )
+
+        # AC-1027. THE SHADOW PARSE STARTS HERE, at the very end of the turn: after the
+        # answer and its send action are composed, and AFTER THE ORDERING TICKET IS
+        # RELEASED. It used to fire immediately after the row insert, which put a second
+        # parser call - and, with the worker off or redis down, a SYNCHRONOUS one - in
+        # front of the customer's reply.
+        #
+        # And it has to come after `mark_done` above, not before: with ordering on and no
+        # worker, a dealer's SECOND message would otherwise wait out the first message's
+        # shadow LLM call before its own turn could start. The observation must not be able
+        # to delay the next reply any more than it may delay this one.
+        #
+        # In the same `finally` as the ticket release, for a related reason: a turn that
+        # failed is still a turn the new prompt should have been asked about, and the
+        # observation must not be the thing that is skipped when something goes wrong.
+        # Fire-and-forget, and it cannot fail this turn - `shadow.fire` catches
+        # everything, including its own enqueue and its own inline run.
+        if turn_id:
+            shadow.fire(
+                envelope,
+                session_factory=session_factory,
+                shadow_version=switches.chatbot_parser_shadow_version,
+                contact_respond_id=contact_respond_id,
+                live_message_id=message_id,
+                offloaded=bool(getattr(settings, "chatbot_turn_on_worker", False)),
+            )
 
 
 def _ordering_redis() -> Any:
