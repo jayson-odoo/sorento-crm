@@ -674,36 +674,20 @@ class TestOwner8SepADeliveryWordPlusANameIsAnOrderAsk:
             **over,
         )
 
-    def test_the_2d903c96_shape_is_an_order_ask_not_a_help_request(self) -> None:
-        out = _post(self._hanlim(), previous=self._OFFERED, latest="delivery to hanlim")
-        assert out["message_type"] == "business_query"
-        assert out["domain_hint"] == "order"
-        assert out["intent_hint"] == "check_order"
-        assert out["escalation"]["is_escalation_confirmation"] is False
-        assert out["switch_word_retyped"] == "order"
-        assert [e["raw"] for e in out["entities"] if e.get("current_message")] == ["hanlim"]
-
-    def test_the_same_shape_with_no_offer_open_is_retyped_too(self) -> None:
-        """The NEW arm is not gated on an open offer: a help request that names a customer
-        beside a delivery word is an order ask on a cold turn as well."""
-        out = _post(self._hanlim(), previous={}, latest="delivery to hanlim")
-        assert out["message_type"] == "business_query"
-        assert out["domain_hint"] == "order" and out["intent_hint"] == "check_order"
-
-    def test_the_malay_delivery_word_is_the_same_ask(self) -> None:
-        out = _post(self._hanlim(), previous=self._OFFERED, latest="hantar ke hanlim")
-        assert out["message_type"] == "business_query" and out["domain_hint"] == "order"
-
-    def test_when_the_model_also_said_yes_the_widened_guard_defuses_it(self) -> None:
-        """The EXISTING arm (model said `is_escalation_confirmation: true`) now fires on the
-        2d903c96 shape too: no decisive intent, but a switch word plus a current entity."""
-        out = _post(
-            self._hanlim(escalation={"is_escalation_confirmation": True, "company_pick": None}),
-            previous=self._OFFERED,
-            latest="delivery to hanlim",
-        )
-        assert out["escalation"]["is_escalation_confirmation"] is False
-        assert out["message_type"] == "business_query"
+    # `test_the_2d903c96_shape_is_an_order_ask_not_a_help_request`,
+    # `test_the_same_shape_with_no_offer_open_is_retyped_too`,
+    # `test_the_malay_delivery_word_is_the_same_ask` and
+    # `test_when_the_model_also_said_yes_the_widened_guard_defuses_it` RETIRED (AC-1032):
+    # all four pinned the "#6 switch-word override" (`_switch_word_domain`,
+    # `output_exchange.py`, deleted at the site now commented "re-tokenised the message to
+    # answer the same [question]", line ~2489) - a CODE-side rescue for a parser that came
+    # back `request_for_help` with null hints on "delivery to hanlim". AC-1032: "the parse
+    # carries the signal now" - parser v3's OWN schema and prompt (AC-1021/1022, a
+    # DIFFERENT slice, L1-S2) are what must classify this phrase as an `order` ask
+    # directly; there is no `dialogue/focus.py` rule this maps to, because the defect was
+    # never a FOCUS-state concern, so no focus-rule case captures it. The v3 corpus replay
+    # (AC-1022, `tests/chatbot/test_parser_v3.py` once it exists) is where this owner
+    # turn's shape belongs going forward.
 
     # ---- negatives: nothing else moves ---------------------------------------------- #
 
@@ -751,21 +735,10 @@ class TestOwner8SepADeliveryWordPlusANameIsAnOrderAsk:
         assert out["escalation"]["is_escalation_confirmation"] is False
         assert "switch_word_retyped" not in out
 
-    def test_a_help_request_with_no_entity_is_byte_identical(self) -> None:
-        """Byte identity for the turn the arm must never touch: the same emission with the
-        helper reporting no switch domain produces the very same output object."""
-        import app.services.chatbot.head.output_exchange as oe
-
-        emission = _emission(message_type="request_for_help", intent_hint=None, domain_hint=None, entities=[])
-        with_rule = _post(emission, previous=self._OFFERED, latest="can someone help me with my delivery")
-        original = oe._switch_word_domain
-        oe._switch_word_domain = lambda message: None
-        try:
-            without_rule = _post(emission, previous=self._OFFERED, latest="can someone help me with my delivery")
-        finally:
-            oe._switch_word_domain = original
-        assert with_rule == without_rule
-        assert with_rule["message_type"] == "request_for_help"
+    # `test_a_help_request_with_no_entity_is_byte_identical` RETIRED (AC-1032): monkeypatched
+    # `oe._switch_word_domain` directly, which no longer exists - the byte-identity claim it
+    # made (the arm never touches a turn with no switch domain) is meaningless once the arm
+    # itself is gone; nothing left to be byte-identical WITH.
 
     def test_a_carried_entity_alone_is_not_a_current_one(self) -> None:
         """A bare "delivery" is the #6 switch-word consumer's own case (every content token
@@ -811,30 +784,14 @@ class TestReviewRound2B2TheRetypeIsTheMeasuredArmOnly:
             **over,
         )
 
-    def test_a_decisive_intent_plus_a_name_with_no_switch_word_stays_a_help_request(self) -> None:
-        out = _post(self._person_ask(), previous={}, latest="I need someone to look into HANLIM")
-        assert out["message_type"] == "request_for_help"
-        assert "switch_word_retyped" not in out
-
-    def test_the_same_shape_over_an_open_offer_still_asks_which_team(self) -> None:
-        out = _post(self._person_ask(), previous=self._OFFERED, latest="I need someone to look into HANLIM")
-        assert out["message_type"] == "request_for_help"
-        assert out["escalation"].get("team_unresolved") is True
-        assert out["escalation"]["is_escalation_confirmation"] is False
-
-    def test_the_2d903c96_shape_is_still_retyped(self) -> None:
-        out = _post(
-            _emission(
-                message_type="request_for_help",
-                intent_hint=None,
-                domain_hint=None,
-                entities=[{"raw": "hanlim", "hint": "customer", "confident": True, "current_message": True}],
-            ),
-            previous=self._OFFERED,
-            latest="delivery to hanlim",
-        )
-        assert out["message_type"] == "business_query"
-        assert out["switch_word_retyped"] == "order"
+    # `test_a_decisive_intent_plus_a_name_with_no_switch_word_stays_a_help_request`,
+    # `test_the_same_shape_over_an_open_offer_still_asks_which_team` and
+    # `test_the_2d903c96_shape_is_still_retyped` RETIRED (AC-1032): all three pinned the
+    # same "#6 switch-word override" (`_switch_word_domain`) retired above - here at the
+    # boundary the reviewer's round 2 narrowed it to. AC-1032: the parse carries the
+    # signal now, so the boundary itself (a decisive-intent person-ask over an open offer
+    # stays `request_for_help`; the 2d903c96 shape is retyped) is parser v3's own
+    # classification to get right (AC-1021/1022, L1-S2), not a gate this module runs.
 
     def test_the_confirm_suppression_backstop_still_reads_the_decisive_intent(self) -> None:
         """`business_ask_now` keeps both halves for the said-yes arm: a decisive ask that

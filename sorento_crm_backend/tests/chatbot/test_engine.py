@@ -215,7 +215,16 @@ class TestHappyPath:
         # STAGE records only: the same array also carries the structured decisions
         # `TurnTrace.add` writes (`decay`, `focus`, ...), which are not timeline rows.
         trace = trace_mod.stage_records(_turn_row(session_factory, result.turn_id).trace)
-        assert [r["stage"] for r in trace] == ["received", "understood", "access", "routed"]
+        # L1-S3: `answered` sits between `understood` and `access` - AC-1013's "did this
+        # message answer the open question" decision, recorded on every turn including
+        # "nothing was open".
+        assert [r["stage"] for r in trace] == [
+            "received",
+            "understood",
+            "answered",
+            "access",
+            "routed",
+        ]
         for record in trace:
             assert record["summary"] and record["why"]
             assert "{" not in record["summary"], record["summary"]
@@ -231,9 +240,10 @@ class TestHappyPath:
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
         trace = trace_mod.stage_records(_turn_row(session_factory, result.turn_id).trace)
         assert all(r["stage"] in TURN_STAGES for r in trace)
-        # The four the HEAD owns. `looked_up` onwards arrive with the lanes and the tail;
-        # a stage that did not run is omitted, never recorded empty (AC-252).
-        assert [r["stage"] for r in trace] == list(TURN_STAGES[:4])
+        # The five the HEAD owns (L1-S3 adds `answered`). `looked_up` onwards arrive with
+        # the lanes and the tail; a stage that did not run is omitted, never recorded empty
+        # (AC-252).
+        assert [r["stage"] for r in trace] == list(TURN_STAGES[:5])
 
 
 class TestParserFailure:

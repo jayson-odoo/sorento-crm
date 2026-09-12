@@ -128,7 +128,17 @@ class TestTheTailWritesTheSession:
         done = engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
 
         stored = _session_of(session_factory)
-        assert stored["variables"]["domain_hint"] == "master_products", "the tail overwrote it"
+        # D8/AC-1001: the five keys, not the legacy `domain_hint` / `response` shape
+        # `PRIOR_SESSION` seeded - proves the tail OVERWROTE it (a structurally different
+        # dict), whole-patch write, one contact row.
+        assert set(stored["variables"]) == {
+            "focus",
+            "open_question",
+            "ideation",
+            "access_levels",
+            "contains_flyer",
+        }
+        assert stored["variables"] != PRIOR_SESSION["variables"], "the tail overwrote it"
         # The stored value is the WHOLE patch, not just `variables`: `save-session-vars`
         # PUT `JSON.stringify($json.reply.session_patch)`, so a variables-only write would
         # change what every existing reader of that column sees.
@@ -145,7 +155,8 @@ class TestTheTailWritesTheSession:
         )
         assert set(done.reply) == {"text", "quick_replies", "result_set", "attachments_src"}
         assert done.reply["attachments_src"] == [{"url": "s3://x"}]
-        assert done.reply["result_set"] == _session_of(session_factory)["variables"]["last_result_set"]
+        open_question = _session_of(session_factory)["variables"].get("open_question") or {}
+        assert done.reply["result_set"] == (open_question.get("options") or [])
 
     def test_the_turn_closes_done_with_the_head_s_trace_continued(self, seeded, stub_parser, session_factory):
         head = _head(session_factory, is_test=False)
@@ -180,7 +191,14 @@ class TestDryRunWritesNothing:
 
         assert _session_of(session_factory) == PRIOR_SESSION, "a dry run wrote the session"
         assert done.session_patch is not None
-        assert done.session_patch["variables"]["domain_hint"] == "master_products"
+        # D8/AC-1001: the would-be write is still the five-key shape, never the legacy one.
+        assert set(done.session_patch["variables"]) == {
+            "focus",
+            "open_question",
+            "ideation",
+            "access_levels",
+            "contains_flyer",
+        }
         assert _integration_logs(session_factory, "respond_contacts.session_vars") == 0
 
     def test_a_live_turn_does_not_return_the_patch(self, seeded, stub_parser, session_factory):
