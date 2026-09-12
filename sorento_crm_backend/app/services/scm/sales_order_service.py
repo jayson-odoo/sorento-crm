@@ -1599,18 +1599,22 @@ class SalesOrderService:
                 old_location = (
                     target.warehouse.warehouse_code if target.warehouse is not None else ""
                 )
+                old_qty = float(target.qty_ordered or 0)
                 line_changes.append((
-                    target, float(target.qty_ordered or 0), target.required_date,
-                    old_item_code, old_location,
+                    target, old_qty, target.required_date, old_item_code, old_location,
                 ))
                 target.product_id = prod.id
                 target.qty_ordered = ln.qty_ordered
-                if float(ln.qty_ordered or 0) <= 0:
+                if old_qty > 0 and float(ln.qty_ordered or 0) <= 0:
                     # Settling a held line's qty to 0 ends it exactly like a removal does
                     # (review round, R-S5) - one shape, `line_status = CANCELLED`, for both
                     # gestures, so a later reader (the SKU fallback above, the removed-line
                     # dependents check, `_order_amount`/`total_qty`) has one thing to check
-                    # rather than two.
+                    # rather than two. Gated on the TRANSITION, not the new value alone
+                    # (round 2, R2-N1): an AutoCount line already at 0 (25,738 open on the
+                    # prod copy, most carrying money) is resent unchanged whenever another
+                    # line on the same order is edited, and `qty_ordered=0` alone would
+                    # cancel it as a side effect of an edit that never touched it.
                     target.line_status = CANCELLED
                 if "warehouse_code" in fields_set:
                     target.warehouse_id = warehouse_id
