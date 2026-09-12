@@ -369,6 +369,7 @@ class TestTheAnsweredStepOnARealTurn:
             domain_hint=None,
             intent_hint=None,
             entities=[],
+            asks=[],
             answers_open_question={"resolved": True, "picks": [2], "yes_no": None, "free_text": None},
             anaphora=False,
             topic_reset=False,
@@ -402,7 +403,10 @@ class TestTheAnsweredStepOnARealTurn:
         emission = _parser_output(
             message_type="casual",
             entities=[],
+            asks=[],
             answers_open_question={"resolved": True, "picks": [1], "yes_no": None, "free_text": None},
+            anaphora=False,
+            topic_reset=False,
         )
         result = self._run(
             session_factory,
@@ -429,7 +433,10 @@ class TestTheAnsweredStepOnARealTurn:
         emission = _parser_output(
             message_type="casual",
             entities=[],
+            asks=[],
             answers_open_question={"resolved": True, "picks": [1], "yes_no": None, "free_text": None},
+            anaphora=False,
+            topic_reset=False,
         )
 
         result = self._run(

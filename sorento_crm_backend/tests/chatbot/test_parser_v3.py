@@ -77,18 +77,22 @@ class TestV3StopsTellingTheModelToCarry:
         [
             "== DECISIVE DOMAIN TERMS ==",
             "== REQUESTED ATTRIBUTES ==",
-            "== BROADEN AXIS ==",
             "== DATE FILTER (per-message, never carried over) ==",
             "== ORDER_STATUS FILTER ==",
             "== IS_ACTIVE FILTER ==",
-            "== POSITIONAL REFERENCES AND REFERENCE TARGET ==",
             "== PERSON-NAME MENTION ==",
             "== ROUTING ==",
         ],
     )
     def test_every_other_section_survives(self, kept: str) -> None:
         """v3 removes INSTRUCTIONS, never keys: `output_exchange` derives ~69 keys from
-        this emission and a section quietly dropped is a lane that stops working."""
+        this emission and a section quietly dropped is a lane that stops working.
+
+        `== BROADEN AXIS ==` and `== POSITIONAL REFERENCES AND REFERENCE TARGET ==`
+        retired from this list here (S2 flip): both sections are gone from the v3
+        prompt along with the keys they instructed (`broaden_axis`, `scope_intent`,
+        `reference_positions`, `reference_target` - D3's seven keys OUT), so there is
+        no instruction left to survive."""
         assert kept in SEMANTIC_PARSER_PROMPT_V3
 
     def test_it_uses_no_dash_characters(self) -> None:
@@ -123,11 +127,25 @@ class TestTheWireCarriesTheThreeKeysUNDERV3ONLY:
             assert key not in schema["required"]
         assert len(schema["required"]) == 28
 
-    def test_the_two_schemas_differ_by_exactly_those_three(self) -> None:
+    def test_the_two_schemas_differ_by_asks_in_and_seven_keys_out(self) -> None:
+        """S2 (D3): v3 does not only ADD the three signals plus `asks` - it drops the
+        seven keys `asks` replaces (`domain_hint`, `intent_hint`, `entities`,
+        `reference_positions`, `reference_target`, `scope_intent`, `broaden_axis`).
+        v1 = 28 keys, v3 = 25."""
         assert parser_mod.DECLARED_KEYS_V3 - parser_mod.DECLARED_KEYS == set(
             parser_mod.V3_EMISSION_KEYS
-        )
-        assert parser_mod.DECLARED_KEYS - parser_mod.DECLARED_KEYS_V3 == set()
+        ) | {"asks"}
+        assert parser_mod.DECLARED_KEYS - parser_mod.DECLARED_KEYS_V3 == {
+            "domain_hint",
+            "intent_hint",
+            "entities",
+            "reference_positions",
+            "reference_target",
+            "scope_intent",
+            "broaden_axis",
+        }
+        assert len(parser_mod.DECLARED_KEYS) == 28
+        assert len(parser_mod.DECLARED_KEYS_V3) == 25
 
     def test_the_answer_object_is_strict_too(self) -> None:
         answer = parser_mod.PARSE_OUTPUT_JSON_SCHEMA_V3["properties"]["answers_open_question"]

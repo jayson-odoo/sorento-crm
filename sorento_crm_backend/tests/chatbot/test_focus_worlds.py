@@ -15,12 +15,18 @@ source of truth rather than a shadow computed alongside the legacy markers) has 
 landed. Today `output_exchange.py` still decides "was there a picker" and resolves an
 answered question off the LEGACY `selection_context` / `pending` markers (its own
 comment: "`selection_context` is that marker today and stays the reader for one release
-(AC-951); slice B4 replaces it with `open_question` and this line with it") and nothing
-anywhere calls `dialogue/clearing.py::apply` with `conversation_closed=True` - there is no
-hook yet for the Respond.io close event this file's AC-1006 half needs. `focus`'s carry
-rules (`domains`, `products`, `customer`, `date_window`) DO already run for real via
-`output_exchange.py::focus_rules.apply`, wired at S1, so those halves may already read
-correctly; the open-question and conversation-closed halves are the S3 reds.
+(AC-951); slice B4 replaces it with `open_question` and this line with it"). `focus`'s
+carry rules (`domains`, `products`, `customer`, `date_window`) DO already run for real
+via `output_exchange.py::focus_rules.apply`, wired at S1, so those halves may already
+read correctly; the open-question half is the S3 red.
+
+**AC-1006's conversation-closed half is NOT simulated by a session key** - there is no
+`conversation_closed` key; the five-key wall (AC-1001) rejects one. S0 (58c5993eb)
+already wires the real event:
+`sla_service.ConversationSLATrackingService._clear_chatbot_dialogue_state_best_effort`,
+called from ticket resolve beside the Respond close, under the last-open-sibling gate,
+idempotent. This file calls that method directly between turns, the same way a resolved
+ticket would trigger it, rather than reaching for an invented marker.
 """
 from __future__ import annotations
 
@@ -46,6 +52,11 @@ from tests.chatbot.test_worlds import (  # noqa: F401 - fixtures/helpers reused 
     _patch_owner_session,
     owner_stubs,
 )
+
+
+# A sentinel `arm` key, never written to the session: `test_focus_world` intercepts it
+# and calls the REAL SLA close path instead (see AC-1006's world, below).
+_SLA_CLOSE_SENTINEL = "__sla_conversation_close__"
 
 
 NEW_WORLDS: tuple[OwnerWorld, ...] = (
@@ -85,13 +96,19 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                 )
                 for _ in range(9)
             ),
-            # Turn 11: the conversation-closed marker. `arm` writes what the SLA close
-            # path would have persisted onto the contact's own session before this
-            # message runs - a plain boolean flag, since the plan names no other shape
-            # for it.
+            # Turn 11: the conversation-closed event. `arm` carries the sentinel key
+            # `_SLA_CLOSE_SENTINEL`, which `test_focus_world` (below) intercepts and
+            # turns into a REAL call to
+            # `sla_service.ConversationSLATrackingService._clear_chatbot_dialogue_state_
+            # best_effort` between turns - exactly what a resolved ticket does - rather
+            # than writing anything to the session directly. That method nulls `focus`
+            # and `open_question` wholesale, outside this turn's own trace (it is a
+            # separate DB write the SLA path made, not something turn 11 itself
+            # decided), so there is no `decay` line to grade here - only that the slot
+            # is actually gone by the time turn 11 runs.
             OwnerTurn(
                 message="hello?",
-                arm={"conversation_closed": True},
+                arm={_SLA_CLOSE_SENTINEL: True},
                 emission={
                     "message_type": "business_query",
                     "domain_hint": None,
@@ -100,8 +117,6 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                 },
                 expect={
                     "focus_products": None,
-                    "decayed": ("products", "domains"),
-                    "decay_reason_contains": "conversation was closed",
                 },
             ),
         ),
@@ -122,6 +137,9 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                 emission={
                     "message_type": "business_query",
                     "asks": [{"domain": "inventory", "entities": [_product("SRTWC8517")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 expect={"focus_products": ["SRTWC8517"], "focus_domains": ["inventory"]},
             ),
@@ -130,6 +148,9 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                 emission={
                     "message_type": "business_query",
                     "asks": [{"domain": "incoming", "entities": []}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 expect={"focus_products": ["SRTWC8517"], "focus_domains": ["incoming"]},
             ),
@@ -140,6 +161,9 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "domain_hint": None,
                     "entities": [_product("SRTKS6091")],
                     "asks": [{"domain": None, "entities": [_product("SRTKS6091")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 expect={"focus_products": ["SRTKS6091"], "focus_domains": ["incoming"]},
             ),
@@ -217,6 +241,10 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "domain_hint": "inventory",
                     "intent_hint": "check_stock",
                     "entities": [_product("SRTKS8091")],
+                    "asks": [{"domain": "inventory", "entities": [_product("SRTKS8091")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 expect={"focus_products": ["SRTKS8091"]},
             ),
@@ -231,7 +259,10 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "domain_hint": None,
                     "intent_hint": None,
                     "entities": [],
+                    "asks": [],
                     "answers_open_question": _answers(resolved=True, picks=[2]),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 expect={
                     "answered": "product_pick",
@@ -246,7 +277,10 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "domain_hint": None,
                     "intent_hint": None,
                     "entities": [],
+                    "asks": [],
                     "answers_open_question": _answers(resolved=False),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 expect={
                     # Nothing open: "2" answers nothing, and the alive product from the
@@ -272,8 +306,11 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "domain_hint": None,
                     "intent_hint": None,
                     "entities": [],
+                    "asks": [],
                     "is_affirmative": True,
                     "answers_open_question": _answers(resolved=True, yes_no="yes"),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 expect={"answered": "team_pick", "branch_kind": "out_of_scope", "lane_ran": True},
             ),
@@ -293,8 +330,11 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "domain_hint": None,
                     "intent_hint": None,
                     "entities": [],
+                    "asks": [],
                     "is_affirmative": False,
                     "answers_open_question": _answers(resolved=True, yes_no="no"),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 expect={
                     "answered": "team_pick",
@@ -350,6 +390,10 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "domain_hint": "inventory",
                     "intent_hint": "check_stock",
                     "entities": [],
+                    "asks": [{"domain": "inventory", "entities": []}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 arm={
                     "selection_context": "disambiguation",
@@ -364,7 +408,10 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "domain_hint": None,
                     "intent_hint": None,
                     "entities": [],
+                    "asks": [],
                     "answers_open_question": _answers(resolved=True, picks=[1]),
+                    "anaphora": False,
+                    "topic_reset": False,
                 },
                 expect={
                     "answered": "product_pick",
@@ -470,7 +517,26 @@ def test_focus_world(world, owner_stubs, session_factory, monkeypatch) -> None:
         monkeypatch.setattr(engine_mod, "run_escalation_lane", _fake_escalation)
 
     for index, turn in enumerate(world.turns):
-        if turn.arm:
+        if turn.arm and _SLA_CLOSE_SENTINEL in turn.arm:
+            # AC-1006's conversation-closed half: the REAL event, not an invented
+            # session key. `_clear_chatbot_dialogue_state_best_effort` only reads
+            # `tracking.respond_contact_id`, so a duck-typed stand-in is enough - no
+            # real ConversationSLATracking row is needed to exercise it.
+            from types import SimpleNamespace
+
+            from app.models.access import RespondContact
+            from app.services.sla_service import ConversationSLATrackingService
+
+            db = session_factory()
+            contact_id = (
+                db.query(RespondContact.id)
+                .filter(RespondContact.respond_io_id == OWNER_CONTACT)
+                .scalar()
+            )
+            ConversationSLATrackingService(db)._clear_chatbot_dialogue_state_best_effort(
+                SimpleNamespace(respond_contact_id=contact_id, id="ZZT-owner-world-ticket")
+            )
+        elif turn.arm:
             _patch_owner_session(session_factory, turn.arm, drop=("open_question",))
         owner_stubs(_owner_emission(turn.emission), emits_v3=world.emits_v3)
         envelope = _owner_envelope(turn.message, index)

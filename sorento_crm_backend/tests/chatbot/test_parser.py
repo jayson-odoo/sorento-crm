@@ -61,14 +61,14 @@ class TestStrictSchema:
     def test_it_declares_the_keys_the_NEWEST_prompt_declares(self) -> None:
         """The schema and the newest prompt's OUTPUT block must not drift apart.
 
-        The schema is one wire shape shared by every published prompt version, so the
-        agreement is with the NEWEST of them: v3 (growth r1 slice B2) asks for three keys
-        the live v1 body has never heard of, and the strict schema is what makes the
-        provider emit them at all.
+        S2 flip: v3 no longer shares v1's wire shape at all (D3: `asks` replaces
+        `domain_hint` / `intent_hint` / `entities` / `reference_positions` /
+        `reference_target` / `scope_intent` / `broaden_axis`), so the newest prompt's
+        own agreement is with `PARSE_OUTPUT_JSON_SCHEMA_V3`, not the v1 schema.
         """
         block = SEMANTIC_PARSER_PROMPT_V3.split("== OUTPUT (exactly these keys")[1]
-        for key in parser_mod.PARSE_OUTPUT_JSON_SCHEMA["properties"]:
-            assert f'"{key}"' in block, f"{key} is in the schema but not in prompt v3"
+        for key in parser_mod.PARSE_OUTPUT_JSON_SCHEMA_V3["properties"]:
+            assert f'"{key}"' in block, f"{key} is in the v3 schema but not in prompt v3"
 
     def test_no_key_the_live_prompt_asks_for_was_dropped(self) -> None:
         """The other half, and the one that matters on deploy: v3 REMOVED instructions,
