@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Paperclip, Upload, X, Clipboard, Eye } from 'lucide-react';
+import { Paperclip, Upload, X, Clipboard, Eye, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -59,6 +59,13 @@ interface Props {
   // callbacks. Parent uploads them after creating the draft.
   pendingFiles?: File[];
   onPendingFilesChange?: (files: File[]) => void;
+  /**
+   * Per-tile "Extract with AI" action (D-P3): given for a tile, whether
+   * already uploaded or still pending. Uploaded tiles are fetched into a
+   * `File` here (the dropzone already owns `portalFetchBytes`) so the caller
+   * always gets a `File` regardless of where it came from.
+   */
+  onExtract?: (file: File) => void;
 }
 
 export function AttachmentDropzone({
@@ -69,6 +76,7 @@ export function AttachmentDropzone({
   disabled,
   pendingFiles,
   onPendingFilesChange,
+  onExtract,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -127,6 +135,26 @@ export function AttachmentDropzone({
       setPreviewOpen(true);
     },
     [attachments.length],
+  );
+
+  // D-P3: an already-uploaded tile has no local File - fetch its bytes once,
+  // on demand, so the caller's AIExtractDialog can run on it exactly like a
+  // still-pending file.
+  const handleExtractAttachment = useCallback(
+    async (a: PortalAttachment) => {
+      if (!onExtract) return;
+      try {
+        const res = await portalFetchBytes(toPreviewItem(a));
+        const blob = await res.blob();
+        const file = new File([blob], a.filename || 'attachment', {
+          type: a.content_type || blob.type || undefined,
+        });
+        onExtract(file);
+      } catch {
+        toast.error('Could not read that file for extraction.');
+      }
+    },
+    [onExtract],
   );
 
   const addFiles = useCallback(
@@ -359,6 +387,7 @@ export function AttachmentDropzone({
               disabled={disabled}
               onView={() => openPreview(a.link_id)}
               onRemove={() => setUnlinkTarget(a)}
+              onExtract={onExtract ? () => handleExtractAttachment(a) : undefined}
             />
           ))}
           {(pendingFiles ?? []).map((file, idx) => (
@@ -373,6 +402,7 @@ export function AttachmentDropzone({
                   (pendingFiles ?? []).filter((_, i) => i !== idx),
                 )
               }
+              onExtract={onExtract ? () => onExtract(file) : undefined}
             />
           ))}
         </ul>
@@ -430,11 +460,13 @@ function UploadedRow({
   disabled,
   onView,
   onRemove,
+  onExtract,
 }: {
   attachment: PortalAttachment;
   disabled?: boolean;
   onView: () => void;
   onRemove: () => void;
+  onExtract?: () => void;
 }) {
   const isImage = isImageAttachment(attachment);
   const isVideo = isVideoAttachment(attachment);
@@ -487,6 +519,19 @@ function UploadedRow({
         >
           <Eye className="h-4 w-4" />
         </Button>
+        {onExtract && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onExtract}
+            disabled={disabled}
+            aria-label={`Extract with AI from ${attachment.filename || 'this file'}`}
+            title={`Extract with AI from ${attachment.filename || 'this file'}`}
+          >
+            <Sparkles className="h-4 w-4 text-primary" />
+          </Button>
+        )}
         {canUnlink && (
           <Button
             type="button"
@@ -510,6 +555,7 @@ function PendingRow({
   disabled,
   onView,
   onRemove,
+  onExtract,
 }: {
   file: File;
   /** blob: url owned by the parent (created + revoked there), or null for a
@@ -518,6 +564,7 @@ function PendingRow({
   disabled?: boolean;
   onView: () => void;
   onRemove: () => void;
+  onExtract?: () => void;
 }) {
   return (
     <li className="flex items-center gap-3 rounded-md border border-dashed border-border px-3 py-2 bg-muted/30">
@@ -560,16 +607,31 @@ function PendingRow({
           {(file.size / 1024).toFixed(1)} KB · pending upload
         </p>
       </div>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onClick={onRemove}
-        disabled={disabled}
-        aria-label="Remove pending file"
-      >
-        <X className="h-4 w-4" />
-      </Button>
+      <div className="flex items-center gap-1 shrink-0">
+        {onExtract && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onExtract}
+            disabled={disabled}
+            aria-label={`Extract with AI from ${file.name}`}
+            title={`Extract with AI from ${file.name}`}
+          >
+            <Sparkles className="h-4 w-4 text-primary" />
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onRemove}
+          disabled={disabled}
+          aria-label="Remove pending file"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
     </li>
   );
 }

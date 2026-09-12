@@ -19,7 +19,6 @@ import {
   Loader2,
   MessageSquare,
   Plus,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -272,8 +271,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
-  // ---- AI extract sales order lines (D7) ----
+  // ---- AI extract sales order lines (D7, per-file per D-P3) ----
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
+  // Set the moment a tile's own Extract action is tapped, so the dialog opens
+  // straight on that one file's results (D-P3) instead of the upload stage.
+  const [aiExtractFiles, setAiExtractFiles] = useState<File[] | undefined>(
+    undefined,
+  );
   // Per-row match state for the CURRENT extraction, indexed the same as the
   // dialog's own `result.products` - populated as each code resolves so the
   // dialog can show "Not found" before Apply is even clicked (AC-S6-2), and
@@ -1383,24 +1387,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         onOpenChange={(next) => toggleSection('sales_order', next)}
       >
         <div className="space-y-1.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Label>Sales Order</Label>
-            {/* Always shown, not gated on an attachment already existing here
-               (review fix): the dialog takes the file itself and, with
-               alsoAttach checked, stores it into this same section - gating
-               on an attachment first meant dropping the file in TWICE. */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setAiExtractOpen(true)}
-            >
-              <Sparkles className="size-3.5 mr-1" />
-              Extract lines with AI
-            </Button>
-          </div>
+          <Label>Sales Order</Label>
           {/* The shared portal dropzone (D2/D3): a file dropped before the draft
               exists is buffered and shown here as pending; once the draft exists
-              (this request already has an id) a drop uploads immediately. */}
+              (this request already has an id) a drop uploads immediately.
+              D-P3: the section-header "Extract lines with AI" button is gone -
+              each tile below carries its own Extract action, since one dropped
+              file among ten is the common case, not "extract everything". */}
           <AttachmentDropzone
             kind="price_tag_request"
             submissionId={effectiveId ?? null}
@@ -1409,6 +1402,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             disabled={saving || submitting || deleting}
             pendingFiles={pendingFiles}
             onPendingFilesChange={setPendingFiles}
+            onExtract={(file) => {
+              setAiExtractFiles([file]);
+              setAiExtractOpen(true);
+            }}
           />
         </div>
 
@@ -1580,7 +1577,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
       <AIExtractDialog
         open={aiExtractOpen}
-        onOpenChange={setAiExtractOpen}
+        onOpenChange={(next) => {
+          setAiExtractOpen(next);
+          // Cleared on close so the next tile's Extract starts fresh - a
+          // stale `initialFiles` would re-run extraction on the WRONG file
+          // the next time this dialog opens some other way.
+          if (!next) setAiExtractFiles(undefined);
+        }}
         kind="price_tag_request"
         // No header fields to mirror (D7 review push-back): Customer is a
         // select, not free text, and there is no sales order number field -
@@ -1592,6 +1595,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         renderRowStatus={(_p, index) => (
           <AIMatchStatusLabel status={aiMatchStatuses[index]} />
         )}
+        initialFiles={aiExtractFiles}
       />
 
       {/* One line saying how much is outstanding, above the button that found it */}
