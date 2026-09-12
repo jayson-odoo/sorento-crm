@@ -490,8 +490,12 @@ def test_build_batch_covers_only_held_lines_and_is_none_when_nothing_held_change
 def test_build_batch_skips_a_date_move_anchored_on_a_null_date(api):
     """PLAN section 10 / the 19 Aug 2026 incident: a date change with no FROM or no TO
     builds no reaction - a first-time date, or one an unreadable cell wiped, is not a
-    delay or an advance."""
-    _client, world = api
+    delay or an advance.
+
+    `real_line` is frozen with a full Buy (`PLAN-scm-planning-change-gate-held-or-inquiry.md`):
+    an undecided line raises nothing regardless of the null-anchor rule, so this test's
+    "a real move still builds a batch" assertion needs a held line to prove that rule on."""
+    client, world = api
     db = world.db
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="72",
@@ -530,8 +534,12 @@ def test_build_batch_skips_a_date_move_anchored_on_a_null_date(api):
     # move as a row - the null-anchored one is silently dropped, not merely unclassified.
     real_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
                             required_date=date(2026, 8, 20))
-    _project_line(db, order, line_no=2, product=world.product, core_line=real_line)
+    real_project_line = _project_line(db, order, line_no=2, product=world.product,
+                                       core_line=real_line)
     db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(real_project_line.id, buy_qty="10", buy_reason="ZZT no stock anywhere"),
+    ]})
     real_move = _diff_change(
         DATE_MOVED, real_line, doc_number=core_so.so_number, item_code="ZZT-ITEM-2",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 20),
@@ -1191,7 +1199,10 @@ def test_routes_denied_without_the_view_permission(api):
 
 def test_apply_and_put_are_denied_for_a_view_only_principal(api):
     """PUT and Apply take `projects.projects.edit` - the same dependency the board's own
-    `confirm` route uses - not the read-only `projects.projects.view` GETs sit on."""
+    `confirm` route uses - not the read-only `projects.projects.view` GETs sit on.
+
+    `PLAN-scm-planning-change-gate-held-or-inquiry.md`: the line must be HELD for the
+    change to raise a row at all, so it is frozen with a full Buy first."""
     client, world = api
     db = world.db
     from app.services.user_service import UserPermissionService
@@ -1200,8 +1211,11 @@ def test_apply_and_put_are_denied_for_a_view_only_principal(api):
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="72",
                             required_date=date(2026, 8, 20))
     order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
-    _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
     db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="72", buy_reason="ZZT no stock anywhere"),
+    ]})
 
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
@@ -1236,14 +1250,19 @@ def test_apply_and_put_are_denied_for_a_view_only_principal(api):
 
 
 def test_route_put_rejects_an_unknown_decision_with_422(api):
+    """`PLAN-scm-planning-change-gate-held-or-inquiry.md`: the line must be HELD for the
+    change to raise a row at all, so it is frozen with a full Buy first."""
     client, world = api
     db = world.db
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="72",
                             required_date=date(2026, 8, 20))
     order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
-    _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
     db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="72", buy_reason="ZZT no stock anywhere"),
+    ]})
 
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
@@ -1476,10 +1495,13 @@ def test_apply_placed_offset_is_a_noop_with_nothing_placed():
     assert out is proposal
 
 
-def _no_decision_replan_row(client, world, *, qty="72", days_moved=14):
-    """A changed planned line with NO active decision (AC-R03): always `replan`, with a
-    real board `proposal` behind it (no stock seeded, so the board proposes the whole
-    quantity as Buy) - the common case the captain's fix targets."""
+def _held_line_advanced_replan_row(client, world, *, qty="72", days_moved=14):
+    """A HELD line (`PLAN-scm-planning-change-gate-held-or-inquiry.md` superseded AC-R03's
+    "no decision -> replan": a row now needs a held decision or an inquiry row to exist at
+    all) whose date moves EARLIER: `suggest()` returns `replan` unconditionally for
+    `advanced`, whatever is held, so `decision` still comes back `None` and the row still
+    carries a real board `proposal` (no stock seeded, so the board proposes the whole
+    quantity as Buy) - the common case the captain's original fix targets."""
     db = world.db
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered=qty,
@@ -1487,11 +1509,14 @@ def _no_decision_replan_row(client, world, *, qty="72", days_moved=14):
     order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
     line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
     db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty=qty, buy_reason="ZZT no stock anywhere"),
+    ]})
 
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
         location=world.own_wh.warehouse_code, old_date=date(2026, 8, 20),
-        new_date=date(2026, 8, 20) + timedelta(days=days_moved), old_qty=qty, new_qty=qty,
+        new_date=date(2026, 8, 20) - timedelta(days=days_moved), old_qty=qty, new_qty=qty,
     )
     diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
     batch = planning_change_service.build_batch(
@@ -1510,7 +1535,7 @@ def _no_decision_replan_row(client, world, *, qty="72", days_moved=14):
 
 def test_route_put_confirm_composes_from_the_proposal_and_apply_writes_it(api):
     client, world = api
-    batch, order, line, row = _no_decision_replan_row(client, world)
+    batch, order, line, row = _held_line_advanced_replan_row(client, world)
 
     put = client.put(
         f"{BASE}/planning-changes/{batch.id}/rows/{row['id']}", json={"decision": "confirm"},
@@ -1544,7 +1569,7 @@ def test_route_put_confirm_composes_from_the_proposal_and_apply_writes_it(api):
 
 def test_route_put_amend_requires_a_composition_with_422(api):
     client, world = api
-    batch, _order, _line, row = _no_decision_replan_row(client, world)
+    batch, _order, _line, row = _held_line_advanced_replan_row(client, world)
 
     response = client.put(
         f"{BASE}/planning-changes/{batch.id}/rows/{row['id']}", json={"decision": "amend"},
@@ -1554,7 +1579,7 @@ def test_route_put_amend_requires_a_composition_with_422(api):
 
 def test_route_put_amend_rejects_a_composition_that_does_not_balance_with_422(api):
     client, world = api
-    batch, _order, line, row = _no_decision_replan_row(client, world)
+    batch, _order, line, row = _held_line_advanced_replan_row(client, world)
 
     response = client.put(
         f"{BASE}/planning-changes/{batch.id}/rows/{row['id']}",
@@ -1569,7 +1594,7 @@ def test_route_put_amend_rejects_a_composition_that_does_not_balance_with_422(ap
 def test_route_put_amend_stores_the_planners_own_composition_and_apply_writes_it(api):
     client, world = api
     _stock(world.db, world.product, world.pool_wh, on_hand=100)
-    batch, order, line, row = _no_decision_replan_row(client, world)
+    batch, order, line, row = _held_line_advanced_replan_row(client, world)
 
     response = client.put(
         f"{BASE}/planning-changes/{batch.id}/rows/{row['id']}",

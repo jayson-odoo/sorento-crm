@@ -345,8 +345,12 @@ def build_batch(
     import_job_id: Optional[str],
     file_name: Optional[str],
 ) -> Optional[PlanningChangeBatch]:
-    """One row per PLANNED line the upload changed (AC-R01). `None` when nothing planned
-    changed - the caller shows nothing for such an upload.
+    """One row per changed line that is HELD by the order's ACTIVE supply decision or has a
+    non-cancelled Order Inquiry row (`PLAN-scm-planning-change-gate-held-or-inquiry.md`,
+    AC-G1). Being adopted onto `projects.sales_orders` is not, by itself, enough: an
+    undecided line is silent, whatever changed. `None` when no changed line clears that
+    gate - the caller shows nothing for such an upload - for all three triggers that call
+    this function (SO book re-upload, ESB ingest, manual SO edit).
 
     `applied_line_ids` / `order_ids` are `outstanding_import_service.apply()`'s own local
     state, passed in because an ADDED change's `row_ref` is a source ROW NUMBER, not a
@@ -468,6 +472,8 @@ def build_batch(
     # Keyed `(so_number, project_line_id)`, not just `so_number` - see `_proposal_for`.
     board_cache: Dict[Tuple[str, Optional[str]], dict] = {}
 
+    kept_orders: set = set()
+    kept_count = 0
     for pso_id, group in by_order.items():
         order = group[0]["order"]
         active_decision = supply.active_decision(pso_id)
@@ -495,7 +501,23 @@ def build_batch(
                 so_number,
                 moved_transfers,
             )
+            if row is None:
+                # AC-G1/AC-G4: the line is neither held nor inquired, so it stays off the
+                # batch entirely - not a row worth counting.
+                continue
             db.add(row)
+            kept_orders.add(pso_id)
+            kept_count += 1
+
+    if kept_count == 0:
+        # Every changed line on this upload/edit failed the held-or-inquiry gate: there is
+        # nothing to re-decide, so no batch is left standing for the pill to point at.
+        db.delete(batch)
+        db.flush()
+        return None
+
+    batch.order_count = len(kept_orders)
+    batch.line_count = kept_count
     db.flush()
     return batch
 
@@ -917,7 +939,7 @@ def _build_row(
     board_cache: Dict[Tuple[str, Optional[str]], dict],
     so_number: str,
     moved_transfers: Optional[Dict[str, str]] = None,
-) -> PlanningChangeRow:
+) -> Optional[PlanningChangeRow]:
     c = entry["change"]
     project_line: Optional[ProjectSalesOrderLine] = entry["project_line"]
     product_id = entry.get("product_id")
@@ -939,6 +961,13 @@ def _build_row(
     within_window = bool(days_moved is not None and abs(days_moved) <= RESERVE_WINDOW_DAYS)
 
     inquiry_rows, buy_actioned = _inquiry_rows_and_buy_actioned(db, project_line_id)
+
+    if held is None and not inquiry_rows:
+        # `PLAN-scm-planning-change-gate-held-or-inquiry.md`, AC-G1: a change to a line
+        # nobody has decided on invalidates nothing a person committed to, so it raises no
+        # row. Checked before any of the expensive work below (`_proposal_for` walks the
+        # fulfilment board's ladder) since most changed lines take this exit.
+        return None
 
     facts = {
         "dealer_hot_selling": {

@@ -21,7 +21,10 @@ from app.models.access import MarketSegment
 from app.models.inventory import Stock, Warehouse
 from app.models.lookup import LookupOption
 from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
-from app.models.planning_change import PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT
+from app.models.planning_change import (
+    PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT,
+    PLANNING_CHANGE_STATE_PENDING,
+)
 from app.models.product import Product, UnitOfMeasure
 from app.models.project_so import (
     SO_STATUS_ADOPTED,
@@ -1005,7 +1008,10 @@ class SalesOrderService:
         AC-P3-1: a re-uploaded book that moved a planned line puts a "Changed" badge on the
         order, and the badge opens the board on that order and that batch - which is where
         the change is decided. Pending only: an applied batch is history, and a badge for
-        it would send the reader to a board with nothing left to confirm.
+        it would send the reader to a board with nothing left to confirm. Pending rows only,
+        too (`PLAN-scm-planning-change-gate-held-or-inquiry.md`, AC-G5): a batch left open
+        but whose rows were all superseded by the held-or-inquiry gate has nothing left to
+        decide either, even before `applied_at` is stamped.
 
         The chain is `sales_orders.id` -> `projects.sales_orders.so_id` ->
         `projects.planning_change_rows.project_sales_order_id`. `None` on every order with
@@ -1028,6 +1034,7 @@ class SalesOrderService:
             .filter(
                 ProjectSalesOrder.so_id.in_(list(by_id)),
                 PlanningChangeBatch.applied_at.is_(None),
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
             )
             .order_by(PlanningChangeBatch.created_at.desc())
             .all()
