@@ -1,6 +1,6 @@
 # PLAN - Loading plan Lines tab feedback, 12 Sep 2026
 
-**Status:** APPROVED by the captain 12 Sep 2026 ("i agree with your propose rule"). Implementation on `fix/loading-plan-lines-feedback-12sep`. UAC: `scm-loading-plan-lines-feedback-12sep-acceptance-criteria.md`.
+**Status:** MERGED 12 Sep 2026 in PR #849 (jayson-odoo/sorento-crm). Lane `fix/loading-plan-lines-feedback-12sep`. UAC: `scm-loading-plan-lines-feedback-12sep-acceptance-criteria.md`.
 
 ## Journey
 
