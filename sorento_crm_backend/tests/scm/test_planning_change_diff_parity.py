@@ -25,7 +25,7 @@ from decimal import Decimal
 import pytest
 
 from app.models.inventory import Warehouse
-from app.models.order import SalesOrder, SalesOrderLine
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.planning_change import (
     PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT,
     PlanningChangeBatch,
@@ -36,6 +36,7 @@ from app.models.project_so import (
     DECISION_CHALLENGED,
     SO_STATUS_ADOPTED,
     SO_STATUS_PUBLISHED,
+    AllocationClaim,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -44,6 +45,7 @@ from app.models.project_so import (
 from app.models.user import User
 from app.schemas.scm_orders import SalesOrderUpdate
 from app.services import project_seed_service
+from app.services.error_handler import AppException
 from app.services.scm.front_planning_engine import qty_text
 from app.services.scm.sales_order_service import SalesOrderService
 from tests._pg_fixture import blank_session
@@ -490,6 +492,31 @@ def test_setting_a_held_lines_qty_to_zero_raises_cancelled_not_qty_down(api):
 
 
 # --------------------------------------------------------------------------- #
+# R-S5 (review round): qty-to-zero and removal both end with the SAME core-line
+# shape - line_status CANCELLED - so a later reader has one thing to check, not two.
+# --------------------------------------------------------------------------- #
+
+def test_setting_a_held_lines_qty_to_zero_marks_the_line_cancelled(api):
+    world, project = api
+    db = world.db
+    core_so, core_line, product, order, mirror_line = _linked_line(
+        world, project, qty_ordered=72,
+    )
+    _freeze_with_a_full_buy(db, world, order, mirror_line)
+
+    update = SalesOrderUpdate(lines=[
+        {"id": core_line.id, "sku": product.product_code, "qty_ordered": 0},
+    ])
+    SalesOrderService(db).update(core_so.id, update, user_id=world.actor)
+
+    db.expire_all()
+    from app.services.document_ingest_service import CANCELLED
+
+    reloaded = db.get(SalesOrderLine, core_line.id)
+    assert reloaded.line_status == CANCELLED, reloaded.line_status
+
+
+# --------------------------------------------------------------------------- #
 # Schema contract: every PLANNING_CHANGE_KIND_* constant is in the wire Literal,
 # and "closed" (the pre-rename row kind) is not.
 # --------------------------------------------------------------------------- #
@@ -515,3 +542,163 @@ def test_every_planning_change_kind_constant_is_in_the_schema_literal_and_closed
         "(PLAN-scm-change-management-one-engine.md, Slice A) - 'closed' must not remain "
         "in the wire literal"
     )
+
+
+# --------------------------------------------------------------------------- #
+# R-B1 (review round): re-adding the same product after a cancellation is a
+# NEW open line, never a write onto the cancelled row the SKU fallback would
+# otherwise re-match.
+# --------------------------------------------------------------------------- #
+
+def test_re_adding_the_same_product_after_a_cancellation_creates_a_new_open_line(api):
+    from app.services.document_ingest_service import CANCELLED
+
+    world, _project = api
+    db = world.db
+    core_so, core_line, product, order, mirror_line = _adopted_line(world, qty_ordered=72)
+    _freeze_with_a_full_buy(db, world, order, mirror_line)
+
+    SalesOrderService(db).update(core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor)
+    db.expire_all()
+    assert db.get(SalesOrderLine, core_line.id).line_status == CANCELLED
+
+    result = SalesOrderService(db).update(
+        core_so.id,
+        SalesOrderUpdate(lines=[{"sku": product.product_code, "qty_ordered": 30}]),
+        user_id=world.actor,
+    )
+
+    lines_by_id = {str(ln["id"]): ln for ln in result["lines"]}
+    assert str(core_line.id) in lines_by_id, "the cancelled line must survive, untouched"
+    cancelled_line = lines_by_id[str(core_line.id)]
+    assert cancelled_line["line_status"] == "cancelled"
+    assert cancelled_line["qty_ordered"] == 72
+
+    new_lines = [
+        ln for ln in result["lines"]
+        if str(ln["id"]) != str(core_line.id) and ln["sku"] == product.product_code
+    ]
+    assert len(new_lines) == 1, result["lines"]
+    new_line = new_lines[0]
+    assert new_line["line_status"] == "open"
+    assert new_line["qty_ordered"] == 30
+
+    envelope = result["planning_change_batch"]
+    assert envelope is not None
+    batch = db.get(PlanningChangeBatch, envelope["id"])
+    rows = _rows_for(db, batch.id)
+    assert len(rows) == 1, [r.kind for r in rows]
+    assert rows[0].kind == "added", rows[0].kind
+
+
+# --------------------------------------------------------------------------- #
+# R-B2 (review round): saving the identical payload a second time must not
+# re-raise the cancellation - the line is already gone from the payload,
+# already cancelled; nothing NEW changed.
+# --------------------------------------------------------------------------- #
+
+def test_saving_the_same_payload_again_does_not_re_raise_the_cancellation(api):
+    world, _project = api
+    db = world.db
+    core_so, core_line, product, order, mirror_line = _adopted_line(world, qty_ordered=72)
+    _freeze_with_a_full_buy(db, world, order, mirror_line)
+
+    SalesOrderService(db).update(core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor)
+    SalesOrderService(db).update(core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor)
+
+    batches = db.query(PlanningChangeBatch).all()
+    assert len(batches) == 1, [b.id for b in batches]
+    all_rows = [r for b in batches for r in _rows_for(db, b.id)]
+    cancelled_rows = [r for r in all_rows if r.kind == "cancelled"]
+    assert len(cancelled_rows) == 1, [r.kind for r in all_rows]
+
+
+# --------------------------------------------------------------------------- #
+# R-S2 (review round): a held line's removal is only ever bypassed by the
+# SOLineAllocation Confirm itself writes - another project's AllocationClaim
+# on the same mirror line still refuses the removal.
+# --------------------------------------------------------------------------- #
+
+def test_removing_a_held_line_with_an_allocation_claim_is_still_refused(api):
+    world, project = api
+    db = world.db
+    core_so, core_line, _held_product, order, mirror_line = _adopted_line(world, qty_ordered=72)
+    _freeze_with_a_full_buy(db, world, order, mirror_line)
+
+    claim_product = _product(db)
+    claim = AllocationClaim(
+        id=_uid(), from_project_id=project.id, to_project_id=project.id,
+        so_line_id=mirror_line.id, product_id=claim_product.id, qty=Decimal("5"),
+    )
+    db.add(claim)
+    db.commit()
+
+    with pytest.raises(AppException) as exc:
+        SalesOrderService(db).update(
+            core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "SO_LINE_LINKED_TO_PROJECT"
+
+
+# --------------------------------------------------------------------------- #
+# R-S3 (review round): the order header's own totals must not still count a
+# cancelled line's quantity.
+# --------------------------------------------------------------------------- #
+
+def test_order_totals_exclude_a_cancelled_line(api):
+    world, _project = api
+    db = world.db
+    core_so, core_line, _product, order, mirror_line = _adopted_line(world, qty_ordered=72)
+    _freeze_with_a_full_buy(db, world, order, mirror_line)
+
+    result = SalesOrderService(db).update(
+        core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor,
+    )
+
+    assert result["total_qty"] == 0, result["total_qty"]
+    assert result["open_line_count"] == 0, result["open_line_count"]
+
+
+# --------------------------------------------------------------------------- #
+# R-S4 (review round): a brand-new order can never be created with a
+# zero-qty line - only an EDIT settling an existing held line reads 0 as
+# "cancel it" (AC-A4).
+# --------------------------------------------------------------------------- #
+
+def test_create_rejects_a_zero_qty_line(api):
+    from app.models.numbering import DocumentNumberingRule
+
+    world, _project = api
+    db = world.db
+    customer = Customer(
+        id=_uid(), customer_code=f"ZZT-{_uid()[:8]}", customer_name=f"{MARKER} co",
+    )
+    # `SalesOrderService.create` numbers via `NumberingService.get_next_number
+    # ("sales_order", commit_rule=False)` with no `company_id` - the scratch schema has
+    # no rule at all, so this seeds the cheapest one (unscoped) rather than depending on
+    # a fixture this file does not otherwise need.
+    numbering_rule = DocumentNumberingRule(
+        id=_uid(), company_id=None, doc_type="sales_order", enabled=True,
+        prefix_template="ZZT-{year}-", number_digits=4, next_value=1, start_value=1,
+        reset_policy="none",
+    )
+    db.add_all([customer, numbering_rule])
+    db.commit()
+    product = _product(db)
+
+    client, originals = _api_client(db, world.actor)
+    try:
+        response = client.post(
+            "/api/v1/scm/sales-orders",
+            json={
+                "order_type": "SO",
+                "customer_code": customer.customer_code,
+                "lines": [{"sku": product.product_code, "qty_ordered": 0}],
+            },
+        )
+    finally:
+        _restore_api_client(originals)
+
+    assert response.status_code == 422, response.text
