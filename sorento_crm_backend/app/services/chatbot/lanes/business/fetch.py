@@ -587,9 +587,12 @@ def entity_ids_transformer(
         # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
         # the route onto its own body so the presenter can render "IB (BRW-IB, MWH-IB)".
         # The lane never re-renders that header itself: one writer, one wording.
-        location_token = jsc.get(semantic_input, "outstanding_location_token")
-        if jsc.truthy(location_token) and isinstance(warehouse_codes, list) and warehouse_codes:
-            out["location_token"] = jsc.js_string(location_token)
+        location_token = jsc.js_string(jsc.get(semantic_input, "outstanding_location_token") or "")
+        # The route caps it at 32 characters (it is a word, not a filter). `warehouse_code`
+        # is `String(50)`, so an exact match on a very long code could otherwise 422 the
+        # whole report over a header echo; the codes still travel, the word just does not.
+        if location_token and len(location_token) <= 32 and isinstance(warehouse_codes, list) and warehouse_codes:
+            out["location_token"] = location_token
         # D13/AC-1141: the same wire trip for the withheld SO half, so the refusal line
         # prints IN PLACE (after the header, before the DO block) rather than in front
         # of the whole reply.
