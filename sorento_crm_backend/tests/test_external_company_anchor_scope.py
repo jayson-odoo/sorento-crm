@@ -526,30 +526,77 @@ def test_adoption_does_not_reach_into_another_company(env):
     assert by_company[env.company_b]["product_name"] == f"{MARKER} {code}"
 
 
-def test_a_source_ref_linked_in_another_company_fails_instead_of_updating(env):
-    """AC-A1-7. The reference table is global, so a ref resolves to a row whatever
-    company the request anchored to. Overwriting it would be a cross-company write
-    dressed up as an ordinary re-sync, so it is refused per record."""
-    code = f"{MARKER}WH{uuid.uuid4().hex[:6]}"
-    theirs, source_ref = _link_in_company_b(env, code)
+def test_a_source_ref_linked_in_another_company_creates_a_new_row_in_this_one(env):
+    """AC-19 (autocount-brands-ingest BL-056, D15) - replaces AC-A1-7.
+
+    BL-056's behaviour flip: the reference table now carries a `company_id`
+    anchor (`integration_references.company_id`), so `resolve()` scoped to
+    company A genuinely finds nothing for a ref linked only under B - the same
+    answer as a ref that was never linked at all. A push under A therefore
+    proceeds through the ordinary adoption/create path and lands a NEW row in
+    A; B's row and its own reference are untouched. `_require_same_company` is
+    unreachable through refs now and is gone.
+
+    ``products`` rather than ``warehouses`` (as before): this needs the same
+    code resolvable in two companies for the follow-up read check, and
+    ``Warehouse.warehouse_code`` still carries the pre-305 GLOBAL
+    ``unique=True`` in the model (see the note on `test_adoption_does_not_
+    reach_into_another_company` above).
+    """
+    from app.services.integration_reference_service import IntegrationReferenceService
+
+    code = f"{MARKER}-A19-{uuid.uuid4().hex[:6]}"
+    theirs = env.product(code, env.company_b)
+    source_ref = f"{MARKER}-XREF-{uuid.uuid4().hex[:8]}"
+    IntegrationReferenceService(env.db).link(
+        entity_type="products", entity_id=str(theirs.id), source_ref=source_ref
+    )
 
     res = env.client.post(
-        INGEST_WAREHOUSES,
+        INGEST_PRODUCTS,
         json={
             "companyCode": env.company_a_code,
-            "records": [{"source_ref": source_ref, "code": code, "name": f"{MARKER} hijack"}],
+            "records": [
+                {
+                    "source_ref": source_ref,
+                    "code": code,
+                    "name": f"{MARKER} new in A",
+                    "category_code": env._category.category_code,
+                    "uom_code": env._uom.uom_code,
+                }
+            ],
         },
     )
 
     assert res.status_code == 200, res.text
     entry = res.json()["records"][0]
-    assert entry["outcome"] == "failed"
-    assert "another company" in entry["errors"]["source_ref"]
+    assert entry["outcome"] == "created", entry
 
-    row = _warehouse_row(env, code)
-    assert str(row["id"]) == str(theirs.id)
-    assert str(row["company_id"]) == env.company_b
-    assert row["warehouse_name"] == f"{MARKER} {code}"
+    rows = (
+        env.db.execute(
+            text("SELECT id, product_name, company_id FROM products WHERE product_code = :c"),
+            {"c": code},
+        )
+        .mappings()
+        .all()
+    )
+    by_company = {str(row["company_id"]): row for row in rows}
+    assert set(by_company) == {env.company_a, env.company_b}, (
+        "a new row must exist in A, and B's must be untouched"
+    )
+    assert str(by_company[env.company_b]["id"]) == str(theirs.id)
+    assert by_company[env.company_b]["product_name"] == f"{MARKER} {code}", "B's row untouched"
+    new_id = str(by_company[env.company_a]["id"])
+    assert new_id != str(theirs.id)
+
+    # Second half of AC-19: under A, a read for a ref that resolves only in B
+    # is not_found - the same answer as a ref that was never linked at all.
+    read_res = env.client.post(
+        "/api/v1/external/read/products",
+        json={"companyCode": env.company_a_code, "source_refs": [source_ref]},
+    )
+    assert read_res.status_code == 200, read_res.text
+    assert source_ref in read_res.json()["not_found"], read_res.text
 
 
 def test_read_reports_another_companys_row_as_not_found(env):
