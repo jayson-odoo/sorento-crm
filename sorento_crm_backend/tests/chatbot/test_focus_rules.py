@@ -514,7 +514,8 @@ class TestReuseAlive:
 
         assert fired is True
         assert o["domain_hint"] == "inventory"
-        assert o["intent_hint"] == "check_stock"
+        # D14: intent_hint has no focus slot; derived per turn from DOMAIN_SPEC, never carried
+        assert o["intent_hint"] is None
         assert o["domain_reused_entityless"] is True
 
     def test_a_decisive_domain_of_its_own_beats_the_carry(self) -> None:
