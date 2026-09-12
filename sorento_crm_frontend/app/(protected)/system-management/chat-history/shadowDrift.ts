@@ -98,8 +98,10 @@ export function shadowSummaryLine(summary: ShadowTurnSummary | null | undefined)
   // "the first 5,000" rather than "5,000": the parities below are computed over exactly
   // the rows this counts, and a reader who takes a capped window for the whole one draws
   // the opposite conclusion from the same number.
+  // The count is printed the same way in both branches - bare, no thousands separator -
+  // so the two readings of the same field cannot look like two different numbers.
   const counted = summary.truncated
-    ? `the first ${summary.count.toLocaleString('en-US')} shadow turns`
+    ? `the first ${summary.count} shadow turns`
     : `${summary.count} shadow ${summary.count === 1 ? 'turn' : 'turns'}`;
   const parts = [counted];
   // "not measured" rather than 0%: a range where no pair could be compared and a range
