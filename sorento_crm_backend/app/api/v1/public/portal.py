@@ -736,7 +736,13 @@ def _require_price_tag_request_visible(db: Session, contact_id: str) -> None:
         )
 
 
-def _require_own_price_tag_request(db: Session, token: PortalToken, submission_id: str) -> None:
+def _require_own_price_tag_request(
+    db: Session,
+    token: PortalToken,
+    submission_id: str,
+    *,
+    require_editable: bool = False,
+) -> None:
     """The contact's own price tag request, or a 404 - mirrors
     ``_require_own_request`` in portal_price_tag.py. The attachment routes check
     ownership here instead of ``PortalService.get_submission``, which does not
@@ -746,6 +752,11 @@ def _require_own_price_tag_request(db: Session, token: PortalToken, submission_i
     .id`` is a UUID column, and a malformed value (not just a wrong-but-valid
     one) has to answer the same 404 a genuinely missing row would, not a 500
     from Postgres refusing to compare a UUID column to garbage.
+
+    ``require_editable``: the two ATTACHMENT WRITES (upload, delete) pass this
+    so a locked request (review round 2) refuses them with the same 409
+    ``_require_editable`` gives the header PUT - reading attachments (list,
+    download) does not, since viewing a locked request's files is still fine.
     """
     from app.models.price_tag import PriceTagRequest
 
@@ -754,6 +765,10 @@ def _require_own_price_tag_request(db: Session, token: PortalToken, submission_i
     row = db.query(PriceTagRequest).filter(PriceTagRequest.id == submission_id).first()
     if row is None or str(row.contact_id) != str(token.contact_id):
         raise handle_not_found("Price tag request", submission_id)
+    if require_editable:
+        from app.api.v1.public.portal_price_tag import _require_editable
+
+        _require_editable(row)
 
 
 @router.get("/submissions")
@@ -1319,7 +1334,7 @@ async def portal_upload_attachment(
     portal = PortalService(db)
     k = _check_attachment_kind(kind)
     if k == "price_tag_request":
-        _require_own_price_tag_request(db, token, submission_id)
+        _require_own_price_tag_request(db, token, submission_id, require_editable=True)
     else:
         portal.get_submission(token, k, submission_id)  # ownership check
     attachment_type = portal.get_portal_attachment_type()
@@ -1433,7 +1448,7 @@ def portal_delete_attachment(
         if not owns:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
     elif raw_kind == "price_tag_request":
-        _require_own_price_tag_request(db, token, link.entity_id)
+        _require_own_price_tag_request(db, token, link.entity_id, require_editable=True)
     else:
         portal.get_submission(token, raw_kind, link.entity_id)
 

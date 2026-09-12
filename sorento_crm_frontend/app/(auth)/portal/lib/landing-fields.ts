@@ -126,15 +126,16 @@ export function applyLandingFilters(
         if (!value.from && !value.to) return true;
         const raw = landingFieldValue(row, field);
         if (!raw) return false;
-        const rowTime = new Date(raw).getTime();
-        if (Number.isNaN(rowTime)) return false;
-        if (value.from && rowTime < new Date(value.from).getTime()) return false;
-        if (
-          value.to &&
-          rowTime > new Date(value.to).getTime() + 24 * 60 * 60 * 1000 - 1
-        ) {
-          return false;
-        }
+        // Review round 2: compare the date PART as a string, never
+        // `new Date(...)`. A row timestamp like `created_at` is naive-local
+        // (no timezone designator) while a bare `YYYY-MM-DD` bound parses as
+        // UTC per the ECMA-262 spec - the two `new Date` calls disagreed on
+        // what "midnight" meant, so a row just after local midnight on the
+        // `from` day compared against an hours-ahead UTC boundary and was
+        // wrongly excluded. `YYYY-MM-DD` sorts identically as a string.
+        const rowDate = String(raw).slice(0, 10);
+        if (value.from && rowDate < value.from) return false;
+        if (value.to && rowDate > value.to) return false;
         return true;
       }
       if (!value) return true;

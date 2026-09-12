@@ -64,6 +64,7 @@ import { ReviseAction } from './ReviseAction';
 import { LandingToolbar } from './LandingToolbar';
 import {
   DEFAULT_LANDING_SORT,
+  activeLandingFilterCount,
   applyLandingFilters,
   landingFieldsFor,
   sortLandingItems,
@@ -578,6 +579,8 @@ export function PortalLanding({ slug }: { slug?: string }) {
         view={view}
         onViewChange={setView}
         slug={slug}
+        search={search}
+        onClearSearch={() => setSearch('')}
       />
     </div>
   );
@@ -593,6 +596,8 @@ function SubmissionList({
   view,
   onViewChange,
   slug,
+  search,
+  onClearSearch,
 }: {
   kind: PortalLandingKind;
   items: PortalSubmissionSummary[];
@@ -603,6 +608,12 @@ function SubmissionList({
   view: ListBoardViewMode;
   onViewChange: (mode: ListBoardViewMode) => void;
   slug?: string;
+  /** A search term is answered server-side (`fetchSubmissions(kind, q)`),
+   *  so a search-only zero result already arrives as `items.length === 0`
+   *  with no client-side `filters` set at all (review round 2, AC-L8) - the
+   *  empty state has to know about it too, not just `filters`. */
+  search?: string;
+  onClearSearch?: () => void;
 }) {
   const fields = useMemo(() => landingFieldsFor(kind), [kind]);
   const filtered = useMemo(
@@ -627,10 +638,16 @@ function SubmissionList({
           view={view}
           onViewChange={onViewChange}
         />
-        <Button asChild size="sm" className="shrink-0">
+        <Button asChild size="sm" className="shrink-0 max-w-[7.5rem] sm:max-w-none">
           <Link href={portalNewPath(kind, slug)}>
-            <Plus />
-            New {LANDING_LABELS[kind]}
+            <Plus className="shrink-0" />
+            {/* Review round 2: "New Price Tag Request" (the longest label)
+                pushed the toolbar onto two rows at 375px - truncated below
+                `sm` (icon plus as much of the label as fits, at minimum
+                "New"), the full label at `sm` and up. One text node, not a
+                second element also reading "New" - that collided with a
+                status pill of the same word elsewhere on the page. */}
+            <span className="truncate">New {LANDING_LABELS[kind]}</span>
           </Link>
         </Button>
       </div>
@@ -638,7 +655,9 @@ function SubmissionList({
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground space-y-2">
             <FileText className="h-8 w-8 mx-auto" />
-            {items.length === 0 ? (
+            {items.length === 0 &&
+            !(search ?? '').trim() &&
+            activeLandingFilterCount(filters) === 0 ? (
               <p>No {LANDING_LABELS[kind].toLowerCase()} submissions yet.</p>
             ) : (
               <>
@@ -647,7 +666,10 @@ function SubmissionList({
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => onFiltersChange({})}
+                  onClick={() => {
+                    onFiltersChange({});
+                    onClearSearch?.();
+                  }}
                 >
                   Clear filters
                 </Button>
@@ -783,6 +805,13 @@ function SubmissionRow({
         dateStyle: 'medium',
       })
     : null;
+  // Review round 2: same formatting as createdText - the list row used to
+  // print the raw ISO string here instead.
+  const neededByText = row.needed_by_date
+    ? new Date(row.needed_by_date).toLocaleDateString(undefined, {
+        dateStyle: 'medium',
+      })
+    : null;
 
   return (
     <div
@@ -791,14 +820,16 @@ function SubmissionRow({
     >
       {isComplaint && !row.is_draft ? (
         <span
-          className={`shrink-0 inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${complaintStatusPillClass(row.status)}`}
+          className={`max-w-[40%] shrink-0 inline-flex items-center truncate rounded-md px-2 py-0.5 text-xs font-semibold ${complaintStatusPillClass(row.status)}`}
+          title={statusText}
         >
           {statusText}
         </span>
       ) : (
         <Badge
           variant={statusVariant(row)}
-          className="shrink-0 whitespace-nowrap"
+          className="max-w-[40%] shrink-0 truncate"
+          title={statusText}
         >
           {statusText}
         </Badge>
@@ -815,12 +846,12 @@ function SubmissionRow({
       >
         {primaryMeta}
       </span>
-      {row.needed_by_date && (
+      {neededByText && (
         <span
           className="shrink-0 w-20 truncate text-right text-xs text-muted-foreground"
-          title={row.needed_by_date}
+          title={neededByText}
         >
-          {row.needed_by_date}
+          {neededByText}
         </span>
       )}
       <span

@@ -73,7 +73,13 @@ interface Props {
    * always gets a `File` regardless of where it came from.
    */
   onExtract?: (file: File) => void;
+  /** The drop-area prompt above Choose file / Paste from clipboard - the
+   *  generic default reads oddly on a form with only one thing to drop
+   *  (e.g. the price tag form's Sales Order file). */
+  placeholder?: string;
 }
+
+const DEFAULT_PLACEHOLDER = 'Drop a file here, paste a screenshot or text, or';
 
 export function AttachmentDropzone({
   kind,
@@ -85,6 +91,7 @@ export function AttachmentDropzone({
   onPendingFilesChange,
   onExtract,
   readOnly,
+  placeholder = DEFAULT_PLACEHOLDER,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -147,10 +154,21 @@ export function AttachmentDropzone({
 
   // D-P3: an already-uploaded tile has no local File - fetch its bytes once,
   // on demand, so the caller's AIExtractDialog can run on it exactly like a
-  // still-pending file.
+  // still-pending file. `extractingRef` (review round 2) guards a second tap
+  // while that fetch is still in flight - the read is async, and without it
+  // a fast double-tap read the bytes (and called `onExtract`) twice. A ref,
+  // not just the `extractingIds` state below, because the check has to be
+  // synchronous: two clicks in the same tick would otherwise both pass a
+  // state-based check before either render had a chance to disable the tile.
+  const extractingRef = useRef<Set<string>>(new Set());
+  const [extractingIds, setExtractingIds] = useState<Set<string>>(new Set());
+
   const handleExtractAttachment = useCallback(
     async (a: PortalAttachment) => {
       if (!onExtract) return;
+      if (extractingRef.current.has(a.link_id)) return;
+      extractingRef.current.add(a.link_id);
+      setExtractingIds(new Set(extractingRef.current));
       try {
         const res = await portalFetchBytes(toPreviewItem(a));
         const blob = await res.blob();
@@ -160,6 +178,9 @@ export function AttachmentDropzone({
         onExtract(file);
       } catch {
         toast.error('Could not read that file for extraction.');
+      } finally {
+        extractingRef.current.delete(a.link_id);
+        setExtractingIds(new Set(extractingRef.current));
       }
     },
     [onExtract],
@@ -344,9 +365,7 @@ export function AttachmentDropzone({
           } ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
         >
           <Upload className="h-6 w-6 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            Drop a file here, paste a screenshot or text, or
-          </p>
+          <p className="text-sm text-muted-foreground">{placeholder}</p>
           <div className="flex flex-wrap items-center justify-center gap-2">
             <Button
               type="button"
@@ -395,6 +414,7 @@ export function AttachmentDropzone({
               key={a.link_id}
               attachment={a}
               disabled={disabled}
+              extracting={extractingIds.has(a.link_id)}
               onView={() => openPreview(a.link_id)}
               onRemove={readOnly ? undefined : () => setUnlinkTarget(a)}
               onExtract={
@@ -479,12 +499,16 @@ function uploaderLabel(attachment: PortalAttachment): string | null {
 function UploadedRow({
   attachment,
   disabled,
+  extracting,
   onView,
   onRemove,
   onExtract,
 }: {
   attachment: PortalAttachment;
   disabled?: boolean;
+  /** This tile's own Extract fetch is in flight (review round 2) - only the
+   *  Extract button reflects it, so View/Remove stay usable. */
+  extracting?: boolean;
   onView: () => void;
   onRemove?: () => void;
   onExtract?: () => void;
@@ -547,12 +571,16 @@ function UploadedRow({
             variant="outline"
             size="sm"
             onClick={onExtract}
-            disabled={disabled}
+            disabled={disabled || extracting}
             aria-label={`Extract with AI from ${attachment.filename || 'this file'}`}
             title={`Extract with AI from ${attachment.filename || 'this file'}`}
           >
-            <Sparkles className="h-4 w-4 text-primary" />
-            <span className="hidden md:inline">Extract with AI</span>
+            <Sparkles
+              className={`h-4 w-4 text-primary${extracting ? ' animate-pulse' : ''}`}
+            />
+            <span className="hidden md:inline">
+              {extracting ? 'Reading...' : 'Extract with AI'}
+            </span>
           </Button>
         )}
         {canUnlink && (

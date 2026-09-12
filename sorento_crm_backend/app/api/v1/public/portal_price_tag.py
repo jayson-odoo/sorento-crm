@@ -301,7 +301,16 @@ def portal_update_price_tag_request(
     _require_editable(req)
     is_post_submit_edit = req.portal_draft_at is None
 
+    # Pre-edit snapshot for the audit row's old_values (D-P6b) - taken before
+    # any setattr/replace_lines below, so it is genuinely the "before" state.
+    old_snapshot = _header_and_lines_snapshot(req) if is_post_submit_edit else None
+
     update_data = payload.model_dump(exclude_unset=True)
+    if "promotion_id" in update_data:
+        with company_scope(db, frozenset({req.company_id})):
+            PriceTagRequestService.validate_promotion_access(
+                db, req.contact_id, update_data["promotion_id"]
+            )
     # `lines` is a relationship, not a column: given, it REPLACES the draft's
     # lines; omitted, it leaves them alone. Re-saving a draft posts the whole
     # table, which is why the form no longer creates a second request each time.
@@ -314,16 +323,30 @@ def portal_update_price_tag_request(
     db.flush()
 
     if is_post_submit_edit:
+        # A post-submit PUT is a Save on a request marketing already treats as
+        # complete - it must clear the same bar Submit does (D-P6b), after the
+        # write so it inspects what would actually be saved. Set guard first:
+        # a guarded line is the more specific, more actionable refusal, and a
+        # test fixture with no debtor set (this PUT never touches debtor_name)
+        # must not have that generic incompleteness mask it.
+        PriceTagRequestService.validate_set_guard(db, req)
+        PriceTagRequestService.validate_submittable(req, require_debtor=False)
+
         from app.services.audit_service import log_audit
 
         log_audit(
             db,
             entity_type="price_tag_request",
             entity_id=req.id,
-            action="portal_edit",
+            action="UPDATE",
             contact_id=req.contact_id,
-            new_values=update_data,
-            description="Portal edit after submit",
+            company_id=req.company_id,
+            old_values=old_snapshot,
+            # JSON-safe payload (mode="json"): the python-mode `update_data`
+            # above still carries raw `date` objects, which the JSONB column's
+            # driver cannot serialise and used to 500 the whole request.
+            new_values=payload.model_dump(exclude_unset=True, mode="json"),
+            description="portal edit after submit",
         )
 
     db.commit()
@@ -630,6 +653,40 @@ def _require_editable(req) -> None:
         message="This request can no longer be edited.",
         code="NOT_EDITABLE",
     )
+
+
+def _header_and_lines_snapshot(req) -> dict:
+    """A JSON-safe snapshot of the header fields a post-submit PUT can change,
+    plus the whole line table, for the audit row's ``old_values`` (D-P6b).
+    Called BEFORE any ``setattr``/``replace_lines`` on the request, so it is
+    genuinely the pre-edit state, not the header-only dict the payload itself
+    carries.
+    """
+    return {
+        "debtor_code": req.debtor_code,
+        "debtor_name": req.debtor_name,
+        "promotion_id": req.promotion_id,
+        "needed_by_date": req.needed_by_date.isoformat() if req.needed_by_date else None,
+        "notes": req.notes,
+        "price_mode": req.price_mode,
+        "lines": [
+            {
+                "line_type": line.line_type,
+                "product_id": line.product_id,
+                "product_set_id": line.product_set_id,
+                "quantity": line.quantity,
+                "remarks": line.remarks,
+                "marketing_price_override": (
+                    float(line.marketing_price_override)
+                    if line.marketing_price_override is not None
+                    else None
+                ),
+                "marketing_override_reason": line.marketing_override_reason,
+                "sort_order": line.sort_order,
+            }
+            for line in req.lines
+        ],
+    }
 
 
 def _detail_body(db: Session, req) -> dict:

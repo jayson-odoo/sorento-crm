@@ -141,11 +141,25 @@ All line refs are `origin/main` at c385da410.
   `portal_draft_at` is set OR `status in (new, changes_requested)`; PUT uses it, DELETE and
   submit keep `_require_draft`. The PUT path for a non-draft: same `update_request` service
   call (which already re-derives `show_promo_price` and validates price mode), then
-  `record_audit(...)` with action `portal_edit`; no `emit_form_event`, no status
+  `log_audit(...)` with action `UPDATE` (see D-P6b); no `emit_form_event`, no status
   or assignee change. `_detail_body` adds `is_editable`. Trigger for notifying the designer:
   a designer reports designing against stale lines.
-- **D-M1** No new motion beyond `--duration-fast` opacity on section bodies (AC-U1); the
-  Collapsible primitive's height animation, if any, is turned off for these sections.
+- **D-P6b Post-submit PUT hardening (review round 2, 12 Sep).** The post-submit branch runs
+  `validate_submittable` + `validate_set_guard` before commit (a submitted request can never be
+  left with zero lines or a guarded set); `replace_lines` on that branch carries
+  `marketing_price_override` / `marketing_override_reason` over to the new line with the same
+  `product_id` / `product_set_id`; `promotion_id` on create and update is validated against
+  `lookup_promotions(db, contact_id)` (422 outside the contact's audience); attachment upload and
+  delete for `kind == price_tag_request` (`portal.py` attachment routes) run the same editability
+  gate as the PUT; `needed_by_date: ""` is coerced to NULL by the schema; the audit row is
+  `action="UPDATE"` with `description="portal edit after submit"`, `company_id=req.company_id`,
+  `old_values` = pre-edit header + lines, `new_values` = the JSON-safe payload including lines
+  (`model_dump(mode="json")`); `ai_extract.py` rejects a file whose extension is empty the same
+  way as an unlisted one.
+- **D-M1** No motion on section open / close (review round 2 ruling): `animate-none` both ways,
+  as `ContainerRequestSection.tsx` does. The design-language frequency band permits none, it
+  clears the keyboard-motion hard-fail (Enter / Space toggles the header) and the literal
+  `duration-N` guardrail (`css/design-tokens.test.ts`). Filter / Sort keep the shared surfaces.
 
 ## Slices (one lane, one PR, commit per slice)
 

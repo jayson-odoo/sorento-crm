@@ -382,7 +382,27 @@ export function AIExtractDialog({
           </DialogTitle>
         </DialogHeader>
 
-        {stage === 'upload' && isPerFileMode && (
+        {stage === 'upload' && isPerFileMode && extractError && (
+          // Review round 2: a rejected per-file extract used to leave the
+          // spinner above showing forever - stage never left 'upload' on
+          // failure, and that block had no error branch of its own. No
+          // separate Cancel button here - the Dialog's own close control
+          // already offers that, and a second one of the same name is
+          // ambiguous to anything querying by role.
+          <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+            <p className="text-sm text-destructive" data-testid="ai-extract-error">
+              {extractError}
+            </p>
+            <Button
+              onClick={() => void runExtract(initialFiles ?? [])}
+              data-testid="ai-extract-retry"
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {stage === 'upload' && isPerFileMode && !extractError && (
           <div
             className="flex flex-col items-center justify-center gap-3 py-10"
             data-testid="ai-extract-per-file-loading"

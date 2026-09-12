@@ -5,11 +5,11 @@
  * Sales Order & Lines, Price, Additional Information. A header button toggles
  * the body; a collapsed section with values shows a one-line summary (AC-P9).
  *
- * Motion (AC-U1, D-M1): section expand/collapse is a "tens/day" row-expand
- * gesture, so it gets opacity only, never height or slide - the shared
- * Collapsible primitive's height keyframes are switched off here rather than
- * reused as-is (same call `ContainerRequestSection.tsx` made for its own
- * fold). Reduced motion drops the fade too: the body just appears.
+ * Motion (AC-U1, D-M1, review round 2): section expand/collapse gets NO
+ * animation at all - the body appears and disappears instantly, on tap and on
+ * Enter / Space alike - the shared Collapsible primitive's height keyframes
+ * are switched off here rather than reused as-is (same call
+ * `ContainerRequestSection.tsx` made for its own fold).
  */
 import type { ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
@@ -20,7 +20,6 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
-import { useReducedMotion } from '@/lib/motion';
 
 export function FormSection({
   title,
@@ -45,8 +44,6 @@ export function FormSection({
   children: ReactNode;
   className?: string;
 }) {
-  const prefersReducedMotion = useReducedMotion();
-
   return (
     <Card className={cn('overflow-hidden', className)}>
       <Collapsible open={open} onOpenChange={onOpenChange}>
@@ -77,13 +74,7 @@ export function FormSection({
             />
           </button>
         </CollapsibleTrigger>
-        <CollapsibleContent
-          className={
-            prefersReducedMotion
-              ? 'overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none'
-              : 'overflow-hidden data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:duration-150 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:duration-150'
-          }
-        >
+        <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none">
           <div className="space-y-4 border-t px-4 py-4">{children}</div>
         </CollapsibleContent>
       </Collapsible>

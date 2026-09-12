@@ -90,8 +90,9 @@ trigger named in the plan).
   exactly one line (number, status pill, the type's primary meta, need-by when present,
   created date); a long cell truncates with a `title` and never wraps the row and the choice persists in localStorage per device; the default is Cards
   under 768px and List at 768px and up. Switching type keeps the choice.
-- **AC-L8 [FE]** Given filters active and a search term, when both apply, then the empty
-  state reads "No submissions match your filters." with a "Clear filters" action.
+- **AC-L8 [FE]** Given any filter active OR a search term, when zero rows result, then the
+  empty state reads "No submissions match your filters." with a "Clear filters" action that
+  clears both.
 
 ### Duplicate
 
@@ -176,8 +177,8 @@ Frequency: a dealer opens the portal a few times a day and the form a few times 
 (occasional band in `DESIGN-LANGUAGE.md`). Section expand / collapse is a row-expand
 gesture (tens/day band): no height animation.
 
-- **AC-U1 [UX]** Section open / close: content appears with `--duration-fast` opacity
-  only, no height or slide; under `prefers-reduced-motion` it appears instantly.
+- **AC-U1 [UX]** Section open / close: no animation at all (`animate-none` both ways); the
+  body appears and disappears instantly, on tap and on Enter / Space alike.
 - **AC-U2 [UX]** Filter popover and Sort menu use the shared Popover / DropdownMenu
   surfaces and their existing presets; nothing new is animated. Keyboard-opened surfaces
   do not animate (M2-01).
@@ -204,6 +205,16 @@ gesture (tens/day band): no height animation.
 - **AC-B5 [BE][T]** Given a draft with `price_mode = selling` and no `promotion_id`, when
   POST `.../submit`, then 200 and every line has `show_promo_price = true` (the rule
   `PRICE_MODE_NEEDS_PROMOTION` no longer exists).
+- **AC-B10 [BE][T]** Given a post-submit PUT, then: `needed_by_date` as a date serialises
+  into the audit row (200, not 500); `lines: []` -> 422; a set-guarded line -> 422; a line
+  carrying a marketing price override keeps it; a `promotion_id` outside the contact's
+  audience -> 422; the audit row is `UPDATE` with description "portal edit after submit",
+  `company_id`, `old_values` (header + lines) and `new_values` (payload incl. lines).
+- **AC-B11 [BE][T]** Given a price tag request that is not editable (approved, ready, void,
+  designing, proof_ready), when the contact POSTs an attachment or DELETEs an attachment link
+  on it, then 409; at new / changes_requested / draft both succeed.
+- **AC-B12 [BE][T]** Given `needed_by_date: ""` on PUT, then it is stored NULL and submit
+  succeeds.
 - **AC-B9 [BE][T]** Given a draft with customer, one line and a price mode but no
   `needed_by_date`, when POST `.../submit`, then 200 (need by is optional).
 - **AC-B6 [BE][T]** Given the detail GET, when the request is `new` or
