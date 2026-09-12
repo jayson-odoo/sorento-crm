@@ -602,6 +602,12 @@ class SystemSetting(Base):
     chatbot_ordering_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # AC-1027. The `chatbot_semantic_parser` version every real turn ALSO runs, in the
+    # background, so the owner can watch a new parser's answers beside the live one before
+    # promoting it (D10). NULL = no shadow parse runs, which is the state every install is
+    # in until the owner sets it, so the column is nullable with no server default rather
+    # than NOT NULL with a sentinel: "off" is the absence of a version, not a version.
+    chatbot_parser_shadow_version = Column(String(255), nullable=True)
 
 
 class UserQuickAccess(Base):

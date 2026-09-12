@@ -166,6 +166,10 @@ class SystemSettingUpdate(BaseModel):
     # above - they must appear HERE and in the GET dict, because both are manual.
     chatbot_business_lane_enabled: Optional[bool] = None
     chatbot_ordering_enabled: Optional[bool] = None
+    # AC-1027 / AC-1028. The parser version the shadow turn runs, or null for off. Here
+    # AND in the GET dict below, because both builders are hand-written and a column on
+    # only one of them never reaches the screen.
+    chatbot_parser_shadow_version: Optional[str] = None
 
 
 class ChatbotLane(BaseModel):
@@ -382,6 +386,7 @@ async def get_settings(
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
+                "chatbot_parser_shadow_version": getattr(settings, "chatbot_parser_shadow_version", None) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]

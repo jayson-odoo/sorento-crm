@@ -4881,6 +4881,13 @@ class ConversationSLATrackingService:
             self._enqueue_ticket_resolved_message_best_effort(tracking)
             if not self._has_other_open_conversation_siblings(tracking):
                 self._close_respond_conversation_best_effort(tracking)
+                # D9 / AC-1003: the conversation is over, so what the chatbot
+                # remembered about it is over too. Here, beside the Respond close and
+                # under the same last-sibling gate, because this IS the "conversation
+                # closed" event the chatbot's third clearing cause names - and a
+                # contact whose sibling ticket is still open has a live conversation
+                # whose focus must survive.
+                self._clear_chatbot_dialogue_state_best_effort(tracking)
                 # AC-M3: and tell n8n directly, so respond-close-convo runs with
                 # a real resolver identity instead of inferring one from an API
                 # close. Additive to the RQ job above, which stays as the
@@ -5028,6 +5035,66 @@ class ConversationSLATrackingService:
         except Exception as exc:  # noqa: BLE001 - enqueue is best-effort
             logger.warning(
                 "Resolve: failed to enqueue Respond.io close for tracking %s: %s",
+                getattr(tracking, "id", None),
+                exc,
+            )
+
+    def _clear_chatbot_dialogue_state_best_effort(
+        self, tracking: ConversationSLATracking
+    ) -> None:
+        """Clear the contact's chatbot focus and open question on a conversation close.
+
+        D9 (owner, 12 Sep 2026) leaves the chatbot with three ways to forget, and this is
+        the only one that is not something the customer typed: the conversation ended, so
+        the next message starts a new one and must not inherit the last one's product,
+        customer or half-answered picker.
+
+        `focus` and `open_question` ONLY. `ideation` is an open draft the contact can come
+        back to, `access_levels` is what they are allowed to see and `contains_flyer`
+        describes the last media they sent - none of the three is what the conversation was
+        ABOUT, and wiping them here would log a contact out of a draft because a ticket
+        closed.
+
+        Best-effort and idempotent, like every other post-commit side effect on this path:
+        the resolve has already committed, a contact with no row or no state is a no-op,
+        and a second close writes the same two nulls. Never raises.
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+        try:
+            from app.models.access import RespondContact
+            from app.services.conversation_variables_service import (
+                get_for_contact,
+                overwrite_for_contact,
+            )
+
+            contact_id = getattr(tracking, "respond_contact_id", None)
+            if not contact_id:
+                return
+            contact = (
+                self.db.query(RespondContact)
+                .filter(RespondContact.id == str(contact_id))
+                .first()
+            )
+            respond_io_id = getattr(contact, "respond_io_id", None) if contact else None
+            if not respond_io_id:
+                return
+
+            state = get_for_contact(self.db, respond_io_id=str(respond_io_id))
+            # The engine stores the dialogue state one level in, under `variables`; a
+            # state written through the external endpoint is flat. Clear whichever shape
+            # is there rather than imposing one, so a close never reshapes a session the
+            # engine is about to read.
+            target = state.get("variables") if isinstance(state.get("variables"), dict) else state
+            if target.get("focus") is None and target.get("open_question") is None:
+                return  # already clear: nothing to write, and the write is not free
+            target["focus"] = None
+            target["open_question"] = None
+            overwrite_for_contact(self.db, respond_io_id=str(respond_io_id), state=state)
+        except Exception as exc:  # noqa: BLE001 - post-commit side effect, never raises
+            logger.warning(
+                "Resolve: failed to clear chatbot dialogue state for tracking %s: %s",
                 getattr(tracking, "id", None),
                 exc,
             )

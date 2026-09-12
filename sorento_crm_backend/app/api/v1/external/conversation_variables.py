@@ -97,8 +97,12 @@ def overwrite_conversation_state(
     _http_exc_to_reraise: HTTPException | None = None
 
     try:
+        # AC-1034: the five keys the model declares, in a fixed order, and NOTHING else.
+        # `exclude_unset` is deliberately not used: a PUT is a wholesale overwrite, so a
+        # key the caller omitted is a key they are clearing, and writing the omission as
+        # an absent key would leave the old value in place on the next read.
         state = overwrite_for_contact(
-            db, respond_io_id=respond_io_id, state=payload.root
+            db, respond_io_id=respond_io_id, state=payload.model_dump()
         )
         response_payload = ConversationStateResponse(
             respond_io_id=respond_io_id, session_vars=state

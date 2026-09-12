@@ -524,7 +524,12 @@ ActionKind = Literal[ACTION_KINDS]  # type: ignore[valid-type]
 
 # Which injector delivered this envelope (D15). The engine never behaves differently on
 # it; it exists so a trace row can say where a duplicate came from.
-INGRESS_KINDS = ("webhook", "poller", "retry", "console")
+#
+# `shadow` (AC-1027) is the one member that is not an injector: it marks a row the engine
+# wrote about ITSELF, a second parse of a live turn under the version in
+# `system_settings.chatbot_parser_shadow_version`. It sends nothing, writes no session and
+# escalates nothing, and it names the turn it shadows in `shadow_of`.
+INGRESS_KINDS = ("webhook", "poller", "retry", "console", "shadow")
 IngressKind = Literal[INGRESS_KINDS]  # type: ignore[valid-type]
 
 # The business lane's resolve+gate exits (S6a). Taken from the four `resolve-exit-*`

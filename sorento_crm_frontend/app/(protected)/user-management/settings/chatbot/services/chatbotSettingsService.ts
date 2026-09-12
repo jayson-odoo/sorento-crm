@@ -29,11 +29,8 @@ import { extractApiError } from '@/lib/api-client';
  *   the backstop for a direct call rather than how an operator finds out.
  *
  * ---------------------------------------------------------------------------
- * EXPECTED CONTRACT - `chatbot_parser_shadow_version` (L1-S4, AC-1027 / AC-1028)
+ * `chatbot_parser_shadow_version` (L1-S0, AC-1027 / AC-1028) - LIVE
  * ---------------------------------------------------------------------------
- *
- * NOT IMPLEMENTED YET. Phase 1 builds the field against the mock below; Phase 2 of
- * `PLAN-chatbot-focus-multi-domain.md` adds the column and this note goes with the mock.
  *
  *   GET  /api/v1/user-management/settings
  *     `settings.chatbot_parser_shadow_version`: string | null
@@ -103,16 +100,6 @@ const FALLBACKS: ChatbotSettings = {
   chatbot_parser_shadow_version: null,
 };
 
-// ---------------------------------------------------------------------------
-// PHASE 1 MOCK - `chatbot_parser_shadow_version` only. DEBT, not done.
-// ---------------------------------------------------------------------------
-// The column does not exist yet (Phase 2 of L1-S4 adds it, with the migration and both
-// dict builders). Until it does, the field round-trips through this module-level value so
-// the screen's every state can be tuned with no backend: the save is accepted, the reload
-// shows what was saved, and a page refresh forgets it - which is exactly what a mock owes
-// and exactly why it must not ship. Swapping it for the real field is deleting these two
-// lines and the `??` in `pickChatbotSettings`.
-let mockParserShadowVersion: string | null = null;
 
 function pickChatbotSettings(row: Record<string, unknown> | null | undefined): ChatbotSettings {
   return {
@@ -125,11 +112,8 @@ function pickChatbotSettings(row: Record<string, unknown> | null | undefined): C
     chatbot_unsupported_domains: Array.isArray(row?.chatbot_unsupported_domains)
       ? (row.chatbot_unsupported_domains as string[])
       : FALLBACKS.chatbot_unsupported_domains,
-    // PHASE 1 MOCK: the `??` is the whole swap. Once the column ships, the row carries
-    // the value and the mock falls out of the expression unread.
     chatbot_parser_shadow_version:
-      (row?.chatbot_parser_shadow_version as string | null | undefined) ??
-      mockParserShadowVersion,
+      (row?.chatbot_parser_shadow_version as string | null | undefined) ?? null,
   };
 }
 
@@ -152,9 +136,6 @@ export async function getChatbotSettings(): Promise<ChatbotSettings> {
 }
 
 export async function saveChatbotSettings(input: ChatbotSettings): Promise<ChatbotSettings> {
-  // PHASE 1 MOCK: remembered before the call, so a save that the backend ignores still
-  // reads back the way the real one will.
-  mockParserShadowVersion = input.chatbot_parser_shadow_version;
   const response = await apiFetch('/api/user-management/settings/general', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
