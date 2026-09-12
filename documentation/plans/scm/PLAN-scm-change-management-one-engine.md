@@ -1,6 +1,6 @@
 # PLAN: managing a sales-order change after planning, one engine
 
-**Status:** Slices A and B built; Slice C Phase 1 in progress. Same lane/scm-change-a-diff-parity, ONE PR
+**Status:** Slices A, B and C built (C's Phase 1 and Phase 2 both). Same lane/scm-change-a-diff-parity, ONE PR
 (#855) for all slices per the owner, 13 Sep 2026. Grilled with the owner across four rounds
 on 12 and 13
 September 2026; the agreed page is versioned at
@@ -318,3 +318,42 @@ S3, S4, S9, S10, S12 likewise), `decision` null / confirm / amend only.
    carries a branch of its own any more.
 4. Migration `515` adds `suggestion_json` and maps existing `decision` values:
    `accept` / `keep` -> `confirm`, `board` -> `null`.
+
+### E. Slice C as built (13 September 2026), and what it cost elsewhere
+
+1. **`compose_suggestion` is a pure diff, and the RE-RUN is asked for on every kind but
+   `cancelled`.** `_build_row` used to walk the ladder only for a `replan` row; it now does
+   it for every held line that still exists, because the suggestion IS that walk diffed
+   against the hold. A cancelled line is skipped (there is nothing left to walk for) and
+   its whole hold is released or reallocated.
+2. **A stale walk is fitted to the line's own new quantity** (`_fit_to_new_quantity`). The
+   board walks the LIVE line, and production writes the line before it raises the change -
+   but a caller that diffs before it writes (two of the red tests do) came back sized to
+   the old quantity, and diffing against that offers to keep a Buy for stock the customer
+   no longer wants. Which rungs were chosen stays the engine's answer; only the size is the
+   line's. A walk sized to NEITHER quantity is left alone: that is a partially delivered
+   line.
+3. **The `release` path is gone, not moved.** `_oi_demand_rows`' release branch, and with it
+   `_release_inquiry_rows` / `_release_note` / `_has_unlinked_row` / `_confirm_payload_reduce`,
+   were only ever reachable from a reaction verb. A delayed-past-the-window line is now
+   Released-and-Bought as a COMPOSITION that CS confirms, and the confirm's own
+   settle-in-place seam updates the line's inquiry row - so nothing moves a row to the pool
+   location behind CS's back. Moving freed quantity is Slice D's, and it will need its own
+   path (the target is a row or the dealer pool, not a location string).
+4. **A batch no longer applies a row nobody decided.** `build_batch` writes `decision=None`
+   for every row; Apply takes `confirm` / `amend` plus `kind == cancelled` (a line the book
+   closed has nothing to decide). Every test that relied on the implicit `accept` has to
+   say what it decides.
+5. **`_notify_purchasing` on an order inquiry is now QUEUED, not sent inline**
+   (`project_order_inquiry_service.py`). It calls
+   `NotificationService.create_with_channel_preferences`, which COMMITS - forbidden inside
+   a savepoint by that method's own docstring - and it runs inside the confirm, which the
+   batch apply wraps in one. Before Slice C a batch apply never reached it (a release
+   superseded instead of confirming); now CS confirming a delayed line raises a NEW inquiry
+   and the commit released the savepoint, so a perfectly written revision came back as
+   "This transaction is closed" whenever a purchasing-role user existed - i.e. on live. The
+   payload is queued on `Session.info` and fired by the module's existing
+   `after_commit` listener on a fresh session, the same pattern
+   `_dispatch_changed_with_links` already uses beside it.
+6. **The board's own Confirm** (`_confirm_a_planning_change`) dispatched on
+   `row.suggested in ("release", "retire")`; it dispatches on `row.kind == "cancelled"` now.
