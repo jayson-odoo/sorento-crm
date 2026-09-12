@@ -212,8 +212,9 @@ class TestAC921ThePORungReachesTheCustomer:
         assert CODE in said
         # Owner ruling, 11 Sep 2026: the structured field block - PO_ROWS carries no
         # `po_date`, so that line is omitted, but Ordered/Outstanding/Location print.
-        assert "Ordered: 1000" in said and "Outstanding: 1000" in said
-        assert "Location: KL-WH" in said
+        # Owner ruling, 12 Sep 2026 (finding 3): every field line is bold-labelled.
+        assert "*Ordered:* 1000" in said and "*Outstanding:* 1000" in said
+        assert "*Location:* KL-WH" in said
         assert "PO date" not in said
 
     def test_the_supplier_is_never_in_the_rung_text(
@@ -420,9 +421,10 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         assert result.status == "done", result.error
         assert PO_TOOL in probes
         # Owner ruling, 11 Sep 2026: the structured field block, no per-document heading.
+        # Owner ruling, 12 Sep 2026 (finding 3): every field line is bold-labelled.
         assert (
             "but PO is placed:\n"
-            "Product Code: SRTWT7445-LV-NEW\nOrdered: 27\nOutstanding: 27\nPO date: 2026-06-30"
+            "*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 27\n*Outstanding:* 27\n*PO date:* 2026-06-30"
         ) in said, said
         assert "Location" not in said  # po_row carries no location
         assert "pcs" not in said and "expected" not in said and "202607-S0031" not in said
@@ -477,9 +479,10 @@ class TestD7AnIncomingAskReachesThePORung:
         # Owner ruling, 11 Sep 2026: PO_ROWS carries no `po_date`, so that line is omitted;
         # Ordered/Outstanding/Location still print, and the (irrelevant) expected date
         # never renders either way.
+        # Owner ruling, 12 Sep 2026 (finding 3): every field line is bold-labelled.
         assert (
             "but PO is placed:\n"
-            f"Product Code: {CODE}\nOrdered: 1000\nOutstanding: 1000\nLocation: KL-WH"
+            f"*Product Code:* {CODE}\n*Ordered:* 1000\n*Outstanding:* 1000\n*Location:* KL-WH"
         ) in said
         assert "PO date" not in said
         assert "expected" not in said and "2026-06-01" not in said

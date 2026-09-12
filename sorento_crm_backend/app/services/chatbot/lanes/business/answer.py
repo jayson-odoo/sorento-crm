@@ -582,9 +582,9 @@ def crossdomain_zeroset(
         else:
             intersection = []
         for m in intersection:
-            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _type_norm(
-                jsc.get(m, "canonical_code")
-            ) in tokens:
+            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _token_requests(
+                _type_norm(jsc.get(m, "canonical_code")), tokens
+            ):
                 add(jsc.get(m, "canonical_code"), jsc.get(m, "uuid"), False)
 
     # DYM-PICKED (strict): prior cumulative picks plus this turn's pick.
@@ -918,8 +918,17 @@ def crossdomain_render(
         if zs.get("origin_domain") == "incoming"
         else "But there is INCOMING stock (ETA) for the requested products:"
     )
+    # D2 (12 Sep 2026 owner finding): no "I have attached the file(s) below." sentence.
+    # `compose.crossdomain_compose` folds `block["block"]` (TEXT ONLY) into the reply, and
+    # the send lane reads `envelope.attachments` off the PRIMARY answer alone
+    # (`engine._attachments_src`) - the cross-domain probe's own envelope never reaches a
+    # send, so the sentence was never true. `xd_files` still feeds `_xdBlock["attachments"]`
+    # below - review fix round: NOT dropped after all (see the reviewer note below the
+    # `_xdBlock` literal) - the key is graded byte-for-byte by the crossdomain-render
+    # corpus replay (`test_s6c_answer_lane.py`/`test_s6c_engine_paths.py`, six registered
+    # captures), so removing it turns 12 green replays red; only the claim that the files
+    # were SENT is gone.
     xd_files = env["attachments"] if isinstance(jsc.get(env, "attachments"), list) else []
-    mention = "\n\n" + "I have attached the file(s) below." if (blocks and xd_files) else ""
 
     silent_note = ""
     lookup_cos = (
@@ -1001,7 +1010,7 @@ def crossdomain_render(
             )
         nothing_note = " ".join(sentences)
 
-    body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else ""
+    body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note) if blocks else ""
     if body and only_other_note:
         body = f"{only_other_note}\n\n{body}"
     if nothing_note:
@@ -1190,32 +1199,32 @@ def _crossdomain_rung_row(it: Any, field_by_key: Any) -> dict[str, Any]:
 
 
 def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
-    """Owner ruling (11 Sep 2026): one field per line per row - `Product Code:`,
-    `Ordered:`, `Outstanding:`, `PO date:`, `Location:` - rows separated by ONE blank
-    line. A null/empty `ordered_qty`, `po_date` or `location` OMITS that line entirely
-    (never a placeholder, never `_fmt_xd_value`'s own "-"); `Product Code` and
-    `Outstanding` always print. No per-document heading naming the PO/SPO number, and no
-    "pcs":
+    """D3 (12 Sep 2026 owner finding): one field per line per row - `*Product Code:*`,
+    `*Ordered:*`, `*Outstanding:*`, `*PO date:*`, `*Location:*`, bold labels like every
+    other field line in the reply - rows separated by ONE blank line. A null/empty
+    `ordered_qty`, `po_date` or `location` OMITS that line entirely (never a placeholder,
+    never `_fmt_xd_value`'s own "-"); `Product Code` and `Outstanding` always print. No
+    per-document heading naming the PO/SPO number, and no "pcs":
 
-        Product Code: SRTWC191-G3
-        Ordered: 30
-        Outstanding: 30
-        PO date: 2026-08-10
-        Location: KL-WH
+        *Product Code:* SRTWC191-G3
+        *Ordered:* 30
+        *Outstanding:* 30
+        *PO date:* 2026-08-10
+        *Location:* KL-WH
     """
     blocks: list[str] = []
     for row in rows:
-        lines = [f"Product Code: {_fmt_xd_value(row.get('product_code'))}"]
+        lines = [f"*Product Code:* {_fmt_xd_value(row.get('product_code'))}"]
         ordered_qty = row.get("ordered_qty")
         if ordered_qty not in (None, ""):
-            lines.append(f"Ordered: {_fmt_xd_value(ordered_qty)}")
-        lines.append(f"Outstanding: {_fmt_xd_value(row.get('qty'))}")
+            lines.append(f"*Ordered:* {_fmt_xd_value(ordered_qty)}")
+        lines.append(f"*Outstanding:* {_fmt_xd_value(row.get('qty'))}")
         po_date = row.get("po_date")
         if po_date not in (None, ""):
-            lines.append(f"PO date: {_fmt_xd_value(po_date)}")
+            lines.append(f"*PO date:* {_fmt_xd_value(po_date)}")
         location = row.get("location")
         if location not in (None, ""):
-            lines.append(f"Location: {_fmt_xd_value(location)}")
+            lines.append(f"*Location:* {_fmt_xd_value(location)}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
@@ -2293,6 +2302,29 @@ def _type_norm(value: Any) -> str:
     "SRT2405-CR". This is the key both sides are compared through.
     """
     return _TYPE_NORM_RE.sub("", jsc.nullish_str(value)).lower()
+
+
+# A token shorter than this never PREFIX-matches (D4/AC-7): "SRT" would otherwise request
+# every product in the intersection, since most of the catalogue's codes start with it.
+_TOKEN_PREFIX_MIN_LEN = 4
+
+
+def _token_requests(norm_code: str, tokens: set[str]) -> bool:
+    """D4 (12 Sep 2026, finding 4): does a typed token request this intersection product?
+
+    Owner finding, 12 Sep 2026: "ETA SRTWT6236" resolved (tier `and`) to the one family
+    member SRTWT6236-GY, but `crossdomain_zeroset`'s non-`resolutions` branch only asked
+    "does `_type_norm(canonical_code)` EQUAL a typed token" - the prefix never matched, so
+    `requested` stayed empty, `_xd.active` was False, and nothing probed the incoming or
+    PO ladder at all, though SRTWT6236-GY has an open PO line. The `missing` loop two
+    screens down already treats a typed code as satisfied by any `startswith` family
+    member, so the two halves disagreed about what "requested" means. Fixed here: a
+    product is requested when a typed token EQUALS its normalised code, OR when a token of
+    at least `_TOKEN_PREFIX_MIN_LEN` characters is a PREFIX of it.
+    """
+    if norm_code in tokens:
+        return True
+    return any(len(t) >= _TOKEN_PREFIX_MIN_LEN and norm_code.startswith(t) for t in tokens)
 
 
 def _prettify_type(value: Any) -> str:

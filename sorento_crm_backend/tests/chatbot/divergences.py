@@ -771,6 +771,44 @@ DIVERGENCES: list[Divergence] = [
             "sub-resolve-and-gate",
         )
     ),
+    # D4 (chatbot-answer-polish, 12 Sep 2026, finding 4): `crossdomain_zeroset`'s
+    # non-`resolutions` branch now requests an intersection product when a typed token
+    # PREFIXES its normalised code (>= 4 chars), not only on equality - n8n's node only
+    # ever compared for equality, so a typed prefix like "MMC544" never requested its
+    # family member "MMC544-AL-BL" at all (owner finding: "ETA SRTWT6236" never probed
+    # SRTWT6236-GY's open PO line). Both captures below are real intersections where a
+    # typed token is a >= 4 character prefix of a canonical_code the n8n capture treated
+    # as unrequested; this port now requests them, which is the deliberate point of D4.
+    # Field-scoped to `_xd` (`exec-13479632`) or, more narrowly, to `_xd.requested` alone
+    # (`exec-13481094`, review fix round: only `requested` moves on this capture -
+    # `active`/`missing`/`probe_entities` are unaffected here, unlike `exec-13479632` where
+    # the prefix match is what makes the branch active at all); every other key of the
+    # validator item still grades byte for byte. Behaviour pinned by
+    # tests/chatbot/test_crossdomain_ladder.py::TestOwner12SepTypedPrefixIsRequested.
+    Divergence(
+        node="crossdomain-zeroset",
+        fixture="exec-13479632",
+        hazard="D4 (chatbot-answer-polish, 12 Sep 2026, finding 4)",
+        reason=(
+            "a typed token that PREFIXES an intersection product's canonical_code "
+            "(>= 4 chars) now requests it, where n8n's node only matched on equality. "
+            "Field-scoped to `_xd`."
+        ),
+        strip_paths=(("_xd",),),
+    ),
+    Divergence(
+        node="crossdomain-zeroset",
+        fixture="exec-13481094",
+        hazard="D4 (chatbot-answer-polish, 12 Sep 2026, finding 4)",
+        reason=(
+            "a second, ALREADY-satisfied typed token in this capture's intersection now "
+            "also prefix-matches a sibling canonical_code, so `_xd.requested` gains that "
+            "sibling where n8n's node named the first token alone. `active` stays False "
+            "either way (the primary render already returned the code), so field-scoped "
+            "to `_xd.requested` only."
+        ),
+        strip_paths=(("_xd", "requested"),),
+    ),
 ]
 
 
