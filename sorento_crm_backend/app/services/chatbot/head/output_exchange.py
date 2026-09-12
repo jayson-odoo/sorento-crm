@@ -1051,6 +1051,13 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # only an answer keeps the pending alive.
     own_question = bool(jsc.array(o.get("entities"))) or jsc.truthy(o.get("domain_hint"))
     if own_question and (kind == "outstanding_detail" or picked is None):
+        # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask is
+        # DROPPED here, and every later reader of `prev_pending` this turn has to see that
+        # - the scope-ask signal below and the `outstanding_filters` carry in
+        # `tail/compile_state.py` both keyed off "an outstanding pending was open last
+        # turn", so a hit's `outstanding_detail` marker silently suppressed the scope
+        # question on the NEXT bare-word ask, however many turns later.
+        o["outstanding_pending_dropped"] = True
         return
 
     o["domain_hint"] = "order"
@@ -1226,8 +1233,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     prev_state = parent_input.get("previous_conversation_state")
     prev_pending = jsc.get(prev_state, "pending") if prev_state is not None else None
     _apply_outstanding_pending(o, prev_state=prev_state, prev_pending=prev_pending)
+    stale_outstanding_ask_open = jsc.get(prev_pending, "kind") in (
+        "outstanding_scope",
+        "outstanding_detail",
+    ) and not jsc.truthy(o.get("outstanding_pending_dropped"))
     if (
-        jsc.get(prev_pending, "kind") not in ("outstanding_scope", "outstanding_detail")
+        not stale_outstanding_ask_open
         and jsc.js_string(o.get("order_status") or "").strip() == "outstanding"
         and jsc.js_string(o.get("domain_hint") or "") == "order"
         and any(

@@ -820,7 +820,15 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # from last turn is the identical "one answering turn, then gone" lifetime -
     # a new ask, a topic reset, or simply the turn after the answer all read
     # `prev_pending`'s kind as something else (or nothing) and clear it.
-    prev_pending_kind = jsc.get(jsc.get(prev, "pending"), "kind")
+    # A pending this turn DROPPED as a new ask (`head/output_exchange.py::
+    # _apply_outstanding_pending`) is not an open ask any more, so its filters go with
+    # it - otherwise a turn that walked away from the offer kept carrying the previous
+    # question's product/customer/location (console run 3, 13 Sep 2026).
+    prev_pending_kind = (
+        None
+        if jsc.truthy(jsc.get(qf, "outstanding_pending_dropped"))
+        else jsc.get(jsc.get(prev, "pending"), "kind")
+    )
     outstanding_filters_value = (
         jsc.get(outstanding_ask, "filters")
         if jsc.truthy(outstanding_ask)

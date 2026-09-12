@@ -844,6 +844,49 @@ class TestBareOutstandingWithKeyArmsScopeQuestion:
             stored.get("outstanding_filters")
         )
 
+    def test_a_new_bare_outstanding_ask_after_a_hit_asks_the_scope_question(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """D2 one-turn life, console run 3 (13 Sep 2026): a report HIT leaves
+        `pending.kind = "outstanding_detail"` for the next turn's "1"/"2". A LATER bare
+        "outstanding" ask is a NEW ask, not an answer to that offer, so it must ask the
+        scope question - it ran the full report instead, because the stale pending
+        suppressed the scope-ask signal. Resetting the session made the question fire,
+        which is what named the pending as the cause."""
+        _seed_contact(session_factory, variables={})
+        _r1, captured1 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="so_outstanding"),
+            text_body="SRTWT7445 sales order outstanding",
+            msg_id="ZZT-outstanding-stale-pending-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured1 and captured1[0][0] == "crm_outstanding_report", captured1
+        assert (_session_of(session_factory)["variables"].get("pending") or {}).get(
+            "kind"
+        ) == "outstanding_detail"
+
+        result, captured2 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="outstanding"),
+            text_body="SRTWT7445 outstanding",
+            msg_id="ZZT-outstanding-stale-pending-2",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured2 == [], (
+            f"a new bare-word ask must ask the scope question first, not fetch: {captured2}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" in reply, reply
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", stored.get("pending")
+
 
 # --------------------------------------------------------------------------- #
 # AC-1132 - the scope answer restores the filters and runs the report
