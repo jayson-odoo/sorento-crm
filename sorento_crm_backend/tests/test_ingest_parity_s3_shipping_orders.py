@@ -120,7 +120,10 @@ def _seed_product(db) -> tuple[str, str]:
     db.add(product)
     db.flush()
     ref = f"DK-{product.product_code}"
-    IntegrationReferenceService(db).link(
+    # Anchored: plan D14 is strict, an unanchored link on a scoped type now
+    # raises ValueError. Every caller of this helper works inside the
+    # incumbent company.
+    IntegrationReferenceService(db, company_id=DEFAULT_COMPANY_ID).link(
         entity_type="products", entity_id=product.id, source_ref=ref
     )
     return str(product.id), ref
@@ -574,7 +577,10 @@ class TestAcP38XlsxVsEsbParity:
         set_company_scope(db, frozenset({company_b}))
         from app.services.integration_reference_service import IntegrationReferenceService
 
-        refs = IntegrationReferenceService(db)
+        # Anchored to B: every row this half seeds belongs to company_b, and
+        # plan D14 is strict - an unanchored link on a scoped type now raises
+        # ValueError rather than inferring the company from the row.
+        refs = IntegrationReferenceService(db, company_id=company_b)
         shipment_b = InboundShipment(
             shipment_number=_code("SHB"), shipping_container_number=shared_container,
             shipment_date=date(2026, 1, 1), shipment_status="pending",

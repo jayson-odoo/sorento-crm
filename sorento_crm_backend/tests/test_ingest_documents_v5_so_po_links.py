@@ -205,7 +205,8 @@ class TestContractVersion22:
 
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.2"
+        # Bumped again (autocount-brands-ingest, AC-13): "2.3" adds `brands`.
+        assert body["version"] == "2.3"
         wanted = {
             "from_so_line_ref", "from_so_external", "from_po_line_ref", "from_po_number",
         }

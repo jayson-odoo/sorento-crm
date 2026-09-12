@@ -1,6 +1,7 @@
 """Ingest contract version for the ESB (D8, AC-V0-1; v2.1 shape added S4 of
 ingest-parity-standardisation; v2.2 adds the SO<->PO linkage fields below,
-ingest-contract-2-2-so-links).
+ingest-contract-2-2-so-links; v2.3 adds `brands` as a first-class EntitySpec,
+autocount-brands-ingest).
 
 The ESB gates every new key it sends behind `sorento_contract_version = 2` on
 its consumer connection, so it needs one endpoint to ask Sorento what version

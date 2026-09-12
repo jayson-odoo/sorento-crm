@@ -164,7 +164,7 @@ removed copy, for whoever restores a UI for them:
   record then fails on every retry. Not reachable today: refs are `{DatabaseName}:{AutoKey}` and
   one book is connected. **Trigger:** a second AutoCount database connects. Fix: add `company_id`
   to `integration_references` and include it in `resolve`/`link`, or skip the auto-link when the
-  local row was found by code rather than back-created. | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Medium | Open |
+  local row was found by code rather than back-created. **Closed 2026-09-12** in `plans/autocount/PLAN-autocount-brands-ingest.md` section 8 (migration 512: `company_id` on the table, two partial unique indexes, scoped `resolve`/`link`). | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Medium | Closed |
 - **BL-057** (2026-09-05, same review): a document `.edit` slug (`scm.sales_orders.edit`,
   `scm.purchase_orders.edit`, `scm.shipping_orders.edit`) can back-create suppliers, customers and
   shared sales agents through the ladder, while those masters have their own `.edit` slugs on the
