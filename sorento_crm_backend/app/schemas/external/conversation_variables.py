@@ -49,6 +49,12 @@ class ConversationStateVariables(BaseModel):
 class ConversationStateOverwriteRequest(BaseModel):
     """`{"variables": {...}}` - the shape the column holds and the shape the GET returns.
 
+    `variables` is REQUIRED, and it is what tells a caller still on the old contract from a
+    caller clearing the state. A flat five-key body would otherwise validate as "no
+    variables supplied" and be written as an empty session - the exact wipe this model
+    exists to stop, performed silently and reported as 200. A reset is `{"variables": {}}`,
+    which says it.
+
     The OUTER object is deliberately not `extra="forbid"`: a GET with `?message_id=` injects
     two response-only keys beside `variables`, and a caller that PUTs a GET body straight
     back must not be refused for keys this endpoint handed them. They are dropped on the
@@ -57,6 +63,4 @@ class ConversationStateOverwriteRequest(BaseModel):
     itself is now strict, which is where the wrong key was actually landing.
     """
 
-    variables: ConversationStateVariables = Field(
-        default_factory=ConversationStateVariables
-    )
+    variables: ConversationStateVariables
