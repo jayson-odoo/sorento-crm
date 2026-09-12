@@ -132,6 +132,36 @@ describe('the composed suggestion on the board', () => {
     expect(screen.getByTestId('board-change-pcr-s2').className).toMatch(/text-\[10px\]/);
   });
 
+  it('AC-D6: every rendered suggestion line is words, never a UUID', () => {
+    // The engine's own sentence names an SO number, a document number or a warehouse
+    // code - never a raw id - for every scenario the fixture carries, S1 through S12.
+    const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const ids = Array.from({ length: 12 }, (_, i) => `pcr-s${i + 1}`);
+    for (const id of ids) {
+      let row: PlanningChangeRow;
+      let soNumber: string;
+      try {
+        ({ row, soNumber } = rowOf(id));
+      } catch {
+        continue; // a scenario id not present in this fixture build - nothing to check
+      }
+      const result = render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
+      const lines = result
+        .queryAllByTestId('board-change-suggestion-line')
+        .map((line) => line.textContent ?? '');
+      for (const line of lines) {
+        expect(line).not.toMatch(uuidRegex);
+      }
+      result.unmount();
+    }
+  });
+
+  it('AC-D6/S2: the reallocate line names the target order and document in words', () => {
+    // Duplicate of the S2 case above, pinned on its own so a change to the wider S2
+    // assertion cannot silently drop the AC-D6 guard with it.
+    expect(linesOf('pcr-s2')).toContain('Reallocate PO-A 34 to SO420103 ORDER 50');
+  });
+
   it('says nothing at all when the engine composed no suggestion', () => {
     const { row, soNumber } = rowOf('pcr-s6');
     render(

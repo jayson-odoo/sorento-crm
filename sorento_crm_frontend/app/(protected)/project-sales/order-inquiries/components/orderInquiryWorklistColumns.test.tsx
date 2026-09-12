@@ -14,8 +14,21 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import type { ColumnDef } from '@tanstack/react-table';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
+
+// AC-D6: Radix Tooltip only mounts TooltipContent's portal on hover, which a plain
+// render+query cannot see - mocked to render its children inline instead, the same
+// convention `components/rule-builder/RuleBuilder.test.tsx` already uses.
+vi.mock('@/components/ui/tooltip', async () => {
+  const actual = await vi.importActual<typeof import('@/components/ui/tooltip')>(
+    '@/components/ui/tooltip',
+  );
+  return {
+    ...actual,
+    TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  };
+});
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 
 function worklistRow(over: Partial<OrderInquiryWorklistRow> = {}): OrderInquiryWorklistRow {
@@ -695,5 +708,24 @@ describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)
     const row = screen.getByTestId('row-companion-sc');
     expect(within(row).getByTitle('Included with 2 items · 2 of 2')).toBeInTheDocument();
     expect(row.textContent?.toLowerCase()).not.toContain('host');
+  });
+});
+
+describe('AC-D6: the instruction column tooltip prints the reallocation note in words', () => {
+  it('renders "Found: PO-A 34" for a row the reallocation cascade linked', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-reallocated',
+          qty: '34',
+          verb: 'ORDER',
+          note: 'Found: PO-A 34',
+        }),
+      ],
+      'verb',
+    );
+
+    const row = screen.getByTestId('row-row-reallocated');
+    expect(within(row).getByText('Found: PO-A 34')).toBeInTheDocument();
   });
 });
