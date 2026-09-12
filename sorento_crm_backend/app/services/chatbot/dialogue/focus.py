@@ -163,8 +163,17 @@ class Outputs:
 
 
 def slot(value: Any, *, turn_no: int, source: str) -> dict[str, Any]:
-    """One slot. No wall clock: see `contracts.FocusSlot` for why (D11 + AC-206)."""
-    return {"value": value, "set_at_turn": int(turn_no), "source": source}
+    """One slot, in the four fields AC-1002 names: `{value, set_at_turn, set_at, source}`.
+
+    `set_at` is the wall clock and it is ALWAYS None on a slot this engine writes. AC-206
+    says a dry run's returned `session_patch` is byte-equal to what a live run persists,
+    and a timestamp inside the state makes two otherwise identical turns differ. It is
+    written explicitly rather than left absent so every slot has the same four keys
+    whichever rule set it, and so a reader never has to tell "no clock" from "this build
+    does not record one". The TRACE carries the real clock, stamped `at` by
+    `TurnTrace.add`.
+    """
+    return {"value": value, "set_at_turn": int(turn_no), "set_at": None, "source": source}
 
 
 def value_of(focus: Any, name: str) -> Any:

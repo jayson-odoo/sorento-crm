@@ -1198,6 +1198,71 @@ _LANE_BY_OUTCOME = {
 }
 
 
+def _resolve_open_question(
+    variables: dict[str, Any],
+    *,
+    parser_raw: Any,
+    emits_v3: bool,
+    referenced_result_set: Any,
+    turn_no: int,
+) -> dict[str, Any]:
+    """Did this message answer the question the bot was waiting for? (AC-1014 to AC-1020)
+
+    Pure, and it runs BEFORE the post-processor so the pick can be applied as this turn's
+    scope rather than written over the top of it. Returns the question that was open, the
+    normalised answer, the trace entry and the LANE the outcome names - the caller records
+    the stage and the post-processor applies the outcome to the emission.
+    """
+    question = variables.get("open_question")
+    if "open_question" not in variables:
+        # A session written BEFORE the five-key shape - by an older build, or by n8n - has
+        # no slot, and the customer looking at that roster must still be able to answer it.
+        # A PRESENT key wins, `None` included: that means the slot was there and was
+        # cleared, and deriving over it would resurrect the question clearing just removed.
+        question = open_question_mod.from_state(variables, asked_at_turn=max(0, turn_no - 1))
+    question = question if isinstance(question, dict) and question.get("kind") else None
+    signals = output_exchange_mod.v3_signals(parser_raw, emits_v3=emits_v3)
+    answer = signals["answers_open_question"]
+    out: dict[str, Any] = {
+        "question": question,
+        "answer": answer,
+        "outcome": None,
+        "entry": None,
+        "lane": None,
+        "options": None,
+    }
+    if question is None or not answer.get("resolved"):
+        return out
+
+    # AC-1016: a QUOTED reply resolves against THAT message's frozen options, not the alive
+    # question's. The rows the customer is looking at are the ones they quoted.
+    quoted_rows = jsc.array(referenced_result_set)
+    options = quoted_rows if len(quoted_rows) > 0 else question.get("options")
+    outcome = open_question_mod.resolve(
+        question["kind"], answer, options, question.get("payload")
+    )
+    out["outcome"] = outcome
+    out["options"] = options
+    out["lane"] = _lane_for_outcome(outcome)
+    out["entry"] = {
+        "before": {
+            "kind": question["kind"],
+            "expects": question.get("expects"),
+            "options": len(options or []),
+            "quoted": len(quoted_rows) > 0,
+        },
+        "answer": answer,
+        "after": {
+            "escalate": outcome.escalate,
+            "declined": outcome.declined,
+            "lane": out["lane"],
+        },
+        "handler": outcome.handler,
+        "outcome": outcome.outcome,
+    }
+    return out
+
+
 def _lane_for_outcome(outcome: Any) -> str | None:
     if getattr(outcome, "escalate", False):
         return _LANE_BY_OUTCOME["escalate"]
@@ -1375,6 +1440,23 @@ def _run_stages(  # noqa: PLR0915
             parser_raw = parser.parse(parser_config, user_block)
         # Empty on a bypassed parse: no call, no spend to record.
         parser_usage = getattr(parser_raw, "usage", {}) or {}
+        # -- the ANSWER, decided here and APPLIED inside the post-processor ------- #
+        # The decision needs nothing from post-processing: the persisted question, this
+        # message's `answers_open_question` and the rows a quoted reply names are all in
+        # hand. It is taken BEFORE the call because a pick IS this turn's scope, and the
+        # rules that read the scope - the entity executor, the domain blocklist, the
+        # bare-entity retype - all run inside that call. Deciding after it and writing the
+        # pick into the emission afterwards is what put `MWC7625-SH` into the resolver as a
+        # `product` instead of an `inbound_shipment` (capture exec-13488887, measured over
+        # the graded corpus: 45 captures moved on `entities` alone).
+        answered = _resolve_open_question(
+            variables,
+            parser_raw=parser_raw,
+            emits_v3=parser_config.emits_v3,
+            referenced_result_set=referenced_result_set,
+            turn_no=turn_no,
+        )
+        parent_input["_answered"] = answered
         parse_block = post_process({"output": parser_raw}, {}, parent_input)
         parse_block = suggest_follow_up(parse_block, parent_input)
     except (parser.ParserError, ParserOutputError) as exc:
@@ -1457,126 +1539,40 @@ def _run_stages(  # noqa: PLR0915
     )
 
     # -- answered (L1-S3, AC-1014, AC-1015, AC-1018, AC-1020) ---------------- #
-    # Does THIS message answer the question the bot was waiting for? Asked here, between
-    # understanding the message and deciding what the contact may see, because the answer
-    # decides two things the rest of the turn is built on: what the scope IS (a pick is
-    # this turn's scope, sourced `pick` rather than `current_message`) and which LANE runs
-    # (a "yes" to an escalate offer is an escalation, not a business query).
-    #
-    # It reads the PERSISTED `open_question` slot - not a marker re-derived from the reply
-    # text, and not a mirror of the legacy keys (D8). One writer, one reader.
+    # The DECISION was taken before the post-processor (see above) and applied inside it.
+    # What happens here is the RECORD and the routing consequence: a yes to an escalate
+    # offer is an escalation, a pick is a business query with new scope, and an operator
+    # reads which it was on the timeline.
     stage[0] = "answered"
-    open_question_before = variables.get("open_question")
-    if "open_question" not in variables:
-        # A session written BEFORE the five-key shape - by an older build, or by n8n - has
-        # no slot, and the customer looking at that roster must still be able to answer it.
-        # `from_state` derives the question the legacy keys describe, once, at READ time. A
-        # PRESENT key wins, `None` included: that means the slot was there and was cleared,
-        # and deriving over it would resurrect the question that was just cleared. This is
-        # not a mirror (D8) - nothing writes those keys any more.
-        open_question_before = open_question_mod.from_state(
-            variables, asked_at_turn=max(0, turn_no - 1)
-        )
-    open_question_before = (
-        open_question_before if isinstance(open_question_before, dict) else None
-    )
-    turn_signals = output_exchange_mod.v3_signals(
-        parse_block.get("_parser_raw"), emits_v3=parser_config.emits_v3
-    )
-    answer = turn_signals["answers_open_question"]
-    answered_entry: dict[str, Any] | None = None
-    lane_override: str | None = None
+    open_question_before = answered["question"]
+    answered_entry = answered["entry"]
+    lane_override = answered["lane"]
     cleared_question: list[dict[str, Any]] = []
 
-    if open_question_before is not None and answer.get("resolved"):
-        # AC-1016: a QUOTED reply resolves against THAT message's frozen options, not the
-        # alive question's. The rows the customer is looking at are the ones they quoted.
-        quoted_rows = jsc.array(referenced_result_set)
-        options = quoted_rows if len(quoted_rows) > 0 else open_question_before.get("options")
-        outcome = open_question_mod.resolve(
-            open_question_before["kind"],
-            answer,
-            options,
-            open_question_before.get("payload"),
-        )
-        before_entities = len(jsc.array(qf.get("entities")))
-        output_exchange_mod.apply_open_question_outcome(qf, open_question_before, outcome)
-        lane_override = _lane_for_outcome(outcome)
-        answered_entry = {
-            "before": {
-                "kind": open_question_before["kind"],
-                "expects": open_question_before.get("expects"),
-                "options": len(options or []),
-                "quoted": len(quoted_rows) > 0,
-            },
-            "answer": answer,
-            "after": {
-                "entities": len(jsc.array(qf.get("entities"))),
-                "entities_before": before_entities,
-                "escalate": outcome.escalate,
-                "declined": outcome.declined,
-                "lane": lane_override,
-            },
-            "handler": outcome.handler,
-            "outcome": outcome.outcome,
-        }
+    if answered_entry is not None:
         turn_trace.add("open_question", answered_entry)
     elif open_question_before is not None:
         # AC-1020: a message that carries an ask of its own and does NOT answer the
         # question clears it, with a trace line, and is handled as a new ask. A casual or
-        # low-signal message leaves it open however many of them arrive - which is
-        # `clearing.apply`'s rule, applied here where the parse exists.
+        # low-signal message leaves it open however many of them arrive.
         variables, cleared_question = clearing_mod.apply(
             variables, qf, conversation_closed=False, trace=turn_trace
         )
-        open_question_before = variables.get("open_question")
+        if cleared_question:
+            open_question_before = None
 
-    # -- the focus rules (AC-1005) ------------------------------------------ #
-    # ONE call, on every turn, with the pick already applied so the rules see it as this
-    # turn's own scope.
-    #
-    # THE PLAN PUTS THIS AFTER `resolve_gate` and gives a reason - "it needs the resolver's
-    # `entity_type` and `confident`" - which the rules as written do not bear out:
-    # `confident` is read off the PARSER's entity (`focus._confident_enough`) and
-    # `entity_type` appears nowhere in `dialogue/focus.py`. Running it here instead keeps
-    # ONE writer and, more importantly, means the business lane can READ the focus it is
-    # told to read: `run_fetch` and `complete_answer` run inside `run_until_exit`, after
-    # the gate, so a focus applied after that call would arrive too late for them.
-    focus_inputs = parse_block.pop("_focus_inputs", None) or parent_input.pop(
-        "_focus_inputs", None
-    ) or {}
-    focus_out = None
-    if focus_inputs:
-        focus_turn = focus_rules.Turn(
-            o=focus_inputs["o"],
-            prev=focus_inputs["prev"],
-            turn_no=focus_inputs["turn_no"],
-            explicit=focus_inputs["explicit"],
-            switch_domain=focus_inputs["switch_domain"],
-            is_carried=focus_inputs["is_carried"],
-            date_widened=focus_inputs["date_widened"],
-            signals=focus_inputs["signals"],
-            parser_raw=focus_inputs["parser_raw"],
-            latest_user_message=focus_inputs["latest_user_message"],
-            has_picker=open_question_before is not None,
-            entityless_domain_reused=focus_inputs["entityless_domain_reused"],
-            answered_by_pick=answered_entry is not None,
-        )
-        focus_out = focus_rules.apply(
-            focus_rules.from_session(focus_inputs["prev"], turn_no=focus_turn.turn_no),
-            focus_turn,
-        )
-        for entry in focus_out.entries:
-            turn_trace.add("focus", entry)
-    parse_block["_focus"] = (focus_out.focus if focus_out is not None else {}) or {}
+    dialogue_out = parent_input.pop("_dialogue_out", None) or {}
+    parse_block["_focus"] = dialogue_out.get("focus") or {}
     parse_block["_open_question_before"] = open_question_before
     parse_block["_answered"] = answered_entry
     parse_block["_lane_override"] = lane_override
+    for entry in dialogue_out.get("trace") or []:
+        turn_trace.add("focus", entry)
 
     turn_trace.record(
         "answered",
         summary=(
-            f"Answered the open {jsc.js_string(open_question_before.get('kind'))} question."
+            f"Answered the open {jsc.js_string((open_question_before or {}).get('kind'))} question."
             if answered_entry is not None and open_question_before
             else (
                 "The customer asked something else, so the open question was cleared."
@@ -1595,7 +1591,7 @@ def _run_stages(  # noqa: PLR0915
             "lane": lane_override,
             "cleared": [line["slot"] for line in cleared_question],
         },
-        raw={"answer": answer},
+        raw={"answer": answered["answer"]},
     )
 
     # -- access + routed ---------------------------------------------------- #
