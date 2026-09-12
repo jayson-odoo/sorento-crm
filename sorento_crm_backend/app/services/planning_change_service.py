@@ -289,51 +289,6 @@ def _split_over_sources(
     return out
 
 
-def _fit_to_new_quantity(
-    proposed: Dict[str, dict], proposal: dict, facts: dict
-) -> Dict[str, dict]:
-    """The ladder's ANSWER, at the line's own NEW quantity.
-
-    `_proposal_for` asks the board to walk the LIVE line, and the live line is normally
-    already written by the time a batch is built (the trigger writes, then raises the
-    change). When it is not - an ESB push whose board read raced the write, a caller that
-    diffs before it commits - the walk comes back sized to the OLD quantity, and a diff
-    against it would offer to keep a Buy for stock the customer no longer wants.
-
-    So: when the walk's own quantity IS the old one and the line now asks for a different
-    one, the CLASS TOTALS are trimmed to the new need (last rung first - Buy, then SPO,
-    then Borrow, then the reserve, the reverse of the order the ladder filled them in) or
-    the shortfall is added to the Buy, which is what "remaining uncovered need" already
-    means. Which rungs were chosen stays the engine's answer; only the size is the line's.
-
-    A walk sized to NEITHER quantity is left alone: that is a partially delivered line,
-    where the outstanding quantity is legitimately smaller than what was ordered.
-    """
-    walked_raw = (
-        proposal.get("qty_outstanding")
-        if proposal.get("qty_outstanding") is not None
-        else proposal.get("qty")
-    )
-    walked = _dec(walked_raw)
-    old_qty = _dec(facts.get("qty_was"))
-    new_qty = _dec(facts.get("qty_now"))
-    if new_qty <= _ZERO or walked == new_qty or walked != old_qty:
-        return proposed
-    if new_qty < walked:
-        over = walked - new_qty
-        for klass in ("buy", "spo", "borrow", "reserve"):
-            if over <= _ZERO:
-                break
-            cut = min(proposed[klass]["qty"], over)
-            if cut <= _ZERO:
-                continue
-            proposed[klass]["qty"] = proposed[klass]["qty"] - cut
-            over -= cut
-    else:
-        proposed["buy"]["qty"] = proposed["buy"]["qty"] + (new_qty - walked)
-    return proposed
-
-
 def _sourcing_components(
     klass: str,
     proposed: dict,
@@ -498,8 +453,6 @@ def compose_suggestion(
     facts = facts or {}
     held_by = _held_classes(held)
     proposed = _proposed_classes(proposal)
-    if proposed is not None and proposal:
-        proposed = _fit_to_new_quantity(proposed, proposal, facts)
     new_date = facts.get("new_date")
     late_days: Optional[int] = None
     shortfall_qty: Optional[str] = None
@@ -1634,8 +1587,6 @@ def _build_row(
         # `row_out` lifts out of here), because nothing on screen compares them.
         "new_date": new_date.isoformat() if new_date else None,
         "old_date": old_date.isoformat() if old_date else None,
-        "qty_was": from_json.get("qty"),
-        "qty_now": to_json.get("qty"),
         "immediate": _is_immediate(new_date),
     }
     if _dec(placed.get("qty")) > _ZERO or _dec((held or {}).get("timely_spo_qty")) > _ZERO:

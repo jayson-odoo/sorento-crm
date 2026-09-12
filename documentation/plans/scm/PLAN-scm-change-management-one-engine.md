@@ -326,13 +326,13 @@ S3, S4, S9, S10, S12 likewise), `decision` null / confirm / amend only.
    it for every held line that still exists, because the suggestion IS that walk diffed
    against the hold. A cancelled line is skipped (there is nothing left to walk for) and
    its whole hold is released or reallocated.
-2. **A stale walk is fitted to the line's own new quantity** (`_fit_to_new_quantity`). The
-   board walks the LIVE line, and production writes the line before it raises the change -
-   but a caller that diffs before it writes (two of the red tests do) came back sized to
-   the old quantity, and diffing against that offers to keep a Buy for stock the customer
-   no longer wants. Which rungs were chosen stays the engine's answer; only the size is the
-   line's. A walk sized to NEITHER quantity is left alone: that is a partially delivered
-   line.
+2. **The walk is taken as it comes; THE LINE IS WRITTEN BEFORE THE BATCH IS BUILT.** Every
+   trigger writes the line first and raises the change after (`_propagate_planning_change`
+   runs after `_upsert_lines`; the delta-seam helper's own docstring states the same order),
+   so the board's walk is already at the new state and the diff needs no correction. A first
+   cut trimmed a stale walk to the row's new quantity; it was removed (captain's ruling, 13
+   September) because the only callers that needed it were two tests that skipped the write,
+   and machinery that exists for a fixture rather than a journey is machinery to delete.
 3. **The `release` path is gone, not moved.** `_oi_demand_rows`' release branch, and with it
    `_release_inquiry_rows` / `_release_note` / `_has_unlinked_row` / `_confirm_payload_reduce`,
    were only ever reachable from a reaction verb. A delayed-past-the-window line is now
