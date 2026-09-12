@@ -98,14 +98,16 @@ def run_for(
     contact's stored state, which is what the live turn read a moment earlier because the
     live turn has not written its own yet.
     """
-    from app.services.chatbot.head import parser as parser_mod
-
     row_status = "done"
     error: str | None = None
     parsed: Any = None
     prompt_version: Any = None
 
     try:
+        # INSIDE the try, like every other import here. It was the one statement in this
+        # function that could raise on its way to the net below, and "never raises" has to
+        # be true of the whole body or it is not a promise the caller can build on.
+        from app.services.chatbot.head import parser as parser_mod
         from app.services.chatbot.engine import (
             _current_date_directive,
             _read_session_vars,
@@ -297,12 +299,17 @@ def fire(
 ) -> None:
     """Start the shadow parse and return immediately. Never raises, never blocks a reply.
 
-    CALLED AT THE END OF THE TURN, after the reply and its send action are composed - see
-    `engine.run_turn`'s `finally`. `offloaded` is the same flag the live turn ran under:
-    with a worker this rides the same `chat` queue, so the window costs the customer's turn
-    nothing at all. Without one it runs IN PROCESS, which is why where it is called from
-    matters: an install with no worker must still be able to run a window, and the only
-    thing a slow provider may delay is the observation.
+    CALLED AT THE END OF THE TURN, from `engine.run_turn`'s `finally`: after the reply and
+    its send action are composed, and after the ordering ticket is released.
+
+    `offloaded` is the same flag the live turn ran under. With a worker this rides the same
+    `chat` queue and the window costs the customer's turn nothing at all. WITHOUT one it
+    runs IN PROCESS, which is the case worth being precise about: the reply is already
+    composed, but the caller has not received it yet, so a slow provider here delays n8n's
+    receipt of an answer that is otherwise finished. An install with no worker must still
+    be able to run a window; what it may not do is cost the customer the reply itself, and
+    the `try` around the whole body is what guarantees that - `fire` is called from a
+    `finally`, where an escaping exception replaces the return value.
     """
     if not isinstance(shadow_version, str) or not shadow_version.strip():
         return
@@ -310,31 +317,42 @@ def fire(
         # A dry run answers nobody and writes nothing; shadowing it would put console
         # traffic into the window the owner is reading real turns out of.
         return
+    # THE WHOLE BODY IS INSIDE THE TRY, and that is what this function is FOR. `fire` is
+    # called from `run_turn`'s `finally`, where an escaping exception REPLACES the return
+    # value: the turn would be persisted, the caller would get an exception instead of the
+    # reply, and nothing would be sent. So no path out of here may raise - not the enqueue,
+    # not the inline tail call, and not `run_for`'s own first statement, which is why its
+    # import moved inside its own try as well.
     try:
         if offloaded:
-            from app.services.chatbot.engine import CHAT_QUEUE
-            from app.services.queue_service import enqueue_job
-            from app.tasks.chat_turns import run_shadow_parse_job
+            try:
+                from app.services.chatbot.engine import CHAT_QUEUE
+                from app.services.queue_service import enqueue_job
+                from app.tasks.chat_turns import run_shadow_parse_job
 
-            enqueue_job(
-                run_shadow_parse_job,
-                envelope.model_dump(mode="json"),
-                shadow_version.strip(),
-                contact_respond_id,
-                str(live_message_id) if live_message_id else None,
-                queue_name=CHAT_QUEUE,
-                job_timeout=120,
-            )
-            return
-    except Exception:  # noqa: BLE001 - redis down is not the live turn's problem
-        logger.warning("chatbot shadow parse could not be enqueued; running it inline", exc_info=True)
-
-    run_for(
-        envelope,
-        session_factory=session_factory,
-        shadow_version=shadow_version.strip(),
-        contact_respond_id=contact_respond_id,
-        live_message_id=live_message_id,
-        focus_hints=focus_hints,
-        open_question_hint=open_question_hint,
-    )
+                enqueue_job(
+                    run_shadow_parse_job,
+                    envelope.model_dump(mode="json"),
+                    shadow_version.strip(),
+                    contact_respond_id,
+                    str(live_message_id) if live_message_id else None,
+                    queue_name=CHAT_QUEUE,
+                    job_timeout=120,
+                )
+                return
+            except Exception:  # noqa: BLE001 - redis down is not the live turn's problem
+                logger.warning(
+                    "chatbot shadow parse could not be enqueued; running it inline",
+                    exc_info=True,
+                )
+        run_for(
+            envelope,
+            session_factory=session_factory,
+            shadow_version=shadow_version.strip(),
+            contact_respond_id=contact_respond_id,
+            live_message_id=live_message_id,
+            focus_hints=focus_hints,
+            open_question_hint=open_question_hint,
+        )
+    except Exception:  # noqa: BLE001 - an observation may never cost the customer a reply
+        logger.warning("chatbot shadow parse could not be run", exc_info=True)
