@@ -133,7 +133,9 @@ export function annotationOf(
   soNumber: string,
   ownLocation?: string | null,
 ): BoardChangeAnnotation {
-  const closed = row.kind === 'closed';
+  // `cancelled`, renamed from `closed` (Slice A,
+  // `documentation/plans/scm/PLAN-scm-change-management-one-engine.md` rule 5).
+  const closed = row.kind === 'cancelled';
   const proposal = (row.proposal ?? null) as BoardContribution | null;
   const location = ownLocation ?? proposal?.fulfilment_location ?? null;
   const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;

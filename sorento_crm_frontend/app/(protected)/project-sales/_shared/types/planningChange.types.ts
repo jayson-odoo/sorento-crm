@@ -13,8 +13,22 @@
  */
 import type { BoardContribution, ConfirmLine } from './fulfilmentPlanning.types';
 
-/** What changed on the line, exactly as the book's own diff names it (AC-R02). */
-export type PlanningChangeKind = 'delayed' | 'advanced' | 'qty_up' | 'qty_down' | 'closed' | 'added';
+/**
+ * What changed on the line, exactly as the book's own diff names it (AC-R02).
+ *
+ * `cancelled` (renamed from `closed`) and `product_changed` are Slice A
+ * (`documentation/plans/scm/PLAN-scm-change-management-one-engine.md`, rule 5): "closed" read
+ * as a delivery outcome, not a change kind, and a product swap on the same line used to fall
+ * apart into a closed row plus an unrelated added row.
+ */
+export type PlanningChangeKind =
+  | 'delayed'
+  | 'advanced'
+  | 'qty_up'
+  | 'qty_down'
+  | 'cancelled'
+  | 'added'
+  | 'product_changed';
 
 /** The verb the planner already knows from the board (section 0's rule table). */
 export type PlanningChangeReaction = 'keep' | 'release' | 'replan' | 'reduce' | 'retire';
@@ -48,6 +62,8 @@ export interface PlanningChangeFromTo {
   required_date?: string | null;
   qty?: string | null;
   status?: string | null;
+  /** The old/new product on a `product_changed` row only. `null` on every other kind. */
+  item_code?: string | null;
 }
 
 /** One warehouse holding a Reserve for this line today. */
