@@ -696,12 +696,13 @@ def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:
         if row is None:
             extra.append(composition)
             continue
-        if row.suggested in ("release", "retire"):
-            # Approving one of these on the board means "yes, do what the book did" - it
-            # is not an amendment of the line's supply. Posting it as an `amend` sent it
-            # down the confirm branch instead, so the RELEASE rule (AC-P3-10) and the
-            # retire-and-shift never fired from the board at all. The row already carries
-            # `accept` from `build_batch`, and the board offers no way to change it.
+        if row.kind == "cancelled":
+            # The book CANCELLED this line. Approving it on the board means "yes, do what
+            # the book did" - it is not an amendment of the line's supply, and there is no
+            # line left to compose one for. Posting it as an `amend` sent it down the
+            # confirm branch instead, so the retire-and-shift never fired from the board at
+            # all. Apply dispatches on the kind (Slice C contract D), so nothing has to be
+            # recorded here; the row is still marked applied with the rest of them.
             continue
         planning_change_service.set_row_decision(
             db, batch_id, str(row.id), "amend", composition
