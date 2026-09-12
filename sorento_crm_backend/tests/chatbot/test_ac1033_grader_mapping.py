@@ -106,3 +106,92 @@ class TestMapExpectedVariablesToFiveKeys:
         assert mapped is None
         assert reason is not None
         assert "from_a_future_build" in reason
+
+    def test_selection_context_tier_offer_maps_to_tier_pick(self) -> None:
+        expected = {
+            "message_type": "clarification",
+            "selection_context": "tier_offer",
+            "tier_menu": ["dealer", "office"],
+        }
+
+        mapped, reason = worlds_mod.map_expected_variables_to_five_keys(expected)
+
+        assert reason is None
+        assert mapped["open_question"]["kind"] == "tier_pick"
+        assert mapped["open_question"]["options"] == []
+        assert mapped["open_question"]["expects"] == "yes_no"
+
+    def test_selection_context_member_offer_maps_to_member_offer(self) -> None:
+        expected = {
+            "message_type": "clarification",
+            "selection_context": "member_offer",
+        }
+
+        mapped, reason = worlds_mod.map_expected_variables_to_five_keys(expected)
+
+        assert reason is None
+        assert mapped["open_question"]["kind"] == "member_offer"
+
+    def test_disambiguation_with_a_customer_roster_maps_to_customer_pick(self) -> None:
+        roster = [
+            {"idx": 1, "label": "Acme Sdn Bhd", "entity_type": "customer"},
+            {"idx": 2, "label": "Beta Trading", "entity_type": "customer"},
+        ]
+        expected = {
+            "message_type": "clarification",
+            "selection_context": "disambiguation",
+            "last_result_set": roster,
+        }
+
+        mapped, reason = worlds_mod.map_expected_variables_to_five_keys(expected)
+
+        assert reason is None
+        assert mapped["open_question"]["kind"] == "customer_pick"
+        assert mapped["open_question"]["options"] == roster
+
+    def test_pending_team_clarify_maps_to_team_pick(self) -> None:
+        expected = {
+            "message_type": "casual",
+            "pending": {"kind": "team_clarify", "team": "sales"},
+        }
+
+        mapped, reason = worlds_mod.map_expected_variables_to_five_keys(expected)
+
+        assert reason is None
+        assert mapped["open_question"]["kind"] == "team_pick"
+        assert mapped["open_question"]["payload"] == {"team": "sales"}
+
+    def test_pending_company_clarify_maps_to_company_pick(self) -> None:
+        expected = {
+            "message_type": "casual",
+            "pending": {"kind": "company_clarify"},
+        }
+
+        mapped, reason = worlds_mod.map_expected_variables_to_five_keys(expected)
+
+        assert reason is None
+        assert mapped["open_question"]["kind"] == "company_pick"
+
+    def test_a_last_result_set_with_no_selection_context_is_the_answers_own_rows_not_a_roster(
+        self,
+    ) -> None:
+        # A plain stock/order list rides `last_result_set` too - with no `selection_context`
+        # and no `pending`, that is the answer's own rows, never an open picker.
+        expected = {
+            "message_type": "business_query",
+            "last_result_set": [{"idx": 1, "label": "SRTWC8517", "code": "SRTWC8517"}],
+        }
+
+        mapped, reason = worlds_mod.map_expected_variables_to_five_keys(expected)
+
+        assert reason is None
+        assert mapped["open_question"] is None
+
+    def test_an_unrecognised_selection_context_is_named_not_silently_dropped(self) -> None:
+        expected = {"selection_context": "from_a_future_build"}
+
+        mapped, reason = worlds_mod.map_expected_variables_to_five_keys(expected)
+
+        assert mapped is None
+        assert reason is not None
+        assert "from_a_future_build" in reason
