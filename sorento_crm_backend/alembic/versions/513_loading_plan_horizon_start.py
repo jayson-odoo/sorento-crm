@@ -1,7 +1,7 @@
 """scm.loading_plan gains plan_horizon_start (AC-N7, PLAN-scm-loading-plan-lines-feedback-12sep.md)
 
 Revision ID: 513_loading_plan_horizon_start
-Revises: 512_hidden_by_default_col
+Revises: 512_integration_ref_company
 Create Date: 2026-09-12
 
 The loading plan's "Sales order cut-off" becomes a window, the same From/To shape and the
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "513_loading_plan_horizon_start"
-down_revision = "512_hidden_by_default_col"
+down_revision = "512_integration_ref_company"
 branch_labels = None
 depends_on = None
 
