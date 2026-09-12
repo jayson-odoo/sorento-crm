@@ -1074,17 +1074,27 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     o["domain_hint"] = "order"
     o["message_type"] = "business_query"
     o["intent_hint"] = "check_order"
-    if product_code:
-        # The subject of the question being answered. Anything this turn named of its own
-        # is KEPT beside it rather than overwritten - the customer just typed it.
-        carried_product = {
-            "raw": product_code,
-            "hint": "product",
-            "canonical_code": product_code,
-            "current_message": True,
-            "confident": True,
-        }
-        o["entities"] = [carried_product, *named_entities]
+    # Console run 4, finding 6: a turn CONSUMED as an answer carries no entities of its
+    # own. The live parser hints the answer word itself ("Both") as an order entity, and
+    # that entity then travelled into resolution and came back as
+    # `Couldn't find these: "Both" (order): not found.` appended under a report that had
+    # just answered the question correctly. The answer is a pick, not a filter - the same
+    # `o["entities"] = []` the CS member pick makes for its own numbered answer. The one
+    # entity that survives is the SUBJECT of the question being answered; a turn that
+    # named a product of its own is a NEW ask and returned above, never here.
+    o["entities"] = (
+        [
+            {
+                "raw": product_code,
+                "hint": "product",
+                "canonical_code": product_code,
+                "current_message": True,
+                "confident": True,
+            }
+        ]
+        if product_code
+        else []
+    )
     # N2: the carried window is a DEFAULT, not an override. It used to be assigned
     # unconditionally, so a pick that narrowed the window ("2, but only 2026") was
     # answered over the previous question's dates.
@@ -1098,13 +1108,15 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # token its header echoes, or the re-run silently widens to every warehouse under a
     # header that says otherwise.
     #
-    # N2: restored ONLY when this turn named nothing of its own. A turn that names a
-    # customer or a location is choosing a different scope from the one the question was
-    # asked about, and the answer must be about what the customer just said.
-    if not named_entities:
-        o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
-        o["outstanding_carried_warehouse_codes"] = filters.get("warehouse_codes") or []
-        o["outstanding_carried_location_token"] = filters.get("location_token")
+    # Restored on every consumed answer. N2 gated this on "the turn named no entity of
+    # its own", which finding 6 then showed to be unreadable: the entity an answer turn
+    # carries is the parser's own hint on the ANSWER WORD, not a filter the customer
+    # named, so that gate silently dropped the carried customer and location whenever
+    # the model hinted "Both" as one. A turn that genuinely names a different subject
+    # names a PRODUCT, and that turn is a new ask and has already returned above.
+    o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
+    o["outstanding_carried_warehouse_codes"] = filters.get("warehouse_codes") or []
+    o["outstanding_carried_location_token"] = filters.get("location_token")
 
     if kind == "outstanding_scope":
         if picked is not None:
