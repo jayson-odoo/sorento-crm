@@ -829,16 +829,20 @@ class DocumentIngestService(MasterRefResolver):
         return mapped
 
     def _header(self, spec: DocumentSpec, payload: Any) -> tuple[Any, IngestOutcome]:
-        """The row this document addresses: by reference, then by number, then new."""
+        """The row this document addresses: by reference, then by number, then new.
+
+        BL-056 (D15): `self.refs` is scoped to this anchor company, so a
+        header ref linked under a DIFFERENT company never resolves here - the
+        same as a ref that was never linked - and falls through to
+        adopt-by-number/create below, landing a brand new row in THIS company.
+        The cross-company refusal this used to need
+        (`MasterRefResolver._require_same_company`) is unreachable through
+        refs now and has been removed.
+        """
         existing_id = self.refs.resolve(
             entity_type=spec.entity_type, source_ref=payload.source_ref
         )
         if existing_id is not None:
-            self._require_same_company(
-                spec.header_model,
-                existing_id,
-                f"source_ref {payload.source_ref!r}",
-            )
             return self._load(spec, existing_id), IngestOutcome.UPDATED
 
         # Within the company, and through the model: `so_number` is unique per
@@ -1605,7 +1609,7 @@ class DocumentReadService:
     def __init__(self, db: Session, *, company_id: str):
         self.db = db
         self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        self.refs = IntegrationReferenceService(db, company_id=self.company_id)
 
     def current_state(self, entity_type: str, source_refs: list[str]) -> dict[str, Any]:
         # The route 404s an unknown entity (`_entity`) and dispatches to this

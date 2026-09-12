@@ -124,7 +124,12 @@ class TestMemoDoesNotLeakAcrossResolverInstances:
         assert res_b.json()["records"][0]["outcome"] == "created", res_b.text
 
         header_a = env.header("sales_orders", record_a["source_ref"])
-        header_b = env.header("sales_orders", record_b["source_ref"])
+        # record_b was pushed under company_b - env.header()'s default anchor
+        # (company_a) would resolve nothing for it (plan D14: resolve() on a
+        # scoped type only sees its own anchor's rows), reading back as None.
+        header_b = env.header(
+            "sales_orders", record_b["source_ref"], company_id=env.company_b
+        )
         line_a_row = env.so_lines(header_a["id"])[0]
         line_b_row = env.so_lines(header_b["id"])[0]
 

@@ -81,6 +81,9 @@ INGEST_PERMISSIONS = {
     "customers": "order_management.customers.edit",
     "products": "master_data.products.edit",
     "sales_agents": "master_data.sales_agents.edit",
+    # autocount-brands-ingest (contract 2.3), D5: ingest takes .edit, not .add,
+    # same as every sibling master.
+    "brands": "master_data.brands.edit",
     # Documents (group A3). Pushing an order through the ESB is the same act as
     # editing one on the SCM screen, so it is the same slug.
     "sales_orders": "scm.sales_orders.edit",
@@ -96,6 +99,7 @@ READ_PERMISSIONS = {
     "customers": "order_management.customers.view",
     "products": "master_data.products.view",
     "sales_agents": "master_data.sales_agents.view",
+    "brands": "master_data.brands.view",
     "sales_orders": "scm.sales_orders.view",
     "purchase_orders": "scm.purchase_orders.view",
     "shipping_orders": "scm.shipping_orders.view",
@@ -113,6 +117,7 @@ DELETE_PERMISSIONS = {
     "customers": "order_management.customers.delete",
     "products": "master_data.products.delete",
     "sales_agents": "master_data.sales_agents.delete",
+    "brands": "master_data.brands.delete",
     "sales_orders": "scm.sales_orders.delete",
     "purchase_orders": "scm.purchase_orders.delete",
     "shipping_orders": "scm.shipping_orders.delete",
@@ -193,7 +198,10 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 # shipping_orders lines, and from_so_numbers is now listed under
 # `fields_added` too (a v2-era field the ESB only now depends on reading
 # back). All additive and optional, same as every point release before it.
-CONTRACT_VERSION = "2.2"
+# "2.3" (autocount-brands-ingest): `brands` joins ENTITY_SPECS as a
+# first-class master, with its own INGEST/READ/DELETE permission slugs -
+# additive, an ESB on 2.2 simply never sees `brands` in `entities`.
+CONTRACT_VERSION = "2.3"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
