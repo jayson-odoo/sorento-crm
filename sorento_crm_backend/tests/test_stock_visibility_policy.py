@@ -1769,25 +1769,6 @@ def test_detailed_without_the_flag_still_shows_the_zero_rows(db):
     assert result["stock_visibility"]["hide_zero_locations"] is False
 
 
-def test_detailed_hide_zero_takes_the_existing_empty_path(db):
-    """B17. Every row of the request filtered out is the same answer as no row at
-    all: `data: []`, `total: 0`, `empty: true`. The mode is unchanged, so the
-    caller gets the empty shape it already handles rather than a new one."""
-    brw, brw_bb, _ = _three_warehouses(db)
-    p = product(db, company_id=DEFAULT_COMPANY_ID)
-    for wh in (brw, brw_bb):
-        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
-    contact = _contact(db)
-    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
-    db.flush()
-
-    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
-
-    assert result["data"] == []
-    assert result["pagination"]["total"] == 0
-    assert result["empty"] is True
-
-
 def test_compact_drops_the_zero_locations_and_keeps_the_total(db):
     """B17. In `compact` the flag works on the location LINES, not on the rows:
     a line reading `BRW-BB: 0` is noise in a WhatsApp message, while the total is

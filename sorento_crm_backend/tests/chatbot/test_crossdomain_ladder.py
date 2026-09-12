@@ -656,7 +656,10 @@ class TestOwner12SepBoldRungLabels:
         row_a = {"product_code": "A", "ordered_qty": 1, "qty": 1, "po_date": None, "location": None}
         row_b = {"product_code": "B", "ordered_qty": 2, "qty": 2, "po_date": None, "location": None}
         text = _crossdomain_rung_text([row_a, row_b])
-        assert text == "*Product Code:* A\n*Outstanding:* 1\n\n*Product Code:* B\n*Outstanding:* 2"
+        assert text == (
+            "*Product Code:* A\n*Ordered:* 1\n*Outstanding:* 1\n\n"
+            "*Product Code:* B\n*Ordered:* 2\n*Outstanding:* 2"
+        )
         assert "\n\n\n" not in text
 
 

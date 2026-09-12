@@ -601,6 +601,17 @@ class TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine:
             if rest.endswith("\n\n"):
                 rest = rest[:-2]
 
+        # D2 (12 Sep 2026, finding 2): the CAPTURED n8n block may still end with the
+        # phantom "I have attached the file(s) below." sentence - CRM no longer renders
+        # it at all (`crossdomain_render`'s own `mention` retired), so it is stripped
+        # from `want` here rather than the CRM side. Same mechanism as the two strips
+        # above, just on the other side of the comparison; unconditional on content,
+        # never on the fixture id, so any capture with this trailing sentence is graded
+        # the same way.
+        _RETIRED_ATTACHMENT_SENTENCE = "\n\nI have attached the file(s) below."
+        if want.endswith(_RETIRED_ATTACHMENT_SENTENCE):
+            want = want[: -len(_RETIRED_ATTACHMENT_SENTENCE)]
+
         assert rest == want, (
             "with the known sentence(s) removed the block must still be byte-equal to the "
             f"capture:\n{rest!r}\n{want!r}"
