@@ -24,6 +24,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -125,6 +126,20 @@ const MATRIX_GRANULARITY_OPTIONS = [
  */
 export function holdingSortValue(row: ContainerRequestRow): number {
   return row.holding_qty ?? -1;
+}
+
+/**
+ * Whether the Product cell's subtitle says something the code does not (AC-N1). Most of this
+ * supplier's rows carry a `product_name` equal to their own `item_code`, so printing it again
+ * underneath reads as a defect, not a fact - same rule as the order-inquiry worklist
+ * (`orderInquiryWorklistColumns.tsx`), trimmed and case-insensitive because a name and a code
+ * that differ only by spacing or case are still the same word to a reader scanning the grid.
+ */
+export function productNameDiffersFromCode(row: ContainerRequestRow): boolean {
+  if (!row.product_name) return false;
+  const name = row.product_name.trim().toLowerCase();
+  const code = (row.item_code ?? '').trim().toLowerCase();
+  return name !== code;
 }
 
 /**
@@ -301,6 +316,9 @@ export function ContainerRequestSection({
   });
   const [foldSorting, setFoldSorting] = useState<SortingState>([]);
   const [view, setView] = useState<'table' | 'schedule'>('table');
+  // AC-N3: client-side, every row is already on the client. Filters the ranked table, the
+  // folded rows and the Schedule view alike; the stat cards and Save (N) read `rows` unfiltered.
+  const [searchQuery, setSearchQuery] = useState('');
   const [matrixAxis, setMatrixAxis] = useState<ContainerRequestMatrixAxis>('product');
   const [matrixGranularity, setMatrixGranularity] =
     useState<ContainerRequestMatrixGranularity>('week');
@@ -314,11 +332,23 @@ export function ContainerRequestSection({
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const soLines = useMemo(() => build.data?.lines ?? [], [build.data]);
 
+  // AC-N3: case-insensitive substring over item_code, product_name and set_code. `rows`
+  // itself stays unfiltered - the stat cards and Save (N) read it directly.
+  const searchTerm = searchQuery.trim().toLowerCase();
+  const displayRows = useMemo(() => {
+    if (!searchTerm) return rows;
+    return rows.filter((r) =>
+      [r.item_code, r.product_name, r.set_code].some(
+        (v) => v && v.toLowerCase().includes(searchTerm),
+      ),
+    );
+  }, [rows, searchTerm]);
+
   // AC-E0/AC-E1: membership and placement are separate. Every candidate the build returned
   // is either ranked (open demand) or folded (held, no open demand); nothing the build sends
   // is dropped, it just changes which table it renders in.
-  const rankedRows = useMemo(() => rows.filter((r) => r.has_demand !== false), [rows]);
-  const foldedRows = useMemo(() => rows.filter((r) => r.has_demand === false), [rows]);
+  const rankedRows = useMemo(() => displayRows.filter((r) => r.has_demand !== false), [displayRows]);
+  const foldedRows = useMemo(() => displayRows.filter((r) => r.has_demand === false), [displayRows]);
 
   const linesByProduct = useMemo(() => {
     const map = new Map<string, ContainerRequestSoLine[]>();
@@ -342,9 +372,21 @@ export function ContainerRequestSection({
     return map;
   }, [rows]);
 
+  // AC-N3: the Schedule view reads the SAME filter, applied by product - a line whose product
+  // did not match the query is not on the plan she asked to see, whichever axis it is grouped
+  // by (an order row disappears entirely once none of its lines match).
+  const matchedProductIds = useMemo(
+    () => new Set(displayRows.map((r) => r.product_id)),
+    [displayRows],
+  );
+  const matrixSoLines = useMemo(
+    () => (searchTerm ? soLines.filter((l) => matchedProductIds.has(l.product_id)) : soLines),
+    [soLines, matchedProductIds, searchTerm],
+  );
+
   const matrix = useMemo(
-    () => buildContainerRequestMatrix(soLines, matrixAxis, matrixGranularity, rankByProductId),
-    [soLines, matrixAxis, matrixGranularity, rankByProductId],
+    () => buildContainerRequestMatrix(matrixSoLines, matrixAxis, matrixGranularity, rankByProductId),
+    [matrixSoLines, matrixAxis, matrixGranularity, rankByProductId],
   );
 
   const historyRef = useRef(new Map<string, ContainerRequestHistoryProduct>());
@@ -409,6 +451,9 @@ export function ContainerRequestSection({
     () => [
       {
         id: 'rank',
+        // AC-N5: a row with no rank (has_demand: false, the folded table) sorts after every
+        // ranked row rather than tying with rank 1.
+        accessorFn: (row) => row.rank ?? Number.MAX_SAFE_INTEGER,
         header: ({ column }) => (
           <span className="flex items-center gap-1">
             <DataGridColumnHeader title="Rank" column={column} />
@@ -443,11 +488,13 @@ export function ContainerRequestSection({
           );
         },
         size: 110,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Rank' },
       },
       {
         id: 'product',
+        // AC-N5: sorts by the code every row shows, product or set alike.
+        accessorFn: (row) => row.item_code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => {
           const original = row.original;
@@ -483,23 +530,26 @@ export function ContainerRequestSection({
                   </Badge>
                 ) : null}
               </span>
-              <span
-                className="truncate text-2xs text-muted-foreground"
-                title={
-                  original.row_kind === 'set'
-                    ? `Figures from ${original.driver_item_code ?? 'its driver member'}`
-                    : (original.product_name ?? '')
-                }
-              >
-                {original.row_kind === 'set'
-                  ? (original.driver_item_code ?? EM_DASH)
-                  : (original.product_name ?? EM_DASH)}
-              </span>
+              {original.row_kind === 'set' ? (
+                <span
+                  className="truncate text-2xs text-muted-foreground"
+                  title={`Figures from ${original.driver_item_code ?? 'its driver member'}`}
+                >
+                  {original.driver_item_code ?? EM_DASH}
+                </span>
+              ) : productNameDiffersFromCode(original) ? (
+                <span
+                  className="truncate text-2xs text-muted-foreground"
+                  title={original.product_name ?? ''}
+                >
+                  {original.product_name}
+                </span>
+              ) : null}
             </button>
           );
         },
         size: 210,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Product' },
       },
       {
@@ -538,6 +588,7 @@ export function ContainerRequestSection({
       },
       {
         id: 'open_so_need',
+        accessorFn: (row) => row.open_so_need,
         header: ({ column }) => <DataGridColumnHeader title="Need" column={column} />,
         // S2: the figure that used to be plain text now opens its OWN dialog - project and
         // retail together, since Need is the sum of both.
@@ -560,7 +611,7 @@ export function ContainerRequestSection({
           );
         },
         size: 100,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Need' },
       },
       {
@@ -584,7 +635,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 140,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Project' },
       },
       {
@@ -606,7 +657,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 140,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Retail' },
       },
       {
@@ -622,7 +673,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 90,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'On hand' },
       },
       {
@@ -636,7 +687,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 80,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'SPO' },
       },
       {
@@ -652,11 +703,13 @@ export function ContainerRequestSection({
           />
         ),
         size: 100,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Incoming PL' },
       },
       {
         id: 'total_supply',
+        // AC-N5: sortable off the same sum the cell prints, so the two cannot disagree.
+        accessorFn: (row) => row.on_hand + row.incoming_spo + row.incoming_pl,
         header: ({ column }) => <DataGridColumnHeader title="Total supply" column={column} />,
         // R7: On hand + SPO + Incoming PL, plain - no lightbox of its own, the three source
         // columns and theirs are untouched.
@@ -666,7 +719,7 @@ export function ContainerRequestSection({
           </span>
         ),
         size: 110,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Total supply' },
       },
       {
@@ -680,7 +733,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 80,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'PO' },
       },
       {
@@ -835,7 +888,11 @@ export function ContainerRequestSection({
         table={table}
         recordCount={rankedRows.length}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        emptyMessage="No open customer demand for what this supplier supplies."
+        emptyMessage={
+          searchTerm
+            ? 'No product matches'
+            : 'No open customer demand for what this supplier supplies.'
+        }
       >
         <Card>
           {/* The heading, and nothing else (R5): Send and the gear moved to the record's own
@@ -850,33 +907,43 @@ export function ContainerRequestSection({
           </CardHeader>
 
           <div className="flex flex-col gap-3 border-t border-border px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-            <div
-              className="inline-flex rounded-md border border-input"
-              role="group"
-              aria-label="Request view"
-            >
-              <Button
-                type="button"
-                size="sm"
-                variant={view === 'table' ? 'primary' : 'ghost'}
-                className="rounded-e-none"
-                aria-pressed={view === 'table'}
-                onClick={() => setView('table')}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div
+                className="inline-flex rounded-md border border-input"
+                role="group"
+                aria-label="Request view"
               >
-                <Table2 className="size-4" aria-hidden />
-                Table
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={view === 'schedule' ? 'primary' : 'ghost'}
-                className="rounded-s-none border-s border-input"
-                aria-pressed={view === 'schedule'}
-                onClick={() => setView('schedule')}
-              >
-                <LayoutGrid className="size-4" aria-hidden />
-                Schedule
-              </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={view === 'table' ? 'primary' : 'ghost'}
+                  className="rounded-e-none"
+                  aria-pressed={view === 'table'}
+                  onClick={() => setView('table')}
+                >
+                  <Table2 className="size-4" aria-hidden />
+                  Table
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={view === 'schedule' ? 'primary' : 'ghost'}
+                  className="rounded-s-none border-s border-input"
+                  aria-pressed={view === 'schedule'}
+                  onClick={() => setView('schedule')}
+                >
+                  <LayoutGrid className="size-4" aria-hidden />
+                  Schedule
+                </Button>
+              </div>
+              {/* AC-N3: client-side over item_code/product_name/set_code - every row is
+                  already on the client, so there is no round trip to debounce. */}
+              <ListSearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search product"
+                className="w-full sm:w-64"
+              />
             </div>
 
             {view === 'schedule' ? (

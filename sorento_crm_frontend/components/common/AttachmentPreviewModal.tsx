@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download,
   ExternalLink,
@@ -26,6 +26,7 @@ import {
   type CarouselApi,
 } from '@/components/ui/carousel';
 import { Button } from '@/components/ui/button';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { apiFetch } from '@/lib/api';
 import { toast } from '@/lib/toast';
 
@@ -484,6 +485,25 @@ const MAX_COLS = 40;
  */
 const SCAN_ROWS = 2000;
 
+/** Every occurrence of `query` inside `text`, wrapped in `<mark>` (AC-N6). Case-insensitive;
+ *  an empty query returns the text plain, so the common (non-searching) render path never
+ *  builds a regex it does not need. */
+function highlightCell(text: string, query: string) {
+  if (!query) return text;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    part.toLowerCase() === query.toLowerCase() ? (
+      <mark key={i} className="rounded-sm bg-yellow-200 px-0.5 text-inherit">
+        {part}
+      </mark>
+    ) : (
+      part
+    ),
+  );
+}
+
 function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBytes: FetchBytes }) {
   const wbRef = useRef<import('xlsx').WorkBook | null>(null);
   const xlsxRef = useRef<typeof import('xlsx') | null>(null);
@@ -491,8 +511,13 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
   const [error, setError] = useState<string | null>(null);
   const [sheets, setSheets] = useState<string[]>([]);
   const [active, setActive] = useState('');
-  const [rows, setRows] = useState<string[][]>([]);
-  const [truncated, setTruncated] = useState(false);
+  // Every row the sheet loaded (up to SCAN_ROWS physical rows, blank rows already dropped,
+  // columns already clamped to MAX_COLS) - search reads ALL of these, not only the 200-row
+  // slice the plain preview shows (AC-N6). NOT reset on a sheet switch by itself; `query` is
+  // its own state below and lives across `showSheet` calls, so changing sheet re-applies it.
+  const [allRows, setAllRows] = useState<string[][]>([]);
+  const [colsClamped, setColsClamped] = useState(false);
+  const [query, setQuery] = useState('');
 
   const showSheet = useCallback((name: string) => {
     const wb = wbRef.current;
@@ -503,13 +528,13 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
     // range, so on a sheet with a stale used-range marker it does millions of
     // cell lookups and only then hands back the 30 real rows we slice to 200.
     let range: string | undefined;
-    let colsClamped = false;
+    let clampedCols = false;
     const ref = ws?.['!ref'];
     if (ref) {
       const r = XLSX.utils.decode_range(ref);
       const endRow = Math.min(r.e.r, r.s.r + SCAN_ROWS - 1);
       const endCol = Math.min(r.e.c, r.s.c + MAX_COLS - 1);
-      colsClamped = r.e.c > endCol;
+      clampedCols = r.e.c > endCol;
       range = XLSX.utils.encode_range({ s: r.s, e: { r: endRow, c: endCol } });
     }
     // raw:false → return each cell's FORMATTED text (the `.w` value), so date
@@ -522,15 +547,32 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
       raw: false,
       ...(range ? { range } : {}),
     });
-    const trimmed = aoa
-      .slice(0, MAX_ROWS)
-      .map((r) => r.slice(0, MAX_COLS).map((c) => (c == null ? '' : String(c))));
-    // Deliberately NOT derived from the declared range: it is the thing that
-    // lies. Claim truncation only for rows we actually saw and dropped.
-    setTruncated(aoa.length > MAX_ROWS || colsClamped);
-    setRows(trimmed);
+    setColsClamped(clampedCols);
+    setAllRows(aoa.map((r) => r.slice(0, MAX_COLS).map((c) => (c == null ? '' : String(c)))));
     setActive(name);
   }, []);
+
+  // AC-N6: case-insensitive substring, any cell, over the FULL loaded set - not the 200-row
+  // display slice. Client-side (the sheet is already on the browser), so no debounce.
+  const trimmedQuery = query.trim();
+  const matches = useMemo(() => {
+    if (!trimmedQuery) return allRows;
+    const q = trimmedQuery.toLowerCase();
+    return allRows.filter((r) => r.some((c) => c.toLowerCase().includes(q)));
+  }, [allRows, trimmedQuery]);
+  const rows = useMemo(() => matches.slice(0, MAX_ROWS), [matches]);
+  // Wording follows what's actually being cut: a query narrows to MATCHES, no query shows the
+  // sheet's own ROWS - and the column clamp (independent of both) still gets said.
+  let footnote: string | null = null;
+  if (trimmedQuery) {
+    if (matches.length > MAX_ROWS) {
+      footnote = `Showing first ${MAX_ROWS} matches. Download for the full sheet.`;
+    } else if (colsClamped) {
+      footnote = `Showing first ${MAX_COLS} columns. Download for the full sheet.`;
+    }
+  } else if (allRows.length > MAX_ROWS || colsClamped) {
+    footnote = `Showing first ${MAX_ROWS} rows × ${MAX_COLS} columns. Download for the full sheet.`;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -591,31 +633,47 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
           ))}
         </div>
       )}
-      <div className="w-full overflow-auto rounded border bg-white">
-        <table className="w-max border-collapse text-xs">
-          <tbody>
-            {rows.map((r, ri) => (
-              <tr key={ri} className={ri === 0 ? 'bg-muted/50 font-medium' : ''}>
-                {r.map((c, ci) => (
-                  <td
-                    key={ci}
-                    className="max-w-[240px] truncate border px-2 py-1"
-                    title={c}
-                  >
-                    {c}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="flex items-center gap-2">
+        <ListSearchInput
+          value={query}
+          onChange={setQuery}
+          placeholder="Search in sheet"
+          aria-label="Search in sheet"
+          className="w-full sm:w-64"
+        />
+        {trimmedQuery && (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {matches.length} of {allRows.length} rows
+          </span>
+        )}
       </div>
-      {truncated && (
-        <p className="text-xs text-muted-foreground">
-          Showing first {MAX_ROWS} rows × {MAX_COLS} columns. Download for the full
-          sheet.
-        </p>
+      {trimmedQuery && matches.length === 0 ? (
+        <p className="py-8 text-center text-xs text-muted-foreground">No cell matches</p>
+      ) : (
+        <div className="w-full overflow-auto rounded border bg-white">
+          <table className="w-max border-collapse text-xs">
+            <tbody>
+              {rows.map((r, ri) => (
+                <tr
+                  key={ri}
+                  className={ri === 0 && !trimmedQuery ? 'bg-muted/50 font-medium' : ''}
+                >
+                  {r.map((c, ci) => (
+                    <td
+                      key={ci}
+                      className="max-w-[240px] truncate border px-2 py-1"
+                      title={c}
+                    >
+                      {trimmedQuery ? highlightCell(c, trimmedQuery) : c}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
+      {footnote && <p className="text-xs text-muted-foreground">{footnote}</p>}
     </div>
   );
 }

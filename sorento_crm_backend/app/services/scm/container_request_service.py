@@ -338,17 +338,23 @@ def _plan_stock_list(db: Session, plan) -> tuple[Optional[Any], dict[str, dict]]
     Same aggregation, one predicate added. The snapshot used to be one per supplier, so a
     plan started with no file at all read whatever the supplier had last sent - from any
     plan - and its own subtitle said "No file" while it did.
+
+    `as_of` is read off EVERY row this plan owns, bound or not (AC-U3 follow-up): the upload
+    dates the whole file at once, so a row nothing matched still says when the file arrived -
+    "we have a statement, dated X, that named none of ours" is a different fact from "we have
+    no statement" and the freshness strip has to be able to say which. `stock` (the holdings
+    dict `_aggregate_stock` builds) stays bound-rows-only: an unbound row carries no product or
+    set identity to key a holding on.
     """
     rows = (
         db.query(SupplierInventory)
-        .filter(
-            SupplierInventory.loading_plan_id == str(plan.id),
-            SupplierInventory.product_id.isnot(None)
-            | SupplierInventory.product_set_id.isnot(None),
-        )
+        .filter(SupplierInventory.loading_plan_id == str(plan.id))
         .all()
     )
-    return _aggregate_stock(rows)
+    as_of = max((r.as_of for r in rows if r.as_of is not None), default=None)
+    bound = [r for r in rows if r.product_id is not None or r.product_set_id is not None]
+    _, stock = _aggregate_stock(bound)
+    return as_of, stock
 
 
 def _plan_proforma(db: Session, plan) -> Optional[dict]:
@@ -991,15 +997,17 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
       `-BB` project bin (spoken for by an order already promised) silently cancel an ask this
       container needed. That reasoning did not account for `open_so_need` also counting project
       demand, which is what the 8 Sep ruling above corrects.
-    * `incoming_pl` (unreceived packing-list quantity on shipments that have not arrived) is
-      shown beside the ask, with the shipments behind it, exactly as before Q1 - a packing
-      list names no destination, so there is no way to tell whether it lands in a pool or in
-      a group bin, and netting the WHOLE figure would be a guess.
-    * `incoming_pl_unallocated` (R6) is the part of `incoming_pl` NOT already turned into an
-      SPO on that same shipment line (`GREATEST(quantity_shipped - spo_allocated_quantity -
-      quantity_received, 0)`) - THIS is what actually nets against the ask, because a unit
-      already counted in `incoming_spo` would otherwise be subtracted twice: once as the SPO,
-      once again as the packing list it came off.
+    * `incoming_pl` (12 Sep 2026, item 2 of `PLAN-scm-loading-plan-lines-feedback-12sep.md`) IS
+      `incoming_pl_unallocated` now - the part of a packing list NOT already turned into an SPO
+      (`PL_UNALLOCATED_SQL`) - shown beside the ask, with the shipments behind it, each already
+      cut to its own unallocated share. It used to be the WHOLE unreceived quantity, which
+      double-counted a container that already had its SPO: Total supply (on hand + SPO +
+      incoming PL) added the same units in twice, once as the SPO and once again as the packing
+      list it came off. A shipment fully allocated to an SPO is now absent from the shipment
+      list rather than listed at a figure that nets to nothing.
+    * `incoming_pl_unallocated` is kept as its own key, equal to `incoming_pl` by construction -
+      readers that subtract it (the netting formula below) and readers that display it (the
+      cell, the lightbox) can use either without drifting apart.
     * `outstanding_po` is likewise shown and never subtracted (captain, 20 Aug, CWCY604): a PO
       placed but not yet allocated to a shipment is often the very demand this request is
       asking the supplier to pack.
@@ -1104,39 +1112,41 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
 
 
 def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """Unreceived packing-list quantity per product, by shipment - the Incoming PL reference,
-    plus the part of it not yet turned into an SPO (R6).
+    """Unreceived, unallocated packing-list quantity per product, by shipment - the Incoming
+    PL reference (12 Sep 2026: the figure and the shipment list are now the SAME number,
+    `PL_UNALLOCATED_SQL` - see item 2 of `PLAN-scm-loading-plan-lines-feedback-12sep.md`).
 
     "Not arrived" is BOTH `actual_arrival_date IS NULL` and a status that is not a finished
     one: a shipment that has landed is already counted in `on_hand`, and counting it here too
-    would show the same units twice on one row.
+    would show the same units twice on one row. "Unallocated" cuts it further: a shipment line
+    already turned into an SPO is already counted in `incoming_spo`, so listing its gross
+    quantity here too double-counted it a second way, this time in Total supply (on hand + SPO
+    + incoming PL) rather than in the netting formula alone (R6 already fixed that half). A
+    shipment fully allocated to an SPO now names nothing here at all.
 
     A draft carries no number yet; it is emitted as a null so the screen can say "draft"
     rather than invent one.
 
-    Returns ``{product_id: {"shipments": [...], "unallocated": float}}`` - `shipments` is
-    the SAME per-shipment breakdown the Incoming PL lightbox has always shown (unchanged
-    shape, so that dialog and the AC-B4 test are untouched); `unallocated` is the new R6
-    figure the netting formula subtracts, summed once per product rather than per shipment
-    since nothing on screen breaks it down further.
+    Returns ``{product_id: {"shipments": [...], "unallocated": float}}`` - `shipments` now
+    carries the unallocated figure as `qty` too, so the cell (`incoming_pl`, the sum of
+    `qty` across shipments) equals `unallocated` by construction and the lightbox rows foot
+    to the cell (AC-N2b, the AC-G3 rule).
     """
     if not product_ids:
         return {}
     scope, params = company_sql_predicate(db, "s.company_id", param_prefix="ipl")
-    remaining = PL_REMAINING_SQL
     unallocated = PL_UNALLOCATED_SQL
     sql = f"""
         SELECT l.product_id::text AS product_id,
                s.id::text AS shipment_id,
                s.shipment_number,
                s.estimated_arrival_date,
-               SUM({remaining}) AS qty,
-               SUM({unallocated}) AS qty_unallocated
+               SUM({unallocated}) AS qty
         FROM inbound_shipment_lines l
         JOIN inbound_shipments s ON s.id = l.shipment_id
         WHERE l.product_id::text = ANY(:pids)
           AND {PL_NOT_ARRIVED_SQL}
-          AND {remaining} > 0
+          AND {unallocated} > 0
           {("AND " + scope) if scope else ""}
         GROUP BY l.product_id, s.id, s.shipment_number, s.estimated_arrival_date
         ORDER BY s.estimated_arrival_date NULLS LAST, s.shipment_number NULLS FIRST
@@ -1145,6 +1155,7 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, di
     out: dict[str, dict] = {}
     for r in rows:
         entry = out.setdefault(r["product_id"], {"shipments": [], "unallocated": 0.0})
+        qty = float(r["qty"] or 0)
         entry["shipments"].append(
             {
                 "shipment_id": r["shipment_id"],
@@ -1154,10 +1165,10 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, di
                     if r["estimated_arrival_date"]
                     else None
                 ),
-                "qty": float(r["qty"] or 0),
+                "qty": qty,
             }
         )
-        entry["unallocated"] += float(r["qty_unallocated"] or 0)
+        entry["unallocated"] += qty
     return out
 
 
