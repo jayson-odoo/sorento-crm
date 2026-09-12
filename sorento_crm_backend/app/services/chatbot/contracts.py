@@ -596,12 +596,13 @@ PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
 # because `Focus` forbids extras and the decay pass walks this tuple: a tenth axis has
 # to be added deliberately, in one place, or it does not exist.
 #
-# `products` is plural and every other axis is singular, which is not an inconsistency:
-# a question can be about several products at once ("SRTWC8517 and SRTKS6091 stock")
-# and never about two customers at once. The plural axis therefore holds a LIST of
-# entities and the singular ones hold one.
+# TWO axes are plural and the rest are singular, which is not an inconsistency: a question
+# can be about several products at once ("SRTWC8517 and SRTKS6091 stock") and about several
+# domains at once ("stock and eta"), and never about two customers at once. `products` holds
+# a list of entities, `domains` holds a list of domain names in the order the dealer said
+# them (D3, D11), and the singular axes hold one value each.
 FOCUS_SLOTS = (
-    "domain",
+    "domains",
     "products",
     "customer",
     "transporter",
@@ -621,14 +622,19 @@ FocusSlotName = Literal[FOCUS_SLOTS]  # type: ignore[valid-type]
 FOCUS_SOURCES = ("current_message", "reuse", "pick", "quoted")
 FocusSource = Literal[FOCUS_SOURCES]  # type: ignore[valid-type]
 
-# The seven kinds of question the bot can leave open, each with ONE handler in
+# The SIX kinds of question the bot can leave open, each with ONE handler in
 # `dialogue/open_question.py`. They replace the five `pending` kinds, the eight-rule
 # `dym_offer` ladder, `selection_context` and the `picker_*` keys: those were each
 # hand-added and none of them aged, which is defect 3 of the growth plan.
+#
+# `escalate_yes_no` is NOT among them and is not a loss (D5): an escalate offer naming ONE
+# team is a `team_pick` with one option and `expects: yes_no`, which is the same question
+# the customer sees today, and an offer naming two or more is the same kind with
+# `expects: pick`. One kind, one handler, and the one-team and two-team offers stop being
+# different code paths that can disagree.
 OPEN_QUESTION_KINDS = (
     "product_pick",
     "customer_pick",
-    "escalate_yes_no",
     "team_pick",
     "company_pick",
     "tier_pick",
@@ -646,21 +652,24 @@ OpenQuestionExpects = Literal[OPEN_QUESTION_EXPECTS]  # type: ignore[valid-type]
 class FocusSlot(BaseModel):
     """One axis of what the conversation is currently about.
 
-    `set_at_turn` is the CONTACT's turn number (`engine._turn_no`), which is what the
-    decay pass counts in - owner decision D11, turns only, no wall-clock TTL.
+    `set_at_turn` is the CONTACT's turn number (`engine._turn_no`). Nothing expires on it
+    (D9 leaves no counter at all); it is kept because the trace screen answers "when did
+    the bot start scoping this to ABC" with it, and a turn number is the only clock a
+    dealer's conversation actually has.
 
-    **There is no `set_at` on the persisted slot**, and the plan's own words are why: it
-    describes the timestamp as "kept for the trace only". Persisting it would also break
-    an acceptance criterion that already exists - AC-206 says a dry run's returned
-    `session_patch` is byte-equal to what a live run persists, and a wall clock inside the
-    state makes two otherwise identical turns differ. The TRACE carries the clock instead:
-    every `focus` and `decay` entry `TurnTrace.add` writes is stamped with `at`.
+    `set_at` is the WALL CLOCK, and it is `None` on every slot this engine writes. AC-206
+    says a dry run's returned `session_patch` is byte-equal to what a live run persists,
+    and a timestamp inside the state makes two otherwise identical turns differ. The field
+    exists because AC-1002 names it in the slot shape and because a session written by
+    another writer may carry one; the TRACE is where the clock is read from, stamped `at`
+    by `TurnTrace.add`.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     value: Any = None
     set_at_turn: int = 0
+    set_at: Any = None
     source: FocusSource = "current_message"
 
 
@@ -669,16 +678,18 @@ class Focus(BaseModel):
 
     ONE writer (`dialogue/focus.py`), against the two the growth plan measured: the
     parser prompt's "always continue the previous turn" plus ten deterministic rules in
-    `head/output_exchange.py`. A slot the customer has not restated for
-    `engine.DEFAULT_FOCUS_TTL_TURNS` turns is dropped at intake, before the parser is
-    asked anything, and the drop is traced. D9: removed in L1-S1 - there is no TTL and no
-    settings column; a slot is cleared by a same-axis entity, a topic reset or the
-    conversation-closed event.
+    `head/output_exchange.py`. A slot is cleared by exactly three things and nothing else
+    (D9, `dialogue/clearing.py`): a current-message entity of the same axis, a topic reset,
+    or the Respond.io conversation-closed event. No counter, no lifetime, no settings
+    field - a dealer cannot see a turn count, so nothing may expire on one.
+
+    `domains` is the list the fan-out reads, in the order the dealer named them (D3, D11).
+    A domain word with no entity REPLACES it and never appends (D7).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    domain: FocusSlot | None = None
+    domains: FocusSlot | None = None
     products: FocusSlot | None = None
     customer: FocusSlot | None = None
     transporter: FocusSlot | None = None
@@ -697,9 +708,11 @@ class OpenQuestion(BaseModel):
     the whole point of freezing them - "2" must mean the second row the customer read,
     not the second row a fresh lookup would return today.
 
-    `ttl_turns` rides on the question rather than on a settings column because the kinds
-    do not agree: a member offer is on screen for 3 turns (AC-816 rule 1) and a team
-    clarify is answered on the very next turn or not at all.
+    There is NO lifetime on it (D9, AC-1019). A question is cleared when it is answered,
+    when a newer one replaces it, or when the customer asks something else instead - and
+    `member_offer`, which used to live 3 turns, follows the same rule as the rest. An offer
+    the customer can still see on their screen is still answerable, and a counter was only
+    ever a guess at when they had stopped looking.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -708,9 +721,9 @@ class OpenQuestion(BaseModel):
     options: list[dict[str, Any]] = Field(default_factory=list)
     expects: OpenQuestionExpects
     asked_at_turn: int = 0
-    # No wall clock here either, and for the same two reasons as `FocusSlot`: the TTL is
-    # counted in turns (D11) and AC-206 wants a dry run's patch byte-equal to a live one's.
-    ttl_turns: int = 1
+    # The wall clock, `None` on everything this engine writes, for the same AC-206 reason
+    # `FocusSlot.set_at` is: a dry run's patch must be byte-equal to a live run's.
+    asked_at: Any = None
     # Everything the handler needs and nothing the reader has to guess at: the offering
     # domain, the team an escalation names, issue #708's `keep` list of siblings that
     # already resolved. Free-form because the seven handlers need seven different

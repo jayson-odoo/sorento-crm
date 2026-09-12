@@ -213,7 +213,11 @@ def from_session(variables: Any, *, turn_no: int) -> dict[str, Any]:
             (e for e in entities if jsc.lower_or_empty(jsc.get(e, "hint")) == hint), None
         )
         put(name, match)
-    put("domain", stored.get("domain_hint"))
+    # A LIST from day one (D1/D3), even projected off a legacy session that could only
+    # ever hold one: every reader downstream is written against the list, and a shape that
+    # depended on where the session came from would need two of them.
+    domain = stored.get("domain_hint")
+    put("domains", [domain] if jsc.truthy(domain) else None)
     window = {
         "start": stored.get("date_filter_start"),
         "end": stored.get("date_filter_end"),
@@ -548,24 +552,40 @@ def _slot_of(entity: Any) -> str | None:
     return _SLOT_BY_HINT.get(hint)
 
 
-def domain_from_switch_word(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
-    """A bare domain word switches the domain and KEEPS the product slots (AC-942).
+def domains_from_asks(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
+    """What the message is ASKING about, in the order it asked (D7, D11, AC-1012).
 
-    "incoming?" after a stock answer is a question about the same products from a different
-    angle, so the domain moves and nothing else does. `output_exchange` computes which word
-    fired (whole-word, case-insensitive, every remaining content token a switch word of the
-    same domain, no current-message entity); this applies the answer.
+    THE WHOLE LIST IS REPLACED, never appended to. "PO?" after a stock answer is a question
+    about the same products from a different angle, so the domains move and nothing else
+    does - and a dealer who then says "promo" is asking about promotions, not about
+    promotions AND purchase orders AND stock. An append would make the answer grow forever
+    and could never be walked back, because nothing the customer can type says "stop
+    including incoming".
 
-    `intent_hint` is nulled exactly as the deleted block nulled it: downstream re-derives it
-    from the new domain, and keeping the old one would route a shipment question through the
-    stock intent.
+    A turn with NO asks leaves the slot exactly as the earlier rules set it: that is the
+    entity-only continuation ("SRTWT2635" on its own), where the question is the same one
+    and only its subject moved.
+
+    This replaces `domain_from_switch_word`, which read a single switch word out of
+    `domain_hint`. Under parser v3 the domains ARE the emission (`asks[]`), so there is
+    nothing left to infer from a word.
     """
-    if not turn.switch_domain:
+    asks = turn.o.get("asks")
+    if not jsc.is_array(asks) or len(asks) == 0:
         return
-    turn.o["domain_hint"] = turn.switch_domain
-    turn.o["domain_switched_by_keyword"] = turn.switch_domain
-    turn.o["intent_hint"] = None
-    _set(focus, "domain", turn.switch_domain, turn, out, rule="domain_from_switch_word")
+    named: list[str] = []
+    for ask in asks:
+        domain = jsc.get(ask, "domain") if jsc.truthy(ask) else None
+        if jsc.truthy(domain) and domain not in named:
+            named.append(jsc.js_string(domain))
+    if not named:
+        return
+    # `domain_hint` is the word the lanes still route on until lane 2 fans out over the
+    # list; it is DERIVED here from the first ask (AC-1026), never persisted as its own
+    # axis of state.
+    turn.o["domain_hint"] = named[0]
+    turn.o["domains_from_asks"] = list(named)
+    _set(focus, "domains", named, turn, out, rule="domains_from_asks")
 
 
 def date_restated_only(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
@@ -670,16 +690,39 @@ def anaphora_reuses(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
 
 
 def apply(prev_focus: dict[str, Any], turn: Turn) -> Outputs:
-    """The six rules, in the plan's order. Returns the new focus and its trace entries."""
+    """The seven rules, in the plan's order. Returns the new focus and its trace entries.
+
+    AC-1005 names the order and it is load-bearing rather than alphabetical: this turn's
+    own entities land first, a reset clears what the customer walked away from, what
+    survives is carried, the domains are taken from the asks, the date is restated, an
+    anaphora resolves against what is left, and the confidence guard has the last word
+    because it is the only rule that can REFUSE another rule's write.
+    """
     out = Outputs(focus=dict(prev_focus or {}))
     replace_same_axis(out.focus, turn, out)
     reset_on_topic(out.focus, turn, out)
     reuse_alive(out.focus, turn, out)
-    domain_from_switch_word(out.focus, turn, out)
+    domains_from_asks(out.focus, turn, out)
     date_restated_only(out.focus, turn, out)
     anaphora_reuses(out.focus, turn, out)
+    confident_guard(out.focus, turn, out)
     _record_domain(out.focus, turn, out)
     return out
+
+
+def confident_guard(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:  # noqa: ARG001
+    """AC-1011, as a NAMED rule: an unconfident entity never replaces an alive slot.
+
+    The decision itself is `_confident_enough`, applied by `replace_same_axis` at the
+    moment it would write - which is the only place it can be applied, because the guard
+    is about a write that must not happen rather than about a value to correct
+    afterwards. This function is the rule's name in the order AC-1005 lists, and it is
+    where a per-turn re-check would go if one is ever needed; today it has nothing left to
+    do, and saying so is more honest than re-walking the slots to change nothing.
+
+    `out.refused` carries what the guard stopped, for the trace.
+    """
+    return
 
 
 def _record_domain(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
@@ -703,12 +746,15 @@ def _record_domain(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
         # their own, so anything left in `domain_hint` is a carry from the subject they
         # said they were finished with. Recording it would undo the reset one line later.
         return
-    if _set_this_turn(focus, "domain", turn):
+    if _set_this_turn(focus, "domains", turn):
         return
     _set(
         focus,
-        "domain",
-        domain,
+        "domains",
+        # A LIST of one: this arm records the single domain the turn CONCLUDED, which is
+        # all a turn with no `asks` can carry. `domains_from_asks` is what writes several,
+        # and it has already run and returned above when it did.
+        [jsc.js_string(domain)],
         turn,
         out,
         rule="record_domain",
@@ -735,7 +781,11 @@ def _reuse_domain(focus: dict[str, Any], turn: Turn, out: Outputs, *, continuati
     )
 
     o = turn.o
-    prev_dom = value_of(focus, "domain") or None
+    # The FIRST domain of the alive list. This rule is the legacy single-domain carry and
+    # stays single-domain until lane 2 fans a turn out over the whole list; taking the head
+    # is what the list means for a reader that can only hold one.
+    prev_domains = value_of(focus, "domains")
+    prev_dom = (prev_domains[0] if isinstance(prev_domains, list) and prev_domains else None) or None
     if not jsc.truthy(prev_dom):
         return
 
@@ -749,7 +799,7 @@ def _reuse_domain(focus: dict[str, Any], turn: Turn, out: Outputs, *, continuati
         # (`reuse_domain_entityless`); all that is left here is the trace line, and only
         # when the slot it reused is alive.
         if turn.entityless_domain_reused:
-            _touch(focus, "domain", turn, out, rule="reuse_alive")
+            _touch(focus, "domains", turn, out, rule="reuse_alive")
         return
 
     raw_snapshot = turn.parser_raw or {}
@@ -792,7 +842,7 @@ def _reuse_domain(focus: dict[str, Any], turn: Turn, out: Outputs, *, continuati
                 retyped = True
         if retyped:
             o["bare_entity_retyped"] = bare_type
-    _touch(focus, "domain", turn, out, rule="reuse_alive")
+    _touch(focus, "domains", turn, out, rule="reuse_alive")
 
 
 def _reuse_is_active(turn: Turn) -> None:

@@ -1,17 +1,28 @@
 """The ONE thing the bot can be waiting for, and the one place an answer is resolved.
 
-Growth r1 slice B4 (AC-944, AC-945, AC-947, AC-948, D7). Seven kinds, one table, one
+AC-944, AC-945, AC-947, AC-948, AC-1013, AC-1019 (D5, D7, D9). SIX kinds, one table, one
 handler each, and a dispatcher that never guesses:
 
-| kind             | expects | options                          | outcome                       |
-|------------------|---------|----------------------------------|-------------------------------|
-| `product_pick`   | pick    | frozen rows: uuid, code, label   | focus.products, source `pick` |
-| `customer_pick`  | pick    | family rows with company codes   | focus.customer                |
-| `escalate_yes_no`| yes_no  | none                             | yes: escalate; no: declined   |
-| `team_pick`      | pick    | the teams the ask OFFERED        | routing set, escalation on    |
-| `company_pick`   | pick    | the ledgers the ask offered      | routing set, escalation on    |
-| `tier_pick`      | pick    | tiers                            | focus.tier, promotion rerun   |
-| `member_offer`   | yes_no  | family members                   | yes: business lane over them  |
+| kind             | expects     | options                        | outcome                       |
+|------------------|-------------|--------------------------------|-------------------------------|
+| `product_pick`   | pick        | frozen rows: uuid, code, label | focus.products, source `pick` |
+| `customer_pick`  | pick        | family rows with company codes | focus.customer                |
+| `team_pick`      | pick/yes_no | the teams the ask OFFERED      | routing set, escalation on    |
+| `company_pick`   | pick        | the ledgers the ask offered    | routing set, escalation on    |
+| `tier_pick`      | pick        | tiers                          | focus.tier, promotion rerun   |
+| `member_offer`   | yes_no      | family members                 | yes: business lane over them  |
+
+**`escalate_yes_no` is gone, and nothing the customer sees changed** (D5). An escalate offer
+naming ONE team is a `team_pick` carrying that one team as its single option, with
+`expects: yes_no` - which is the yes/no question it always was. Two or more teams is the
+same kind with `expects: pick` and a numbered quick reply each. One kind, one handler, and
+the one-team and many-team offers can no longer disagree about what "yes" means.
+
+**Nothing here has a lifetime** (D9, AC-1019). A question is cleared when it is answered,
+when a newer one replaces it, or when the customer asks something else instead
+(`dialogue/clearing.py`); `member_offer`'s TTL of 3 went with the rest. An offer the
+customer can still see is still answerable, and a counter was only ever a guess at when
+they stopped looking.
 
 **WHICH rows, on a partial-miss turn.** Two rosters can be live at once and they are not
 interchangeable: the numbered suggestions the reply printed are `dym_last_result_set` and
@@ -54,23 +65,15 @@ from typing import Any
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import OPEN_QUESTION_KINDS
 
-# What each kind expects, and how many turns it stays on the customer's screen.
-#
-# The TTLs are not one number, and that is why they ride on the question rather than on a
-# settings column. A member offer lives 3 turns (owner ruling, AC-816 rule 1: an offer is
-# what is on the customer's screen, and a "yes" about something else twenty turns later
-# once assigned a human off an offer nobody had answered). A did-you-mean roster lives 3
-# for the same reason. A clarify is answered on the very next turn or not at all - it is a
-# QUESTION, not a roster, and `compile_state` says why carrying one indefinitely masked
-# every later offer.
+# What each kind expects by DEFAULT. A caller that knows better says so: a `team_pick`
+# offering one team passes `expects="yes_no"`, which is the one-team escalate offer (D5).
 KIND_SPEC: dict[str, dict[str, Any]] = {
-    "product_pick": {"expects": "pick", "ttl_turns": 3},
-    "customer_pick": {"expects": "pick", "ttl_turns": 3},
-    "escalate_yes_no": {"expects": "yes_no", "ttl_turns": 1},
-    "team_pick": {"expects": "pick", "ttl_turns": 1},
-    "company_pick": {"expects": "pick", "ttl_turns": 1},
-    "tier_pick": {"expects": "pick", "ttl_turns": 1},
-    "member_offer": {"expects": "yes_no", "ttl_turns": 3},
+    "product_pick": {"expects": "pick"},
+    "customer_pick": {"expects": "pick"},
+    "team_pick": {"expects": "pick"},
+    "company_pick": {"expects": "pick"},
+    "tier_pick": {"expects": "pick"},
+    "member_offer": {"expects": "yes_no"},
 }
 
 # `selection_context` (and, with none, the `pending` marker) says WHICH question the last
@@ -85,7 +88,9 @@ KIND_BY_SELECTION_CONTEXT: dict[str, str] = {
     "company_clarify": "company_pick",
 }
 KIND_BY_PENDING_KIND: dict[str, str] = {
-    "escalation_offer": "escalate_yes_no",
+    # An escalation offer IS a team pick with one team (D5), so the marker maps onto the
+    # kind rather than onto a second one that behaves the same.
+    "escalation_offer": "team_pick",
     "member_offer": "member_offer",
     "team_clarify": "team_pick",
     "company_clarify": "company_pick",
@@ -132,7 +137,7 @@ def ask(
     options: Any = None,
     turn_no: int,
     expects: str | None = None,
-    ttl_turns: int | None = None,
+    domain: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """THE constructor. One function, so every kind is armed the same way.
@@ -141,16 +146,23 @@ def ask(
     verbatim - because this is the only moment the answer and the rows are known to belong
     together. Anything asked for later is a fresh lookup, and a fresh lookup is what makes
     "2" mean a different product than the one on the screen.
+
+    `idx` is assigned here and nowhere else, from 1, ACROSS THE WHOLE ROSTER (AC-1013): one
+    question is open at a time, so "1" can only ever mean one row, and the numbering the
+    customer reads is the numbering the resolver indexes.
+
+    `domain` stamps the rows that do not carry one of their own, so a pick knows which
+    domain it is answering for once lane 2 fans a turn out over several.
     """
     if kind not in OPEN_QUESTION_KINDS:
         raise ValueError(f"unknown open question kind {kind!r}")
     spec = KIND_SPEC[kind]
     return {
         "kind": kind,
-        "options": _freeze(options),
+        "options": _freeze(options, domain=domain),
         "expects": expects or spec["expects"],
         "asked_at_turn": int(turn_no),
-        "ttl_turns": int(spec["ttl_turns"] if ttl_turns is None else ttl_turns),
+        "asked_at": None,
         "payload": dict(payload or {}),
     }
 
@@ -249,7 +261,6 @@ def from_state(
         # because that branch returned above.
         return None if answered else (previous if isinstance(previous, dict) else None)
 
-    ttl = pending.get("ttl") if kind == "member_offer" else None
     payload = {
         "domain": stored.get("domain_hint"),
         "team": pending.get("team"),
@@ -269,11 +280,14 @@ def from_state(
         # A team clarify offers a NARROWED set (owner rule R-a), and `selection_context`
         # alone cannot say which - the marker's own list is the roster.
         rows = [r for r in pending["options"] if isinstance(r, dict)]
+    # One team offered means the yes/no escalate offer (D5); two or more is the numbered
+    # pick. The SAME kind either way, so `resolve` has one handler to dispatch to.
+    expects = "yes_no" if (kind == "team_pick" and len(rows) <= 1) else None
     question = ask(
         kind,
         options=rows,
         turn_no=at,
-        ttl_turns=int(ttl) if isinstance(ttl, int) and ttl > 0 else None,
+        expects=expects,
         payload=payload,
     )
     # THE CLOCK DOES NOT RESTART ON A CARRY. The legacy lifecycle keeps `selection_context`
@@ -350,10 +364,43 @@ def _customer_pick(answer: dict, options: list, payload: dict) -> Outcome:
     )
 
 
-def _escalate_yes_no(answer: dict, options: list, payload: dict) -> Outcome:
-    if answer.get("yes_no") == "yes":
+def _team_pick(answer: dict, options: list, payload: dict) -> Outcome:
+    """The escalate offer, whether it named one team or several (D5, AC-1051).
+
+    ONE handler for both shapes, and the order of the two arms is the whole of it: a
+    NUMBERED reply is a pick, and a bare yes or no answers the one-team offer. A yes on a
+    two-team offer resolves nothing here - `expects` is `pick` there, the customer has not
+    said which team, and the lane re-asks with the same buttons rather than guessing one.
+    """
+    picked = _rows_for(answer.get("picks"), options)
+    if picked:
+        row = picked[0]
+        team = row.get("team") or row.get("value") or row.get("code")
         return Outcome(
-            handler="escalate_yes_no",
+            handler="team_pick",
+            outcome=f"Routed to {team}.",
+            resolved=True,
+            picked=[row],
+            escalate=True,
+            routing={"suggested_team": team},
+        )
+
+    one_team = options[0] if len(options) == 1 and isinstance(options[0], dict) else None
+    if answer.get("yes_no") == "yes" and one_team is not None:
+        team = one_team.get("team") or one_team.get("value") or one_team.get("code")
+        return Outcome(
+            handler="team_pick",
+            outcome="The customer accepted the escalation.",
+            resolved=True,
+            picked=[one_team],
+            escalate=True,
+            routing={"suggested_team": team or payload.get("team")},
+        )
+    if answer.get("yes_no") == "yes":
+        # An offer with no roster at all is the legacy marker's shape: the team rides the
+        # payload, and the customer said yes to the only thing on offer.
+        return Outcome(
+            handler="team_pick",
             outcome="The customer accepted the escalation.",
             resolved=True,
             escalate=True,
@@ -361,31 +408,15 @@ def _escalate_yes_no(answer: dict, options: list, payload: dict) -> Outcome:
         )
     if answer.get("yes_no") == "no":
         return Outcome(
-            handler="escalate_yes_no",
+            handler="team_pick",
             outcome="The customer declined the escalation.",
             resolved=True,
             declined=True,
         )
-    # AC-945: a question that is neither accepted nor declined is LEFT OPEN. It is not
-    # answered by a stock question that happened to arrive next, and it is cleared by its
-    # own TTL with a `decay` trace line rather than silently.
-    return Outcome(handler="escalate_yes_no", outcome="Neither yes nor no.")
-
-
-def _team_pick(answer: dict, options: list, payload: dict) -> Outcome:
-    picked = _rows_for(answer.get("picks"), options)
-    if not picked:
-        return Outcome(handler="team_pick", outcome="No offered team was named.")
-    row = picked[0]
-    team = row.get("team") or row.get("value") or row.get("code")
-    return Outcome(
-        handler="team_pick",
-        outcome=f"Routed to {team}.",
-        resolved=True,
-        picked=[row],
-        escalate=True,
-        routing={"suggested_team": team},
-    )
+    # AC-945 / AC-1020: neither accepted nor declined LEAVES IT OPEN. It is not answered by
+    # a stock question that happened to arrive next; `clearing.apply` clears it, with a
+    # trace line, on the turn the customer asks something else instead.
+    return Outcome(handler="team_pick", outcome="No offered team was named.")
 
 
 def _company_pick(answer: dict, options: list, payload: dict) -> Outcome:
@@ -467,7 +498,6 @@ def _member_offer(answer: dict, options: list, payload: dict) -> Outcome:
 _HANDLERS = {
     "product_pick": _product_pick,
     "customer_pick": _customer_pick,
-    "escalate_yes_no": _escalate_yes_no,
     "team_pick": _team_pick,
     "company_pick": _company_pick,
     "tier_pick": _tier_pick,
@@ -480,17 +510,23 @@ _HANDLERS = {
 # --------------------------------------------------------------------------- #
 
 
-def _freeze(options: Any) -> list[dict[str, Any]]:
-    """The rows, numbered as the customer saw them.
+def _freeze(options: Any, *, domain: str | None = None) -> list[dict[str, Any]]:
+    """The rows, numbered as the customer saw them, each stamped with its domain.
 
     `idx` is taken from the row when it has one (every roster the lanes build stamps it)
     and supplied by position when it does not, so a position always resolves against the
     number that was printed.
+
+    A row's OWN `domain` wins over the question's: a roster assembled across two domains
+    already knows which row came from where, and the question-level value is the default
+    for the rows that do not say.
     """
     frozen: list[dict[str, Any]] = []
     for position, row in enumerate(jsc.array(options), start=1):
         if not isinstance(row, dict):
             continue
+        if domain is not None and row.get("domain") is None:
+            row = {**row, "domain": domain}
         # `js_number(None)` is 0, which `is_integer` accepts, so "has no number" and
         # "is numbered zero" would read the same and every row would collapse onto 0.
         # A printed number is 1-based, so anything below 1 is an absent one.

@@ -37,7 +37,7 @@ from app.config import settings
 from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import dispatch, jsc, trace as trace_mod
-from app.services.chatbot.dialogue import decay as decay_mod
+from app.services.chatbot.dialogue import clearing as clearing_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     SELF_CLOSING_BRANCH_KINDS,
@@ -96,14 +96,6 @@ GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
 # AC-703. The queue the offloaded turn runs on, classified `fast` in `worker.QUEUES`: a
 # customer is watching "typing...", so it must never queue behind a 39-minute import.
 CHAT_QUEUE = "chat"
-
-# D9 (PLAN-chatbot-focus-multi-domain, owner 12 Sep 2026): there is no TTL and no
-# settings column any more - `system_settings.chatbot_focus_ttl_turns` is removed, and a
-# focus slot is cleared only by a new entity on the same axis, a topic reset or the
-# Respond.io conversation-closed event. This constant is what `decay.apply` reads until
-# `decay.py` becomes `clearing.py`.
-# D9: removed in L1-S1.
-DEFAULT_FOCUS_TTL_TURNS = 3
 
 # How often the waiting request looks at the job. Same order as `/external/media`'s own
 # poll: short enough not to pad a fast turn, long enough not to spin.
@@ -1252,30 +1244,25 @@ def _run_stages(  # noqa: PLR0915
             jsc.get(session_block, "session_vars"), "referenced_result_set"
         )
         latest_user_message = build_latest_user_message(envelope, session_block)
-        # -- decay, BEFORE the parser is asked anything (AC-940, AC-941) -------- #
-        # A slot the customer has not restated inside the TTL is dropped here, where the
-        # stored state enters the turn, so it can neither reach the model as context nor
-        # be carried by a rule downstream. `turn_no` is read on this same session; the
-        # row for THIS turn already exists, so a contact's first turn is turn 1.
-        # The row this turn IS, re-read on this session: `_turn_no` counts strictly before
-        # it, so it needs the row's own place in the order rather than a plain total.
+        # -- what the bot remembered, and what the parser will be told about it -- #
+        # NOTHING AGES HERE ANY MORE (D9). The three ways a slot is cleared are all things
+        # that HAPPEN - a same-axis entity, a topic reset, a closed conversation - and the
+        # first two are in the parse, which has not been made yet at this stage;
+        # `dialogue/clearing.py` applies them where the parse exists. The third is applied
+        # by `sla_service` at the moment the conversation closes, so a contact whose
+        # conversation has ended arrives here with the state already clear.
+        #
+        # `turn_no` is read on this same session; the row for THIS turn already exists, so
+        # a contact's first turn is turn 1. `_turn_no` counts strictly before it, so it
+        # needs the row's own place in the order rather than a plain total.
         turn_row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
         turn_no = _turn_no(db, contact_respond_id=contact_respond_id, row=turn_row)
-        decayed = decay_mod.apply(
-            variables,
-            turn_no=turn_no,
-            # D9: removed in L1-S1. No settings column behind this any more.
-            ttl_turns=DEFAULT_FOCUS_TTL_TURNS,
-            trace=turn_trace,
-        )
-        # The stored blob is what every downstream reader holds (`parent_input`, `ctx`),
-        # so the drop has to land THERE and not only in a local copy - the same reason
-        # `_drop_unknown_carried_domain` mutates in place. A turn whose focus decayed and
-        # whose `variables.focus` still held the dead slot would write it back out.
-        if "focus" in variables or decayed.focus:
-            variables["focus"] = decayed.focus
-        if "open_question" in variables or decayed.open_question is not None:
-            variables["open_question"] = decayed.open_question
+        alive_focus = variables.get("focus")
+        alive_focus = alive_focus if isinstance(alive_focus, dict) else {}
+        alive_question = variables.get("open_question")
+        alive_question = alive_question if isinstance(alive_question, dict) else None
+        focus_hints_block = clearing_mod.focus_hints(alive_focus)
+        open_question_hint_block = clearing_mod.open_question_hint(alive_question)
         parser_config = parser.resolve_config(
             db,
             current_date=_current_date_directive(),
@@ -1294,14 +1281,11 @@ def _run_stages(  # noqa: PLR0915
             # ALWAYS present, empty list included: a reader must never have to tell
             # "no harness keys" from "this build does not report them".
             "harness_keys_ignored": harness_ignored,
-            # D11's counter and what it cost this turn. Always present for the same
-            # reason: "nothing decayed" and "this build does not decay" must not read
-            # the same on the trace screen.
+            # Which turn of this conversation this is, and what the bot was still holding
+            # when it started. Always present, empty list included: "nothing was alive" and
+            # "this build does not report it" must not read the same on the trace screen.
             "turn_no": turn_no,
-            # D9: removed in L1-S1.
-            "focus_ttl_turns": DEFAULT_FOCUS_TTL_TURNS,
-            "focus_slots_alive": sorted(decayed.focus),
-            "focus_slots_decayed": [d["slot"] for d in decayed.dropped],
+            "focus_slots_alive": sorted(alive_focus),
         },
         raw={"session_vars": session_block},
     )
@@ -1333,8 +1317,8 @@ def _run_stages(  # noqa: PLR0915
         # either block, so a contact who already has focus state must not change how the
         # promoted prompt parses (`test_parser_user_block_parity.py`).
         emits_v3=parser_config.emits_v3,
-        focus_hints=decayed.focus_hints,
-        open_question_hint=decayed.open_question_hint,
+        focus_hints=focus_hints_block,
+        open_question_hint=open_question_hint_block,
     )
     # G6: a dry run may supply the emission instead of paying for it. The mock goes
     # through the SAME `post_process` + `suggest_follow_up` the real parse takes, so a
