@@ -154,7 +154,14 @@ is the source of truth once code diverges from the table above:
      uniformly. The manual-edit batch stamping (`source_kind = so_manual_edit`) and the
      best-effort try/except are unchanged.
    - `app/schemas/scm_orders.py`: `SalesOrderLineInput.qty_ordered` loosened `gt=0` -> `ge=0`
-     (shared by `SalesOrderFormData`/create and `SalesOrderUpdate`; no test asks create to
-     stay positive, so the validator was not split by operation).
+     (shared by `SalesOrderFormData`/create and `SalesOrderUpdate`, since AC-A4 needs an
+     EDIT to accept 0); a `SalesOrderFormData.lines` `field_validator` (review round,
+     R-S4) rejects a `qty_ordered <= 0` line on create instead, so a brand-new order still
+     cannot open with a line that has nothing on it.
 6. One manual-edit batch per save, `source_kind = so_manual_edit`, every changed row of that
    save in it - unchanged from before this slice.
+7. Qty set to 0 is a cancellation that deliberately does not pass the removal guards
+   (`is_authored`, other dependents, `OrderLinkClaim`): the line is kept, not deleted, so
+   nothing dangles; the change row still raises. Line id is identity for every trigger. A
+   re-keyed AutoCount line (new DtlKey, same product) reads `cancelled` + `added`, not one
+   moved line; counted on the first ESB run after deploy.

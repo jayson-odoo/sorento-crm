@@ -296,8 +296,10 @@ class SalesOrderLineInput(BaseModel):
     #: engine.md`, Slice A rule 5, "qty-to-zero as cancelled"): the service reads it as a
     #: removal (`SalesOrderService._upsert_lines`/`_propagate_planning_change`), the same
     #: as the line being dropped from the payload entirely, never as a `qty_down`. Shared
-    #: by `SalesOrderFormData` (create): nothing there enforces a positive opening qty
-    #: either, and no test asks for one.
+    #: by `SalesOrderFormData` (create) too, but create is NOT left open at 0 - its own
+    #: `_lines_are_all_positive` field_validator below (review round, R-S4) enforces a
+    #: positive opening qty there instead of here, since a brand-new order has no line to
+    #: settle.
     qty_ordered: float = Field(..., ge=0)
     #: Optional[str], read via `model_fields_set` (not `is not None`) in `_upsert_lines` -
     #: an omitted key leaves the line's stored override alone (falling back to the
