@@ -1430,6 +1430,25 @@ async def get_outstanding_report(
             "echoed onto the response body so the MCP presenter can read it."
         ),
     ),
+    location_token: Optional[str] = Query(
+        None,
+        max_length=32,
+        description=(
+            "The raw location word the caller resolved into warehouse_codes (e.g. 'IB'). "
+            "ECHO ONLY (AC-1105): this route never resolves or filters on it - it rides "
+            "back on the body so the rendered header can read 'IB (BRW-IB, MWH-IB)' "
+            "instead of repeating the codes with no word beside them."
+        ),
+    ),
+    so_refused: bool = Query(
+        False,
+        description=(
+            "ECHO ONLY (D13/AC-1141): the caller withheld the SO scope because the "
+            "contact lacks the sales_orders.outstanding field reveal. Echoed onto the "
+            "body so the rendered reply names the withheld half, between the header and "
+            "the DO block. Filtering is unaffected - the caller sends scope=do."
+        ),
+    ),
     current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
     db: Session = Depends(get_db),
 ):
@@ -1495,4 +1514,10 @@ async def get_outstanding_report(
         body.pop("do", None)
     if detail in ("so", "do"):
         body["detail"] = detail
+    # Echo-only, same contract as `detail` above: read by the MCP presenter
+    # (`sorento_crm_mcp/presenters.py::_outstanding_report`), never by this route.
+    if location_token:
+        body["location_token"] = location_token.strip()
+    if so_refused:
+        body["so_refused"] = True
     return JSONResponse(content=body)

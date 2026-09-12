@@ -30,7 +30,11 @@ from pathlib import Path
 
 import pytest
 
-from sorento_crm_mcp.presenters import _outstanding_detail, _outstanding_report
+from sorento_crm_mcp.presenters import (
+    _outstanding_detail,
+    _outstanding_report,
+    present_response,
+)
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "outstanding"
 _DOC_SAMPLES = Path(__file__).parent.parent.parent / "documentation" / "plans" / "chatbot" / "samples"
@@ -51,7 +55,7 @@ def _miss_report() -> dict:
         "product_code": "SRTWT9999",
         "customer_name": None,
         "location_token": None,
-        "location_codes": [],
+        "warehouse_codes": [],
         "order_date_from": None,
         "order_date_to": None,
         "so": {
@@ -175,7 +179,7 @@ def test_location_header_exact_code_prints_alone():
     report = copy.deepcopy(_MOCK)
     report["do"] = None
     report["location_token"] = "BRW-IB"
-    report["location_codes"] = ["BRW-IB"]
+    report["warehouse_codes"] = ["BRW-IB"]
     rendered = _outstanding_report(report)
     assert "Location: BRW-IB" in rendered
     assert "Location: BRW-IB (BRW-IB)" not in rendered
@@ -185,9 +189,77 @@ def test_location_header_no_token_prints_all():
     report = copy.deepcopy(_MOCK)
     report["do"] = None
     report["location_token"] = None
-    report["location_codes"] = []
+    report["warehouse_codes"] = []
     rendered = _outstanding_report(report)
     assert "Location: all" in rendered
+
+
+def test_location_header_is_rendered_from_a_real_route_body():
+    """AC-1105 through the WIRE, not a hand-made key (review round, 13 Sep 2026): the
+    header's two inputs are the route's own `warehouse_codes` echo and the `location_token`
+    the caller sent, so the two must travel on the response body - `location_codes` only
+    ever existed in the mock, which is why a live turn printed `Location: all`."""
+    body = {
+        "product_code": "SRTWT7445",
+        "customer_name": None,
+        "warehouse_codes": ["BRW-IB", "MWH-IB"],
+        "location_token": "IB",
+        "order_date_from": None,
+        "order_date_to": None,
+        "so": {
+            "ordered_qty": 10, "transferred_qty": 3, "outstanding_qty": 7, "so_count": 1,
+            "order_date_min": "2026-01-01", "order_date_max": "2026-01-01",
+        },
+        "so_by_location": [], "so_by_customer": [],
+        "do_by_location": [], "do_by_customer": [],
+        "so_rows": [], "do_rows": [],
+    }
+    rendered = json.loads(present_response("crm_outstanding_report", json.dumps(body)))["response"]
+    assert "Location: IB (BRW-IB, MWH-IB)" in rendered, rendered
+
+    body["location_token"] = None
+    assert "Location: all" in json.loads(
+        present_response("crm_outstanding_report", json.dumps(body))
+    )["response"]
+
+
+def test_so_refused_line_sits_between_the_header_and_the_do_block():
+    """AC-1141 / S4 point 11: the refusal is a note about the withheld half, so it goes
+    AFTER the four header lines and BEFORE the DO block. The lane used to prepend it to
+    the whole reply, which reads as a refusal of the question itself."""
+    body = copy.deepcopy(_MOCK)
+    body.pop("so", None)
+    body["so_by_location"] = []
+    body["so_by_customer"] = []
+    body["so_rows"] = []
+    body["so_refused"] = True
+    rendered = json.loads(present_response("crm_outstanding_report", json.dumps(body)))["response"]
+    lines = rendered.splitlines()
+    assert "Sales order figures are not enabled for your account." in lines, rendered
+    refusal_at = lines.index("Sales order figures are not enabled for your account.")
+    header_at = next(i for i, line in enumerate(lines) if line.startswith("Order date:"))
+    block_at = lines.index("*Delivery order pending*")
+    assert header_at < refusal_at < block_at, rendered
+
+
+def test_the_envelope_carries_has_result_so_a_miss_can_escalate():
+    """AC-1107: the rendered header is ALWAYS non-empty, so the text alone can never tell
+    a hit from a miss. `present_response` therefore returns an envelope carrying
+    `has_result` (any block with rows), which is what the chatbot lane reads to send a
+    total miss down the escalate path."""
+    hit = json.loads(present_response("crm_outstanding_report", json.dumps(_MOCK)))
+    assert hit["has_result"] is True
+    assert hit["response"] == _outstanding_report(_MOCK)
+
+    miss = json.loads(present_response("crm_outstanding_report", json.dumps(_miss_report())))
+    assert miss["has_result"] is False
+    assert miss["response"] == _outstanding_report(_miss_report())
+
+    detail = copy.deepcopy(_MOCK)
+    detail["detail"] = "so"
+    rendered = json.loads(present_response("crm_outstanding_report", json.dumps(detail)))
+    assert rendered["has_result"] is True
+    assert rendered["response"] == _outstanding_detail(detail, "so")
 
 
 # --------------------------------------------------------------------------

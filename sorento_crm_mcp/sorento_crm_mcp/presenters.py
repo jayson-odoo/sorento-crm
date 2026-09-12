@@ -1547,15 +1547,14 @@ def present_response(tool_name: str, raw: str) -> str:
     # "payload-keyed presenter swap" the `so_outstanding` bucket already uses
     # a few lines down (`data.get("order_status") == "so_outstanding"`):
     # present, it swaps in `_outstanding_detail` for that scope; absent, the
-    # report itself. Both return the presenter's PLAIN TEXT directly, not an
-    # envelope - the chatbot lane's own `output_structurer` special-cases this
-    # tool name and uses that text as the reply verbatim
-    # (`app/services/chatbot/lanes/business/fetch.py`).
+    # report itself. Both ride in a MINIMAL envelope (`response` + `has_result`)
+    # rather than the generic item/field one: the chatbot lane's own
+    # `output_structurer` uses `response` as the reply verbatim
+    # (`app/services/chatbot/lanes/business/fetch.py`), and it needs `has_result`
+    # because the rendered header is never empty - the text alone cannot tell a
+    # total miss (which must escalate, AC-1107) from a hit.
     if tool_name == "crm_outstanding_report":
-        detail = data.get("detail")
-        if detail in ("so", "do"):
-            return _outstanding_detail(data, detail)
-        return _outstanding_report(data)
+        return json.dumps(_outstanding_envelope(data))
 
     rows = data.get("data")
     if not isinstance(rows, list):
@@ -1700,16 +1699,24 @@ def present_response(tool_name: str, raw: str) -> str:
 # row->item mapping other lane code reuses.
 #
 # `report` is the shape `GET /api/v1/order-management/outstanding-report` returns
-# (S2), plus two header-only keys the CHATBOT LANE resolves before calling in -
-# the route itself never sees the raw word:
-#   - `location_token`: the raw location word from the message (`"IB"`), or `None`.
-#   - `location_codes`: what it resolved to (`["BRW-IB", "MWH-IB"]`), or `[]`.
+# (S2). The header's location line is built from TWO keys on that body, both of
+# which the route echoes back from the caller's own query (review round, 13 Sep
+# 2026 - the presenter used to read a `location_codes` key that existed only in
+# the mock, so a live turn always printed `Location: all`):
+#   - `location_token`: the raw location word from the message (`"IB"`), echo-only.
+#   - `warehouse_codes`: the exact codes the lane resolved it to, which the route
+#     already echoes because they are what it filtered on.
+# `so_refused` is the third echo-only key: D13 withheld the SO block, and the one
+# sentence that says so prints between the header and the DO block.
 # `so` / `do` is `None` when that scope was not asked (D1); present with
 # `so_count`/`do_count` == 0 keeps the block's own title but collapses its body to
 # one miss line (AC-1107, "the approved shape keeps the block titles") and drops
 # that scope from the detail offer, so a miss never advertises a list with
 # nothing in it. A partial miss (one scope empty, the other not) prints each
 # block independently - the empty one as title + miss line, the other in full.
+
+
+SO_NOT_ENABLED_MESSAGE = "Sales order figures are not enabled for your account."
 
 
 def _outstanding_fmt_int(v: Any) -> str:
@@ -1816,7 +1823,7 @@ def _outstanding_report(report: dict) -> str:
     lines = [
         f"Product: {report.get('product_code')}",
         f"Customer: {report.get('customer_name') if _filled(report.get('customer_name')) else 'all'}",
-        f"Location: {_outstanding_location_header(report.get('location_token'), report.get('location_codes'))}",
+        f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
         f"Order date: {_outstanding_date_range(report.get('order_date_from'), report.get('order_date_to'))}",
     ]
 
@@ -1848,6 +1855,13 @@ def _outstanding_report(report: dict) -> str:
             offer.append("Delivery order list")
 
     text = "\n".join(lines)
+    # D13/AC-1141: the withheld half is named HERE, between the header and the block
+    # that did run - never in front of the whole reply, which reads as a refusal of the
+    # question itself. The wording is the one literal the chatbot lane also holds
+    # (`fetch.SO_NOT_ENABLED_MESSAGE`); the backend image cannot import this package, so
+    # the two copies are pinned by a test on each side.
+    if report.get("so_refused"):
+        text += "\n\n" + SO_NOT_ENABLED_MESSAGE
     if blocks:
         text += "\n\n" + "\n\n".join(blocks)
     if offer:
@@ -1875,6 +1889,34 @@ _OUTSTANDING_DO_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("Pending", "pending_qty", "qty"),
     ("DO Date", "do_date", "date"),
 )
+
+
+def _outstanding_envelope(report: dict) -> dict:
+    """What `present_response` returns for `crm_outstanding_report`: the rendered text
+    plus the one fact the text cannot carry.
+
+    `has_result` is "a block that was asked for came back with rows" - `so_count` or
+    `do_count` for the report, the row list for a detail render. It is what the chatbot
+    lane reads to send a TOTAL miss down the existing escalate path (AC-1107); reading
+    the text instead can only ever say "yes", because the header renders either way.
+    """
+    detail = report.get("detail")
+    if detail in ("so", "do"):
+        return {
+            "result_type": "outstanding_detail",
+            "response": _outstanding_detail(report, detail),
+            "has_result": bool(report.get(f"{detail}_rows")),
+        }
+    so = report.get("so")
+    do = report.get("do")
+    return {
+        "result_type": "outstanding_report",
+        "response": _outstanding_report(report),
+        "has_result": bool(
+            (isinstance(so, dict) and so.get("so_count"))
+            or (isinstance(do, dict) and do.get("do_count"))
+        ),
+    }
 
 
 def _outstanding_detail(report: dict, scope: str) -> str:

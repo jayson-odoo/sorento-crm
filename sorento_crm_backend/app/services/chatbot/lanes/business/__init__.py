@@ -89,6 +89,10 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
         "date_filter_end": semantic_input.get("date_filter_end"),
         "customer_ids": customer_ids,
         "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
+        # AC-1132 (review round, 13 Sep 2026): the TOKEN travels with the codes, so the
+        # answering turn prints the same `Location: IB (BRW-IB, MWH-IB)` header the
+        # asking turn did instead of re-running over every warehouse.
+        "location_token": semantic_input.get("outstanding_location_token"),
     }
 
 
@@ -129,6 +133,9 @@ def _outstanding_scope_ask_from_filters(filters: dict[str, Any]) -> dict[str, An
         "field_access": None,
         "requested_attributes": [],
         "keys_served": False,
+        # AC-1139: this question carries nothing but itself - `tail/compile_state.py`
+        # reads the marker and skips the generic search-scope header.
+        "outstanding_report": True,
     }
     item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
     return {
@@ -515,6 +522,18 @@ def run_fetch(
                 semantic_input["outstanding_warehouse_codes"] = codes
                 semantic_input["outstanding_location_token"] = token
             break  # D5/AC-1105: one location word per turn
+
+        # AC-1132/AC-1138: the SCOPE-ANSWER and DETAIL-PICK turns re-type no location
+        # word at all (they are "2" / "1"), so the loop above finds nothing. The codes
+        # the asking turn already resolved are restored here - the alternative is a
+        # re-run over every warehouse under a header that says otherwise.
+        if not semantic_input.get("outstanding_warehouse_codes"):
+            carried_codes = parse_output.get("outstanding_carried_warehouse_codes")
+            if isinstance(carried_codes, list) and carried_codes:
+                semantic_input["outstanding_warehouse_codes"] = carried_codes
+                semantic_input["outstanding_location_token"] = parse_output.get(
+                    "outstanding_carried_location_token"
+                )
 
         # -- D13: the sales_orders.outstanding field-reveal gate, before any fetch -- #
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}

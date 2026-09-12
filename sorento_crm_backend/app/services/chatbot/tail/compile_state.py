@@ -951,18 +951,23 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     )
 
     # ---- search-scope disclosure (delivery orders only) ------------------- #
-    _search_scope_header(
-        output,
-        qf=qf,
-        prev=prev,
-        gate_ran=gate_ran,
-        gate_json=gate_json,
-        resolver_json=resolver_json,
-        resolved_ran=resolved is not None,
-        is_escalate_branch=is_escalate_branch,
-        last_result_set=last_result_set,
-        raw_of_tok=raw_of_tok,
-    )
+    # AC-1139 / S4 point 10: NOT above an outstanding report. That reply carries its own
+    # Product / Customer / Location / Order date lines (and the scope question carries
+    # nothing but itself), so the generic header printed the same facts a second time,
+    # in different words - measured on the 13 Sep console check.
+    if not jsc.truthy(jsc.get(result_obj, "outstanding_report")):
+        _search_scope_header(
+            output,
+            qf=qf,
+            prev=prev,
+            gate_ran=gate_ran,
+            gate_json=gate_json,
+            resolver_json=resolver_json,
+            resolved_ran=resolved is not None,
+            is_escalate_branch=is_escalate_branch,
+            last_result_set=last_result_set,
+            raw_of_tok=raw_of_tok,
+        )
 
     # ---- MI-D: the media confirmation, merged into the answer ------------- #
     _media_confirm_prefix(output, qf=qf, ctx=ctx, resolver_json=resolver_json, resolved_ran=resolved is not None)

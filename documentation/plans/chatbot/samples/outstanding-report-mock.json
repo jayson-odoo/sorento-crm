@@ -2,7 +2,7 @@
   "product_code": "SRTWT7445",
   "customer_name": null,
   "location_token": "IB",
-  "location_codes": ["BRW-IB", "MWH-IB"],
+  "warehouse_codes": ["BRW-IB", "MWH-IB"],
   "order_date_from": "2026-01-01",
   "order_date_to": "2026-12-31",
   "so": {

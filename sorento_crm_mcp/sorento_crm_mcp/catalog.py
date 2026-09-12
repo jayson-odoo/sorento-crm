@@ -645,7 +645,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "sales_orders.order_date and DO rows on orders.order_date (never actual_delivery_date - a "
             "pending DO by definition has none); omit both for all dates. `detail` = so | do - render "
             "the numbered detail list for that scope instead of the two-block report (`view=render`); "
-            "the report's own computation is unchanged by it.\n\n"
+            "the report's own computation is unchanged by it. `location_token` (max 32 chars) - the raw "
+            "location word you resolved into `warehouse_codes` (e.g. 'IB'), echoed back so the rendered "
+            "header reads 'IB (BRW-IB, MWH-IB)'. `so_refused=true` - echoed back so the rendered reply "
+            "names the withheld SO half; it changes no filter, send `scope=do` alongside it.\n\n"
             "Use crm_order_management_orders_list / crm_order_management_orders_by_product_list instead "
             "for a plain row list or a delivered/actual-delivery-date question.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
@@ -655,7 +658,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "product_code", "scope", "customer_query", "customer_ids", "warehouse_codes",
-            "order_date_from", "order_date_to", "detail",
+            "order_date_from", "order_date_to", "detail", "location_token", "so_refused",
             "contact_id", "space_id",
         ),
         domain="orders",

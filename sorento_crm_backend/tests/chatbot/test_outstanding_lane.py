@@ -746,6 +746,20 @@ class TestFieldRevealGateBeforeFetch:
         assert "Sales order figures are not enabled for your account." in reply, (
             f"D13's exact refusal line must be in the reply: {reply!r}"
         )
+        # AC-1141 / S4 point 11 (review round, 13 Sep 2026): PLACEMENT, not mere
+        # presence. The line belongs AFTER the four header lines and BEFORE the DO
+        # block - opening the whole reply with it reads as a refusal of the question
+        # the customer asked, rather than a note about the half that is withheld.
+        lines = reply.splitlines()
+        refusal_at = lines.index("Sales order figures are not enabled for your account.")
+        header_at = [i for i, line in enumerate(lines) if line.startswith("Order date:")]
+        do_block_at = [i for i, line in enumerate(lines) if line == "*Delivery order pending*"]
+        assert header_at and refusal_at > header_at[0], (
+            f"the refusal must come after the header's four lines: {reply!r}"
+        )
+        assert do_block_at and refusal_at < do_block_at[0], (
+            f"the refusal must come before the Delivery order pending block: {reply!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -807,7 +821,8 @@ def _seed_open_outstanding_scope(session_factory, *, filters: dict[str, Any] | N
                 "date_filter_start": None,
                 "date_filter_end": None,
                 "customer_ids": [CUSTOMER_UUID],
-                "warehouse_codes": ["ZZT-BRW-IB"],
+                "warehouse_codes": ["ZZT-BRW-IB", "ZZT-MWH-IB"],
+                "location_token": "IB",
             },
             "pending": {"kind": "outstanding_scope"},
         },
@@ -839,6 +854,69 @@ class TestScopeAnswerRunsReportWithCarriedFilters:
         )
         assert args.get("customer_ids") == [CUSTOMER_UUID], (
             f"the carried customer_ids must be restored: {args}"
+        )
+        # AC-1132 / AC-1138 (review round, 13 Sep 2026): the LOCATION is part of the
+        # filter set. Dropping it re-ran the report over every warehouse and printed
+        # `Location: all` under a question the customer asked about one location, so
+        # the answering turn quietly answered a wider question than the one asked.
+        assert args.get("warehouse_codes") == ["ZZT-BRW-IB", "ZZT-MWH-IB"], (
+            f"the carried warehouse_codes must be restored: {args}"
+        )
+        assert args.get("location_token") == "IB", (
+            f"the carried location token must be restored so the header still echoes it: {args}"
+        )
+        reply = (_result.reply or {}).get("text") or ""
+        assert "Location: IB (ZZT-BRW-IB, ZZT-MWH-IB)" in reply, (
+            f"the answering turn must print the SAME location header as the asking turn: {reply!r}"
+        )
+
+    def test_a_new_ask_during_the_scope_question_is_not_hijacked(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """D2's one-turn life, review round 13 Sep 2026: a message that brings its OWN
+        question - a domain word, or a new product code - is a NEW ASK while an
+        `outstanding_scope` question is open. The carve-out existed for
+        `outstanding_detail` only, so "stock for SRTWC8517" was rewritten into the
+        carried outstanding ask and answered with the scope question AGAIN: the customer
+        could not leave the question except by answering it."""
+        _seed_open_outstanding_scope(session_factory)
+        other_uuid = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                intent_hint="check_stock",
+                domain_hint="inventory",
+                entities=[
+                    {
+                        "raw": "SRTWC8517", "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="stock for SRTWC8517",
+            msg_id="ZZT-outstanding-scope-hijack-1",
+            attributes=["sales_orders.outstanding"],
+            matches={"SRTWC8517": {"uuid": other_uuid, "entity_type": "product", "canonical_code": "SRTWC8517"}},
+            mcp_response={
+                "items": [
+                    {
+                        "title": "SRTWC8517",
+                        "fields": [{"key": "product_code", "label": "Product", "value": "SRTWC8517"}],
+                    }
+                ],
+                "has_result": True,
+                "intro": "Here are the results.",
+            },
+        )
+        assert captured, "the new ask must be answered, not swallowed by the open question"
+        name, _args = captured[0]
+        assert name != "crm_outstanding_report", (
+            f"a stock ask must not be rewritten into the carried outstanding ask: {name}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" not in reply, (
+            f"the open scope question must be DROPPED by a new ask, never re-asked: {reply!r}"
         )
 
     def test_out_of_range_number_reasks(self, session_factory, monkeypatch) -> None:
@@ -891,6 +969,87 @@ class TestHitArmsOutstandingDetailAndNoEscalateOffer:
         labels = {row.get("label") for row in (stored.get("last_result_set") or [])}
         assert "Sales order list" in labels, (
             f"only the SO scope was requested/present, so only its option is offered: {labels}"
+        )
+
+
+    def test_report_skips_search_scope_header(self, session_factory, monkeypatch) -> None:
+        """AC-1139 / S4 point 10 (never written until the review round): the generic
+        delivery-order search-scope header ("Customer: ... / Product: ... / Dates: ...")
+        must NOT print above a report that carries its own Product / Customer / Location
+        / Order date lines. The console check read both, one under the other."""
+        _seed_contact(session_factory, variables={})
+        result, _captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="so_outstanding"),
+            text_body="SRTWT7445 sales order outstanding",
+            msg_id="ZZT-outstanding-header-skip-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert reply.startswith(f"Product: {PRODUCT_CODE}"), (
+            f"the report's own header must be the first thing in the reply: {reply!r}"
+        )
+        assert "Dates: all dates" not in reply, (
+            f"the generic search-scope header must not print above the report: {reply!r}"
+        )
+        assert "Customer: all customers" not in reply, (
+            f"the generic search-scope header must not print above the report: {reply!r}"
+        )
+
+    def test_scope_question_skips_search_scope_header(self, session_factory, monkeypatch) -> None:
+        """The same on the ASKING turn (the journey says the question carries nothing
+        else): the scope question is three lines and a product, not a search summary."""
+        _seed_contact(session_factory, variables={})
+        result, _captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="outstanding"),
+            text_body="SRTWT7445 outstanding",
+            msg_id="ZZT-outstanding-header-skip-2",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert reply.startswith(f"Product: {PRODUCT_CODE}"), reply
+        assert "Dates: all dates" not in reply, (
+            f"the scope question must carry nothing but itself: {reply!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# AC-1107 - a TOTAL miss escalates, on the rendered-text path
+# --------------------------------------------------------------------------- #
+
+
+class TestTotalMissEscalates:
+    def test_empty_report_offers_the_escalation(self, session_factory, monkeypatch) -> None:
+        """AC-1107: both requested scopes empty is an ABSENCE, so the existing escalate
+        offer + team picker follow. On the rendered path the reply text is never empty
+        (the header always renders), so `has_result` cannot be read off the text - the
+        presenter's envelope has to carry it, or every miss reads as a hit and the
+        customer is left with "No open sales order." and no way forward."""
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="outstanding_both"),
+            text_body="SRTWT7445 outstanding both",
+            msg_id="ZZT-outstanding-miss-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_MISS,
+        )
+        assert captured, "the report must still have been fetched"
+        reply = (result.reply or {}).get("text") or ""
+        assert "escalate" in reply.lower(), (
+            f"a total miss must reach the existing escalate offer: {reply!r}"
+        )
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
+            f"a miss offers no detail list: {stored.get('pending')!r}"
         )
 
 
@@ -963,6 +1122,55 @@ class TestDetailPickRerunsToolWithDetail:
         assert captured, "the detail pick must re-run the tool"
         _name, args = captured[0]
         assert args.get("detail") == "do", f"'2' must ask for the DO detail: {args}"
+
+    def test_a_real_hit_arms_the_pending_and_the_next_1_reruns_with_detail_so(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """AC-1135 + AC-1138 end to end, two turns, no hand-seeded pending (the gap the
+        console check found): turn 1 is a genuine report hit, turn 2 is "1". The
+        previously-passing pair seeded `pending.kind = outstanding_detail` directly, so
+        a hit that never armed it still looked green."""
+        _seed_contact(session_factory, variables={})
+        _result1, captured1 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="outstanding_both"),
+            text_body="SRTWT7445 outstanding both",
+            msg_id="ZZT-outstanding-live-hit-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured1 and captured1[0][0] == "crm_outstanding_report", captured1
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
+            f"a real hit must arm the detail pending the next turn reads: {stored.get('pending')!r}"
+        )
+        assert stored.get("outstanding_filters", {}).get("product_code") == PRODUCT_CODE, (
+            f"the hit must carry its own filters forward: {stored.get('outstanding_filters')!r}"
+        )
+
+        _result2, captured2 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-live-hit-2",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured2, "the detail pick must re-run the tool"
+        name, args = captured2[0]
+        assert name == "crm_outstanding_report", name
+        assert args.get("detail") == "so", f"'1' must ask for the SO detail: {args}"
+        reply = (_result2.reply or {}).get("text") or ""
+        assert "*SO Number:* SO1" in reply, (
+            f"the reply must be the numbered SO detail list (AC-1106): {reply!r}"
+        )
 
     def test_a_new_product_code_drops_the_pending(self, session_factory, monkeypatch) -> None:
         _seed_open_outstanding_detail(session_factory)

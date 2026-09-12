@@ -584,6 +584,17 @@ def entity_ids_transformer(
         warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
         if isinstance(warehouse_codes, list) and warehouse_codes:
             out["warehouse_codes"] = warehouse_codes
+        # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
+        # the route onto its own body so the presenter can render "IB (BRW-IB, MWH-IB)".
+        # The lane never re-renders that header itself: one writer, one wording.
+        location_token = jsc.get(semantic_input, "outstanding_location_token")
+        if jsc.truthy(location_token) and isinstance(warehouse_codes, list) and warehouse_codes:
+            out["location_token"] = jsc.js_string(location_token)
+        # D13/AC-1141: the same wire trip for the withheld SO half, so the refusal line
+        # prints IN PLACE (after the header, before the DO block) rather than in front
+        # of the whole reply.
+        if jsc.truthy(jsc.get(semantic_input, "outstanding_so_refused")):
+            out["so_refused"] = True
         # AC-1132: the scope-answer's carried customer_ids are ALREADY resolved UUIDs
         # (restored by `head/output_exchange.py`, never re-parsed) - they win over
         # whatever THIS turn's own (empty) entity list produced.
@@ -1410,6 +1421,10 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
         "date_filter_end": semantic_input.get("date_filter_end"),
         "customer_ids": customer_ids,
         "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
+        # AC-1132/AC-1138 (review round): the location is part of the filter set, and
+        # the TOKEN travels with the codes - the answering turn has to print the same
+        # header ("IB (BRW-IB, MWH-IB)") as the turn that asked.
+        "location_token": semantic_input.get("outstanding_location_token"),
     }
 
 
@@ -1419,28 +1434,29 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
     each with its own By location / By customer subgroup) has no row list to build
     items from.
 
-    `result` is the ALREADY-RENDERED text - `sorento_crm_mcp.presenters.
-    _outstanding_report` / `_outstanding_detail` built it server-side through the same
-    PRESENTER_TOOLS + `view=render` mechanism every other tool uses (`fetch.py` always
-    sets `view=render`) - and it is used verbatim. There is no second, local rendering
-    of the report body here: a lane that re-derived the header from a raw payload could
-    disagree with the text the customer is reading, and the backend container cannot
-    import `sorento_crm_mcp` to share the presenter (`CHATBOT_READ_ONLY_TOOLS`'s own
-    docstring above explains why).
+    `result` is the MINIMAL envelope `sorento_crm_mcp.presenters.present_response`
+    returns for this tool: `response` (the already-rendered reply, used VERBATIM) and
+    `has_result`. There is no second, local rendering of the report here - a lane that
+    re-derived the header from a raw payload could disagree with the text the customer
+    is reading, and the backend container cannot import `sorento_crm_mcp` to share the
+    presenter (`CHATBOT_READ_ONLY_TOOLS`'s own docstring above explains why).
+
+    `has_result` has to come off the wire: the rendered header prints on a TOTAL MISS
+    too ("Product: ... / No open sales order."), so reading the text would call every
+    miss an answer and the existing escalate offer (AC-1107) would never fire - which
+    is exactly what the 13 Sep console check saw.
     """
-    semantic_input = ctx.get("semantic_input")
-    if isinstance(semantic_input, str):
-        semantic_input = _safe_json(semantic_input) or {}
-    semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
-    so_refused = bool(jsc.truthy(semantic_input.get("outstanding_so_refused")))
-    refusal = SO_NOT_ENABLED_MESSAGE if so_refused else None
-
-    text = result if isinstance(result, str) else jsc.js_string(result)
+    envelope = result if isinstance(result, dict) else {}
+    if "response" in envelope:
+        text = jsc.js_string(envelope.get("response") or "")
+        has_result = envelope.get("has_result") is True
+    else:
+        # The render never happened (an MCP that returned the raw body, or a failure
+        # fallback). Nothing can be said about absence from a shape this function did
+        # not get, so the text stands and the turn is treated as an answer.
+        text = result if isinstance(result, str) else jsc.js_string(result)
+        has_result = bool(text.strip())
     offer = _outstanding_offer_from_text(text)
-    has_result = bool(text.strip())
-
-    if refusal:
-        text = f"{refusal}\n\n{text}"
 
     outstanding_ask = (
         {
@@ -1465,6 +1481,10 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         "requested_attributes": [],
         "keys_served": False,
         "outstanding_ask": outstanding_ask,
+        # AC-1139: the report carries its OWN Product / Customer / Location / Order date
+        # lines, so `tail/compile_state.py` must skip the generic search-scope header it
+        # prints above a delivery-order answer. Read there off this marker.
+        "outstanding_report": True,
     }
 
 

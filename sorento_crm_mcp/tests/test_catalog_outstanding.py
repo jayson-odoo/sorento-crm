@@ -110,9 +110,15 @@ REPORT_WITH_SO_ROWS = {
 def test_detail_param_renders_outstanding_detail_not_the_report():
     """`detail=so` makes `present_response` render `_outstanding_detail(report, "so")` -
     the numbered SO list - instead of the two-block report `_outstanding_report` builds.
-    The route itself is unchanged by `detail` (AC-1114b); this is the PRESENTER dispatch."""
+    The route itself is unchanged by `detail` (AC-1114b); this is the PRESENTER dispatch.
+
+    The rendered text rides in the envelope's `response` (review round, 13 Sep 2026):
+    the report's own reply needs `has_result` beside it, because its header renders on a
+    total miss too and the lane has to tell the two apart (AC-1107)."""
     raw = json.dumps(REPORT_WITH_SO_ROWS)
-    rendered = present_response("crm_outstanding_report", raw)
+    envelope = json.loads(present_response("crm_outstanding_report", raw))
+    rendered = envelope["response"]
+    assert envelope["has_result"] is True, envelope
     assert rendered == _outstanding_detail(REPORT_WITH_SO_ROWS, "so"), (
         f"present_response must dispatch to _outstanding_detail when detail is set: {rendered!r}"
     )

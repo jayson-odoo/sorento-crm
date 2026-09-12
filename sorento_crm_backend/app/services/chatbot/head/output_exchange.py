@@ -996,6 +996,15 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:
         ) from exc
 
 
+#: The scope words, as the parser already spells them (D2): answering "sales order" is
+#: the same emission a direct "sales order outstanding" ask produces.
+_SCOPE_BY_ORDER_STATUS: dict[str, str] = {
+    "so_outstanding": "so",
+    "do_outstanding": "do",
+    "outstanding_both": "both",
+}
+
+
 def _outstanding_scope_pick(prev_state: Any, o: Any) -> str | None:
     """AC-1132/AC-1138: which option this turn answered an OPEN `outstanding_scope` or
     `outstanding_detail` ask with, or None (out of range / not answered) - the SAME
@@ -1024,16 +1033,25 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     filters = filters if isinstance(filters, dict) else {}
     product_code = filters.get("product_code")
 
-    if kind == "outstanding_detail":
-        # D9 (chatbot-focus): a turn that brings its OWN business question - a new
-        # entity, or its own domain - is a NEW ask, not an answer to "1"/"2", and the
-        # pending must be dropped rather than mis-resolved. `_team_clarify_pick` makes
-        # the same "own_question" carve-out for its numbered ask.
-        own_question = bool(jsc.array(o.get("entities"))) or jsc.truthy(o.get("domain_hint"))
-        if own_question:
-            return
-
     picked = _outstanding_scope_pick(prev_state, o)
+    if kind == "outstanding_scope" and picked is None:
+        # The question may also be answered in WORDS ("sales order", "delivery order",
+        # "both"), which the parser emits as an `order_status` - the same vocabulary a
+        # direct ask uses, so there is nothing extra to teach it.
+        picked = _SCOPE_BY_ORDER_STATUS.get(jsc.js_string(o.get("order_status") or ""))
+
+    # D2/D9: a turn that brings its OWN business question - a new entity, or its own
+    # domain - is a NEW ask, not an answer to "1"/"2"/"3", and the pending is DROPPED
+    # rather than mis-resolved (`_team_clarify_pick` makes the same "own_question"
+    # carve-out for its numbered ask). Applied to BOTH kinds since the review round of
+    # 13 Sep 2026: while an `outstanding_scope` question was open, "stock for
+    # SRTWC8517" was rewritten into the carried outstanding ask and answered with the
+    # scope question AGAIN, so the customer could not leave the question except by
+    # answering it. A pick (a number, or a scope word) is what an ANSWER looks like, and
+    # only an answer keeps the pending alive.
+    own_question = bool(jsc.array(o.get("entities"))) or jsc.truthy(o.get("domain_hint"))
+    if own_question and (kind == "outstanding_detail" or picked is None):
+        return
 
     o["domain_hint"] = "order"
     o["message_type"] = "business_query"
@@ -1054,6 +1072,11 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # resolve-entity seam could look up again - restored directly onto the fetch args
     # in `fetch.entity_ids_transformer`, never through entity resolution.
     o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
+    # AC-1132/AC-1138: the location travels too - both the codes the report filters on
+    # and the token its header echoes. Without them the re-run silently widened to every
+    # warehouse and printed `Location: all` under a question about one location.
+    o["outstanding_carried_warehouse_codes"] = filters.get("warehouse_codes") or []
+    o["outstanding_carried_location_token"] = filters.get("location_token")
 
     if kind == "outstanding_scope":
         if picked is not None:
