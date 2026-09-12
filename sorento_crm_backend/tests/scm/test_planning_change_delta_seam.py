@@ -32,11 +32,13 @@ from decimal import Decimal
 
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 from app.models.project_so import (
+    ALLOC_SOURCE_ORDER,
     DECISION_ACTIVE,
     INQUIRY_CANCELLED,
     IV_ORDER,
     IV_ORDER_BACK,
     OrderInquiryRow,
+    SOLineAllocation,
     SOSupplyDecision,
 )
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
@@ -120,6 +122,34 @@ def _held_buy_world(db, *, qty="134", required_date=NON_IMMEDIATE):
     }
 
 
+def _held_reserve_world(db, *, qty="134", required_date=NON_IMMEDIATE):
+    """A held Use-own (Reserve) line, no inquiry row raised - AC-B4's starting shape.
+    Seeds exactly `qty` of own stock so the confirm has precisely enough to hold, the way
+    S1's own "Use own X" shape would (any more and a later top-up test's "free stock"
+    figure would quietly include some of THIS seed)."""
+    company_id, actor, project, product = _world(db)
+    _group, sites = _group_sites(db)
+    own, pool = sites["BRW"]
+    order, line, core_so, core_line = _seed_order(
+        db, company_id, project, product, own, qty=qty, required_date=required_date,
+    )
+    _stock(db, product, own, on_hand=qty)
+    ProjectSupplyService(db).confirm(
+        order,
+        ConfirmSupplyBody(lines=[ConfirmLine(
+            project_line_id=line.id,
+            reserve=[{"warehouse_id": str(own.id), "qty": qty}],
+        )]),
+        actor_user_id=actor,
+    )
+    db.commit()
+    return {
+        "company_id": company_id, "actor": actor, "project": project, "product": product,
+        "own": own, "pool": pool, "order": order, "line": line, "core_so": core_so,
+        "core_line": core_line,
+    }
+
+
 def _change_and_batch(db, world, *, new_qty=None, new_required_date=None):
     """Mutates the core line the way a book re-upload or a manual edit already would (the
     write happens BEFORE `build_batch` runs - `test_planning_changes.py`'s own
@@ -182,6 +212,37 @@ def _live_order_rows(db, line_id):
                 OrderInquiryRow.state != INQUIRY_CANCELLED)
         .all()
     )
+
+
+def _hold_qty(db, line_id) -> Decimal:
+    """The stock actually held for this line right now - `ProjectSupplyService._hold_rows`'
+    own predicate (project_supply_service.py:7650-7741), restated: a confirmed
+    `SOLineAllocation` whose `source_type` is NOT `order` (a Buy allocation carries no
+    warehouse and is not a stock hold at all)."""
+    rows = (
+        db.query(SOLineAllocation)
+        .filter(SOLineAllocation.so_line_id == line_id,
+                SOLineAllocation.confirmed_at.isnot(None),
+                SOLineAllocation.source_type != ALLOC_SOURCE_ORDER)
+        .all()
+    )
+    return sum((Decimal(str(r.qty)) for r in rows), Decimal("0"))
+
+
+def _add_stock(db, product, warehouse, extra):
+    """Top up the ALREADY-SEEDED (product, warehouse) stock row rather than inserting a
+    second one - `stock` carries `uq_stock_product_id_warehouse_id`, and `_held_reserve_world`
+    already seeded one row for this pair when it confirmed the initial Reserve."""
+    from app.models.inventory import Stock
+
+    row = (
+        db.query(Stock)
+        .filter(Stock.product_id == product.id, Stock.warehouse_id == warehouse.id)
+        .one()
+    )
+    row.quantity_on_hand = Decimal(str(row.quantity_on_hand)) + Decimal(str(extra))
+    db.flush()
+    return row
 
 
 def _active_decision(db, order_id):
@@ -442,3 +503,72 @@ def test_advance_that_stays_outside_the_immediate_window_takes_no_partial_pool_s
         # cannot produce.
         assert live_rows[0].previous_qty == Decimal("134")
         assert live_rows[0].note and "Was 134" in live_rows[0].note
+
+
+# --------------------------------------------------------------------------- #
+# AC-B4a: qty up on a held Use-own takes MORE stock when the group has it
+# --------------------------------------------------------------------------- #
+
+def test_qty_up_on_a_held_use_own_takes_more_stock_when_the_group_has_it():
+    with blank_session() as db:
+        world = _held_reserve_world(db, qty="134")
+        # 200 MORE free on top of the 134 already held - 334 on hand in total, enough to
+        # cover the whole 234 the line moves up to.
+        _add_stock(db, world["product"], world["own"], extra=200)
+
+        batch = _change_and_batch(db, world, new_qty="234")
+        assert batch is not None
+        row = _only_row(db, batch)
+        assert row.kind == "qty_up"
+        composition = planning_change_service.composition_from_proposal(row.proposal_json)
+        assert composition.get("buy_qty") == "0", composition
+        assert sum(Decimal(r["qty"]) for r in composition.get("reserve") or []) == (
+            Decimal("234")
+        ), composition
+
+        result = _confirm_and_apply(db, world, batch)
+        assert result["failed_orders"] == [], result["failed_orders"]
+
+        decision = _active_decision(db, world["order"].id)
+        snapshot = next(
+            s for s in decision.line_snapshots if s["project_line_id"] == str(world["line"].id)
+        )
+        reserve_qty = sum(
+            Decimal(c["qty"]) for c in snapshot["components"] if c["kind"] == "reserve"
+        )
+        assert reserve_qty == Decimal("234"), snapshot
+        # The real stock hold, not just the frozen JSON snapshot - `_hold_rows`' own read.
+        assert _hold_qty(db, world["line"].id) == Decimal("234")
+        # AC-B4c folds in here: no window where the line has neither a hold nor an
+        # inquiry row - the hold above covers it whole, and Use-own raises no ORDER row.
+        assert _live_order_rows(db, world["line"].id) == []
+
+
+# --------------------------------------------------------------------------- #
+# AC-B4b: qty up on a held Use-own moves the WHOLE unit to the next step when
+# the group's stock is short
+# --------------------------------------------------------------------------- #
+
+def test_qty_up_on_a_held_use_own_moves_the_whole_unit_to_the_next_step_when_stock_is_short():
+    with blank_session() as db:
+        world = _held_reserve_world(db, qty="134")
+        # Only 50 more free - 184 on hand in total, short of the 234 the line moves up to,
+        # and no donor/pool seeded - the whole unit must move to Buy, never split.
+        _add_stock(db, world["product"], world["own"], extra=50)
+
+        batch = _change_and_batch(db, world, new_qty="234")
+        assert batch is not None
+        row = _only_row(db, batch)
+        assert row.kind == "qty_up"
+        composition = planning_change_service.composition_from_proposal(row.proposal_json)
+        assert composition.get("buy_qty") == "234", composition
+        assert composition.get("reserve") == [], composition
+
+        result = _confirm_and_apply(db, world, batch)
+        assert result["failed_orders"] == [], result["failed_orders"]
+
+        # The 134 hold is released - the whole unit moved to Buy, not 184 kept + 50 bought.
+        assert _hold_qty(db, world["line"].id) == Decimal("0")
+        live_rows = _live_order_rows(db, world["line"].id)
+        assert len(live_rows) == 1, [str(r.id) for r in live_rows]
+        assert live_rows[0].qty == Decimal("234")
