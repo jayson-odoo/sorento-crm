@@ -76,13 +76,10 @@ PLANNING_CHANGE_KIND_CANCELLED = "cancelled"
 PLANNING_CHANGE_KIND_ADDED = "added"
 PLANNING_CHANGE_KIND_PRODUCT_CHANGED = "product_changed"
 
-# `PlanningChangeRow.suggested` - the verb the planner already knows from the board
-# (section 0's rule table).
-PLANNING_CHANGE_REACTION_KEEP = "keep"
-PLANNING_CHANGE_REACTION_RELEASE = "release"
-PLANNING_CHANGE_REACTION_REPLAN = "replan"
-PLANNING_CHANGE_REACTION_REDUCE = "reduce"
-PLANNING_CHANGE_REACTION_RETIRE = "retire"
+# `PlanningChangeRow.suggested` is RETIRED (Slice C): the rule table its five verbs came
+# from is replaced by `planning_change_service.compose_suggestion`, which diffs the re-run
+# against the hold. The CONSTANTS went with their last writer; the two columns stay
+# nullable for the rows already written under them (migration 515).
 
 
 class PlanningChangeBatch(Base, CompanyScopedMixin):

@@ -464,3 +464,80 @@ these predate this slice and are not among the tester's rewrites):**
   `AttributeError: 'ProjectSupplyService' object has no attribute 'challenge_if_drifted'`,
   confirming the method the retired flip removed is exactly what they exercise - and neither
   can pass again without the mechanism AC-E2 explicitly retires.
+
+## Slice D contract (captain, 13 September 2026, issue #859) and what was built
+
+**The rule (6, 7, 10):** a `reallocate` component is not a word, it is an instruction. At
+apply of a confirmed row - AFTER the confirm, because the confirm is what frees the
+quantity by settling the line's own inquiry row down to what the line still needs - every
+`reallocate` in `suggestion_json` is carried out.
+
+### A. Freed document quantity (AC-D1, D2, D3)
+
+In rule 6's own order, per component:
+
+1. **Dealer hot-selling -> the dealer pool.** A POOL-LOCATION row: a new `OrderInquiryRow`
+   in the same `OrderInquiry`, `so_line_id` NULL, verb ORDER, `stock_location` = the line's
+   pool warehouse code, qty = the freed quantity, note `Reallocated from <SO> line <n>`,
+   linked to the same document for that quantity through `place_on_po_allocations`. Retail
+   wins over a waiting project row (the grill page's decided 3.1).
+2. **Else the linking engine's priority.** `_waiting_rows` = raised or partly-linked ORDER
+   rows for the product with unlinked quantity, company-wide, ranked by `_rank_raised_rows`
+   (the one priority policy). The first takes what it needs, gains the link and the note
+   `Found: <document> <qty>`; its order's decision is NOT touched and no revision is written
+   for it - its board reads the new state next time it opens (decided 3.2).
+3. **Else the pool-location row** as in 1, where the reorder engine counts it as cover.
+
+**The hot-selling verdict and the ranking are read LIVE at apply**, not off the row: a batch
+may sit for days, and where a quantity goes is decided by what is selling, and who is
+waiting, when it actually moves. The words the board showed name the same walk
+(`_reallocation_target` and the apply share `_waiting_rows`), so they can only differ when
+the world itself has.
+
+**A line THIS batch is re-deciding is never a candidate.** Its rows are in flux the same
+apply, and handing it a quantity the next line of the loop cancels is two answers to one
+question.
+
+**The SPO half is not built.** Only an ORDER BACK row may carry an SPO allocation
+(`place_on_po_allocations`'s own rule), so a pool-location ORDER row cannot hold one. A
+freed SPO share is logged and left where it is for a person. THE TRIGGER for building it:
+the first batch that frees SPO quantity in anger.
+
+### B. The reserve (AC-D4, S3)
+
+A `reallocate` whose source is `reserve`: a `SOLineAllocation` on the RECEIVING mirror line,
+at the warehouse the giver held it in, `decision_id` = the receiving order's active decision
+(or NULL), `confirmed_at` now, reason `Reallocated from <SO A> line <n>`. Its ORDER row is
+cancelled (or reduced when only partly covered) with `Found: reserve <qty> from <SO A>`, and
+its decision's `line_snapshots` are NOT rewritten - that board reads live holds.
+
+The receiving line's `order` allocation is DELETED for the covered quantity: it holds
+nothing, it is a statement that a quantity still needs buying, and it has stopped being
+true. Every stock allocation on that line is untouched.
+
+**Compose side.** `_reserve_rival` is what the ladder cannot see: `_proposal_for` walks the
+board with this line's own hold carved out, so free stock reads as available and the re-run
+proposes the same reserve again, while another order's earlier, unlinked row waits for it.
+When there is such a row, the re-run is rewritten as a whole-unit Buy at the new date (rule
+1: what is left of the stock cannot cover the unit) and the suggestion reads Reallocate +
+Release + Buy. With no such row it still reads Keep (S9). **The simplification, named:** the
+rewrite says Buy, because the ladder was walked once against stock the rival had not yet
+claimed and has no "reserve minus this claim" input to be asked again with - so a rung that
+could have covered the whole unit (the grill page's S3 ends on SPO-77) is not knowable from
+here. THE TRIGGER for building that input: the first case where a whole-unit SPO or Borrow
+could have covered the line and the board offered a Buy.
+
+### C. What was retired (AC-D5)
+
+`_apply_placed_redirect` is deleted and nothing writes `redirected_to_pool` (the column and
+its readers stay for the rows already carrying it). The `placed_redirect_qty` field
+`_apply_placed_offset` used to leave on a proposal fed that function alone and is retired
+with it - a second answer to "where does this go" is exactly what rule 6 replaced. The
+`PLANNING_CHANGE_REACTION_*` constants went too, once their last writer (a test fixture)
+did.
+
+### D. Words only (AC-D6)
+
+Every target, note and label carries an SO number, a document number or a warehouse code.
+No id reaches a sentence: `_row_target_words` resolves a receiving row to `<SO> ORDER <qty>`,
+and the pool row says `Reallocated from <SO> line <n>`.
