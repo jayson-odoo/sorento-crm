@@ -136,6 +136,7 @@ const PLAN: LoadingPlanRecord = {
   supplier_name: 'CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD',
   supplier_email: 'sales@jinbaichuan.cn',
   started_at: '2026-08-27T14:02:00',
+  plan_horizon_start: null,
   plan_horizon_date: '2026-09-30',
   document_kind: 'stock_list',
   document_label: 'Stock list 27/07/2026',
@@ -279,7 +280,9 @@ describe('LoadingPlanView (the record)', () => {
     ).toBeTruthy();
     const subtitle = screen.getByTestId('plan-subtitle').textContent ?? '';
     expect(subtitle).toContain('Started');
-    expect(subtitle).toContain('SO cut-off 30/09/2026');
+    // AC-N7: the window is worded like reorder planning's own (`describeWindow`); no start
+    // on this plan's fixture, so it reads as an end-only window.
+    expect(subtitle).toContain('up to 30/09/2026');
     expect(subtitle).toContain('Stock list 27/07/2026');
     // The state pill, not the sidebar crumb that also reads "Planning".
     expect(
@@ -470,12 +473,49 @@ describe('LoadingPlanView (the record)', () => {
     renderView();
 
     fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
-    const input = await screen.findByLabelText('Sales order cut-off');
-    fireEvent.change(input, { target: { value: '2026-10-31' } });
+    const to = await screen.findByLabelText('To');
+    fireEvent.change(to, { target: { value: '2026-10-31' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Save cut-off' })[0]);
 
     await waitFor(() =>
-      expect(changeCutOff).toHaveBeenCalledWith('2026-10-31', expect.anything()),
+      expect(changeCutOff).toHaveBeenCalledWith(
+        { plan_horizon_start: null, plan_horizon_date: '2026-10-31' },
+        expect.anything(),
+      ),
+    );
+  });
+
+  // AC-N7 (PLAN-scm-loading-plan-lines-feedback-12sep.md): the "Change cut-off" dialog
+  // becomes a From/To window, worded like reorder planning's Start Plan dialog.
+  it('the Change cut-off dialog pre-fills the window and sends both dates (AC-N7)', async () => {
+    state.plan = {
+      ...PLAN,
+      plan_horizon_date: '2026-10-31',
+      plan_horizon_start: '2026-10-01',
+    } as LoadingPlanRecord;
+    renderView();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
+
+    expect(await screen.findByText('Sales orders needed')).toBeTruthy();
+    const from = screen.getByLabelText('From') as HTMLInputElement;
+    const to = screen.getByLabelText('To') as HTMLInputElement;
+    expect(from.value).toBe('2026-10-01');
+    expect(to.value).toBe('2026-10-31');
+
+    // A valid window: the new From stays before the existing To (2026-10-31) - a backwards
+    // window disables Save (review round, 12 Sep) rather than being sent at all.
+    fireEvent.change(from, { target: { value: '2026-09-01' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save cut-off' })[0]);
+
+    await waitFor(() =>
+      expect(changeCutOff).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan_horizon_start: '2026-09-01',
+          plan_horizon_date: '2026-10-31',
+        }),
+        expect.anything(),
+      ),
     );
   });
 

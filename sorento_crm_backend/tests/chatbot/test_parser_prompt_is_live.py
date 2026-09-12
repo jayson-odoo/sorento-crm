@@ -26,6 +26,7 @@ import pytest
 
 from app.services.chatbot_parser_prompt import (
     GROWTH_R1_ADDENDUM,
+    LAST_COST_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     SEMANTIC_PARSER_PROMPT,
 )
@@ -68,22 +69,32 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # resource_attachment domain description, both bodies - a document-class word plus a
 # brand or company name is get_resource_attachment with the attachment entity, never
 # promotion.
-CONSTANT_CHARS = 48996
+# +99 chars (12 Sep 2026, PLAN-chatbot-last-purchase-cost.md item 9): "| purchase_cost"
+# woven into the `domain_hint = ONE of:` literal and one "- check_po_cost - ..." bullet
+# woven into the intent_hint list, both inside the OUTPUT/INTENT & DOMAIN section, ahead
+# of where `LAST_COST_ADDENDUM` stacks. Intentional content, not drift.
+CONSTANT_CHARS = 49095
 
 
 def _without_growth_r1_addendum(text: str) -> str:
     """The body as it was before growth r1 appended its vocabulary block (migration 490).
 
-    An APPENDED block, so it comes off with a `removesuffix` rather than the index slice the
-    warehouse-arrival edit needs - that one sits INSIDE the requested-attributes section. The
-    assertion that it really is a suffix lives in
+    `LAST_COST_ADDENDUM` (migration 511, 12 Sep 2026) now stacks AFTER
+    `GROWTH_R1_ADDENDUM` on both bodies, the same way this one stacked after the live
+    text - so it comes off FIRST, before the `removesuffix` this function has always
+    done. Each addendum is an APPENDED block, so both come off by suffix rather than by
+    the index slice the warehouse-arrival edit needs (that one sits INSIDE the
+    requested-attributes section). The assertion that `GROWTH_R1_ADDENDUM` really is the
+    tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
+    if text.endswith(LAST_COST_ADDENDUM):
+        text = text[: -len(LAST_COST_ADDENDUM)]
     assert text.endswith(GROWTH_R1_ADDENDUM), (
-        "GROWTH_R1_ADDENDUM is no longer the tail of the prompt. It is appended rather than "
-        "woven in on purpose (the FULL body has to stay a mechanical derivation of the live "
-        "n8n message); moving it into the body means this file needs a second slice-out, not "
-        "a bigger character count."
+        "GROWTH_R1_ADDENDUM is no longer the tail of the prompt (once any LATER addendum "
+        "is removed). It is appended rather than woven in on purpose (the FULL body has "
+        "to stay a mechanical derivation of the live n8n message); moving it into the "
+        "body means this file needs a second slice-out, not a bigger character count."
     )
     return text[: -len(GROWTH_R1_ADDENDUM)]
 

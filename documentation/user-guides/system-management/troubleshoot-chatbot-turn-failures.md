@@ -227,3 +227,5 @@ previous version again, not by asking engineering to revert code.
 * [Troubleshoot a failed notification (email or WhatsApp)](troubleshoot-failed-notifications.md) -
   for a WhatsApp send that failed for reasons unrelated to the bot (e.g. a bad workspace key), not
   the bot's own decision-making.
+* [Chatbot - "last purchase cost" answer](chatbot-last-purchase-cost.md) - the per-contact
+  Field reveal that gates a cost answer, and rolling out its parser vocabulary via a Publish.

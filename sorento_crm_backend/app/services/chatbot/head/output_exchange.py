@@ -90,6 +90,11 @@ _AGENT_BY_DOMAIN: dict[str, str] = {
     "promotion": "general_enquiries",
     "inventory": "general_enquiries",
     "purchase_order": "general_enquiries",
+    # PLAN-chatbot-last-purchase-cost (#844, merged from main): a purchase-COST question
+    # is a purchasing question, the same team and agent `purchase_order` already routes
+    # to - a supplier order and its cost are the same team's record. The TEAM comes from
+    # `DOMAIN_SPEC["purchase_cost"].escalation_team`; this is its agent.
+    "purchase_cost": "general_enquiries",
     "incoming": "incoming_stock_enquiries",
     "forms": "marketing_form",
     "order": "order_enquiries",

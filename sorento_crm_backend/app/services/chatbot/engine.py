@@ -1995,21 +1995,32 @@ def _run_stages(  # noqa: PLR0915
                             # is what makes `WHERE stage = 'looked_up'` find the turn.
                             fetch_error_text = jsc.js_string(fetch_fragment.get("error"))
                             absent = fetch_fragment.get("outcome") == "not_found"
-                            business_completes = completes_here and absent
+                            # PLAN-chatbot-last-purchase-cost.md D6: the whole-domain
+                            # grant gate also answers ITSELF - the customer gets the
+                            # access_denied canned reply, never a hard failure - so it
+                            # joins `absent` for `business_completes` while keeping its
+                            # own summary/why on the trace.
+                            denied = fetch_fragment.get("outcome") == "access_denied"
+                            business_completes = completes_here and (absent or denied)
                             if not business_completes:
                                 lane_error_text = fetch_error_text
-                            if completes_here and not absent:
+                            if completes_here and not (absent or denied):
                                 fetch_failed_hard = fetch_error_text
                             turn_trace.record(
                                 "looked_up",
                                 status="ok" if business_completes else "failed",
                                 summary=(
-                                    "Found nothing to look the answer up with."
+                                    "Refused: the domain grant is not held."
+                                    if denied
+                                    else "Found nothing to look the answer up with."
                                     if absent
                                     else "Could not look the answer up."
                                 ),
                                 why=(
-                                    "No tool matched the question."
+                                    "The contact does not hold the field-reveal grant "
+                                    "this domain requires."
+                                    if denied
+                                    else "No tool matched the question."
                                     if absent
                                     else "The read the answer needs did not come back."
                                 ),

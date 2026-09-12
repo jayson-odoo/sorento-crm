@@ -9,10 +9,13 @@ supplier reverts with a packing list does CBM matter, and that stage is unchange
 
 Two moves, two functions:
 
-* `build` - a pure read. The candidate product set comes off the supplier's current stock
-  list (`SupplierInventory` is a full-replace snapshot, so "current" already means "latest" -
-  there is nothing to pick a most-recent-of), the quantity to ask for off the outstanding
-  sales-order book, and the order off the ACTIVE Fulfilment Priority policy through
+* `build` - a pure read. The candidate product set is the statement on file when there is one
+  (the supplier's current stock list or proforma - `SupplierInventory` is a full-replace
+  snapshot, so "current" already means "latest" - there is nothing to pick a most-recent-of),
+  and the `product_suppliers` sourcing links alone when there is none (`_linked_products`,
+  never both - the file-or-links rule, 12 Sep 2026,
+  `PLAN-scm-loading-plan-lines-feedback-12sep.md`). The quantity to ask for comes off the
+  outstanding sales-order book, and the order off the ACTIVE Fulfilment Priority policy through
   `priority.factors_for_demand_rows` - the same call the fulfilment board makes, so a product
   cannot rank differently on the two screens (AC-H5).
 
@@ -68,7 +71,6 @@ from app.models.scm import (
     ProformaInvoice,
     ProformaInvoiceLine,
     SupplierInventory,
-    SupplierProductCodeAlias,
 )
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
@@ -113,15 +115,13 @@ OPEN_PO_SQL = (
     + ") AND pol.line_status = 'open' AND pol.qty_ordered > pol.qty_received"
 )
 
-#: What is still to land on one packing-list line, floored at zero.
-PL_REMAINING_SQL = (
-    "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.quantity_received, 0), 0)"
-)
-
-#: R6 (purchasing consolidation, 6 Sep): the part of one line still to land that has NOT
-#: already been turned into an SPO. Always <= `PL_REMAINING_SQL` (an allocated unit is also
-#: a received-or-not-yet unit), which is why filtering rows on `PL_REMAINING_SQL > 0` never
-#: drops a line this figure would otherwise count.
+#: R6 (purchasing consolidation, 6 Sep), widened to every reader by AC-N2 (12 Sep): the part
+#: of one packing-list line still to land that has NOT already been turned into an SPO -
+#: shipped, less whatever of it is already allocated and less whatever is already received,
+#: floored at zero. The dead sibling this used to sit beside (`PL_REMAINING_SQL`, "shipped
+#: less received" alone, with no allocation cut) is gone: AC-N2 moved every reader - the
+#: netting formula, the cell, the shipment list, the drill - onto this one figure, so there
+#: is no longer a second, gross reading of "still to land" anywhere in this file.
 #: `l.spo_allocated_quantity` is per LINE since S4 (AC-D5): `refresh_shipment_line_statuses`
 #: apportions the product's allocated total across that product's own lines on the shipment
 #: in `(created_at, id)` order rather than stamping the product total onto each of them, so
@@ -243,28 +243,19 @@ def _aggregate_stock(rows: list) -> tuple[Optional[Any], dict[str, dict]]:
 
 
 def _linked_products(db: Session, supplier_id: str) -> set[str]:
-    """Every product we buy from this supplier - the universe's first leg (F1, AC-A1).
+    """Every product we buy from this supplier - the no-file universe, whole.
 
     `product_suppliers` is the sourcing link the reorder engine already reads, so "what does
     this supplier make for us" has one answer across the module. Company scope comes free:
     the ORM's loader criteria apply to `Product`, and a link to a foreign company's product
     therefore names nothing here.
 
-    Without this leg the universe was the supplier's stock list ALONE, which is why a
-    supplier who had never sent one produced an empty screen on the very page that exists to
-    say what to ask them for.
-
-    UNIONED with the supplier's remembered codes (AC-E0): once somebody has ruled that this
-    supplier's `SRTWC8354-SH` is our product, that ruling is a statement of what they make,
-    and it has to outlive the file it was answered on - otherwise a plan with no statement of
-    its own (S6) forgets every code the supplier has ever been matched on. A DISMISSED code
-    names nothing and is excluded.
-
-    A code ruled onto one of our SETS (AC-D3) is not a product id itself, so it joins through
-    the set's DRIVER - the same member whose figures a statement-named set row reads (R19).
-    Without this leg, ruling a code onto a set the supplier has never shipped a stock row for
-    left the driver, and therefore the whole set, out of the universe entirely: the ruling
-    was on file but nothing on screen ever asked about it.
+    Read ONLY when the plan has no statement on file (captain, 12 Sep 2026, the file-or-links
+    rule in `PLAN-scm-loading-plan-lines-feedback-12sep.md`). It used to be unioned into
+    every build, and unioned with the supplier's remembered codes (the old AC-E0 / AC-D3),
+    so a plan with a file on it listed products the file never named - "too confusing", in
+    the captain's words. An alias binds a file's code to our product; it is no membership
+    of its own any more.
     """
     rows = (
         db.query(ProductSupplier.product_id)
@@ -272,32 +263,7 @@ def _linked_products(db: Session, supplier_id: str) -> set[str]:
         .filter(ProductSupplier.supplier_id == supplier_id)
         .all()
     )
-    aliased = (
-        db.query(SupplierProductCodeAlias.product_id)
-        .join(Product, Product.id == SupplierProductCodeAlias.product_id)
-        .filter(
-            SupplierProductCodeAlias.supplier_id == supplier_id,
-            SupplierProductCodeAlias.product_id.isnot(None),
-        )
-        .all()
-    )
-    aliased_set_ids = [
-        str(r.product_set_id)
-        for r in db.query(SupplierProductCodeAlias.product_set_id)
-        .filter(
-            SupplierProductCodeAlias.supplier_id == supplier_id,
-            SupplierProductCodeAlias.product_set_id.isnot(None),
-        )
-        .all()
-    ]
-    from app.services.product_set_service import driver_members
-
-    drivers = driver_members(db, aliased_set_ids) if aliased_set_ids else {}
-    return (
-        {str(r.product_id) for r in rows}
-        | {str(r.product_id) for r in aliased}
-        | {str(member.product_id) for member in drivers.values()}
-    )
+    return {str(r.product_id) for r in rows}
 
 
 def _standin_proforma(db: Session, supplier_id: str) -> Optional[dict]:
@@ -370,17 +336,23 @@ def _plan_stock_list(db: Session, plan) -> tuple[Optional[Any], dict[str, dict]]
     Same aggregation, one predicate added. The snapshot used to be one per supplier, so a
     plan started with no file at all read whatever the supplier had last sent - from any
     plan - and its own subtitle said "No file" while it did.
+
+    `as_of` is read off EVERY row this plan owns, bound or not (AC-U3 follow-up): the upload
+    dates the whole file at once, so a row nothing matched still says when the file arrived -
+    "we have a statement, dated X, that named none of ours" is a different fact from "we have
+    no statement" and the freshness strip has to be able to say which. `stock` (the holdings
+    dict `_aggregate_stock` builds) stays bound-rows-only: an unbound row carries no product or
+    set identity to key a holding on.
     """
     rows = (
         db.query(SupplierInventory)
-        .filter(
-            SupplierInventory.loading_plan_id == str(plan.id),
-            SupplierInventory.product_id.isnot(None)
-            | SupplierInventory.product_set_id.isnot(None),
-        )
+        .filter(SupplierInventory.loading_plan_id == str(plan.id))
         .all()
     )
-    return _aggregate_stock(rows)
+    as_of = max((r.as_of for r in rows if r.as_of is not None), default=None)
+    bound = [r for r in rows if r.product_id is not None or r.product_set_id is not None]
+    _, stock = _aggregate_stock(bound)
+    return as_of, stock
 
 
 def _plan_proforma(db: Session, plan) -> Optional[dict]:
@@ -509,8 +481,8 @@ def _project_open_need(
     a requirement somebody has already bought cannot make the product rank as urgent.
 
     No company predicate of its own: `product_ids` was resolved company-scoped upstream
-    (`_linked_products` / `_stock_list` / `_standin_proforma`), and a product id belongs to
-    exactly one company, so filtering on it IS the scope.
+    (`_linked_products` / `_stock_list` / `_plan_stock_list` / `_standin_proforma`), and a
+    product id belongs to exactly one company, so filtering on it IS the scope.
     """
     if not product_ids:
         return {}
@@ -1023,15 +995,17 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
       `-BB` project bin (spoken for by an order already promised) silently cancel an ask this
       container needed. That reasoning did not account for `open_so_need` also counting project
       demand, which is what the 8 Sep ruling above corrects.
-    * `incoming_pl` (unreceived packing-list quantity on shipments that have not arrived) is
-      shown beside the ask, with the shipments behind it, exactly as before Q1 - a packing
-      list names no destination, so there is no way to tell whether it lands in a pool or in
-      a group bin, and netting the WHOLE figure would be a guess.
-    * `incoming_pl_unallocated` (R6) is the part of `incoming_pl` NOT already turned into an
-      SPO on that same shipment line (`GREATEST(quantity_shipped - spo_allocated_quantity -
-      quantity_received, 0)`) - THIS is what actually nets against the ask, because a unit
-      already counted in `incoming_spo` would otherwise be subtracted twice: once as the SPO,
-      once again as the packing list it came off.
+    * `incoming_pl` (12 Sep 2026, item 2 of `PLAN-scm-loading-plan-lines-feedback-12sep.md`) IS
+      `incoming_pl_unallocated` now - the part of a packing list NOT already turned into an SPO
+      (`PL_UNALLOCATED_SQL`) - shown beside the ask, with the shipments behind it, each already
+      cut to its own unallocated share. It used to be the WHOLE unreceived quantity, which
+      double-counted a container that already had its SPO: Total supply (on hand + SPO +
+      incoming PL) added the same units in twice, once as the SPO and once again as the packing
+      list it came off. A shipment fully allocated to an SPO is now absent from the shipment
+      list rather than listed at a figure that nets to nothing.
+    * `incoming_pl_unallocated` is kept as its own key, equal to `incoming_pl` by construction -
+      readers that subtract it (the netting formula below) and readers that display it (the
+      cell, the lightbox) can use either without drifting apart.
     * `outstanding_po` is likewise shown and never subtracted (captain, 20 Aug, CWCY604): a PO
       placed but not yet allocated to a shipment is often the very demand this request is
       asking the supplier to pack.
@@ -1136,39 +1110,41 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
 
 
 def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """Unreceived packing-list quantity per product, by shipment - the Incoming PL reference,
-    plus the part of it not yet turned into an SPO (R6).
+    """Unreceived, unallocated packing-list quantity per product, by shipment - the Incoming
+    PL reference (12 Sep 2026: the figure and the shipment list are now the SAME number,
+    `PL_UNALLOCATED_SQL` - see item 2 of `PLAN-scm-loading-plan-lines-feedback-12sep.md`).
 
     "Not arrived" is BOTH `actual_arrival_date IS NULL` and a status that is not a finished
     one: a shipment that has landed is already counted in `on_hand`, and counting it here too
-    would show the same units twice on one row.
+    would show the same units twice on one row. "Unallocated" cuts it further: a shipment line
+    already turned into an SPO is already counted in `incoming_spo`, so listing its gross
+    quantity here too double-counted it a second way, this time in Total supply (on hand + SPO
+    + incoming PL) rather than in the netting formula alone (R6 already fixed that half). A
+    shipment fully allocated to an SPO now names nothing here at all.
 
     A draft carries no number yet; it is emitted as a null so the screen can say "draft"
     rather than invent one.
 
-    Returns ``{product_id: {"shipments": [...], "unallocated": float}}`` - `shipments` is
-    the SAME per-shipment breakdown the Incoming PL lightbox has always shown (unchanged
-    shape, so that dialog and the AC-B4 test are untouched); `unallocated` is the new R6
-    figure the netting formula subtracts, summed once per product rather than per shipment
-    since nothing on screen breaks it down further.
+    Returns ``{product_id: {"shipments": [...], "unallocated": float}}`` - `shipments` now
+    carries the unallocated figure as `qty` too, so the cell (`incoming_pl`, the sum of
+    `qty` across shipments) equals `unallocated` by construction and the lightbox rows foot
+    to the cell (AC-N2b, the AC-G3 rule).
     """
     if not product_ids:
         return {}
     scope, params = company_sql_predicate(db, "s.company_id", param_prefix="ipl")
-    remaining = PL_REMAINING_SQL
     unallocated = PL_UNALLOCATED_SQL
     sql = f"""
         SELECT l.product_id::text AS product_id,
                s.id::text AS shipment_id,
                s.shipment_number,
                s.estimated_arrival_date,
-               SUM({remaining}) AS qty,
-               SUM({unallocated}) AS qty_unallocated
+               SUM({unallocated}) AS qty
         FROM inbound_shipment_lines l
         JOIN inbound_shipments s ON s.id = l.shipment_id
         WHERE l.product_id::text = ANY(:pids)
           AND {PL_NOT_ARRIVED_SQL}
-          AND {remaining} > 0
+          AND {unallocated} > 0
           {("AND " + scope) if scope else ""}
         GROUP BY l.product_id, s.id, s.shipment_number, s.estimated_arrival_date
         ORDER BY s.estimated_arrival_date NULLS LAST, s.shipment_number NULLS FIRST
@@ -1177,6 +1153,7 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, di
     out: dict[str, dict] = {}
     for r in rows:
         entry = out.setdefault(r["product_id"], {"shipments": [], "unallocated": 0.0})
+        qty = float(r["qty"] or 0)
         entry["shipments"].append(
             {
                 "shipment_id": r["shipment_id"],
@@ -1186,10 +1163,10 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, di
                     if r["estimated_arrival_date"]
                     else None
                 ),
-                "qty": float(r["qty"] or 0),
+                "qty": qty,
             }
         )
-        entry["unallocated"] += float(r["qty_unallocated"] or 0)
+        entry["unallocated"] += qty
     return out
 
 
@@ -1362,6 +1339,8 @@ def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) ->
         db,
         supplier_id=str(plan.supplier_id),
         include_lines=include_lines,
+        # AC-N7: the window's start-side twin, read off the row exactly like the end date.
+        plan_horizon_start=plan.plan_horizon_start,
         plan_horizon_date=plan.plan_horizon_date,
         # S6: the plan reads its OWN statement, so `build` is handed the row rather than just
         # the supplier it names.
@@ -1403,11 +1382,17 @@ def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) ->
 
 def _statement(
     db: Session, supplier_id: str, plan: Optional[Any]
-) -> tuple[Optional[Any], dict[str, dict], Optional[dict]]:
-    """What this build reads as "what they hold": `(as_of, stock rows, proforma)`.
+) -> tuple[Optional[Any], dict[str, dict], Optional[dict], bool]:
+    """What this build reads as "what they hold": `(as_of, stock rows, proforma, on_file)`.
 
     THE UNIVERSE's statement leg (F1, AC-A1). One statement, never two, because the stock
     list and the proforma answer the same question about the same warehouse.
+
+    `on_file` decides the UNIVERSE (12 Sep 2026, the file-or-links rule): a statement on file,
+    bound or not, IS the ask, and a plan with none asks about what `product_suppliers` says we
+    buy from this supplier instead - never both. A plan whose rows all bound to nothing HAS a
+    statement that names none of ours, so its ask is empty rows, not a fall-through to the
+    sourcing links.
 
     A PLAN reads its OWN rows and nothing else (S6, AC-F4/AC-F6): the stock list it was
     started from for `stock_list`, the invoices its upload created for `proforma`, and NOTHING
@@ -1430,19 +1415,20 @@ def _statement(
     """
     if plan is None:
         as_of, stock = _stock_list(db, supplier_id)
-        return as_of, stock, (_standin_proforma(db, supplier_id) if not stock else None)
+        proforma = _standin_proforma(db, supplier_id) if not stock else None
+        return as_of, stock, proforma, bool(stock) or proforma is not None
 
     kind = plan.document_kind
     if kind == "stock_list":
         if plan_statement.has_stock_rows(db, str(plan.id)):
             as_of, stock = _plan_stock_list(db, plan)
-            return as_of, stock, None
+            return as_of, stock, None, True
     elif kind == "proforma":
         if plan_statement.has_invoices(db, str(plan.id)):
-            return None, {}, _plan_proforma(db, plan)
+            return None, {}, _plan_proforma(db, plan), True
     else:
         # "No file" is a real answer, not a missing one: this plan reads no statement.
-        return None, {}, None
+        return None, {}, None, False
 
     # Legacy: nothing of this plan's own is on file. `loading_plan_id` routes the read
     # through `plan_statement.stock_scope`, which - because `has_stock_rows` above already
@@ -1450,7 +1436,8 @@ def _statement(
     # rather than every row on file for the supplier, so a newer plan's stamped snapshot for
     # the same code cannot double-count into this one.
     as_of, stock = _stock_list(db, supplier_id, loading_plan_id=str(plan.id))
-    return as_of, stock, (_standin_proforma(db, supplier_id) if not stock else None)
+    proforma = _standin_proforma(db, supplier_id) if not stock else None
+    return as_of, stock, proforma, bool(stock) or proforma is not None
 
 
 def build(
@@ -1495,7 +1482,7 @@ def build(
     and the horizon does not disturb it: every side applies it identically.
     """
     _supplier(db, supplier_id)
-    as_of, stock, proforma = _statement(db, supplier_id, plan)
+    as_of, stock, proforma, on_file = _statement(db, supplier_id, plan)
     stock_list_as_of = as_of.isoformat() if as_of else None
     holdings = _holdings(stock, proforma)
     holding_source = "stock_list" if stock else "proforma" if proforma else "none"
@@ -1510,9 +1497,12 @@ def build(
     driver_ids = {entry["driver_product_id"] for entry in sets.values()}
 
     product_holdings = {k: v for k, v in holdings.items() if _set_id_of(k) is None}
-    universe = (
-        _linked_products(db, supplier_id) | set(product_holdings) | driver_ids
-    ) - {None}
+    # The file-or-links rule (captain, 12 Sep 2026): a statement on file IS the ask, and a
+    # plan with none asks about what `product_suppliers` says we buy from them. Never both.
+    if on_file:
+        universe = (set(product_holdings) | driver_ids) - {None}
+    else:
+        universe = _linked_products(db, supplier_id)
     need = _open_need(db, universe, horizon=plan_horizon_date,
                       horizon_start=plan_horizon_start)
     project = _project_open_need(db, universe, horizon=plan_horizon_date,

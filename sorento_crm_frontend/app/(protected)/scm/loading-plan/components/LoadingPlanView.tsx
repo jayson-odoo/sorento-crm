@@ -26,7 +26,8 @@ import AttachmentPreviewModal, {
 } from '@/components/common/AttachmentPreviewModal';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useUrlTab } from '@/hooks/useUrlTab';
-import { EM_DASH, fmtDate, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtInt } from '../../lib/format';
+import { describeWindow } from '../../reorder/lib/runListing';
 import {
   loadingPlanPagerQuery,
   useContainerRequestBuild,
@@ -130,6 +131,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const [edits, setEdits] = useState<Record<string, LoadingPlanLineEdit>>({});
   const [sendOpen, setSendOpen] = useState(false);
   const [cutOffOpen, setCutOffOpen] = useState(false);
+  // AC-N7: "Sales orders needed" is now a window, the start-side twin beside the existing
+  // end date - same two fields reorder planning's own Start Plan dialog carries.
+  const [cutOffStartDraft, setCutOffStartDraft] = useState('');
   const [cutOffDraft, setCutOffDraft] = useState('');
   const [cutOffDropOpen, setCutOffDropOpen] = useState(false);
   const [refreshOpen, setRefreshOpen] = useState(false);
@@ -332,6 +336,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     changeCutOff: {
       disabled: readOnly,
       run: () => {
+        setCutOffStartDraft(plan?.plan_horizon_start ?? '');
         setCutOffDraft(plan?.plan_horizon_date ?? '');
         setCutOffOpen(true);
       },
@@ -374,12 +379,15 @@ export function LoadingPlanView({ planId }: { planId: string }) {
       setEdits({});
       await save.mutateAsync({});
     }
-    changeCutOff.mutate(cutOffDraft || null, {
-      onSuccess: () => {
-        setCutOffDropOpen(false);
-        setCutOffOpen(false);
+    changeCutOff.mutate(
+      { plan_horizon_start: cutOffStartDraft || null, plan_horizon_date: cutOffDraft || null },
+      {
+        onSuccess: () => {
+          setCutOffDropOpen(false);
+          setCutOffOpen(false);
+        },
       },
-    });
+    );
   };
 
   /** Send saves first (R6, AC-A15), so the document and the screen can never disagree. */
@@ -436,9 +444,17 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
   const subtitle = [
     `Started ${formatDateTimeInMalaysia(plan.started_at)}`,
-    `SO cut-off ${plan.plan_horizon_date ? fmtDate(plan.plan_horizon_date) : 'none'}`,
+    // AC-N7: the same window wording the reorder run's own header/subtitle/list use
+    // (`describeWindow`), so a plan with a start never states the end alone.
+    describeWindow(plan.plan_horizon_start, plan.plan_horizon_date),
     plan.document_label,
   ].join(' · ');
+
+  // Review round, 12 Sep: same guard as reorder planning's own Start Plan dialog
+  // (RunPlanningModal.tsx:142-147) - a backwards window nets nothing either.
+  const cutOffWindowInvalid = Boolean(
+    cutOffStartDraft && cutOffDraft && cutOffDraft < cutOffStartDraft,
+  );
 
   // R11: the SAME merge backs the plan table's Remarks column and the preview's own qty /
   // remark inputs - a remark typed on one shows on the other before either is saved (AC-E4).
@@ -472,7 +488,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
             }
           >
             <p className="w-full text-xs text-muted-foreground">
-              {plan.plan_horizon_date ? `Until ${fmtDate(plan.plan_horizon_date)}` : 'No cut-off'}
+              {describeWindow(plan.plan_horizon_start, plan.plan_horizon_date)}
               {' · '}
               {fmtInt(lines.length)} products · {fmtInt(totalQty)} units
             </p>
@@ -688,35 +704,48 @@ export function LoadingPlanView({ planId }: { planId: string }) {
           <DialogHeader>
             <DialogTitle>Change the sales order cut-off</DialogTitle>
             <DialogDescription>
-              The suggestion is worked out again against the new date.
+              The suggestion is worked out again against the new window.
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-2">
-            <Label htmlFor="plan-cutoff" className="text-xs">
-              Sales order cut-off
-            </Label>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                id="plan-cutoff"
-                type="date"
-                className="w-44"
-                value={cutOffDraft}
-                onChange={(e) => setCutOffDraft(e.target.value)}
-              />
-              {cutOffDraft ? (
-                <Button variant="ghost" size="sm" onClick={() => setCutOffDraft('')}>
-                  Clear
-                </Button>
-              ) : null}
+            <Label className="text-xs">Sales orders needed</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="plan-cutoff-start" className="mb-1 block text-2xs text-muted-foreground">
+                  From
+                </Label>
+                <Input
+                  id="plan-cutoff-start"
+                  type="date"
+                  value={cutOffStartDraft}
+                  onChange={(e) => setCutOffStartDraft(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label htmlFor="plan-cutoff" className="mb-1 block text-2xs text-muted-foreground">
+                  To
+                </Label>
+                <Input
+                  id="plan-cutoff"
+                  type="date"
+                  value={cutOffDraft}
+                  onChange={(e) => setCutOffDraft(e.target.value)}
+                />
+              </div>
             </div>
             <p className="text-2xs text-muted-foreground">Empty = every open order counts.</p>
+            {cutOffWindowInvalid ? (
+              <p className="text-2xs text-destructive">
+                The To date cannot be before the From date.
+              </p>
+            ) : null}
           </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCutOffOpen(false)}>
               Cancel
             </Button>
             <Button
-              disabled={changeCutOff.isPending || save.isPending}
+              disabled={changeCutOff.isPending || save.isPending || cutOffWindowInvalid}
               onClick={() => (editedCount > 0 ? setCutOffDropOpen(true) : void applyCutOff())}
             >
               {changeCutOff.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
