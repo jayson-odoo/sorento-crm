@@ -773,7 +773,7 @@ class TestAcX11XlsxThenGrnThenPushMatchesPushThenGrn:
         db.flush()
         return str(other.id)
 
-    def _seed_product_and_warehouse(self, db):
+    def _seed_product_and_warehouse(self, db, company_id=None):
         from app.models.product import Product, ProductCategory, UnitOfMeasure
 
         category = ProductCategory(category_code=unique_code(MARKER), category_name="Cat")
@@ -790,11 +790,16 @@ class TestAcX11XlsxThenGrnThenPushMatchesPushThenGrn:
         db.add(product)
         db.flush()
         ref = f"{MARKER}:ITEM:{uuid.uuid4().hex[:8]}"
+        from app.services.company_scope import DEFAULT_COMPANY_ID
         from app.services.integration_reference_service import IntegrationReferenceService
 
-        IntegrationReferenceService(db).link(
-            entity_type="products", entity_id=product.id, source_ref=ref
-        )
+        # Anchored to the company this call is seeding into (defaults to the
+        # incumbent): plan D14 is strict, an unanchored link on a scoped type
+        # raises ValueError, and this helper is called for BOTH company A and
+        # company B in the cross-company test below.
+        IntegrationReferenceService(
+            db, company_id=company_id or DEFAULT_COMPANY_ID
+        ).link(entity_type="products", entity_id=product.id, source_ref=ref)
         warehouse = Warehouse(
             warehouse_code=f"{MARKER}WH{uuid.uuid4().hex[:6]}", warehouse_name="Main"
         )
@@ -872,7 +877,7 @@ class TestAcX11XlsxThenGrnThenPushMatchesPushThenGrn:
             # ---- company B: first push -> GRN ----
             company_b = self._seed_company(db)
             set_company_scope(db, frozenset({company_b}))
-            product_b, ref_b, wh_b = self._seed_product_and_warehouse(db)
+            product_b, ref_b, wh_b = self._seed_product_and_warehouse(db, company_id=company_b)
 
             svc_b = ShippingOrderIngestService(db, integration_id=None, company_id=company_b)
             result_b = svc_b.ingest(

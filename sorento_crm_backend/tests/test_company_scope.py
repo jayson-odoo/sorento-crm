@@ -323,6 +323,13 @@ _COMPANY_ID_ALLOWLIST = {
     # a narrowed run - the whole point of the row is to say "notify me about
     # company X" from a session that is scoped to company Y.
     "user_product_discontinued_scopes",
+    # A scoped reference's company_id is per-company; a SHARED master's
+    # (sales_agents) is deliberately NULL - the mixin's auto-filter would hide
+    # every shared-type row from any scoped session, and its auto-stamp would
+    # reject the NULL-company insert `link()` writes for one on purpose
+    # (BL-056, autocount-brands-ingest). `IntegrationReferenceService` scopes
+    # both reads and writes explicitly instead.
+    "integration_references",
 }
 
 

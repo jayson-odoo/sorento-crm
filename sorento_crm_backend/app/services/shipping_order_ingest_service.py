@@ -1338,7 +1338,7 @@ class ShippingOrderReadService:
     def __init__(self, db: Session, *, company_id: str):
         self.db = db
         self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        self.refs = IntegrationReferenceService(db, company_id=self.company_id)
 
     def current_state(self, entity_type: str, source_refs: list[str]) -> dict[str, Any]:
         found: list[dict[str, Any]] = []
