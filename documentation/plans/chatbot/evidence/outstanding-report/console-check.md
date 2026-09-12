@@ -380,3 +380,125 @@ narrow, precisely-diagnosed gap distinct from the six fixes the coder made.
 `git status` on `sorento_crm_backend/.env` shows nothing. Backend (:8085) and MCP (:8766)
 processes killed by pid; `lsof -i :8085 -i :8766 -sTCP:LISTEN` empty afterwards. Ports
 :8000/:8765/:3000/:8080 untouched throughout.
+
+## Run 4 - 13 Sep 2026, lane tip `d709bbd78`
+
+Same recipe: backend :8085 + MCP :8766, `PYTHONPATH` pinned to the lane's own `sorento_crm_mcp`,
+`.env` flipped to `sorento_ai_automation_0907` (+ `AI_ASSISTANT_MCP_URL` override, restored
+after), `ENABLE_SCHEDULER` already `false`. Contact `437264483` still holds
+`sales_orders.outstanding` (re-confirmed via `granted_keys` before this run).
+
+**Migration body changed, so `alembic upgrade` alone would not re-run it** (this DB's
+`alembic_version` was already `514_chatbot_outstanding_vocab`). Called `514`'s own
+`publish(session)` directly against the flipped DB:
+
+    from app.database import SessionLocal
+    import importlib.util; from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "_mig_514", Path("alembic/versions/514_chatbot_outstanding_vocab.py"))
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    mod.publish(SessionLocal())
+    # -> {'full': 15, 'slim': 16}
+
+Published **FULL v15** (`8615d49a-42be-4090-95ea-aa8a6ea0ac81`, the id pinned below) and
+**SLIM v16**; both carry `do_outstanding` / `outstanding_both`. `production` label
+unchanged (still v1).
+
+### Case file fixes (data, not code)
+
+Turn 5's customer word changed from the bare "FULLSHUN" (which matched four customers and
+answered a disambiguation picker, per run 3) to the FULL exact name
+`FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)` -
+`select customer_name from customers where customer_name ilike 'FULLSHUN SANITARYWARE SDN
+BHD (CERAMIC & ELLECI)%'` returns exactly one row, so it resolves uniquely. Per-turn `cold`
+removed from turns 5 and 6 - all six now run as ONE continuous conversation, since "a new ask
+never inherits the previous question's filters" is one of the fixes this run grades. Added a
+header comment: AC-1140/AC-1141's no-key case is not run by this script at all (every
+non-granted contact's stored envelope lacks `contact.custom_fields` - see run 3's own
+finding) and is covered by the pytest suite instead.
+
+### Per-turn result, pinned to v15 (full log `console-run4-pinned-v15.log`, raw replies
+`turn-replies-run4.txt`)
+
+- **Turn 1 - PASS.** `Product: SRTWT7443` (no sibling suffix), clean single header,
+  `Location: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)`, `1. Sales order list` offered.
+- **Turn 2 - PASS on the stale-pending fix, FAIL on a narrower sibling-code gap.** Trace:
+  received `pending = {"kind": "outstanding_detail"}` from turn 1's own hit, yet
+  `outstanding_scope_ask_candidate = True` this time (run 3 showed `None`/absent under the
+  identical carried state) - **the stale-pending finding from run 3 is fixed**, confirmed a
+  second way in an isolated two-turn `--say` replay from a freshly reset contact
+  (`run4-isolated-stale-pending.log`: same hit, same bare ask, same result). But the reply's
+  own header still reads `Product: SRTWT7445-LV-GM`, not the typed `SRTWT7445` - **new finding
+  5**: the "typed code wins over its sibling" fix appears to live on the DIRECT-report code
+  path (explicit scope word, confirmed by turns 1/5/6 all showing the exact typed code) but
+  not on the scope-question-arm / filters-carry path (`_outstanding_filters_from` in
+  `lanes/business/__init__.py`, read during run 3's own investigation), which still resolves
+  the sibling representative code.
+- **Turn 3 - mixed.** Trace: received `pending = {"kind": "outstanding_scope"}` (correctly set
+  by turn 2), "3" resolves `reference_positions=[3]` to `order_status=outstanding_both`; both
+  blocks print with `*_By location_*`/`*_By customer_*` sub-headings and the offer correctly
+  lists only "1. Delivery order list" (SO empty for the substituted code). Still shows finding
+  5's sibling code. **New finding 6**: the reply carries a trailing, unexplained fragment after
+  the detail offer -
+
+      Reply with a number for detail:
+      1. Delivery order list
+
+      Couldn't find these:
+      "Both" (order): not found.
+
+      Ask again with the correct code.
+
+  - looks like a second, unrelated code path also tries to resolve "3" as an order-entity
+    reference and appends its own "not found" sentence once the outstanding-report reply is
+    already composed.
+- **Turn 4 - FAIL, new finding 7.** Trace: received `pending = {"kind": "outstanding_detail"}`
+  (correctly set by turn 3 this time - contrast run 3, where this never even got there), "1"
+  resolves `reference_positions=[1]`. Despite both being correct, the actual reply is the
+  PLAIN `crm_order_management_orders_list` answer again ("Here are the orders I found", 4
+  unrelated M26xx orders, no product filter at all) - `crm_outstanding_report` is not
+  re-called with `detail=do`. The session-state half of AC-1138 is now right; the fetch/tool
+  re-run half still is not.
+- **Turn 5 - PASS.** `Product: SRTWT7445` (no `SRTWT7443` from turns 1-4, no sibling suffix),
+  `Customer: FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)`, one SO line, qty 3 - the fresh
+  ask correctly stands on its own filters rather than inheriting turns 1-4's.
+- **Turn 6 - PASS.** `Product: SRTWT02` (no `-A` suffix, no carried `SRTWT7445`), both
+  `No open sales order.` / `No pending delivery order.` lines, then the escalate offer and
+  team picker.
+
+### A script-level caveat, not a code finding
+
+Every `pending_kind` assertion in every run (1 through 4) has graded `None`, including on
+turns this run's own trace proves were correctly armed (turn 2's `outstanding_scope`, turn 3's
+and turn 4's `outstanding_detail`). `scripts/chatbot_console_check.py::_pending_kind` reads
+`response.pending` off the top-level `chatbot.turns.response` column; queried directly, that
+key is `None` on EVERY turn in this run's `test_run_id`, including turns 1, 5 and 6 which carry
+no pending at all by design. The marker lives under `response.reply` (session_patch/variables),
+not at the top level the script reads - `pending_kind` is unusable as written, for any lane, not
+specific to this one. Verified pending directly from `chatbot.turns.trace`'s own `received`
+stage instead (shown per turn above).
+
+### Run 4 summary
+
+| turn | six-turn journey, pinned v15 |
+|---|---|
+| 1 SO + location token | **PASS** |
+| 2 bare outstanding (right after turn 1's hit) | stale-pending fix confirmed (question arms); FAIL on finding 5 (sibling code) |
+| 3 "3" (both) | scope-answer carry confirmed (blocks, sub-headings, offer correct); FAIL on finding 5 + new finding 6 (stray "not found" fragment) |
+| 4 "1" (detail) | FAIL - new finding 7 (state correct, wrong tool re-run) |
+| 5 customer filter, different product | **PASS** (case-authoring gap from runs 1-3 resolved with the exact customer name) |
+| 6 miss | **PASS** |
+| isolated stale-pending replay | **PASS** (confirms turn 2 independently of the full journey) |
+
+3 of 6 journey turns pass outright (1, 5, 6); the stale-pending fix and the filters-carry
+mechanism (turns 2-3) are confirmed working at the session-state level via the trace, with two
+narrower, newly-isolated findings (5: sibling code on the scope-question path only; 7: the
+detail-pick tool re-run) remaining, plus one new cosmetic artifact (6).
+
+## Restoration confirmed (run 4)
+
+`sorento_crm_backend/.env` MD5 back to `3230cafdad30a5a064f1a76e838dcfac`, `DATABASE_URL`/
+`DIRECT_URL` back to `sorento_osr_ci`, `AI_ASSISTANT_MCP_URL` override removed; `git status` on
+`sorento_crm_backend/.env` shows nothing. Backend (:8085) and MCP (:8766) processes killed by
+pid; `lsof -i :8085 -i :8766 -sTCP:LISTEN` empty afterwards. Ports :8000/:8765/:3000/:8080
+confirmed untouched (other lanes' own pre-existing listeners only).

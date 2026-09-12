@@ -14,8 +14,13 @@
 # probes below each case. `SRTWT7443` (25 open SO lines at BRW-IB, 3,530 outstanding) and
 # `SRTWT7445` (4 open SO lines including 3 in 2026, plus DO rows spanning 2026) both carry
 # real data; `SRTWT02` carries neither an open SO line nor a DO line, a genuine miss.
-# `IDEAL BATH SDN BHD` and `FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)` both hold open
-# SO lines on SRTWT7443/SRTWT7445 respectively.
+# `FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)` holds an open SO line on SRTWT7445 and
+# is the FULL, exact customer name - `select customer_name from customers where
+# customer_name ilike 'FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)%'` returns exactly
+# one row, so it resolves uniquely (the bare word "FULLSHUN" alone does not: four other
+# customers share that prefix, e.g. "FULLSHUN SANITARYWARE SDN BHD (SRT)" and "FULLSHUN
+# BATH CONCEPT SDN BHD (PROJECT) (SRT)", and answered a customer-disambiguation picker
+# instead of the report in an earlier run - a case-authoring gap, not a code finding).
 #
 # TWO CASES CARRY AN EXPLICIT SCOPE WORD where the plan's own Journey narrative used a bare
 # "outstanding" a second time (steps 5 and 6): measured against the real S4 wiring, AC-1130
@@ -25,11 +30,23 @@
 # explicitly so they grade the customer filter and the miss instead of re-asking the same
 # question. Not a code finding - the Journey prose predates the mechanism S4 shipped.
 #
+# ALL SIX TURNS RUN AS ONE CONTINUOUS CONVERSATION (no per-turn `cold`, only the case's own
+# top-level one) - a new ask (steps 5, 6) must stand on its own filters rather than inherit
+# the previous question's, which is one of the fixes this run grades.
+#
 # The contact must hold `sales_orders.outstanding` (Contacts > Access > Field reveals) for
 # turns 1-6 (granted here, 13 Sep 2026, via `contact_field_reveal_service.set_granted_keys`
-# on the prod copy - left in place); AC-1140/AC-1141's "no key" cases are graded separately,
-# by the pytest suite (`tests/chatbot/test_outstanding_lane.py`), not here - a console
-# contact's grants are the owner's own and this file does not flip them mid-run.
+# on the prod copy - left in place).
+#
+# AC-1140/AC-1141'S "NO KEY" CASE IS NOT RUN HERE. Every candidate non-granted contact
+# checked (438930735, 445239409, 445239415, 477071889, 477071892, 477071888, 423755030,
+# 423882401) has a stored `chatbot.turns` envelope missing `contact.custom_fields`, which
+# the engine's `is_human_intervened` read needs - the console script's envelope-borrowing
+# mechanism cannot exercise this case with the contacts available on this prod copy. AC-1140
+# and AC-1141 are covered by the pytest suite instead
+# (`tests/chatbot/test_outstanding_lane.py::TestFieldRevealGateBeforeFetch`), which builds
+# the `ctx.access.attributes` gate directly rather than depending on a real contact's
+# reveal-grant history.
 contact: "437264483"
 
 cases:
@@ -44,17 +61,19 @@ cases:
         expect:
           branch_kind: business_query
           reply_contains:
-            - "SRTWT7443"
+            - "Product: SRTWT7443"
             - "Location: IB"
             - "BRW-IB"
             - "Order date: all"
             - "Sales order outstanding"
             - "Outstanding:"
             - "1. Sales order list"
-          reply_not_contains: ["Outstanding for which document?"]
+          reply_not_contains: ["Outstanding for which document?", "SRTWT7443-"]
           no_uuid: true
 
-      # 2. Bare "outstanding" with a year - the scope question, nothing else.
+      # 2. Bare "outstanding" with a year - the scope question, nothing else. Right after
+      # turn 1's hit (which leaves pending = outstanding_detail) - the stale-pending finding
+      # from run 3, expected fixed: this must still ask, not silently run with scope=both.
       - text: "SRTWT7445 outstanding in 2026"
         expect:
           branch_kind: business_query
@@ -63,7 +82,7 @@ cases:
             - "1. Sales orders"
             - "2. Delivery orders"
             - "3. Both"
-          reply_not_contains: ["Sales order outstanding", "Delivery order pending"]
+          reply_not_contains: ["Sales order outstanding", "Delivery order pending", "SRTWT7445-"]
           no_uuid: true
           pending_kind: outstanding_scope
 
@@ -74,12 +93,13 @@ cases:
         expect:
           branch_kind: business_query
           reply_contains:
-            - "SRTWT7445"
+            - "Product: SRTWT7445"
             - "01/01/2026 to 31/12/2026"
             - "Sales order outstanding"
             - "Delivery order pending"
             - "1. Sales order list"
             - "2. Delivery order list"
+          reply_not_contains: ["SRTWT7445-"]
           no_uuid: true
           pending_kind: outstanding_detail
 
@@ -91,36 +111,23 @@ cases:
           reply_not_contains: ["+", "more"]
           no_uuid: true
 
-      # 5. A fresh ask, customer filter by name. Explicit scope word (see header note).
-      # SQL: FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI) carries 1 open SO line,
-      # 3 outstanding, on SRTWT7445.
-      - text: "FULLSHUN sales order outstanding SRTWT7445"
-        cold: true
+      # 5. A fresh ask, customer filter by name, on a DIFFERENT product - must NOT inherit
+      # turns 1-4's carried product/filters (a fix graded here). Explicit scope word (see
+      # header note). SQL: the exact customer name below carries 1 open SO line, 3
+      # outstanding, on SRTWT7445, and resolves uniquely (see header note).
+      - text: "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI) sales order outstanding SRTWT7445"
         expect:
           branch_kind: business_query
-          reply_contains: ["SRTWT7445", "FULLSHUN"]
+          reply_contains: ["Product: SRTWT7445", "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)"]
+          reply_not_contains: ["SRTWT7443", "SRTWT7445-"]
           no_uuid: true
 
       # 6. A miss - same header shape, one line per empty scope, then the existing
       # escalate offer (AC-1107). Explicit scope word (see header note); SRTWT02 carries
       # no open SO line and no DO line at all.
       - text: "SRTWT02 outstanding both"
-        cold: true
         expect:
           branch_kind: business_query
-          reply_contains: ["SRTWT02", "No open sales order", "No pending delivery order"]
+          reply_contains: ["Product: SRTWT02", "No open sales order", "No pending delivery order"]
+          reply_not_contains: ["SRTWT02-", "SRTWT7445"]
           no_uuid: true
-
-  # AC-1140: a contact with NO `sales_orders.outstanding` grant asks a bare "outstanding" -
-  # no scope question, the report runs directly with scope=do (DO only). Contact 438930735
-  # (12 prior chatbot.turns rows so the script can borrow an envelope; confirmed via
-  # `contact_field_reveal_service.granted_keys` to hold no reveal keys at all).
-  - name: AC-1140 - no sales_orders.outstanding grant runs DO-only, never asks
-    contact: "438930735"
-    cold: true
-    text: "SRTWT7445 outstanding"
-    expect:
-      branch_kind: business_query
-      reply_contains: ["Delivery order pending"]
-      reply_not_contains: ["Outstanding for which document?", "Sales order outstanding"]
-      no_uuid: true
