@@ -123,6 +123,82 @@ def sanitize_em_dash(value: Any) -> Any:
     return value
 
 
+def _ask_for_turn(
+    *,
+    qf: Mapping[str, Any],
+    gate: Any,
+    offer_open: bool,
+    selection_context: Any,
+    options: Any,
+    team_clarify_options: Any,
+    turn_no: int,
+) -> dict[str, Any] | None:
+    """The question THIS turn left open, composed by `open_question.ask` (AC-1013).
+
+    The same four decisions `tail/pending.derive` made, in the same order and for the same
+    reasons, said once in the vocabulary that survives: a team clarify outranks an offer
+    because the next turn has to resolve an answer against a NARROWED list and "an offer is
+    open" does not say which; a member roster outranks it for the same reason; a tier menu
+    is a question too; and a plain escalate offer is the yes/no it always was - one team,
+    one option, `expects: yes_no` (D5).
+
+    `options` are frozen HERE, as the customer saw them, and `ask` numbers them from 1.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+    from app.services.chatbot.tail.pending import escalation_team
+
+    context = jsc.nullish_str(selection_context or "")
+    team = escalation_team(qf, gate)
+    domain = jsc.get(qf, "domain_hint")
+    payload = {"team": team, "domain": domain}
+
+    if context == "team_clarify":
+        return oq.ask(
+            "team_pick",
+            options=list(jsc.array(team_clarify_options)),
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload,
+        )
+    if context == "company_clarify":
+        return oq.ask(
+            "company_pick",
+            options=list(jsc.array(options)),
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload,
+        )
+    if context == "member_offer":
+        return oq.ask(
+            "member_offer",
+            options=list(jsc.array(options)),
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload,
+        )
+    if context == "tier_offer":
+        return oq.ask(
+            "tier_pick",
+            options=list(jsc.array(options)),
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload,
+        )
+    if offer_open:
+        # ONE team, ONE option, answered yes or no - the escalate offer exactly as the
+        # customer sees it. Two or more teams is the same kind with `expects: pick` (D5),
+        # which is lane 2's fan-out and has no caller yet.
+        return oq.ask(
+            "team_pick",
+            options=[{"idx": 1, "team": team, "label": team}] if jsc.truthy(team) else [],
+            turn_no=turn_no,
+            expects="yes_no",
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload,
+        )
+    return None
+
+
 def seal(patch: Mapping[str, Any]) -> dict[str, Any]:
     """RS-3 half H2: the `reply` contract, derived from ONE object.
 
@@ -979,12 +1055,25 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # `previous` is what stops the clock restarting: the legacy lifecycle carries a roster
     # across turns that build no offer of their own, so a question re-derived from it every
     # turn would be permanently one turn old and its TTL would never be reached.
+    # ---- the question THIS turn asked, built where it was asked (L1-S3d) -- #
+    asked_here = _ask_for_turn(
+        qf=qf,
+        gate=gate,
+        offer_open=offer_open,
+        selection_context=variables.get("selection_context"),
+        options=last_result_set,
+        team_clarify_options=turn_state.get("team_clarify_options"),
+        turn_no=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
+    )
+
     # THE LANE'S OWN QUESTION WINS (L1-S3d). A lane that asked something froze the rows it
     # showed at the moment it showed them and handed the question back on its fragment; the
     # tail persists that, unchanged. The derivation below is the fallback for the lanes that
     # have not been converted yet and for a replay fixture that feeds this function a node
     # output composed before the conversion - it goes with the last of them (step 4).
     asked = jsc.get(sug, "open_question") if jsc.truthy(sug) else None
+    if not (isinstance(asked, dict) and asked.get("kind")):
+        asked = asked_here
     if isinstance(asked, dict) and asked.get("kind"):
         variables["open_question"] = {
             **asked,
