@@ -82,6 +82,11 @@ class ShadowTurnSummary(BaseModel):
     count: int = 0
     branch_parity: float | None = None
     asks_parity: float | None = None
+    # Whether `count` is the whole range or the cap. The scan is bounded
+    # (`shadow_list.SUMMARY_SCAN_LIMIT`), and a capped number read as a complete one is the
+    # difference between "the new parser agreed on 96% of the window" and "of the newest
+    # 5,000 turns in it". The screen says which.
+    truncated: bool = False
 
 
 class ChatbotTurnDetailResponse(ChatbotTurnResponse):

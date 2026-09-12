@@ -95,7 +95,13 @@ export function shadowSummaryLine(summary: ShadowTurnSummary | null | undefined)
   if (!summary || summary.count === 0) return null;
   const branch = percent(summary.branch_parity);
   const asks = percent(summary.asks_parity);
-  const parts = [`${summary.count} shadow ${summary.count === 1 ? 'turn' : 'turns'}`];
+  // "the first 5,000" rather than "5,000": the parities below are computed over exactly
+  // the rows this counts, and a reader who takes a capped window for the whole one draws
+  // the opposite conclusion from the same number.
+  const counted = summary.truncated
+    ? `the first ${summary.count.toLocaleString('en-US')} shadow turns`
+    : `${summary.count} shadow ${summary.count === 1 ? 'turn' : 'turns'}`;
+  const parts = [counted];
   // "not measured" rather than 0%: a range where no pair could be compared and a range
   // where none of them matched are opposite findings.
   parts.push(`branch parity ${branch ?? 'not measured'}`);

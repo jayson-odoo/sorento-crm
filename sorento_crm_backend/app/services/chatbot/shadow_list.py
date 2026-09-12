@@ -225,7 +225,9 @@ def summarise(db: Session, query: Query) -> Any:
     NEWEST FIRST and capped at `SUMMARY_SCAN_LIMIT`, both explicit. Without the order the
     cap takes whatever rows the plan happened to reach, so a truncated window would answer
     with an arbitrary sample rather than the most recent one; `count` is what the cap
-    reached, which is what the screen reports.
+    reached, and `truncated` says whether that IS the range or only the newest slice of it.
+    A capped number read as a complete one is the difference between "the new parser agreed
+    on 96% of the window" and "of the newest 5,000 turns in it".
     """
     from app.schemas.chatbot_turn import ShadowTurnSummary
 
@@ -237,11 +239,12 @@ def summarise(db: Session, query: Query) -> Any:
     )
     if not rows:
         return ShadowTurnSummary(count=0)
+    truncated = len(rows) >= SUMMARY_SCAN_LIMIT
     try:
         live_by_message = _live_rows(db, rows)
     except Exception:  # noqa: BLE001 - same rule as `decorate`
         logger.warning("shadow summary join failed; reporting the count only", exc_info=True)
-        return ShadowTurnSummary(count=len(rows))
+        return ShadowTurnSummary(count=len(rows), truncated=truncated)
 
     paired = branch_same = asks_same = 0
     for row in rows:
@@ -265,4 +268,5 @@ def summarise(db: Session, query: Query) -> Any:
         count=len(rows),
         branch_parity=(branch_same / paired) if paired else None,
         asks_parity=(asks_same / paired) if paired else None,
+        truncated=truncated,
     )

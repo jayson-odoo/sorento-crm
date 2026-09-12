@@ -1108,12 +1108,14 @@ DIVERGENCES: list[Divergence] = [
 # whole corpus.
 #
 # FIELD-SCOPED to what a carry decides: the turn's SCOPE (`entities` and the flags the
-# executor stamps beside it), the domain and date window it inherits, and the routing team
-# that follows from the domain. Everything else in the emission is still compared byte for
-# byte - `access_levels`, `query_brands`, `match_mode`, `reference_positions`,
-# `escalation`, `is_affirmative`, `order_status`, `user_goal` and the rest - so what the
-# parse UNDERSTOOD about the customer's own words is graded on these fixtures exactly as
-# before. The carries themselves are graded by `tests/chatbot/test_focus_rules.py`,
+# executor stamps beside it) and the domain and date window it inherits. FOUR more fields
+# move on a handful of fixtures each rather than on all 44 - `message_type`, `routing`,
+# `requested_attributes`, `date_filter_gated` - and are stripped only there
+# (`_FIXROUND_FIELD_MOVES`), so the other forty keep them graded. Everything else in the
+# emission is still compared byte for byte - `access_levels`, `query_brands`, `match_mode`,
+# `reference_positions`, `escalation`, `is_affirmative`, `order_status`, `user_goal` and
+# the rest - so what the parse UNDERSTOOD about the customer's own words is graded on these
+# fixtures exactly as before. The carries themselves are graded by `tests/chatbot/test_focus_rules.py`,
 # `test_focus_worlds.py` and the world corpus, which speak the five-key shape.
 _FIXROUND_CARRY_PATHS: tuple[tuple[str, ...], ...] = (
     ("output", "entities"),
@@ -1124,27 +1126,42 @@ _FIXROUND_CARRY_PATHS: tuple[tuple[str, ...], ...] = (
     ("output", "entities_emptied_by_filter"),
     ("output", "broaden_dropped"),
     ("output", "scope_exclusive_applied"),
-    ("output", "message_type"),
     ("output", "domain_hint"),
     ("output", "intent_hint"),
     ("output", "domain_inherited_for_position"),
     ("output", "date_filter_start"),
     ("output", "date_filter_end"),
     ("output", "date_mode"),
-    ("output", "date_filter_gated"),
-    ("output", "requested_attributes"),
-    ("output", "routing"),
     ("output", "_query_brands_carried"),
 )
+
+# FOUR FIELDS THAT MOVE ON A HANDFUL OF FIXTURES, not on all 44, so the other forty keep
+# them graded. Measured one field at a time against the corpus; same shape as
+# `_SUBJECT_CARRY_MOVES` above, and the same reason - a blanket strip for a field three
+# captures disagree on would blind forty that agree.
+_FIXROUND_FIELD_MOVES: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
+    (("output", "message_type"), frozenset({"b56-t4-parser", "parser-15123878", "parser-15129616"})),
+    (("output", "routing"), frozenset({"parser-15157165"})),
+    (("output", "requested_attributes"), frozenset({"parser-15143883"})),
+    (("output", "date_filter_gated"), frozenset({"b56-t4-parser"})),
+)
+
+
+def _fixround_paths(name: str) -> tuple[tuple[str, ...], ...]:
+    """`_FIXROUND_CARRY_PATHS` plus whichever of the four narrow fields this fixture moves."""
+    return _FIXROUND_CARRY_PATHS + tuple(
+        path for path, names in _FIXROUND_FIELD_MOVES if name in names
+    )
 
 _FIXROUND_HAZARD = "L1-S3 fix round (D8, AC-1032)"
 _FIXROUND_REASON = (
     "the engine hands the node five keys, so the captured previous state carries values "
     "the node can no longer read - `entities`, `domain_hint`, `intent_hint` and the date "
     "window. The carries read `focus` now, which no capture can have. Field-scoped to what "
-    "a carry decides: the turn's scope, the domain and window it inherits, and the routing "
-    "that follows; every other byte of the emission, and everything the parse understood "
-    "about the customer's own words, stays graded."
+    "a carry decides: the turn's scope, and the domain and window it inherits. Four further "
+    "fields are stripped ONLY on the handful of fixtures measured to move on them "
+    "(`_FIXROUND_FIELD_MOVES`); every other byte of the emission, and everything the parse "
+    "understood about the customer's own words, stays graded."
 )
 
 _FIXROUND_OUTPUT_EXCHANGE: tuple[str, ...] = (
@@ -1209,7 +1226,7 @@ _FIXROUND_OUTPUT_EXCHANGE: tuple[str, ...] = (
 # else gets one of its own, spliced in AHEAD of the blanket `fixture=None` entry for the
 # same reason.
 DIVERGENCES = [
-    replace(entry, strip_paths=entry.strip_paths + _FIXROUND_CARRY_PATHS)
+    replace(entry, strip_paths=entry.strip_paths + _fixround_paths(entry.fixture))
     if entry.node == "output_exchange"
     and entry.fixture is not None
     and entry.fixture in _FIXROUND_OUTPUT_EXCHANGE
@@ -1223,7 +1240,7 @@ _FIXROUND_NEW = [
         fixture=name,
         hazard=_FIXROUND_HAZARD,
         reason=_FIXROUND_REASON,
-        strip_paths=_FIXROUND_CARRY_PATHS + _ADDED_DIAGNOSTIC_KEYS,
+        strip_paths=_fixround_paths(name) + _ADDED_DIAGNOSTIC_KEYS,
     )
     for name in _FIXROUND_OUTPUT_EXCHANGE
     if not any(

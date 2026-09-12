@@ -210,6 +210,12 @@ export interface ShadowTurnSummary {
   count: number;
   branch_parity: number | null;
   asks_parity: number | null;
+  /**
+   * Whether `count` is the whole range or the endpoint's scan cap. A capped number read as
+   * a complete one is the difference between "the new parser agreed on 96% of the window"
+   * and "of the newest 5,000 turns in it".
+   */
+  truncated?: boolean;
 }
 
 export interface ChatbotTurnListResponse {
