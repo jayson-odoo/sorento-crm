@@ -133,14 +133,13 @@ class TestIntentHintIsGone:
         )
         assert "intent_hint" not in Focus.model_fields
 
-        detail = trace_detail.compose_trace_detail(
-            {
-                "trace": [],
-                "envelope": {},
-                "response": {},
-                "status": "done",
-            }
-        )
+        from types import SimpleNamespace
+
+        # `compose_trace_detail(row)` reads `row.trace` (an ORM attribute, `ChatbotTurn`
+        # in production) - a plain dict has no such attribute and raises AttributeError,
+        # which is not this test's subject. `SimpleNamespace` is the lightest stand-in
+        # that satisfies the same access.
+        detail = trace_detail.compose_trace_detail(SimpleNamespace(trace=[]))
         assert "intent_hint" not in str(detail), (
             "no compose_trace_detail output may mention intent_hint"
         )
