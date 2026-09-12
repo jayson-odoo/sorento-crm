@@ -697,9 +697,6 @@ class OwnerWorld:
     acs: tuple[str, ...]
     why: str
     turns: tuple[OwnerTurn, ...]
-    # The focus TTL this world runs under. Named per world because the TTL is what two of
-    # them are about.
-    ttl_turns: int = 3
     # Which LANE this world lets run for real, through the seam fakes the s6a and s5 tests
     # already use. `None` composes with the `not_supported` fragments, which is right for a
     # world about memory and scope; `"business"` runs the real resolve+gate and the exit

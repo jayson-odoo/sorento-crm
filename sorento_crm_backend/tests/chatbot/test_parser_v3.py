@@ -121,7 +121,7 @@ class TestTheWireCarriesTheThreeKeysUNDERV3ONLY:
         for key in parser_mod.V3_EMISSION_KEYS:
             assert key not in schema["properties"]
             assert key not in schema["required"]
-        assert len(schema["required"]) == 26
+        assert len(schema["required"]) == 28
 
     def test_the_two_schemas_differ_by_exactly_those_three(self) -> None:
         assert parser_mod.DECLARED_KEYS_V3 - parser_mod.DECLARED_KEYS == set(
@@ -153,7 +153,11 @@ class TestTheWireCarriesTheThreeKeysUNDERV3ONLY:
     def test_a_v1_emission_needs_no_exemption_to_post_process(self) -> None:
         """The 1,875 captured emissions predate v3 and always will. They are COMPLETE
         under the v1 contract now, rather than complete-with-three-exemptions."""
-        assert ox._required_emission_keys() == parser_mod.DECLARED_KEYS - {"broaden_axis"}
+        assert ox._required_emission_keys() == parser_mod.DECLARED_KEYS - {
+            "broaden_axis",
+            "group_by",
+            "top_n",
+        }
         for key in parser_mod.V3_EMISSION_KEYS:
             assert key not in ox._required_emission_keys()
 

@@ -452,7 +452,11 @@ DIVERGENCES: list[Divergence] = [
                 ("output", "entities_dropped_on_topic_change"),
             ),
         )
-        for name in ("parser-15124806", "parser-15151771")
+        # `parser-15124806` moved to the combined PR #735 entry below: after the D10
+        # retype generalisation it ALSO disagrees on `incoming_hint_retyped_to_product`,
+        # and `find()` returns the first (node, fixture) match, so one fixture cannot be
+        # covered by two entries.
+        for name in ("parser-15151771",)
     ),
     # OWNER RULING B, console pass 3 (6 Sep 2026): a did-you-mean pick stamps
     # `entity_op: "replace"` where the JS stamped `"replace_combine"`. The four
@@ -607,23 +611,110 @@ DIVERGENCES: list[Divergence] = [
     # `product` before the resolver has to referee the parser's own guess - n8n's live
     # body has no such arm, so it left the model's `inbound_shipment` hint standing. This
     # capture ("MWC7625-SH") is the one graded corpus member the retype actually fires
-    # on. Field-scoped to the entity list and the retype's own diagnostic; the domain,
-    # the intent and everything else on the capture still grades byte for byte. Pinned by
+    # on, until PR #735 (`9a49921c9`, 8 Sep 2026) moved the retype at
+    # `output_exchange.py:2298-2342` earlier in the pipeline - reachable on every
+    # `sub-semantic-parser` capture whose raw entity is product-shaped under `incoming`,
+    # not only the one turn D10 was written about. Generalised here (rather than a
+    # `fixture=None` blanket, which the module docstring reserves for a hazard that
+    # changes the WHOLE node's contract - most `output_exchange` fixtures never touch
+    # this arm at all) to the 42 `sub-semantic-parser/parser-*` captures the corpus run
+    # after that PR shows diverging on exactly this pair of fields and no other. Field-
+    # scoped to the entity list and the retype's own diagnostic; the domain, the intent
+    # and everything else on each capture still grades byte for byte. Pinned by
     # `tests/chatbot/test_growth_r1_review_fixes.py::TestD10AnIncomingAskTypesTheCodeAsAProduct`.
-    Divergence(
-        node="output_exchange",
-        fixture="exec-13488887",
-        hazard="owner ruling D10 (8 Sep 2026, AC-816-adjacent)",
-        reason=(
-            "the capture records the model's own `inbound_shipment` hint for a "
-            "product-shaped code under `incoming`; the port retypes it to `product` "
-            "before resolution. Field-scoped to the entity list and "
-            "`incoming_hint_retyped_to_product`."
-        ),
-        strip_paths=(
-            ("output", "entities"),
-            ("output", "incoming_hint_retyped_to_product"),
-        ),
+    *(
+        Divergence(
+            node="output_exchange",
+            fixture=fixture,
+            hazard="owner ruling D10 (8 Sep 2026, AC-816-adjacent) / PR #735",
+            reason=(
+                "the capture records the model's own `inbound_shipment` or `order` hint "
+                "for a product-shaped code under `incoming`; the port retypes it to "
+                "`product` before resolution. Field-scoped to the entity list and "
+                "`incoming_hint_retyped_to_product`."
+            ),
+            strip_paths=(
+                ("output", "entities"),
+                ("output", "incoming_hint_retyped_to_product"),
+            ),
+        )
+        for fixture in (
+            "exec-13488887",
+            "parser-15025509",
+            "parser-15025803",
+            "parser-15026111",
+            "parser-15026562",
+            "parser-15028916",
+            "parser-15102530",
+            "parser-15103048",
+            "parser-15111624",
+            "parser-15114041",
+            # parser-15114945, parser-15117784, parser-15124806 and parser-15138882 move
+            # to the combined entry below: each ALSO disagrees on `_pending_pick` and/or
+            # `entities_dropped_on_topic_change`, and one fixture cannot be covered by
+            # two entries (`find()` returns the first match).
+            "parser-15115511",
+            "parser-15116428",
+            "parser-15121307",
+            "parser-15122026",
+            "parser-15123783",
+            "parser-15123848",
+            "parser-15126382",
+            "parser-15126468",
+            "parser-15128367",
+            "parser-15128565",
+            "parser-15130540",
+            "parser-15134735",
+            "parser-15137401",
+            "parser-15137439",
+            "parser-15137729",
+            "parser-15138906",
+            "parser-15140593",
+            "parser-15142899",
+            "parser-15143028",
+            "parser-15143518",
+            "parser-15143756",
+            "parser-15145783",
+            "parser-15149502",
+            "parser-15151011",
+            "parser-15153567",
+            "parser-15155432",
+            "parser-15155494",
+            "parser-15160950",
+            "parser-15161626",
+        )
+    ),
+    # Same PR #735 retype as the block above, on four captures where it lands beside an
+    # ALSO-carried entity from a topic change (K rule 2's `entities_dropped_on_topic_change`
+    # / `_pending_pick`, `output_exchange.py:3308`): `parser-15124806` already carried the
+    # topic-change diagnostic (its own K-rule-2 entry, above) and now also carries the
+    # retype's; `parser-15114945`, `parser-15117784` and `parser-15138882` are new captures
+    # from the same 4-5 Sep run that exhibit both at once. Measured: stripping all four
+    # fields leaves each of the four byte-equal to its capture.
+    *(
+        Divergence(
+            node="output_exchange",
+            fixture=fixture,
+            hazard="owner ruling D10 / K rule 2 (AC-816) / PR #735",
+            reason=(
+                "the capture carries both the pre-existing topic-change diagnostics "
+                "(`entities`, `entities_dropped_on_topic_change`, `_pending_pick`) and "
+                "the PR #735 incoming-to-product retype (`incoming_hint_retyped_to_"
+                "product`) at once."
+            ),
+            strip_paths=(
+                ("output", "entities"),
+                ("output", "incoming_hint_retyped_to_product"),
+                ("output", "entities_dropped_on_topic_change"),
+                ("output", "_pending_pick"),
+            ),
+        )
+        for fixture in (
+            "parser-15114945",
+            "parser-15117784",
+            "parser-15124806",
+            "parser-15138882",
+        )
     ),
     # PLAN-broaden-domain-switch (exec 15121180, 9 Sep 2026): "ANY INCOMING" after a stock
     # turn on SRTWT04A came back domain_hint incoming / intent_hint check_incoming /

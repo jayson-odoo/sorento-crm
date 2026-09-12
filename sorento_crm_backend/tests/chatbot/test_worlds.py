@@ -586,7 +586,6 @@ def test_owner_world(world, owner_stubs, session_factory, monkeypatch) -> None:
     if settings_row is None:
         settings_row = SystemSetting()
         db.add(settings_row)
-    settings_row.chatbot_focus_ttl_turns = world.ttl_turns
     if world.lane == "business":
         # The real resolve+gate, through the SAME seam bundle `test_s6a_gate_dry_run_and_
         # seams.py` uses: the resolver, the entity gate and the exit contract all run, and
