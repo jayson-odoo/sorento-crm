@@ -357,3 +357,45 @@ S3, S4, S9, S10, S12 likewise), `decision` null / confirm / amend only.
    `_dispatch_changed_with_links` already uses beside it.
 6. **The board's own Confirm** (`_confirm_a_planning_change`) dispatched on
    `row.suggested in ("release", "retire")`; it dispatches on `row.kind == "cancelled"` now.
+
+### F. Slice C review round (13 September 2026)
+
+1. **C1, the blocker - rule 7 was not reachable.** A pure delay cuts nothing from the Buy,
+   so the placed-document arm never ran and a purchase order landing in October against a
+   line moved to March composed `Keep`. THE RULE, now in `compose_suggestion`: a held
+   document whose **arrival + `RESERVE_WINDOW_DAYS` falls before the new required date** is
+   reallocated WHOLE (rule 6's target) and the line is bought again for its own date
+   ("Buy 134 for 20 Nov"); the composition is that Buy. Inside the window the document is
+   kept, unchanged. Keeping it beyond the window is an Amend, never the suggestion (the
+   owner's own ruling on the grill page's open 4.2). The constant is IMPORTED from
+   `project_so_delta_service`, the one place it is defined - rule 2 retired this service's
+   own use of it for the size of a move, not the window itself.
+2. **C2 - the notify queue is keyed by the savepoint that earned it.** Each queued
+   "order inquiry raised" payload carries `tx_chain`: the transaction it was written under
+   and every one above it. `after_soft_rollback` (which fires on a NESTED rollback too, and
+   a batch apply gives each order its own savepoint) now discards only the items whose own
+   ancestry contains the transaction that rolled back, instead of popping the queue. Two
+   behaviours measured on the real session: a savepoint COMMIT already drains the queue
+   (SQLAlchemy fires `after_commit` on a nested commit as well), so order 1 is normally
+   notified before order 2 even runs; and an item still queued at an outer scope now
+   survives an inner rollback.
+3. **C3 - `scripts/recompute_planning_change_proposals.py` is a Slice C backfill now.** It
+   filtered `suggested == "replan"` and had become a silent no-op. It recomputes
+   `suggestion_json`, `composition_json` and the re-run for every PENDING row of an
+   unapplied batch that nobody has decided yet (a confirmed or amended row keeps the
+   composition a person chose). Idempotent; both callers of the compose seam go through one
+   function (`compose_row_state`) so the script and `_build_row` cannot drift. Run on the
+   lane database: 2 rows recomposed, second run 0 changed / 2 unchanged. It is the DoD
+   backfill for the new column - a row raised before the deploy otherwise shows a Was / Now
+   table with no suggestion under it and a Confirm with nothing to post.
+4. **C4 / C5 / C6, the wording.** The shortfall is said LAST, after every rung that could
+   cover part of the unit, and names the Buy it came off ("Short 84 by 20 Aug (was Buy
+   134)"). A `product_changed` row carries the item code in every sentence ("Release 134 A,
+   free at BRW-IB", "Buy 134 B for 4 Sep"); every other kind stays code-free. Lateness is
+   said once: `late_days` is the fact the board prints "Late by N days" from, so the
+   sentence stays "Keep 134".
+5. **C7 and the nits.** `_confirm_payload` deleted (no caller since the rule table went),
+   the unreachable `accept` dropped from two decision tuples, `_reallocation_target`'s dead
+   ORDER BACK arm removed, two unused locals dropped, and the prose naming a deleted
+   function corrected. `PLANNING_CHANGE_REACTION_*` stays: `tests/test_project_so_unpublish
+   .py` still writes `suggested=PLANNING_CHANGE_REACTION_KEEP` when it builds a row.
