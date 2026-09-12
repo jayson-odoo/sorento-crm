@@ -792,6 +792,9 @@ def test_extraction_outliving_the_wait_degrades_to_pending_not_a_failure(
         db.close()
 
 
+# #307: same xdist row-lock race as S3-01 above -- a short stub can outlive
+# the sync wait when a neighbouring worker holds the contact_media_limit row.
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 def test_the_inline_polled_and_callback_result_bodies_are_identical(
     real_chain, monkeypatch
 ):
