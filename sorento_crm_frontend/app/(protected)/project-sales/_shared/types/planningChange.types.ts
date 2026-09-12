@@ -2,10 +2,15 @@
  * Planning changes wire shapes, transcribed from
  * `documentation/plans/scm/PLAN-so-book-diff-replanning.md` section 3.
  *
- * A batch is born the moment a re-uploaded AutoCount sales-order book changes a line that is
- * already planned: what changed, what the line's decision holds today, what the ladder
- * suggests, and the one decision the planner takes per row (accept the suggestion, keep the
- * plan as is, or go decide it by hand on the board). Nothing here is written until Apply.
+ * A batch is born the moment a sales order changes after it was planned - a re-uploaded
+ * AutoCount book, an ESB push or a manual edit alike: what changed, what the line's decision
+ * holds today, the re-run at the new state diffed against that hold (`suggestion`), and the
+ * one decision CS takes per row - Confirm the composition or Amend it. Nothing here is
+ * written until Apply.
+ *
+ * Slice C of `documentation/plans/scm/PLAN-scm-change-management-one-engine.md` replaced the
+ * rule table's reaction verbs (`suggested` / `why`) with that diff: see the Slice C contract
+ * section there for the wire shape this file mirrors.
  *
  * Quantities are decimal STRINGS for the same reason every other supply-composition figure in
  * this module is (see `fulfilmentPlanning.types.ts`): a float round trip loses the tail of a
@@ -30,21 +35,85 @@ export type PlanningChangeKind =
   | 'added'
   | 'product_changed';
 
-/** The verb the planner already knows from the board (section 0's rule table). */
-export type PlanningChangeReaction = 'keep' | 'release' | 'replan' | 'reduce' | 'retire';
+/**
+ * What the diff did to ONE component of the plan (Slice C, rule 3).
+ *
+ * The first four are what the re-run did to something the line already HELD; the last four
+ * are how quantity the re-run left uncovered is sourced. There is no `replan` and no
+ * `retire`: a change is a re-run at the new state diffed against the hold, so every line of
+ * the suggestion is one of these eight and nothing else.
+ */
+export type PlanningChangeSuggestionAction =
+  | 'keep'
+  | 'reduce'
+  | 'release'
+  | 'reallocate'
+  | 'use_own'
+  | 'borrow'
+  | 'spo'
+  | 'buy';
+
+/** Where the quantity in a component comes from, or went to. `null` when it has no source. */
+export type PlanningChangeSuggestionSource =
+  | 'reserve'
+  | 'borrow'
+  | 'spo'
+  | 'buy'
+  | 'po'
+  | 'pool_share'
+  | null;
 
 /**
- * The one decision per row (AC-R04). `null` on a row with no active decision (AC-R03), or on
- * a `replan`/`qty_up` row nobody has composed yet (it defaults to `null` too - "Leave on the
- * board"): such a row offers no `accept`/`keep`, because there is nothing to accept - it simply
- * enters the board at its new date/quantity until composed or opened there.
+ * One line of the suggestion, with the sentence the board prints for it.
  *
- * `confirm`/`amend` apply only to a row carrying a `proposal`: `confirm` takes the board's own
- * proposal as it stands (turned into a composition server-side); `amend` takes the composition
- * the planner built in the reused `BoardAmendDialog`. Recording either is what makes accepting
- * a replan row actually DO something at Apply, rather than a decision Apply never executes.
+ * `label` is composed SERVER-side and printed verbatim: the engine is the only side that
+ * knows which rung covered what, against which document, for whose order, so a second
+ * composition in TypeScript could only drift from it. Everything beside it is there so the
+ * line can be read as data (filters, the amend dialog, a future grouping), never so the
+ * frontend can re-write the sentence.
  */
-export type PlanningChangeDecision = 'accept' | 'keep' | 'board' | 'confirm' | 'amend' | null;
+export interface PlanningChangeSuggestionComponent {
+  action: PlanningChangeSuggestionAction;
+  source: PlanningChangeSuggestionSource;
+  /** What the component held before, when the action changed an existing figure. */
+  qty_was?: string | null;
+  qty_now: string;
+  /** The warehouse the quantity sits in or is freed at, e.g. `BRW-IB`. */
+  location?: string | null;
+  /** The document the quantity is on: `PO-A`, `SPO-77`. Never a UUID. */
+  document?: string | null;
+  /** Where a reallocation went, in words: `dealer pool`, `SO420103 ORDER 50`, `pool`. */
+  target?: string | null;
+  /** On a `product_changed` row: the NEW product this component sources. */
+  item_code?: string | null;
+  /** The sentence the board prints, e.g. `Keep PO-A 100 of 134`. */
+  label: string;
+}
+
+/**
+ * The whole suggestion for one changed line: the diff of the re-run against what is held.
+ *
+ * Held components come first, in held order, then the new sourcing - so the reader sees what
+ * happens to what they already decided before they read what is being added.
+ */
+export interface PlanningChangeSuggestion {
+  components: PlanningChangeSuggestionComponent[];
+  /** The unit is kept but lands N days after the line's new date (S12). `null` when on time. */
+  late_days?: number | null;
+  /** Quantity nothing can cover in time (S11). `null` when the unit is covered. */
+  shortfall_qty?: string | null;
+}
+
+/**
+ * The one decision per row: Confirm the composed suggestion, or Amend it. `null` until CS
+ * takes one (AC-C7).
+ *
+ * `accept` / `keep` / `board` are retired with the rule table that produced them (Slice C):
+ * "accept" existed because the suggestion was a VERB the row could agree with, and agreeing
+ * with a verb executed nothing; the suggestion is now a composition, so Confirm posts it and
+ * Amend edits it, and there is nothing else to say about a row.
+ */
+export type PlanningChangeDecision = 'confirm' | 'amend' | null;
 
 /**
  * What Apply did to this row (AC-R05, R06, R07, R11). `pending` before Apply is pressed;
@@ -152,9 +221,10 @@ export interface PlanningChangeInquiryRow {
 }
 
 /**
- * One changed planned line (AC-R02). `proposal` is present only for `replan` (advance / new
- * line) and the `qty_up` delta - the same shape a board cell's contribution is (AC-R07), so the
- * row and the board show one proposal, not two.
+ * One changed planned line (AC-R02). `proposal` is the re-run itself - the same shape a board
+ * cell's contribution is (AC-R07), so the row, the amend dialog and the board show one
+ * proposal, not two; `suggestion` is that proposal DIFFED against `held`, which is what the
+ * board prints.
  *
  * `applied_reason` carries `result_json` from the persisted row (section 2's data model) - it
  * is set when `applied_state` is `failed` (why the order's revision could not be written) or
@@ -177,12 +247,19 @@ export interface PlanningChangeRow {
   days_moved?: number | null;
   held: PlanningChangeHeld | null;
   facts: PlanningChangeFacts;
-  suggested: PlanningChangeReaction;
-  why: string;
+  /**
+   * The diff of the re-run against what the line holds, as the board prints it (AC-C1).
+   * `null` only on a row raised before Slice C, which has no composed suggestion to show.
+   */
+  suggestion: PlanningChangeSuggestion | null;
   proposal?: BoardContribution | null;
   inquiry_rows: PlanningChangeInquiryRow[];
   decision: PlanningChangeDecision;
-  /** What Apply will post for this line - set only by `confirm`/`amend`. */
+  /**
+   * What Apply posts for this line. PRE-FILLED at build from the re-run's own proposal, so
+   * Confirm posts it unchanged and Amend edits it in the board's own `BoardAmendDialog`
+   * (AC-C7). `null` on a row the engine could compose nothing for.
+   */
   composition?: ConfirmLine | null;
   applied_state: PlanningChangeAppliedState;
   applied_reason?: string | null;

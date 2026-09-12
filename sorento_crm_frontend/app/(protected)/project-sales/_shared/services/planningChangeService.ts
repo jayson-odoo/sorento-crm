@@ -1,6 +1,7 @@
 /**
  * ============================================================================
- * Planning changes - feature service (`PLAN-so-book-diff-replanning.md` section 3)
+ * Planning changes - feature service (`PLAN-so-book-diff-replanning.md` section 3,
+ * re-shaped by `PLAN-scm-change-management-one-engine.md` Slice C)
  * ============================================================================
  * Layering: UI -> hooks (`usePlanningChanges`) -> THIS service -> lib/api-client -> backend.
  *
@@ -15,7 +16,31 @@
  *   PUT  /api/v1/project-sales/planning-changes/{batch_id}/rows/{row_id}     (AC-R04)
  *        body UpdatePlanningChangeRowBody { decision, composition? }
  *        `composition` is REQUIRED when `decision === 'amend'` (422 otherwise); `confirm`
- *        derives its own composition from the row's `proposal` server-side.
+ *        posts the row's own pre-filled `composition` unchanged.
+ *
+ * ── THE ROW SHAPE, Slice C (`PLAN-scm-change-management-one-engine.md`, contract A) ───────
+ * Endpoints are unchanged; the ROW the two GETs return is not. Per changed line:
+ *
+ *   suggestion  (BE `suggestion_json`, JSONB) - the re-run at the new state DIFFED against
+ *               what the line holds, which is the whole suggestion (rule 3):
+ *                 components[] : { action, source, qty_was?, qty_now, location?, document?,
+ *                                  target?, item_code?, label }
+ *                   action  keep | reduce | release | reallocate   (on a held component)
+ *                         | use_own | borrow | spo | buy           (for new quantity)
+ *                   source  reserve | borrow | spo | buy | po | pool_share | null
+ *                   label   the SERVER-composed sentence the board prints VERBATIM, e.g.
+ *                           "Keep PO-A 100 of 134", "Reallocate PO-A 34 to SO420103 ORDER 50",
+ *                           "Release 134, free at BRW-IB", "Buy 234 (was 134)".
+ *                   Held components come first, in held order, then the new sourcing.
+ *                 late_days    : the unit is kept but lands N days late (S12), else null
+ *                 shortfall_qty: nothing covers this much in time (S11), else null
+ *   composition - PRE-FILLED at build from that same re-run, so Confirm posts it unchanged
+ *                 and Amend edits it in the board's own `BoardAmendDialog`.
+ *   decision    - null | 'confirm' | 'amend'. `accept` / `keep` / `board` are retired with
+ *                 the rule table (migration 515 maps accept/keep -> confirm, board -> null).
+ *   `suggested` and `why` are GONE from the payload: a verb the row agreed with executed
+ *   nothing, which is why "accept" had to exist at all.
+ * ──────────────────────────────────────────────────────────────────────────────────────────
  *   POST /api/v1/project-sales/planning-changes/{batch_id}/apply             (AC-R05)
  *        -> ApplyPlanningChangesResult { applied_orders, failed_orders, already_applied,
  *           returned_to_review } - the last is B1 (code review, 20 Aug 2026): lines a revised
