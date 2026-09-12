@@ -5,7 +5,7 @@
  * finished; whether the buyer has finished with it is a fact about the decisions on it, and
  * the two are different questions the same word used to answer.
  */
-import { DATE_LOCALE, DATE_PARTS, EM_DASH } from '../../lib/format';
+import { DATE_LOCALE, DATE_PARTS, EM_DASH, fmtDate } from '../../lib/format';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 
 export type RunListStatus = 'running' | 'planning' | 'confirmed' | 'failed';
@@ -47,6 +47,27 @@ export function runStatusReading(run: {
     return { status: 'confirmed', label: 'Confirmed', variant: 'success' };
   }
   return { status: 'planning', label: 'Planning', variant: 'secondary' };
+}
+
+/**
+ * AC-S4.5: one wording for the sales-order window, so the plan header, the plan page
+ * subtitle and the plans list never say it three different ways.
+ *
+ *   both set   -> "01/01/2025 to 31/10/2026"
+ *   end only   -> "up to 31/10/2026"
+ *   start only -> "from 01/01/2025"
+ *   neither    -> "every open order" - "empty = every open order counts" stays true.
+ */
+export function describeWindow(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string {
+  const hasStart = Boolean(start);
+  const hasEnd = Boolean(end);
+  if (hasStart && hasEnd) return `${fmtDate(start)} to ${fmtDate(end)}`;
+  if (hasEnd) return `up to ${fmtDate(end)}`;
+  if (hasStart) return `from ${fmtDate(start)}`;
+  return 'every open order';
 }
 
 /**

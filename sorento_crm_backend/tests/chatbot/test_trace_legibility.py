@@ -33,13 +33,19 @@ from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures use
 
 
 def _assert_trace_is_legible(trace: list[dict[str, Any]]) -> None:
-    """Every STAGE record reads as sentences (AC-007, D11).
+    """Every STAGE RECORD in the persisted array is a sentence (AC-007, D11).
 
-    Stage records only. The same array also carries the structured decisions
-    `trace.TurnTrace.add` writes (`decay`, `focus`, `open_question`, `tool`, ...), and
-    those are machine payloads by design - the trace screen renders them as their own
-    sections, not as timeline prose. `trace.stage_records` is the one place that tells the
-    two apart.
+    `chatbot.turns.trace` carries two kinds of entry since growth r1 A9. A stage record
+    (`TurnTrace.record`) has a `stage` and no `kind`, and is what this AC is about: an
+    operator reads it. An EVENT (`TurnTrace.add` - a tool call, a cross-domain probe, the
+    field reveals, and the dialogue decisions `decay` / `focus` / `open_question`) has a
+    flat `kind` and is deliberately technical detail: raw args and a raw MCP envelope,
+    which `trace_detail.py` renders in its own sections and which no honest `summary`
+    could be written for. Demanding prose of one would only ever produce a fake sentence,
+    so the filter is the `kind` key itself, via `trace.stage_records` - the one place that
+    tells the two apart.
+
+    The stage list is still asserted non-empty, so "skip everything" is not a way to pass.
     """
     assert trace, "no trace records were written at all"
     records = trace_mod.stage_records(trace)
@@ -103,7 +109,15 @@ class TestTraceLegibilityAcrossBranchKinds:
         _assert_trace_is_legible(trace)
 
     def test_out_of_scope(self, session_factory, seeded, stub_parser, stub_access):
-        stub_parser(_parser_output(message_type="request_for_help", domain_hint="order"))
+        # A pure help request: no entity named this turn. Since 8 Sep 2026 a
+        # `request_for_help` that names an entity beside a decisive intent or a switch
+        # word is retyped `business_query` (owner turn 2d903c96, "delivery to hanlim"),
+        # and the default fixture carries exactly that shape.
+        stub_parser(
+            _parser_output(
+                message_type="request_for_help", domain_hint="order", intent_hint=None, entities=[]
+            )
+        )
         stub_access()
         result, trace = _run(session_factory, _envelope())
         assert result.branch_kind == "out_of_scope"

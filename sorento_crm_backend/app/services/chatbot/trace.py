@@ -49,6 +49,43 @@ def cap_document(value: Any, *, limit: int = DOCUMENT_BYTE_CAP) -> Any:
     return _cap(value, limit=limit)
 
 
+# One MCP envelope, inside a `tool` event. Smaller than the per-stage `raw` cap and
+# capped at WRITE time rather than only on read, because this is what lands in
+# `chatbot.turns.trace` forever: a result set of ten thousand rows would otherwise sit in
+# the row for the life of the table, and the turn-detail screen renders this one inline
+# where a stage's `raw` only ever appears behind "technical details".
+#
+# TRUNCATE, never drop, and on ENCODED BYTES rather than code points: a code-point cut on a
+# multibyte (e.g. Chinese) envelope either undercounts against the byte cap or slices a
+# character in half. `ensure_ascii=False` for the same reason - the default escapes every
+# non-ASCII character to a pure-ASCII `\uXXXX` sequence, which could never be cut
+# mid-character and would make the distinction moot.
+#
+# The read side (`trace_detail._cap_envelope`, the trace-UI lane) applies the same cap to
+# the same shape, so a payload already capped here passes through it untouched. Two copies
+# until that lane merges, on purpose: this module must not import a file that does not
+# exist on this branch.
+TOOL_ENVELOPE_BYTE_CAP = 8_192
+
+
+def cap_envelope(envelope: Any, *, limit: int = TOOL_ENVELOPE_BYTE_CAP) -> Any:
+    """A tool envelope, truncated to `limit` bytes with a marker saying so."""
+    if envelope is None:
+        return None
+    try:
+        encoded = json.dumps(envelope, default=str, ensure_ascii=False)
+    except Exception:  # noqa: BLE001 - a trace must never fail the turn
+        return {"truncated": True, "note": "payload is not JSON-serialisable"}
+    encoded_bytes = encoded.encode("utf-8")
+    if len(encoded_bytes) <= limit:
+        return json.loads(encoded)
+    return {
+        "truncated": True,
+        "bytes": len(encoded_bytes),
+        "head": encoded_bytes[:limit].decode("utf-8", errors="ignore"),
+    }
+
+
 def _cap(raw: Any, *, limit: int = RAW_BYTE_CAP) -> Any:
     if raw is None:
         return None
@@ -82,10 +119,28 @@ def stage_records(records: Any) -> list[dict[str, Any]]:
 class TurnTrace:
     """An ordered list of stage records, plus the clock for the stage in progress."""
 
-    __slots__ = ("_records", "_started_perf", "_started_iso")
+    __slots__ = ("_records", "_events", "_started_perf", "_started_iso")
 
     def __init__(self) -> None:
         self._records: list[dict[str, Any]] = []
+        # A9 (chatbot-growth-r1): sub-events WITHIN a stage - one MCP tool call, one
+        # cross-domain rung probe, which restricted fields a turn saw/granted/dropped.
+        #
+        # A SEPARATE LIST from `_records`, but the SAME persisted array. They are held
+        # apart in memory so `persisted()` can put every stage record first and every
+        # event after, in one pass, whatever order the turn produced them in - the
+        # trace screen reads the stage timeline top to bottom, and an event interleaved
+        # into it would read as a stage that has no summary. On the way out they are
+        # one list, `chatbot.turns.trace`, because Slice D's reader
+        # (`trace_detail.py`, the trace-UI lane) composes the turn-detail view from
+        # exactly that column and a second column would be a migration for nothing.
+        #
+        # An event is `{"kind": ..., "at": ..., **payload}` - `kind` FLAT, not nested
+        # under a wrapper, because that is the shape the reader keys on
+        # (`_kind_records`) and the same key is what tells the two apart:
+        # `test_trace_legibility.py` demands a plain-language summary/why/raw of every
+        # entry WITHOUT a `kind`, and a tool call's raw args and envelope are not prose.
+        self._events: list[dict[str, Any]] = []
         self._started_perf: float | None = None
         self._started_iso: str | None = None
 
@@ -99,7 +154,12 @@ class TurnTrace:
         """
         trace = cls()
         if isinstance(records, list):
-            trace._records = [r for r in records if isinstance(r, dict)]
+            entries = [r for r in records if isinstance(r, dict)]
+            # Split back into the two lists the way `persisted()` joined them, so a tail
+            # that appends `replied` and `remembered` still lands them among the STAGES
+            # rather than after the head's tool event.
+            trace._records = [r for r in entries if r.get("kind") is None]
+            trace._events = [r for r in entries if r.get("kind") is not None]
         trace.start()
         return trace
 
@@ -137,32 +197,61 @@ class TurnTrace:
         self.start()
 
     def add(self, kind: str, payload: dict[str, Any]) -> None:
-        """One STRUCTURED entry in the same array, for a decision rather than a stage.
+        """A sub-event WITHIN the current stage (A9, chatbot-growth-r1): one MCP tool
+        call, one cross-domain rung probe, which restricted fields a turn saw / granted /
+        dropped, or one dialogue decision (`decay`, `focus`, `open_question`). See the
+        `_events` slot's own comment for why this is a SEPARATE list from `record()`'s,
+        not an entry appended to it.
 
-        Slice D of the growth plan renders `decay[]`, `focus[]`, `open_question`, `tool`,
-        `crossdomain[]` and `reveals` per turn. Each of those is a decision the engine
-        took INSIDE a stage, so it has no start, no duration and no status of its own -
-        writing it as a stage record would put a second "Received" row on the timeline
-        and lie about what ran. It goes in the SAME array because the turn has exactly one
-        trace and a second column would have to be joined back to it by hand.
+        A decision the engine took INSIDE a stage has no start, no duration and no status
+        of its own, so writing it as a stage record would put a second "Received" row on
+        the timeline and lie about what ran. `kind` is what tells the two apart, and the
+        timeline is "every record with no `kind`" (`turnPresentation.stageRecords`).
 
-        `kind` is what tells the two apart, and there is precedent: `POST
-        /system/chatbot/turns/{id}/retry` already appends a `kind: "note"` record here.
-        The timeline is therefore "every record with no `kind`", which is what
-        `turnPresentation.stageRecords` selects.
+        `payload` is SPREAD into the entry beside `kind` and `at`, not nested under a
+        `payload` key: the reader keys on the flat shape
+        (`trace_detail._kind_records` reads `entry["name"]` / `["args"]` /
+        `["envelope"]` / `["ms"]` straight off it).
 
-        Never raises: a trace that fails must not fail the turn (`_cap` above is written
-        to the same rule).
+        An `envelope` value is capped to 8 KB with a `truncated` marker first
+        (`cap_envelope`), then the WHOLE entry rides through the same 32 KB `_cap` a
+        stage's `raw` does, as a backstop for an unexpectedly large `args`. An entry
+        that trips the backstop keeps its `kind` and `at` and carries the note in
+        place of its fields, so the screen says what happened rather than showing a
+        silently shortened object.
         """
-        self._records.append({"kind": kind, "at": _now_iso(), **_cap(payload)})
+        entry = dict(payload)
+        if "envelope" in entry:
+            entry["envelope"] = cap_envelope(entry["envelope"])
+        capped = _cap(entry)
+        self._events.append(
+            {
+                "kind": kind,
+                "at": _now_iso(),
+                **(capped if isinstance(capped, dict) else {"value": capped}),
+            }
+        )
 
     def entries(self, kind: str) -> list[dict[str, Any]]:
         """Every `add`ed entry of one kind, in the order they were written."""
-        return [r for r in self._records if r.get("kind") == kind]
+        return [r for r in self._events if r.get("kind") == kind]
 
     @property
     def records(self) -> list[dict[str, Any]]:
         return self._records
+
+    @property
+    def events(self) -> list[dict[str, Any]]:
+        return self._events
+
+    def persisted(self) -> list[dict[str, Any]]:
+        """What goes into `chatbot.turns.trace`: the stage records, then the events.
+
+        The ONE thing `_close_turn` is handed, so an event cannot be persisted by some
+        call sites and dropped by others - which is what "not yet persisted anywhere"
+        meant before, and why Slice D's reader saw no `tool` entry on any real turn.
+        """
+        return [*self._records, *self._events]
 
     def stages(self) -> list[str]:
         """The STAGE records' names. `add`ed entries carry a `kind` and are not stages."""

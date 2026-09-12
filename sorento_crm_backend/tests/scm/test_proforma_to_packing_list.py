@@ -254,8 +254,11 @@ def _kailu_bytes(w: World, *, pi_number=None) -> bytes:
 def _kailu_invoice(db, w: World, *, pi_number=None, source_ref="kailu.xlsx"):
     svc.apply(db, _kailu_bytes(w, pi_number=pi_number), supplier_id=str(w.supplier.id),
               actor="Ms Tee", source_ref=source_ref)
+    # `pi_number` here is the document's own stated reference (S1: `supplier_ref` now,
+    # never OUR minted `pi_number`) - matched on that, same identity key `apply` itself
+    # matches a re-upload on.
     return _invoices(db, w)[0] if pi_number is None else next(
-        inv for inv in _invoices(db, w) if inv.pi_number == pi_number
+        inv for inv in _invoices(db, w) if inv.supplier_ref == pi_number
     )
 
 

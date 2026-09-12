@@ -65,6 +65,12 @@ def _delete_order(db: Session, payload: dict):
     return OrderService(db).delete_order(_entity_id(payload))
 
 
+def _delete_product_companion_rule(db: Session, payload: dict):
+    from app.services.product_companion_service import ProductCompanionService
+
+    return ProductCompanionService(db).delete(_entity_id(payload))
+
+
 def _set_order_status(db: Session, payload: dict):
     from app.schemas.order import OrderUpdate
     from app.services.order_service import OrderService
@@ -118,6 +124,17 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="order_management.orders.edit",
         label="Change status",
+    )
+)
+
+register(
+    FormAction(
+        key="product_companion_rule.delete",
+        entity_types=("product_companion_rule",),
+        execute=_delete_product_companion_rule,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Delete rule",
     )
 )
 
@@ -249,6 +266,12 @@ def _delete_uom(db: Session, payload: dict):
     return UnitOfMeasureService(db).delete_uom(_entity_id(payload))
 
 
+def _delete_country(db: Session, payload: dict):
+    from app.services.country_service import CountryService
+
+    return CountryService(db).delete_country(_entity_id(payload))
+
+
 def _delete_brand(db: Session, payload: dict):
     from app.services.product_service import BrandService
 
@@ -293,6 +316,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.units_of_measure.delete",
         label="Delete unit of measure",
+    )
+)
+
+register(
+    FormAction(
+        key="country.delete",
+        entity_types=("country",),
+        execute=_delete_country,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.countries.delete",
+        label="Delete country",
     )
 )
 
@@ -1350,6 +1384,64 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="scm.reorder.run",
         label="Forget supplier-code match",
+    )
+)
+
+
+def _dismiss_packing_line(db: Session, payload: dict):
+    from app.services.scm import proforma_invoice_packing_service
+
+    # `invoice_id` scopes the row, exactly as the route does: a row id under ANOTHER
+    # invoice must not be reachable off a guess.
+    out = proforma_invoice_packing_service.dismiss_packing_line(
+        db,
+        str(payload.get("invoice_id") or ""),
+        _entity_id(payload),
+        actor=_scm_actor(db, payload),
+    )
+    db.commit()
+    return {"id": str(out.id), "match_state": out.match_state}
+
+
+register(
+    FormAction(
+        key="proforma_invoice_packing_line.dismiss",
+        entity_types=("proforma_invoice_packing_line",),
+        execute=_dismiss_packing_line,
+        # Reversible: the row stays on the invoice, and Undo dismiss is on its own gear
+        # afterwards. Same window and same reasoning as `supplier_code_alias.forget`,
+        # which is the ruling this one writes.
+        window=WINDOW_REVERSIBLE,
+        permission="scm.proforma_invoice.upload",
+        label="Dismiss packing row",
+    )
+)
+
+
+def _forget_import_field_alias(db: Session, payload: dict):
+    from app.models.import_alias import ImportFieldAlias
+    from app.services.error_handler import handle_not_found
+
+    alias_id = _entity_id(payload)
+    row = db.query(ImportFieldAlias).filter(ImportFieldAlias.id == alias_id).first()
+    if row is None:
+        raise handle_not_found("Import column mapping", alias_id)
+    db.delete(row)
+    db.commit()
+    return {"deleted": 1}
+
+
+register(
+    FormAction(
+        key="import_field_alias.forget",
+        entity_types=("import_field_alias",),
+        execute=_forget_import_field_alias,
+        # Reversible, and named `forget` rather than `delete` for the same reason
+        # `supplier_code_alias.forget` is: what goes is a REMEMBERED spelling, re-added
+        # from the same page in one line if it turns out to have been wanted.
+        window=WINDOW_REVERSIBLE,
+        permission="system.import_field_aliases.edit",
+        label="Remove import column mapping",
     )
 )
 

@@ -134,3 +134,34 @@ class AliasResolver:
 
 def _is_blank(value: Any) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
+
+
+def canonical_fields(doc_type: str) -> list[str]:
+    """The canonical field names a document type's own reader asks for (S5, AC-E1) - read
+    off the reader's OWN dataclasses (`dataclasses.fields`), never hand-typed: a field the
+    reader adds tomorrow is on this list the same day, with no second place to update it.
+
+    Deferred imports: both readers import `AliasResolver` FROM this module, so importing
+    them back at module level here would cycle.
+    """
+    import dataclasses
+
+    if doc_type == "proforma_invoice":
+        from app.services.scm.proforma_invoice_reader import ProformaDocument, ProformaLine
+
+        classes: tuple[type, ...] = (ProformaLine, ProformaDocument)
+    elif doc_type == "packing_list":
+        from app.services.scm.packing_list_reader import PackingBlock, PackingLine
+
+        classes = (PackingLine, PackingBlock)
+    else:
+        return []
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for cls in classes:
+        for f in dataclasses.fields(cls):
+            if f.name not in seen:
+                seen.add(f.name)
+                out.append(f.name)
+    return out

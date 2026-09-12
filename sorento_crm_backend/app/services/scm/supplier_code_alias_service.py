@@ -715,7 +715,21 @@ def _rebind(
         line.product_id = product_id
         line.product_set_id = product_set_id
     db.flush()
+
+    # The THIRD reader under the same code (S2): the supplier's packing rows on those same
+    # invoices. Imported here rather than at module scope - the packing service imports
+    # this one for its own dismiss/undo.
+    from app.services.scm.proforma_invoice_packing_service import rebind_packing_rows
+
+    packing_rows = rebind_packing_rows(
+        db,
+        supplier_id=str(supplier_id),
+        code=code,
+        product_id=product_id,
+        product_set_id=product_set_id,
+    )
     return {
         "rebound_stock_rows": len(stock),
         "rebound_invoice_lines": len(lines),
+        "rebound_packing_rows": packing_rows,
     }

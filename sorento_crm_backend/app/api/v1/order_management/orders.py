@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
-from app.services.order_service import OrderService
+from app.services.order_service import OrderService, stamp_so_outstanding_rows
 from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
@@ -338,21 +338,47 @@ async def get_orders(
         None,
         description=(
             "Delivery bucket filter: 'outstanding' = orders NOT yet delivered, "
-            "'delivered' = orders already delivered, omit/null = no filter (all). "
-            "Delivered means the order's status is delivered/completed AND its "
-            "actual_delivery_date is set; everything else (New Order, Processing, "
-            "In Transit, Cancelled, or a delivery date under a non-delivered status) "
-            "is outstanding. Use for 'outstanding/pending/undelivered orders', "
-            "'belum hantar', 'not delivered yet'. AND'd with the other filters."
+            "'delivered' = orders already delivered, 'so_outstanding' = open sales-order "
+            "LINES not yet turned into a DO at all (qty_ordered - qty_delivered > 0 over "
+            "sales_order_lines, line_status='open' - a DIFFERENT table from the other two "
+            "buckets, so rows carry so_number/product/outstanding_qty/order_date/customer/ "
+            "requested_delivery_date instead of the usual order fields), omit/null = no "
+            "filter (all, over `orders`). Delivered means the order's status is "
+            "delivered/completed AND its actual_delivery_date is set; everything else (New "
+            "Order, Processing, In Transit, Cancelled, or a delivery date under a "
+            "non-delivered status) is outstanding. Use for 'outstanding/pending/undelivered "
+            "orders', 'belum hantar', 'not delivered yet'; use so_outstanding for 'SO "
+            "outstanding', 'ordered but no DO', 'belum DO'. AND'd with the other filters."
         ),
     ),
     include_summary: bool = Query(
         False,
         description=(
             "true = also return `summary`: filter-wide measures (order/delivered/pending "
-            "counts, customers, delivered date span, per-product delivered/pending quantity "
-            "when product_ids is given). Send it when the user asks HOW MANY / how much was "
-            "taken; omit for a plain DO list."
+            "counts, customers, delivered date span, per-product delivered/pending "
+            "quantity when product_ids is given). Send it when the user asks HOW MANY / "
+            "how much was taken; omit for a plain DO list."
+        ),
+    ),
+    include_pipeline: bool = Query(
+        False,
+        description=(
+            "true = also fold so_outstanding_qty/so_outstanding_count (open SO lines for "
+            "the same customer_ids/product_ids scope) into `summary`, so a render "
+            "presenter can show the three-line SO outstanding / DO open / delivered "
+            "pipeline (AC-905b). Opt-in and independent of `include_summary` on purpose "
+            "(fix, 7 Sep 2026): the CRM's own chatbot lane sets it alongside "
+            "`include_summary` on a quantity ask; a caller that only asks for "
+            "`include_summary` (every pre-existing caller, n8n included) gets exactly "
+            "the summary shape it got before this field existed."
+        ),
+    ),
+    group_by: Optional[str] = Query(
+        None,
+        description=(
+            "Group rows into headed sections. One of: customer, transporter, date, "
+            "product. Applies to every bucket (outstanding/delivered/so_outstanding/all). "
+            "An unrecognised value returns 422 naming the allowed axes."
         ),
     ),
     has_order_lines: Optional[str] = Query(
@@ -403,10 +429,77 @@ async def get_orders(
     External API-key callers (e.g. AI agent / MCP) are capped at limit=20 to keep
     tool responses small enough to reason over.
     """
+    from app.services.error_handler import AppException
+    from app.services.order_service import (
+        ORDER_GROUP_BY_AXES,
+        group_rows,
+        so_outstanding_rows,
+        so_outstanding_summary,
+    )
+
+    if group_by is not None and group_by not in ORDER_GROUP_BY_AXES:
+        raise AppException(
+            422,
+            f"Unknown group_by value '{group_by}'",
+            detail=f"allowed: {', '.join(sorted(ORDER_GROUP_BY_AXES))}",
+            code="invalid_group_by",
+        )
+
     try:
+        _resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+        _resolved_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+
+        # A3 (AC-905): a DIFFERENT table (sales_order_lines, not orders), so a
+        # dedicated path rather than shoehorning it into `service.list_orders` -
+        # the row shape (SO number/product/outstanding qty/order date/customer/
+        # requested delivery date) has nothing in common with `OrderResponse`.
+        # Hoisted above the so_outstanding arm: BOTH buckets need it for the cap.
         _date_scoped = _has_orders_date_filter(
             order_date_from, order_date_to, actual_delivery_date_from, actual_delivery_date_to
         )
+        if order_status == "so_outstanding":
+            from fastapi.encoders import jsonable_encoder
+
+            # The SAME external cap the DO buckets take, applied BEFORE the read
+            # (review, should-fix 7). This arm returned up to 500 rows to an
+            # external/AI caller that every other bucket hard-caps at 20 - the cap is
+            # what stops one WhatsApp turn pulling a five-hundred-row page through the
+            # MCP and into a message, and a new bucket is exactly where it gets
+            # forgotten. `_date_scoped` is computed once, above both arms now, because
+            # the cap relaxes for a date-narrowed read and this bucket takes a date
+            # window like the others.
+            _so_limit = _external_orders_limit(
+                request, limit, cap=_EXTERNAL_ORDERS_LIST_LIMIT_CAP, date_scoped=_date_scoped
+            )
+            rows = so_outstanding_rows(
+                db,
+                customer_ids=_resolved_customer_ids,
+                product_ids=_resolved_product_ids,
+                limit=min(_so_limit, 500),
+            )
+            payload: dict = {
+                "data": rows,
+                # The MCP presenter has no other way to tell a bucket whose rows
+                # carry `so_number` instead of `order_number` apart from a plain
+                # "no rows matched" answer - it never sees the query params, only
+                # this JSON. Echoed back, not derived from the rows, so an empty
+                # result still renders as an SO-outstanding miss, not a DO miss.
+                "order_status": "so_outstanding",
+                "pagination": {"total": len(rows), "page": 1, "limit": len(rows)},
+                "empty": not rows,
+            }
+            if group_by:
+                payload["groups"] = group_rows(rows, group_by=group_by)
+            if include_summary:
+                payload["summary"] = {
+                    "scope": "filter",
+                    "row_count": len(rows),
+                    **so_outstanding_summary(
+                        db, customer_ids=_resolved_customer_ids, product_ids=_resolved_product_ids
+                    ),
+                }
+            return JSONResponse(content=jsonable_encoder(payload))
+
         limit = _external_orders_limit(
             request, limit, cap=_EXTERNAL_ORDERS_LIST_LIMIT_CAP, date_scoped=_date_scoped
         )
@@ -417,8 +510,8 @@ async def get_orders(
             query=query,
             entities=_normalize_entities(entities),
             order_ids=parse_uuid_list(order_ids, param_name="order_ids"),
-            customer_ids=parse_uuid_list(customer_ids, param_name="customer_ids"),
-            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            customer_ids=_resolved_customer_ids,
+            product_ids=_resolved_product_ids,
             transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
             customer_query=customer_query,
             product_query=product_query,
@@ -438,12 +531,66 @@ async def get_orders(
         )
         # Date-axis relaxation (§3.4): when the service attached `alternatives` /
         # `relaxed_axis` (only on an empty result), bypass the strict
-        # `ListResponse` response_model - which would silently drop those keys - 
+        # `ListResponse` response_model - which would silently drop those keys -
         # and emit the raw dict. `data` is always [] here so encoding is trivial,
         # and the with-data path stays byte-identical (AC-R1).
         if isinstance(result, dict) and result.get("alternatives"):
             from fastapi.encoders import jsonable_encoder
             return JSONResponse(content=jsonable_encoder(result))
+
+        # A3 (AC-905b, AC-906): group_by and/or the SO-outstanding leg of the
+        # three-line pipeline. Both bypass `response_model` (neither key exists
+        # on `ListResponse[OrderResponse]`), same reason as the alternatives
+        # path above - and ONLY when actually needed, so a plain call with
+        # neither stays on the fast, byte-identical `return result` below.
+        if isinstance(result, dict) and (group_by or include_summary):
+            from fastapi.encoders import jsonable_encoder
+
+            body = jsonable_encoder(result)
+            if group_by:
+                # DO rows have no single product (an order carries many lines), so
+                # `product` groups everything under "Not specified" - the same
+                # documented fallback `group_rows` uses for any axis a row lacks.
+                axis_source = {
+                    "customer": "debtor_name",
+                    "transporter": "transporter",
+                    "date": "actual_delivery_date",
+                }.get(group_by)
+                groups = group_rows(
+                    body.get("data") or [],
+                    group_by=group_by,
+                    value_fn=(lambda o, _k=axis_source: o.get(_k) if _k else None),
+                )
+                body["groups"] = groups
+            # `include_pipeline` (fix, 7 Sep 2026): gated SEPARATELY from
+            # `include_summary` above - folding `so_outstanding_qty` in unconditionally
+            # on every `include_summary=true` call put it in front of every existing
+            # caller that never asked for it, n8n's quantity-ask workflow included, and
+            # its presence alone is what `sorento_crm_mcp/presenters.py`'s
+            # `_pipeline_summary_items` renders on. A caller that wants the three-line
+            # pipeline now has to ask for it by name.
+            if (
+                include_summary
+                and include_pipeline
+                and isinstance(body.get("summary"), dict)
+            ):
+                body["summary"].update(
+                    so_outstanding_summary(
+                        db, customer_ids=_resolved_customer_ids, product_ids=_resolved_product_ids
+                    )
+                )
+                # D8 (owner console pass, 8 Sep 2026): the per-row SO block the by-product
+                # route stamps reaches THIS route's products[] / groups[] too - the same
+                # five figures, the same three-state rule, the same scope. The top-level
+                # leg above stays for callers that read it; the presenter no longer
+                # renders a three-line block off it.
+                stamp_so_outstanding_rows(
+                    db,
+                    body["summary"],
+                    customer_ids=_resolved_customer_ids,
+                    product_ids=_resolved_product_ids,
+                )
+            return JSONResponse(content=body)
         return result
     except HTTPException:
         raise
@@ -597,6 +744,19 @@ async def get_orders_by_product(
             "Send it when the user asks HOW MANY / how much was taken; omit for a plain DO list."
         ),
     ),
+    include_pipeline: bool = Query(
+        False,
+        description=(
+            "true = also fold so_outstanding_qty (open SO lines for the same "
+            "customer_ids/product_ids scope) into EVERY `summary.products` and "
+            "`summary.groups` row, so a render presenter can show the SO outstanding "
+            "leg next to each customer x product's DO figures. Opt-in and independent of "
+            "`include_summary` on purpose: the CRM's own chatbot lane sets it alongside "
+            "`include_summary` on a quantity ask; a caller that only asks for "
+            "`include_summary` (every pre-existing caller, n8n included) gets exactly "
+            "the summary shape it got before this field existed."
+        ),
+    ),
     order_date_from: Optional[str] = Query(
         None,
         description=(
@@ -676,6 +836,7 @@ async def get_orders_by_product(
             has_actual_delivery_date=has_actual_delivery_date,
             order_status=order_status,
             include_summary=include_summary,
+            include_pipeline=include_pipeline,
             order_date_from=_parse_flex_date(order_date_from),
             order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
             actual_delivery_date_from=_parse_flex_date(actual_delivery_date_from),

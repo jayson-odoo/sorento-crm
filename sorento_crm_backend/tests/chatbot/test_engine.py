@@ -149,7 +149,9 @@ def stub_parser(monkeypatch):
 
 @pytest.fixture()
 def stub_access(monkeypatch):
-    def _install(allowed: bool = True, decision: str = "allow"):
+    def _install(allowed: bool = True, decision: str = "allow", attributes: list | None = None):
+        # `attributes` = the contact's granted field-reveal keys (`ctx["access"]["attributes"]`);
+        # None is the empty grant set, exactly as `head/access.py` reports it live.
         monkeypatch.setattr(
             engine_mod,
             "check_access",
@@ -157,7 +159,7 @@ def stub_access(monkeypatch):
                 "allowed": allowed,
                 "decision": decision,
                 "agent_name": "General Enquiries",
-                "attributes": None,
+                "attributes": attributes,
                 "all_attributes_allowed": None,
             },
         )

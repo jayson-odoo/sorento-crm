@@ -20,6 +20,18 @@ let retryState: { isPending: boolean } = { isPending: false };
 
 vi.mock('../hooks/useChatbotTurns', () => ({
   useRetryChatbotTurn: () => ({ mutate: retryMutate, isPending: retryState.isPending }),
+  // TurnPanel renders TurnDetailDrawer for its "open full trace" button (Slice D2);
+  // the drawer is closed in every test here (`turnId` is null), but the hook still
+  // runs (with `enabled: false`), so it needs a shape to return.
+  useChatbotTurn: () => ({ data: undefined, isLoading: false, isError: false }),
+}));
+
+// A stub, not the real Sheet: this file's job is proving TurnPanel PASSES the right
+// turnId to the drawer when its row's trigger is clicked (Slice D2, AC-972), not
+// re-testing TurnDetailDrawer's own rendering (covered in its own test file).
+vi.mock('./TurnDetailDrawer', () => ({
+  TurnDetailDrawer: ({ turnId }: { turnId: string | null }) =>
+    turnId ? <div data-testid="turn-detail-drawer-stub">{turnId}</div> : null,
 }));
 
 function renderWithClient(ui: React.ReactElement) {
@@ -218,5 +230,19 @@ describe('TurnPanel - AC-254 Remembered: Kept / New / Cleared', () => {
     const added = screen.getByText(/new · things being asked about/i);
     expect(added).toBeInTheDocument();
     expect(added.closest('[title]')?.getAttribute('title')).toBe('entities');
+  });
+});
+
+describe('TurnPanel - AC-972 opens the turn detail drawer from a row', () => {
+  it('the row is closed until its "Open full trace" button is clicked', () => {
+    renderWithClient(<TurnPanel turn={turn({ id: 'ZZT-turn-open-detail' })} />);
+
+    expect(screen.queryByTestId('turn-detail-drawer-stub')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /open full trace/i }));
+
+    expect(screen.getByTestId('turn-detail-drawer-stub')).toHaveTextContent(
+      'ZZT-turn-open-detail',
+    );
   });
 });

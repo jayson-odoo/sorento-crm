@@ -222,6 +222,18 @@ export function coverForLine(
   taken: TakenByWarehouse = {},
   scopeOptions: CoverScopeOptions = {},
 ): CoverProposal {
+  // ONE FORMULA (PLAN-reorder-one-formula.md, 11 Sep 2026): a PRODUCT-grain row names no
+  // warehouse, and its `on_hand` is the SUM of every in-scope location's site pool
+  // (`reorder_run_service._product_agg_cell`: `_total("on_hand")` over the same cells
+  // `plan_basis.locations` lists). There is therefore no "other location" left for it to
+  // borrow from - `proposeCover` only ever excluded `lineWarehouseId`, which is null here,
+  // so it handed the row its OWN pool back and the grid netted the same units a second
+  // time. Measured on run d9790035 (11 Sep 14:09): of 226 cover offers made to
+  // product-grain buy rows, 148 were locations already inside that row's own on hand.
+  //
+  // Cross-location cover stays exactly as it was for a WAREHOUSE-grain row, whose own net
+  // really does stop at its own pool.
+  if (!line.warehouse_id) return NO_COVER;
   if (line.status === 'covered_by_stock') {
     const committed = line.rec.covered_committed ?? line.order_qty;
     const available = Math.max(0, line.rec.covered_available ?? 0);

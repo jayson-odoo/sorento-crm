@@ -22,13 +22,17 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, File, Form, Query, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import exists, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
+from app.models.scm import ProformaInvoiceLine, ProformaInvoicePackingLine
 from app.services.error_handler import AppException
-from app.services.scm import proforma_invoice_service
+from app.services import translation_service
+from app.services.scm import proforma_invoice_packing_service, proforma_invoice_service
+from app.services.scm.description_translation import normalized_description
 from app.services.scm.upload_intake import read_upload
 from app.utils.http import content_disposition
 
@@ -65,6 +69,11 @@ class ConvertToDraftShipmentRequest(BaseModel):
         description="The box the convert dialog chose (S5, ruling 1). Null = the tenant "
                     "default. Written onto the draft shipment; the over-capacity check "
                     "compares the COMBINED volume of every selected invoice against it.",
+    )
+    packing_row_ids: Optional[List[str]] = Field(
+        None,
+        description="Which supplier packing rows go in this container (AC-D2b). A row is "
+                    "placed whole or not at all; omitted = every row not already placed.",
     )
 
 
@@ -256,7 +265,7 @@ def convert_proforma_invoices_to_draft_shipment(
     A container is routinely several factories' PIs landing in the same box, so more than
     one invoice - from different suppliers - is not a mistake; every shipment line still
     carries its own supplier. The real packing list, when it arrives, is uploaded through
-    the existing `/scm/packing-lists/apply` path, unchanged by this action.
+    the `/scm/supplier-documents/apply` path, unchanged by this action.
 
     Always a NEW packing list: "add to an existing draft" was dropped everywhere (part 4,
     Q6), so this route no longer takes a target.
@@ -269,6 +278,7 @@ def convert_proforma_invoices_to_draft_shipment(
         override_reason=payload.override_reason,
         line_quantities=payload.line_quantities,
         container_size_id=payload.container_size_id,
+        packing_row_ids=payload.packing_row_ids,
     )
     db.commit()
     return out
@@ -457,6 +467,138 @@ def get_proforma_invoice(
     return proforma_invoice_service.serialize(
         db, proforma_invoice_service.get_or_404(db, invoice_id)
     )
+
+
+@router.post("/proforma-invoices/{invoice_id}/packing-lines/{row_id}/dismiss")
+def dismiss_packing_line(
+    invoice_id: str,
+    row_id: str,
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """"That is not one of ours" (AC-B6/B7) - the same ruling a Dismiss anywhere in this
+    channel makes, so a later upload lands this code dismissed without asking again."""
+    proforma_invoice_packing_service.dismiss_packing_line(
+        db, invoice_id, row_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return proforma_invoice_service.serialize(
+        db, proforma_invoice_service.get_or_404(db, invoice_id)
+    )
+
+
+class PackingLineMatchRequest(BaseModel):
+    """The same body the Lines tab's own Match dialog sends: a product OR a set, never
+    both and never neither (`supplier_code_alias_service.create` enforces it)."""
+
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+
+
+@router.post("/proforma-invoices/{invoice_id}/packing-lines/{row_id}/match")
+def match_packing_line(
+    invoice_id: str,
+    row_id: str,
+    payload: PackingLineMatchRequest = Body(...),
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """"It is this product after all" (AC-B12): writes the supplier's manual alias for the
+    code, which rebinds the row, links it to the PI line of that product and re-rolls the
+    line's figures. Returns the whole invoice, like every other packing write here."""
+    proforma_invoice_packing_service.match_packing_line(
+        db,
+        invoice_id,
+        row_id,
+        product_id=payload.product_id,
+        product_set_id=payload.product_set_id,
+        actor=_actor(current_user),
+    )
+    db.commit()
+    return proforma_invoice_service.serialize(
+        db, proforma_invoice_service.get_or_404(db, invoice_id)
+    )
+
+
+@router.delete("/proforma-invoices/{invoice_id}/packing-lines/{row_id}/dismiss")
+def undo_dismiss_packing_line(
+    invoice_id: str,
+    row_id: str,
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """The pending window's Undo (AC-B7)."""
+    proforma_invoice_packing_service.undo_dismiss_packing_line(
+        db, invoice_id, row_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return proforma_invoice_service.serialize(
+        db, proforma_invoice_service.get_or_404(db, invoice_id)
+    )
+
+
+class ProformaInvoiceTranslationRequest(BaseModel):
+    """The supplier's own wording, and the English for it (S2, text glossary lane)."""
+
+    source_text: str = Field(min_length=1, max_length=500)
+    target_text: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("source_text", "target_text")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("This cannot be blank.")
+        return cleaned
+
+
+@router.put("/proforma-invoices/{invoice_id}/translations")
+def put_proforma_invoice_translation(
+    invoice_id: str,
+    payload: ProformaInvoiceTranslationRequest = Body(...),
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """One word, learnt from a Packing-tab or Lines-tab row (R2/R10): the person handling
+    the PI holds `scm.proforma_invoice.upload`, not the admin-only `system.translations.
+    edit`, so this is a thin, PI-scoped door onto `translation_service.remember` - the
+    SAME write path System Management > Translations' own inline edit uses (R11). Checking
+    the invoice exists first means the route is reachable only from a PI the caller can
+    already see; the second check below (review round, 10 Sep) makes it MEAN something -
+    an upload-permission holder can only teach the memory a word that is actually on a
+    document they hold, not an arbitrary phrase. The write itself (like `remember`'s own
+    re-bind) still reaches every PI on file sharing this text, not just this one.
+    """
+    invoice = proforma_invoice_service.get_or_404(db, invoice_id)
+    normalized = translation_service.normalize_source_text(payload.source_text)
+    on_this_invoice = db.query(
+        or_(
+            exists().where(
+                ProformaInvoiceLine.invoice_id == invoice.id,
+                normalized_description(ProformaInvoiceLine.description) == normalized,
+            ),
+            exists().where(
+                ProformaInvoicePackingLine.proforma_invoice_id == invoice.id,
+                normalized_description(ProformaInvoicePackingLine.description) == normalized,
+            ),
+        )
+    ).scalar()
+    if not on_this_invoice:
+        raise AppException(
+            422, "That text is not on this proforma invoice.", detail="source_text"
+        )
+    result = translation_service.remember(
+        db,
+        [{"source_text": payload.source_text, "target_text": payload.target_text}],
+        user_id=current_user.get("id"),
+    )
+    db.commit()
+    return {
+        "source_text": payload.source_text,
+        "target_text": payload.target_text,
+        "source": "manual",
+        "rebound": result["rebound"],
+    }
 
 
 @router.delete("/proforma-invoices/{invoice_id}", status_code=status.HTTP_204_NO_CONTENT)

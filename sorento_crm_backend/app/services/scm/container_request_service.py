@@ -91,8 +91,11 @@ logger = logging.getLogger(__name__)
 
 #: The site-pool test, from the one module that spells it (`pool_predicate`). It used to be
 #: written here and re-written in three more files, each with a comment saying it was
-#: "character for character" one of the others - a rule that only holds while four files
-#: agree, feeding the very cells AC-G3 requires to foot with their own lightboxes.
+#: "character for character" one of the others - a rule that only holds while every copy
+#: agrees. R7 (captain 8 Sep 2026) retired two of those four: `container_request_drill` and
+#: `spo_conversion_service` stopped filtering their netting on it, so this and
+#: `reorder_run_service` are the only two SQL callers left. Here it no longer decides what
+#: COUNTS (see `_stock_context`'s docstring) - only the site/group SPLIT below still reads it.
 _pool_predicate = site_pool_sql
 
 #: The open-PO predicate - `scm.po_ordered_v`'s own, and what the "Outstanding PO" cell
@@ -119,12 +122,11 @@ PL_REMAINING_SQL = (
 #: already been turned into an SPO. Always <= `PL_REMAINING_SQL` (an allocated unit is also
 #: a received-or-not-yet unit), which is why filtering rows on `PL_REMAINING_SQL > 0` never
 #: drops a line this figure would otherwise count.
-#: CAVEAT: `l.spo_allocated_quantity` is written by
-#: `InboundShipmentService.refresh_shipment_line_statuses`, which sums SPO allocations for the
-#: SHIPMENT grouped by PRODUCT and stamps that same product total onto every line of that
-#: product on the shipment - not the allocation for that one line. A shipment with more than
-#: one line for the same product would over-subtract here; every shipment measured so far has
-#: had at most one line per product, so this has not yet been observed to matter.
+#: `l.spo_allocated_quantity` is per LINE since S4 (AC-D5): `refresh_shipment_line_statuses`
+#: apportions the product's allocated total across that product's own lines on the shipment
+#: in `(created_at, id)` order rather than stamping the product total onto each of them, so
+#: a container carrying one product on two lines (the supplier's own carton split) subtracts
+#: each line's own share here exactly once.
 PL_UNALLOCATED_SQL = (
     "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.spo_allocated_quantity, 0) "
     "- COALESCE(l.quantity_received, 0), 0)"
@@ -483,7 +485,8 @@ _PLACED_ON_LINE_SQL = """
 
 
 def _project_open_need(
-    db: Session, product_ids: set[str], *, horizon: Optional[date] = None
+    db: Session, product_ids: set[str], *, horizon: Optional[date] = None,
+    horizon_start: Optional[date] = None,
 ) -> dict[str, dict]:
     """Project need per product: the open project SO book, less what CS already placed.
 
@@ -530,12 +533,15 @@ def _project_open_need(
               AND {_OPEN_QTY_SQL} > 0
               AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                    OR sol.required_date <= CAST(:horizon AS date))
+              AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+                   OR sol.required_date >= CAST(:horizon_start AS date))
         ) p
         WHERE qty > 0
         GROUP BY product_id
     """
     rows = db.execute(
-        text(sql), {"pids": list(product_ids), "horizon": horizon}
+        text(sql), {"pids": list(product_ids), "horizon": horizon,
+                    "horizon_start": horizon_start}
     ).mappings().all()
     return {
         r["product_id"]: {
@@ -721,7 +727,8 @@ def _identity(info: dict, entry: Optional[dict]) -> dict:
 
 
 def _open_need(
-    db: Session, product_ids: set[str], *, horizon: Optional[date] = None
+    db: Session, product_ids: set[str], *, horizon: Optional[date] = None,
+    horizon_start: Optional[date] = None,
 ) -> dict[str, Any]:
     """Outstanding SO need per product, split by demand class.
 
@@ -786,6 +793,11 @@ def _open_need(
         query = query.filter(
             SalesOrderLine.required_date.is_(None) | (SalesOrderLine.required_date <= horizon)
         )
+    if horizon_start is not None:
+        query = query.filter(
+            SalesOrderLine.required_date.is_(None)
+            | (SalesOrderLine.required_date >= horizon_start)
+        )
     rows = query.group_by(SalesOrderLine.product_id).all()
     return {str(r.product_id): r for r in rows}
 
@@ -807,6 +819,7 @@ def _open_lines(
     catalogue: dict[str, dict],
     *,
     horizon: Optional[date] = None,
+    horizon_start: Optional[date] = None,
 ) -> list[dict]:
     """The open SO lines behind the demand rows, at line grain - CHANGE 2.
 
@@ -881,6 +894,8 @@ def _open_lines(
               -- a no-op.
               AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                    OR sol.required_date <= CAST(:horizon AS date))
+              AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+                   OR sol.required_date >= CAST(:horizon_start AS date))
               {("AND " + co) if co else ""}
         ) l
         -- A project line placed in full has nothing left to ask for, so it is not a line on
@@ -889,7 +904,8 @@ def _open_lines(
         ORDER BY required_date NULLS LAST, so_number
     """
     rows = db.execute(
-        text(sql), {"pids": product_ids, "horizon": horizon, **co_params}
+        text(sql), {"pids": product_ids, "horizon": horizon, "horizon_start": horizon_start,
+                    **co_params}
     ).mappings().all()
     return [
         {
@@ -967,21 +983,46 @@ def _pool_warehouses(db: Session) -> list[str]:
 
 
 def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """What we already hold or have coming, per product - SITE POOLS ONLY for the netting.
+    """What we already hold or have coming, per product - EVERY ACTIVE LOCATION, for the netting.
 
-    THE NETTING RULE THIS FUNCTION IS THE RECORD OF (F2, captain 26 Aug; R6, 6 Sep):
+    THE NETTING RULE THIS FUNCTION IS THE RECORD OF (R7, captain 8 Sep 2026, REVERSING F2/26 Aug):
 
-        suggested_qty = open_so_need - on_hand(site pools) - incoming_spo(site pools)
+        suggested_qty = open_so_need - on_hand(all active locations) - incoming_spo(all active locations)
                          - incoming_pl_unallocated
 
     and nothing else is ever subtracted.
 
-    * `on_hand` / `incoming_spo` count only locations where `COALESCE(w.segment,'dealer') <>
-      'project'` - the reorder engine's own pool predicate (`reorder_run_service`), and the
-      reason this function changed at all: it used to sum all 82 warehouses, so stock sitting
-      in a `-BB` project bin (spoken for by an order already promised) silently cancelled an
-      ask this container needed. That stock is not hidden - it travels as `on_hand_group` /
-      `incoming_spo_group` and is shown, muted, in the row breakdown.
+    * `on_hand` / `incoming_spo` now count EVERY active location, site pools AND
+      project-segment bins alike (captain, 8 Sep 2026): "these quantities are taken into
+      account in calculating the needed quantity ... which means our quantity in this formula
+      for on hand and SPO should consider all locations." `open_so_need` (above) already sums
+      project demand alongside retail/unclassified, so a supply side that only counted site
+      pools was overstating the ask for the common case: an UNREVIEWED or still-open project
+      line, whose demand `open_so_need` counts and whose bin stock the old rule dropped. This
+      REVERSES the F2/26-Aug rule below, which excluded project-segment warehouses from the
+      total.
+    * NOT an exact fix, and the accepted residue of it (S5, captain 8 Sep 2026): `project_qty`
+      (`_project_open_need`) is ALREADY NET of what CS has placed on a PO or an SPO
+      (`_PLACED_ON_LINE_SQL`, R15) - a project line placed in full leaves NOTHING in
+      `open_so_need` for it. The widening above does not ask what a bin's stock is FOR: once
+      that placement lands as received stock in the project's own bin, `on_hand` counts it
+      anyway. The result: stock whose matching demand has already left `open_so_need` nets
+      instead against whatever OTHER (retail) demand for the SAME product is still open -
+      supply counted, its own demand already gone. `test_container_request.
+      py::test_build_on_hand_nets_a_placed_projects_bin_stock_against_retail_demand` pins the
+      exact number this produces; it is a known, accepted asymmetry under R7, not a bug this
+      docstring is blessing by accident.
+    * The site/group split itself is unchanged and still uses the reorder engine's own pool
+      predicate (`COALESCE(w.segment,'dealer') <> 'project'`, `reorder_run_service`) - `sites`
+      still lists only pool warehouses, and `on_hand_group` / `incoming_spo_group` /
+      `group_locations` still isolate the project-bin half. That split is now a LABEL/breakdown
+      the row dialog shows ("of which, in project bins"), not an exclusion from the total: both
+      halves are added into `on_hand` / `incoming_spo` below.
+    * Superseded history (F2, captain 26 Aug): project-segment warehouses used to be excluded
+      from the netting total entirely, because summing all 82 warehouses let stock sitting in a
+      `-BB` project bin (spoken for by an order already promised) silently cancel an ask this
+      container needed. That reasoning did not account for `open_so_need` also counting project
+      demand, which is what the 8 Sep ruling above corrects.
     * `incoming_pl` (unreceived packing-list quantity on shipments that have not arrived) is
       shown beside the ask, with the shipments behind it, exactly as before Q1 - a packing
       list names no destination, so there is no way to tell whether it lands in a pool or in
@@ -1039,9 +1080,11 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
         ctx = out.setdefault(pid, _empty_context())
         on_hand = float(r["on_hand"] or 0)
         spo = float(r["incoming_spo"] or 0)
+        # 8 Sep 2026 ruling: both halves count toward the total now, pool and group alike -
+        # only the site/group SPLIT below still turns on `is_pool`.
+        ctx["on_hand"] += on_hand
+        ctx["incoming_spo"] += spo
         if r["is_pool"]:
-            ctx["on_hand"] += on_hand
-            ctx["incoming_spo"] += spo
             site = per_site.setdefault(pid, {}).setdefault(
                 r["warehouse_code"],
                 {"warehouse_code": r["warehouse_code"], "on_hand": 0.0, "incoming_spo": 0.0},
@@ -1416,6 +1459,7 @@ def build(
     supplier_id: str,
     include_lines: bool = False,
     plan_horizon_date: Optional[date] = None,
+    plan_horizon_start: Optional[date] = None,
     plan: Optional[Any] = None,
 ) -> dict:
     """What to ask this supplier for, ranked. Pure read - persists nothing.
@@ -1469,8 +1513,10 @@ def build(
     universe = (
         _linked_products(db, supplier_id) | set(product_holdings) | driver_ids
     ) - {None}
-    need = _open_need(db, universe, horizon=plan_horizon_date)
-    project = _project_open_need(db, universe, horizon=plan_horizon_date)
+    need = _open_need(db, universe, horizon=plan_horizon_date,
+                      horizon_start=plan_horizon_start)
+    project = _project_open_need(db, universe, horizon=plan_horizon_date,
+                                 horizon_start=plan_horizon_start)
 
     def _owed(pid: Optional[str]) -> bool:
         return bool(pid) and (pid in need or pid in project)
@@ -1552,8 +1598,9 @@ def build(
             unclassified_qty = float(getattr(n, "unclassified_qty", 0) or 0) if n else 0.0
             project_qty = p["qty"] if p else 0.0
             open_so_need = retail_qty + unclassified_qty + project_qty
-            # Site pools only; the outstanding PO and the ALLOCATED half of incoming_pl are
-            # not subtracted - `_stock_context`'s docstring is the record of that rule (R6).
+            # Every active location, site pools and project bins alike (R7, 8 Sep 2026); the
+            # outstanding PO and the ALLOCATED half of incoming_pl are still not subtracted -
+            # `_stock_context`'s docstring is the record of that rule (R6/R7).
             suggested_qty = max(
                 open_so_need
                 - ctx["on_hand"]
@@ -1642,6 +1689,9 @@ def build(
         "rows": prepared + no_demand_rows,
         "sources": _sources(db, stock_list_as_of=stock_list_as_of, proforma=proforma),
         "plan_horizon_date": plan_horizon_date.isoformat() if plan_horizon_date else None,
+        "plan_horizon_start": (
+            plan_horizon_start.isoformat() if plan_horizon_start else None
+        ),
     }
     if include_lines:
         # The drivers too: the "Open SOs" cell on a set row drills into this list keyed on
@@ -1652,6 +1702,7 @@ def build(
             sorted(set(demand_ids) | {sets[key]["driver_product_id"] for key in set_demand_keys}),
             catalogue,
             horizon=plan_horizon_date,
+            horizon_start=plan_horizon_start,
         )
     return result
 

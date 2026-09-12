@@ -36,9 +36,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_, text
 
+from app.models.inventory import Warehouse
 from app.models.procurement import InboundShipment, SPOAllocation, Supplier
+from app.services.scm.pool_predicate import active_site_pool_sql
 
 #: Receipt statuses that mean the goods are in. `fully_received` is the value the column's
 #: own CHECK constraint allows; `received` is kept beside it because migration 337's view
@@ -69,6 +71,52 @@ def open_incoming_clauses() -> tuple:
     )
 
 
+def visible_line_clauses() -> tuple:
+    """The one test a row must pass to be SHOWN in a listing (PLAN-hide-retired-spo-lines,
+    R1/R2): NOT (retired AND never received) - `retired_at IS NOT NULL AND
+    coalesce(quantity_received, 0) = 0` is the hidden set, everything else is visible.
+
+    This is a different question from `open_incoming_clauses()` above. That one asks
+    "is this line still supply a planner may count on" - closed, fully received or
+    landed lines all answer no, and stay entirely correct rows that simply are not
+    incoming anything more. This one asks "did AutoCount ever have this line, as far
+    as the document is concerned" - R1: a retired line is one AutoCount stopped
+    naming (the leftover sweep, or a DocKey change under the same `spo_number`), so it
+    is hidden from the document rather than merely marked closed. R2: a retired line
+    that carries a receipt (`quantity_received > 0`) stays visible regardless - stock
+    physically arrived against it, and D28c freezes that receipt on retirement, so
+    hiding the row would hide real goods that already landed.
+
+    A row that is merely `closed` (fully received, or closed for any reason with no
+    `retired_at`) is UNAFFECTED - it has no `retired_at`, so it is visible either way.
+
+    Readers: `procurement_service.SPOAllocationService.list_allocations`,
+    `list_allocations_grouped_by_shipment`, `list_allocations_grouped_by_spo_number`,
+    `list_documents` (and its `total_allocated` / `total_received` rollups),
+    `get_document` (its lines list and the same two rollups), and
+    `spo_last_receipt_service.last_receipt_rows` (the chatbot's "last in" - a line the
+    document no longer shows must not be able to answer as the newest one).
+    """
+    return (
+        or_(
+            SPOAllocation.retired_at.is_(None),
+            func.coalesce(SPOAllocation.quantity_received, 0) > 0,
+        ),
+    )
+
+
+def is_visible_allocation(allocation: "SPOAllocation") -> bool:
+    """The Python twin of `visible_line_clauses()`, for a reader that already holds
+    loaded `SPOAllocation` ORM objects rather than building a query (R7, round 2
+    security review) - `spo_conversion_service.planner_state`'s DISPLAY, filtering the
+    writer-facing, deliberately-unfiltered rows `_own_state` hands back. Kept as the
+    one restatement of the same rule rather than a second inline copy, so the two can
+    never drift the way `open_incoming_clauses()`'s SQL/Python halves are already
+    warned about above.
+    """
+    return allocation.retired_at is None or float(allocation.quantity_received or 0) > 0
+
+
 def overdue_days(arrival_date: Optional[date], as_of: Optional[date] = None) -> int:
     """How many days late a promised arrival is. 0 when it is today, ahead, or unstated.
 
@@ -81,47 +129,45 @@ def overdue_days(arrival_date: Optional[date], as_of: Optional[date] = None) -> 
     return max((reference - arrival_date).days, 0)
 
 
-def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
+def spo_history_for_product(db, run_id: str, product_id: str,
+                            warehouse_id: Optional[str] = None) -> dict:
     """The SPO book behind a plan row's SPO cell: open first, then what has landed.
 
-    Scoped to the row's SITE POOL and nothing else (R15). A run writes recommendations for
-    the locations that carry demand, which on live data is usually a project BIN rather
-    than the pool itself, so the pool is resolved the same way every other reader resolves
-    it - ``COALESCE(warehouses.pool_warehouse_id, warehouses.id)`` off the run's own rows
-    for this product. A shipment bound for a project bin, or for another site entirely, is
-    absent: the cell it explains deliberately excludes both.
+    PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S2 (AC-7, AC-8): scoped to the
+    ONE site-pool rule (`pool_predicate.active_site_pool_sql`). The old pool-id resolution
+    (`COALESCE(w.pool_warehouse_id, w.id)` off the run's recommendation rows for this
+    product) narrowed to whichever locations happened to be in THIS run's plan basis - a
+    warehouse that holds a shipment but no committed demand of its own was invisible even
+    though it is real site-pool supply the product-grain cell must sum.
+
+    Review fix round B (reviewer S1, AC-7 amended): a LOCATION-grain row's modal must read
+    that row's OWN warehouse only - the same grain rule `po_book_service._po_book_sql`
+    already applies (its `pr.warehouse_id IS NOT NULL` branch). Resolution:
+
+    1. `warehouse_id` given (the caller already knows which row/location it is opening -
+       the route/FE passes the plan row's own `warehouse_id` for a location-grain line) -
+       that warehouse alone, and only when it passes `active_site_pool_sql` (a project bin
+       explicitly named answers empty, never falls back to a wider read).
+    2. Omitted - every active site-pool warehouse, product-wide (unchanged since S2).
+
+    A caller-supplied `warehouse_id` is what tells the two grains apart, mirroring
+    `purchase_trend_service.purchase_trend_for_run`'s own `warehouse_id` kwarg - the same
+    "the caller who already resolved the row's grain names its warehouse; the function
+    itself does not re-derive it from `scm.reorder_recommendation`" shape. An
+    auto-detecting third branch (infer location-grain from this run's OWN recommendation
+    rows when no `warehouse_id` is given) was tried and dropped: no red test exercises it,
+    and the one available signal - any rec for this run/product carrying a non-NULL
+    `warehouse_id` - misclassifies `tests/scm/test_spo_history_to_pool.py`'s fixture
+    (`_revamp_fixtures.recommendation()` always stamps a location, even on a run whose
+    `decision_grain` is `'product'`), breaking 4 of its 5 already-green tests. Flagged to
+    the captain rather than implemented against no evidence (PRINCIPLES.md, "simplest
+    thing that works").
 
     `open` uses the one rule in this module (`open_incoming_clauses` plus "something is
-    still to come"); everything else the pool has ever been promised is history. Both are
-    newest-promise-first, so a buyer reads the next arrival at the top.
+    still to come"); everything else the site pool has ever been promised is history.
+    Both are newest-promise-first, so a buyer reads the next arrival at the top.
     """
-    from sqlalchemy import text as _text
-
-    # BOTH ways a run states where a row's demand sits. A location-grain row names its
-    # warehouse on the column; a PRODUCT-grain row names NONE - it is one buy for the whole
-    # product, and the locations it was netted over live in the frozen
-    # `inputs.plan_basis.locations` (`_emit_product`). Reading only the column returned an
-    # empty book for every row on the live plan, which is the shape the rollout default
-    # produces.
-    pool_ids = [
-        r[0] for r in db.execute(_text("""
-            SELECT DISTINCT COALESCE(w.pool_warehouse_id, w.id)::text
-              FROM scm.reorder_recommendation rr
-              JOIN warehouses w ON w.id = rr.warehouse_id
-             WHERE rr.run_id = CAST(:run AS uuid)
-               AND rr.product_id = CAST(:pid AS uuid)
-            UNION
-            SELECT DISTINCT COALESCE(lw.pool_warehouse_id, lw.id)::text
-              FROM scm.reorder_recommendation rr
-              CROSS JOIN LATERAL jsonb_array_elements(
-                  COALESCE(rr.inputs -> 'plan_basis' -> 'locations', '[]'::jsonb)) loc
-              JOIN warehouses lw ON lw.id = CAST(loc ->> 'warehouse_id' AS uuid)
-             WHERE rr.run_id = CAST(:run AS uuid)
-               AND rr.product_id = CAST(:pid AS uuid)
-        """), {"run": run_id, "pid": product_id}).all()
-    ]
-    if not pool_ids:
-        return {"open": [], "history": []}
+    wh_filter = [warehouse_id] if warehouse_id else None
 
     # ORM, not raw SQL, for two reasons. The company isolation filter runs on ORM
     # execution only, and this reads a company-owned table (`SPOAllocation` is
@@ -129,7 +175,7 @@ def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
     # orders. And the open/closed test is `open_incoming_clauses()` itself, evaluated in
     # SQL and returned per row, rather than a second Python copy of the same three
     # conditions that could drift from the module they are meant to share.
-    rows = (
+    query = (
         db.query(
             SPOAllocation.spo_number,
             Supplier.supplier_name,
@@ -139,17 +185,24 @@ def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
             InboundShipment.actual_arrival_date,
             and_(*open_incoming_clauses()).label("is_open"),
         )
+        .join(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
         .outerjoin(Supplier, Supplier.id == SPOAllocation.supplier_id)
         .outerjoin(InboundShipment,
                    InboundShipment.id == SPOAllocation.inbound_shipment_id)
         .filter(
             SPOAllocation.product_id == product_id,
-            SPOAllocation.warehouse_id.in_(pool_ids),
+            text(active_site_pool_sql("warehouses")),
+            # R7: a retired line is omitted from both legs below, not only labelled
+            # by `open_incoming_clauses()` above - that tuple is a SELECTED LABEL
+            # here (`is_open`), never a filter, so without this a retired line would
+            # still land in "open" or "history".
+            *visible_line_clauses(),
         )
-        .order_by(SPOAllocation.expected_date.desc().nullslast(),
-                  SPOAllocation.spo_number)
-        .all()
     )
+    if wh_filter is not None:
+        query = query.filter(SPOAllocation.warehouse_id.in_(wh_filter))
+    rows = query.order_by(SPOAllocation.expected_date.desc().nullslast(),
+                          SPOAllocation.spo_number).all()
 
     open_rows: list[dict] = []
     history: list[dict] = []

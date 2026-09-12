@@ -48,15 +48,22 @@ is carried and carries a uuid), which suppresses the "which company do you mean"
 the pin stops the QUESTION without constraining the ANSWER. The header renders `entity.raw`
 (right) while the rows are 15 other customers' orders (wrong).
 
-**Not fixed here, deliberately.** The fix is AND-mode entity pins in the resolver route,
-which is a change to `resolve_references`' own contract, not to this lane - and not a lane
-merely waiting to land: PR #456 is MERGED (9f04a3205) and it is what AUTHORED the refusal
-(`references.py:1650-1655`), for two stated reasons (an intersection has no per-token view
-to narrow, and a zero-intersection AND request retries under `force_mode="or"` where a pin
-would suddenly start applying). Closing the gap means deciding how a pin behaves in both,
-which is issue #715. The unit test below is `xfail(strict=True)`
-so the day that lands it announces itself instead of having to be remembered - the same
-mechanism `test_s5_escalation_lane.py` uses for the unpromoted B-HB-1 / B-TEAM-1' gates.
+**Fixed at the gate, not at the resolver (issue #715, closed 7 Sep 2026, H77/AC-825).**
+AND-mode `entity_pins` stays refused, exactly as PR #456 shipped it
+(`references.py:1650-1655`) - the two reasons that refusal was authored for (an
+intersection has no per-token view to narrow, and a zero-intersection AND request
+retries under `force_mode="or"` where a pin would suddenly start applying) are still
+true, and `resolve_entity_body` is unchanged. `gate.py`'s own "A PINNED PICK WINS OVER
+FUZZY RE-RESOLUTION" mechanism already re-seated a carried pick's uuid (exec
+13705266's fix widened its ENTRY gate to carried pins, `pin_uuids_all`) but never
+widened its FILTER: `pin_types` / `pin_bases` / `pin_codes` and `_keep`'s own uuid
+check stayed built from `pins` / `pin_uuids` (this-turn only), so a carried pick with
+no current-turn pin left `pin_types` empty and `_keep` kept every resolver row
+"untouched" - the pin stopped the QUESTION without constraining the ANSWER, which is
+this test's own account above. Widened those four reads to `pins_all` /
+`pin_uuids_all`, the same set the entry gate already used - the resolver's own wrong
+rows for the shared debtor code are then REPLACED by the picked uuid, never merged
+with it. See `TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver`.
 """
 from __future__ import annotations
 
@@ -247,55 +254,81 @@ def _wire(session_factory, monkeypatch) -> list[tuple[str, dict]]:
         return json.dumps({"answers": [{"note": "stub"}], "has_result": True})
 
     def fake_fetch_services(db: Any):
+        # Only the MCP seam is stubbed. The turn parses as `order`, whose `DOMAIN_SPEC`
+        # tool is `crm_order_management_orders_list` - the name this used to hand back as
+        # a search hit.
         FetchServices = business_services_mod.FetchServices
-        return FetchServices(
-            embed=lambda query: [0.1],
-            tool_search=lambda embedding, *, query, domain: [
-                {"name": "crm_order_management_orders_list", "similarity": 0.9}
-            ],
-            mcp_call=recording_mcp_call,
-        )
+        return FetchServices(mcp_call=recording_mcp_call)
 
     monkeypatch.setattr(engine_mod.business_services, "fetch_services", fake_fetch_services)
     return calls
 
 
-class TestACarriedCustomerPickIsSentToTheResolverAsAPin:
-    """The decisive unit, and the one that is RED (`xfail(strict=True)`).
+PICKED_UUID = "bec07281-8c52-4581-af8a-ad2d7a5f8e16"
 
-    Nothing else in this file can be: at any scale a test can seed, `301-C001` names one
-    customer, so re-resolving the code finds the right row and the defect hides. It takes
-    the 99 rows production has to show, which is why the class below is a guard rather than
-    a reproduction."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "The resolver route refuses `entity_pins` in AND mode BY DESIGN and that "
-            "refusal is already shipped: PR #456 is MERGED (9f04a3205) and it AUTHORED "
-            "the rule (references.py:1650-1655) for two stated reasons - an AND-mode "
-            "intersection has no per-token view to narrow, and a zero-intersection AND "
-            "request retries under `force_mode='or'`, where a pin would suddenly start "
-            "applying. So this is not a lane waiting to merge; it is a deliberate gap "
-            "somebody has to decide how to close. Tracked as issue #715. Until it does, "
-            "a carried customer pick is re-resolved from a debtor code 99 production rows "
-            "share. AC-825 / H77."
-        ),
-    )
-    def test_the_picked_uuid_is_pinned_so_a_shared_debtor_code_cannot_widen_the_scope(self):
+def _wrong_debtor_code_sibling(name: str, uuid: str) -> dict[str, Any]:
+    """One of the OTHER accounts production's own debtor code 301-C001 is shared by -
+    a different company, a different `uuid`, the SAME `canonical_code` a bare-text
+    re-search returns it under."""
+    return {
+        "uuid": uuid,
+        "entity_type": "customer",
+        "canonical_code": "301-C001",
+        "match_tier": "exact",
+        "display": {"customer_name": name},
+    }
+
+
+class TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver:
+    """Issue #715 (H77/AC-825), closed by `gate.py`'s own "PINNED PICK WINS OVER FUZZY
+    RE-RESOLUTION" mechanism - NOT by an AND-mode `entity_pins`, which stays refused by
+    PR #456's own contract (references.py:1650-1655: an AND-mode intersection has no
+    per-token view to narrow, and a zero-intersection AND request retries under
+    `force_mode='or'`, where a pin would suddenly start applying). `resolve_entity_body`
+    is unchanged and still omits `entity_pins` in AND mode - asserted below, so this
+    class cannot silently start relying on a pin that was never sent.
+
+    The mechanism already existed for a CURRENT-turn pick (`pins`, `current_message is
+    True`) and was already entered on a CARRIED one (`pins_all`, exec 13705266's own
+    fix, gated at `len(pin_uuids_all) > 0`) - it re-seated the picked uuid so the
+    ANSWER at least always carried it. What it never did for a carried pick was
+    FILTER: `pin_types` / `pin_bases` / `pin_codes` and `_keep`'s own uuid check were
+    all still built from `pins` / `pin_uuids` (this-turn only), so a carried pick with
+    zero current-turn pins left `pin_types` empty, and `_keep`'s first line (`if t not
+    in pin_types: return True`) kept every resolver row "untouched" - the pin stopped
+    the QUESTION ("which company do you mean?") without constraining the ANSWER. Fixed
+    by widening those four reads to `pins_all` / `pin_uuids_all`, the same set the
+    entry gate already uses.
+
+    Exercises `run_gate` directly rather than the resolver seam, matching the fix's
+    OWN layer: the resolver's bare re-search of `301-C001` is exactly what production
+    measured (99 rows share the code, the resolver returns up to its own limit of
+    them, the picked uuid is not necessarily among them) - reproduced here at a
+    tractable scale (3 siblings, not 99) because the MECHANISM being tested has no
+    dependency on the count."""
+
+    def test_resolve_entity_body_still_never_sends_a_pin_in_and_mode(self) -> None:
+        """The companion fact the class docstring states: nothing upstream of the gate
+        changed. If this ever starts asserting an `entity_pins` key, the "REPLACE at
+        the gate, never intersect at the resolver" account above is stale."""
         from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
 
         ctx = {
             "contact": {"id": "ZZT-item2", "phone": "+60000000009"},
-            "text": {"message": {"messageId": "ZZT-item2-unit",
-                                 "message": {"type": "text", "text": "last month"}}},
+            "text": {
+                "message": {
+                    "messageId": "ZZT-item2-unit",
+                    "message": {"type": "text", "text": "last month"},
+                }
+            },
             "session": {"session_vars": {"variables": {}}},
             "parse": {
                 "output": {
                     "message_type": "business_query",
                     "intent_hint": "check_order",
                     "domain_hint": "order",
-                    "match_mode": "and",  # the parser's own default, and this turn's value
+                    "match_mode": "and",
                     "access_levels": [],
                     "date_filter_start": "2026-08-01",
                     "date_filter_end": "2026-08-31",
@@ -305,7 +338,7 @@ class TestACarriedCustomerPickIsSentToTheResolverAsAPin:
                             "hint": "customer",
                             "ordinal": 3,
                             "current_message": False,
-                            "uuid": "bec07281-8c52-4581-af8a-ad2d7a5f8e16",
+                            "uuid": PICKED_UUID,
                             "canonical_code": "301-C001",
                         }
                     ],
@@ -315,15 +348,51 @@ class TestACarriedCustomerPickIsSentToTheResolverAsAPin:
             "media": None,
         }
         body = resolve_entity_body(ctx)
-
         assert body["tokens"] == ["301-C001"], body["tokens"]
-        assert body.get("entity_pins") == {
-            "301-C001": "bec07281-8c52-4581-af8a-ad2d7a5f8e16"
-        }, (
-            "a carried customer entity that already carries the uuid the customer PICKED "
-            "must be sent to the resolver as a pin, or the debtor code is re-resolved from "
-            "scratch and answers for every other account that shares it (99 rows share "
-            f"301-C001 in production): {body.get('entity_pins')!r}"
+        assert "entity_pins" not in body, body.get("entity_pins")
+
+    def test_the_picked_uuid_replaces_the_resolvers_wrong_debtor_code_siblings(self) -> None:
+        from app.services.chatbot.lanes.business.gate import run_gate
+
+        parser = {
+            "domain_hint": "order",
+            "entities": [
+                {
+                    "raw": CUSTOMER_LABEL,
+                    "hint": "customer",
+                    "ordinal": 3,
+                    "current_message": False,
+                    "uuid": PICKED_UUID,
+                    "canonical_code": "301-C001",
+                }
+            ],
+        }
+        # The resolver's OWN bare re-search of "301-C001" (AND-mode, no pin, per the
+        # test above) - three OTHER accounts sharing the code, the picked row not
+        # among them (production's own shape: the resolver returns up to its own
+        # limit, 15 of 99, and the picked uuid is not guaranteed to be one of them).
+        resolver = {
+            "resolutions": [
+                {
+                    "token": "301-C001",
+                    "matches": [
+                        _wrong_debtor_code_sibling("SILK CABINETS SDN BHD", "zzt-wrong-1"),
+                        _wrong_debtor_code_sibling("LAW KOK SIM (PROJECT-CASH)", "zzt-wrong-2"),
+                        _wrong_debtor_code_sibling("SUN CREST TRANSPORT SDN BHD", "zzt-wrong-3"),
+                    ],
+                }
+            ],
+        }
+
+        gate = run_gate({}, parser=parser, resolver=resolver, session=None)
+
+        customer_uuids = {
+            e["uuid"] for e in gate["compatible_entities"] if e.get("entity_type") == "customer"
+        }
+        assert customer_uuids == {PICKED_UUID}, (
+            "a resolved customer pick must REPLACE the resolver's own re-resolved "
+            "rows for the shared debtor code, never merge with them - the picked "
+            f"uuid must be the ONLY customer entity the gate hands the order tool: {customer_uuids!r}"
         )
 
 

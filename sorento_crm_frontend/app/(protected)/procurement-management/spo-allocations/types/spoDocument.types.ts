@@ -16,6 +16,14 @@ export type SPODocumentState = 'all' | 'outstanding' | 'completed';
 /** Whether fulfilment planning can see this line (plan Q4, UAC AC-6). */
 export type PlanningSpan = 'in_plan' | 'pool' | 'off' | 'none';
 
+/** One distinct container over a document's visible lines (PLAN-spo-list-container-
+ *  number.md AC-1). `shipment_id` is null for a raw, unlinked
+ *  `spo_allocations.container_number`. */
+export interface SPODocumentContainer {
+  container_number: string;
+  shipment_id: string | null;
+}
+
 /** One SPO number's header row, as the document list renders it (UAC AC-2). */
 export interface SPODocumentRow {
   /** The document's own key - also `id`, so the row satisfies `useListPager`'s
@@ -39,6 +47,9 @@ export interface SPODocumentRow {
   line_count: number;
   /** Max `overdue_days` over the document's OUTSTANDING lines; 0 when none are late. */
   worst_overdue_days: number;
+  /** Distinct containers over the document's visible lines, sorted by container number
+   *  (PLAN-spo-list-container-number.md AC-1/AC-2). */
+  containers: SPODocumentContainer[];
 }
 
 /** One allocation line, with the computed fields the Lines tab renders (UAC AC-6, AC-13). */
@@ -97,6 +108,14 @@ export interface SPODocumentLine {
    * join); an older/un-migrated response simply renders the PO column as a dash.
    */
   po?: { po_number: string; purchase_order_id: string; line_no: number | null } | null;
+  /**
+   * The AutoCount book's own source purchase-order NUMBER, straight off
+   * `spo_allocations.from_po_number` - text, never resolved into a CRM row, and never the
+   * same fact as `po` above (`PLAN-scm-book-linkage-on-document-lines.md` Slice B). Written
+   * by the live ingest (contract 2.2) whenever the book names one; `null` means the book
+   * itself named no source document for that line, never that nothing has written it yet.
+   */
+  from_po_number?: string | null;
   /**
    * Every sales order this line's allocation covers - `order_inquiry_links` (project) +
    * the SPO line's own `source_ref.so_coverage` (retail, the record of a retail take),

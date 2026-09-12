@@ -1,4 +1,4 @@
-"""The chatbot module's lane vocabulary, published for the settings screen (AC-809).
+"""The chatbot module's lane and domain vocabulary, published for core (AC-809, AC-931).
 
 The Settings > Chatbot screen has to render one checkbox per branch kind the build can
 complete, and `PUT /settings/general` has to refuse one it cannot. Both live in
@@ -35,3 +35,23 @@ def lane_options(*, business_lane_enabled: bool) -> list[tuple[str, bool]]:
         (kind, business_lane_enabled if kind in BUSINESS_BRANCH_KINDS else True)
         for kind in sorted(completed_lane_kinds())
     ]
+
+
+def default_unsupported_domains() -> list[str]:
+    """The domains the bot refuses out of the box (AC-304, AC-931).
+
+    `contracts.DEFAULT_UNSUPPORTED_DOMAINS`, projected off `DOMAIN_SPEC` (D9), reached
+    through this doorway for the same AC-002 reason `completed_lane_kinds` exists: the two
+    core-side readers - `SystemSetting.chatbot_unsupported_domains`' Python default and
+    `api/v1/user_management/settings.py`'s null-reset table - may not import
+    `app/services/chatbot/`, and hand-copied literals in those two places are exactly what
+    drifted when A6 unblocked `spo_allocation` (the settings copy was found only after the
+    other two were fixed).
+
+    A LIST, not the tuple, because both readers hand the value to SQLAlchemy as a JSONB
+    column value and a tuple serialises differently. Read at call time, so a slice that
+    changes the table needs no edit here.
+    """
+    from app.services.chatbot.contracts import DEFAULT_UNSUPPORTED_DOMAINS
+
+    return list(DEFAULT_UNSUPPORTED_DOMAINS)

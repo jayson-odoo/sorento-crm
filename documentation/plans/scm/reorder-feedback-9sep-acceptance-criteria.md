@@ -1,0 +1,367 @@
+# UAC: Reorder planning feedback batch, 9 Sep 2026
+
+Plan: `PLAN-reorder-feedback-9sep.md`. Status: S1-S9 done, 9 Sep 2026; issues #770-#778.
+
+## Journey
+
+**Actor:** the buyer (purchasing seat). Arrives from the sidebar: Procurement > Supply Chain >
+Reorder Planning, or Procurement > SPO Allocations.
+
+**J1 Buyer starts a plan.** Start Plan asks for the sales-order window: an optional start date
+and an optional end date ("Empty = every open order counts" stays true for both ends).
+Warehouses and products as today. The system already knows which products are excluded from
+planning (a flag on the product), so those never appear. The buyer decides ONE thing: the
+window.
+
+**J2 Buyer reads the plan.** Lines tab. The five preset dropdowns in Filters are gone; the
+filter builder alone slices the grid. Prices everywhere carry two decimals. A CNY last price
+reads "CNY 110.00" in both places, never "RM 110.00" beside "CNY 110.00". The Project count
+on a row and the Project demand lightbox agree: every source the engine counted is listed.
+
+**J3 Buyer decides a row.** Expanded panel. Product health arrives with the engine's
+suggestion already selected: Dead -> Discontinue, Slow or Fast moving -> Keep selling. The
+AutoCount level suggestion is built from retail deliveries only, so a project job that shipped
+2,000 pieces once does not lift the dealer reorder level. Buyer changes what they disagree
+with, saves.
+
+**J4 Buyer confirms.** Confirm (N) counts only products the buyer decided (an explicit
+decision saved or drafted). Rows nobody touched are NOT bought. Nothing decided -> Confirm (0),
+disabled. What the buyer decided is what is bought, exactly.
+
+**J5 Buyer changes the window or scope later.** Header tab, Edit is the primary call to action
+on the Plan card. Both dates editable. Re-plan carries decisions as today (G8, 1 Sep).
+
+**J6 Buyer prints the order sheet.** Order summary (already reachable from the plan) grows the
+columns of the paper sheet: delivery quantities grouped by month, the project/customer names
+behind the project quantity, the suggested supplier, and remarks (BRW PO qty, incoming SPO
+qty, last receipt date + qty, MOQ). Export gives the sheet as PDF (landscape, one row per
+product) and Excel. Nothing on the sheet is typed twice: every figure is the plan's own.
+
+**J7 Buyer reads SPO allocations.** The list shows the document date as its own sortable
+column; the SPO No cell is one line tall again. On the SPO document Lines tab every column
+sorts when clicked and a search box narrows the lines by product code/name or warehouse code.
+
+**Other stakeholders told automatically:** none new. AutoCount level output travels back by
+the user as today.
+
+## Acceptance criteria
+
+Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
+
+### S1 SPO list date column + SPO Lines sort and search
+
+- AC-S1.1 [FE] SPO Allocations list has a "Date" column right of SPO No showing `doc_date`
+  as dd/mm/yyyy, sortable (server `sort=doc_date`, already supported). The SPO No cell no
+  longer stacks the date underneath.
+- AC-S1.2 [FE] SPO Document Lines tab: clicking Product, Warehouse, Plan, Packing List,
+  Status, PO, SO covered headers reorders the rows (client-side sorted row model wired;
+  every column has an accessor).
+- AC-S1.3 [FE] SPO Document Lines tab has a search input (placeholder "Search product or
+  warehouse") that filters lines by product code, product name, warehouse code or name,
+  case-insensitive, with a clear button. Empty result shows "No lines match".
+- AC-S1.4 [E2E] Sidebar walk: SPO Allocations -> sort by Date desc -> open an SPO -> sort
+  Lines by Warehouse -> search a warehouse code -> only matching lines remain.
+- AC-S1.5 [T] vitest: list renders Date column and no sub-line; detail sort by warehouse
+  reorders; search narrows; product cell is one line when name equals code.
+- AC-S1.6 [FE] SPO Document Lines Product cell follows the PO form view rule
+  (`PurchaseOrderDetail.tsx:495-510`): the product name sub-line renders only when it is
+  non-empty and differs from the code (case-insensitive); otherwise the cell is one line.
+  Captain, 9 Sep 14:30 (screenshot 16).
+
+### S2 Plan grid: filters, money, price label, Edit CTA
+
+- AC-S2.1 [FE] Filters popover shows the filter builder only; the five preset selects
+  (statuses, decided, price answer, suggested action, level answer) are removed, and their
+  state code is deleted (not hidden). Rec type and Decision state remain builder fields.
+- AC-S2.2 [FE] Every money value in `scm/` renders with exactly two decimals: `fmtMoney`
+  and `fmtMoneyIn` use min/max 2 fraction digits. Cash tiles read "RM 9,070,460.00",
+  a zero reads "RM 0.00".
+- AC-S2.3 [FE] Last price in the row panel is labelled in the purchase's own currency
+  (`price.last.currency`), so a CNY purchase reads "CNY 110.00" in both the value and the
+  sub-line. Only when no purchase is on file does it fall back to the line's currency.
+- AC-S2.4 [FE] When the purchase currency has no MYR rate on file, the row panel shows
+  "No MYR rate for CNY, set it under SCM policies" under Line cost instead of a bare "-".
+- AC-S2.5 [FE] Header tab Plan card: Edit is the primary button (default variant), same
+  placement.
+- AC-S2.6 [T] vitest: presets absent; fmtMoney 2dp; CNY label; Edit primary.
+
+### S3 Project demand lightbox matches the row
+
+- AC-S3.1 [FE] The "open" tab of the demand lightbox on a grouped (product) row queries
+  with `scope=product`, the same scope the history tab already uses.
+- AC-S3.2 [BE] `demand_for_recommendation` returns form-leg rows (Order Inquiry Form rows
+  with no supply decision, the view's third leg) as `confirmed_lines` with
+  `source='order_inquiry_form'`, customer from the inquiry, project title where linked,
+  qty = raised minus linked, needed = `delivery_date`. The lightbox total equals the row's
+  Project figure for every product on a run.
+- AC-S3.3 [T] pytest: a product whose only project demand is one form-leg row shows
+  `project_committed=N` on the row and N in the lightbox lines. Golden reads unchanged.
+- AC-S3.4 [E2E] A product with Project > 0 opens a lightbox whose total equals the cell.
+
+### S4 Sales-order window (start + end)
+
+- AC-S4.1 [BE] `CreateReorderRunRequest` and `ReplanReorderRunRequest` accept optional
+  `plan_horizon_start: date`; `ReorderRun` stores it; `plan_horizon_start <= plan_horizon_date`
+  when both set, else 422.
+- AC-S4.2 [BE] `horizon_committed_select_sql` applies the start on every leg the end applies
+  to (book `sol.required_date`, confirmed and form `oir.delivery_date`):
+  `(:start IS NULL OR date IS NULL OR date >= :start)`. Undated demand stays in (G2 ruling).
+- AC-S4.3 [BE] Re-plan carries `plan_horizon_start` and treats a changed start as a changed
+  horizon (decision carry rules unchanged).
+- AC-S4.4 [FE] Start Plan modal: "Sales orders needed" with From and To date inputs, each
+  optional, helper "Empty = every open order counts."; To before From is refused inline.
+- AC-S4.5 [FE] Header tab shows "Sales orders needed: 01/01/2025 to 31/10/2026" (or "up to",
+  "from", "every open order"); Edit exposes both inputs; plan page subtitle uses the same
+  wording.
+- AC-S4.6 [T] pytest: run with start only, end only, both; a line dated before start is
+  out of committed, undated line stays in. vitest: modal validation, header wording.
+- AC-S4.7 [E2E] Start Plan with From 01/01/2026: an SO required 2025 is absent from the
+  Retail lightbox of its product.
+
+### S5 Product excluded from planning
+
+- AC-S5.1 [BE] Migration adds `products.exclude_from_planning BOOLEAN NOT NULL DEFAULT false`
+  with no backfill (G3 ruling: the buyer flips products by hand).
+- AC-S5.2 [BE] `_planning_rows` adds `p.exclude_from_planning = false`; an explicitly named
+  product at Start Plan still bypasses (G10, 1 Sep) is NOT extended: an excluded product is
+  excluded even when named, and the create request answers 422 naming it.
+- AC-S5.3 [BE] Product read/update schemas carry the field; both manual dict builders and
+  the product list serializer include it (CLAUDE.md "both dict builders").
+- AC-S5.4 [FE] Product form (create + edit modal) has a "Exclude from reorder planning"
+  switch under the existing status fields; product detail shows it; product list gets an
+  optional column and a filter field.
+- AC-S5.5 [T] pytest: excluded product absent from a run that would otherwise carry it;
+  named excluded product -> 422. vitest: switch round-trips.
+- AC-S5.6 [E2E] Toggle on `**NEW` from the product page, start a plan, `**NEW` absent.
+- AC-S5.7 [FE][BE] The product form saves a product whose code contains `*` (AutoCount
+  placeholder codes `**NEW`, `**SPARE PART`, `**REPLACE`, `**REPAIR`): the product code
+  validation accepts `*` in both the frontend schema and any backend validator. Found by the
+  browser walk, 9 Sep: without it the buyer cannot flip the exclusion on `**NEW` at all.
+
+### S6 Confirm buys decided rows only
+
+- AC-S6.1 [BE] `confirm_decisions` with `ids=[]` confirms every row holding a saved decision
+  (`PlanRowDecision` / product decision with buy > 0) and NEVER sweeps undecided `buy` recs
+  into PO lines. The R3 "untouched rows confirm as suggestion" blocks in both grains are
+  removed. Order summary's confirm (same endpoint) inherits the rule.
+- AC-S6.2 [FE] `confirmSummary` counts products with an explicit decision (drafted edit or
+  persisted decision) and buy > 0; suggested-only rows are not counted. Zero -> button
+  disabled, label "Confirm (0)".
+- AC-S6.3 [FE] Decisions tile "N of M made" unchanged; Confirm tooltip when zero: "Decide at
+  least one row first".
+- AC-S6.4 [T] pytest: run with 3 buy recs, 1 decided: confirm creates exactly 1 PO line;
+  run with none decided: confirm creates none and answers 200 with confirmed=0. vitest:
+  confirmSummary excludes suggested-only rows.
+- AC-S6.5 [E2E] Fresh plan, Confirm reads (0) disabled; decide one row (Use suggestion),
+  Save, Confirm (1).
+
+### S7 AutoCount level from retail deliveries only
+
+- AC-S7.1 [BE] `scm.consumption_v` gains `warehouse_segment` (from `warehouses.segment`);
+  `average_daily_usage` and `suggest_level_from_usage` inputs read only rows whose segment
+  is `dealer` (G1 ruling). Health `movement_class` is unchanged (all deliveries).
+- AC-S7.2 [BE] Level suggestion payload gains `basis.retail_only: true` and the FE terms line
+  reads "ADU 1.911 / day (retail)".
+- AC-S7.3 [T] pytest: product with 100 project-bin deliveries and 10 pool deliveries in the
+  window: ADU uses 10. View migration is a `CREATE OR REPLACE` that appends the column only.
+
+### S8 Product health carries a default decision
+
+- AC-S8.1 [FE] Radio preselects from the health class when no decision is stored: `dead`
+  -> Discontinue; `fast_moving`, `slow_moving`, `no_history` -> Keep selling. A stored
+  decision always wins.
+- AC-S8.2 [FE] The preselected value is a suggestion: it is sent on Save only for rows the
+  buyer decided (any edit on that row), and on Confirm for every confirmed product (G4).
+- AC-S8.3 [FE] Confirm's preceding plan-edits save carries the suggested lifecycle for every
+  confirmable product (`withConfirmLifecycle`); no new backend path (S5, Phase 3 ruling -
+  confirm already saves plan-edits before it confirms, and that save is where the
+  suggestion is persisted, so a second write path for the same fact was never needed).
+- AC-S8.4 [T] vitest: default mapping; `withConfirmLifecycle` carries the suggestion.
+
+### S9 Order summary = the paper sheet
+
+- AC-S9.1 [BE] SUPERSEDED by AC-S14.3/S14.4/S14.9 (10 Sep): `OrderSummaryRowOut` gains `delivery_by_month: [{month: "2026-09", qty}]`
+  (open retail SO lines by `required_date` + project OI rows by `delivery_date`, undated
+  under `month: null`), `project_customers: [{label, qty}]` (project OI rows grouped by
+  customer/project title), `supplier_name` (chosen else suggested), `po_open_qty` (BRW pool
+  open PO qty), `incoming_spo_qty`, `last_receipt: {date, qty}` (latest goods_received
+  picking line for the product), `moq`. All frozen with the row at run time.
+- AC-S9.2 [FE] SUPERSEDED by AC-S14.3/S14.4/S14.9 (10 Sep): Order summary grid adds columns Delivery (month groups rendered "Sep 30 -
+  Oct 30", newest last), Project / customer (names, qty in brackets, truncated with title),
+  Supplier, Remarks ("PO 400 + incoming 89 = 489", "Last in 21/07/2026 - 300", "MOQ 1000").
+  Browser round 3 (9 Sep): the screen and the export are NOT the same column set. The
+  screen keeps the pre-existing combined "SO demand" cell (Project / Retail stacked in one
+  cell, with its own drill popovers) rather than splitting it - column order there is
+  Product, On hand, SO demand (Project / Retail stacked), Order qty, Delivery, Project /
+  customer, Supplier, Remarks, then the screen's own remaining existing columns
+  (Locations, Ordered, Incoming, Short vs orders, Suggested (policy)). The PDF/Excel
+  export renders the sheet's own nine SEPARATE columns instead: Item, On hand, Project
+  qty, Dealer o/s, Order qty, Delivery, Project / customer, Supplier, Remarks - the split
+  the printed sheet has always used, generated fresh for the document rather than reused
+  from the grid's combined cell.
+- AC-S9.3 [BE] `GET /order-summary/export?run_id=&format=pdf|xlsx` renders the same rows:
+  PDF landscape A4 via `pdf_render`, Excel via an openpyxl workbook built directly in
+  `summary_order_service` (Phase 3 ruling S2 - `xlsx_renderer`'s fixed multi-sheet register
+  shape did not fit this flat nine-column sheet). Order qty column carries the chosen qty,
+  blank when undecided (the pen column).
+- AC-S9.4 [FE] Export button on the Order summary toolbar offers PDF and Excel, downloads
+  through the existing file download helper, toast on failure.
+- AC-S9.5 [T] SUPERSEDED by AC-S14.3/S14.4/S14.9 (10 Sep): pytest: report row for a fixture product shows two delivery months, one
+  project customer, last receipt, MOQ; export endpoints return the right content types.
+  vitest: Remarks cell composition.
+- AC-S9.6 [E2E] Open Order summary from a plan, see Delivery and Remarks populated, export
+  PDF, file lands.
+
+### Round 2 (captain, 9 Sep evening, screenshots 17-20)
+
+Measured: for SRTSS8710 the engine's suggested supplier is the `DEFAULT` product_suppliers link
+at MYR 121.80 while the last purchase is CNY 48.00 from KAIPING HANSHUN (202603-S0048); the row
+printed "Line cost RM 56,271.60 at last price" = 462 x 121.80, a stale default, under a wrong
+label. MOQ edits land only as `set_moq_override` on the recommendation (per run).
+
+### S10 Order sheet from the plan, Order summary page retired
+
+- AC-S10.1 [FE] The plan grid Actions menu offers "Order sheet PDF" and "Order sheet Excel";
+  each downloads `GET /order-summary/export?run_id=<run>&format=` for the open run through
+  the shared file-download helper, toast on failure (including the 422 "Narrow the plan first").
+- AC-S10.2 [FE] The "Order summary" action and the Order summary view are removed from the plan
+  page; the component, its hooks and tests are deleted when nothing else consumes them
+  (`useConfirmOrderDecisions` reuse is checked first). Backend order-summary routes stay.
+- AC-S10.3 [T] vitest: Actions menu lists both sheet entries, neither lists Order summary;
+  clicking PDF calls the download helper with the run id and `pdf`.
+- AC-S10.4 [E2E] Actions > Order sheet PDF on a completed plan: 200, file lands.
+
+### S11 Price in the buying currency
+
+- AC-S11.1 [FE] The Last supplier select prefills with the LAST PURCHASE supplier when one is
+  on file (KAIPING HANSHUN for SRTSS8710), not the engine's default link; the buyer can still
+  change it.
+- AC-S11.2 [FE] Line cost = Buy qty x last price, labelled in the purchase's currency:
+  "Line cost CNY 22,176.00 at last price". With "Get new price" selected, or no last price on
+  file, it is Buy qty x the chosen supplier's own cost in that supplier's currency, labelled
+  "at supplier price"; with neither, "-".
+- AC-S11.3 [FE] The "No MYR rate for CNY, set it under SCM policies" hint is removed
+  (AC-S2.4 retired). Cash tiles unchanged (they sum what has a base cost).
+- AC-S11.4 [T] vitest: CNY last price 48 with Buy 462 renders "CNY 22,176.00 at last price";
+  no last price + supplier cost renders the supplier's currency; hint text absent.
+
+### S12 Row Save
+
+- AC-S12.1 [FE] The expanded row's "Use suggestion" button becomes "Save": it persists this
+  row's current inputs (decision cover/buy, MOQ, level, reorder qty, lifecycle, price mode,
+  supplier) immediately through the plan-edits save for that row's recommendations, removes
+  the row from the unsaved set, and toasts. "Skip" stays. Toolbar Save (N) still saves every
+  drafted row.
+- AC-S12.2 [FE] After a row Save the Decisions tile and Confirm (N) update without a reload.
+- AC-S12.5 [FE] Row Save first commits the row's pending inputs (a value typed but not yet
+  blurred counts), then saves; with nothing drafted on the row it toasts "Nothing to save on
+  this row" and fires no request.
+- AC-S12.3 [T] vitest: clicking Save calls savePlanEdits with only that row's recs; Save (N)
+  drops by one; Confirm (N) rises when the row carries a buy.
+- AC-S12.4 [E2E] Type Buy 30, Save: toast, Confirm (1), reload shows 30.
+
+### S13 MOQ remembered on the product supplier
+
+- AC-S13.1 [BE] Saving an MOQ on a row (plan-edits `moq`, and `PUT /recommendations/{id}/moq`)
+  also writes `product_suppliers.moq` for (product, supplier) where supplier = the row's chosen
+  supplier, else the last-purchase supplier, else the primary link; the link is created when
+  it does not exist and a supplier is known. The per-run rec override is still written.
+- AC-S13.2 [FE] The MOQ input prefills from that product-supplier link's MOQ (the rec's
+  `supplier.moq` when present) so a remembered MOQ shows on the next plan.
+- AC-S13.3 [BE] The next run applies it: `_supplier_constraints` already reads
+  `ProductSupplier.moq`; a test creates a run after saving MOQ 100 and asserts the row's
+  `supplier_moq` is 100 and the rounded qty respects it.
+- AC-S13.4 [T] pytest: plan-edits moq 100 on a rec whose last-purchase supplier has no link
+  creates `product_suppliers` (product, supplier, moq 100); a second save updates in place.
+- AC-S13.5 [E2E] Set MOQ 100, Save, start a new plan, the same product shows MOQ 100 and a
+  Buy qty of at least 100 (MOQ is a floor, not an order multiple; `order_multiple` is the
+  multiple and stays as it is).
+- AC-S13.6 [BE] (ruling G7) The engine's chosen supplier is the last-purchase supplier when
+  one is on file (its product_suppliers link; price by the existing candidate cascade, last
+  purchase first, contract cost second), else the primary link, else today's cheapest
+  candidate. `inputs.supplier`, `supplier_selection`, MOQ, lead time and unit cost all come
+  from that supplier, on EVERY pick: cell, product, pooled and network aggregate rows. pytest:
+  product with primary A (MYR 121.80) and last purchase from B (CNY 48, link B moq 100): the
+  run's rec names B, currency CNY, cost 48, moq 100, rounded qty at least 100 (a need of 30
+  rounds up to 100; a need of 622 stays 622), on a single-warehouse run, on a two-warehouse
+  pooled run and on a network-scope run; a product
+  with no last purchase still picks A.
+- AC-S13.7 [BE] A blank or 0 MOQ on a row clears the per-run `moq_override` only; the
+  product-supplier link's MOQ is master data and is never nulled or created by a clear.
+  remember_moq finds the link without a company filter (the unique key is
+  `(product_id, supplier_id, effective_from)`, so a legacy link stamped to another company
+  must be updated, never duplicated) and inserts only when none exists; a lost race between two
+  concurrent saves surfaces as the unique violation, accepted as out of scope for a buyer's
+  single screen.
+
+### Cross-cutting
+
+- AC-X.1 Usable at 375px and 1280px on every touched screen.
+- AC-X.2 No new Playwright spec; agent-browser evidence run recorded per slice.
+- AC-X.3 Every touched listing keeps `tableLayout` fixed + resizable columns.
+
+### Round 3 (captain, 10 Sep, screenshots 21-24): S14 the sheet reads like the paper one
+
+- AC-S14.1 [BE] `write_rows` freezes `pool_on_hand` (site pool stock only: a product with
+  100 at BRW and 40 at a project bin freezes 100) and `reorder_level` (the run's own
+  `inputs.reorder_level`; NULL when no recommendation carries one). Migration 504, additive.
+- AC-S14.2 [BE] `incoming_spo_qty` counts open SPO allocations at site pool warehouses only:
+  an allocation at a project bin or with no warehouse is not counted.
+- AC-S14.3 [BE] `delivery_by_month` and `project_customers` come from Order Inquiry ORDER
+  rows (qty > 0, state not cancelled, active supply decision) for the product; a retail SO
+  line with a required_date contributes NOTHING to `delivery_by_month`; a cancelled ORDER
+  row contributes nothing; raised and placed rows both count; the customer label is
+  "<customer> / <project title>" when the project SO names a project, else the customer.
+  The sum of `project_customers` qty equals the sum of `delivery_by_month` qty.
+- AC-S14.4 [BE] Export columns, in order: Item code, BRW on hand, Reorder level, Project
+  qty, Dealer o/s, Order qty, Delivery, Project / customer, Supplier, BRW PO qty, BRW
+  incoming qty, Last in qty, Last in date, Remarks. Project qty = sum of
+  `project_customers`. Remarks = "MOQ n" or blank. Last in date = dd/mm/yyyy.
+- AC-S14.5 [BE] Delivery cell = one "Mon - qty" per line, oldest first, "Undated - qty"
+  last; Project / customer = one "Name - qty" per line; blank when the product has no
+  inquiry rows.
+- AC-S14.6 [BE] xlsx: header row bold, white font, solid dark fill; every written cell has
+  a thin border on all four sides and wrap_text on; freeze panes at A2; column widths set;
+  a multi-entry Delivery cell contains a newline. Quantities stay numbers.
+- AC-S14.7 [BE] PDF html: header cells dark-filled white bold text, borders on every cell,
+  `pre-line` on the two list cells, thead repeats per page; landscape A4 unchanged.
+- AC-S14.8 [FE] `lib/orderSheetText.ts` and its test are gone; vitest and lint stay green.
+- AC-S14.9 [T] pytest in `tests/scm/test_order_summary_sheet.py` pins S14.1-S14.7 on a
+  seeded chain (own category/uom/products/warehouses - the CI DB is empty).
+- AC-S14.10 [E2E] Actions > Order sheet Excel on the lane's latest completed plan: the
+  workbook opens with the 14 headers styled, a project row shows its inquiry customers one
+  per line, BRW on hand differs from the grid's On hand where a project bin holds stock.
+
+### S15 (owner, 10 Sep 2026): Supplier column = last PO supplier
+
+Measured on the prod copy: 11,804 of 11,807 `product_suppliers` links point at one
+placeholder supplier, code DEFAULT, none marked primary - `resolve_default_supplier_id`
+(`app/services/rules/product_rules.py`) auto-links every new/imported product to it. Of
+the 5,353 products with PO history, only 1 already had a link matching its own last PO.
+
+- AC-S15.1 [BE] The sheet's Supplier column reads the product's LAST purchase order's
+  supplier (`purchase_orders.issue_date` desc, NULLs last, `created_at` desc as the
+  tiebreak), never the `product_suppliers` link. `_last_po_supplier_map` replaces
+  `_suggested_supplier_map` in `summary_order_service.py`.
+- AC-S15.2 [BE] A product with NO purchase order history prints a BLANK Supplier, never
+  DEFAULT and never a link-table fallback.
+- AC-S15.3 [BE] A buyer's explicit chosen supplier (`record_decision`) still wins over the
+  engine's last-PO reading, unchanged from before S15.
+- AC-S15.4 [BE] A PO with a NULL `issue_date` sorts LAST, not first, so it is never read as
+  "newest" merely because it was inserted last.
+- AC-S15.5 [BE] Remarks' MOQ (and `order_multiple`) is read from the SAME last-PO
+  supplier's own `product_suppliers` link when one exists, else null - never another
+  supplier's terms, so the Supplier column and the Remarks MOQ always describe one choice.
+- AC-S15.6 [BE] `scripts/backfill_product_supplier_from_last_po.py`: dry-run by default,
+  `--apply` to write. Per product with PO history, upserts a `product_suppliers` link to
+  the last-PO supplier as `is_primary_supplier=true` (clearing the flag on the product's
+  other links, touching nothing else on them), then deletes that product's DEFAULT link
+  (identified by `--default-supplier-code`, default `DEFAULT`) unless the last-PO supplier
+  IS DEFAULT itself. `--drop-default-all` additionally deletes the DEFAULT link of products
+  with NO PO history. Idempotent (a second run creates/promotes/removes 0). Reports
+  products seen, links created, links promoted, DEFAULT links removed, and up to 10 sample
+  `product_code -> supplier_code` lines.
+- AC-S15.7 [T] pytest in `tests/scm/test_supplier_last_po_s15.py`: AC-S15.1-S15.5 against
+  the shared chain fixture; AC-S15.6 against an empty scratch schema (the script sweeps
+  every product with PO history under company scope, so an exact count needs a blank
+  slate rather than the shared prod-copy DB).

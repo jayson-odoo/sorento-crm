@@ -3,133 +3,32 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
-import { CircleCheck, CircleDashed, History, Info } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { CircleCheck, CircleDashed, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
-  ACK_LABELS,
   ackStateOf,
   isBulkRejectable,
   previousValueOf,
 } from '../../_shared/lib/orderInquiryAck';
-import { BoardChangeTable } from '../../fulfilment-planning/components/BoardChangeTable';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
-import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
-  KIND_COLOURS,
-  KIND_LABELS,
-  fullyLinked,
-  segmentsOfRow,
-} from '../../_shared/lib/orderInquiryKinds';
-import {
+  bundledHeadline,
   flowExclusionLabel,
   formatInquiryQty,
   linkedSummary,
   orderInquiryRowHref,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
-import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
+import { OrderInquiryBackingDocumentsDialog } from './OrderInquiryBackingDocumentsDialog';
+import { OrderInquiryQtyAnnotationDialog } from './OrderInquiryQtyAnnotationDialog';
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
-}
-
-/**
- * The Was/Now of a settled amendment, behind a lightbox: the row keeps only the clickable
- * "Changed <date>" badge (captain, 1 Sep - the inline table crowded the qty cell), and the
- * dialog is mounted only once it has been asked for, same as the document lightbox below.
- */
-function ChangedBadge({ row }: { row: OrderInquiryWorklistRow }) {
-  const [open, setOpen] = React.useState(false);
-  const previous = previousValueOf(row);
-  if (!previous) return null;
-  return (
-    <>
-      <button
-        type="button"
-        data-testid={`change-badge-trigger-${row.id}`}
-        className="cursor-pointer"
-        aria-label={`Show what changed on ${row.item_code ?? row.so_number ?? 'this row'}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          setOpen(true);
-        }}
-      >
-        <Badge variant="warning" appearance="light" size="sm">
-          <History className="size-3" aria-hidden="true" />
-          {row.changed_at
-            ? `${ACK_LABELS.changed} ${formatDateInMalaysia(row.changed_at)}`
-            : ACK_LABELS.changed}
-        </Badge>
-      </button>
-      {open ? (
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent className="max-w-lg" data-testid={`change-detail-${row.id}`}>
-            <DialogHeader>
-              <DialogTitle className="tabular-nums">
-                {row.item_code ?? row.so_number ?? 'Changed'}
-              </DialogTitle>
-              <DialogDescription>
-                {row.changed_at
-                  ? `Changed ${formatDateInMalaysia(row.changed_at)}`
-                  : 'Changed by customer service'}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogBody>
-              <BoardChangeTable
-                omitDecision
-                omitHeader
-                annotation={{
-                  rowId: row.id,
-                  soNumber: row.so_number ?? '',
-                  lineNo: 0,
-                  itemCode: row.item_code ?? '',
-                  // The batch's own change vocabulary is never shown (part 3) and this
-                  // table prints none of it; `qty_up` is the nearest true word for a row
-                  // CS amended, and nothing reads it here.
-                  kind: 'qty_up',
-                  closed: false,
-                  was: { qty: previous.qty, date: previous.date, decision: null },
-                  now: { qty: row.qty, date: row.delivery_date ?? null, decision: null },
-                  movedTransfer: null,
-                  projectLineId: null,
-                }}
-              />
-            </DialogBody>
-          </DialogContent>
-        </Dialog>
-      ) : null}
-    </>
-  );
-}
-
-/**
- * The rejected reason, wherever a rejected row is rendered (moved off its own Confirmed
- * column into the qty cell, S1 AC-1.5).
- */
-function RejectedNote({ row }: { row: OrderInquiryWorklistRow }) {
-  const reason = (row.rejected_reason ?? '').trim();
-  const line = reason
-    ? `Rejected: ${reason}`
-    : `Rejected${row.rejected_by_name ? ` by ${row.rejected_by_name}` : ''}`;
-  return (
-    <span className="block truncate text-2xs text-muted-foreground" title={line}>
-      {reason && row.rejected_by_name ? `${row.rejected_by_name}: ${reason}` : line}
-    </span>
-  );
 }
 
 /**
@@ -155,13 +54,149 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
     );
   }
   return (
-    <span
-      data-testid="link-draft-mark"
-      title="Not yet acknowledged"
-      aria-label="Not yet acknowledged"
-    >
+    <span data-testid="link-draft-mark" title="Proposed" aria-label="Proposed">
       <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
     </span>
+  );
+}
+
+/**
+ * The "Outstanding PO/SPO" cell's own info icon (AC-A5): opens
+ * `OrderInquiryBackingDocumentsDialog`, mounted only once asked for so a page of a hundred
+ * rows does not carry a hundred dialogs - the same pattern `OrderInquiryDocumentLink` uses.
+ */
+function BackingDocumentsButton({ row }: { row: OrderInquiryWorklistRow }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        data-testid={`backing-documents-trigger-${row.id}`}
+        aria-label={`Show documents backing ${row.item_code ?? row.so_number ?? 'this row'}`}
+        className="size-5 shrink-0 text-muted-foreground"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <Info className="size-3.5" aria-hidden />
+      </Button>
+      {open ? (
+        <OrderInquiryBackingDocumentsDialog row={row} open onOpenChange={setOpen} />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The "Outstanding PO/SPO" cell's info icon for a BUNDLED row (UAC D1-D3, D10;
+ * PLAN-scm-supplied-with-companions.md section 3.4).
+ *
+ * A row that rides ENTIRELY inside the item(s) it is bundled with has no backing
+ * documents of its own - the icon opens the ANCHOR row's own lightbox instead ("the
+ * info icon opens the HOST row's lightbox", never named that in the UI). A row that is
+ * only PART bundled keeps its own lightbox (its own links back the ala carte
+ * remainder), with a leading entry naming what the rest rides with.
+ */
+function BundledDocumentsButton({
+  row,
+  anchorRow,
+  fullyBundled,
+}: {
+  row: OrderInquiryWorklistRow;
+  anchorRow: OrderInquiryWorklistRow | null;
+  fullyBundled: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const bundled = row.bundled_with;
+  if (!bundled) return null;
+  const itemCodes = bundled.item_codes.length ? bundled.item_codes : [bundled.item_code];
+  const dialogRow = fullyBundled ? (anchorRow ?? row) : row;
+  return (
+    <>
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        data-testid={`backing-documents-trigger-${row.id}`}
+        aria-label={`Show documents backing ${row.item_code ?? row.so_number ?? 'this row'}`}
+        className="size-5 shrink-0 text-muted-foreground"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <Info className="size-3.5" aria-hidden />
+      </Button>
+      {open ? (
+        <OrderInquiryBackingDocumentsDialog
+          row={dialogRow}
+          open
+          onOpenChange={setOpen}
+          bundleNote={
+            fullyBundled
+              ? { itemCodes, fullyBundled: true }
+              : { itemCodes, fullyBundled: false, qty: row.bundled_qty ?? '0' }
+          }
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The Qty cell's own info icon (owner's 9 Sep feedback, live look at the running lane):
+ * the same one-line defect slice A fixed for the Outstanding column also sat here - a
+ * rejected row's reason or a changed row's Was/Now table rendered as a second line, so
+ * those rows read taller than every other one. Rendered ONLY when the row actually has
+ * something to say (a rejection, a change stamp, or both); a plain acknowledged row shows
+ * the quantity alone.
+ *
+ * The two states stay distinguishable at a glance without adding words to the cell: a
+ * REJECTED row's icon reads as a warning (the design system's own warning token, matching
+ * `Badge variant="warning"` elsewhere on this screen) because it is the one that needs
+ * purchasing to look again; a row that only carries a change stamp reads muted, the same
+ * colour every other icon-only trigger on this list uses, because it is informational.
+ * Both facts win the warning colour when both apply - a rejection is the more urgent of
+ * the two.
+ */
+function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
+  const [open, setOpen] = React.useState(false);
+  const rejected = ackStateOf(row) === 'rejected';
+  const changed = Boolean(previousValueOf(row));
+  if (!rejected && !changed) return null;
+  const label = rejected
+    ? `Show why ${row.item_code ?? row.so_number ?? 'this row'} was rejected`
+    : `Show what changed on ${row.item_code ?? row.so_number ?? 'this row'}`;
+  return (
+    <>
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        data-testid={`qty-annotation-trigger-${row.id}`}
+        aria-label={label}
+        className={`size-5 shrink-0 ${
+          rejected
+            ? 'text-[var(--color-warning-accent,var(--color-yellow-700))]'
+            : 'text-muted-foreground'
+        }`}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <Info className="size-3.5" aria-hidden />
+      </Button>
+      {open ? (
+        <OrderInquiryQtyAnnotationDialog row={row} open onOpenChange={setOpen} />
+      ) : null}
+    </>
   );
 }
 
@@ -290,30 +325,22 @@ export function useOrderInquiryWorklistColumns({
         ),
       },
       {
-        // Qty carries the handshake now (S1, AC-1.5): there is no manual confirm left to
-        // put a Confirmed column about, so the two facts that still matter to a buyer
-        // scanning the row - a rejection and its reason, a settle-in-place and its
-        // Was/Now - render right under the figure they are about. A row that is simply
+        // Qty carries the handshake now (S1, AC-1.5): a rejection and its reason, or a
+        // settle-in-place and its Was/Now, are the two facts that still matter to a buyer
+        // scanning the row. ONE LINE (AC-A8, owner's 9 Sep feedback against the running
+        // lane - the same defect slice A fixed for the Outstanding column): the quantity,
+        // and an info icon only when there is something to say. A row that is simply
         // acknowledged (the ordinary case) shows the number and nothing else.
         accessorKey: 'qty',
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
         size: 150,
         meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
-        cell: ({ row }) => {
-          const state = ackStateOf(row.original);
-          return (
-            <div className="min-w-0 space-y-1">
-              <span className="block tabular-nums">
-                {formatInquiryQty(row.original.qty)}
-              </span>
-              {state === 'rejected' ? (
-                <RejectedNote row={row.original} />
-              ) : (
-                <ChangedBadge row={row.original} />
-              )}
-            </div>
-          );
-        },
+        cell: ({ row }) => (
+          <span className="flex min-w-0 items-center gap-1 tabular-nums">
+            {formatInquiryQty(row.original.qty)}
+            <QtyAnnotationButton row={row.original} />
+          </span>
+        ),
       },
       {
         accessorKey: 'delivery_date',
@@ -401,11 +428,12 @@ export function useOrderInquiryWorklistColumns({
           ),
       },
       {
-        // WHERE the quantity sits (AC-D16/AC-D17). One row holds many links
-        // (`projects.order_inquiry_links`), so the cell states the coverage first -
-        // `8 of 8` - and then names each document with the LOCATION and quantity it
-        // holds, which is the shape the buyer keys into AutoCount. Either kind of
-        // document number opens the lightbox.
+        // WHERE the quantity sits (AC-A1..AC-A7, owner's 8 Sep cut of the mock). The cell
+        // is ONE LINE: the draft/confirmed mark, the coverage headline - `115 of 493` -
+        // and, when there is something to explain, an info icon that opens
+        // `OrderInquiryBackingDocumentsDialog`. No SupplyBar (a proportion of a number the
+        // cell already prints in full), no document number, no count and no lateness -
+        // every one of those moved behind the icon or off the cell entirely.
         //
         // The column id stays `po_number` even though the header no longer says PO: it
         // is what a saved column layout is keyed by, and renaming it would silently
@@ -415,97 +443,64 @@ export function useOrderInquiryWorklistColumns({
         header: ({ column }) => (
           <DataGridColumnHeader title="Outstanding PO/SPO" column={column} />
         ),
-        size: 280,
+        size: 220,
         meta: { headerTitle: 'Outstanding PO/SPO', skeleton: <Skeleton className="h-4 w-28" /> },
-        cell: ({ row }) => {
+        cell: ({ row, table }) => {
+          const bundled = row.original.bundled_with;
+          const bundledQty = Number(row.original.bundled_qty ?? '0');
+          if (bundled && Number.isFinite(bundledQty) && bundledQty > 0) {
+            const headline = bundledHeadline(row.original);
+            if (headline) {
+              // The FULL anchor row, for the info icon's own lightbox only (it needs
+              // the anchor's real documents, not just its headline) - the headline text
+              // above never depends on this: it comes straight off `bundled.anchor_headline`,
+              // resolved server-side. `table.options.data` is the loaded rows, never a
+              // second fetch; a page that does not happen to hold the anchor falls back
+              // to the row's own lightbox (`dialogRow` inside `BundledDocumentsButton`).
+              const rows = table.options.data as OrderInquiryWorklistRow[];
+              const anchorRow = rows.find((r) => r.id === bundled.row_id) ?? null;
+              const qty = Number(row.original.qty ?? '0');
+              const fullyBundled = qty - bundledQty <= 0;
+              return (
+                <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
+                  <DraftMark row={row.original} />
+                  <span className="truncate" title={headline}>
+                    {headline}
+                  </span>
+                  <BundledDocumentsButton
+                    row={row.original}
+                    anchorRow={anchorRow}
+                    fullyBundled={fullyBundled}
+                  />
+                </span>
+              );
+            }
+          }
           const summary = linkedSummary(
             row.original.qty,
             row.original.linked_qty,
             row.original.links,
           );
-          // The same bar the schedule draws, off the same three kinds (AC-I14), so the
-          // two views of this worklist cannot read differently: an unlinked row is a
-          // faded rose bar over the words that say so (faded because nothing has been
-          // committed to yet), a row linked 5 of 8 is sky over rose. No legend beside it
-          // - the cards above the list carry the words.
-          const bar = (
-            <SupplyBar
-              segments={segmentsOfRow(row.original)}
-              decided={fullyLinked([row.original])}
-              labels={KIND_LABELS}
-              colours={KIND_COLOURS}
-              className="mt-1 max-w-[120px]"
-            />
-          );
           if (!summary) {
             // Nothing in either book can cover this row, so it is a NEW order rather
-            // than an oversight (AC-D2). "Not linked" read as a step somebody had
+            // than an oversight (AC-A7). "Not linked" read as a step somebody had
             // forgotten to take; the links are drafted the moment a row is raised now,
-            // so an empty cell means the cascade looked and found nothing.
+            // so an empty cell means the cascade looked and found nothing. No icon: there
+            // is nothing behind it to open.
             return (
               <div className="min-w-0">
                 <Muted>Not found (new order)</Muted>
-                {bar}
               </div>
             );
           }
           return (
-            <div className="min-w-0">
-              <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
-                <DraftMark row={row.original} />
-                <span className="truncate">{summary.headline}</span>
+            <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
+              <DraftMark row={row.original} />
+              <span className="truncate" title={summary.headline}>
+                {summary.headline}
               </span>
-              {bar}
-              {summary.documents.map((entry) => {
-                const link = (row.original.links ?? []).find(
-                  (candidate) =>
-                    candidate.document === entry.document && candidate.kind === entry.kind,
-                );
-                const lateWords =
-                  entry.lateDays !== null
-                    ? ` - lands ${entry.lateDays} day${entry.lateDays === 1 ? '' : 's'} after ${
-                        row.original.delivery_date
-                          ? formatDateInMalaysia(row.original.delivery_date)
-                          : 'the required date'
-                      }`
-                    : entry.late
-                      ? ' - arrives late'
-                      : '';
-                // The line label lives HERE and nowhere else (AC-D16): it names which
-                // line of the document holds the quantity, which matters once the
-                // document is open and never while the list is being scanned.
-                const label = `${entry.document}: ${entry.partsTitle}${lateWords}`;
-                return (
-                  <span
-                    key={`${entry.kind}-${entry.document}`}
-                    className="flex min-w-0 items-center gap-1"
-                    title={label}
-                  >
-                    <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
-                      {entry.kind}
-                    </span>
-                    <OrderInquiryDocumentLink
-                      kind={entry.kind}
-                      document={entry.document}
-                      poId={link?.po_id}
-                    />
-                    <span className="truncate text-xs text-muted-foreground">
-                      {entry.parts}
-                    </span>
-                    {/* AC-D17: it lands after this row needs it, and by how much. Said,
-                        never acted on - nothing is unlinked for lateness. */}
-                    {entry.late ? (
-                      <span
-                        data-testid={`link-late-${entry.document}`}
-                        className="shrink-0 rounded-sm bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800"
-                      >
-                        {entry.lateDays !== null ? `late ${entry.lateDays} d` : 'late'}
-                      </span>
-                    ) : null}
-                  </span>
-                );
-              })}
-            </div>
+              <BackingDocumentsButton row={row.original} />
+            </span>
           );
         },
       },

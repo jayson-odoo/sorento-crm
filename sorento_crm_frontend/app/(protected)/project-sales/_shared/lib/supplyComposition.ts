@@ -300,8 +300,21 @@ function poolShareSplit(
  *
  * `limits` is the site pools' own allowances when the caller has them (the BOARD does; the
  * sheet does not) - see `PoolShareLimits`.
+ *
+ * `options.mixAllowed` (the captain, 8 Sep 2026): the whole-line rule (AC-L5) stays for the
+ * ENGINE's proposals and for the per-order SHEET, where a mix is never a deliberate manual
+ * decision. The fulfilment-planning BOARD passes `mixAllowed: true` on the strength of its
+ * own `reason` field, not of this function: the panel seeds `reason` from the frozen
+ * decision's own `amend_reason` at mount (`BoardLineDecisionPanel`), and `amendNeedsReason`
+ * only asks whether the draft has moved SINCE THEN, so an unchanged frozen mix re-saves on
+ * the reason it already carried, not a freshly typed one. The server's own gate reads that
+ * same field off the confirm line, not a client-only flag.
  */
-export function lineBlockers(draft: DraftLine, limits?: PoolShareLimits): string[] {
+export function lineBlockers(
+  draft: DraftLine,
+  limits?: PoolShareLimits,
+  options?: { mixAllowed?: boolean },
+): string[] {
   const blockers: string[] = [];
   const subject = `Line ${draft.line_no}${draft.item_code ? `, ${draft.item_code}` : ''}`;
   const balance = lineBalance(draft);
@@ -329,8 +342,13 @@ export function lineBlockers(draft: DraftLine, limits?: PoolShareLimits): string
   // covered from stock (own group, pools, borrow, incoming in any mix) or wholly Buy".
   // Said only on a line that already ADDS UP: one refusal at a time, and a line short of
   // its open quantity has not finished stating a composition to judge.
+  //
+  // LIFTED when the caller states `mixAllowed` (the captain, 8 Sep 2026): the sheet never
+  // sets it, so this still fires there exactly as before; the board sets it because a board
+  // amendment that mixes stock and Buy is a legal hand composition once it carries a reason,
+  // and `amendNeedsReason` already makes that reason mandatory before Save unblocks.
   const fromStockMinor = balance.timelyMinor + balance.reserveMinor + balance.borrowMinor;
-  if (balance.balanced && fromStockMinor > 0 && balance.buyMinor > 0) {
+  if (!options?.mixAllowed && balance.balanced && fromStockMinor > 0 && balance.buyMinor > 0) {
     // R-C's one carve-out first (D5): a site pool's share beside a Buy is a composition the
     // engine MAKES, so refusing it here refused the suggestion on screen.
     const split = limits

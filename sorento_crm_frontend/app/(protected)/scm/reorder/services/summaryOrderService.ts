@@ -145,6 +145,29 @@
  *    the accepted quantity back to the frozen location inputs, in the UOM's integer
  *    minor units, summing exactly to `chosen_qty` (AC-F12). No rescaling formula.
  *
+ * 5) The sheet, through My Downloads (S4, PLAN-po-spo-site-pool-and-order-sheet-downloads)
+ *
+ *      POST /api/v1/scm/order-summary/export
+ *          { run_id: <opaque>, format: 'pdf' | 'xlsx' }
+ *
+ *      -> 200  DownloadResponse (`MyDownload`, `status: 'pending'`) - a `user_downloads`
+ *              row was created and `generate_order_sheet` enqueued on the `imports` queue.
+ *              The sheet itself never crosses this response; it lands in My Downloads
+ *              (AC-19) the same way a complaint PDF does.
+ *      -> 422  an unrecognised `format`, a malformed/invisible run, or too many rows to
+ *              order ("Narrow the plan first") - the SAME messages the old synchronous
+ *              export used, unchanged (AC-16, AC-20).
+ *      -> 404  the run does not exist / is not visible to this user.
+ *      Auth: `scm.dashboard.view`, the same read-only permission as the report itself -
+ *      exporting states nothing new, it only prints what (1) already answers.
+ *
+ *    Same NINE columns the report grid renders (AC-S9.2): Item, On hand, Project qty,
+ *    Dealer o/s, Order qty, Delivery, Project / customer, Supplier, Remarks. `Order qty`
+ *    is the chosen quantity, blank when nobody has decided one yet - the pen column,
+ *    exactly as the printed sheet leaves it. PDF is landscape A4 through
+ *    `app.services.pdf_render`; xlsx is an openpyxl workbook built in
+ *    `summary_order_service` (`xlsx_renderer`'s fixed table shape did not fit the sheet).
+ *
  * -- ERROR SHAPE -------------------------------------------------------------
  * Every failure is the standard `AppException` envelope the global handler in
  * `app/main.py` serialises (`{ detail | message | error }`, correct HTTP status).
@@ -154,43 +177,23 @@
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { MyDownload } from '@/services/myDownloadsService';
 import {
   USE_SUMMARY_ORDER_MOCKS,
-  mockOrderSummary,
   mockOrderSummaryDemand,
-  mockOrderSummaryLocations,
-  mockOrderSummarySuppliers,
-  mockRecordOrderDecision,
 } from '../lib/summaryOrderMockStore';
 import type {
-  OrderSummaryDecisionInput,
-  OrderSummaryDecisionResult,
   OrderSummaryDemandDrill,
   OrderSummaryDemandKind,
-  OrderSummaryLocations,
-  OrderSummaryReport,
-  OrderSummarySuppliers,
 } from '../types/summaryOrder.types';
 
-/** Which report to read. Both are optional; omitted means the current run today. */
-export interface OrderSummaryQuery {
-  /** Opaque run key. Never rendered. Null reads the newest completed plan. */
-  run_id?: string | null;
-}
-
-/** The report, one row per product network wide (AC-C2.1). */
-export async function getOrderSummary(q: OrderSummaryQuery = {}): Promise<OrderSummaryReport> {
-  if (USE_SUMMARY_ORDER_MOCKS) return mockOrderSummary();
-  const params = new URLSearchParams();
-  if (q.run_id) params.set('run_id', q.run_id);
-  // No `as_of`: the report STATES the date it was frozen for, and passing a different one
-  // would label a frozen position with a date it does not describe. To read another week,
-  // name its run.
-  const qs = params.toString();
-  const res = await apiFetch(`/api/v1/scm/order-summary${qs ? `?${qs}` : ''}`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the order summary'));
-  return (await res.json()) as OrderSummaryReport;
-}
+// Review fix round 3, finding 6: getOrderSummary / getOrderSummarySuppliers /
+// recordOrderDecision / getOrderSummaryLocations (and `OrderSummaryQuery`, which only
+// they used) are deleted - the Order summary report page they served is retired (S10,
+// round 2). `getOrderSummaryDemand` and `exportOrderSheet` survive: `DemandDrillPopover`
+// still opens the first, and the plan's Actions menu still calls the second.
+// `ReorderResultsGrid`/`ReorderExplanationDialog`'s own orphaned imports of the removed
+// shapes are a separate follow-up, filed by the reviewer - not touched here.
 
 /** The contributing lines behind one aggregate (AC-C2.3 / AC-C2.4). */
 export async function getOrderSummaryDemand(
@@ -208,48 +211,21 @@ export async function getOrderSummaryDemand(
   return (await res.json()) as OrderSummaryDemandDrill;
 }
 
-/** The member locations behind one product row (AC-F08). */
-export async function getOrderSummaryLocations(
-  productCode: string,
-  runId?: string | null,
-): Promise<OrderSummaryLocations> {
-  if (USE_SUMMARY_ORDER_MOCKS) return mockOrderSummaryLocations(productCode);
-  const params = new URLSearchParams();
-  if (runId) params.set('run_id', runId);
-  const qs = params.toString();
-  const res = await apiFetch(
-    `/api/v1/scm/order-summary/${encodeURIComponent(productCode)}/locations${qs ? `?${qs}` : ''}`,
-  );
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the member locations'));
-  return (await res.json()) as OrderSummaryLocations;
-}
-
-/** The supplier candidates for one product (AC-C2.5 / AC-C2.6). */
-export async function getOrderSummarySuppliers(
-  productCode: string,
-): Promise<OrderSummarySuppliers> {
-  if (USE_SUMMARY_ORDER_MOCKS) return mockOrderSummarySuppliers(productCode);
-  const res = await apiFetch(
-    `/api/v1/scm/order-summary/${encodeURIComponent(productCode)}/suppliers`,
-  );
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the supplier candidates'));
-  return (await res.json()) as OrderSummarySuppliers;
-}
-
-/** Record the chosen quantity and supplier (AC-C2.7 / AC-C2.8). */
-export async function recordOrderDecision(
-  productCode: string,
-  input: OrderSummaryDecisionInput,
-): Promise<OrderSummaryDecisionResult> {
-  if (USE_SUMMARY_ORDER_MOCKS) return mockRecordOrderDecision(productCode, input);
-  const res = await apiFetch(
-    `/api/v1/scm/order-summary/${encodeURIComponent(productCode)}/decision`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    },
-  );
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to record the decision'));
-  return (await res.json()) as OrderSummaryDecisionResult;
+/**
+ * Starts the sheet export through My Downloads (AC-19/AC-20). No mock branch: the export
+ * always makes the real call, PDF/xlsx generation being nothing a fixture can usefully
+ * stand in for. Returns the created `MyDownload` row (`status: 'pending'`) - the sheet
+ * itself is fetched later, from the My Downloads drawer, once the worker marks it ready.
+ */
+export async function exportOrderSheet(
+  runId: string,
+  format: 'pdf' | 'xlsx',
+): Promise<MyDownload> {
+  const res = await apiFetch('/api/v1/scm/order-summary/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ run_id: runId, format }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start the order sheet export'));
+  return (await res.json()) as MyDownload;
 }

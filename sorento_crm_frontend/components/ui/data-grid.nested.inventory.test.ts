@@ -113,7 +113,7 @@ const IN_GRID_SUBTREE_SITES = new Map<string, string>([
     'NESTED GRID: AttachmentDetailModal opens inside the promotions grid and holds a PanelDataGrid of linkages. Covered by the context default AND its own scrollerMaxHeight={false} (SF-1)',
   ],
   [
-    'app/(protected)/scm/reorder/components/PlanLinesGrid.tsx:1442',
+    'app/(protected)/scm/reorder/components/PlanLinesGrid.tsx:1347',
     'NESTED GRID: PlanRowDialog opens inside the plan grid and holds DrillTable/OnHandTable/StockDocumentsPanel. Every one already passes scrollerMaxHeight={false}; the context default now agrees with them',
   ],
 ]);
@@ -137,7 +137,7 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'NESTED GRID: the items popover opens from a CELL of this section\'s own grid. It names scrollerMaxHeight="16rem", so the nested default leaves it alone and it keeps its sticky header inside that window',
   ],
   [
-    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1166',
+    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1172',
     'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}',
   ],
   [
@@ -160,6 +160,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:396',
     'Supply tab, same dialog',
   ],
+  [
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:403',
+    "What goes in the container, in a dialog opened as a sibling of the invoice list or the invoice's own detail - no grid context. It KEEPS the default `--grid-max-h` bound rather than turning it off: the dialog body does not scroll, so the table is what scrolls, with its header sticking inside that window while the container size select and Convert stay put",
+  ],
+  [
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:414',
+    'The DataGridTable of the same grid, not a second one',
+  ],
 ]);
 
 /**
@@ -174,7 +182,7 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
 const CONTEXT_BLIND_SITES = new Map<string, string>([
   [
     'app/(protected)/project-sales/fulfilment-planning/components/CellStockTable.tsx',
-    'StockDocumentsPanel opens in a row of this hand-rolled <table> (the carve-out FulfilmentBoardMatrix documents), so there is no grid context. StockDocumentsPanel.tsx passes scrollerMaxHeight={false} itself',
+    'StockDocumentsPanel opens in a row of this hand-rolled <table> (the carve-out FulfilmentBoardMatrix documents), so there is no grid context. StockDocumentsPanel.tsx passes scrollerMaxHeight={false} itself. Also mounted from BorrowAddDialog (the Borrow modal\'s Source table) since local-supplier-oi-routing - same hand-rolled table, same StockDocumentsPanel expansion, no new site to add here',
   ],
 ]);
 

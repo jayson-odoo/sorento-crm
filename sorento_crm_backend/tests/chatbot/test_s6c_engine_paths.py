@@ -106,30 +106,32 @@ def _srtwc8517_resolved_bundle() -> ResolveGateServices:
 
 
 # --------------------------------------------------------------------------- #
-# 1. AC-604 / H11: fetch finds no tool (tool-filter returns zero tools), both switch
-#    positions, through the REAL `run_until_exit` + `run_fetch` - only `embed` /
-#    `tool_search` / `mcp_call` are stubbed, so `select_tool` and `tool_filter` (the
-#    functions H11 is actually about) run unmocked.
+# 1. AC-604 / H11: the fetch finds nothing, both switch positions, through the REAL
+#    `run_until_exit` + `run_fetch` - only `mcp_call` is stubbed, so `select_tool` and
+#    `tool_filter` run unmocked.
+#
+#    It used to stub `tool_search` to `[]` so the POOL was empty. Since the tool RAG was
+#    dropped, `select_tool` reads `DOMAIN_SPEC` and every domain a turn can reach the
+#    fetch step with has a tool, so an empty pool is no longer reachable end to end - it
+#    is graded directly on `run_fetch` in `test_tool_pick_from_domain_spec.py` (AC-4).
+#    What is reachable, and what these two cells grade, is the tool answering EMPTY.
 # --------------------------------------------------------------------------- #
 
 
 class TestH11ZeroToolsIsAnOutcomeEndToEnd:
-    """`fetch.tool_filter([])` -> `outcome == "not_found"`: the same error fragment
+    """A fetch that finds nothing -> `outcome == "not_found"`: the same error fragment
     `TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn` grades with `run_fetch` stubbed
     wholesale, reached here by actually running `select_tool` / `tool_filter`."""
 
     @staticmethod
     def _no_tool_fetch_services() -> FetchServices:
         def _mcp_call(name: str, args: dict) -> Any:
-            raise AssertionError(
-                "no MCP tool matched - `tool_filter` must return before any tool is called"
-            )
+            # The `forms` domain's own tool - `DOMAIN_SPEC["forms"].tools[0]`, which is
+            # what `select_tool` picks for the parse these cells stub.
+            assert name == "crm_forms_management_forms_list", name
+            return '{"answers": [], "has_result": false}'
 
-        return FetchServices(
-            embed=lambda query: [0.0, 0.0, 0.0],
-            tool_search=lambda embedding, *, query, domain: [],
-            mcp_call=_mcp_call,
-        )
+        return FetchServices(mcp_call=_mcp_call)
 
     @classmethod
     def _wire(cls, session_factory, engine_mod, monkeypatch) -> None:
@@ -186,7 +188,14 @@ class TestH11ZeroToolsIsAnOutcomeEndToEnd:
     ) -> None:
         """Default `chatbot_completed_lanes = []`: n8n still answers this turn even
         though the CRM's own resolve+gate and fetch steps ran (S6a/S6b are shadow
-        lanes) - the turn must stop at `delegated` / `looked_up`, never `done`."""
+        lanes) - the turn must stop at `delegated`, never `done`.
+
+        The stage is `routed`, and it used to be `looked_up`: `looked_up` is what the
+        engine records when the shadow lane ERRORED (`lane_error_text`), and the zero-tool
+        pick this cell used to drive was such an error. The shadow fetch now runs clean
+        and finds nothing, which is an answer, so the turn stops where every other healthy
+        delegated turn does.
+        """
         from app.services.chatbot import engine as engine_mod
 
         assert (system_settings_row.chatbot_completed_lanes or []) == []
@@ -198,7 +207,7 @@ class TestH11ZeroToolsIsAnOutcomeEndToEnd:
 
         assert result.branch_kind == "business_query"
         assert result.delegate == "business_query"
-        assert result.stage == "looked_up"
+        assert result.stage == "routed"
         assert result.status == "delegated"
 
 
@@ -520,7 +529,18 @@ class TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine:
     `block` is where everything these captures exist to grade lives (the ETA sort of
     exec-14126915, the multi-company silent note, the discontinued flag). A strip would
     quietly make all of that ungraded, so every one of the six is compared here EXACTLY,
-    with the one known sentence removed (review of #706, S3)."""
+    with the one known sentence removed (review of #706, S3).
+
+    Owner ruling 11 Sep 2026, second ruling (R2, `divergences.
+    CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS`): three of the six captures are, in real data,
+    exactly R2(b)'s target shape - a returned code whose cross-probed rows are ALL 0 - so
+    the block now carries a SECOND CRM-only sentence (the zero climb) the n8n block never
+    had either. Fix round (nit 14): a zero-flagged code no longer earns the AC-820 line at
+    all (the zero sentence two paragraphs later already says the same thing), so THAT
+    line is now present if and only if `_xdBlock.zero_codes` is empty for this capture -
+    itself derived from the capture's own probed rows via `answer._rows_all_zero`, never
+    from a hard-coded exec id list, so a fourth zero capture added to the corpus later is
+    graded the same way with no test change."""
 
     @pytest.mark.parametrize(
         "stem", ONE_SIDED_LINE_FIXTURES, ids=lambda v: v
@@ -539,15 +559,61 @@ class TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine:
 
         actual = _corpus.json_round_trip(_run_crossdomain_render(fixture))
         expected = _corpus.json_round_trip(fixture.expected)
-        got = ((actual[0].get("json") or {}).get("_xdBlock") or {}).get("block") or ""
+        xdblock = (actual[0].get("json") or {}).get("_xdBlock") or {}
+        xdblock = xdblock if isinstance(xdblock, dict) else {}
+        got = xdblock.get("block") or ""
         want = ((expected[0].get("json") or {}).get("_xdBlock") or {}).get("block") or ""
-        head, sep, rest = got.partition("\n\n")
-        assert sep and (head.startswith("No stock for ") or head.startswith("No incoming for ")), (
-            f"the AC-820 line is the ONLY expected difference; got {head!r}"
+
+        head, sep, rest_minus_head = got.partition("\n\n")
+        is_ac820_line = bool(
+            sep
+            and (head.startswith("No stock for ") or head.startswith("No incoming for "))
+            and head.endswith(".")
         )
-        assert head.endswith("."), head
+        zero_codes = xdblock.get("zero_codes") or []
+
+        # Nit 14: present iff this capture's code did NOT climb for reading 0 everywhere.
+        if zero_codes:
+            assert not is_ac820_line, (
+                f"a zero-flagged capture must not ALSO carry the AC-820 line; got {head!r}"
+            )
+            rest = got
+        else:
+            assert is_ac820_line, (
+                f"the AC-820 line is the ONLY expected difference; got {head!r}"
+            )
+            rest = rest_minus_head
+
+        # R2: `_xdBlock.zero_codes` names which of this capture's codes climbed for
+        # reading 0 everywhere - the very list `crossdomain_render` derived via
+        # `answer._rows_all_zero`, never re-derived or hard-coded here.
+        for code in zero_codes:
+            zero_sentence = (
+                f"No incoming and stock is 0 at every location for {code}."
+                if xdblock.get("origin") == "incoming"
+                else f"Stock is 0 at every location and no incoming for {code}."
+            )
+            assert rest.endswith(zero_sentence), (
+                "a capture whose probed rows are all 0 must also carry the zero-climb "
+                f"sentence (divergences.CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS); got {rest!r}"
+            )
+            rest = rest[: -len(zero_sentence)]
+            if rest.endswith("\n\n"):
+                rest = rest[:-2]
+
+        # D2 (12 Sep 2026, finding 2): the CAPTURED n8n block may still end with the
+        # phantom "I have attached the file(s) below." sentence - CRM no longer renders
+        # it at all (`crossdomain_render`'s own `mention` retired), so it is stripped
+        # from `want` here rather than the CRM side. Same mechanism as the two strips
+        # above, just on the other side of the comparison; unconditional on content,
+        # never on the fixture id, so any capture with this trailing sentence is graded
+        # the same way.
+        _RETIRED_ATTACHMENT_SENTENCE = "\n\nI have attached the file(s) below."
+        if want.endswith(_RETIRED_ATTACHMENT_SENTENCE):
+            want = want[: -len(_RETIRED_ATTACHMENT_SENTENCE)]
+
         assert rest == want, (
-            "with that one sentence removed the block must still be byte-equal to the "
+            "with the known sentence(s) removed the block must still be byte-equal to the "
             f"capture:\n{rest!r}\n{want!r}"
         )
 
@@ -667,26 +733,36 @@ class TestF3DomainHintNeverLeavesTheEnumEndToEnd:
       adopted it over this turn's own domain. That second turn is why the emission guard
       alone was not the fix, and why this class drives both through `run_turn`.
 
-    Either way `select_tool`'s `source_id LIKE '%<domain>%'` filter matches nothing (every
-    incoming tool's `source_id` is `implemented::crm_incoming_stock_*`), so the turn ends
-    `not_found` with no tool called. The assertion is on the `domain` `tool_search`
-    receives, which is the value `select_tool` was handed.
+    Either way the team name is not a `DOMAIN_SPEC` key, so `select_tool` falls off the
+    table and the turn ends `not_found` with no tool called. (Before the tool RAG was
+    dropped it fell off a `source_id LIKE '%<domain>%'` filter instead, on the same turns
+    and with the same outcome.) The assertion is on the `domain` `select_tool` is HANDED,
+    recorded by wrapping the real function rather than by stubbing a seam - the pick has
+    no seam left to record on, and the value under test is its argument.
     """
 
     @staticmethod
-    def _domain_recording_fetch_services(seen: list[Any]) -> FetchServices:
-        def _tool_search(embedding, *, query, domain):
+    def _record_select_tool_domain(monkeypatch: Any, seen: list[Any]) -> None:
+        """Spy on `select_tool`, delegating to the real one - never a stand-in for it."""
+        from app.services.chatbot.lanes.business import fetch as fetch_mod
+
+        real = fetch_mod.select_tool
+
+        def _spy(domain):
             seen.append(domain)
-            return []
+            return real(domain)
 
+        monkeypatch.setattr(fetch_mod, "select_tool", _spy)
+
+    @staticmethod
+    def _fetch_services() -> FetchServices:
         def _mcp_call(name: str, args: dict) -> Any:
-            raise AssertionError("no tool can be picked from an empty candidate list")
+            # Reached only on the carried-domain turn, whose clean `incoming` names
+            # `crm_incoming_stock_list`. The team-name turn picks nothing and calls none.
+            assert name == "crm_incoming_stock_list", name
+            return '{"answers": [], "has_result": false}'
 
-        return FetchServices(
-            embed=lambda query: [0.0, 0.0, 0.0],
-            tool_search=_tool_search,
-            mcp_call=_mcp_call,
-        )
+        return FetchServices(mcp_call=_mcp_call)
 
     @staticmethod
     def _shipment_token_is_only_a_product() -> ResolveGateServices:
@@ -729,10 +805,11 @@ class TestF3DomainHintNeverLeavesTheEnumEndToEnd:
             "production_services",
             lambda db, *, space_id=None: bundle,
         )
+        cls._record_select_tool_domain(monkeypatch, seen)
         monkeypatch.setattr(
             engine_mod.business_services,
             "fetch_services",
-            lambda db: cls._domain_recording_fetch_services(seen),
+            lambda db: cls._fetch_services(),
         )
         monkeypatch.setattr(
             engine_mod.business_services,
@@ -784,8 +861,8 @@ class TestF3DomainHintNeverLeavesTheEnumEndToEnd:
             "must be null by the time anything downstream reads it"
         )
         assert "purchasing" not in seen, (
-            "a team name reached tool selection, where its `source_id LIKE` filter matches "
-            "nothing"
+            "a team name reached tool selection, where it is not a DOMAIN_SPEC key and so "
+            "names no tool at all"
         )
 
     def test_a_team_name_carried_in_the_contacts_memory_never_overwrites_this_turns_domain(

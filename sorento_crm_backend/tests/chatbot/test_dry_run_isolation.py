@@ -246,6 +246,51 @@ class TestIntegrationLogWritesRegardlessOfDryRun:
 
 
 # --------------------------------------------------------------------------- #
+# Chatbot growth r1 addendum (AC-982, review 7 Sep 2026): a table added since this
+# file's original findings, held to the same D14 posture as Finding 1's
+# `integration_log` before/after count.
+# --------------------------------------------------------------------------- #
+
+
+class TestDryRunTurnLeavesContactFieldRevealsUntouched:
+    """`contact_field_reveals` (chatbot growth r1, Slice C) is admin-managed only -
+    written by `contact_field_reveal_service.set_granted_keys`, called from the
+    `/system/chatbot/contacts/{id}/field-reveals` PUT and nowhere on the turn path.
+    A dry run must leave its row count unchanged, same D14 posture as every other
+    table this file counts."""
+
+    def test_dry_run_turn_writes_no_contact_field_reveals_row(
+        self, external_chat_client, api_key, session_factory, seeded_contact, stub_engine_seams
+    ):
+        before = session_factory().execute(
+            text("SELECT COUNT(*) FROM contact_field_reveals")
+        ).scalar()
+
+        envelope = _envelope()
+        envelope.message["message"]["messageId"] = "ZZT-msg-dry-run-no-field-reveal"
+        payload = {
+            "envelope": {
+                **json.loads(envelope.model_dump_json()),
+                "test_run_id": "ZZT-run-no-field-reveal",
+            }
+        }
+
+        resp = external_chat_client.post(_TURN_URL, json=payload, headers={"X-API-Key": api_key})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["duplicate"] is False
+
+        after = session_factory().execute(
+            text("SELECT COUNT(*) FROM contact_field_reveals")
+        ).scalar()
+        assert after == before, (
+            "a dry-run /chat/turn call must not write a contact_field_reveals row "
+            "(AC-982) - nothing on the turn path imports the write side of "
+            "contact_field_reveal_service, so this is a structural guarantee "
+            "restated as a count."
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Finding 2 - per-contact ordering keys are shared with live traffic
 # --------------------------------------------------------------------------- #
 
@@ -560,21 +605,30 @@ class TestOperatorSurfacesHideDryRunRows:
 
 
 class TestMcpToolPickRefusesWriteTools:
-    """`tool_filter` (fetch.py ~87-124) picks the single highest-similarity candidate
-    with no allow-list check. The embedded catalogue includes write tools -
-    `crm_it_support_ticket_create`, `crm_complaint_close`, `crm_order_cancel`,
-    `crm_purchase_request_approve`, `crm_purchase_request_reject` - and any one of them
-    can be the top hit for an ordinary business question."""
+    """`tool_filter` (fetch.py) picks the single candidate with no allow-list check of its
+    own. The finding was that the candidate came from an embedded catalogue containing
+    write tools - `crm_it_support_ticket_create`, `crm_complaint_close`,
+    `crm_order_cancel`, `crm_purchase_request_approve`, `crm_purchase_request_reject` -
+    so any one of them could be the top hit for an ordinary business question.
 
-    def test_a_post_tool_top_hit_is_never_called(self):
-        mcp_call = MagicMock(return_value='{"answers": []}')
-        services = FetchServices(
-            embed=lambda query: [0.1],
-            tool_search=lambda embedding, *, query, domain: [
-                {"name": "crm_order_cancel", "similarity": 0.99}
-            ],
-            mcp_call=mcp_call,
+    That door is shut at the source since the tool RAG was dropped: the candidate is
+    `DOMAIN_SPEC[domain].tools[0]`, and no domain lists a write tool. The EGRESS check is
+    what this class still grades, because it is the one that holds however the name
+    arrived, so the write tool is injected at the pick to reach it."""
+
+    def test_a_post_tool_top_hit_is_never_called(self, monkeypatch):
+        from app.services.chatbot.lanes.business import fetch as fetch_mod
+
+        # The state `select_tool` can no longer produce, forced, so the check downstream
+        # of it is still exercised rather than merely believed.
+        monkeypatch.setattr(
+            fetch_mod,
+            "select_tool",
+            lambda domain: [{"name": "crm_order_cancel", "similarity": 1.0}],
         )
+
+        mcp_call = MagicMock(return_value='{"answers": []}')
+        services = FetchServices(mcp_call=mcp_call)
         payload = {
             "_exit_kind": "continue",
             "gate": {
@@ -593,7 +647,7 @@ class TestMcpToolPickRefusesWriteTools:
         assert mcp_call.call_args_list == [], (
             "the read-only chatbot must never call a write (POST) MCP tool: mcp_call "
             f"was invoked with {mcp_call.call_args_list!r} - tool_filter picked "
-            "'crm_order_cancel' on similarity alone with no allow-list check "
+            "'crm_order_cancel' with no allow-list check "
             "(lanes/business/fetch.py::tool_filter)"
         )
         reason = json.dumps(fragment, default=str)

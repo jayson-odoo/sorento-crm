@@ -671,10 +671,92 @@ class McpTool(Base):
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )
+    #: Field-reveal keys this tool's presenter marks `restricted=<key>`, one entry
+    #: per gated field: `[{"key": "inventory.sellable", "label": "Sellable stock"}]`.
+    #: Written by `sync_catalog` from `ToolSpec.restricted_fields` (a static
+    #: declaration, since sync reads the code catalog and never calls the tool).
+    #: `[]` for a tool with nothing restricted - the common case. `sync_catalog` only
+    #: ever runs where `sorento_crm_mcp` is importable (a local checkout, the seed
+    #: script) - the deployed backend image cannot import it (compose builds the
+    #: image with `context: ./sorento_crm_backend`, the package is not in
+    #: `requirements.txt`), so this column stays at its migration-488 default of
+    #: `[]` on every environment that runs from that image. `GET
+    #: /system/chatbot/field-reveal-keys` does NOT read this column for that reason;
+    #: it serves `contact_field_reveal_service.FIELD_REVEAL_KEYS`, a frozen literal a
+    #: CI test pins to the catalogue. This column remains useful wherever the sync
+    #: does run and as the historical record of what was declared at each sync.
+    restricted_fields = Column(
+        JSONB(astext_type=Text()), nullable=False, server_default=text("'[]'::jsonb")
+    )
+    #: The chatbot domain this tool answers FROM (a `DOMAIN_SPEC` key), stamped by
+    #: `sync_catalog` off `app.services.mcp_tool_domains.CHATBOT_TOOL_DOMAINS`.
+    #: NULL for a tool listed under no domain.
+    #:
+    #: **Written, never read (8 Sep 2026.)** It was added days earlier so the chatbot's
+    #: tool search could narrow a domain's pool on DATA rather than on the tool name
+    #: (owner ruling, "I don't accept the leak" - the PO placed tool's old name
+    #: contained "order" and leaked into the `order` pool under a name-LIKE filter).
+    #: That search is gone: the business lane reads
+    #: `contracts.DOMAIN_SPEC[domain].tools[0]` outright, so no name and no column
+    #: decides retrievability any more. The column stays until the next migration that
+    #: touches `mcp_tools` carries the drop - production never populated it, so there is
+    #: nothing to lose and no reason to churn the table on its own.
+    chatbot_domain = Column(String(64), nullable=True)
 
     __table_args__ = (
         Index("ix_mcp_tools_module_key", "module_key"),
         Index("ix_mcp_tools_is_active", "is_active"),
+        Index("ix_mcp_tools_chatbot_domain", "chatbot_domain"),
+    )
+
+
+class ContactFieldReveal(Base):
+    """Per-contact permission to see one RESTRICTED field in a chatbot answer.
+
+    One mechanism for two owner requirements: sellable stock is off by default
+    for every contact (D3), and a PO's supplier must never reach a dealer (D4).
+    Both are just a field a presenter marked `restricted=<key>` in its
+    `field_vocabulary`; this table is the grant.
+
+    Default is HIDDEN: a contact with no row for a key never sees that field,
+    so a new restricted field ships invisible everywhere until an admin ticks
+    it, the same default-deny `agent_field_access` already established.
+
+    Unlike `agent_field_access` (owned by a FUNCTION, resolved through the
+    agents a contact holds), this is granted DIRECTLY on the contact - D4's
+    field reveal is not "which agent" but "which contact may see the
+    supplier", so there is no owning agent to route the grant through.
+
+    Enforcement lives in the chatbot's `output_structurer` only
+    (`ctx.access.attributes`, filled by `head/access.py::check_access`). The
+    MCP server itself stays unfiltered - the in-app assistant and n8n
+    operators are internal callers, not the customer-facing chatbot.
+    """
+
+    __tablename__ = "contact_field_reveals"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    respond_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Matches a presenter's `field_vocabulary[key]["restricted"]` value, e.g.
+    #: "inventory.sellable", "purchase_orders.supplier".
+    field_key = Column(Text, nullable=False)
+    #: A row can exist and be revoked (rather than deleted) so a PUT full-list
+    #: replace has history to flip back to true instead of losing who granted
+    #: it and when. Absence of any row is still the same as `granted=False`.
+    granted = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_by = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_contact_field_reveals_contact", "respond_contact_id"),
+        UniqueConstraint(
+            "respond_contact_id", "field_key", name="uq_contact_field_reveals_contact_key"
+        ),
     )
 
 
@@ -728,6 +810,12 @@ class StockVisibilityPolicy(Base):
     mode = Column(String(20), nullable=False)
     #: NULL = every active warehouse; [] = none.
     warehouse_ids = Column(ARRAY(UUID(as_uuid=False)), nullable=True)
+    #: The include list's sibling, never set alongside it (CHECK below). NULL = no
+    #: exclusion; a list = every active warehouse EXCEPT these, including one
+    #: created after the row was saved. `[]` is a real, storable value here too -
+    #: it means "every active warehouse", the opposite of what `[]` means on
+    #: `warehouse_ids`.
+    excluded_warehouse_ids = Column(ARRAY(UUID(as_uuid=False)), nullable=True)
     #: Drop the locations holding NONE of the product from the answer. `detailed`
     #: withholds the row, `compact` the location line (the total is unchanged),
     #: and `availability` has no line to withhold so it is unaffected. NEGATIVES
@@ -749,6 +837,12 @@ class StockVisibilityPolicy(Base):
         CheckConstraint(
             "contact_id IS NULL OR access_type_code IS NULL",
             name="ck_stock_visibility_policies_one_tier",
+        ),
+        # A row picks one location rule, never both: "only these" and "all but
+        # these" have no defined precedence between them.
+        CheckConstraint(
+            "warehouse_ids IS NULL OR excluded_warehouse_ids IS NULL",
+            name="ck_stock_visibility_policies_one_location_rule",
         ),
         # Three partial uniques, not one constraint: Postgres NULLs are distinct,
         # so a plain UNIQUE would let a SECOND default row in and the resolution

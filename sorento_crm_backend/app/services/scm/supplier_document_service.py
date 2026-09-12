@@ -1,34 +1,23 @@
 """One dialog, several supplier documents: proforma invoice, packing list, or both (R12-R14,
-purchasing consolidation batch, lane C).
+purchasing consolidation batch, lane C; S3/S2, supplier documents / PI-first lane, 9 Sep 2026).
 
-The reading and the writing are NOT done here twice. `proforma_invoice_service` and
-`packing_list_service` already parse their own doc type, resolve the catalogue, resolve the
-currency, and write the invoice / the shipment (one per container block, already, for the
-packing list). This module's own job is the THREE things neither of them does alone:
+The reading is not done here twice. `proforma_invoice_service` already parses the PI doc
+type, resolves the catalogue, resolves the currency, and writes the invoice. This module's
+own job is what neither reader does alone:
 
   * **Classify** which reader a file is for, by its title cell (`发票` / `PROFORMA INVOICE` /
     `INVOICE` vs `装箱单` / `PACKING LIST`), so ONE dialog can take either, or both together.
   * **One preview shape** across files of either kind, so the dialog renders one table
     regardless of what each file turned out to be.
-  * **Price matching (R14).** A packing list's lines carry no price of their own; where a
-    proforma invoice for the same supplier and the same container (or the same `pi_number`)
-    exists, its lines' prices are copied onto the matching shipment lines by PRODUCT (not by
-    the supplier's own item-code text, which the two documents do not always spell the same
-    way) and a `proforma_invoice_shipment_link` row is written - same table, same columns as
-    the "Convert to packing list" dialog writes, because that is what a linked line means
-    everywhere else in this system. Never `convert_to_draft_shipment` itself: that function's
-    whole job is minting a NEW shipment, and the shipment already exists here (the packing
-    list's own apply already created it) - only the price and the link are new.
-
-Runs for EVERY supplier + container pair this supplier currently holds, on every apply,
-rather than only the files just uploaded: the upload order is not fixed (together, PL after
-PI, PI after PL) and a small per-supplier scan is cheap next to getting one of the three
-orders wrong.
+  * **Write the packing rows onto the PI they price** - never a new `inbound_shipments` row
+    (AC-C1, S3): a packing list is born by convert or by hand only (S3, AC-C2). A packing-list
+    (or combined) file resolves which proforma invoice it attaches to and writes its rows
+    there (S2's `replace_packing_rows`); the old R14 price-matching write onto a shipment
+    line (`_match_prices`) is retired along with the shipment birth it depended on.
 """
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -37,6 +26,8 @@ from app.services import translation_service
 from app.services.error_handler import AppException
 from app.services.import_alias_service import AliasResolver
 from app.services.scm import packing_list_service, proforma_invoice_service
+from app.services.scm import proforma_invoice_packing_service as packing_service
+from app.services.scm.proforma_invoice_packing_service import resolve_attach_pi
 from app.services.scm.outstanding_reader import every_sheet_rows, sheet_rows
 from app.services.scm.packing_list_reader import DOC_TYPE as PL_DOC_TYPE
 from app.services.scm.packing_list_reader import PackingReadResult
@@ -49,6 +40,10 @@ from app.services.scm.proforma_invoice_reader import read_workbook as read_profo
 from app.services.scm.supplier_scope import assert_supplier
 
 logger = logging.getLogger(__name__)
+
+#: `apply`'s own `translations` array is caller-supplied and otherwise unbounded (review
+#: round, 10 Sep) - a preview cannot legitimately produce more edits than this.
+_MAX_TRANSLATIONS_PER_APPLY = 200
 
 #: Title-cell markers that decide which reader a file is for (R12). Checked across the
 #: first few rows, upper-cased - both real files write the title on its own row, well above
@@ -65,6 +60,30 @@ _TITLE_SCAN_ROWS = 15
 #: already does for the packing list itself.
 _PROFORMA_TYPE_CODE = "proforma_invoice"
 _PROFORMA_TYPE_NAME = "Proforma Invoice"
+
+
+def _link_source_file(
+    db: Session, invoice_ids: list[str], attachment_id: str, *, actor_id: Optional[str] = None
+) -> None:
+    """AC-B14: the generic attachment linkage this repo already uses for `inbound_shipment`
+    (`EntityAttachmentLink`), applied to `proforma_invoice` - the General tab's own Source
+    files block reads it back (`serialize`'s `source_files`/`packing_file`). Never fails the
+    apply that already succeeded: a filing failure is already tolerated the same way by
+    `file_supplier_document` itself, and a link is strictly less important than the row it
+    is attached to.
+    """
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    service = EntityAttachmentService(db)
+    for invoice_id in invoice_ids:
+        try:
+            service.link_existing_attachment(
+                "proforma_invoice", invoice_id, attachment_id, created_by=actor_id
+            )
+        except AppException:
+            # Already linked (a combined file's own attachment covers >1 block/invoice
+            # and this invoice already got it, or a rare re-run) - not an error here.
+            continue
 
 
 def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
@@ -99,13 +118,22 @@ def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
     return _classify_by_header_shape(db, data)
 
 
+#: Columns a plain proforma invoice never carries (Kailu's own PI header: 序号/品名/编号/
+#: 产品数量/单价/总价/其他 - no cartons, no weight, no volume). A PI-shaped header that ALSO
+#: carries one of these is a COMBINED file - both a priced document AND a packing list on
+#: the SAME sheet (Jinbaichuan, S2/AC-B3) - not merely a PI whose header happens to satisfy
+#: the packing list's own looser item-code-and-quantity test too, which every PI's does.
+_PACKING_SPECIFIC_FIELDS = ("cartons", "net_weight", "gross_weight", "cbm_total", "cbm_per_unit")
+
+
 def _classify_by_header_shape(db: Session, data: bytes) -> Optional[str]:
     """No title cell named either document - decide from the header row(s) instead. A PI's
     OWN required columns (item code, quantity, unit price - `proforma_invoice_reader`'s
     `_REQUIRED_COLUMNS`) are the stricter test, checked first: a header that satisfies them
     is proforma-invoice-shaped even though it would ALSO satisfy the packing list's own
-    looser item-code-and-quantity test. Only a header that fails the stricter test but
-    passes the looser one is packing-list-shaped."""
+    looser item-code-and-quantity test - UNLESS it also names a packing-specific column
+    (`_PACKING_SPECIFIC_FIELDS`), which makes it combined instead (S2, AC-B3). Only a
+    header that fails the stricter test but passes the looser one is packing-list-shaped."""
     try:
         sheets = every_sheet_rows(data)
     except Exception:  # noqa: BLE001
@@ -119,6 +147,11 @@ def _classify_by_header_shape(db: Session, data: bytes) -> Optional[str]:
                 continue
             if _is_header(_header_map(raw, pi_resolver), required=("item_code", "qty", "unit_price")):
                 saw_pi = True
+                pl_mapped = _header_map(raw, pl_resolver)
+                if _is_header(pl_mapped) and any(
+                    f in pl_mapped.values() for f in _PACKING_SPECIFIC_FIELDS
+                ):
+                    saw_pl = True
                 continue
             if _is_header(_header_map(raw, pl_resolver)):
                 saw_pl = True
@@ -326,7 +359,71 @@ def _header_of(
     }
 
 
-def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
+def _attach_rows(
+    db: Session,
+    pl_result: Optional[PackingReadResult],
+    *,
+    supplier_id: Optional[str],
+    attach_to: Optional[str],
+    block_attach: dict[int, str],
+) -> list[dict[str, Any]]:
+    """Which PI each packing-list BLOCK attaches to, and the refusal when none does
+    (AC-B5/B13/B16), straight off `resolve_attach` - the server decides, the dialog only
+    shows it and overrides it.
+
+    Per BLOCK, not per file: Jiexia's one packing list carries two containers, and each
+    container's rows belong to that container's OWN invoice. Keyed by block index and
+    container so the dialog can post a change back for one of them without touching the
+    other.
+    """
+    if not pl_result or not pl_result.ok or not supplier_id:
+        return []
+    out: list[dict[str, Any]] = []
+    for i, block in enumerate(pl_result.blocks):
+        resolved = packing_service.resolve_attach(
+            db,
+            block,
+            supplier_id=supplier_id,
+            attach_to=block_attach.get(i, attach_to),
+        )
+        invoice = resolved.invoice
+        out.append(
+            {
+                "block_index": i,
+                "container_no": block.container_no,
+                "attach_to": (
+                    {
+                        "id": str(invoice.id),
+                        "pi_number": invoice.pi_number,
+                        "supplier_ref": invoice.supplier_ref,
+                        "how": resolved.how,
+                    }
+                    if invoice is not None
+                    else None
+                ),
+                "refusal": resolved.refusal,
+                # Popped by `preview()`: what this BLOCK itself states, so a refusal can be
+                # answered by a proforma invoice sitting in the same Test batch (ruling 22),
+                # which no database lookup can see because nothing is written yet.
+                "_stated": {
+                    "pi_number": block.pi_number,
+                    "container_no": block.container_no,
+                    "invoice_date": block.invoice_date,
+                },
+            }
+        )
+    return out
+
+
+def _file_preview(
+    db: Session,
+    name: str,
+    data: bytes,
+    *,
+    supplier_id: Optional[str] = None,
+    attach_to: Optional[str] = None,
+    block_attach: Optional[dict[int, str]] = None,
+) -> dict[str, Any]:
     kind = classify(data, db)
     if kind is None:
         return {
@@ -337,6 +434,8 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
             "unmatched": [],
             "errors": ["Could not tell whether this is a proforma invoice or a packing list."],
             "footer_note": None,
+            "packing_attach": [],
+            "_pi_docs": [],
         }
 
     pi_result: Optional[ProformaReadResult] = None
@@ -411,12 +510,43 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
         else None
     )
 
+    # AC-E2: header cells the resolver could not place, from whichever reader(s) ran -
+    # a combined file's two readers each report their OWN missed headers, never each
+    # other's genuinely-different column set.
+    #
+    # WHICH reader missed it is reported alongside (ruling 24): a combined sheet is read
+    # twice, and a header the invoice reader could not place has to be mapped for
+    # `proforma_invoice` as well as `packing_list` or half the file goes on ignoring it -
+    # the dialog cannot know that from the file's `kind` alone.
+    by_doc_type: dict[str, list[str]] = {}
+    for header in pi_result.unmapped_headers if pi_result else []:
+        by_doc_type.setdefault(header, []).append(PI_DOC_TYPE)
+    for header in pl_result.unmapped_headers if pl_result else []:
+        by_doc_type.setdefault(header, []).append(PL_DOC_TYPE)
+    unmapped_headers = list(by_doc_type)
+
     return {
         "name": name,
         "kind": kind if not errors else "unreadable",
         "blocks": blocks,
         "header": _header_of(pi_result, pl_result),
         "unmatched": sorted(set(unmatched))[:200],
+        "unmapped_headers": unmapped_headers,
+        "unmapped_header_doc_types": by_doc_type,
+        # AC-B13, per BLOCK. A COMBINED file states its own invoice on the same sheet and
+        # attaches its blocks to the PIs that apply creates from it, so it asks nothing:
+        # only a packing-list-ALONE file has a question to answer here.
+        "packing_attach": (
+            _attach_rows(
+                db,
+                pl_result,
+                supplier_id=supplier_id,
+                attach_to=attach_to,
+                block_attach=block_attach or {},
+            )
+            if kind == "packing_list" and not errors
+            else []
+        ),
         "errors": errors,
         "footer_note": footer_note,
         # Popped by `preview()` before the response goes out - kept OFF the block dicts
@@ -424,9 +554,66 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
         # two used to share one flat `blocks` list, keyed only by the FILE's kind, so a
         # combined file's own PI block landed in `pl_blocks` too (and vice versa) and
         # matched against itself.
+        # The invoices THIS file states, as apply would file them (`supplier_ref_for`, the
+        # same container-suffix rule), for ruling 22's same-batch resolution. Popped by
+        # `preview()` like the two match lists below.
+        "_pi_docs": (
+            [
+                {
+                    "file": name,
+                    "supplier_ref": proforma_invoice_service.supplier_ref_for(
+                        doc, siblings=pi_result.documents
+                    ),
+                    "pi_number": doc.pi_number,
+                    "container_no": doc.container_no,
+                    "invoice_date": doc.invoice_date,
+                }
+                for doc in pi_result.documents
+            ]
+            if pi_result and pi_result.ok
+            else []
+        ),
         "_pi_match": _pi_match_blocks(pi_result, known_pi) if pi_result and pi_result.ok else [],
         "_pl_match": _pl_match_blocks(pl_result, known_pl) if pl_result and pl_result.ok else [],
     }
+
+
+def _same_batch_invoice(
+    invoices: list[dict[str, Any]], stated: dict[str, Any]
+) -> Optional[dict[str, Any]]:
+    """The invoice IN THIS BATCH a packing-list block belongs to (ruling 22), by the same
+    three facts the database pass uses, in the same order of trust: the stated invoice
+    number, then the container, then the date. `None` when the batch holds no invoice, or
+    holds more than one that could be meant - a guess between two is worse than the refusal
+    it would replace.
+    """
+    def _one(candidates: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        return candidates[0] if len(candidates) == 1 else None
+
+    number = (stated.get("pi_number") or "").strip().lower()
+    if number:
+        by_number = [
+            inv for inv in invoices
+            if (inv.get("pi_number") or "").strip().lower() == number
+        ]
+        if by_number:
+            return _one(by_number)
+
+    container = (stated.get("container_no") or "").strip().lower()
+    if container:
+        by_container = [
+            inv for inv in invoices
+            if (inv.get("container_no") or "").strip().lower() == container
+        ]
+        if by_container:
+            return _one(by_container)
+
+    date = stated.get("invoice_date")
+    if date:
+        by_date = [inv for inv in invoices if inv.get("invoice_date") == date]
+        if by_date:
+            return _one(by_date)
+    return None
 
 
 def preview(
@@ -435,12 +622,40 @@ def preview(
     *,
     supplier_id: Optional[str] = None,
     currency: Optional[str] = None,
+    attach_to: Optional[str] = None,
+    block_attach: Optional[dict[tuple[str, int], str]] = None,
 ) -> dict[str, Any]:
-    """What each file is, and what it would create - writes nothing."""
+    """What each file is, and what it would create - writes nothing.
+
+    `block_attach` is keyed `(file name, block index)` because that pair is what the dialog
+    can name: nothing in the batch has an id yet, and one upload may carry two files whose
+    blocks are both index 0.
+
+    `attach_to` is one invoice for the whole upload (the dialog opened from a PI's own
+    "Attach packing list", AC-B10); `block_attach` is `{(file name, block index): invoice
+    id}`, what the operator picked on ONE packing-list block's own Attaches-to select. The
+    more specific of the two wins, and every block that has neither is resolved by
+    `resolve_attach` (AC-B5).
+    """
     if supplier_id:
         assert_supplier(db, supplier_id)
 
-    out_files = [_file_preview(db, name, data) for name, data in files]
+    per_file = block_attach or {}
+    out_files = [
+        _file_preview(
+            db,
+            name,
+            data,
+            supplier_id=supplier_id,
+            attach_to=attach_to,
+            block_attach={
+                index: invoice_id
+                for (file_name, index), invoice_id in per_file.items()
+                if file_name == name
+            },
+        )
+        for name, data in files
+    ]
 
     # Price matches: a PI document and a PL block sharing a container in THIS batch.
     # Uploaded separately (PL after PI, PI after PL) is answered by `apply`'s own DB-wide
@@ -449,8 +664,37 @@ def preview(
     # display `blocks` list - a combined file's PI part and PL part are TAGGED by which
     # helper built them, so one can never be read back as the other and matched against
     # itself (S8, review round 1).
-    pi_entries = [e for f in out_files for e in f.pop("_pi_match")]
-    pl_entries = [e for f in out_files for e in f.pop("_pl_match")]
+    # `.pop(..., [])`: an unreadable file's preview carries none of these private keys, and
+    # a bare `pop` made the whole batch 500 on the one file the operator most needs told
+    # about.
+    pi_entries = [e for f in out_files for e in f.pop("_pi_match", [])]
+    pl_entries = [e for f in out_files for e in f.pop("_pl_match", [])]
+
+    # Ruling 22: a packing list arriving WITH its invoice, in one Test, has nothing in the
+    # database to attach to yet - `resolve_attach` only sees rows, and nothing is written
+    # until Confirm. So a block that resolved to nothing is offered the batch's own
+    # proforma invoices, matched the same three ways the database pass matches on: the
+    # stated invoice number, the container, the date. Apply needs no equivalent - it writes
+    # the invoice files first, so by the time the packing loop runs the row is there.
+    batch_invoices = [d for f in out_files for d in f.pop("_pi_docs", [])]
+    for f in out_files:
+        for entry in f.get("packing_attach", []):
+            stated = entry.pop("_stated", None)
+            if entry.get("attach_to") or not stated:
+                continue
+            sibling = _same_batch_invoice(batch_invoices, stated)
+            if sibling is None:
+                continue
+            entry["attach_to"] = {
+                # No id and no number: neither exists until Confirm mints them. What names
+                # it on screen is the supplier's own reference, or failing that its file.
+                "id": None,
+                "pi_number": None,
+                "supplier_ref": sibling["supplier_ref"],
+                "how": "same_batch",
+                "file": sibling["file"],
+            }
+            entry["refusal"] = None
 
     price_matches: list[dict[str, Any]] = []
     for pi in pi_entries:
@@ -471,121 +715,6 @@ def preview(
     return {"files": out_files, "price_matches": price_matches}
 
 
-def _match_prices(db: Session, *, supplier_id: str) -> int:
-    """Copy proforma-invoice prices onto the packing-list lines they match, by PRODUCT, for
-    every container this supplier holds on both sides (R14). Mirrors
-    `convert_to_draft_shipment`'s own semantics rather than a shape of its own (review
-    round 1, captain's ruling): `qty` on the link is how much is on THIS shipment line,
-    never the PI line's own quantity (which may span more than one container); a PI line
-    with no shipment line to bind to still gets a row, `unmatched_reason` set, so the PI
-    detail page can say where it went; a container carrying TWO shipment lines for the same
-    product (rare - two blocks of one container each writing it) consumes them in order,
-    so a second PI line naming that product takes the SECOND line rather than the same one
-    every time. Idempotent: ANY existing row for a PI line - matched or unmatched - is a
-    recorded outcome and is never written again, same rule `convert_to_draft_shipment` uses
-    (and the reason a PI placed through this path is correctly refused by that function and
-    dropped from its own revision candidates - the outcome here is exactly as permanent).
-    """
-    from app.models.procurement import InboundShipment, InboundShipmentLine
-    from app.models.scm import ProformaInvoice, ProformaInvoiceLine, ProformaInvoiceShipmentLink
-    from app.services.procurement_service import _container_match_key
-
-    invoices = (
-        db.query(ProformaInvoice).filter(ProformaInvoice.supplier_id == supplier_id).all()
-    )
-    if not invoices:
-        return 0
-    shipments = (
-        db.query(InboundShipment).filter(InboundShipment.supplier_id == supplier_id).all()
-    )
-    if not shipments:
-        return 0
-
-    by_container: dict[str, list[InboundShipment]] = {}
-    for s in shipments:
-        key = _container_match_key(s.shipping_container_number)
-        if key:
-            by_container.setdefault(key, []).append(s)
-
-    # ANY existing row - matched (a real link) or skipped (`unmatched_reason` set) - is a
-    # recorded outcome, not only a matched one; re-checking every apply would otherwise
-    # write a second `unmatched_reason` row for the same line on every subsequent upload.
-    already_linked = {
-        str(r[0]) for r in db.query(ProformaInvoiceShipmentLink.proforma_invoice_line_id).all()
-    }
-
-    links_written = 0
-    for inv in invoices:
-        key = _container_match_key(inv.container_ref)
-        if not key:
-            continue
-        candidates = by_container.get(key)
-        if not candidates:
-            continue
-        pi_lines = (
-            db.query(ProformaInvoiceLine)
-            .filter(ProformaInvoiceLine.invoice_id == inv.id, ProformaInvoiceLine.product_id.isnot(None))
-            .order_by(ProformaInvoiceLine.line_no)
-            .all()
-        )
-        if not pi_lines:
-            continue
-        for shipment in candidates:
-            # Consumed in order (`list.pop(0)`, below) - a second shipment line for the
-            # same product takes the NEXT PI line naming it, not the first one twice.
-            lines_by_product: dict[str, list[InboundShipmentLine]] = {}
-            for ln in (
-                db.query(InboundShipmentLine)
-                .filter(InboundShipmentLine.shipment_id == shipment.id)
-                .order_by(InboundShipmentLine.created_at, InboundShipmentLine.id)
-                .all()
-            ):
-                if ln.product_id:
-                    lines_by_product.setdefault(str(ln.product_id), []).append(ln)
-
-            for pi_line in pi_lines:
-                if str(pi_line.id) in already_linked:
-                    continue
-                targets = lines_by_product.get(str(pi_line.product_id))
-                if not targets:
-                    db.add(
-                        ProformaInvoiceShipmentLink(
-                            id=str(uuid.uuid4()),
-                            proforma_invoice_id=inv.id,
-                            proforma_invoice_line_id=pi_line.id,
-                            inbound_shipment_id=shipment.id,
-                            inbound_shipment_line_id=None,
-                            unmatched_reason=(
-                                "No shipment line for this product on this container."
-                            ),
-                        )
-                    )
-                    already_linked.add(str(pi_line.id))
-                    continue
-                target = targets.pop(0)
-                if pi_line.unit_price is not None:
-                    target.unit_cost = pi_line.unit_price
-                    target.currency = inv.currency
-                db.add(
-                    ProformaInvoiceShipmentLink(
-                        id=str(uuid.uuid4()),
-                        proforma_invoice_id=inv.id,
-                        proforma_invoice_line_id=pi_line.id,
-                        inbound_shipment_id=shipment.id,
-                        inbound_shipment_line_id=target.id,
-                        # How much is on THIS shipment - the target line's OWN quantity,
-                        # not the PI line's (which is not split here, but may still name
-                        # more than what a single container actually carries).
-                        qty=target.quantity_shipped,
-                    )
-                )
-                already_linked.add(str(pi_line.id))
-                links_written += 1
-    if links_written:
-        db.flush()
-    return links_written
-
-
 def apply(
     db: Session,
     files: list[tuple[str, bytes, Optional[str]]],
@@ -595,20 +724,40 @@ def apply(
     actor_id: Optional[str] = None,
     actor_name: Optional[str] = None,
     translations: Optional[list[dict[str, Any]]] = None,
+    attach_to: Optional[str] = None,
+    block_attach: Optional[dict[tuple[str, int], str]] = None,
 ) -> dict[str, Any]:
-    """Proforma invoices first, then packing lists, then price links (R12).
+    """Proforma invoices first, then packing lists (S2). No shipment, no price links: the
+    packing rows land on the invoice that prices them (AC-C1), and a packing list is born
+    by convert or by hand.
 
     `files` is `[(filename, data, content_type)]`. Refuses the WHOLE upload when any file is
     unclassifiable, named, rather than silently applying the others and leaving the operator
     to notice one file never showed up.
 
     `translations` (R16) is `[{source_text, target_text}]` off the preview's edited
-    cells - written as MANUAL rows FIRST, before `packing_list_service.apply` runs its
-    own translate-and-compose pass, so an edit made in the preview is what a remark or
-    a note is stored with, never the AI's unedited guess.
+    cells - written as MANUAL rows FIRST (`translation_service.remember`, below), so an
+    edit made in the preview outranks any `ai` guess the memory already held for the
+    same text.
+
+    `attach_to` (AC-B5/B13) is the dialog's own explicit pick for the WHOLE upload - the
+    "Attach packing list" button on a PI's own empty Packing tab (AC-B10), locked to that
+    PI. `block_attach` is `{(file name, block index): invoice id}`, the pick an operator
+    made on ONE packing-list block's Attaches-to select: a two-container packing list
+    (Jiexia) attaches each container's rows to that container's own invoice, so the
+    question is asked and answered per block. The more specific of the two wins, and a
+    block with neither is resolved by `resolve_attach_pi` (AC-B5).
     """
     assert_supplier(db, supplier_id)
     if translations:
+        # A preview cannot legitimately produce more edits than this (review round,
+        # 10 Sep) - a bound on the size of an unbounded caller-supplied array.
+        if len(translations) > _MAX_TRANSLATIONS_PER_APPLY:
+            raise AppException(
+                422,
+                f"No more than {_MAX_TRANSLATIONS_PER_APPLY} translations per upload.",
+                detail="translations",
+            )
         translation_service.remember(db, translations, user_id=actor_id)
 
     kinds = [(name, data, ctype, classify(data, db)) for name, data, ctype in files]
@@ -626,10 +775,16 @@ def apply(
     proforma_invoice_ids: list[str] = []
     shipment_ids: list[str] = []
     attachment_ids: list[str] = []
+    packing_rows_written = 0
     # A COMBINED file is one upload, so it is filed in Drive ONCE - by name, so the packing
     # list loop below can bind the shipment it creates to the SAME attachment rather than
     # filing the same bytes a second time under a second type (S7, review round 1).
     filed_attachment_by_name: dict[str, str] = {}
+    # A combined file's PI documents and PL blocks come from the SAME sheet, in the same
+    # order (S2) - the invoice ids THIS call just minted for a given file name, so the
+    # packing loop below attaches that file's blocks to them directly rather than running
+    # AC-B5's resolution against a file that already says which invoice it is.
+    invoice_ids_by_name: dict[str, list[str]] = {}
 
     for name, data, ctype, kind in kinds:
         if kind not in ("proforma_invoice", "combined"):
@@ -638,7 +793,9 @@ def apply(
             db, data, supplier_id=supplier_id, currency=currency, source_ref=name,
             actor=actor_name,
         )
-        proforma_invoice_ids += [r["invoice_id"] for r in result.get("results", [])]
+        invoice_ids = [r["invoice_id"] for r in result.get("results", [])]
+        proforma_invoice_ids += invoice_ids
+        invoice_ids_by_name[name] = invoice_ids
         attachment_id = packing_list_service.file_supplier_document(
             db, data=data, filename=name, content_type=ctype, actor_id=actor_id,
             type_code=_PROFORMA_TYPE_CODE, type_name=_PROFORMA_TYPE_NAME,
@@ -646,35 +803,61 @@ def apply(
         if attachment_id:
             attachment_ids.append(attachment_id)
             filed_attachment_by_name[name] = attachment_id
+            _link_source_file(db, invoice_ids, attachment_id, actor_id=actor_id)
 
+    # S2: a packing-list (or combined) file never creates an `inbound_shipments` row any
+    # more (AC-C1, S3) - its rows are written onto the PI they price instead
+    # (`replace_packing_rows`); a packing list (the receivable object) is born by convert
+    # or by hand (S3, AC-C2).
+    pl_resolver = AliasResolver.for_doc_type(db, PL_DOC_TYPE)
     for name, data, ctype, kind in kinds:
         if kind not in ("packing_list", "combined"):
             continue
-        already_filed = filed_attachment_by_name.get(name)
-        result = packing_list_service.apply(
-            db, data, supplier_id=supplier_id, currency=currency, source_ref=name,
-            content_type=ctype, attachment_id=already_filed,
-            file_in_drive=already_filed is None, actor_id=actor_id,
-        )
-        for r in result.get("results", []):
-            if r.get("shipment_id"):
-                shipment_ids.append(r["shipment_id"])
-
-    if shipment_ids:
-        from app.models.procurement import InboundShipment
-
-        for row in (
-            db.query(InboundShipment.attachment_id)
-            .filter(InboundShipment.id.in_(shipment_ids), InboundShipment.attachment_id.isnot(None))
-            .all()
-        ):
-            attachment_ids.append(str(row[0]))
-
-    links_written = _match_prices(db, supplier_id=supplier_id)
+        pl_result = read_packing_list(data, pl_resolver)
+        if not pl_result.ok:
+            continue
+        combined_invoice_ids = invoice_ids_by_name.get(name, [])
+        attached_invoice_ids: list[str] = []
+        for i, block in enumerate(pl_result.blocks):
+            if kind == "combined" and i < len(combined_invoice_ids):
+                invoice = proforma_invoice_service.get_or_404(db, combined_invoice_ids[i])
+            else:
+                invoice = resolve_attach_pi(
+                    db,
+                    block,
+                    supplier_id=supplier_id,
+                    attach_to=(block_attach or {}).get((name, i), attach_to),
+                )
+            packing_rows_written += packing_service.replace_packing_rows(
+                db, invoice, block.lines, supplier_id=supplier_id, actor=actor_name,
+            )
+            # Standing ruling (S2/S4/S5, captain 9 Sep): the packing document fills the PI
+            # header's container/seal/BL when the PI itself stated none - convert's header
+            # carry-over (AC-D2c) reads all three off the invoice.
+            if not invoice.container_ref and block.container_no:
+                invoice.container_ref = block.container_no
+            if not invoice.seal_ref and block.seal_no:
+                invoice.seal_ref = block.seal_no
+            if not invoice.bl_ref and block.bl_no:
+                invoice.bl_ref = block.bl_no
+            if not getattr(invoice, "consignee_ref", None) and block.consignee:
+                invoice.consignee_ref = block.consignee
+            attached_invoice_ids.append(str(invoice.id))
+        # AC-B14: a packing-list-ALONE file is its own upload, filed and linked here - a
+        # COMBINED file's single filing already happened in the PI loop above (same
+        # attachment, same invoices), and re-linking it here would be a duplicate.
+        if kind == "packing_list":
+            attachment_id = packing_list_service.file_supplier_document(
+                db, data=data, filename=name, content_type=ctype, actor_id=actor_id,
+            )
+            if attachment_id:
+                attachment_ids.append(attachment_id)
+                _link_source_file(db, attached_invoice_ids, attachment_id, actor_id=actor_id)
 
     return {
         "proforma_invoice_ids": sorted(set(proforma_invoice_ids)),
         "shipment_ids": sorted(set(shipment_ids)),
-        "links_written": links_written,
+        "links_written": 0,
+        "packing_rows_written": packing_rows_written,
         "attachment_ids": sorted(set(attachment_ids)),
     }

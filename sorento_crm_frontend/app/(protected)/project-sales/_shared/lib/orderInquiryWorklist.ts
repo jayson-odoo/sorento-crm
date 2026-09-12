@@ -118,88 +118,78 @@ export function lateDaysOf(
 }
 
 /**
- * "Outstanding PO/SPO", in the shape the plan asked for: `8 of 8`, then per document
- * `202607-S0105  BRW-NTC 5, BRW 3` (plan section 4.2).
+ * "Outstanding PO/SPO"'s coverage headline: `8 of 8`.
  *
- * `headline` is the coverage - how much of the row's quantity is on a document at all -
- * and `documents` groups the links by document so a row split across two lines of one
- * purchase order reads as one document with two lines, which is how the buyer keys it
- * into AutoCount. A row with no links returns `null`, and the cell says "Not found
- * (new order)" rather than printing "0 of 8" at somebody.
+ * A row with no links returns `null`, and the cell reads "Not found (new order)" rather
+ * than printing "0 of 8" at somebody.
  *
- * LOCATION FIRST, and the line label only in the title (item 5, 27 Aug). Every SPO
- * allocation has carried a line number since migration 420, so printing the label first
- * meant the cell read `L14 1` on every SPO row and the warehouse - the one thing the
- * buyer needs to key the split into AutoCount - never showed at all. A link with
- * neither reads "no location", which is a fact about the book rather than a dash.
+ * Slice A (8 Sep 2026, nit S7 on review of `PLAN-scm-oi-reserving-feedback-8sep.md`):
+ * this used to also group the row's links into a per-document `documents` array
+ * (location, quantity, lateness), which the worklist cell printed inline. The cell no
+ * longer prints anything per document - the new `OrderInquiryBackingDocumentsDialog`
+ * reads `row.links` directly instead, at LINE granularity, which is a better fit for
+ * "every backing document" (AC-A5) than this grouping ever was: two links on the same
+ * document at different locations are two lines to key into AutoCount, and grouping them
+ * into one entry with a concatenated `parts` string threw that apart. Lateness left with
+ * it (AC-A3: nothing here says "late" any more). `lateDaysOf` itself stays - the sales
+ * order detail's own link display (`SoLineLinksBody`) still reads it.
  */
 export function linkedSummary(
   qty: string | null | undefined,
   linkedQty: string | null | undefined,
   links: OrderInquiryLink[] | null | undefined,
-): {
-  headline: string;
-  documents: {
-    document: string;
-    kind: 'po' | 'spo';
-    /** What the cell prints: the location and the quantity. */
-    parts: string;
-    /** The same, with the book's own line label in front of each part. Title only. */
-    partsTitle: string;
-    late: boolean;
-    /** By how many days, when that is known. Null on a document that is not late. */
-    lateDays: number | null;
-  }[];
-} | null {
+): { headline: string } | null {
   const list = links ?? [];
   if (list.length === 0) return null;
-  const grouped: {
-    document: string;
-    kind: 'po' | 'spo';
-    parts: string[];
-    titleParts: string[];
-    late: boolean;
-    lateDays: number | null;
-  }[] = [];
-  for (const link of list) {
-    let entry = grouped.find((g) => g.document === link.document && g.kind === link.kind);
-    if (!entry) {
-      entry = {
-        document: link.document,
-        kind: link.kind,
-        parts: [],
-        titleParts: [],
-        late: false,
-        lateDays: null,
-      };
-      grouped.push(entry);
-    }
-    // AC-P3-7: any line of this document landing after the row needs it makes the
-    // document late. Said, never acted on - purchasing decides. The document's lateness
-    // is its WORST line's: a document half of which lands on time is still late for the
-    // half that does not.
-    if (link.late) entry.late = true;
-    const days = lateDaysOf(link);
-    if (days !== null && (entry.lateDays === null || days > entry.lateDays)) {
-      entry.lateDays = days;
-    }
-    const amount = formatInquiryQty(link.qty);
-    const where = link.location || null;
-    entry.parts.push(where ? `${where} ${amount}` : `no location ${amount}`);
-    // The line label names WHICH line of the document holds it, which matters when the
-    // buyer opens the document and not when they are scanning the list.
-    const labelled = [link.line_label || null, where].filter(Boolean).join(' ');
-    entry.titleParts.push(labelled ? `${labelled} ${amount}` : `no location ${amount}`);
-  }
   return {
     headline: `${formatInquiryQty(linkedQty ?? '0')} of ${formatInquiryQty(qty ?? '0')}`,
-    documents: grouped.map((g) => ({
-      document: g.document,
-      kind: g.kind,
-      parts: g.parts.join(', '),
-      partsTitle: g.titleParts.join(', '),
-      late: g.late,
-      lateDays: g.lateDays,
-    })),
   };
+}
+
+/**
+ * The word (or count) a bundled cell names for what it rides with (UAC D10, plan
+ * ruling 5, 9 Sep owner): "the UI never says host". One item names its own code;
+ * two or more read `N items`, and the lightbox is where the codes themselves live.
+ */
+export function bundledItemsLabel(itemCodes: string[]): string {
+  if (itemCodes.length <= 1) return itemCodes[0] ?? '';
+  return `${itemCodes.length} items`;
+}
+
+/**
+ * "Outstanding PO/SPO"'s headline for a bundled row (UAC D1-D3, D10; plan section 3.4).
+ *
+ * A row entirely covered by the bundle (`remainder <= 0`) reads `Included with <label>`
+ * plus the ANCHOR's own coverage in the muted tail - `1 of 1`, or `Not found (new
+ * order)` when nobody has placed anything for it yet. A row that is part bundled, part
+ * ala carte reads `<bundled> with <label> · <own linked> of <ala carte remainder>` -
+ * the remainder is `qty - bundled_qty`, not `qty`, because the ala carte portion is
+ * everything the bundle does NOT cover.
+ *
+ * `null` when the row carries no bundle at all, so a caller falls back to
+ * `linkedSummary` exactly as before - today's un-bundled rows are unaffected.
+ *
+ * The anchor's own coverage (`anchor_headline`) is resolved SERVER-SIDE (review round
+ * 1 item 8) and read straight off `bundled_with` - never recomputed here by scanning
+ * a page's own loaded rows for a match, which was only ever right when the anchor
+ * happened to be on the SAME page as this row.
+ */
+export function bundledHeadline(
+  row: Pick<OrderInquiryWorklistRow, 'qty' | 'linked_qty' | 'bundled_qty' | 'bundled_with'>,
+): string | null {
+  const bundled = row.bundled_with;
+  if (!bundled) return null;
+  const bundledQty = Number(row.bundled_qty ?? '0');
+  if (!Number.isFinite(bundledQty) || bundledQty <= 0) return null;
+  const label = bundledItemsLabel(bundled.item_codes.length ? bundled.item_codes : [bundled.item_code]);
+  const qty = Number(row.qty ?? '0');
+  const remainder = qty - bundledQty;
+  if (remainder <= 0) {
+    const tail = bundled.anchor_headline ?? 'Not found (new order)';
+    return `Included with ${label} · ${tail}`;
+  }
+  const ownLinked = formatInquiryQty(row.linked_qty ?? '0');
+  return `${formatInquiryQty(String(bundledQty))} with ${label} · ${ownLinked} of ${formatInquiryQty(
+    String(remainder),
+  )}`;
 }

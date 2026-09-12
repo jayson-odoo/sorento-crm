@@ -127,6 +127,18 @@ def gate_resolved_tokens(gate: Any) -> set[str]:
     return out
 
 
+def gate_incompatible_only_tokens(gate: Any) -> set[str]:
+    """D10 (owner console pass, 8 Sep 2026, turn 69d9900e): tokens `gate.py` marked as
+    matching NOTHING this domain serves - a flyer/set code hitting `product_set` under
+    `incoming`. To this domain the token is exactly as absent as one that matched nothing at
+    all, so `miss_resolutions` forces it past the `resolved` / exact-match guards below.
+    """
+    incompatible = jsc.get(jsc.get(gate, "gate_debug"), "incompatible_only")
+    if not isinstance(incompatible, dict):
+        return set()
+    return {jsc.nullish_str(t).strip().lower() for t in incompatible if jsc.truthy(t)}
+
+
 def miss_resolutions(resolved: Any, *, gate: Any) -> list:
     """`missResolutions`: a token the resolver did not resolve AND that had no exact match.
 
@@ -134,19 +146,23 @@ def miss_resolutions(resolved: Any, *, gate: Any) -> list:
     three bodies carry the same comment demanding they stay identical.
     """
     resolved_tokens = gate_resolved_tokens(gate)
+    incompatible_only = gate_incompatible_only_tokens(gate)
     resolutions = jsc.get(resolved, "resolutions")
     if isinstance(resolutions, list):
         out = []
         for res in resolutions:
             if not jsc.truthy(res):
                 continue
-            if jsc.get(res, "resolved") is True:
-                continue
-            matches = jsc.get(res, "matches")
-            if isinstance(matches, list) and any(_is_exact(m) for m in matches):
-                continue
-            if jsc.nullish_str(jsc.get(res, "token")).strip().lower() in resolved_tokens:
-                continue
+            token_key = jsc.nullish_str(jsc.get(res, "token")).strip().lower()
+            forced_miss = token_key in incompatible_only
+            if not forced_miss:
+                if jsc.get(res, "resolved") is True:
+                    continue
+                matches = jsc.get(res, "matches")
+                if isinstance(matches, list) and any(_is_exact(m) for m in matches):
+                    continue
+                if token_key in resolved_tokens:
+                    continue
             out.append(res)
         return out
     if jsc.array(jsc.get(resolved, "unresolved_tokens")):
@@ -692,6 +708,9 @@ _PAGE_SATURATION = 50
 _PRODUCT_CODE_RE = re.compile(r"product\s*code", re.IGNORECASE)
 _ATTACHMENT_TYPE_RE = re.compile(r"attachment\s*type", re.IGNORECASE)
 _QUANTITY_ON_HAND_RE = re.compile(r"^\s*quantity\s*on\s*hand\s*\Z", re.IGNORECASE)
+# #768: the `compact` stock-visibility mode (`sorento_crm_mcp/presenters.py::_stock_compact`)
+# renders "Total" + one field per location code, never "Quantity On Hand".
+_STOCK_TOTAL_RE = re.compile(r"^\s*total\s*\Z", re.IGNORECASE)
 _COMPANY_RE = re.compile(r"^\s*company\s*\Z", re.IGNORECASE)
 # `String(raw ?? '').replace(/[^0-9.\-]/g, '')` - ASCII digits only, like JS's own grammar.
 _NON_NUMERIC_RE = re.compile(r"[^0-9.\-]")
@@ -790,21 +809,81 @@ def _annotate(
         meta["reason"] = "page_saturated"
     elif meta["predicate"] == "qty_gt_zero":
         meta["answer_count"] = len(answers)
-        # One row per product x per ACTIVE WAREHOUSE, and a genuine 0 is still returned, so
-        # presence is not has-stock. Sum "Quantity On Hand"; absent / unparseable counts 0.
-        sums: dict[str, Any] = {}
-        for answer in answers:
-            code = _code_of(answer)
-            if not code:
-                continue
-            raw = _field_val(answer, _QUANTITY_ON_HAND_RE)
-            number = jsc.js_number(_NON_NUMERIC_RE.sub("", jsc.nullish_str(raw)))
-            addend = number if jsc.is_integer(number) or isinstance(number, float) else 0
-            if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
-                addend = 0
-            sums[code] = sums.get(code, 0) + addend
-        available = [code for code, total in sums.items() if total > 0]
-        meta["ok"] = True
+        # #768: the probe's row SHAPE depends on the stock tool's visibility mode - a
+        # `detailed` row (`item()`) carries "Quantity On Hand", a `compact` row
+        # (`_stock_compact`) carries "Total" plus one field per location, and an
+        # `availability` row (`_stock_availability`) carries NO fields at all, only
+        # item-level flags. Summing "Quantity On Hand" unconditionally read every
+        # non-detailed probe as all-zero. `stock_visibility.mode` names the mode directly;
+        # `result_type` is the fallback for a probe envelope that never carried that block.
+        # Every fixture captured before #768 carries NEITHER key, so `meta["mode"]` is only
+        # stamped when the probe actually signalled one - an unsignalled probe still resolves
+        # to "detailed" below, but stays byte-identical to those captures.
+        sv_mode = jsc.get(jsc.get(probe_json, "stock_visibility"), "mode")
+        result_type = jsc.get(probe_json, "result_type")
+        if isinstance(sv_mode, str) and sv_mode:
+            mode = sv_mode
+        elif isinstance(result_type, str):
+            # Guarded: `.get()` on a dict raises for an unhashable key, and this whole
+            # function runs OUTSIDE the probe's own try - a hostile, non-string
+            # `result_type` must fall to "detailed" rather than fail the turn.
+            mode = {"stock_compact": "compact", "stock_availability": "availability"}.get(
+                result_type, "detailed"
+            )
+        else:
+            mode = "detailed"
+        if (isinstance(sv_mode, str) and sv_mode) or jsc.truthy(result_type):
+            meta["mode"] = mode
+
+        if mode == "detailed":
+            # One row per product x per ACTIVE WAREHOUSE, and a genuine 0 is still returned, so
+            # presence is not has-stock. Sum "Quantity On Hand"; absent / unparseable counts 0.
+            sums: dict[str, Any] = {}
+            for answer in answers:
+                code = _code_of(answer)
+                if not code:
+                    continue
+                raw = _field_val(answer, _QUANTITY_ON_HAND_RE)
+                number = jsc.js_number(_NON_NUMERIC_RE.sub("", jsc.nullish_str(raw)))
+                addend = number if jsc.is_integer(number) or isinstance(number, float) else 0
+                if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
+                    addend = 0
+                sums[code] = sums.get(code, 0) + addend
+            available = [code for code, total in sums.items() if total > 0]
+            meta["ok"] = True
+        elif mode == "compact":
+            # `_stock_compact` rows carry one "Total" field plus one per location code
+            # (which `hide_zero_locations` can drop to none) - the per-location fields are
+            # never summed, only "Total" drives availability. Rows are per (product,
+            # company): a Sorento twin and a Mocha twin of the same code carry NO company
+            # field to tell them apart, so their totals ACCUMULATE the same way the
+            # detailed arm's `sums` do - overwriting let a zero-stock twin erase a
+            # stocked one.
+            totals: dict[str, Any] = {}
+            for answer in answers:
+                code = _code_of(answer)
+                if not code:
+                    continue
+                raw = _field_val(answer, _STOCK_TOTAL_RE)
+                number = jsc.js_number(_NON_NUMERIC_RE.sub("", jsc.nullish_str(raw)))
+                total = number if jsc.is_integer(number) or isinstance(number, float) else 0
+                if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
+                    total = 0
+                totals[code] = totals.get(code, 0) + total
+            available = [code for code, total in totals.items() if total > 0]
+            meta["ok"] = True
+        elif mode == "availability":
+            # #768 ruling: this arm always fails open, and is written to say why rather
+            # than to read the row. The DYM probe seam never sends `requested_qty`
+            # (`entity_ids_transformer` in fetch.py emits no such key), so the backend
+            # answers `needs_quantity: True, available: None` on every row today. And even
+            # if `requested_qty` ever arrived, `available` is a QUANTITY VERDICT
+            # (`on_hand >= requested_qty`), not "has stock details" - trusting a False
+            # would render a confident "no" on a code that has SOME stock, just less than
+            # the (irrelevant, did-you-mean-context) requested amount.
+            meta["reason"] = "availability_unknown"
+        else:
+            meta["reason"] = "unknown_stock_mode"
     elif full and meta["predicate"] == "row_present":
         # D18: the PER-CANDIDATE lane (promotion). Promotion rows carry no product, so
         # attribution is POSITIONAL - input item i is candidate i. That is an ordering
@@ -919,7 +998,64 @@ def _annotate(
     if full:
         out["dym_ambiguous_codes"] = dym_ambiguous_codes  # [] on every non-uuid-keyed turn
         out["dym_ambiguous_uuids"] = dym_ambiguous_uuids  # F8's uuid companion, likewise
+    # #750, decision 1: on the uuid-keyed lane `probed` / `dym_available_codes` are UUIDs and
+    # every render keys by the CODE it printed, so the composer needs the planner's own
+    # (uuid, code, company) map to translate. Carried HERE rather than re-derived there: this
+    # node already holds it, and a second derivation would be a second thing to keep in step
+    # with `_dym_plan`.
+    if uuid_keyed:
+        out["dym_probe_row_keys"] = jsc.array(jsc.get(xf, "dym_probe_row_keys"))
+    # #750, decision 3: the noun the customer reads is the RESOLVED attachment type
+    # ("Product Photos"), not their own word for it ("photo", "gambar"). The scoping entity is
+    # what the probe was actually filtered on, so it is the only honest name for what was
+    # looked for. `DOMAIN_PROBE["product_attachment"].noun` is None precisely because the type
+    # is not known until the turn resolves one; the domains that DO carry a literal noun
+    # (`inventory`, `promotion`) declare no `requires` and so never reach this.
+    #
+    # BOTH keys are `full`-only. The partial lane's annotator is a separate deployed copy
+    # whose reader (`tail/compile_state.py::_partial_dym_block`) keys by code and takes its
+    # noun from the parser, so a key it never reads would move that node's contract for
+    # nothing. On the FULL lane the type name IS emitted for a code-keyed turn too (it says
+    # what the probe was scoped to, which has nothing to do with the key mode), and that is
+    # why five `dym-annotate` captures are registered in `tests/chatbot/divergences.py`.
+    # `build_suggest_offer` strips both again with the rest of `_DYM_CTRL_KEYS`, so its own
+    # emitted object is unchanged either way.
+    if full:
+        type_name = _scoping_type_name(xf)
+        if type_name:
+            out["dym_probe_type_name"] = type_name
     return out
+
+
+_TYPE_SCOPES: frozenset[str] = frozenset({"attachment_type", "certificate"})
+
+
+def _scoping_type_name(transform: Any) -> str:
+    """The document type the probe was scoped to, off the plan's own `dym_probe_entities`.
+
+    REVERSE order, and that is load-bearing: `_dym_plan` builds the list as
+    `[*cands, *scoping]`, and a CANDIDATE can itself be type-shaped (`attachment_type` and
+    `certificate` are both in `MAPPABLE` and in the domain's `ALLOWED` set, so a misspelt
+    document token can arrive as a did-you-mean candidate). Scanning forwards would name that
+    candidate; scanning backwards reads the scoping entities, which are appended last and are
+    the only entities the probe was actually filtered on. The list is empty whenever scoping
+    is empty (`_dym_plan` fails closed on `no_scoping_entity` before it is built), so the
+    reverse scan cannot fall through to a candidate on a turn that HAS scoping.
+
+    A `certificate` entity's `canonical_code` is a certificate NUMBER
+    (`entity_resolver.py` ~1701), never a type name, so it names its family instead of
+    stamping "- has MS1234-5" at the customer.
+    """
+    for entity in reversed(jsc.array(jsc.get(transform, "dym_probe_entities"))):
+        entity_type = _norm(jsc.get(entity, "entity_type"))
+        if entity_type not in _TYPE_SCOPES:
+            continue
+        if entity_type == "certificate":
+            return "certificate"
+        code = jsc.nullish_str(jsc.get(entity, "code")).strip()
+        if code:
+            return code
+    return ""
 
 
 def dym_annotate(

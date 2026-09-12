@@ -40,13 +40,78 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   column used. Evidence: pytest on seeded allocations with `warehouse_arrival_date` and
   without (fallback). Phase 2 records the measured populated ratio on the prod copy in this
   file.
+
+  **Measured 7 Sep 2026 on the local prod copy** (`sorento_ai_automation`, read-only
+  SELECTs): `spo_allocations.receipt_status` has NO `'received'` value in its check
+  constraint or its data (`pending | partial_received | fully_received | rejected`; only
+  `pending` (721 rows) and `fully_received` (79,747 rows) are in use today) - "received" in
+  this UAC and the plan means `receipt_status = 'fully_received'`. `inbound_shipments.
+  warehouse_arrival_date` DOES exist as a column (an earlier draft of this note said it did
+  not - corrected). Among the 79,747 `fully_received` rows, joined to their shipment:
+  `warehouse_arrival_date` is populated on 1 row (0.0%); `actual_arrival_date` is populated
+  on 0 rows (0.0%); `spo_allocations.updated_at` is populated on 0 rows (0.0%, the column is
+  never written by the receiving flow); `spo_allocations.created_at` is populated on all
+  79,747 rows (100%). **Deviation from the plan's fallback order**
+  (`warehouse_arrival_date` -> `actual_arrival_date` -> `updated_at`): A6 keeps
+  `warehouse_arrival_date` (label "Arrived") and `actual_arrival_date` (label "Arrived
+  (port)") as the first two rungs for when either is backfilled, but replaces `updated_at`
+  with `spo_allocations.created_at` (label "Received (recorded)") as the final,
+  currently-always-hit rung, since `updated_at` is never populated on this table.
 - AC-909 Every list tool in the plan (orders, PO placed, SPO last receipt) accepts `group_by`,
   `include_summary`, `sort`, `dir`, `limit`; an unknown `group_by` value returns 422 naming
   the allowed axes. Evidence: pytest parametrised over the three tools.
 - AC-910 The parser emits `group_by` and `top_n`; "last 3 incoming" yields `top_n=3`,
   "by customer" yields `group_by=customer`. Evidence: replay on new captures.
+
+  **Delivered 7 Sep 2026 as a REACHABILITY chain, not a replay on new captures.** There
+  are no new captures to replay: the new prompt version is published UNLABELLED (migration
+  `490_chatbot_parser_growth`, the same immutable-versions-plus-movable-labels split as
+  475 / 480 / 487), so no live turn has run under it and none can until the owner moves the
+  `production` label. Grading it on captures would need captures that cannot exist yet.
+  What is graded instead, by
+  `tests/chatbot/test_parser_growth_r1_reachability.py`, is every link a customer's
+  sentence travels between the prompt and the tool's own arguments: the addendum teaches
+  each cue in `sorento_crm_backend/tests/chatbot/fixtures/parser_growth_r1_phrases.json`, the
+  strict schema requires `group_by` / `top_n` so the provider must emit them, the
+  post-processor exempts both from its required-key check so all 481 captured emissions
+  still grade (`test_replay.py` stays green, no new divergence), `_fetch_semantic_input`
+  carries them, and `entity_ids_transformer` turns them into `group_by` / `limit` /
+  `top_n` on the right tool. Whether the MODEL obeys the vocabulary is the shadow window's
+  question (AC-952), not this one's.
 - AC-911 `spo_allocation` is no longer in `DEFAULT_UNSUPPORTED_DOMAINS`; `goods_receive`
   still is. Evidence: pytest on `route.decide`.
+
+  **Two further blockers found and fixed 7 Sep 2026**, both of which left the domain
+  unblocked and still unanswerable:
+
+  1. `EmbeddingReadService.search_tool_chunks` narrows the tool pool with
+     `source_id LIKE '%<domain_hint>%'` over `implemented::<tool name>`, a substring match
+     on the NAME (`ToolSpec.domain` in the MCP catalogue is documentation and nothing reads
+     it at retrieval time). `crm_procurement_spo_allocations_last_receipt_list` does not contain
+     "spo_allocation", so the filter matched nothing and every "last in" ended `not_found`.
+     The tool is renamed `crm_procurement_spo_allocations_last_receipt_list`, which does.
+     The PO placed tool (then still `crm_procurement_purchase_orders_placed_list`)
+     already contained "purchase_order" and needed no rename FOR THIS - AC-999 renames
+     it anyway on 8 Sep 2026, for the unrelated reason that it also contained "order"
+     and leaked into that domain's pool. Pinned for every domain (this specific
+     name-substring mechanism, superseded by AC-999) by
+     `test_parser_growth_r1_reachability.py::test_every_domain_tool_is_in_the_read_only_pool`
+     and `::test_after_sync_every_domain_spec_tool_has_its_domain_stamped`.
+  2. `DOMAIN_BLOCKED_HINTS["spo_allocation"]` blocked `product` - harmless while the domain
+     was refused before an entity mattered, fatal once it answers, because `product_ids` is
+     the tool's only narrowing parameter. "last in for SRTWC8517" dropped the code and
+     asked for the last receipt of anything. `product` removed; `spo` stays blocked (the
+     tool takes no SPO number).
+- AC-912 (added 7 Sep 2026, growth r1 Slice A) A `purchase_order` turn is reachable: the
+  domain is in `DOMAIN_HINTS` (so `coerce_domain_hint` does not null it), `check_po` is in
+  `INTENT_HINTS`, the domain is supported by default, `derive_routing` sends it to
+  `purchasing` / `general_enquiries`, and it carries its own rows in `DOMAIN_SUBJECT_AXIS`,
+  `DOMAIN_SUBJECT_HINT`, `DOMAIN_BLOCKED_HINTS` and `DOMAIN_BROADEN_BLOCKED_HINTS`. It
+  deliberately has NO row in `AXIS_BY_DOMAIN` (the `HINT_AXIS_DEFAULT` fallback already
+  sends `product` to `product_scope`, as it does for `inventory`), none in
+  `BARE_ENTITY_TYPE_BY_DOMAIN` and none in `MEMBER_OFFER_FILTER_HINTS` (both tables state
+  a MEASURED turn as the trigger for a new row, and the domain has answered none yet).
+  Evidence: `tests/chatbot/test_parser_growth_r1_reachability.py`.
 
 ## B. Cross-domain ladder
 
@@ -71,12 +136,42 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   `DEFAULT_UNSUPPORTED_DOMAINS` have no independent literal; each is derived from the table.
   Evidence: pytest asserting identity with the derived views; grep in review.
 
+  **As built 7 Sep 2026** (`tests/chatbot/test_domain_spec.py`, 39 assertions). Four
+  deviations, each argued in full in the plan's Slice A `DOMAIN_SPEC` block:
+
+  1. `AXIS_BY_DOMAIN` is NOT derived and keeps its literal, with five other per-domain
+     HAZARD tables. Each of their rows names the live turn that earned it; a uniform table
+     keeps the shape and loses the reason. A test asserts they stay in
+     `head/output_exchange.py`, so a later "finish the job" pass has to argue with it.
+     `BARE_ENTITY_TYPE_BY_DOMAIN`, `DOMAIN_SWITCH_WORDS`, `DEFAULT_UNSUPPORTED_DOMAINS`,
+     `DOMAIN_HINTS`, `INTENT_HINTS` and `CHATBOT_READ_ONLY_TOOLS` ARE derived, each
+     asserted equal to a hand-copied snapshot of the literal it replaced (taken before the
+     deletion, extended by the `purchase_order` entries).
+  2. AC-930's "claimed by exactly one domain" is delivered as "claimed by exactly one
+     domain OR named in `UNDOMAINED_CHATBOT_TOOLS`" - twelve of the thirty-seven tools
+     answer surfaces the chatbot does not route to by `domain_hint`. The two sets are
+     asserted disjoint and exhaustive.
+  3. The parser schema enums are NOT generated from the table. `domain_hint` and
+     `intent_hint` are `string_or_null` on the wire by an explicit, documented contract
+     (`head/parser._build_json_schema`): the parser legitimately emits values the enum does
+     not cover, `output_exchange` normalises several, and `coerce_domain_hint` is the one
+     guard. `contracts.DOMAIN_HINTS` / `INTENT_HINTS` - which the CODE is written against,
+     and which that guard reads - are the generated pair. `group_by`, a key with no legacy
+     emissions, IS a schema enum.
+  4. `SystemSetting.chatbot_unsupported_domains`' `server_default` stays a DDL literal
+     (it cannot be computed at DDL time and must equal migration 488's), pinned by test.
+     Its Python default and `settings.py`'s null-reset table read the table through
+     `app/modules/chatbot/lane_vocabulary.default_unsupported_domains()`, because AC-002
+     forbids core importing the package. The frontend's fifth copy is deleted rather than
+     corrected.
+
 ## D. Dialogue state
 
 - AC-940 A product asked at turn N with no product named at turn N+4 (TTL 3) does NOT carry;
   the reply asks which product. The same at N+2 carries. Evidence: two multi-turn worlds.
 - AC-941 "that one" (anaphora) with the product slot dead asks which product; the trace holds
   a `decay` line naming the slot, age in turns and reason. No wall-clock TTL exists.
+  Evidence: pytest.
   **DEVIATION 3: there is no wall clock in the persisted state at all** - the plan calls
   `set_at` "kept for the trace only", and persisting one would break AC-206 (a dry run's
   `session_patch` is byte-equal to what a live run persists). `trace.TurnTrace.add` stamps
@@ -111,7 +206,8 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   replay assertion.
 - AC-950 `output_exchange.py` no longer contains rules K2, K4, the switch-word override,
   `_query_brands_carried`, `_tier_carried`, or the date / attribute / `is_active` carry arms;
-  each has a named function in `dialogue/focus.py` with its own test.
+  each has a named function in `dialogue/focus.py` with its own test. Evidence: grep in
+  review + test names.
   **DEVIATION 4: `is_active` gets no focus SLOT** (the carry moved, the slot did not). The
   plan names nine axes and this is not one of them: "discontinued" is a property of the
   records being asked about rather than of what the conversation is about, so `reuse_alive`
@@ -119,9 +215,10 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   for giving it a slot is a measured turn where it should have decayed and did not.
   Evidence: grep in review (`tests/chatbot/test_focus_rules.py::
   TestTheRulesAreGoneFromOutputExchange`) + one test class per rule.
-- AC-951 `SessionVars` still carries `pending`, `dym_offer`, `selection_context` and
-  `picker_*`, so every existing world grades. **Amended 7 Sep 2026 during slice B4: the
-  mirror runs the other way.** `open_question` is DERIVED from those keys
+- AC-951 `SessionVars` still carries `pending`, `dym_offer`, `selection_context`,
+  `picker_*` as mirrors derived from `open_question`, so every existing world grades.
+  Evidence: `test_worlds.py` green or each divergence registered with a reason.
+  **Amended 7 Sep 2026 during slice B4: the mirror runs the other way.** `open_question` is DERIVED from those keys
   (`dialogue/open_question.from_state`) rather than them from it, because making
   `open_question` authoritative means porting the eight-rule did-you-mean lifecycle,
   `_offer_carry` and `_picker_carry` onto one TTL - a behaviour change on the lane that
@@ -142,6 +239,14 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
 
 - AC-904b Sellable subtracts open SO only; an open DO (created, not delivered) does not
   reduce sellable a second time. Evidence: pytest with one open SO line and one open DO.
+
+  **Measured 7 Sep 2026 on the local prod copy**: among 18,484 open `sales_order_lines`
+  (`line_status='open'`, `qty_ordered - qty_delivered > 0`), 148 (0.8%) have `warehouse_id`
+  null. Small enough share that the plan's fallback (add a null-warehouse line into the
+  product-level total row rather than any per-warehouse row) is not a data-quality blocker.
+  Also measured for A5/A6: among 2,833 open `purchase_order_lines`
+  (`line_status='open'`, `qty_ordered - qty_received > 0`), 2,832 carry a line-level
+  `expected_date`, 0 rely on header-only `purchase_orders.expected_date`, 1 has neither.
 - AC-960 `contact_field_reveals` exists (migration chained on main head); unique on
   (contact, key); default absent = hidden. Evidence: migration test.
 - AC-961 `check_access` returns `attributes` = the contact's granted keys and
@@ -161,8 +266,23 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
 - AC-970 `GET /system/chatbot/turns/{id}` returns `trace_detail` with stages, parse, decay,
   open_question, focus, tool, crossdomain, reveals and session diff; envelope truncated at
   8 KB with a truncation marker. Evidence: pytest on a real turn through the engine.
+
+  **Writer half delivered by this lane, 7 Sep 2026** (`tests/chatbot/test_trace_persistence.py`).
+  `TurnTrace.add`'s events were appended to a list nothing persisted, so the reader would
+  have shown empty `tool` / `crossdomain` / `reveals` sections on every real turn. They now
+  go into the SAME `chatbot.turns.trace` array, after every stage record, as
+  `{"kind": ..., "at": ..., **payload}` - the flat shape `trace_detail._kind_records` keys
+  on. The 8 KB envelope cap is applied at WRITE time and truncates on encoded BYTES with a
+  `truncated` marker, so the row cannot grow without bound and a multibyte envelope is
+  never cut mid-character. The test drives a real turn through `engine.run_turn`, reads the
+  column, and renders it with a verbatim copy of `trace_detail`'s `_tool` / `_reveals` /
+  `_cap_envelope` (PR #733 is not an ancestor of this branch; delete the copies and import
+  the module once it merges). `test_trace_legibility.py` now asserts prose of the entries
+  WITHOUT a `kind`, since a tool call's raw args and MCP envelope are technical detail by
+  design.
 - AC-971 Every focus rule that fires writes one `focus` trace entry naming the rule, slot,
-  before and after; every decayed slot writes one `decay` entry.
+  before and after; every decayed slot writes one `decay` entry. Evidence: pytest asserting
+  the entries for the AC-940 to AC-946 worlds.
   **DEVIATION 2: the `answered` step is a trace ENTRY, not a ninth `TURN_STAGE`.** That
   vocabulary is closed, the timeline renders it, `chatbot.turns.stage` stores it and 1,875
   fixtures carry it; this plan's own slice-D shape lists `open_question` among the entries.
@@ -194,3 +314,53 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   tools. Evidence: existing CI assertion extended.
 - AC-982 Dry-run turns (`is_test`) write zero rows to `contact_field_reveals`,
   `chat_histories` and `respond_contacts.session_vars`. Evidence: existing D14 test extended.
+
+## I. Owner console follow-ups, 8 Sep 2026 (graded by `tests/chatbot/console_cases/2026-09-07-growth-r1.yaml`)
+
+- AC-993 `[BE][MCP][T]` **SO outstanding reaches the by-product answer, per row.** "how many did
+  heng seng hardware take of srtwc286" (turn 98912914) answers per customer x product with
+  "SO outstanding (not yet DO)" on each row; never a top-level number on the by-product
+  summary. Case: `A3 how many did the customer take - by-product tool carries the SO line per row`.
+  Evidence: `tests/test_order_by_product_so_outstanding.py`, `sorento_crm_mcp/tests/test_presenters.py`.
+- AC-994 `[BE][T]` **A delivery word beside a name is an order ask, never a help request.**
+  "delivery to hanlim" after an escalate offer (turns 2d903c96 / 17d38019) is business_query /
+  order / check_order and answers the DO list. Case: `owner 8 Sep - a delivery word plus a
+  name over an escalate offer is an order ask`. Evidence:
+  `tests/chatbot/test_growth_r1_review_fixes.py::TestOwner8SepADeliveryWordPlusANameIsAnOrderAsk`,
+  `TestReviewRound2B2TheRetypeIsTheMeasuredArmOnly`.
+- AC-995 `[BE][T]` **The escalate offer is said once.** The PO rung and the first probe write
+  no offer; `crossdomain_compose` is the one writer (turns 0184d84d / 5f73ddb0 / 90a1637a
+  carried it twice). The rung needs `purchase_orders.placed`. Cases: the A7 zero-stock
+  ladder cases. Evidence: `tests/chatbot/test_crossdomain_ladder.py`,
+  `tests/chatbot/test_foundre_rung_end_to_end.py::TestOwner8SepTheRungIsPerContactAndOffersOnce`.
+- AC-996 `[BE][MCP][T]` **Nothing on order.** Unshipped SPO allocations count as on order from
+  the supplier; the three-way miss reads "No stock, no incoming and nothing on order for X."
+  Case: `A7 nothing on any rung says so and offers to escalate`. Evidence:
+  `tests/test_purchase_orders_placed.py`, `tests/chatbot/test_crossdomain_ladder.py::TestItem5UnshippedSPOIsOnOrderFromTheSupplier`.
+- AC-997 `[BE][T]` **List price reaches the base field.** "list price of SRTWC286-SH" answers
+  `*List Price:* MYR 1260.00` with no miss line. Case: `item 8 - list price of a product
+  reaches the base List Price field`. Evidence: `tests/chatbot/test_product_spec_projection.py::TestBaseFieldsFirst`.
+- AC-998 `[BE][T]` **Seat cover material reaches the key that contains it, and a miss is said
+  once.** "seat cover material of srtwc286" (turn 0682154e) answers `*Seat cover material:*`
+  per item and at most ONE "not recorded for ..." line for the codes without a value. Case:
+  `item 8 - seat cover material reaches the key that contains it`. Evidence:
+  `tests/chatbot/test_product_spec_projection.py::TestSpecKeysByTokenContainment`,
+  `TestOneMissLinePerAskedWord`.
+- AC-999 `[BE][MCP][T]` **D15 - a chatbot pool is chosen by DATA, not by a substring of the
+  tool's NAME.** Owner ruling, 8 Sep 2026, "I don't accept the leak":
+  `EmbeddingReadService.search_tool_chunks` narrows a `DOMAIN_SPEC` domain's candidate
+  tools on the new `mcp_tools.chatbot_domain` column (stamped by
+  `mcp_tool_registry_service.sync_catalog` off `DOMAIN_SPEC[domain].tools`, raising if a
+  tool is listed under two domains) instead of `source_id LIKE '%<domain>%'`; the LIKE
+  stays only as the fallback for a `domain` outside `DOMAIN_SPEC`. Same-commit follow-up
+  ruling: the PO placed tool is ALSO renamed `crm_procurement_purchase_orders_placed_list`
+  -> `crm_procurement_po_placed_list` (the old name contained "order", the trigger for
+  this fix) so that n8n's own untouched `LIKE` SQL - which this backend cannot edit, and
+  which the owner is retiring rather than fixing - can never match it either; `chatbot_domain`
+  is what protects every OTHER tool that still shares a word with a domain it does not
+  belong to. n8n keeps its LIKE filter unedited; the PO tool's new name is chosen so that
+  filter never matches it. Migration `492_mcp_tool_chatbot_domain`. Evidence:
+  `tests/test_mcp_tool_registry_service.py::test_sync_catalog_stamps_chatbot_domain_from_domain_spec`,
+  `::test_sync_catalog_raises_when_a_tool_is_listed_under_two_domains`,
+  `tests/chatbot/test_tool_search_domain_filter.py`,
+  `tests/chatbot/test_parser_growth_r1_reachability.py::test_after_sync_every_domain_spec_tool_has_its_domain_stamped`.

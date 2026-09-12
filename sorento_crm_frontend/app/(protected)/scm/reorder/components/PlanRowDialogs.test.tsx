@@ -290,7 +290,11 @@ describe('PlanRowDialog - On hand (F4)', () => {
     },
   ];
 
-  it('shows only the site-pool row(s), never a project bin, when a pool row exists', () => {
+  it('shows only the site-pool row(s), never a project bin, when a pool row exists (R7 regression pin: the reorder engine did NOT widen, unlike the shared lightbox\'s "all" scope)', () => {
+    // This is a PRIVATE `OnHandTable`, never `PlanRowDialog.tsx`'s exported one (which the
+    // container-request grid and the SPO planner render with `scope="all"`, R7, captain
+    // 8 Sep 2026) - the reorder screen keeps its own copy specifically so a future widening
+    // of the shared component can never flip this screen's netting along with it.
     useLocationStock.mockReturnValue({
       data: { product_id: 'p1', as_of: '2026-08-20T10:00:00', locations },
       isLoading: false,
@@ -397,7 +401,10 @@ describe('PlanRowDialog - SPO (F5)', () => {
 
     expect(await screen.findByText('Open to BRW (1)')).toBeInTheDocument();
     expect(screen.getByText('History to BRW (0)')).toBeInTheDocument();
-    expect(getSpoHistory).toHaveBeenCalledWith('run-1', 'p1');
+    // AC-7 amended (review round B): a single, non-grouped LOCATION-grain line now names
+    // its OWN warehouse (`line.warehouse_id`, 'w1' by default) as the third arg, so the
+    // modal narrows to it instead of reading the product-wide site-pool sum.
+    expect(getSpoHistory).toHaveBeenCalledWith('run-1', 'p1', 'w1');
 
     // AC-J3: the open tab foots its own qty too.
     const footer = screen.getByText('Total').closest('tr') as HTMLElement;
@@ -410,6 +417,21 @@ describe('PlanRowDialog - SPO (F5)', () => {
 
     expect(await screen.findByText('Open (0)')).toBeInTheDocument();
     expect(screen.queryByText(/to BRW/)).not.toBeInTheDocument();
+  });
+
+  it('a GROUPED (pooled) line passes no warehouse - reads product-wide (AC-7 amended: '
+    + 'a documented limitation, location grain is not the rollout default)', async () => {
+    getSpoHistory.mockResolvedValue({ open: [], history: [] });
+    const grouped = groupPlanLinesByChannel([
+      line({ id: 'r1', warehouse_id: 'w1', warehouse_code: 'BRW', pool_warehouse_id: 'w1' }),
+      line({ id: 'r2', warehouse_id: 'w2', warehouse_code: 'BRW-BB', pool_warehouse_id: 'w1' }),
+    ]);
+    const groupRow = grouped.find((l) => l.id.startsWith('group:')) as PlanLine;
+
+    renderDialog('spo', groupRow);
+
+    await screen.findByText(/Open/);
+    expect(getSpoHistory).toHaveBeenCalledWith('run-1', 'p1', undefined);
   });
 });
 

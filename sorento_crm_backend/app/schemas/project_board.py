@@ -707,6 +707,11 @@ class BoardContribution(BaseModel):
     #: carry a draft with no decision (saved, not confirmed), a decision with no draft
     #: (confirmed - Confirm deletes the draft it promotes), or neither.
     draft: Optional[BoardLineDraft] = None
+    #: S3 (`PLAN-local-supplier-oi-routing.md`): whether the product's supplier sits in
+    #: the home country, computed once per product for the whole board. A `local` Buy
+    #: raises no Order Inquiry row on confirm; the client marks it with a `Local` pill.
+    #: `None` on a server build that skipped origin resolution (never asserted false).
+    buy_origin: Optional[Literal["local", "overseas"]] = None
 
 
 class BorrowDonorImpact(BaseModel):
@@ -762,6 +767,11 @@ class BorrowCandidate(BaseModel):
     donor_core_line_id: Optional[str] = None
     lower_ranked: bool = False
     same_agent: bool = False
+    #: S4 (`PLAN-local-supplier-oi-routing.md`): the SAME location facts the Grid Location
+    #: table states for this warehouse, so the manual Borrow modal renders `CellStockTable`
+    #: instead of a second, narrower table of its own. `None` on a server build that has not
+    #: wired this yet.
+    location: Optional[BoardCellLocation] = None
 
 
 class StockDetailSalesOrder(BaseModel):

@@ -203,6 +203,7 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product C
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "countries", "Countries"))
 PERMISSION_REGISTRY.extend(_with_import_export("master_data", "certificates", "Certificates"))
 # The salesperson master. `.edit` gates the annotation (who a code belongs to, and what
 # its orders count as); there is no add/delete surface, but the four slugs ship together
@@ -367,6 +368,10 @@ PERMISSION_REGISTRY.extend([
 PERMISSION_REGISTRY.extend([
     {"slug": "system.numbering_rules.view", "name": "View Running Numbers", "description": "Permission to view document numbering rules."},
     {"slug": "system.numbering_rules.edit", "name": "Edit Running Numbers", "description": "Permission to edit document numbering rules."},
+])
+PERMISSION_REGISTRY.extend([
+    {"slug": "system.import_field_aliases.view", "name": "View Import Column Mappings", "description": "Permission to view which header spellings resolve to which import field, per document type."},
+    {"slug": "system.import_field_aliases.edit", "name": "Edit Import Column Mappings", "description": "Permission to add or remove a header-to-field mapping for a document type's importer."},
 ])
 PERMISSION_REGISTRY.append({
     "slug": "system.modules.manage",

@@ -12,16 +12,31 @@ import { recToPlanLine } from '../lib/planLine';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+const toastInfo = vi.fn();
+vi.mock('@/lib/toast', () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a),
+                                          error: (...a: unknown[]) => toastError(...a),
+                                          info: (...a: unknown[]) => toastInfo(...a) } }));
+
 const usePlanLines = vi.fn();
 vi.mock('../hooks/usePlanLines', () => ({ usePlanLines: (...a: unknown[]) => usePlanLines(...a) }));
 
 // The draft map has its own suite (`usePlanEdits` is exercised through `PlanLinesGrid`);
 // here it would only drag a QueryClient into every case that is about orchestration.
+// A `vi.fn()`, not a fixed object, so AC-S6.3's Confirm-tooltip test below can vary
+// `confirmable.products` per case - the same shape `usePlanLines` already uses.
+const usePlanEditsMock = vi.fn();
 vi.mock('../hooks/usePlanEdits', () => ({
-  usePlanEdits: () => ({
+  usePlanEdits: (...a: unknown[]) => usePlanEditsMock(...a),
+}));
+
+function stubPlanEdits(over: Record<string, unknown> = {}) {
+  usePlanEditsMock.mockReturnValue({
     edits: {},
     setRowEdit: vi.fn(),
-    resetRow: vi.fn(),
+    saveRow: vi.fn(),
+    savingRowIds: new Set(),
     clearAll: vi.fn(),
     saveCount: 0,
     confirmable: { products: 0, cash: 0, unpriced: 0 },
@@ -29,8 +44,9 @@ vi.mock('../hooks/usePlanEdits', () => ({
     confirm: vi.fn(),
     isSaving: false,
     isConfirming: false,
-  }),
-}));
+    ...over,
+  });
+}
 
 vi.mock('./PlanLinesGrid', () => ({
   PlanLinesGrid: ({
@@ -39,22 +55,57 @@ vi.mock('./PlanLinesGrid', () => ({
     decidedFilter,
     lines,
     secondaryActions,
+    toolbarPrimary,
+    onSaveRow,
+    savingFor,
   }: {
     runId: string | null;
     statusFilter: string | null;
     decidedFilter?: string;
     lines: PlanLine[];
     secondaryActions?: ToolbarAction[];
+    toolbarPrimary?: React.ReactNode;
+    onSaveRow?: (line: PlanLine) => void;
+    savingFor?: (line: PlanLine) => boolean;
   }) => (
     <div>
       plan-lines-grid runId={runId} statusFilter={String(statusFilter)}
       decidedFilter={String(decidedFilter)}
       lines={lines.map((l) => l.sku).join(',')}
       secondaryActions={(secondaryActions ?? []).map((a) => a.key).join(',')}
+      {/* AC-S12.1 (round 2, review fix): a stand-in for the panel's own row Save, so a
+          test can reach the wrapper `PlanLinesSection` builds (`doSaveRow`) the same
+          way it reaches the toolbar's through `toolbarPrimary` below. */}
+      {lines[0] ? (
+        <button
+          disabled={savingFor?.(lines[0]) ?? false}
+          onClick={() => onSaveRow?.(lines[0])}
+        >
+          {savingFor?.(lines[0]) ? 'row-saving' : 'row-save'}
+        </button>
+      ) : null}
+      {/* AC-S6.3: the real grid renders Save/Confirm at the toolbar's right end
+          (`toolbarPrimary`) - rendered here too so a test can reach the actual buttons
+          `PlanLinesSection` builds, not a restated copy of them. */}
+      {toolbarPrimary}
     </div>
   ),
 }));
-vi.mock('./PlanBudgetReview', () => ({ PlanBudgetReview: () => <div>budget-review</div> }));
+// The mock surfaces `totals` (as text, alongside the plain "budget-review" marker every
+// existing case in this file already matches on) so AC-13 can assert WHICH totals object
+// `PlanLinesSection` actually hands the review panel, without pulling in the real
+// component (heavy children stay mocked, per this file's own stated purpose).
+vi.mock('./PlanBudgetReview', () => ({
+  PlanBudgetReview: ({ totals }: { totals: { decided: number; undecided: number } }) => (
+    <div>
+      <div>budget-review</div>
+      <div>{`${totals.decided} of ${totals.decided + totals.undecided}`}</div>
+      {totals.undecided > 0 ? (
+        <div>{`${totals.undecided} line${totals.undecided === 1 ? '' : 's'} still to decide`}</div>
+      ) : null}
+    </div>
+  ),
+}));
 vi.mock('./LevelChangesPanel', () => ({ LevelChangesPanel: () => <div>level-changes</div> }));
 
 import { PlanLinesSection } from './PlanLinesSection';
@@ -116,6 +167,11 @@ function stubPlanLines(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   usePlanLines.mockReset();
+  usePlanEditsMock.mockReset();
+  toastSuccess.mockReset();
+  toastError.mockReset();
+  toastInfo.mockReset();
+  stubPlanEdits();
 });
 
 describe('PlanLinesSection - loading / error / data', () => {
@@ -242,6 +298,9 @@ describe('PlanLinesSection - reports totals upward for the decision-progress til
     const hiddenCovered = line({
       id: 'b', sku: 'COV-NOT-BREACHED', type: 'covered',
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+      // S6 (PLAN-plan-list-tile-sheet-one-scope.md): visibleLines now trusts the
+      // server's own flag instead of recomputing the rule from policy_type/net/level.
+      hidden_by_default: true,
     });
     stubPlanLines({ lines: [visibleBuy, hiddenCovered], decisions: {} });
     const onTotalsChange = vi.fn();
@@ -252,6 +311,35 @@ describe('PlanLinesSection - reports totals upward for the decision-progress til
     expect(onTotalsChange).toHaveBeenCalledWith(
       expect.objectContaining({ decided: 0, undecided: 1 }),
     );
+  });
+
+  it('PLAN-reorder-one-formula.md, AC-13: PlanBudgetReview reads the DEFAULT-VISIBLE ' +
+    'totals, not every line the hook returned', () => {
+    // 3 lines, 1 hidden_by_default. `planLines.totals` is stubbed to the WRONG (every-line)
+    // figure on purpose - it is what `<PlanBudgetReview totals={planLines.totals}>` reads
+    // today - so a pass here would mean the component still hands the review panel the
+    // unfiltered total rather than `reportedTotals` (computed over `defaultVisibleLines`,
+    // the same set the tile and the grid already agree on).
+    const a = line({ id: 'a', sku: 'BUY-1', type: 'buy' });
+    const b = line({ id: 'b', sku: 'BUY-2', type: 'buy' });
+    const hidden = line({
+      id: 'c', sku: 'COV-HIDDEN', type: 'covered',
+      policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+      hidden_by_default: true,
+    });
+    stubPlanLines({
+      lines: [a, b, hidden],
+      decisions: {},
+      totals: {
+        decided: 0, undecided: 3, buying: 2, usingStock: 0, usingPo: 0, skipped: 0,
+        units: 0, cost: 0, unpriced: 0,
+      },
+    });
+    render(<PlanLinesSection runId="run-1" />);
+
+    expect(screen.getByText('0 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 lines still to decide')).toBeInTheDocument();
+    expect(screen.queryByText('0 of 3')).not.toBeInTheDocument();
   });
 
   it('counts the per-warehouse rows even under a Product-grain run (S16, 21 Aug): a decision ' +
@@ -330,10 +418,12 @@ describe('PlanLinesSection - manual mode hides not-breached covered rows by defa
     const notBreached = line({
       id: 'a', sku: 'COV-NOT-BREACHED', type: 'covered',
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+      hidden_by_default: true,
     });
     const breached = line({
       id: 'b', sku: 'COV-BREACHED', type: 'covered',
       policy_type: 'reorder_level', reorder_level: 120, net_position: 30,
+      hidden_by_default: false,
     });
     stubPlanLines({ lines: [notBreached, breached] });
     render(<PlanLinesSection runId="run-1" />);
@@ -407,6 +497,7 @@ describe('PlanLinesSection - manual mode hides not-breached covered rows by defa
       id: 'a', sku: 'COV-ONLY', product_id: 'p-lonely', type: 'covered',
       warehouse_id: null, warehouse_code: null, warehouse_name: null,
       policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+      hidden_by_default: true,
     });
     const other = line({ id: 'b', sku: 'BUY-1', product_id: 'p-other', type: 'buy' });
     stubPlanLines({ lines: [lonely, other] });
@@ -426,5 +517,98 @@ describe('PlanLinesSection - manual mode hides not-breached covered rows by defa
     render(<PlanLinesSection runId="run-1" />);
 
     expect(screen.getByText(/plan-lines-grid/).textContent).toContain('MANUAL-BUY');
+  });
+});
+
+describe('PlanLinesSection - Confirm button tooltip (AC-S6.3)', () => {
+  it('reads "Decide at least one row first" and is disabled at Confirm (0)', () => {
+    stubPlanLines();
+    stubPlanEdits({ confirmable: { products: 0, cash: 0, unpriced: 0 } });
+    render(<PlanLinesSection runId="run-1" />);
+
+    const confirmButton = screen.getByRole('button', { name: /Confirm \(0\)/ });
+    expect(confirmButton).toBeDisabled();
+    expect(confirmButton).toHaveAttribute('title', 'Decide at least one row first');
+  });
+
+  it('drops the "decide a row" hint once a product is confirmable', () => {
+    stubPlanLines();
+    stubPlanEdits({ confirmable: { products: 2, cash: 500, unpriced: 0 } });
+    render(<PlanLinesSection runId="run-1" />);
+
+    const confirmButton = screen.getByRole('button', { name: /Confirm \(2\)/ });
+    expect(confirmButton).not.toBeDisabled();
+    expect(confirmButton).toHaveAttribute(
+      'title',
+      'Save, then turn this plan into draft purchase orders',
+    );
+  });
+});
+
+describe('PlanLinesSection - row Save feedback (AC-S12.1, review fix round 2)', () => {
+  it('a rejecting saveRow toasts the extracted error and never clears the draft', async () => {
+    const saveRow = vi.fn().mockRejectedValue(new Error('Could not reach the server.'));
+    stubPlanLines({ lines: [line()] });
+    stubPlanEdits({ saveRow, edits: { r1: { moq: 5 } } });
+    render(<PlanLinesSection runId="run-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'row-save' }));
+
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not reach the server.'));
+    expect(toastSuccess).not.toHaveBeenCalled();
+    // The hook owns clearing the draft on success only - a rejected save never reaches
+    // that line, so nothing here asserts the draft was touched.
+  });
+
+  it('toasts "Row saved." on a successful save', async () => {
+    const saveRow = vi.fn().mockResolvedValue({ saved_rows: 1, saved_products: 1 });
+    stubPlanLines({ lines: [line()] });
+    stubPlanEdits({ saveRow });
+    render(<PlanLinesSection runId="run-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'row-save' }));
+
+    await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Row saved.'));
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it('disables the row Save affordance while that row is in flight', () => {
+    stubPlanLines({ lines: [line()] });
+    stubPlanEdits({ savingRowIds: new Set(['r1']) });
+    render(<PlanLinesSection runId="run-1" />);
+
+    expect(screen.getByRole('button', { name: 'row-saving' })).toBeDisabled();
+  });
+
+  // AC-S12.5: a row with nothing drafted and no un-blurred value to flush - `saveRow`
+  // resolves null rather than PUTting an empty save - says so instead of staying silent
+  // as if the click never happened, and fires no request either way.
+  it('a row with nothing to save toasts "Nothing to save on this row." and fires no request', async () => {
+    const saveRow = vi.fn().mockResolvedValue(null);
+    stubPlanLines({ lines: [line()] });
+    stubPlanEdits({ saveRow });
+    render(<PlanLinesSection runId="run-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'row-save' }));
+
+    await vi.waitFor(() => expect(toastInfo).toHaveBeenCalledWith('Nothing to save on this row.'));
+    expect(saveRow).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+describe('PlanLinesSection - Confirm dialog copy (finding 4, review fix round 3)', () => {
+  it('states the G5 rule, not the retired R3 sweep sentence', () => {
+    stubPlanLines();
+    stubPlanEdits({ confirmable: { products: 2, cash: 500, unpriced: 0 } });
+    render(<PlanLinesSection runId="run-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Confirm \(2\)/ }));
+
+    expect(
+      screen.getByText(/Only rows you decided are bought; untouched and skipped rows are left out\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/confirmed as the plan suggested/)).not.toBeInTheDocument();
   });
 });

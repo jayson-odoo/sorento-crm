@@ -277,6 +277,338 @@ def test_stock_uses_relabelled_location_fields():
     assert out["last_updated_at"] == "2026-06-12T09:28:56+08:00"
 
 
+def test_orders_so_outstanding_bucket_renders_so_shaped_rows():
+    out = env("crm_order_management_orders_list", {
+        "order_status": "so_outstanding",
+        "data": [{
+            "so_number": "SO-1001", "product_code": "SRTWC8517",
+            "outstanding_qty": 7, "order_date": "2026-06-01",
+            "customer": "ABC SDN BHD", "requested_delivery_date": "2026-06-15",
+        }],
+    })
+    assert out["result_type"] == "so_outstanding"
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["SO Number"] == "SO-1001"
+    assert f["Outstanding Qty"] == "7"
+    assert f["Customer"] == "ABC SDN BHD"
+    assert out["has_result"] is True
+
+
+def test_orders_groups_render_same_shape_as_flat_list():
+    row_a = {"order_number": "A1", "debtor_name": "ABC", "order_date": "2026-06-01"}
+    row_b = {"order_number": "B1", "debtor_name": "XYZ", "order_date": "2026-06-02"}
+    out = env("crm_order_management_orders_list", {
+        "data": [row_a, row_b],
+        "groups": [
+            {"key": "ABC", "label": "ABC", "rows": [row_a]},
+            {"key": "XYZ", "label": "XYZ", "rows": [row_b]},
+        ],
+    })
+    assert [g["key"] for g in out["groups"]] == ["ABC", "XYZ"]
+    assert out["groups"][0]["items"][0]["fields"]
+    labels = {f["label"]: f["value"] for f in out["groups"][0]["items"][0]["fields"]}
+    assert labels["Customer"] == "ABC"
+
+
+def test_orders_groups_absent_when_backend_did_not_group():
+    out = env("crm_order_management_orders_list", {
+        "data": [{"order_number": "A1", "debtor_name": "ABC"}],
+    })
+    assert "groups" not in out
+
+
+def test_no_three_line_block_is_prepended_off_a_top_level_so_outstanding_qty():
+    """D8 (owner, 8 Sep 2026): the old "SO Outstanding / DO open / Delivered" block is gone;
+    the per-row SO block is the only SO rendering, and the `so_outstanding` bucket's own
+    summary (no products) renders nothing either."""
+    out = env("crm_order_management_orders_list", {
+        "data": [{"order_number": "A1", "debtor_name": "ABC",
+                   "lines": [{"quantity": 3, "product": {"product_code": "SRTWC8517"}}]}],
+        "summary": {
+            "row_count": 5, "order_count": 5, "delivered_count": 4, "pending_count": 1,
+            "customers": ["ABC"], "customer_count": 1,
+            "so_outstanding_qty": 7, "so_outstanding_count": 1,
+            "products": [{"product_code": "SRTWC8517", "order_count": 5, "customer_count": 1,
+                          "delivered_quantity": 12, "pending_quantity": 3, "so_count": 1,
+                          "so_ordered_qty": 9, "so_transferred_qty": 2, "so_outstanding_qty": 7}],
+        },
+    })
+    labels = [f["label"] for item in out["summary_items"] for f in item["fields"]]
+    assert "DO open (not yet delivered)" not in labels
+    assert labels.count("SO Outstanding") == 1  # the row's own field, once
+    assert "SO" in labels and "Ordered" in labels
+    bucket = env("crm_order_management_orders_list", {
+        "order_status": "so_outstanding",
+        "data": [{"so_number": "SO-1", "product_code": "SRTWC8517", "outstanding_qty": 7}],
+        "summary": {"scope": "filter", "row_count": 1, "so_outstanding_qty": 7, "so_outstanding_count": 1},
+    })
+    assert "summary_items" not in bucket
+
+
+def test_products_specs_render_as_keyed_fields_ranked_by_backend_order():
+    out = env("crm_master_products_list", {
+        "data": [{
+            "product_code": "SRTWC8517",
+            "specs": [
+                {"key": "thickness", "label": "Thickness", "value": 1.2, "unit": "mm", "rank_weight": 5.0},
+                {"key": "wattage", "label": "Wattage", "value": 60, "unit": "W", "rank_weight": 3.0},
+            ],
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    keyed = [f for f in fields if f.get("key", "").startswith("spec:")]
+    assert [f["label"] for f in keyed] == ["Thickness", "Wattage"]
+    assert keyed[0]["value"] == "1.2 mm"
+    assert keyed[1]["value"] == "60 W"
+    assert out["spec_vocabulary"] == {"thickness": "Thickness", "wattage": "Wattage"}
+
+
+def test_products_no_specs_key_no_vocabulary():
+    out = env("crm_master_products_list", {"data": [{"product_code": "SRTWC8517"}]})
+    assert "spec_vocabulary" not in out
+    assert not any(f.get("key", "").startswith("spec:") for f in out["items"][0]["fields"])
+
+
+def test_purchase_orders_placed_renders_fields_and_restricts_supplier():
+    out = env("crm_procurement_po_placed_list", {
+        "data": [{
+            "po_number": "PO-1001", "product_code": "SRTWC8517",
+            "outstanding_qty": 50, "expected_date": "2026-07-01",
+            "supplier": "Acme Supplies",
+        }],
+    })
+    assert out["result_type"] == "purchase_orders_placed"
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["PO Number"] == "PO-1001"
+    assert f["Outstanding Qty"] == "50"
+    assert f["Supplier"] == "Acme Supplies"
+    assert out["restricted_fields"] == {"supplier": "purchase_orders.supplier"}
+
+
+def test_purchase_orders_placed_group_by_supplier():
+    row_a = {"po_number": "PO-1", "product_code": "P1", "supplier": "Acme"}
+    row_b = {"po_number": "PO-2", "product_code": "P2", "supplier": "Beta"}
+    out = env("crm_procurement_po_placed_list", {
+        "data": [row_a, row_b],
+        "groups": [
+            {"key": "Acme", "label": "Acme", "rows": [row_a]},
+            {"key": "Beta", "label": "Beta", "rows": [row_b]},
+        ],
+    })
+    assert {g["key"] for g in out["groups"]} == {"Acme", "Beta"}
+
+
+def test_spo_last_receipt_intro_names_the_new_meaning():
+    """AC-9 (chatbot-warehouse-entity-and-last-in): the tool answers the last SPO line
+    per product, not a receipt."""
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-01", "product_code": "SRTWC8517",
+            "spo_quantity": 30, "spo_date": "2026-06-10", "spo_date_source": "expected",
+            "warehouse": "BRW",
+        }],
+    })
+    assert out["intro"] == "Here is the last SPO line per product."
+
+
+def test_spo_last_receipt_field_order_is_the_owners_reading_order():
+    """AC-9, owner ruling 8 Sep 2026 (against the rendered screenshot), amended 9 Sep 2026
+    (`PLAN-chatbot-last-in-container-number.md`, owner ruling: "the container number can
+    put below the SPO number in the answer"): SPO Number, then Container Number if any,
+    Product Code, SPO Quantity, GR Quantity if any, SPO Date, GR Date if any, Warehouse.
+    Asserted as an exact LIST, not a membership test - the order IS the ruling."""
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-01", "container_number": "CMAU7650091",
+            "product_code": "SRTWC8517",
+            "spo_quantity": 30, "gr_quantity": 12,
+            "spo_date": "2026-06-10", "spo_date_source": "expected",
+            "gr_date": "2026-06-18", "warehouse": "BRW",
+        }],
+    })
+    item = out["items"][0]
+    assert item["title"] == "SPO-2026-01"
+    assert [f["label"] for f in item["fields"]] == [
+        "SPO Number",
+        "Container Number",
+        "Product Code",
+        "SPO Quantity",
+        "GR Quantity",
+        "SPO Date",
+        "GR Date",
+        "Warehouse",
+    ]
+    assert [f["value"] for f in item["fields"]] == [
+        "SPO-2026-01", "CMAU7650091", "SRTWC8517", "30", "12", "2026-06-10", "2026-06-18", "BRW",
+    ]
+    assert item["fields"][1]["key"] == "container_number"
+
+
+def test_spo_last_receipt_without_a_container_keeps_the_seven_field_row():
+    """AC-6 (chatbot-last-in-container-number). A row with no `container_number` renders
+    the previous seven labels in the previous order - "if any" holds for the new field
+    exactly as it already does for the two GR fields."""
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-01", "product_code": "SRTWC8517",
+            "spo_quantity": 30, "gr_quantity": 12,
+            "spo_date": "2026-06-10", "spo_date_source": "expected",
+            "gr_date": "2026-06-18", "warehouse": "BRW",
+        }],
+    })
+    item = out["items"][0]
+    assert [f["label"] for f in item["fields"]] == [
+        "SPO Number",
+        "Product Code",
+        "SPO Quantity",
+        "GR Quantity",
+        "SPO Date",
+        "GR Date",
+        "Warehouse",
+    ]
+
+
+def test_spo_last_receipt_open_line_shows_neither_gr_field():
+    """"if any" on both halves: an open line has no GR Quantity and no GR Date, and the
+    remaining five fields keep their order."""
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-02", "product_code": "P1",
+            "spo_quantity": 30, "gr_quantity": None,
+            "spo_date": "2026-06-10", "spo_date_source": "expected",
+            "gr_date": None, "warehouse": "BRW",
+        }],
+    })
+    assert [f["label"] for f in out["items"][0]["fields"]] == [
+        "SPO Number", "Product Code", "SPO Quantity", "SPO Date", "Warehouse",
+    ]
+
+
+def test_spo_last_receipt_received_without_a_grn_shows_quantity_and_no_gr_date():
+    """The ESB-stated path - a received quantity the GRN tables know nothing about."""
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-03", "product_code": "P2",
+            "spo_quantity": 50, "gr_quantity": 50,
+            "spo_date": "2026-06-01", "spo_date_source": "issued", "gr_date": None,
+        }],
+    })
+    assert [f["label"] for f in out["items"][0]["fields"]] == [
+        "SPO Number", "Product Code", "SPO Quantity", "GR Quantity", "SPO Date",
+    ]
+
+
+def test_spo_last_receipt_marks_a_recorded_date_in_its_own_label():
+    """The 3% of lines with neither `expected_date` nor `issue_date` fall back to
+    `created_at`, and the label says so rather than letting the reader take a bookkeeping
+    timestamp for a promised delivery."""
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-04", "product_code": "P3",
+            "spo_quantity": 5, "spo_date": "2026-06-01", "spo_date_source": "recorded",
+        }],
+    })
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert "SPO Date (recorded)" in labels
+    assert "SPO Date" not in labels
+
+
+def test_spo_last_receipt_issued_date_keeps_the_plain_label():
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-05", "product_code": "P4",
+            "spo_quantity": 5, "spo_date": "2026-06-01", "spo_date_source": "issued",
+        }],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["SPO Date"] == "2026-06-01"
+
+
+def test_stock_omits_sellable_when_backend_did_not_send_it():
+    """AC-903: byte-identical when the backend answered with no `sellable` at all - no
+    Outstanding field, no restricted_fields, no summary block."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 36}],
+    })
+    labels = [x["label"] for x in out["items"][0]["fields"]]
+    assert labels == ["Product Code", "Warehouse", "System Location", "Quantity On Hand"]
+    assert "restricted_fields" not in out
+    assert "summary_items" not in out
+
+
+def test_stock_rows_keep_every_location_and_carry_outstanding_when_sellable_is_sent():
+    """D1 (owner console pass, 8 Sep 2026): the grant used to hide the location rows -
+    the Open SO block lived in `summary_items`, which the CRM renders INSTEAD of the rows.
+    Now each row carries `*Outstanding:* N` (its own open SO) after Quantity On Hand,
+    restricted behind `inventory.sellable`, and nothing is written to the summary slot."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [
+            {"product_code": "SRTWT107", "warehouse": "A", "quantity_on_hand": 10, "open_so_qty": 6, "sellable": 4},
+            {"product_code": "SRTWT107", "warehouse": "B", "quantity_on_hand": 20, "open_so_qty": 0, "sellable": 20},
+            {"product_code": "SRTWT108", "warehouse": "A", "quantity_on_hand": 5, "open_so_qty": 8, "sellable": -3},
+        ],
+    })
+    assert len(out["items"]) == 3
+    for item, expected in zip(out["items"], (6, 0, 8)):
+        labels = [f["label"] for f in item["fields"]]
+        assert labels.index("Outstanding") == labels.index("Quantity On Hand") + 1
+        field = next(f for f in item["fields"] if f["key"] == "open_so_qty")
+        assert field["value"] == expected
+    assert out["restricted_fields"] == {"open_so_qty": "inventory.sellable"}
+    assert "summary_items" not in out
+
+
+def test_stock_outstanding_is_the_rows_own_number_never_a_product_sum():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "warehouse": "A", "quantity_on_hand": 10, "open_so_qty": 6, "sellable": 4}],
+        "stock_summary": [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 60, "open_so_qty": 941, "sellable": -881}],
+    })
+    field = next(f for f in out["items"][0]["fields"] if f["key"] == "open_so_qty")
+    assert field["value"] == 6
+    assert "summary_items" not in out
+
+
+def test_stock_compact_total_and_warehouse_lines_carry_the_os_suffix_as_granted_value():
+    """D1: `*Total:* 51 (O/S: 36)` and `*BRW:* 0 (O/S: 12)` under the grant; the suffix
+    rides as `granted_value` on a keyed restricted field, so the CRM swaps it in when
+    granted and strips it otherwise - the plain number always stays."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [],
+        "stock_visibility": {"mode": "compact", "source": "access_type"},
+        "stock_summary": [{
+            "product_id": "p1", "product_code": "SRTWT107", "product_name": "SRTWT107",
+            "total_on_hand": 51, "open_so_qty": 36, "sellable": 15,
+            "locations": [
+                {"warehouse_code": "BRW", "quantity_on_hand": 0, "open_so_qty": 12},
+                {"warehouse_code": "KLG", "quantity_on_hand": 51, "open_so_qty": 20},
+            ],
+            "flags": {},
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    total = next(f for f in fields if f["label"] == "Total")
+    assert total == {"key": "total_on_hand", "label": "Total", "value": 51, "granted_value": "51 (O/S: 36)"}
+    brw = next(f for f in fields if f["label"] == "BRW")
+    assert brw == {"key": "location_on_hand", "label": "BRW", "value": 0, "granted_value": "0 (O/S: 12)"}
+    assert out["restricted_fields"] == {"total_on_hand": "inventory.sellable", "location_on_hand": "inventory.sellable"}
+    assert "summary_items" not in out
+
+
+def test_stock_compact_without_sellable_is_the_plain_unkeyed_block():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [],
+        "stock_visibility": {"mode": "compact", "source": "access_type"},
+        "stock_summary": [{
+            "product_id": "p1", "product_code": "SRTWT107", "product_name": "SRTWT107",
+            "total_on_hand": 12,
+            "locations": [{"warehouse_code": "BRW", "quantity_on_hand": 12}],
+            "flags": {},
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    assert fields[1] == {"label": "Total", "value": 12}
+    assert fields[2] == {"label": "BRW", "value": 12}
+    assert "restricted_fields" not in out
 def test_forms_minimal_name_only():
     out = env("crm_forms_management_forms_list", {"data": [{"name": "Renovation Form", "attachment_id": "x"}]})
     assert out["items"][0]["fields"] == [{"label": "Form Name", "value": "Renovation Form"}]
@@ -1123,14 +1455,15 @@ def test_qs_m1_single_customer_single_product_is_one_item_in_the_item_shape():
     items = summary_items(s)
     assert len(items) == 1
     assert items[0]["title"] == "ECO WORLD SDN BHD · SRTWC8605"
+    # D3 (owner, 8 Sep 2026): the DO block in the owner's order and labels
     assert _fields(items[0]) == [
         ("customer", "Customer", "ECO WORLD SDN BHD"),
         ("product_code", "Product Code", "SRTWC8605"),
-        ("order_count", "DOs", 5),
+        ("order_count", "DO", 5),
         ("order_date", "DO Date", "01/03/2026 \u2013 20/07/2026"),
-        ("delivered_quantity", "Delivered Qty", 48),
-        ("pending_quantity", "Pending Qty", 17),
-        ("delivered_between", "Delivered", "02/03/2026 – 15/07/2026"),
+        ("delivered_quantity", "Delivered", 48),
+        ("delivered_between", "Delivery Date", "02/03/2026 – 15/07/2026"),
+        ("pending_quantity", "DO Outstanding", 17),
     ]
     # every field carries a key - consumers match on it, never on the label
     assert all(set(f) == {"key", "label", "value"} for f in items[0]["fields"])
@@ -1157,9 +1490,11 @@ def test_qs_m2_multi_customer_gets_a_leading_total_then_one_item_per_customer():
          "products": [{**_P_8605, "order_count": 6, "delivered_quantity": 55, "delivered_to": "2026-08-01"}],
          "groups": [_G_ECO, g2]}
     items = summary_items(s)
-    assert [i["title"] for i in items] == ["All customers (2) · SRTWC8605", "ECO WORLD SDN BHD · SRTWC8605",
+    assert [i["title"] for i in items] == ["SRTWC8605", "ECO WORLD SDN BHD · SRTWC8605",
                                            "HANLIM TRADING SDN BHD · SRTWC8605"]
     total = dict((k, v) for k, _, v in _fields(items[0]))
+    assert total["customers"] == 2 and "customer" not in total                       # D3: a Customers field, not a title
+    assert _fields(items[0])[0] == ("customers", "Customers", 2)
     assert total["delivered_quantity"] == 55 and total["order_count"] == 6           # products[], not a sum
     assert total["delivered_between"] == "02/03/2026 – 01/08/2026"
     hanlim = dict((k, v) for k, _, v in _fields(items[2]))
@@ -1180,7 +1515,8 @@ def test_qs_m4_real_multi68_envelope():
     items = summary_items(S)
     named = [g for g in S["groups"] if isinstance(g.get("customer"), str) and g["customer"].strip()]
     assert len(items) == 1 + len(named)
-    assert items[0]["title"] == f"All customers ({len(named)}) · {S['products'][0]['product_code']}"
+    assert items[0]["title"] == S["products"][0]["product_code"]
+    assert dict((k, v) for k, _, v in _fields(items[0]))["customers"] == len(named)
     total = dict((k, v) for k, _, v in _fields(items[0]))
     assert total["delivered_quantity"] == S["products"][0]["delivered_quantity"]
     assert "delivered_between" not in total                # old shape has no per-product dates: dropped, not None
@@ -1218,12 +1554,13 @@ def test_qs_m7_hostile_leaves_never_raise_or_leak():
     assert summary_intro(hostile, 3) is None                       # row_count unrenderable -> no intro
 
 
-def test_qs_m8_intro_states_the_page_geometry():
-    assert summary_intro({"row_count": 8}, 2) == "Summary over 8 DOs."          # no page geometry (amendment 5)
-    assert summary_intro({"row_count": 3}, 3) == "Summary over 3 DOs."
-    assert summary_intro({"row_count": 1}, 1) == "Summary over 1 DO."
+def test_qs_m8_intro_is_gone_except_the_truncation_notice():
+    """D3 (owner, 8 Sep 2026): "Summary over N DOs." is struck; the truncation notice
+    stays as its own line."""
+    assert summary_intro({"row_count": 8}, 2) is None
+    assert summary_intro({"row_count": 1}, 1) is None
     assert summary_intro({"row_count": 700, "groups_truncated": True}, 20) == (
-        "Summary over 700 DOs. Not every breakdown is shown — add a customer, a product or a date range.")
+        "Not every breakdown is shown — add a customer, a product or a date range.")
     assert "Not every breakdown" in summary_intro({"row_count": 9, "products_truncated": True}, 9)
 
 
@@ -1234,7 +1571,8 @@ def test_qs_m9_total_uses_the_crm_customer_count_not_the_visible_slice():
          "products": [{**_P_8605, "customer_count": 68, "order_count": 187, "delivered_quantity": 32649}],
          "groups": [_G_ECO]}
     items = summary_items(s)
-    assert items[0]["title"] == "All customers (68) · SRTWC8605"
+    assert items[0]["title"] == "SRTWC8605"
+    assert dict((k, v) for k, _, v in _fields(items[0]))["customers"] == 68
     assert dict((k, v) for k, _, v in _fields(items[0]))["delivered_quantity"] == 32649
     assert items[1]["title"] == "ECO WORLD SDN BHD · SRTWC8605"
     # and with no customer_count on the product (older CRM) it falls back to the visible rows
@@ -1246,7 +1584,7 @@ def test_qs_m0_summary_items_absent_unless_a_real_answer(monkeypatch):
     base = {"data": [{**_QS_ROW, "lines": []}], "pagination": {"total": 1, "page": 1, "limit": 20}}
     out = env("crm_order_management_orders_list", {**base, "summary": _SUM_M1})
     assert out["summary_items"] == summary_items(_SUM_M1)
-    assert out["intro"] == "Summary over 5 DOs."
+    assert out["intro"] == "Here are the orders I found."   # D3: no "Summary over N DOs." line
     assert "summary_lines" not in out
     assert "summary_items" not in env("crm_order_management_orders_list", base)                        # no summary
     assert "summary_items" not in env("crm_order_management_orders_list", {"data": [], "summary": _SUM_M1})  # no rows
@@ -1256,3 +1594,169 @@ def test_qs_m0_summary_items_absent_unless_a_real_answer(monkeypatch):
     monkeypatch.setattr(_p, "summary_items", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")))
     out2 = env("crm_order_management_orders_list", {**base, "summary": _SUM_M1})
     assert out2["items"] and "summary_items" not in out2 and out2["intro"] == "Here are the orders I found."
+
+
+# ------------------------------------------------ SO outstanding per row (by-product)
+
+_BP_ROW = {"product_code": "SRTWC286", "order_count": 2, "customer_count": 1,
+           "delivered_quantity": 10, "pending_quantity": 3, "so_outstanding_qty": 7}
+_BP_GRP = {"customer": "HENG SENG HARDWARE SDN BHD", **_BP_ROW}
+
+
+def test_by_product_so_block_renders_in_the_owners_order_before_the_do_block():
+    """D3 (owner console pass, 8 Sep 2026): SO, SO Date, Ordered, Transferred to DO,
+    SO Outstanding, then DO, DO Date, Delivered, Delivery Date, DO Outstanding - one field
+    per line, never at the top level of the by-product summary (that path would print DO
+    counts as quantities on a multi-variant row)."""
+    row = {**_BP_ROW, "so_count": 3, "so_date_from": "2026-05-01", "so_date_to": "2026-06-10",
+           "so_ordered_qty": 30, "so_transferred_qty": 23, "so_outstanding_qty": 7,
+           "order_date_from": "2026-05-03", "order_date_to": "2026-06-12",
+           "delivered_from": "2026-05-04", "delivered_to": "2026-06-13"}
+    out = env("crm_order_management_orders_by_product_list", {
+        "data": [{"order_number": "A1", "debtor_name": "HENG SENG HARDWARE SDN BHD"}],
+        "summary": {"scope": "filter", "row_count": 2, "order_count": 2, "delivered_count": 1,
+                    "pending_count": 1, "customers": ["HENG SENG HARDWARE SDN BHD"], "customer_count": 1,
+                    "products": [row], "groups": [{"customer": "HENG SENG HARDWARE SDN BHD", **row}]},
+    })
+    items = out["summary_items"]
+    assert len(items) == 1
+    assert [(f["key"], f["label"], f["value"]) for f in items[0]["fields"]] == [
+        ("customer", "Customer", "HENG SENG HARDWARE SDN BHD"),
+        ("product_code", "Product Code", "SRTWC286"),
+        ("so_count", "SO", 3),
+        ("so_date", "SO Date", "01/05/2026 \u2013 10/06/2026"),
+        ("so_ordered_qty", "Ordered", 30),
+        ("so_transferred_qty", "Transferred to DO", 23),
+        ("so_outstanding_qty", "SO Outstanding", 7),
+        ("order_count", "DO", 2),
+        ("order_date", "DO Date", "03/05/2026 \u2013 12/06/2026"),
+        ("delivered_quantity", "Delivered", 10),
+        ("delivered_between", "Delivery Date", "04/05/2026 \u2013 13/06/2026"),
+        ("pending_quantity", "DO Outstanding", 3),
+    ]
+    assert out["intro"] == "Here are the orders I found."
+
+
+def test_by_product_so_zero_still_prints_and_the_total_row_carries_customers():
+    grp_a = {**_BP_GRP, "so_outstanding_qty": 7, "so_count": 2}
+    grp_b = {"customer": "QUIET SDN BHD", **_BP_ROW, "so_outstanding_qty": 0, "so_count": 0}
+    total = {**_BP_ROW, "customer_count": 2, "so_outstanding_qty": 7, "so_count": 2}
+    out = env("crm_order_management_orders_by_product_list", {
+        "data": [{"order_number": "A1"}],
+        "summary": {"scope": "filter", "row_count": 3, "products": [total], "groups": [grp_a, grp_b]},
+    })
+    items = out["summary_items"]
+    assert items[0]["title"] == "SRTWC286"
+    assert items[0]["fields"][0] == {"key": "customers", "label": "Customers", "value": 2}
+    so_values = [next(f["value"] for f in it["fields"] if f["key"] == "so_outstanding_qty") for it in items]
+    assert so_values == [7, 7, 0]
+    so_counts = [next(f["value"] for f in it["fields"] if f["key"] == "so_count") for it in items]
+    assert so_counts == [2, 2, 0]
+
+
+def test_by_product_summary_without_the_key_renders_no_so_field():
+    row = {k: v for k, v in _BP_ROW.items() if k != "so_outstanding_qty"}
+    out = env("crm_order_management_orders_by_product_list", {
+        "data": [{"order_number": "A1"}],
+        "summary": {"scope": "filter", "row_count": 2, "products": [row],
+                    "groups": [{"customer": "HENG SENG HARDWARE SDN BHD", **row}]},
+    })
+    for it in out["summary_items"]:
+        assert "so_outstanding_qty" not in [f["key"] for f in it["fields"]]
+        assert "SO Outstanding" not in [f["label"] for f in it["fields"]]
+
+
+def test_purchase_orders_placed_field_order_no_source_no_expected_date():
+    """Owner ruling (11 Sep 2026): the row order is PO Number, Product Code, Ordered Qty,
+    Outstanding Qty, PO Date, Location - Source (`kind`) and Expected Date never render
+    again, even when the row still carries `kind` / `expected_date` (the backend keeps
+    both on the raw row for its own filtering/sorting; only the presenter drops them)."""
+    out = env("crm_procurement_po_placed_list", {
+        "data": [{
+            "company_name": "Sorento HQ", "po_number": "PO-1001", "kind": "po",
+            "product_code": "SRTWC8517", "ordered_qty": 50, "outstanding_qty": 50,
+            "po_date": "2026-05-01", "expected_date": "2026-07-01",
+            "location": "KL-WH", "supplier": "Acme Supplies",
+        }],
+    })
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert labels == [
+        "Company", "PO Number", "Product Code", "Ordered Qty",
+        "Outstanding Qty", "PO Date", "Location", "Supplier",
+    ]
+    assert "Source" not in labels
+    assert "Expected Date" not in labels
+
+
+def test_purchase_orders_placed_without_company_starts_at_po_number():
+    """Company is scope-gated and only present when the resolver widened scope; unchanged
+    by this ruling."""
+    out = env("crm_procurement_po_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50}],
+    })
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert labels[0] == "PO Number"
+    assert "Company" not in labels
+
+
+def test_purchase_orders_placed_row_without_ordered_qty_or_location_omits_them():
+    out = env("crm_procurement_po_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50}],
+    })
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert "Ordered Qty" not in labels
+    assert "Location" not in labels
+
+
+def test_purchase_orders_placed_ordered_qty_and_location_render_when_present():
+    out = env("crm_procurement_po_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517",
+                  "ordered_qty": 30, "outstanding_qty": 30, "location": "BRW"}],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["Ordered Qty"] == "30"
+    assert f["Location"] == "BRW"
+
+
+def test_purchase_orders_placed_item_carries_kind_at_the_top_level():
+    """The item dict now carries `kind` as a TOP-LEVEL key (sibling of `title`/`fields`/
+    `flags`), not a rendered field - the chatbot rung reads it from there so it can still
+    tell a PO row from an SPO row with no rendered Source field."""
+    out = env("crm_procurement_po_placed_list", {
+        "data": [
+            {"po_number": "202607-S0031", "kind": "po", "product_code": "C-FH14", "outstanding_qty": 27},
+            {"po_number": "SPO-2026/09-0001", "kind": "spo", "product_code": "C-FH14", "outstanding_qty": 7},
+        ],
+    })
+    assert [item.get("kind") for item in out["items"]] == ["po", "spo"]
+    for item in out["items"]:
+        assert "Source" not in [f["label"] for f in item["fields"]]
+        assert "kind" not in [f.get("key") for f in item["fields"]]
+
+
+def test_purchase_orders_placed_item_has_no_kind_key_when_row_has_none():
+    """Byte identity for an older/kind-less row: no top-level `kind` key at all, not
+    `None`."""
+    out = env("crm_procurement_po_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50}],
+    })
+    assert "kind" not in out["items"][0]
+
+
+def test_product_attachment_with_no_link_is_listed_with_the_unavailable_note_and_never_attached():
+    """D9 (8 Sep 2026): a file whose link could not be signed stays in the answer (name,
+    type) with "(file link unavailable right now)" and produces no attachment entry."""
+    out = env("crm_master_product_attachments_list", {
+        "data": [
+            {"product": {"product_code": "CWSP124"}, "attachment": {"original_filename": "CWSP124-drawing.pdf",
+             "attachment_type": {"type_name": "Technical Drawing"}, "file_path": None, "mime_type": "application/pdf"}},
+            {"product": {"product_code": "CWSP124"}, "attachment": {"original_filename": "CWSP124.jpg",
+             "attachment_type": {"type_name": "Product Photos"}, "file_path": "https://cdn-sorento.com/x/CWSP124.jpg", "mime_type": "image/jpeg"}},
+        ],
+    })
+    first = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert first["File Name"] == "CWSP124-drawing.pdf"
+    assert first["File Link"] == "(file link unavailable right now)"
+    second = {f["label"]: f["value"] for f in out["items"][1]["fields"]}
+    assert "File Link" not in second
+    assert [a["filename"] for a in out["attachments"]] == ["CWSP124.jpg"]

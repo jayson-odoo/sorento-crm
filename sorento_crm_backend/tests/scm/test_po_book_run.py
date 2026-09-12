@@ -51,18 +51,28 @@ def _world(db, company_id=None, inputs=None):
         {"id": wid, "c": unique_code("W")[:20], **({"co": company_id} if company_id else {})})
 
     def add_po(number, status, qty, received, line_status="open", expected=None):
+        # `purchase_orders`/`purchase_order_lines.company_id` fall to the column default
+        # (the legacy shared company) when omitted - correctly invisible under a scoped
+        # test company since `_PO_BOOK_SQL` gained `company_sql_predicate` (round A,
+        # 877365a5f). Stamped with the SAME `company_id` the warehouse/run/recommendation
+        # above already carry, so a company-scoped `_world()` produces PO rows that
+        # company can actually see.
         poid = _u()
         db.execute(text(
             "INSERT INTO purchase_orders (id, po_number, status, expected_date, issue_date, "
-            "currency, source_system) VALUES (:id, :n, :s, :e, :d, 'CNY', 'test')"),
+            "currency, source_system"
+            + (", company_id) VALUES (:id, :n, :s, :e, :d, 'CNY', 'test', :co)" if company_id
+               else ") VALUES (:id, :n, :s, :e, :d, 'CNY', 'test')")),
             {"id": poid, "n": f"{MARKER}-{number}", "s": status, "e": expected,
-             "d": date(2026, 7, 1)})
+             "d": date(2026, 7, 1), **({"co": company_id} if company_id else {})})
         db.execute(text(
             "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, "
-            "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status) "
-            "VALUES (:id, :po, :p, :w, :q, :r, 10, 'CNY', :ls)"),
+            "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status"
+            + (", company_id) VALUES (:id, :po, :p, :w, :q, :r, 10, 'CNY', :ls, :co)"
+               if company_id
+               else ") VALUES (:id, :po, :p, :w, :q, :r, 10, 'CNY', :ls)")),
             {"id": _u(), "po": poid, "p": pid, "w": wid, "q": qty, "r": received,
-             "ls": line_status})
+             "ls": line_status, **({"co": company_id} if company_id else {})})
 
     add_po("OPEN", "active", 504, 0, expected=date(2026, 8, 10))
     add_po("PART", "partial", 100, 40)
@@ -78,8 +88,9 @@ def _world(db, company_id=None, inputs=None):
         + ", created_at) VALUES (:id, 'completed', false"
         + (", :co" if company_id else "")
         + ", now())"), {"id": run_id, **({"co": company_id} if company_id else {})})
-    # `inputs` carries the frozen channel split the P8 filter reads. None reproduces a run
-    # that states neither figure - a legacy one - which must keep its receipts.
+    # `inputs` carries the frozen channel split (P8 retired - no longer filtered on, but
+    # still frozen and worth exercising). None reproduces a run that states neither figure
+    # - a legacy one - which must keep its receipts.
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation "
         "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status, inputs"
@@ -136,25 +147,22 @@ def test_the_endpoint_serves_it_and_rbac_holds(scm_app):
 
 
 # --------------------------------------------------------------------------- #
-# P8: a project row's purchase order is consumed by the Order Inquiry, not here
+# P8 is retired (PLAN-reorder-one-formula.md, 11 Sep 2026)
 # --------------------------------------------------------------------------- #
 
-def test_a_project_only_cell_serves_no_receipts():
-    """`PLAN-scm-purchasing-uat-journey.md` P8, from the captain's own question: "why does
-    reorder planning consider outstanding PO again when the OI already links to it".
-
-    A raised inquiry row links to the PO line and the plan's Project figure drops by exactly
-    that much. Offering the same PO here as well is the same units twice, and the buyer
-    handles them twice - so a cell whose demand is ALL project is absent from the map, which
-    is what removes "Use PO" from the row.
-    """
+def test_a_project_only_cell_keeps_its_receipts_too():
+    """P8 is retired: the engine nets every row's open PO ONCE, project demand included
+    (since #828), so hiding a project-only row's own receipts broke the Suggestion's own
+    identity (Stock + PO + Buy = need) for exactly that row. A cell whose demand is ALL
+    project now serves its receipts the same as any other."""
     from tests._pg_fixture import pg_session
     with pg_session() as db:
         w = _world(db, inputs={"project_committed": 90, "retail_committed": 0})
 
         out = po_book_service.po_book_for_run(db, w["run_id"])
 
-        assert f"{w['product_id']}:{w['warehouse_id']}" not in out["po_book"]
+        assert sum(r["remaining"]
+                   for r in out["po_book"][f"{w['product_id']}:{w['warehouse_id']}"]) == 564.0
 
 
 def test_a_cell_carrying_BOTH_channels_keeps_its_receipts():

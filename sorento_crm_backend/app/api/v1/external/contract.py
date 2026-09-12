@@ -1,5 +1,7 @@
 """Ingest contract version for the ESB (D8, AC-V0-1; v2.1 shape added S4 of
-ingest-parity-standardisation).
+ingest-parity-standardisation; v2.2 adds the SO<->PO linkage fields below,
+ingest-contract-2-2-so-links; v2.3 adds `brands` as a first-class EntitySpec,
+autocount-brands-ingest).
 
 The ESB gates every new key it sends behind `sorento_contract_version = 2` on
 its consumer connection, so it needs one endpoint to ask Sorento what version
@@ -22,6 +24,14 @@ only an explicit `null` does). `warnings` is the fixed vocabulary every
 verdict's `warnings`/`lines` keys draw from, imported from the modules that
 actually raise each one rather than restated here, so this list cannot drift
 from what a real response emits.
+
+v2.2 (`CONTRACT_VERSION` bump, `app/api/v1/external/ingest.py`) widens the
+AutoCount linkage `purchase_orders`/`shipping_orders` lines carry:
+`from_so_line_ref`, `from_so_external`, `from_po_line_ref`, `from_po_number`.
+`from_so_numbers` is also added to `fields_added` here even though it
+shipped in v2 (V4) - it was never listed on this endpoint, and the ESB now
+reads this diff to confirm it, so an omission here would be as wrong as a
+field that was never added.
 """
 from __future__ import annotations
 
@@ -57,8 +67,22 @@ FIELDS_ADDED: dict[str, list[str]] = {
     "products": ["is_discontinued", "remark", "brand_code"],
     "customers": ["market_segment_code", "region"],
     "sales_orders": ["customer_segment", "customer_region"],
-    "purchase_orders": ["is_shipping_order"],
-    "shipping_orders": ["container_number"],
+    "purchase_orders": [
+        "is_shipping_order",
+        "from_so_numbers",
+        "from_so_line_ref",
+        "from_so_external",
+        "from_po_line_ref",
+        "from_po_number",
+    ],
+    "shipping_orders": [
+        "container_number",
+        "from_so_numbers",
+        "from_so_line_ref",
+        "from_so_external",
+        "from_po_line_ref",
+        "from_po_number",
+    ],
 }
 
 # D24 (captain 2026-09-06): per-entity notes on a field's meaning that
@@ -67,6 +91,17 @@ FIELDS_ADDED: dict[str, list[str]] = {
 # per-field schema nothing else needs yet.
 FIELD_NOTES: dict[str, str] = {
     "products": "name is transitional, maps to description when description is absent",
+    # Both entities get the SAME sentence (D24's shape is one note per
+    # entity, not per field) - from_so_external means the identical thing on
+    # a purchase-order line and on a shipping-order line.
+    "purchase_orders": (
+        "from_so_external is the cross-book case of from_so_line_ref: the sales order "
+        "lives in another database and is recorded raw, never resolved into a Sorento id"
+    ),
+    "shipping_orders": (
+        "from_so_external is the cross-book case of from_so_line_ref: the sales order "
+        "lives in another database and is recorded raw, never resolved into a Sorento id"
+    ),
 }
 
 # D15 end state (AC-P0-4): these now FAIL validation (extra=forbid), never
@@ -92,8 +127,12 @@ STATUS_OPTIONAL: dict[str, bool] = {
 # own constants - there was exactly one call site for each) and two
 # documentation-only entries: `lines.dropped` names the `lines.dropped` COUNT
 # key a document verdict carries (D9), not a `warnings` list entry itself;
-# `deprecated_field` is retired code (D15 end state) kept here so a pre-2.1
-# integration checking for it by name still finds it documented.
+# `lines.superseded` is the same kind of entry for a shipping order (D27,
+# spo-xlsx-supersede) - the count of xlsx-era rows a document's FIRST push
+# replaced with the AutoCount line-set, so an ESB reading a verdict can tell a
+# supersede apart from a plain create; `deprecated_field` is retired code
+# (D15 end state) kept here so a pre-2.1 integration checking for it by name
+# still finds it documented.
 WARNINGS: list[str] = sorted(
     {
         WARN_CUSTOMER_CREATED,
@@ -111,6 +150,7 @@ WARNINGS: list[str] = sorted(
         "brand_created",
         "segment_unknown",
         "lines.dropped",
+        "lines.superseded",
         "deprecated_field",
     }
 )

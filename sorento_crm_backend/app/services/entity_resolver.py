@@ -45,13 +45,14 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.certificate import Certificate, CertificateRevision
-from app.models.product import Product, chat_searchable_products
+from app.models.product import Product, ProductAttachment, chat_searchable_products
 from app.models.resources import Attachment, AttachmentType
 # Imported rather than redefined, so the value cannot drift between the two modules. A
 # draft (proforma-created) shipment must not be resolvable by container/BOL/invoice number
 # here either - `incoming_stock_service` already excludes it from every list read, and an
 # assistant that could still NAME the draft via this resolver would ask incoming_list about
 # it and get told "nothing incoming for container X" instead of never hearing of it.
+from app.services.scm import spo_supply
 from app.services.scm.proforma_invoice_service import _DRAFT_SHIPMENT_STATUS
 
 
@@ -535,8 +536,13 @@ class TokenResolution:
     # Fuzzy trigram "did you mean" neighbours for a token that produced NO exact/
     # prefix/embedding match. Purely entity-level (NOT domain-data-gated - that is
     # the list tools' job): "SRTKT71SX unknown → did you mean SRTKT71SS?". Emitted
-    # so callers get a suggestion inline without a second neighbour lookup. Never
-    # populated when `matches` is non-empty; does not affect `resolved`.
+    # so callers get a suggestion inline without a second neighbour lookup. Usually
+    # empty when `matches` is non-empty; the one exception (D10b) is a token whose
+    # every match is a type outside the caller's OWN `allowed_entity_types` (a flyer/set
+    # code hitting `product_set` when the caller asked for `product`) - there `matches`
+    # keeps that row (byte identity for callers reading it) and `alternatives` ALSO gets
+    # populated, because to the caller that match is as useless as no match at all. Does
+    # not affect `resolved`, which still reads `matches` alone.
     alternatives: list[ResolvedEntity] = field(default_factory=list)
 
     @property
@@ -727,6 +733,21 @@ def _ws_insensitive_lower(col):
     whether either side carries stray dashes or whitespace (§3a). Cheap on
     small lookup tables; for large tables consider a functional index if hot."""
     return func.lower(func.regexp_replace(col, r"[-\s]+", "", "g"))
+
+
+def _alnum_casefold(value: str) -> str:
+    """Casefold + strip every character that is not `[0-9A-Za-z]`.
+
+    Stricter than `_strip_all_ws` (dash/whitespace only): the warehouse exact-code rule
+    (owner ruling 8 Sep 2026, chatbot-warehouse-entity-and-last-in) needs "brw ib",
+    "brwib", "BRW-IB" and "Brw_IB" to all normalize to the same string, and a caller can
+    type an underscore or other punctuation a code-style field never stores."""
+    return re.sub(r"[^0-9A-Za-z]+", "", value or "").casefold()
+
+
+def _alnum_insensitive_lower(col):
+    """Postgres twin of :func:`_alnum_casefold`: `lower(regexp_replace(col, '[^0-9A-Za-z]+', '', 'g'))`."""
+    return func.lower(func.regexp_replace(col, r"[^0-9A-Za-z]+", "", "g"))
 
 
 def _norm_sql(expr: str) -> str:
@@ -965,7 +986,6 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
             Order.order_number,
             Order.debtor_name,
             Order.order_date,
-            Order.estimated_delivery_date,
             Order.actual_delivery_date,
             Order.pickup_time,
             Order.transporter,
@@ -991,7 +1011,6 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
                     "customer_name": row.debtor_name,
                     "status": row.status_name or row.status_code,
                     "order_date": _iso(row.order_date),
-                    "estimated_delivery_date": _iso(row.estimated_delivery_date),
                     "actual_delivery_date": _iso(row.actual_delivery_date),
                     "pickup_time": row.pickup_time,
                     "transporter": row.transporter,
@@ -1388,13 +1407,22 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
 
 
 def _probe_spo(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """R8/AC-E4: a number whose every line is retired must not resolve as a live
+    entity, so `visible_line_clauses()` is a WHERE filter here, not a post-filter -
+    a number with a visible sibling still resolves off that row's id, and a number
+    with none is simply absent from `rows`, which the loop below already treats as
+    "no match" for the token.
+    """
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
     norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     rows = (
         db.query(SPOAllocation.id, SPOAllocation.spo_number)
-        .filter(_ws_insensitive_lower(SPOAllocation.spo_number).in_(list(norm_to_token.keys())))
+        .filter(
+            _ws_insensitive_lower(SPOAllocation.spo_number).in_(list(norm_to_token.keys())),
+            *spo_supply.visible_line_clauses(),
+        )
         .distinct()
         .all()
     )
@@ -1454,17 +1482,27 @@ def _probe_grn(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]
 
 
 def _probe_warehouse(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact match on `warehouse_code` ONLY, normalized by casefold + strip every
+    non-alphanumeric character on both sides (owner ruling 8 Sep 2026,
+    chatbot-warehouse-entity-and-last-in: "it is actually the bare code, so it should be
+    exact match ... brw ib, brwib should map to brw-ib, but when we say brw, it means brw,
+    not the rest"). No prefix and no fuzzy fan-out for this type - a token that is not an
+    exact normalized code is a miss here, and `_prefix_probe_warehouse` /
+    `_and_probe_warehouse` delegate back to this function rather than widen the match.
+    Inactive warehouses still resolve; the caller decides what to show."""
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
+    norm_to_token = {_alnum_casefold(t): t for t in tokens if _alnum_casefold(t)}
+    if not norm_to_token:
+        return result
     rows = (
         db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
-        .filter(_ws_insensitive_lower(Warehouse.warehouse_code).in_(list(norm_to_token.keys())))
+        .filter(_alnum_insensitive_lower(Warehouse.warehouse_code).in_(list(norm_to_token.keys())))
         .all()
     )
     for wid, code, name, location, is_active in rows:
-        token = norm_to_token.get(_strip_all_ws(str(code).lower()))
+        token = norm_to_token.get(_alnum_casefold(str(code)))
         if not token:
             continue
         result[token].append(
@@ -1821,7 +1859,6 @@ def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity
             Order.id,
             Order.order_number,
             Order.debtor_name,
-            Order.estimated_delivery_date,
             Order.actual_delivery_date,
             OrderStatus.status_name,
         )
@@ -1840,7 +1877,6 @@ def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity
             display={
                 "customer_name": row.debtor_name,
                 "status": row.status_name,
-                "estimated_delivery_date": _iso(row.estimated_delivery_date),
                 "actual_delivery_date": _iso(row.actual_delivery_date),
             },
         )
@@ -1983,23 +2019,12 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
 
 
 def _prefix_probe_warehouse(db: Session, token: str) -> list[ResolvedEntity]:
-    rows = (
-        db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.is_active)
-        .filter(_norm_prefix(Warehouse.warehouse_code, token))
-        .limit(PREFIX_LIMIT)
-        .all()
-    )
-    return [
-        ResolvedEntity(
-            entity_type="warehouse",
-            canonical_code=code,
-            uuid=str(wid) if wid else None,
-            match_field="warehouse_code",
-            match_tier="prefix",
-            display={"warehouse_name": name, "is_active": bool(is_active)},
-        )
-        for wid, code, name, is_active in rows
-    ]
+    """Not actually a prefix probe: the owner ruling (8 Sep 2026,
+    chatbot-warehouse-entity-and-last-in) bans prefix fan-out for warehouse ("brw" must
+    never surface `BRW-IB`/`BRW-IR`), so this Tier-2 slot delegates to the same exact
+    normalized-code match as `_probe_warehouse` and returns at most the one row a token
+    names outright."""
+    return _probe_warehouse(db, [token]).get(token, [])
 
 
 def _prefix_probe_supplier(db: Session, token: str) -> list[ResolvedEntity]:
@@ -2023,9 +2048,13 @@ def _prefix_probe_supplier(db: Session, token: str) -> list[ResolvedEntity]:
 
 
 def _prefix_probe_spo(db: Session, token: str) -> list[ResolvedEntity]:
+    """R8/AC-E4: same WHERE-filter reasoning as `_probe_spo` above."""
     rows = (
         db.query(SPOAllocation.id, SPOAllocation.spo_number)
-        .filter(_norm_prefix(SPOAllocation.spo_number, token))
+        .filter(
+            _norm_prefix(SPOAllocation.spo_number, token),
+            *spo_supply.visible_line_clauses(),
+        )
         .distinct()
         .limit(PREFIX_LIMIT)
         .all()
@@ -2484,6 +2513,41 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
             )
         )
     return out[:PREFIX_LIMIT]
+
+
+def _product_attachment_type_ids(db: Session) -> frozenset[str]:
+    """AttachmentType ids a PRODUCT actually carries a file of, via `product_attachments`.
+
+    Chatbot pass 5, item 1 (H78/AC-827, production regression against #713, migration 485's
+    `attachment_types` seed): "photo" Tier-2 substring-matches BOTH "Product Photos" and
+    "Shipment Line Photo" (`entity_type='inbound_shipment_line'` ALWAYS -
+    `app/services/scm/shipment_line_photos.py`, never on a product) - an internal SCM
+    document type that happens to share the substring "photo". `gate.py`'s own
+    non-product ambiguity handling (`run_gate`, the OR-mode `non_products` branch)
+    has no per-type narrowing, so the two collided and the customer got a did-you-mean
+    for a document type they never asked about, or a silent wrong pick.
+
+    **A product's own file is linked via `product_attachments` (`product_id` ->
+    `attachment_id`), never via `attachments.entity_type`.** Measured against the local
+    prod-copy database, read-only, review of this item's first cut: `attachments.entity_type`
+    distribution is 4302 NULL / 77 `dealer_kit_asset` / 41 `stock_list` / 9
+    `supplier_stock_list` / 1 `project` - ZERO rows carry `entity_type='product'`, so the
+    first cut's own filter matched nothing and the frozenset it returned was EMPTY in
+    production, leaving "photo" exactly as ambiguous as before the fix. Joining through
+    `product_attachments` instead returns the real four types product files use today
+    (2108 Product Photos / 1033 Technical Specifications / 569 Certification / 1
+    Promotion) - measured, not invented, so a type stays a candidate exactly when a
+    product photo / document of that type genuinely exists, no hardcoded denylist of
+    codes a future internal type could silently miss.
+    """
+    rows = (
+        db.query(Attachment.attachment_type_id)
+        .join(ProductAttachment, ProductAttachment.attachment_id == Attachment.id)
+        .filter(Attachment.attachment_type_id.isnot(None))
+        .distinct()
+        .all()
+    )
+    return frozenset(str(r[0]) for r in rows if r[0])
 
 
 def _prefix_probe_certificate(db: Session, token: str) -> list[ResolvedEntity]:
@@ -3608,25 +3672,33 @@ def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntit
 
 
 def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
-    blob = _concat_ws(Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location)
-    counts = _and_token_match_counts(blob, tokens)
-    base = db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
-    tier = _and_max_tier_filter(base, counts)
-    if tier is None:
+    """Same ban as `_prefix_probe_warehouse`: no AND-mode fan-out for warehouse, exact
+    normalized code per token only, deduped across tokens.
+
+    ALL OR NOTHING across the tokens, like every other AND probe: this probe answers only
+    when EVERY token is itself a warehouse code. Exact-code-per-token alone broke the AND
+    contract ("rows matching EVERY token") in the one way that matters to the chatbot -
+    "SRT62-GM to brw" answered with BRW, which does not match "SRT62-GM", and that
+    non-empty intersection suppressed `_resolve_input`'s own "AND-mode produced zero
+    intersection; switched to OR-mode under the whitelist" degrade. That degrade is what
+    resolves a product and a warehouse SEPARATELY, so the product was lost and the
+    chatbot's fetch args carried `warehouse_ids` with no `product_ids` (measured, browser
+    AC-10, 8 Sep 2026; 161 of the 166 multi-hint AND turns in the corpus already ride the
+    degrade and were never affected).
+    """
+    seen: set[str] = set()
+    out: list[ResolvedEntity] = []
+    hits = _probe_warehouse(db, tokens)
+    if any(not hits.get(tok) for tok in tokens):
         return []
-    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
-    return [
-        ResolvedEntity(
-            entity_type="warehouse",
-            canonical_code=code,
-            uuid=str(wid) if wid else None,
-            match_field="warehouse_code",
-            match_tier="and",
-            match_blob=" ".join(x for x in (code, name, location) if x),
-            display={"warehouse_name": name, "location": location, "is_active": bool(is_active) if is_active is not None else True},
-        )
-        for wid, code, name, location, is_active in rows
-    ]
+    for tok in tokens:
+        for m in hits.get(tok, []):
+            if m.uuid:
+                if m.uuid in seen:
+                    continue
+                seen.add(m.uuid)
+            out.append(m)
+    return out
 
 
 def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
@@ -3662,7 +3734,7 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
     if not conds:
         return []
     rows = (
-        db.query(Order.id, Order.order_number, Order.debtor_name, Order.actual_delivery_date, Order.estimated_delivery_date)
+        db.query(Order.id, Order.order_number, Order.debtor_name, Order.actual_delivery_date)
         .filter(Order.deleted_at.is_(None), *conds)
         .limit(AND_MODE_LIMIT)
         .all()
@@ -3678,7 +3750,6 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
             display={
                 "customer_name": row.debtor_name,
                 "actual_delivery_date": _iso(row.actual_delivery_date),
-                "estimated_delivery_date": _iso(row.estimated_delivery_date),
             },
         )
         for row in rows
@@ -3778,11 +3849,27 @@ def token_word_coverage_for_rows(
         coverage: list[dict[str, Any]] = []
         for etype in sorted(blobs_by_type):
             blobs = blobs_by_type[etype]
+            norm_blobs = [_strip_all_ws(b) for b in blobs]
             matched: list[str] = []
             unmatched: list[str] = []
-            for word in [w for w in tok.split() if w]:
+            # D13 (owner turn, 8 Sep 2026, "CB6622-PP?"). Two separate fixes:
+            #  1. a trailing "?" (or !.,) on the query is punctuation, not a fifth
+            #     character of the code beside it - a row's own `_match_blob` never
+            #     carries it, so an un-stripped word read as "unmatched" against a row
+            #     that answered it exactly.
+            #  2. the CALLER's own token is already dash/ws-stripped by the time it
+            #     reaches here (`resolve_entity_body`/`_strip_entity_stopwords` send
+            #     "cb6622pp"), while `_match_blob` is the RAW column value
+            #     ("CB6622-PP") - the same §3a normalization the code PROBE itself
+            #     used to decide this row was the answer (`_ws_insensitive_lower`)
+            #     has to run here too, or a dash-insensitive match reads as unanswered
+            #     by a coverage check that never dropped the dash.
+            for word in [w.rstrip("?!.,") for w in tok.split() if w.rstrip("?!.,")]:
                 variants = [v.lower() for v in _word_variants(word)]
-                hit = any(v in blob for blob in blobs for v in variants)
+                norm_variants = [_strip_all_ws(v) for v in variants]
+                hit = any(v in blob for blob in blobs for v in variants) or any(
+                    nv and nv in nblob for nblob in norm_blobs for nv in norm_variants
+                )
                 (matched if hit else unmatched).append(word)
             coverage.append(
                 {
@@ -4658,6 +4745,30 @@ def resolve_references(
             return frozenset({paired}) if paired else frozenset()
         return allowed
 
+    # D10b (owner console pass, 8 Sep 2026, turn 69d9900e): the caller's OWN requested
+    # types, canonicalized but NOT expanded. `allowed` above already widens "product" to
+    # also reach `product_set` (a flyer/set code is a legitimate product-domain hit in
+    # general, and n8n relies on that), which is exactly why a token that matched ONLY
+    # `product_set` still counts as `resolved` and never reached the alternatives search
+    # below - the caller asked for "product", not "product or product_set", and has no way
+    # to tell a set code from an absence. Compared against this NARROWER set, not `allowed`.
+    caller_types: Optional[frozenset[str]] = (
+        frozenset(_canonical_entity_type(t) for t in allowed_entity_types if t)
+        if allowed_entity_types is not None
+        else None
+    )
+
+    # `product_attachment` is the ONE domain this filters: a customer asking for a
+    # document ABOUT a product must never land on an internal SCM document type
+    # (Shipment Line Photo, Proforma Invoice, ...) that happens to share a substring
+    # with the word they used ("photo"). Opt-in by domain, same pattern as
+    # `attachment_coverage` in `resolve_references_intersection` - every other
+    # caller's attachment_type resolution (resource_attachment browsing, admin
+    # search, ...) is unaffected. Computed once, lazily, only if a Tier-2
+    # attachment_type candidate is actually produced.
+    _scope_attachment_types = (domain_hint or "").strip().lower() == "product_attachment"
+    _product_attachment_type_id_cache: frozenset[str] | None = None
+
     # ----- Tier 1: exact -----
     per_token: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     ambiguous_tokens: set[str] = set()
@@ -4721,6 +4832,17 @@ def resolve_references(
             if per_token[tok]:
                 continue
             candidates = _tier2_fuzzy_lookup(db, tok, allowed_entity_types=tok_allowed)
+            if _scope_attachment_types and any(
+                c.entity_type == "attachment_type" for c in candidates
+            ):
+                if _product_attachment_type_id_cache is None:
+                    _product_attachment_type_id_cache = _product_attachment_type_ids(db)
+                candidates = [
+                    c
+                    for c in candidates
+                    if c.entity_type != "attachment_type"
+                    or c.uuid in _product_attachment_type_id_cache
+                ]
             if not candidates:
                 continue
             if len(candidates) == 1:
@@ -4910,12 +5032,17 @@ def resolve_references(
     ]
     resolutions.extend(freeword_resolutions)
 
-    # Fuzzy "did you mean" alternatives for tokens that matched NOTHING. Trigram
-    # neighbours only (entity-level, no domain-data gate); best-effort so a missing
+    # Fuzzy "did you mean" alternatives for tokens that matched NOTHING - PLUS (D10b) a
+    # token whose every match is a type the caller never asked for (`caller_types`, not
+    # the internally-widened `allowed`). The latter is the SAME shape as matching nothing:
+    # the caller has no use for the row it got and no way to tell that from a genuine miss.
+    # Trigram neighbours only (entity-level, no domain-data gate); best-effort so a missing
     # pg_trgm (e.g. sqlite tests) or a probe error never fails resolution. Capped
     # and floored to keep the surface tight and relevant.
     for tr in resolutions:
-        if tr.matches:
+        if tr.matches and (
+            caller_types is None or any(m.entity_type in caller_types for m in tr.matches)
+        ):
             continue
         tok_types = _types_for(tr.token)
         if tok_types is not None and not tok_types:
@@ -4925,6 +5052,21 @@ def resolve_references(
         except Exception:
             logger.exception("resolve alternatives trgm lookup failed for token=%s", tr.token)
             hits = []
+        if tr.matches:
+            # D10b: a product_set's own MEMBER products are not an alternative to the set
+            # code that already matched - they are PART of what the customer already
+            # named, not a different thing to try instead. Measured: without this, "did
+            # you mean" for SRTWC8610-SH led with its own two members (SRTWCX8610-SH,
+            # SRTWCY8610-SH, similarity 0.667) ahead of the sibling codes a customer could
+            # actually use (SRTWC8611/8613/8614, similarity 0.571).
+            member_uuids = {
+                str(member.get("uuid"))
+                for m in tr.matches
+                for member in (m.display.get("members") or [])
+                if isinstance(member, dict) and member.get("uuid")
+            }
+            if member_uuids:
+                hits = [h for h in hits if str(h.uuid) not in member_uuids]
         tr.alternatives = [h for h in hits if (h.similarity or 0.0) >= SUGGEST_FLOOR][:_ALTERNATIVES_CAP]
 
     _apply_company_scope(db, resolutions)

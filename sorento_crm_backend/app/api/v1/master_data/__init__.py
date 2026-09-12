@@ -6,6 +6,7 @@ from app.api.v1.master_data import (
     categories,
     certificates,
     units_of_measure,
+    countries,
     products_select,
     product_attachments,
     lookup_sets,
@@ -16,6 +17,7 @@ from app.api.v1.master_data import (
     spec_registry,
     product_specifications,
     product_sets,
+    product_companions,
     sales_agents,
 )
 
@@ -32,9 +34,15 @@ router.include_router(
     tags=["product-specifications"],
 )
 router.include_router(units_of_measure.router, prefix="/units-of-measure", tags=["units-of-measure"])
+router.include_router(countries.router, prefix="/countries", tags=["countries"])
 router.include_router(product_attachments.router, prefix="/product-attachments", tags=["product-attachments"])
 router.include_router(certificates.router, prefix="/certificates", tags=["certificates"])
 router.include_router(product_sets.router, prefix="/product-sets", tags=["product-sets"])
+router.include_router(
+    product_companions.router,
+    prefix="/product-companion-rules",
+    tags=["product-companion-rules"],
+)
 router.include_router(sales_agents.router, prefix="/sales-agents", tags=["sales-agents"])
 router.include_router(lookup_sets.router, prefix="/lookup-sets", tags=["lookup-sets"])
 router.include_router(lookup_eligibility.router, prefix="/lookup-eligibility", tags=["lookup-eligibility"])

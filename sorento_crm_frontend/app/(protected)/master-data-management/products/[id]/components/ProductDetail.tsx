@@ -534,6 +534,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                       >
                         Chat Search: {CHAT_SEARCH_LABEL[chatSearchState(product)]}
                       </Badge>
+                      <Badge
+                        variant={product.exclude_from_planning ? 'destructive' : 'secondary'}
+                      >
+                        Reorder Planning: {product.exclude_from_planning ? 'Excluded' : 'Included'}
+                      </Badge>
                     </div>
                   </div>
                 </CardContent>

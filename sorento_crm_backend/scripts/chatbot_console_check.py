@@ -33,6 +33,30 @@ that contact has real stored state, so a turn the owner hit cold is not reproduc
 without it. Spell it `cold: true` rather than `previous_conversation_state: {}` - both work
 and the flag is the one that survives a YAML round trip unambiguously.
 
+**`--prompt-version` grades a prompt the tenant has not promoted.** A prompt change ships as
+a new, UNLABELLED `ai_prompt_versions` row (migrations 475 / 480 / 487 / 490 all do this) and
+reaches a customer only when the owner moves the `production` label. That is the right order,
+and it leaves a hole in this check: the "before the PR" run would grade the OLD prompt and
+report green about vocabulary the new one adds. So the flag pins one version FOR THE RUN, by
+putting it on each envelope's `prompt_overrides` harness key - the same key the Prompts
+screen's "Run a turn" uses (AC-807), which the engine honours on a DRY RUN ONLY
+(`engine._prompt_override` returns None on a live turn whatever the envelope says). Nothing
+is promoted and nothing is written; run the file once without the flag and once with it, and
+the pair says what the tenant gets today and what it would get after the label moves.
+
+    # the id of the row to pin, and the body it carries
+    venv/bin/python -c "from app.database import SessionLocal; from app.models.ai_prompt \
+        import AIPromptVersion; db=SessionLocal(); \
+        print([(v.id, v.version, len(v.template)) for v in db.query(AIPromptVersion) \
+        .filter(AIPromptVersion.name=='chatbot_semantic_parser').all()])"
+
+**`expected_red_until: <branch or slice>` marks a case another lane owns.** A case whose
+expectation this lane cannot meet is still worth keeping - it is what measures whether the
+lane that owns it did the job - but a permanent red teaches the reader to ignore the
+output. Such a case reports `XFAIL` and does NOT count as a failure while it fails, and
+reports `XPASS` and DOES count as a failure the moment it passes: the marker is now a lie
+and has to be removed. Never reach for it to quieten a case this lane owns.
+
 **The runner owns the lane switches.** `chatbot_business_lane_enabled` and
 `chatbot_completed_lanes` decide whether the CRM ANSWERS a turn or delegates it to n8n, and
 a delegated turn comes back with an empty reply - which would grade the handoff, not the
@@ -59,6 +83,10 @@ from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+# The registry key `--prompt-version` pins. One parser, one key; spelled here rather than
+# imported from `head/parser` because this script is core-side tooling and that module is
+# inside the chatbot package (AC-002).
+PARSER_PROMPT_KEY = "chatbot_semantic_parser"
 TURN_PATH = "/api/v1/external/chat/turn"
 UUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
@@ -117,6 +145,7 @@ def _envelope_for(
     run_id: str,
     parser: Any = None,
     previous_state: Any = None,
+    prompt_version: str | None = None,
 ) -> dict[str, Any]:
     """The borrowed envelope with this turn's words in it. Never mutates `base`."""
     envelope = json.loads(json.dumps(base))
@@ -141,6 +170,11 @@ def _envelope_for(
         envelope["previous_conversation_state"] = previous_state
     else:
         envelope.pop("previous_conversation_state", None)
+    if prompt_version:
+        # `engine.HARNESS_KEYS`' own `prompt_overrides`, dry-run only by construction.
+        envelope["prompt_overrides"] = {PARSER_PROMPT_KEY: str(prompt_version)}
+    else:
+        envelope.pop("prompt_overrides", None)
     return envelope
 
 
@@ -154,6 +188,41 @@ def _post(session: Any, url: str, api_key: str, envelope: dict[str, Any], timeou
     if response.status_code != 200:
         return {"_http_error": f"HTTP {response.status_code}: {response.text[:200]}"}
     return response.json()
+
+
+_RETRY_WAIT_SECONDS = 20.0
+
+
+def _is_429(body: dict[str, Any]) -> bool:
+    """A turn the parser's own OpenAI call hit a rate limit on - "429" appears either in
+    the endpoint's own HTTP error text or in a failed turn's `error` field (the parser
+    call's exception message, surfaced verbatim by `run_turn`'s failure path)."""
+    return "429" in str(body.get("_http_error") or "") or "429" in str(body.get("error") or "")
+
+
+def _post_with_pacing(
+    session: Any,
+    url: str,
+    api_key: str,
+    envelope: dict[str, Any],
+    timeout: float,
+    *,
+    sleep_seconds: float = 0.0,
+) -> dict:
+    """`_post`, plus the owner's two pacing rules (8 Sep 2026, a graded run sharing the
+    parser's OpenAI key with someone testing live): sleep `sleep_seconds` BEFORE every
+    call (so a caller that paces the whole run paces the first turn too), and a SINGLE
+    automatic retry, after a fixed 20s wait, of a turn whose error contains "429" - one
+    retry only, and it counts as ONE attempt in the report (the caller sees only the
+    retry's own result, not two graded turns for one customer message)."""
+    if sleep_seconds > 0:
+        time.sleep(sleep_seconds)
+    body = _post(session, url, api_key, envelope, timeout)
+    if _is_429(body):
+        print(f"      (429 from the parser - waiting {_RETRY_WAIT_SECONDS:g}s and retrying once)")
+        time.sleep(_RETRY_WAIT_SECONDS)
+        body = _post(session, url, api_key, envelope, timeout)
+    return body
 
 
 def _pending_kind(turn_id: str | None) -> str | None:
@@ -358,15 +427,46 @@ def main(argv: list[str] | None = None) -> int:
     import yaml
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("cases", help="the YAML case file")
+    parser.add_argument("cases", nargs="?", help="the YAML case file (omit with --say)")
+    parser.add_argument(
+        "--say",
+        action="append",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "an ad-hoc turn. Repeatable, and the repeats are ONE conversation: each reply's "
+            "session variables feed the next turn exactly as a YAML `turns:` list does. "
+            "Nothing is graded - the reply is printed for a human to read."
+        ),
+    )
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--contact", default=None, help="default respond.io contact id")
     parser.add_argument("--api-key", default=os.getenv("EXTERNAL_API_KEY"))
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument(
+        "--sleep-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "pace turns by sleeping this long between each one (default 0 = as fast as "
+            "the server answers). Owner ruling, 8 Sep 2026: a graded run shares the "
+            "parser's OpenAI key with anyone testing live at the same time, and a burst "
+            "of 58 back-to-back turns hit 429 on 6 of them plus 2 MCP timeouts."
+        ),
+    )
+    parser.add_argument(
         "--mock-parser",
         action="store_true",
         help="use each case's own `parser:` block instead of calling the model",
+    )
+    parser.add_argument(
+        "--prompt-version",
+        default=None,
+        help=(
+            "pin one `ai_prompt_versions.id` of `chatbot_semantic_parser` for this run, so "
+            "an UNPROMOTED version can be graded before the label moves. Dry-run only by "
+            "construction; nothing is promoted and nothing is written."
+        ),
     )
     parser.add_argument(
         "--production",
@@ -393,6 +493,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    run_id = f"console-check-{int(time.time())}"
+    url = args.base_url.rstrip("/") + TURN_PATH
+    session = requests.Session()
+    session.trust_env = False
+
+    if args.say:
+        return _run_ad_hoc(args, session, url, run_id)
+    if not args.cases:
+        print("give a YAML case file, or --say \"<text>\"", file=sys.stderr)
+        return 2
     with open(args.cases, encoding="utf-8") as handle:
         document = yaml.safe_load(handle) or {}
     default_contact = args.contact or document.get("contact")
@@ -412,17 +522,116 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    run_id = f"console-check-{int(time.time())}"
-    url = args.base_url.rstrip("/") + TURN_PATH
-    session = requests.Session()
-    session.trust_env = False
 
-    print(f"{run_id}  {len(cases)} cases against {args.base_url}")
+    pinned = (
+        f"  parser prompt pinned to version {args.prompt_version}"
+        if args.prompt_version
+        else "  parser prompt: whatever the `production` label points at"
+    )
+    print(f"{run_id}  {len(cases)} cases against {args.base_url}{pinned}")
     with _lanes_on(is_production):
         failed = _run_cases(cases, session, url, args, default_contact, run_id)
 
     print(f"\n{len(cases) - failed} passed, {failed} failed  ({run_id})")
     return 1 if failed else 0
+
+
+def _latest_live_contact() -> str | None:
+    """The contact of the most recent chatbot turn - who the bot last spoke to.
+
+    The default for `--say`, because the envelope borrowing already needs a contact with a
+    stored turn and this is the one most likely to have one.
+    """
+    from sqlalchemy import text
+
+    db = _script_session()
+    try:
+        row = db.execute(
+            text(
+                "SELECT contact_respond_id FROM chatbot.turns WHERE envelope IS NOT NULL "
+                "ORDER BY created_at DESC LIMIT 1"
+            )
+        ).fetchone()
+    finally:
+        db.close()
+    return str(row[0]) if row else None
+
+
+def _trace_line(turn_id: str | None) -> str:
+    """One line of WHY: the tool, the rungs, the reveals - off the persisted trace."""
+    if not turn_id:
+        return "trace: (no turn id)"
+    from sqlalchemy import text
+
+    db = _script_session()
+    try:
+        row = db.execute(
+            text("SELECT trace FROM chatbot.turns WHERE id = :id"), {"id": turn_id}
+        ).fetchone()
+    finally:
+        db.close()
+    events = [e for e in ((row[0] if row else None) or []) if isinstance(e, dict) and e.get("kind")]
+    parts: list[str] = []
+    for event in events:
+        if event["kind"] == "tool":
+            args = {
+                k: v for k, v in (event.get("args") or {}).items()
+                if k not in ("view", "contact_id", "space_id", "_diagnostics")
+            }
+            parts.append(f"tool={event.get('name')} args={json.dumps(args, default=str)}")
+        elif event["kind"] == "crossdomain":
+            parts.append(f"rung={event.get('rung')}({event.get('rows')} rows)")
+        elif event["kind"] == "reveals":
+            dropped = event.get("dropped") or []
+            if dropped:
+                parts.append("reveals dropped=" + ",".join(str(d) for d in dropped))
+    return "trace: " + ("  ".join(parts) if parts else "no tool call")
+
+
+def _run_ad_hoc(args, session, url, run_id) -> int:
+    """`--say` turns as ONE conversation. Nothing is graded; the reply is printed.
+
+    Reuses the YAML path's own two functions - `_envelope_for` builds the borrowed
+    envelope (so `is_test` / `test_run_id` are set the same way, D14) and `_next_state`
+    feeds each reply's session variables into the next turn, which is exactly what a
+    `turns:` list does. So an ad-hoc conversation and a multi-turn case exercise the same
+    engine path, and neither writes anything outside `chatbot.turns`.
+    """
+    contact = str(args.contact or _latest_live_contact() or "")
+    if not contact:
+        print("no contact: pass --contact, or run one turn first", file=sys.stderr)
+        return 2
+    base = _base_envelope(contact)
+    previous_state = None
+    with _lanes_on(False):
+        for index, text_in in enumerate(args.say, start=1):
+            envelope = _envelope_for(
+                base,
+                contact=contact,
+                message=text_in,
+                run_id=run_id,
+                previous_state=previous_state,
+                prompt_version=args.prompt_version,
+            )
+            body = _post_with_pacing(
+                session, url, args.api_key, envelope, args.timeout, sleep_seconds=args.sleep_seconds
+            )
+            print(f"\n--- turn {index}  contact {contact} ---")
+            print(f"> {text_in}")
+            if "_http_error" in body:
+                print(f"  {body['_http_error']}")
+                return 1
+            print(f"  branch_kind: {body.get('branch_kind')}")
+            reply = (body.get("reply") or {}).get("text")
+            print(f"  reply.text: {reply if reply else '(none - this lane speaks in actions)'}")
+            for action in body.get("actions") or []:
+                if isinstance(action, dict) and action.get("kind") == "send_message":
+                    print(f"  send_message: {action.get('text')}")
+                    if action.get("quick_replies"):
+                        print(f"  quick_replies: {action['quick_replies']}")
+            print("  " + _trace_line(body.get("turn_id")))
+            previous_state = _next_state(body)
+    return 0
 
 
 def _run_cases(cases, session, url, args, default_contact, run_id) -> int:
@@ -448,8 +657,11 @@ def _run_cases(cases, session, url, args, default_contact, run_id) -> int:
                 run_id=run_id,
                 parser=(turn.get("parser") or case.get("parser")) if args.mock_parser else None,
                 previous_state=previous_state,
+                prompt_version=args.prompt_version,
             )
-            body = _post(session, url, args.api_key, envelope, args.timeout)
+            body = _post_with_pacing(
+                session, url, args.api_key, envelope, args.timeout, sleep_seconds=args.sleep_seconds
+            )
             pending = _pending_kind(body.get("turn_id"))
             reply = _customer_words(body)
             last_branch = body.get("branch_kind")
@@ -457,9 +669,19 @@ def _run_cases(cases, session, url, args, default_contact, run_id) -> int:
             prefix = f"turn {index + 1}: " if len(_turns_of(case)) > 1 else ""
             case_failures += [prefix + f for f in _grade(turn.get("expect") or {}, body, pending)]
             previous_state = _next_state(body)
-        verdict = "FAIL" if case_failures else "PASS"
-        failed += 1 if case_failures else 0
-        print(f"{verdict}  {name:<44} branch={last_branch}  {last_line!r}")
+        owned_by = str(case.get("expected_red_until") or "").strip()
+        if owned_by:
+            # Inverted on purpose (see the module docstring): failing is the expected
+            # state, passing is the news.
+            verdict = "XFAIL" if case_failures else "XPASS"
+            is_failure = not case_failures
+            suffix = f"  [{'expected red until ' + owned_by if case_failures else 'NOW PASSES - remove expected_red_until: ' + owned_by}]"
+        else:
+            verdict = "FAIL" if case_failures else "PASS"
+            is_failure = bool(case_failures)
+            suffix = ""
+        failed += 1 if is_failure else 0
+        print(f"{verdict}  {name:<44} branch={last_branch}  {last_line!r}{suffix}")
         for failure in case_failures:
             print(f"      - {failure}")
     return failed

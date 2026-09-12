@@ -69,3 +69,18 @@ Two things to read carefully:
   lane offers no choices and returns no rows; both keys are always present, so the executor
   never has to test for a missing one. When the tail produces an `attachments_src`, a fifth
   action (`send_attachments`) is appended after both messages.
+
+
+## The growth r1 phrase corpus lives in the test package, not here
+
+`sorento_crm_backend/tests/chatbot/fixtures/parser_growth_r1_phrases.json` (graded by
+`tests/chatbot/test_parser_growth_r1_reachability.py`). It is a POINTER, not a copy: a
+corpus in two places is a corpus that disagrees with itself.
+
+It cannot live in this directory. The backend image's build context is
+`./sorento_crm_backend` only, so nothing under `documentation/` exists inside it, and CI's
+in-image `pytest --collect-only` gate reads that file at COLLECTION time (it feeds a
+`parametrize`). A path resolved above the backend root is `/` in the image, which is how
+this landed as `FileNotFoundError` and exit code 2 on PR #735. Anything a test READS at
+import or collection belongs under `sorento_crm_backend/`; this directory is for artifacts
+a human reads.

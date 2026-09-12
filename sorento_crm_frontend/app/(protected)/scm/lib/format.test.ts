@@ -56,10 +56,12 @@ describe('fmtSupplierCost', () => {
 });
 
 describe('fmtMoney', () => {
-  it('still renders base-currency figures unchanged', () => {
+  it('renders base-currency figures with two decimals (AC-S2.2)', () => {
     // The budget, valuations and cash impact are ringgit by definition, and this is the
-    // formatter that says so.
-    expect(fmtMoney(1980)).toBe('RM 1,980');
+    // formatter that says so. Every SCM money value carries two decimals, standardized -
+    // a zero reads "RM 0.00", never a bare "RM 0" beside a supplier price that already
+    // carried cents.
+    expect(fmtMoney(1980)).toBe('RM 1,980.00');
   });
 
   it('shows an em dash rather than a fabricated zero', () => {
@@ -69,18 +71,18 @@ describe('fmtMoney', () => {
 
 describe('fmtMoneyIn', () => {
   it('names the currency a rounded figure is actually in', () => {
-    // The PO worklist committed cash against a mostly-USD book; `RM 1,980` there was a
+    // The PO worklist committed cash against a mostly-USD book; `RM 1,980.00` there was a
     // wrong number printed as a fact.
-    expect(fmtMoneyIn(1980, 'USD')).toBe('USD 1,980');
+    expect(fmtMoneyIn(1980, 'USD')).toBe('USD 1,980.00');
   });
 
   it('writes the base currency with the same glyph as everything else', () => {
-    expect(fmtMoneyIn(1980, BASE_CURRENCY)).toBe('RM 1,980');
-    expect(fmtMoneyIn(1980, null)).toBe('RM 1,980');
+    expect(fmtMoneyIn(1980, BASE_CURRENCY)).toBe('RM 1,980.00');
+    expect(fmtMoneyIn(1980, null)).toBe('RM 1,980.00');
   });
 
-  it('drops the cents, because a committed-cash total is read at a glance', () => {
-    expect(fmtMoneyIn(1980.49, 'USD')).toBe('USD 1,980');
+  it('keeps the cents, two decimals always (AC-S2.2)', () => {
+    expect(fmtMoneyIn(1980.49, 'USD')).toBe('USD 1,980.49');
   });
 
   it('shows an em dash rather than a fabricated zero', () => {

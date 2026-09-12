@@ -29,6 +29,10 @@ from app.models.procurement import InboundShipment, InboundShipmentLine, Purchas
 from app.services.error_handler import AppException
 from app.services.scm import priority
 from app.services.scm.cash_ranking import rank_score
+# The CRM-raised marker (D25c, security round 6), taken from the rules module that
+# declares it rather than through `spo_conversion_service`'s re-export: this module has
+# no other reason to depend on that one, and the stamp is a shipping-order rule.
+from app.services.rules.shipping_order_rules import CRM_SPO_SOURCE_SYSTEM
 
 #: Why a candidate won. Named rather than implied: "ranked first" is not a reason a person can
 #: check, and this screen exists to be checked.
@@ -367,6 +371,11 @@ def approve(db: Session, shipment_id: str, decisions: list[dict], *,
                 created_by=actor_id,
                 # Not per row - see `forward_match_targets` above.
                 forward_match=False,
+                # D25c (security round 6): one row per accepted suggestion against
+                # one PO line, never an Excel aggregate - stamped so the first-push
+                # supersede leaves it alone. A service argument, not a request field
+                # (security round 7).
+                source_system=CRM_SPO_SOURCE_SYSTEM,
             )
             target_spo = (
                 str(allocation.spo_number) if allocation.spo_number is not None else ""

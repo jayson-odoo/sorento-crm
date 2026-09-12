@@ -25,6 +25,7 @@ from app.models.procurement import (
     PurchaseOrderLine,
     ViewToken,
 )
+from app.models.country import Country
 from app.models.product import Product
 from app.models.resources import Attachment
 from app.models.user import User
@@ -37,6 +38,8 @@ from app.services.scm.container_capacity import fit as _fit_capacity
 from app.services.scm.container_capacity import line_cbm as _line_cbm
 from app.services.rules.master_rules import clean_supplier_name, resolve_master_by_code
 from app.services.rules import shipping_order_rules
+from app.services.company_scope import build_company_predicate
+from app.models.base import get_company_scope
 from app.services.document_ingest_service import SOURCE_SYSTEM as ESB_SOURCE_SYSTEM
 from app.services.scm.outstanding_import_service import (
     DEFAULT_PO_CURRENCY,
@@ -50,9 +53,10 @@ from app.schemas.procurement import (
     StockInquiryCreate, StockInquiryUpdate,
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
     ProductSimple, WarehouseSimple, InboundShipmentSimple,
-    SPODocument, SPODocumentLine, SPODocumentRow,
+    SPODocument, SPODocumentLine, SPODocumentRow, SPODocumentContainer,
 )
 from app.services.error_handler import (
+    AppException,
     handle_not_found,
     handle_conflict,
     handle_unprocessable,
@@ -289,6 +293,71 @@ def _spo_match_key(spo_number: Optional[str]) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", str(spo_number).strip()).upper()
 
 
+#: A line nothing may write a receipt onto. There is no `cancelled`
+#: `line_status` on `spo_allocations` today - the ESB's own `cancelled`
+#: document forces `closed` instead - so the word itself is the guard for the
+#: day a writer introduces one: a cancelled line covers no demand.
+_CANCELLED_WORDS = frozenset({"cancelled", "canceled"})
+
+
+def _is_live_group_member(allocation) -> bool:
+    """Whether this AutoCount line takes part in its group's recompute (D28c,
+    AC-X41).
+
+    Three exclusions, one predicate, because all three are the same statement:
+    the line is no longer demand this system may move a receipt onto.
+
+    - RETIRED (`retired_at` set, D28d): the ESB has stopped naming it, by
+      absence in a re-push of the same DocKey or because the document was
+      re-created under a new one. This is the only one of the three that a
+      `closed` + `fully_received` row can carry, and it is what tells a
+      retired line from a live fully received one.
+    - `cancelled`: covers no demand by definition.
+    - closed for a reason OTHER than a receipt (`closed` with `receipt_status`
+      anything but `fully_received`): retired by the leftover sweep before
+      D28d existed, or by a cancelled document. A recompute must neither give
+      it a share nor write to it at all, or a receipt would revive demand
+      AutoCount itself retired (and `_write_received`'s reopen would fire on
+      it).
+
+    A line closed BY a receipt (`closed` + `fully_received`) and still named
+    by the ESB IS live: the receipt is the only reason it is closed, so if
+    that receipt goes the line must come back (AC-X35).
+    """
+    if getattr(allocation, "retired_at", None) is not None:
+        return False
+    line_status = (allocation.line_status or "").strip().lower()
+    receipt_status = (allocation.receipt_status or "").strip().lower()
+    if line_status in _CANCELLED_WORDS or receipt_status in _CANCELLED_WORDS:
+        return False
+    if line_status == "closed" and receipt_status != "fully_received":
+        return False
+    return True
+
+
+def _spo_allocation_group_key(allocation) -> tuple:
+    """The `(company, spo_number, product, location)` key an AutoCount line
+    shares its receipt over (D28a). One definition, used both to visit a group
+    once and to see which groups a release touched (D28d)."""
+    return (
+        str(allocation.company_id),
+        _spo_match_key(allocation.spo_number),
+        str(allocation.product_id),
+        _spo_group_location(allocation.location_code),
+    )
+
+
+def _spo_group_location(location_code: Optional[str]) -> Optional[str]:
+    """The location half of the `(product, location)` group key (D28a).
+
+    Normalised exactly the way `shipping_order_rules.supersede_group_key`
+    normalises it - upper-cased, blank as `None` - so the group a recompute
+    redistributes over is the same group the first-push supersede carried a
+    receipt across.
+    """
+    return (location_code or "").strip().upper() or None
+
+
 # Separators seen in extracted container numbers (ISO 6346 is 4 letters + 7
 # digits, but the PDF/LLM round-trip introduces spaces, dashes and slashes).
 # The Python and SQL normalizers below MUST strip exactly the same set or a
@@ -402,6 +471,29 @@ def compute_inbound_shipment_line_status(
     if alloc >= qty and recv > 0:
         return "partially_received"
     return "in_transit"
+
+
+def _apportion(total: int, lines: list) -> dict[str, int]:
+    """Split a PER-PRODUCT total (allocated, or received) across that product's own
+    shipment lines (S4, AC-D5) - `lines` already in `(created_at, id)` order.
+
+    Each line takes up to its own `quantity_shipped`; the LAST line takes whatever is
+    LEFT, never its own capped share - that is what lets 100 allocated against 50 + 35
+    shipped read as 50 / 50 rather than 50 / 35 with 15 unaccounted for. Retires the
+    CAVEAT this function's own callers used to carry: `spo_allocated_quantity` /
+    `quantity_received` were summed per PRODUCT and stamped onto every line of it, which
+    doubled up whenever a container held the same product on two lines.
+    """
+    remaining = int(total or 0)
+    out: dict[str, int] = {}
+    for i, line in enumerate(lines):
+        if i == len(lines) - 1:
+            out[str(line.id)] = max(remaining, 0)
+            continue
+        take = min(remaining, int(line.quantity_shipped or 0))
+        out[str(line.id)] = take
+        remaining -= take
+    return out
 
 
 def shipment_supplier_predicate(supplier_id):
@@ -568,30 +660,6 @@ def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list
     return list(merged.values())
 
 
-def _duplicate_line_product_id(
-    lines_data, header_supplier_id: Optional[str]
-) -> Optional[str]:
-    """The first `product_id` stated twice in one line set for the same effective supplier.
-
-    `_merge_shipment_lines` would silently SUM two lines that land on the same
-    `(product, supplier)` key - correct where a packing list legitimately states one item
-    twice at two prices, a mid-order renegotiation
-    (`test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average`, the
-    import channel). `update_shipment`'s only caller is the Shipment lines grid, where the
-    same collision means an operator just repicked one row's product onto a row already on
-    screen - losing the other row's identity into a silent sum there reads as data loss, not
-    a stated fact about the container, so it is refused before the merge runs.
-    """
-    seen: set[tuple[str, Optional[str]]] = set()
-    for line_data in lines_data or []:
-        d = line_data.model_dump(exclude_unset=True) if hasattr(line_data, "model_dump") else dict(line_data)
-        key = (str(d["product_id"]), _effective_line_supplier(d, header_supplier_id))
-        if key in seen:
-            return d["product_id"]
-        seen.add(key)
-    return None
-
-
 def _line_company_kwargs(shipment: "InboundShipment") -> dict:
     """The company a new line of this container belongs to: its HEADER's.
 
@@ -631,7 +699,9 @@ class SupplierService:
         so offset position and prev/next neighbours are unambiguous when the
         primary sort column has equal values.
         """
-        q = self.db.query(Supplier)
+        # S2 (`PLAN-local-supplier-oi-routing.md`, review S6): eager, so `country_code`/
+        # `country_name` never cost an extra query per row on the way to `SupplierResponse`.
+        q = self.db.query(Supplier).options(joinedload(Supplier.country))
 
         if query:
             q = q.filter(
@@ -648,8 +718,14 @@ class SupplierService:
             "created_at": Supplier.created_at,
             "supplier_code": Supplier.supplier_code,
             "supplier_name": Supplier.supplier_name,
+            # review S5: sorting by the joined name needs its own join - `joinedload`
+            # above is for eager-loading the relationship attribute, not for referencing
+            # the join in an ORDER BY.
+            "country_name": Country.name,
         }
         sort_column = sort_map.get(sort_field, Supplier.created_at)
+        if sort_field == "country_name":
+            q = q.outerjoin(Country, Supplier.country_id == Country.id)
         if sort_dir == "desc":
             q = q.order_by(sort_column.desc(), Supplier.id.asc())
         else:
@@ -690,11 +766,19 @@ class SupplierService:
             raise handle_not_found("Supplier", supplier_id)
         return supplier
     
+    def _validate_country_id(self, country_id: Optional[str]) -> None:
+        """S2: an unresolvable `country_id` is a 422, never a raw FK violation."""
+        if not country_id:
+            return
+        if not self.db.query(Country.id).filter(Country.id == country_id).first():
+            raise handle_unprocessable("Unknown country.")
+
     def create_supplier(self, supplier_data: SupplierCreate):
         """Create a new supplier."""
         # D17: case/whitespace-insensitive, same as every other channel.
         if resolve_master_by_code(self.db, Supplier, supplier_data.supplier_code):
             raise handle_conflict("Supplier code already exists.")
+        self._validate_country_id(supplier_data.country_id)
 
         data = supplier_data.model_dump()
         # D2: AutoCount's trailing currency note (`"ACME (RMB)"`) is not part
@@ -706,12 +790,14 @@ class SupplierService:
         self.db.commit()
         self.db.refresh(supplier)
         return supplier
-    
+
     def update_supplier(self, supplier_id: str, supplier_data: SupplierUpdate):
         """Update a supplier."""
         supplier = self.get_supplier(supplier_id)
 
         update_data = supplier_data.model_dump(exclude_unset=True)
+        if "country_id" in update_data:
+            self._validate_country_id(update_data["country_id"])
         # D2 (review nit): the trailing currency note (`"ACME (RMB)"`) is not
         # part of the legal name on create - `update_supplier` used to write
         # it through unstripped, so an edit could quietly restore the note
@@ -720,7 +806,7 @@ class SupplierService:
             update_data["supplier_name"] = clean_supplier_name(update_data["supplier_name"])
         for key, value in update_data.items():
             setattr(supplier, key, value)
-        
+
         self.db.commit()
         self.db.refresh(supplier)
         return supplier
@@ -888,6 +974,8 @@ class InboundShipmentService:
 
             line_counts = _line_counts()
             non_received_counts = _line_counts(lines_table.c.line_status != "received")
+            from app.services.scm import spo_supply
+
             spo_counts = {
                 str(shipment_id): int(count or 0)
                 for shipment_id, count in (
@@ -895,7 +983,12 @@ class InboundShipmentService:
                         SPOAllocation.inbound_shipment_id,
                         func.count(SPOAllocation.id),
                     )
-                    .filter(SPOAllocation.inbound_shipment_id.in_(shipment_ids))
+                    .filter(
+                        SPOAllocation.inbound_shipment_id.in_(shipment_ids),
+                        # R7/AC-E8: a retired line is not counted, so this figure
+                        # agrees with the grouped allocation listing beside it.
+                        *spo_supply.visible_line_clauses(),
+                    )
                     .group_by(SPOAllocation.inbound_shipment_id)
                     .all()
                 )
@@ -955,6 +1048,13 @@ class InboundShipmentService:
         shipment and its own SPO allocation report different numbers for the same
         goods: a 60-of-100 short receipt read as 100 here and 60 there, and the
         container looked fully received when 40 of it never arrived.
+
+        AC-E14 (PLAN-hide-retired-everywhere): deliberately UNFILTERED by
+        `spo_supply.visible_line_clauses()`. This collects PickingLine receipts by
+        product across every allocation on the shipment to find what actually landed;
+        filtering could drop a REAL receipt rather than hide a phantom line - it looks
+        up receipts by number, and a receipt found through a retired line is still a
+        receipt.
         """
         received_totals: dict[str, int] = {}
 
@@ -1042,11 +1142,11 @@ class InboundShipmentService:
         `in_transit` forever, while the detail page (a joined relationship load) showed
         the very lines it could not find.
 
-        CAVEAT (S4, review round 1): `spo_allocated_quantity` is summed per PRODUCT, not
-        per line, so a container carrying the same product on two lines gives BOTH lines
-        the whole product's allocated figure. Pre-existing and left as is here - the
-        column has one writer and changing what it means is a change to every reader of
-        it. Backlogged in `PLAN-scm-purchasing-consolidation-6sep.md` (Deviations, lane D).
+        `spo_allocated_quantity` / `quantity_received` are APPORTIONED per line (S4,
+        AC-D5, `_apportion`) rather than the product's whole total stamped onto every
+        line of it - a container carrying the same product on two lines (Kailu's own
+        carton split) used to give BOTH lines the whole figure, doubling what counted
+        as incoming. Each product's own lines are walked in `(created_at, id)` order.
         """
         shipment = (
             self.db.query(InboundShipment)
@@ -1066,14 +1166,29 @@ class InboundShipmentService:
         )
         spo_by_product = {str(p): int(t) for p, t in totals_alloc}
         received_by_product = self.get_received_quantities_by_product(shipment_id)
+
+        lines_by_product: dict[str, list] = {}
+        for line in lines:
+            lines_by_product.setdefault(str(line.product_id), []).append(line)
+        alloc_by_line: dict[str, int] = {}
+        recv_by_line: dict[str, int] = {}
+        for product_id, product_lines in lines_by_product.items():
+            product_lines.sort(key=lambda l: (l.created_at or datetime.min, str(l.id)))
+            alloc_by_line.update(
+                _apportion(spo_by_product.get(product_id, 0), product_lines)
+            )
+            recv_by_line.update(
+                _apportion(received_by_product.get(product_id, 0), product_lines)
+            )
+
         for line in lines:
             # Self-heal: a line belongs to the company of the container it hangs off,
             # and an earlier company-less write may have stamped it with the incumbent
             # company instead. Put it back, or the next scoped read loses it again.
             if shipment.company_id and line.company_id != shipment.company_id:
                 line.company_id = shipment.company_id
-            alloc = spo_by_product.get(str(line.product_id), 0)
-            recv = received_by_product.get(str(line.product_id), 0)
+            alloc = alloc_by_line.get(str(line.id), 0)
+            recv = recv_by_line.get(str(line.id), 0)
             line.spo_allocated_quantity = alloc
             line.quantity_received = recv
             line.line_status = compute_inbound_shipment_line_status(
@@ -1201,12 +1316,13 @@ class InboundShipmentService:
         AFTER its own commit, same ordering `delete_photo` uses.
         """
         existing = list(shipment.shipment_lines) if existing_lines is None else list(existing_lines)
-        by_pair: dict[tuple[str, Optional[str]], InboundShipmentLine] = {}
+        existing_by_id = {str(line.id): line for line in existing}
+        by_pair: dict[tuple[str, Optional[str]], list[InboundShipmentLine]] = {}
         by_product: dict[str, list[InboundShipmentLine]] = {}
         for line in existing:
             product_id = str(line.product_id)
             supplier_id = str(line.supplier_id) if line.supplier_id else None
-            by_pair[(product_id, supplier_id)] = line
+            by_pair.setdefault((product_id, supplier_id), []).append(line)
             by_product.setdefault(product_id, []).append(line)
 
         claimed: set[str] = set()
@@ -1232,12 +1348,54 @@ class InboundShipmentService:
                 "state supplier_id per line"
             )
 
+        def line_id_required(product_id: str, supplier_id: Optional[str]):
+            code = (
+                self.db.query(Product.product_code)
+                .filter(Product.id == product_id)
+                .scalar()
+            ) or product_id
+            where = "for this supplier" if supplier_id else "with no supplier stated"
+            return AppException(
+                409,
+                f"Product {code} is on two lines {where}; edit them by line.",
+                code="line_id_required",
+            )
+
+        # ID-first (S4, AC-D4): a payload line naming an id that IS one of this
+        # container's own claims exactly that line, whatever its own (product, supplier)
+        # says - the same key can now repeat (AC-D1's own carton split), so an edit that
+        # already knows which line it means is never left to the guesswork below.
+        id_claims: list[dict] = []
+        remaining_incoming: list[dict] = []
+        for raw in incoming or []:
+            d = dict(raw)
+            line_id = d.pop("id", None)
+            if line_id and str(line_id) in existing_by_id:
+                id_claims.append((str(line_id), d))
+            else:
+                remaining_incoming.append(d)
+        for line_id, d in id_claims:
+            target = existing_by_id[line_id]
+            claimed.add(str(target.id))
+            updates.append((target, d))
+        incoming = remaining_incoming
+
         # Attributed first: see the docstring.
         for d in sorted(incoming, key=lambda d: d.get("supplier_id") is None):
             product_id = str(d["product_id"])
             supplier_id = str(d["supplier_id"]) if d.get("supplier_id") else None
             if supplier_id is not None:
-                target = by_pair.get((product_id, supplier_id))
+                named = [
+                    line for line in by_pair.get((product_id, supplier_id), [])
+                    if str(line.id) not in claimed
+                ]
+                if len(named) > 1:
+                    # AC-D1's own scenario: two lines already share (product, supplier)
+                    # (Kailu's carton split) - an id-LESS edit naming only the pair
+                    # cannot say which one it means, and guessing would move a quantity
+                    # from one carton to the other silently.
+                    raise line_id_required(product_id, supplier_id)
+                target = named[0] if named else None
                 if target is None:
                     # Nothing on this container under that supplier yet. Claim the
                     # unattributed row for the product rather than replacing it, so an
@@ -1256,7 +1414,13 @@ class InboundShipmentService:
             else:
                 candidates = unclaimed(product_id, unattributed_only=False)
                 if len(candidates) > 1:
-                    raise ambiguous(product_id)
+                    # Two DIFFERENT suppliers already ship this product and the payload
+                    # names neither (pre-existing, unchanged) - `line_id_required` is for
+                    # the NEW case below it, where the id-less line names a pair that is
+                    # itself ambiguous (two lines of the SAME supplier).
+                    if len({str(l.supplier_id) if l.supplier_id else None for l in candidates}) > 1:
+                        raise ambiguous(product_id)
+                    raise line_id_required(product_id, candidates[0].supplier_id)
                 target = candidates[0] if candidates else None
             if target is None:
                 inserts.append(d)
@@ -1390,77 +1554,92 @@ class InboundShipmentService:
             for k, v in shipment_dict.items():
                 if v is not None:
                     setattr(existing, k, v)
-            # Replace lines, but only the ones this upload speaks for. One container
-            # carries several factories and each sends its own packing list, so replacing
-            # every line on a supplier-stated upload deleted the other factories' lines -
-            # the data-loss this rule exists to end. An upload that names NO supplier
-            # (the n8n PDF path, legacy callers) still speaks for the whole container, as
-            # it always did.
-            merged_lines = _merge_shipment_lines(
-                shipment_data.shipment_lines, shipment_data.supplier_id
-            )
-            incoming_suppliers = {
-                str(d["supplier_id"]) if d["supplier_id"] else None for d in merged_lines
-            }
-            incoming_products = {str(d["product_id"]) for d in merged_lines}
-            if not merged_lines and shipment_data.supplier_id:
-                # No lines at all: the upload clears what that supplier had on the container.
-                incoming_suppliers = {str(shipment_data.supplier_id)}
-            states_supplier = bool(shipment_data.supplier_id) or any(
-                (line.supplier_id or None) for line in (shipment_data.shipment_lines or [])
+            from app.models.scm import ProformaInvoiceShipmentLink
+
+            # AC-D4b (S4): a CONVERTED draft's lines are sourced from proforma invoices,
+            # not this forwarder's own PDF/Excel - the manual -> n8n -> back flow updates
+            # the HEADER only and leaves convert's own split lines untouched. A shipment
+            # with no PI links keeps today's per-product line replacement below.
+            has_pi_links = (
+                self.db.query(ProformaInvoiceShipmentLink.id)
+                .filter(ProformaInvoiceShipmentLink.inbound_shipment_id == existing.id)
+                .first()
+                is not None
             )
             photo_objects: list[tuple[str, str]]
-            if states_supplier:
-                # REUSE: every real, in-app upload names a supplier (R12 asks for one per
-                # file), so this is the path a re-uploaded packing list actually takes.
-                # `_upsert_shipment_lines` matches an incoming line to the row already
-                # there by `(product, supplier)` and updates it IN PLACE rather than
-                # deleting and recreating: a re-upload used to mint a new line id every
-                # time, which orphaned that line's photos (`entity_attachment_links` has
-                # no real FK onto the line) - browser-test round, finding 1. Scoped to
-                # this upload's own lines, same as the delete used to be: a line outside
-                # `_is_superseded_line` belongs to another factory's own list and is left
-                # alone entirely.
-                scoped_existing = [
-                    line
-                    for line in existing.shipment_lines
-                    if _is_superseded_line(line, incoming_suppliers, incoming_products)
-                ]
-                photo_objects = self._upsert_shipment_lines(
-                    existing, merged_lines, existing_lines=scoped_existing
-                )
+            if has_pi_links:
+                photo_objects = []
+                setattr(existing, "lines_skipped_reason", "lines_from_proforma_invoices")
             else:
-                # RE-POINT is not applicable here either: every merged line's
-                # `supplier_id` is explicitly `None` (this upload names no supplier at
-                # all), which never matches an existing line's OWN (possibly attributed)
-                # supplier under the `(product, supplier)` key `_upsert_shipment_lines`
-                # reuses by - reusing here would leave a line's old, real supplier
-                # silently intact although nothing in this upload said so
-                # (`test_an_n8n_resend_clears_the_header_the_container_used_to_name`).
-                # This upload restates the WHOLE container from scratch (the n8n PDF
-                # path, legacy callers) - every existing line is superseded, deleted
-                # outright, and its photos purged with it before the fresh rows land.
-                departing_ids = [str(line.id) for line in existing.shipment_lines]
-                from app.models.scm import ProformaInvoiceShipmentLink
-                from app.services.scm import shipment_line_photos
-
-                if departing_ids:
-                    self.db.query(ProformaInvoiceShipmentLink).filter(
-                        ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
-                            departing_ids
-                        )
-                    ).delete(synchronize_session=False)
-                    self.db.flush()
-                photo_objects = shipment_line_photos.purge_for_lines(self.db, departing_ids)
-                for line in existing.shipment_lines[:]:
-                    self.db.delete(line)
-                self.db.flush()
-                for d in merged_lines:
-                    line = InboundShipmentLine(
-                        **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+                # Replace lines, but only the ones this upload speaks for. One container
+                # carries several factories and each sends its own packing list, so
+                # replacing every line on a supplier-stated upload deleted the other
+                # factories' lines - the data-loss this rule exists to end. An upload that
+                # names NO supplier (the n8n PDF path, legacy callers) still speaks for
+                # the whole container, as it always did.
+                merged_lines = _merge_shipment_lines(
+                    shipment_data.shipment_lines, shipment_data.supplier_id
+                )
+                incoming_suppliers = {
+                    str(d["supplier_id"]) if d["supplier_id"] else None for d in merged_lines
+                }
+                incoming_products = {str(d["product_id"]) for d in merged_lines}
+                if not merged_lines and shipment_data.supplier_id:
+                    # No lines at all: the upload clears what that supplier had on the container.
+                    incoming_suppliers = {str(shipment_data.supplier_id)}
+                states_supplier = bool(shipment_data.supplier_id) or any(
+                    (line.supplier_id or None) for line in (shipment_data.shipment_lines or [])
+                )
+                if states_supplier:
+                    # REUSE: every real, in-app upload names a supplier (R12 asks for one per
+                    # file), so this is the path a re-uploaded packing list actually takes.
+                    # `_upsert_shipment_lines` matches an incoming line to the row already
+                    # there by `(product, supplier)` and updates it IN PLACE rather than
+                    # deleting and recreating: a re-upload used to mint a new line id every
+                    # time, which orphaned that line's photos (`entity_attachment_links` has
+                    # no real FK onto the line) - browser-test round, finding 1. Scoped to
+                    # this upload's own lines, same as the delete used to be: a line outside
+                    # `_is_superseded_line` belongs to another factory's own list and is left
+                    # alone entirely.
+                    scoped_existing = [
+                        line
+                        for line in existing.shipment_lines
+                        if _is_superseded_line(line, incoming_suppliers, incoming_products)
+                    ]
+                    photo_objects = self._upsert_shipment_lines(
+                        existing, merged_lines, existing_lines=scoped_existing
                     )
-                    self.db.add(line)
-                self.db.flush()
+                else:
+                    # RE-POINT is not applicable here either: every merged line's
+                    # `supplier_id` is explicitly `None` (this upload names no supplier at
+                    # all), which never matches an existing line's OWN (possibly attributed)
+                    # supplier under the `(product, supplier)` key `_upsert_shipment_lines`
+                    # reuses by - reusing here would leave a line's old, real supplier
+                    # silently intact although nothing in this upload said so
+                    # (`test_an_n8n_resend_clears_the_header_the_container_used_to_name`).
+                    # This upload restates the WHOLE container from scratch (the n8n PDF
+                    # path, legacy callers) - every existing line is superseded, deleted
+                    # outright, and its photos purged with it before the fresh rows land.
+                    departing_ids = [str(line.id) for line in existing.shipment_lines]
+                    from app.services.scm import shipment_line_photos
+
+                    if departing_ids:
+                        self.db.query(ProformaInvoiceShipmentLink).filter(
+                            ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
+                                departing_ids
+                            )
+                        ).delete(synchronize_session=False)
+                        self.db.flush()
+                    photo_objects = shipment_line_photos.purge_for_lines(self.db, departing_ids)
+                    for line in existing.shipment_lines[:]:
+                        self.db.delete(line)
+                    self.db.flush()
+                    for d in merged_lines:
+                        line = InboundShipmentLine(
+                            **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+                        )
+                        self.db.add(line)
+                    self.db.flush()
             self._derive_header_supplier(existing, shipment_data.supplier_id)
             self.db.commit()
             for provider, key in photo_objects:
@@ -1554,26 +1733,22 @@ class InboundShipmentService:
 
         photo_objects: list[tuple[str, str]] = []
         if "shipment_lines" in shipment_data.model_dump(exclude_unset=True):
-            # The whole line set, upserted onto what is already there (grouped by product
-            # AND supplier - the same key `create_shipment` merges on, because the same
-            # product from two factories is two rows).
+            # The whole line set, upserted onto what is already there - id FIRST
+            # (`_upsert_shipment_lines`, S4/AC-D4), never merged: two lines of one
+            # product from one supplier are legal now (Kailu's own carton split), and
+            # `_merge_shipment_lines` would silently sum them back into one, which is
+            # exactly the loss the per-line grid exists to stop. The external n8n create
+            # route still merges (its payload has no carton grain) - only THIS edit-form
+            # path drops it.
             header_supplier = getattr(shipment, "supplier_id", None)
-            duplicate_product_id = _duplicate_line_product_id(
-                shipment_data.shipment_lines, header_supplier
-            )
-            if duplicate_product_id:
-                code = (
-                    self.db.query(Product.product_code)
-                    .filter(Product.id == duplicate_product_id)
-                    .scalar()
-                ) or duplicate_product_id
-                raise handle_conflict(
-                    f"Product {code} is on this line set twice for the same supplier; "
-                    "combine the two lines or pick a different product on one of them."
+            incoming = [
+                {**d, "supplier_id": _effective_line_supplier(d, header_supplier)}
+                for d in (
+                    ln.model_dump(exclude_unset=True) if hasattr(ln, "model_dump") else dict(ln)
+                    for ln in shipment_data.shipment_lines
                 )
-            photo_objects = self._upsert_shipment_lines(
-                shipment, _merge_shipment_lines(shipment_data.shipment_lines, header_supplier)
-            )
+            ]
+            photo_objects = self._upsert_shipment_lines(shipment, incoming)
             # The lines just changed, so the header has to be re-derived from them or it
             # keeps naming a supplier that is no longer on the container.
             self._derive_header_supplier(shipment, header_supplier)
@@ -1660,13 +1835,15 @@ class SPOAllocationService:
         """List SPO allocations. quantity_received is computed on load from approved GRN lines."""
         from sqlalchemy.orm import joinedload
         from app.schemas.procurement import SPOAllocationResponse
+        from app.services.scm import spo_supply
         q = self.db.query(SPOAllocation).options(
             joinedload(SPOAllocation.product),
             joinedload(SPOAllocation.warehouse),
             joinedload(SPOAllocation.inbound_shipment),
         )
-        
-        filters = []
+
+        # R1/R6: a retired line AutoCount stopped naming is hidden from the grid.
+        filters = [*spo_supply.visible_line_clauses()]
 
         shipment_ids = resolve_identifier(
             self.db,
@@ -1776,6 +1953,7 @@ class SPOAllocationService:
             InboundShipmentSimple,
             ShipmentAllocationSummaryGroup,
         )
+        from app.services.scm import spo_supply
 
         # Subquery / join: shipments that have at least one allocation matching filters
         q_shipments = (
@@ -1797,7 +1975,9 @@ class SPOAllocationService:
                 "empty": True,
             }
 
-        shipment_filters = []
+        # R1/R6: a retired line AutoCount stopped naming is hidden from the grid, and a
+        # shipment whose only allocations are hidden must not appear as a group of its own.
+        shipment_filters = [*spo_supply.visible_line_clauses()]
         if resolved_warehouse_ids:
             shipment_filters.append(SPOAllocation.warehouse_id.in_(resolved_warehouse_ids))
         if receipt_status and receipt_status != "all":
@@ -1822,7 +2002,7 @@ class SPOAllocationService:
         if shipment_filters:
             q_shipments = q_shipments.filter(and_(*shipment_filters))
 
-        allocation_filters = []
+        allocation_filters = [*spo_supply.visible_line_clauses()]
         if resolved_warehouse_ids:
             allocation_filters.append(SPOAllocation.warehouse_id.in_(resolved_warehouse_ids))
         if receipt_status and receipt_status != "all":
@@ -1919,10 +2099,13 @@ class SPOAllocationService:
             SPOAllocationWithShippedResponse,
             SPOWithAllocationsGroup,
         )
+        from app.services.scm import spo_supply
 
         # Base filter query (no eager load) - reuse for count and for page of spo_numbers
         q_base = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
-        filters = []
+        # R1/R6: a retired line AutoCount stopped naming is hidden from the grid, both from
+        # the count/page-of-numbers query and from the allocations loaded per number below.
+        filters = [*spo_supply.visible_line_clauses()]
         resolved_warehouse_ids = resolve_identifier(
             self.db,
             warehouse_id,
@@ -2110,7 +2293,18 @@ class SPOAllocationService:
         # does not agree is late.
         today = date.today()
 
+        # R1/R4/R6: a retired line AutoCount stopped naming is hidden from the header
+        # rollups (`total_allocated`, `total_received`, `line_count`) the same as it is
+        # from every other grid - one clause, imported from `spo_supply`.
+        is_visible = and_(*spo_supply.visible_line_clauses())
+        # Round 3 S1 (reviewer): `is_outstanding` gates on visibility too, not only on
+        # `open_incoming_clauses()` - a hidden row is never "closed" by any DB
+        # constraint (retirement and line_status are independent columns), so without
+        # this a hidden-but-line_status='open' row could still count towards Balance,
+        # status, worst overdue and earliest ETA here while `get_document` (which
+        # already filters the row out entirely) does not agree.
         is_outstanding = and_(
+            is_visible,
             *spo_supply.open_incoming_clauses(),
             SPOAllocation.allocated_quantity > func.coalesce(SPOAllocation.quantity_received, 0),
         )
@@ -2125,6 +2319,14 @@ class SPOAllocationService:
         balance_sum_expr = func.coalesce(func.sum(case((is_outstanding, balance_expr), else_=0)), 0)
         worst_overdue_expr = func.coalesce(func.max(case((is_outstanding, overdue_expr), else_=0)), 0)
         earliest_eta_expr = func.min(case((is_outstanding, arrival_expr), else_=None))
+        # PLAN-spo-list-container-number.md AC-5: the Container No column sorts by the
+        # document's first container over its VISIBLE lines - MIN, so a raw or linked
+        # container both count and a hidden line never votes; `nullslast()` below is
+        # what puts a document with no container last in EITHER direction.
+        container_value_expr = func.coalesce(
+            SPOAllocation.container_number, InboundShipment.shipping_container_number
+        )
+        containers_sort_expr = func.min(case((is_visible, container_value_expr), else_=None))
         # COALESCE(min(issue_date), min(created_at)) (review S4): `issue_date` is the
         # document's own date; `created_at` is the import timestamp, a fallback for
         # rows a bare shipment-allocation import never set `issue_date` on. Cast the
@@ -2133,6 +2335,14 @@ class SPOAllocationService:
             func.min(SPOAllocation.issue_date),
             cast(func.min(SPOAllocation.created_at), Date),
         )
+        # Round 3 B2 (reviewer, "the ghost document"): shared by the SELECT's
+        # `line_count`, the sort_map's `line_count` entry, and the unconditional HAVING
+        # below that drops a document with no visible line from every state - the
+        # aggregates were already gated on `is_visible`, but document MEMBERSHIP was
+        # not, so a document whose every line retirement hid still grouped as a 0-line
+        # row here and 404ed the moment `get_document` (which filters the rows out
+        # entirely) was opened for it.
+        visible_line_count_expr = func.count(case((is_visible, SPOAllocation.id), else_=None))
 
         # Which DOCUMENTS have >=1 line matching product/warehouse/query (Q10) - filters
         # match LINES, the list shows the whole document (every other line included).
@@ -2186,6 +2396,11 @@ class SPOAllocationService:
                         MatchLine.product_id.in_(matching_product_ids),
                         MatchLine.warehouse_id.in_(matching_warehouse_ids),
                         MatchLine.inbound_shipment_id.in_(matching_shipment_ids),
+                        # AC-4 (PLAN-spo-list-container-number.md): the raw, unlinked
+                        # `spo_allocations.container_number` - the shipment's own
+                        # `shipping_container_number` is already covered above via
+                        # `matching_shipment_ids`.
+                        MatchLine.container_number.ilike(f"%{q_str}%"),
                     )
                 )
             match_filter = select(MatchLine.id).where(*match_conditions).exists()
@@ -2194,9 +2409,19 @@ class SPOAllocationService:
             self.db.query(
                 SPOAllocation.spo_number.label("spo_number"),
                 doc_date_expr.label("doc_date"),
-                func.sum(SPOAllocation.allocated_quantity).label("total_allocated"),
-                func.sum(func.coalesce(SPOAllocation.quantity_received, 0)).label("total_received"),
-                func.count(SPOAllocation.id).label("line_count"),
+                func.coalesce(
+                    func.sum(case((is_visible, SPOAllocation.allocated_quantity), else_=0)), 0
+                ).label("total_allocated"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (is_visible, func.coalesce(SPOAllocation.quantity_received, 0)),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("total_received"),
+                visible_line_count_expr.label("line_count"),
                 has_outstanding_expr.label("has_outstanding"),
                 balance_sum_expr.label("balance"),
                 worst_overdue_expr.label("worst_overdue_days"),
@@ -2209,6 +2434,11 @@ class SPOAllocationService:
             rollup = rollup.filter(match_filter)
         rollup = rollup.group_by(SPOAllocation.spo_number)
 
+        # Round 3 B2: unconditional, every state - a document with no visible line
+        # does not appear here under "outstanding", "completed" OR "all". `get_document`
+        # keeps its 404 for the same number, so the two now agree instead of the list
+        # offering a 0-line row that errors the moment it is opened.
+        rollup = rollup.having(visible_line_count_expr > 0)
         state_norm = (state or "outstanding").strip().lower()
         if state_norm == "outstanding":
             rollup = rollup.having(has_outstanding_expr.is_(True))
@@ -2229,11 +2459,12 @@ class SPOAllocationService:
             "spo_number": SPOAllocation.spo_number,
             "doc_date": doc_date_expr,
             "created_at": doc_date_expr,
-            "total_allocated": func.sum(SPOAllocation.allocated_quantity),
-            "line_count": func.count(SPOAllocation.id),
+            "total_allocated": func.sum(case((is_visible, SPOAllocation.allocated_quantity), else_=0)),
+            "line_count": visible_line_count_expr,
             "balance": balance_sum_expr,
             "worst_overdue_days": worst_overdue_expr,
             "earliest_eta": earliest_eta_expr,
+            "containers": containers_sort_expr,
         }
         sort_dir_norm = (sort_dir or "desc").strip().lower()
         order_col = sort_map.get((sort_field or "spo_number").strip().lower(), SPOAllocation.spo_number)
@@ -2253,6 +2484,7 @@ class SPOAllocationService:
             }
 
         supplier_map = self._document_supplier_rollup(spo_numbers_page)
+        container_map = self._document_container_rollup(spo_numbers_page)
 
         rows = []
         for r in page_rows:
@@ -2271,6 +2503,7 @@ class SPOAllocationService:
                     balance=int(r.balance or 0),
                     line_count=int(r.line_count or 0),
                     worst_overdue_days=int(r.worst_overdue_days or 0),
+                    containers=container_map.get(r.spo_number, []),
                 )
             )
         return {
@@ -2287,6 +2520,8 @@ class SPOAllocationService:
         """
         if not spo_numbers:
             return {}
+        from app.services.scm import spo_supply
+
         # ONE join, not two (review: a SECOND `aliased(Supplier)` join is not a
         # SQLAlchemy/Postgres limitation - `project_supply_service._spo_rows` joins
         # `Supplier` unaliased AND `aliased(Supplier)` in the same query and works fine).
@@ -2303,7 +2538,14 @@ class SPOAllocationService:
             )
             .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
             .outerjoin(Supplier, Supplier.id == supplier_key)
-            .filter(SPOAllocation.spo_number.in_(spo_numbers))
+            .filter(
+                SPOAllocation.spo_number.in_(spo_numbers),
+                # Round 3 S2 (reviewer): the same clause `get_document`'s own
+                # `supplier_counts` reads (below), or the majority supplier this list
+                # shows can differ from the one the page it opens shows - a hidden
+                # line's supplier must not vote.
+                *spo_supply.visible_line_clauses(),
+            )
             .group_by(SPOAllocation.spo_number, Supplier.supplier_name)
             .all()
         )
@@ -2317,6 +2559,61 @@ class SPOAllocationService:
             majority_name = entries[0][0]
             extra = max(len(entries) - 1, 0)
             result[spo_number] = (majority_name, extra)
+        return result
+
+    def _document_container_rollup(self, spo_numbers: List[str]) -> Dict[str, List[SPODocumentContainer]]:
+        """One `{container_number, shipment_id}` entry per distinct container over each
+        document's VISIBLE lines, sorted by container number (PLAN-spo-list-container-
+        number.md AC-1/AC-2/AC-3).
+
+        Same two-phase shape as `_document_supplier_rollup` above: reads only the
+        page's own documents. Dedup happens in Python because the winner between a
+        linked and a raw duplicate (AC-3) is "carries a shipment id", not a SQL
+        aggregate a GROUP BY can express in one pass.
+        """
+        if not spo_numbers:
+            return {}
+        from app.services.scm import spo_supply
+
+        container_expr = func.coalesce(
+            SPOAllocation.container_number, InboundShipment.shipping_container_number
+        )
+        rows = (
+            self.db.query(
+                SPOAllocation.spo_number,
+                container_expr.label("container_number"),
+                SPOAllocation.inbound_shipment_id,
+            )
+            .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .filter(
+                SPOAllocation.spo_number.in_(spo_numbers),
+                container_expr.isnot(None),
+                *spo_supply.visible_line_clauses(),
+            )
+            .distinct()
+            # Deterministic tiebreak (review S2): one container number can name several
+            # DIFFERENT `inbound_shipment_id`s on the same document (39 on the prod
+            # copy) - ASC sorts NULLS LAST by default, so a linked row always sorts
+            # ahead of a raw duplicate for the same container ("linked wins over raw"
+            # falls out of the ordering, no separate branch needed), and among several
+            # shipments sharing one container the smallest id wins, every run.
+            .order_by(SPOAllocation.spo_number, container_expr, SPOAllocation.inbound_shipment_id)
+            .all()
+        )
+        by_doc: Dict[str, Dict[str, Optional[str]]] = {}
+        for spo_number, container_number, shipment_id in rows:
+            entries = by_doc.setdefault(spo_number, {})
+            # The first row per container already wins the ORDER BY above.
+            entries.setdefault(container_number, shipment_id)
+        result: Dict[str, List[SPODocumentContainer]] = {}
+        for spo_number, entries in by_doc.items():
+            result[spo_number] = [
+                SPODocumentContainer(
+                    container_number=container_number,
+                    shipment_id=str(shipment_id) if shipment_id is not None else None,
+                )
+                for container_number, shipment_id in sorted(entries.items(), key=lambda kv: kv[0])
+            ]
         return result
 
     def _planning_span_map(self, warehouse_ids: List[str]) -> Dict[str, str]:
@@ -2384,7 +2681,12 @@ class SPOAllocationService:
                 joinedload(SPOAllocation.product),
                 joinedload(SPOAllocation.warehouse),
             )
-            .filter(SPOAllocation.spo_number == spo_number)
+            .filter(
+                SPOAllocation.spo_number == spo_number,
+                # R1/R6: a retired line AutoCount stopped naming is hidden from the
+                # document's own lines list and its rollups below.
+                *spo_supply.visible_line_clauses(),
+            )
             .order_by(SPOAllocation.spo_line_number.asc().nullslast(), SPOAllocation.id)
             .all()
         )
@@ -2556,12 +2858,16 @@ class SPOAllocationService:
         for allocation, shipment, supplier_name, is_open in rows:
             allocated = allocation.allocated_quantity or 0
             received = allocation.quantity_received or 0
-            balance = max(allocated - received, 0)
             arrival = None
             if shipment is not None:
                 arrival = shipment.eta_delay_date or shipment.estimated_arrival_date
             arrival = arrival or allocation.expected_date
             outstanding = bool(is_open) and allocated > received
+            # R5: a line that is not outstanding reads balance 0, so the grid can never
+            # again disagree with its own header - `total_allocated`/`balance` above
+            # already sum outstanding-only, this was the one reader still computing a
+            # closed line's balance as if it were still owed.
+            balance = max(allocated - received, 0) if outstanding else 0
             overdue_days = spo_supply.overdue_days(arrival, today) if outstanding else 0
             supplier_counts[supplier_name] = supplier_counts.get(supplier_name, 0) + 1
 
@@ -2598,6 +2904,12 @@ class SPOAllocationService:
                     grns=line_grns.get(str(allocation.id), []),
                     line_status=allocation.line_status,
                     po=po_info.get(str(allocation.po_line_id)) if allocation.po_line_id else None,
+                    # The AutoCount book's own source purchase order, straight off the
+                    # ingested column - text, never resolved into `po` above. The two can
+                    # disagree (`po_line_id` names a CRM line, `from_po_number` names a
+                    # different document) and neither is wrong when they do; see
+                    # `PLAN-scm-book-linkage-on-document-lines.md` Slice B.
+                    from_po_number=allocation.from_po_number,
                     so_covered=so_covered_by_alloc.get(str(allocation.id), []),
                 )
             )
@@ -2742,6 +3054,7 @@ class SPOAllocationService:
         *,
         forward_match: bool = True,
         commit: bool = True,
+        source_system: Optional[str] = None,
     ):
         """Create a new SPO allocation.
 
@@ -2764,6 +3077,16 @@ class SPOAllocationService:
             allocation_dict.get("receipt_status")
         )
         allocation_dict["created_by"] = created_by
+        # WHO raised the row (spo-xlsx-supersede D25c, security round 6). A SERVICE
+        # argument, never a request field (security round 7): the first-push supersede
+        # and the group recompute both branch on this column, so a client that could
+        # post `autocount` or clear a stamp would decide which rows get replaced and
+        # which receipts get pooled. The two SCM writers that raise one allocation per
+        # purchase-order line pass `crm_spo`; the n8n packing-list route and the Excel
+        # import pass nothing, and their rows are aggregates. The screen passes nothing
+        # too, so a hand-created row stays a first-push supersede candidate: a named
+        # residual (PLAN D25c), with no such row among the measured production set.
+        allocation_dict["source_system"] = source_system
         # Section 7 currency gap (S3): absent on every SPO xlsx row today -
         # filled the same way the PO side already is, so parity has one less
         # excluded column.
@@ -2959,14 +3282,17 @@ class SPOAllocationService:
                 SPOAllocation.product_id == allocation_data.product_id,
                 SPOAllocation.warehouse_id == allocation_data.warehouse_id,
                 # D11 (S3): one shipping-order writer identity. NULL is this
-                # service's own unstamped rows; `SPO_UPLOAD_SOURCE` is the
-                # outstanding book's own SPO write path; `ESB_SOURCE_SYSTEM`
-                # ("autocount") is `ShippingOrderIngestService`'s. All three
-                # are xlsx/ESB-era rows this upload may legitimately correct
-                # a quantity on - only `scm_po_history`/`scm_spo_history`
-                # (closed history, a different feed entirely) stay excluded.
+                # service's own unstamped rows; `CRM_SPO_SOURCE_SYSTEM` is the
+                # same thing stamped, by the two SCM writers that raise one
+                # allocation per purchase-order line (security round 7);
+                # `SPO_UPLOAD_SOURCE` is the outstanding book's own SPO write
+                # path; `ESB_SOURCE_SYSTEM` ("autocount") is
+                # `ShippingOrderIngestService`'s. All of them are rows this
+                # upload may legitimately correct a quantity on - only
+                # `scm_po_history`/`scm_spo_history` (closed history, a
+                # different feed entirely) stay excluded.
                 or_(
-                    SPOAllocation.source_system.is_(None),
+                    shipping_order_rules.crm_raised(SPOAllocation.source_system),
                     SPOAllocation.source_system.in_([SPO_UPLOAD_SOURCE, ESB_SOURCE_SYSTEM]),
                 ),
             ).order_by(SPOAllocation.spo_line_number).first()
@@ -2995,7 +3321,15 @@ class SPOAllocationService:
         # unstamped) row through THIS channel makes it this channel's row
         # again, the same way `ShippingOrderIngestService._write_row`'s own
         # blind setattr already re-stamps an xlsx-era row it adopts.
-        existing.source_system = None
+        #
+        # EXCEPT a `crm_spo` row (security round 7). That stamp is not a
+        # writer's claim on the row, it is the marker that says this
+        # allocation belongs to a purchase-order line, and clearing it would
+        # quietly hand the row back to the supersede sweep (D25c reads an
+        # unstamped ref-less row as Excel-era). A quantity correction is not a
+        # change of what the row IS.
+        if existing.source_system != shipping_order_rules.CRM_SPO_SOURCE_SYSTEM:
+            existing.source_system = None
         existing.allocated_quantity = new_qty
         existing.updated_at = datetime.utcnow()
         self.db.commit()
@@ -3093,9 +3427,34 @@ class SPOAllocationService:
     #: system returns 0 for all of them, which would show three years of delivered
     #: purchases as outstanding. A row this system raised itself carries no stamp, and for
     #: those the GRN lines ARE the record.
+    #:
+    #: THREE receipt-ownership rules, and they are deliberately different
+    #: (spo-xlsx-supersede D28 / D28a / D28b):
+    #:
+    #: 1. READ path (this predicate, used by the listings and availability readers
+    #:    below): an IMPORTED row's stored figure is trusted as stated, and a row this
+    #:    system raised itself is measured from its GRN lines. "Raised itself" is no
+    #:    stamp at all OR `crm_spo` (D25c, security round 6): the two SCM writers now
+    #:    stamp the rows they create so the supersede leaves them alone, and without
+    #:    naming that stamp here every SCM-raised allocation would stop reporting the
+    #:    receipt its own approved GRN lines prove.
+    #: 2. WRITE path, per allocation (`_sync_received_for_allocations` for a
+    #:    `source_system` NULL or `scm_upload` row): recomputed from its OWN picking
+    #:    lines, and skipped entirely when nothing picks against it and nobody is
+    #:    releasing it - that stored value was stated or carried, not computed here.
+    #: 3. WRITE path, per GROUP (`_sync_group_received` for an `autocount` row): the
+    #:    group's approved picking total redistributed over its lines (D28a), each line
+    #:    floored by its own `stated_received` (D28c) - a pushed line-set that replaced
+    #:    one aggregated row shares one receipt, so a partial Sorento pick against one of
+    #:    its lines is not evidence that the rest never arrived, while a share only a GRN
+    #:    produced leaves again when that GRN does. The floor is per line and comes from
+    #:    the DECLARED column, never from `quantity_received`: the stored figure cannot
+    #:    say whether it was stated or derived, which is what D28b got wrong.
     @staticmethod
     def _receipt_is_computed(allocation) -> bool:
-        return getattr(allocation, "source_system", None) is None
+        return (
+            getattr(allocation, "source_system", None) or None
+        ) in shipping_order_rules.COMPUTED_RECEIPT_SOURCE_SYSTEMS
 
     def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
         """Bulk: for each allocation id, return computed quantity_received (the sum
@@ -3495,6 +3854,10 @@ class PickingHeaderService:
         grn = self.get_grn(grn_id)
         prev_status = grn.picking_status
         prev_spo_number = grn.spo_number
+        # D28: read before anything moves - a re-point or a line rewrite
+        # leaves these allocations with no picking line at all, and the
+        # re-syncs below are what release the receipt they still carry.
+        previously_linked = self._allocation_ids_of_grn(grn_id)
 
         update_data = grn_data.model_dump(exclude_unset=True)
         picking_lines_payload = update_data.pop("picking_lines", None)
@@ -3584,9 +3947,13 @@ class PickingHeaderService:
             and spo_key_changed
         ):
             if prev_spo_number and str(prev_spo_number).strip():
-                self.sync_received_for_spo_number(prev_spo_number)
+                self.sync_received_for_spo_number(
+                    prev_spo_number, released_allocation_ids=previously_linked
+                )
             if grn.spo_number and str(grn.spo_number).strip():
-                self.sync_received_for_spo_number(grn.spo_number)
+                self.sync_received_for_spo_number(
+                    grn.spo_number, released_allocation_ids=previously_linked
+                )
 
         return grn
 
@@ -3599,17 +3966,25 @@ class PickingHeaderService:
         if not grn or not grn.spo_number or not str(grn.spo_number).strip():
             return
         lines = self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).all()
+        released = {str(line.spo_allocation_id) for line in lines if line.spo_allocation_id}
         for line in lines:
             line.spo_allocation_id = None
         self.db.flush()
-        self.sync_received_for_spo_number(grn.spo_number)
+        # D28: the allocations this GRN just let go are named explicitly - the
+        # re-sync is what releases their stored receipt, and after the unlink
+        # no picking line is left to prove they ever had one.
+        self.sync_received_for_spo_number(grn.spo_number, released_allocation_ids=released)
     
     def delete_grn(self, grn_id: str):
         """Delete a GRN and its lines."""
         grn = self.get_grn(grn_id)
         spo_number = grn.spo_number
         was_approved = grn.picking_status == "approved"
-        
+        # D28: read BEFORE the lines go - these are the allocations this GRN is
+        # releasing, and the re-sync below has no other way to know they ever
+        # had a picking line.
+        released = self._allocation_ids_of_grn(grn_id)
+
         # Explicitly delete picking lines first to avoid foreign key constraint issues
         self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
         
@@ -3617,7 +3992,7 @@ class PickingHeaderService:
         self.db.delete(grn)
         self.db.commit()
         if was_approved and spo_number and str(spo_number).strip():
-            self.sync_received_for_spo_number(spo_number)
+            self.sync_received_for_spo_number(spo_number, released_allocation_ids=released)
         return {"message": "GRN deleted successfully"}
 
     def bulk_delete_grns(self, grn_ids: list[str]) -> dict:
@@ -3626,6 +4001,7 @@ class PickingHeaderService:
             return {"message": "No GRNs to delete", "deleted_count": 0}
         deleted = 0
         spo_numbers_to_sync = set()
+        released_by_spo: dict[str, set] = {}
         for gid in grn_ids:
             grn = (
                 self.db.query(PickingHeader)
@@ -3638,12 +4014,19 @@ class PickingHeaderService:
             if grn:
                 if grn.picking_status == "approved" and grn.spo_number and str(grn.spo_number).strip():
                     spo_numbers_to_sync.add(str(grn.spo_number))
+                    # D28: same release list as `delete_grn`, read before the
+                    # lines go, accumulated per SPO number.
+                    released_by_spo.setdefault(str(grn.spo_number), set()).update(
+                        self._allocation_ids_of_grn(gid)
+                    )
                 self.db.query(PickingLine).filter(PickingLine.picking_header_id == gid).delete()
                 self.db.delete(grn)
                 deleted += 1
         self.db.commit()
         for spo_number in spo_numbers_to_sync:
-            self.sync_received_for_spo_number(spo_number)
+            self.sync_received_for_spo_number(
+                spo_number, released_allocation_ids=released_by_spo.get(spo_number, set())
+            )
         return {"message": f"{deleted} GRN(s) deleted", "deleted_count": deleted}
 
     def get_grn_by_picking_number(self, picking_number: str):
@@ -3718,6 +4101,31 @@ class PickingHeaderService:
         match filter, because the row identity is still
         (header, product, source_warehouse, spo_allocation_id).
 
+        A draw that NOW carries an allocation id (PLAN-grn-link-ignores-mirror-received,
+        B1) has no exact match when the row already on the header is the ORPHAN a
+        previous import left - unlinked, ``spo_allocation_id IS NULL`` - because the
+        pool could not place it at the time. Matching by the exact tuple would insert
+        a SIBLING row instead of linking the orphan in place: the GRN reads two lines
+        for one sheet row, picked quantity doubles, and the container reports twice
+        the receipt. So when the draw carries an allocation id and no exact match
+        exists, an unlinked row for the same (header, product, warehouse) is ADOPTED -
+        given this draw's allocation id and quantity - the same "link in place, don't
+        duplicate" outcome forward matching produces. A later draw of the same sheet
+        row (a genuine split) then finds no more unlinked rows to adopt and correctly
+        creates a new one.
+
+        The adoption candidate is ALSO confined to what THIS draw's SPO number
+        claims (review round 2, B3): a multi-SPO GRN groups its rows by
+        ``(doc_no, product, effective_spo)`` (``import_tasks.py``), so the same
+        header/product/warehouse can carry an unlinked row stating one SPO and a
+        linked draw for a DIFFERENT one. Without the guard the different-SPO draw
+        adopted the other SPO's orphan and overwrote its quantity - a 40-unit
+        remainder stating SPO-A destroyed by a 60-unit draw against SPO-B, the
+        GRN reading one 60-unit line for a 100-unit sheet. An orphan's own
+        ``spo_number_raw`` is NULL (nothing has ever stated one for it) or must
+        match this draw's ``spo_number_raw`` under the same key
+        ``grn_spo_matching._spo_match_key`` uses everywhere else.
+
         ``company_id`` is the GRN header's own company, stated rather than left to
         the insert hook - the same rule ``_add_picking_line`` follows. An import job
         with no company snapshot runs system-scoped ("all companies"), where the
@@ -3739,8 +4147,34 @@ class PickingHeaderService:
             filters.append(PickingLine.spo_allocation_id == spo_allocation_id)
         else:
             filters.append(PickingLine.spo_allocation_id.is_(None))
-        
+
         line = self.db.query(PickingLine).filter(*filters).first()
+        if line is None and spo_allocation_id is not None:
+            # No exact match - adopt an orphan of this header/product/warehouse
+            # rather than insert a sibling. See the docstring above (B1). The
+            # orphan must state NO SPO or the SAME one this draw does (B3) - an
+            # orphan stating a different SPO belongs to a different group and
+            # must be left for that group's own draw to place.
+            from app.services.grn_spo_matching import _spo_match_key_sql
+
+            line = (
+                self.db.query(PickingLine)
+                .filter(
+                    PickingLine.picking_header_id == picking_header_id,
+                    PickingLine.product_id == product_id,
+                    PickingLine.source_warehouse_id == source_warehouse_id,
+                    PickingLine.spo_allocation_id.is_(None),
+                    or_(
+                        PickingLine.spo_number_raw.is_(None),
+                        _spo_match_key_sql(PickingLine.spo_number_raw)
+                        == _spo_match_key(spo_number_raw),
+                    ),
+                )
+                .order_by(PickingLine.created_at.asc(), PickingLine.id.asc())
+                .first()
+            )
+            if line is not None:
+                line.spo_allocation_id = spo_allocation_id
         if line:
             line.quantity_expected = quantity
             line.quantity_picked = quantity
@@ -3969,47 +4403,425 @@ class PickingHeaderService:
         received_map = {str(r[0]): int(r[1]) for r in rows}
         return {aid: received_map.get(aid, 0) for aid in allocation_ids}
 
+    def _allocation_ids_of_grn(self, grn_id: str) -> set:
+        """The allocations this GRN's picking lines currently point at (D28).
+
+        Read before a delete or an unlink, so the re-sync afterwards can tell
+        "this allocation is being released" apart from "nothing ever picked
+        against this allocation" - the two look identical once the lines are
+        gone, and only the first may zero a stored receipt.
+        """
+        rows = (
+            self.db.query(PickingLine.spo_allocation_id)
+            .filter(
+                PickingLine.picking_header_id == grn_id,
+                PickingLine.spo_allocation_id.isnot(None),
+            )
+            .all()
+        )
+        return {str(row[0]) for row in rows}
+
+    def _allocation_has_picking_line(self, allocation_id: str) -> bool:
+        """Whether ANY picking line points at this allocation (D28,
+        spo-xlsx-supersede).
+
+        `compute_received_for_allocation` answers 0 for an allocation nothing
+        has ever picked against, and writing that 0 back would erase a receipt
+        this system did not compute: an ESB-stated `qty_received`, or the
+        receipt a superseded xlsx-era row carried onto its AutoCount lines
+        (D26). A GRN deletion lowering an ESB-era line's receipt is named out
+        of scope in the plan - it cannot lower one below the ESB-stated value
+        today either.
+
+        Deliberately NOT filtered to approved goods-received headers: the
+        question here is ownership ("does a GRN draw against this row at all"),
+        not how much has been approved, and a line whose GRN is still pending
+        is exactly the row whose receipt should compute to 0 rather than stay
+        frozen.
+        """
+        return (
+            self.db.query(PickingLine.id)
+            .filter(PickingLine.spo_allocation_id == allocation_id)
+            .first()
+            is not None
+        )
+
+    def _write_received(
+        self, alloc: SPOAllocation, total: int, *, may_reopen: bool = False
+    ) -> None:
+        """The one place a recompute writes a receipt onto an allocation.
+
+        `receipt_status` AND `line_status` both come off the same test
+        (AC-X33), so no path can leave the pair contradicting itself:
+
+        - receipt reaches the allocation -> `closed` + `fully_received`;
+        - receipt below it, row currently open -> stays `open` + `pending`;
+        - receipt below it, row closed BY A RECEIPT (`closed` +
+          `fully_received`) -> reopened when `may_reopen` (D28c, AC-X35): the
+          receipt that closed it is gone, and a line reading closed with
+          nothing received is supply this system can no longer see - the exact
+          MB2 defect. Only the group path passes `may_reopen`, because only
+          there is the receipt the whole reason the line was closed.
+        - receipt below it, row closed any OTHER way (the leftover sweep, a
+          cancelled document) -> left closed. A recompute does not revive
+          demand a document retired; those rows are `scm_upload`-era anyway
+          and never reach the group path.
+        """
+        closed_by_receipt = (alloc.line_status or "") == "closed" and (
+            alloc.receipt_status or ""
+        ) == "fully_received"
+        alloc.quantity_received = total
+        fully_received = total >= (alloc.allocated_quantity or 0)
+        alloc.receipt_status = "fully_received" if fully_received else "pending"
+        if fully_received:
+            alloc.line_status = "closed"
+        elif may_reopen and closed_by_receipt:
+            alloc.line_status = "open"
+
+    def _autocount_group_members(self, alloc: SPOAllocation) -> list[SPOAllocation]:
+        """The AutoCount lines sharing this allocation's `(spo_number, product,
+        location)` group, in `spo_line_number` order (D28a).
+
+        Only `source_system='autocount'` rows join the group: an AutoCount
+        line is one of N lines standing for what the upload held as ONE
+        aggregated row, so a GRN draw against any of them measures the
+        GROUP's receipt. A `scm_upload` or CRM-written row in the same
+        (product, location) keeps its own per-allocation receipt and must not
+        be folded in, or its picking lines would be counted twice.
+
+        Scoped to the allocation's OWN company explicitly, on top of the
+        ambient company filter (S9), so this can never gather another
+        company's lines under a shared SPO number.
+        """
+        target_key = _spo_match_key(alloc.spo_number)
+        location = _spo_group_location(alloc.location_code)
+        rows = (
+            self.db.query(SPOAllocation)
+            .filter(
+                SPOAllocation.company_id == alloc.company_id,
+                # AC-X34: `spo_number` and `product_id` are BOTH predicates in
+                # SQL (`ix_spo_allocations_spo_product_warehouse` leads on
+                # exactly that pair), so a product carried by hundreds of
+                # shipping orders costs one index probe rather than a load of
+                # every SPO it ever appeared on. The equality is safe for this
+                # group: an AutoCount row's number is the one AutoCount stated,
+                # never a variant spelling - only xlsx-era rows carry those,
+                # and they are excluded by `source_system` below. The
+                # `_spo_match_key` comparison stays as the authority.
+                SPOAllocation.spo_number == alloc.spo_number,
+                SPOAllocation.product_id == alloc.product_id,
+                SPOAllocation.source_system == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM,
+                # D28d: a retired line is not a member of anything. It is
+                # closed and otherwise identical to a live fully received one,
+                # which is how a retired DocKey's rows rejoined the new
+                # DocKey's group, took a Seq-order share of its GRN and
+                # reopened when that GRN was deleted.
+                SPOAllocation.retired_at.is_(None),
+            )
+            .all()
+        )
+        members = [
+            row
+            for row in rows
+            if _spo_match_key(row.spo_number) == target_key
+            and _spo_group_location(row.location_code) == location
+            # Compared in Python too (AC-X47): the SQL predicate above is an
+            # index probe, and every OTHER component of the key is re-checked
+            # here - a UUID that compares equal in SQL but not as a string
+            # (or a driver that hands back a different type) must not slip
+            # into a group whose receipt it would then share.
+            and str(row.product_id) == str(alloc.product_id)
+        ]
+        if not members:
+            return [alloc]
+        members.sort(
+            key=lambda r: (
+                r.spo_line_number if r.spo_line_number is not None else 10**9,
+                str(r.id),
+            )
+        )
+        return members
+
+    def _sync_group_received(
+        self, members: list[SPOAllocation], *, released: set, group_released: bool = False
+    ) -> None:
+        """D28a/D28c: one AutoCount group's approved picking total over its
+        lines, floored per line by what a DECLARER stated for it.
+
+        The picking total is spread in `spo_line_number` order through the SAME
+        `shipping_order_rules.distribute_received` the first-push supersede
+        carries a receipt with (each line up to its allocated quantity,
+        remainder onto the last) - never one line's own picking total onto that
+        line alone, which is what a repointed GRN draw (D27) would otherwise
+        make of a 47-unit receipt against a 29 + 18 line pair.
+
+        D28's ownership rule governs entry, at GROUP level: if nothing
+        APPROVED picks against any member and none is being released, nothing
+        here computed the stored values and they are left alone. A draft GRN's
+        line does not open the group for rewrite - it proves nothing has been
+        received yet, and the approval is the event that does.
+
+        D28c, the per-line FLOOR (this replaces D28b's stored-sum floor, which
+        used the very figure that could not be trusted): each line is written
+        `max(stated_received, its share)`, so
+
+        - AutoCount's own `TransferedQty` (and a supersede / dedupe carry,
+          which is the same kind of statement) survives a GRN delete - MB1 was
+          a released line's stated 25 being written to 0;
+        - a share that only a GRN produced leaves WITH that GRN, because
+          nothing states it - MB2 was 18 stranded on a sibling for ever.
+
+        A RELEASED member (its GRN unlinked, re-pointed or deleted) is outside
+        the distribution entirely and is written `max(stated, its own
+        remaining approved picking lines)`: a sibling's proven receipt must
+        never land on the line whose GRN was just taken away.
+
+        A member that is not LIVE (`_is_live_group_member`: cancelled, or
+        closed for any reason other than a receipt) is skipped completely - no
+        share, no write, no reopen (AC-X41). Its OWN approved draws stay with
+        it and are NOT counted for anybody else (AC-X42): the row still
+        reports the receipt it was retired holding, so redistributing that
+        same figure onto the standing lines would make the group report one
+        GRN twice. What the live members share is the picking total of the
+        live members, in Seq order, remainder on the last live line.
+        """
+        member_ids = [str(member.id) for member in members]
+        released_ids = released & set(member_ids)
+        has_approved_line = (
+            self.db.query(PickingLine.id)
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(
+                PickingLine.spo_allocation_id.in_(member_ids),
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.picking_status == "approved",
+            )
+            .first()
+            is not None
+        )
+        if not has_approved_line and not released_ids and not group_released:
+            # D28's ownership gate. `group_released` (D28d) is the third way
+            # in: the GRN just deleted pointed at a RETIRED line of this
+            # group, which is no longer a member but whose receipt these
+            # lines were sharing.
+            return
+
+        computed = self.get_computed_received_map(member_ids)
+
+        def _stated(member: SPOAllocation) -> int:
+            # NULL reads 0: a row written before migration 488 stated nothing.
+            return int(member.stated_received or 0)
+
+        non_released = [member for member in members if str(member.id) not in released_ids]
+        released_members = [
+            member
+            for member in members
+            if str(member.id) in released_ids and _is_live_group_member(member)
+        ]
+        live_targets = [member for member in non_released if _is_live_group_member(member)]
+
+        for member in released_members:
+            # Its OWN remaining approved picking lines, floored by what a
+            # declarer stated: a sibling's proven receipt must never land on
+            # the line whose GRN was just taken away (MB1).
+            self._write_received(
+                member,
+                max(_stated(member), computed.get(str(member.id), 0)),
+                may_reopen=True,
+            )
+
+        if not live_targets:
+            return
+        # The picking sum of the LIVE non-released members only (AC-X42): a
+        # non-live member keeps its own draws, because it also keeps its own
+        # receipt - it is never written here. Counting them again for the
+        # live lines reported one GRN twice, once on the retired line that
+        # still shows it and once redistributed onto the standing ones.
+        kept_total = sum(computed.get(str(member.id), 0) for member in live_targets)
+        shares = shipping_order_rules.distribute_received(
+            kept_total, [int(member.allocated_quantity or 0) for member in live_targets]
+        )
+        for member, share in zip(live_targets, shares):
+            self._write_received(member, max(_stated(member), share), may_reopen=True)
+
+    def _sync_received_for_allocations(
+        self, allocations: list[SPOAllocation], *, released: Optional[set] = None
+    ) -> set:
+        """Recompute `quantity_received` for these allocations; returns the
+        shipment ids touched.
+
+        Two rules, decided per row by `source_system` (D28 + D28a): an
+        AutoCount line recomputes as part of its whole `(spo_number, product,
+        location)` group; anything else (`scm_upload`, or the NULL the CRM UI
+        and the n8n packing-list route write) recomputes on its own, which is
+        what its own single picking line measures.
+        """
+        released = {str(value) for value in (released or set())}
+        shipment_ids: set = set()
+        done_groups: set = set()
+        # D28d: which GROUPS a release touched, retired members included. A
+        # retired line is no longer a member of its group (it takes no share
+        # and is never written), but a GRN deleted off it is still an event
+        # for the live lines that SHARED that receipt: without this the group
+        # would fail the D28 ownership gate ("no approved line, nobody
+        # released") and a sibling would keep a share of a GRN that no longer
+        # exists - MB2 again, one row over (AC-X40's sibling).
+        released_group_keys = {
+            _spo_allocation_group_key(alloc)
+            for alloc in allocations
+            if str(alloc.id) in released
+            and (alloc.source_system or "") == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM
+        }
+        for alloc in allocations:
+            if alloc.inbound_shipment_id:
+                shipment_ids.add(alloc.inbound_shipment_id)
+            if (alloc.source_system or "") == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM:
+                if alloc.retired_at is not None:
+                    # D28d + B2 (round 2 security review, PLAN-hide-retired-spo-lines):
+                    # a retired line anchors no group of its own and takes no share
+                    # of a sibling's receipt - it is never written by the group path
+                    # below, and `may_reopen` is never passed for it, so it can never
+                    # reopen. But a receipt approved AFTER retirement (a GRN picked
+                    # against it while it was still open, approved once the ingest
+                    # retired it) must still reach `quantity_received`, or the row is
+                    # hidden (`visible_line_clauses()` R2) with an approved
+                    # goods-received note pointing at nothing. Written from its OWN
+                    # approved picking lines only, floored by whatever was stated for
+                    # it before retirement (D28c) - the same floor a live member gets,
+                    # so a later GRN delete cannot drop it below what was already
+                    # proven (AC-X40: stated 29 beats a recomputed 0).
+                    #
+                    # Round 4 (security review, AC-H14): the SAME ownership gate the
+                    # non-AutoCount branch applies twenty lines below - skip a row that
+                    # is neither released nor picked against, because nothing here
+                    # computed its stored value. Without it a backfill-stamped row
+                    # carrying a real ESB-stated receipt but no `stated_received` floor
+                    # (every row written before migration 488) got written unconditionally
+                    # here on the next recompute - `max(0, own picking total 0) = 0` -
+                    # zeroing a real receipt and then hiding the row (visible under R2
+                    # only via `quantity_received > 0`). A retired row that IS picked
+                    # against still takes its own approved total (AC-H10 unchanged).
+                    alloc_id = str(alloc.id)
+                    if alloc_id not in released and not self._allocation_has_picking_line(alloc_id):
+                        continue
+                    self._write_received(
+                        alloc,
+                        max(
+                            int(alloc.stated_received or 0),
+                            self.compute_received_for_allocation(alloc_id),
+                        ),
+                        may_reopen=False,
+                    )
+                    continue
+                key = _spo_allocation_group_key(alloc)
+                if key in done_groups:
+                    continue
+                done_groups.add(key)
+                members = self._autocount_group_members(alloc)
+                self._sync_group_received(
+                    members,
+                    released=released,
+                    group_released=key in released_group_keys,
+                )
+                for member in members:
+                    if member.inbound_shipment_id:
+                        shipment_ids.add(member.inbound_shipment_id)
+                continue
+            alloc_id = str(alloc.id)
+            if alloc_id not in released and not self._allocation_has_picking_line(alloc_id):
+                # D28: nothing picks against this row and nobody is releasing
+                # it, so its stored receipt was stated (ESB) or carried (D26),
+                # not computed here.
+                continue
+            self._write_received(alloc, self.compute_received_for_allocation(alloc_id))
+        return shipment_ids
+
     def sync_grn_received_to_spo(self, picking_header_id: str) -> None:
         """After GRN is approved: set quantity_received on each affected SPO allocation (DB field, for legacy/reports).
         From picking lines (spo_allocation_id = allocation, header approved). Idempotent.
-        Also refreshes inbound_shipment_lines.line_status for affected shipments."""
+        Also refreshes inbound_shipment_lines.line_status for affected shipments.
+
+        The allocations come from this header's OWN picking lines, so each of
+        them has at least one by construction - D28's "no picking line, keep
+        the stored value" skip is unreachable here (reviewer cleanup) and is
+        not repeated. What DOES apply is D28a: an AutoCount line recomputes
+        with its whole group, through the shared
+        `_sync_received_for_allocations`.
+        """
         lines = self.db.query(PickingLine).filter(
             PickingLine.picking_header_id == picking_header_id,
             PickingLine.spo_allocation_id.isnot(None),
         ).all()
         allocation_ids = {str(line.spo_allocation_id) for line in lines if line.spo_allocation_id}
-        shipment_ids = set()
-        for alloc_id in allocation_ids:
-            alloc = self.db.query(SPOAllocation).filter(SPOAllocation.id == alloc_id).first()
-            if not alloc:
-                continue
-            shipment_ids.add(alloc.inbound_shipment_id)
-            total = self.compute_received_for_allocation(alloc_id)
-            alloc.quantity_received = total
-            alloc.receipt_status = "fully_received" if total >= alloc.allocated_quantity else "pending"
+        allocations = [
+            alloc
+            for alloc in (
+                self.db.query(SPOAllocation).filter(SPOAllocation.id == alloc_id).first()
+                for alloc_id in allocation_ids
+            )
+            if alloc is not None
+        ]
+        shipment_ids = self._sync_received_for_allocations(allocations)
         self.db.commit()
         inbound_svc = InboundShipmentService(self.db)
         for sid in shipment_ids:
             inbound_svc.refresh_shipment_line_statuses(sid)
 
-    def sync_received_for_spo_number(self, spo_number: Optional[str]) -> None:
-        """Re-sync DB quantity_received for all allocations under this SPO (optional background use)."""
+    def sync_received_for_spo_number(
+        self,
+        spo_number: Optional[str],
+        *,
+        released_allocation_ids: Optional[set] = None,
+        company_id: Optional[str] = None,
+    ) -> None:
+        """Re-sync DB quantity_received for all allocations under this SPO (optional background use).
+
+        `released_allocation_ids` (D28, spo-xlsx-supersede): allocations a
+        caller has just DETACHED - a GRN unlinked, re-pointed or deleted - and
+        is therefore explicitly releasing. They recompute even though no
+        picking line points at them any more, because that recompute IS the
+        release: the stored receipt they still carry is the one being given
+        back. Every OTHER allocation with no picking line keeps its stored
+        value (an ESB-stated receipt, or one carried onto an AutoCount line by
+        the first-push supersede), which nothing here computed and nothing
+        here may zero.
+
+        `company_id` (S1, review round 2), same shape as `build_allocation_pool`'s:
+        when given, it NARROWS the query with an explicit equality filter IN
+        ADDITION to the ambient `CompanyScopedMixin` predicate (`do_orm_execute`
+        auto-filters every scoped model by the session's company scope) - it does
+        not replace that auto-filter, only the extra `build_company_predicate`
+        call below, which is redundant with it when the session scope is already
+        resolved. A caller that already knows the document's own company (a job
+        with no company snapshot runs system-scoped - "all companies" - where the
+        ambient auto-filter constrains nothing) states it explicitly rather than
+        let this sweep rewrite another company's allocations under the same SPO
+        number.
+        """
         if not spo_number or not spo_number.strip():
             return
         target_key = _spo_match_key(spo_number)
         if not target_key:
             return
-        allocations = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None)).all()
-        shipment_ids = set()
-        for alloc in allocations:
-            if _spo_match_key(alloc.spo_number) != target_key:
-                continue
-            alloc_id = str(alloc.id)
-            total = self.compute_received_for_allocation(alloc_id)
-            alloc.quantity_received = total
-            alloc.receipt_status = "fully_received" if total >= alloc.allocated_quantity else "pending"
-            if alloc.inbound_shipment_id:
-                shipment_ids.add(alloc.inbound_shipment_id)
+        query = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
+        if company_id:
+            query = query.filter(SPOAllocation.company_id == str(company_id))
+        else:
+            # S9 (security review): the company filter stated HERE rather than
+            # left entirely to the ambient session scope. An SPO number is not
+            # unique across companies, and this sweep writes every row it reads -
+            # a caller whose session scope was never resolved must not be one
+            # accident away from recomputing another company's document.
+            predicate = build_company_predicate(SPOAllocation, get_company_scope(self.db))
+            if predicate is not None:
+                query = query.filter(predicate)
+        allocations = [
+            alloc
+            for alloc in query.all()
+            if _spo_match_key(alloc.spo_number) == target_key
+        ]
+        shipment_ids = self._sync_received_for_allocations(
+            allocations, released=released_allocation_ids
+        )
         self.db.commit()
         inbound_svc = InboundShipmentService(self.db)
         for sid in shipment_ids:

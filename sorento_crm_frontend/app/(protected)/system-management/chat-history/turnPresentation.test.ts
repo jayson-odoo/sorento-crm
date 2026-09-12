@@ -198,6 +198,54 @@ describe('stageRecords / turnNotes (S2b hardening 1c)', () => {
   });
 });
 
+/**
+ * The live bug: the engine's `TurnTrace.add` sub-events ride the same `trace` array and
+ * carry no `stage`, so `kind !== 'note'` let a `tool` event through as a timeline row and
+ * `stageLabel(undefined).replace` crashed the whole Chat History page through the error
+ * boundary. Every one of the six kinds is covered, because the filter is the contract.
+ */
+describe('sub-events on the trace (chatbot-growth r1 TurnTrace.add)', () => {
+  const toolEvent: TurnTraceRecord = {
+    kind: 'tool',
+    at: '2026-09-05T06:00:01.000Z',
+    name: 'stock_list',
+    args: { code: 'SRTWC8517' },
+    envelope: { rows: [] },
+    ms: 42,
+  };
+  const t = turn({
+    status: 'done',
+    trace: [record({ stage: 'received' }), toolEvent, record({ stage: 'sent' })],
+  });
+
+  it('stageRecords drops a sub-event, which has no stage', () => {
+    expect(stageRecords(t).map((r) => r.stage)).toEqual(['received', 'sent']);
+  });
+
+  it('buildTimeline renders only the stages and does not throw', () => {
+    expect(buildTimeline(t)).toEqual([
+      { kind: 'stage', record: expect.objectContaining({ stage: 'received' }), label: 'Received' },
+      { kind: 'stage', record: expect.objectContaining({ stage: 'sent' }), label: 'Sent' },
+    ]);
+  });
+
+  it('turnNotes ignores sub-events', () => {
+    expect(turnNotes(t)).toEqual([]);
+  });
+
+  it.each(['tool', 'crossdomain', 'reveals', 'decay', 'focus', 'open_question'] as const)(
+    'a %s event never becomes a timeline row',
+    (kind) => {
+      const withEvent = turn({ trace: [record({ stage: 'received' }), { kind }] });
+      expect(buildTimeline(withEvent)).toHaveLength(1);
+    },
+  );
+
+  it('stageLabel names a missing stage instead of throwing', () => {
+    expect(stageLabel(undefined)).toBe('Unknown');
+  });
+});
+
 describe('memoryChips (AC-254)', () => {
   it('classifies kept / new / cleared and sorts kept before new before cleared', () => {
     const chips = memoryChips(

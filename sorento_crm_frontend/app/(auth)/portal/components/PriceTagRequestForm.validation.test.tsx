@@ -242,7 +242,7 @@ describe('Submit says what is missing (D48b)', () => {
   it('names the row that has no item picked', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
-    fireEvent.change(screen.getByLabelText(/Needed by/), {
+    fireEvent.change(screen.getByLabelText(/Need by/), {
       target: { value: '2026-09-30' },
     });
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
@@ -279,7 +279,7 @@ describe('Submit says what is missing (D48b)', () => {
     );
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
-    fireEvent.change(screen.getByLabelText(/Needed by/), {
+    fireEvent.change(screen.getByLabelText(/Need by/), {
       target: { value: '2026-09-30' },
     });
     await addLineWithAProduct();
@@ -304,7 +304,7 @@ describe('Submit says what is missing (D48b)', () => {
     );
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
-    fireEvent.change(screen.getByLabelText(/Needed by/), {
+    fireEvent.change(screen.getByLabelText(/Need by/), {
       target: { value: '2026-09-30' },
     });
     await addLineWithAProduct();

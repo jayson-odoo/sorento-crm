@@ -160,6 +160,14 @@ describe('PlanHeaderTab - canReplan gating (review S7)', () => {
     expect(screen.getByRole('button', { name: /Edit/i })).toBeInTheDocument();
   });
 
+  // AC-S2.5: Edit is the Plan card's primary call to action, the default `variant`
+  // (`data-slot="button"` carries no explicit `variant="outline"` any more).
+  it('renders Edit with the default (primary) button variant', () => {
+    renderTab(makeRun());
+    const edit = screen.getByRole('button', { name: /Edit/i });
+    expect(edit.className).not.toMatch(/border-input/);
+  });
+
   it('offers no Edit once the run has been superseded', () => {
     renderTab(makeRun({ superseded_by_run_id: 'run-9' }));
     expect(screen.queryByRole('button', { name: /Edit/i })).not.toBeInTheDocument();
@@ -191,7 +199,7 @@ describe('PlanHeaderTab - scope round-trip through Edit -> Re-plan (review S7)',
     expect(await screen.findByTestId('chip-All products')).toHaveTextContent(
       'SRTWT7408 - Wall-hung WC 7408',
     );
-    expect(screen.getByLabelText('Sales order cut-off')).toHaveValue('2099-12-31');
+    expect(screen.getByLabelText('To')).toHaveValue('2099-12-31');
 
     fireEvent.click(screen.getByRole('button', { name: /^Re-plan$/i }));
     await screen.findByRole('alertdialog');
@@ -201,6 +209,7 @@ describe('PlanHeaderTab - scope round-trip through Edit -> Re-plan (review S7)',
     expect(replanReorderRunMock).toHaveBeenCalledWith('run-1', {
       warehouse_codes: ['BRW'],
       product_codes: ['SRTWT7408'],
+      plan_horizon_start: null,
       plan_horizon_date: '2099-12-31',
     });
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith('/scm/reorder/run-2'));
@@ -217,6 +226,7 @@ describe('PlanHeaderTab - scope round-trip through Edit -> Re-plan (review S7)',
     expect(replanReorderRunMock).toHaveBeenCalledWith('run-1', {
       warehouse_codes: [],
       product_codes: [],
+      plan_horizon_start: null,
       plan_horizon_date: null,
     });
   });
@@ -226,7 +236,7 @@ describe('PlanHeaderTab - past cut-off validation (review S7)', () => {
   it('blocks Re-plan and explains why, without opening the confirm dialog', async () => {
     renderTab(makeRun());
     fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
-    fireEvent.change(screen.getByLabelText('Sales order cut-off'), {
+    fireEvent.change(screen.getByLabelText('To'), {
       target: { value: '2000-01-01' },
     });
     fireEvent.click(screen.getByRole('button', { name: /^Re-plan$/i }));
@@ -242,7 +252,7 @@ describe('PlanHeaderTab - the cut-off prefill is clamped to today (review nit)',
   it('a stored cut-off already in the past opens the edit form at today, not the stale date', () => {
     renderTab(makeRun({ plan_horizon_date: '2000-01-01' }));
     fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
-    const input = screen.getByLabelText('Sales order cut-off') as HTMLInputElement;
+    const input = screen.getByLabelText('To') as HTMLInputElement;
     expect(input.value).not.toBe('2000-01-01');
     expect(input.value >= input.min).toBe(true);
   });

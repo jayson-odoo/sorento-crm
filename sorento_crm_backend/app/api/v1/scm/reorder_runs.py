@@ -8,6 +8,7 @@ fields - SKU/warehouse/supplier resolve to human codes/names.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Response
@@ -94,6 +95,7 @@ def create_reorder_run(
         actor=(_user or {}).get("id"),
         include_market=payload.include_market,
         plan_horizon_date=payload.plan_horizon_date,
+        plan_horizon_start=payload.plan_horizon_start,
     )
     if response is not None:
         response.status_code = 202
@@ -123,6 +125,7 @@ def replan_reorder_run(
         warehouse_codes=payload.warehouse_codes or [],
         product_codes=payload.product_codes or [],
         plan_horizon_date=payload.plan_horizon_date,
+        plan_horizon_start=payload.plan_horizon_start,
         actor=(_user or {}).get("id"),
     )
     if response is not None:
@@ -214,6 +217,7 @@ def list_reorder_runs(
         SELECT id, status, buy_scope, warehouse_ids, product_ids, created_by,
                started_at, finished_at, run_log,
                decision_grain, front_planning_contract_version, plan_horizon_date,
+               plan_horizon_start,
                -- Denormalised at write time by `decision_service._refresh_run_counts`
                -- and at run completion (S3 perf, AC-3.3) - a plain column instead of the
                -- LEFT JOIN against the whole `purchase_order_lines` table this page used
@@ -320,6 +324,7 @@ def _list_item(
         "decision_grain": r["decision_grain"],
         "front_planning_contract_version": r["front_planning_contract_version"],
         "plan_horizon_date": _iso(r["plan_horizon_date"]),
+        "plan_horizon_start": _iso(_key(r, "plan_horizon_start")),
         # The scheduler passes no actor, so a run nobody is named on is the daily one.
         "is_scheduled": _key(r, "created_by") is None,
         # A run launched with no warehouse scope stores every ACTIVE warehouse, so "60
@@ -486,7 +491,8 @@ def get_reorder_run(
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
         "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
-        "       front_planning_contract_version, plan_horizon_date, started_at, "
+        "       front_planning_contract_version, plan_horizon_date, plan_horizon_start, "
+        "       started_at, "
         "       warehouse_ids, product_ids, supersedes_run_id, superseded_by_run_id "
         "  FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
@@ -517,6 +523,7 @@ def get_reorder_run(
         "decision_grain": row["decision_grain"],
         "front_planning_contract_version": row["front_planning_contract_version"],
         "plan_horizon_date": _iso(row["plan_horizon_date"]),
+        "plan_horizon_start": _iso(row["plan_horizon_start"]),
         # The plan header is "Plan dd/mm/yyyy HH:mm" (C1) and this is the only response
         # that page reads.
         "started_at": _iso(row["started_at"]),
@@ -620,6 +627,12 @@ def list_cover_sources(
 def get_spo_history(
     run_id: str,
     product_id: str = Query(...),
+    warehouse_id: Optional[uuid.UUID] = Query(
+        None,
+        description="The row's OWN warehouse, for a location-grain line - narrows the "
+                    "modal to that warehouse alone. Omitted (a product-grain line) reads "
+                    "every active site-pool warehouse, product-wide.",
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -628,9 +641,15 @@ def get_spo_history(
     Scoped to the row's SITE POOL and nothing else (R15) - a shipment bound for a project
     bin is already claimed by an Order Inquiry, and the cell this explains excludes it.
     The SPO is a FACT on the row, never an input (R2), so this endpoint only reads.
+
+    `warehouse_id` (review fix round B, reviewer S1, AC-7 amended): typed as a UUID so a
+    malformed value 422s via FastAPI's own validation rather than reaching the service as
+    a string that silently matches nothing.
     """
     svc.assert_run_visible(db, run_id)
-    return spo_supply.spo_history_for_product(db, run_id, product_id)
+    return spo_supply.spo_history_for_product(
+        db, run_id, product_id, warehouse_id=str(warehouse_id) if warehouse_id else None
+    )
 
 
 @router.get("/reorder-runs/{run_id}/price-history")
@@ -775,6 +794,12 @@ def get_po_book(
 def get_purchase_trend(
     run_id: str,
     warehouse: Optional[str] = Query(None),
+    scope: Optional[str] = Query(
+        None,
+        description='Omitted = run-wide (unchanged). "site_pool" narrows to active '
+                    "site-pool warehouses, product-wide - the read a product-grain row "
+                    "(no pool code) asks for. Ignored when `warehouse` is also given.",
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -785,10 +810,22 @@ def get_purchase_trend(
     monthly trend (`recent_qty` vs `previous_qty`) plus the last few purchase lines
     (supplier, date, quantity, cost), newest first. A draft this run itself proposed is
     never read back as a purchase we made.
+
+    UAC AC-10 (amended, 10 Sep 2026): the bare default (no `warehouse`, no `scope`) is
+    run-wide and UNCHANGED - it feeds a row's Last price / price history and must not
+    narrow silently. `scope=site_pool` is the one recognised value that opts into the
+    site-pool-wide read; anything else is a 422 rather than a silently-ignored typo.
     """
     svc.assert_run_visible(db, run_id)
+    site_pool_only = False
+    if scope is not None:
+        if scope != "site_pool":
+            raise AppException(status_code=422, message='scope must be "site_pool".')
+        site_pool_only = True
     return purchase_trend_service.purchase_trend_for_run(
-        db, run_id, warehouse_id=_warehouse_id_for_code(db, warehouse))
+        db, run_id, warehouse_id=_warehouse_id_for_code(db, warehouse),
+        site_pool_only=site_pool_only,
+    )
 
 
 @router.get("/reorder-runs/{run_id}/product-economics")
@@ -996,7 +1033,7 @@ def list_recommendations(
                rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
                rr.allocation, (rr.inputs - 'plan_basis') AS inputs, rr.moq_override,
                rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
-               rr.currency, rr.rate_to_base, rr.rate_as_of, rr.status,
+               rr.currency, rr.rate_to_base, rr.rate_as_of, rr.status, rr.hidden_by_default,
                p.product_code, p.product_name,
                w.warehouse_code, w.warehouse_name, w.segment,
                -- Precomputed at generation time (S3 perf, AC-3.4,
@@ -1285,7 +1322,19 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "last_purchase_date": (inp.get("last_purchase") or {}).get("at"),
         "last_purchase_ref": (inp.get("last_purchase") or {}).get("ref"),
         "last_purchase_basis": inp.get("last_purchase_basis"),
+        # S11 (round 2, 9 Sep): who this purchase actually named, so the panel can prefill
+        # its supplier select to the LAST PURCHASE supplier rather than the engine's own
+        # default link (measured: SRTSS8710's default link is a stale MYR 121.80 while the
+        # last purchase was CNY 48.00 from KAIPING HANSHUN). A code, never the raw id.
+        "last_purchase_supplier_code": (inp.get("last_purchase") or {}).get("supplier_code"),
+        "last_purchase_supplier_name": (inp.get("last_purchase") or {}).get("supplier_name"),
         "policy_type": inp.get("policy_type"),
+        # S6, PLAN-plan-list-tile-sheet-one-scope.md (AC-1); PLAN-reorder-one-formula.md
+        # S3/AC-12: the ONE rule (`plan_scope.hidden_by_default`) the list, the Decisions
+        # tile total and the order sheet export all read - stamped once at write time
+        # (`reorder_run_service._build_rec`) onto the row's own `hidden_by_default`
+        # column, read here rather than re-derived per row.
+        "hidden_by_default": bool(r.get("hidden_by_default")),
         "supplier_selection": inp.get("selection"),
         # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---
         # `unit_cost` is what the SUPPLIER charges, in `currency`. `cash_impact` is what the

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Save } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
@@ -10,11 +10,13 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { usePlanLines } from '../hooks/usePlanLines';
 import { usePlanEdits } from '../hooks/usePlanEdits';
+import type { PlanRowEdit } from '../lib/planEdits';
 import type { PlanLine, PlanLineStatus } from '../lib/planLine';
 import { planTotals, type PlanTotals } from '../lib/planDecisions';
 import { groupPlanLinesByChannel } from '../lib/planLineGrouping';
-import { lineBreachStatus } from '../lib/orderQtyLedger';
+import { filterGroupAsksForRecType } from '../lib/planLineFilters';
 import { fmtInt, fmtMoney } from '../../lib/format';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { LevelChangesPanel } from './LevelChangesPanel';
 import { PlanBudgetReview } from './PlanBudgetReview';
 import { PlanLinesGrid } from './PlanLinesGrid';
@@ -87,30 +89,34 @@ export function PlanLinesSection({
 
   const planLines = usePlanLines(runId, !!runId);
 
+  // AC-5b: the grid owns `filterGroup` (its own Filters builder + saved segments) and
+  // reports the APPLIED one upward via `onFilterGroupChange` - captured here purely to
+  // decide whether to reveal the hidden-by-default rows below, never to drive the grid's
+  // own filtering (it already applies the group itself).
+  const [appliedFilterGroup, setAppliedFilterGroup] = useState<ListQueryFilterGroup | null>(
+    null,
+  );
+
   /**
    * Manual mode hides not-breached covered rows by default (user feedback, 2026-08-12:
    * "if net is not below my reorder level, it is not my business, I don't need to see
    * this in reorder planning").
    *
-   * Scoped narrowly: a manual-basis (`reorder_level`) row whose own status is
-   * `covered_by_stock` (the informational rec_type - `covered`, per `planLine.ts`) AND
-   * whose net sits ABOVE its level. Reuses `lineBreachStatus` (the same breach math the
-   * order-qty ledger's own "Line not breached" sentence uses) rather than re-deriving it -
-   * a breached row, an auto-mode row, or any other rec_type is untouched. Hidden from the
-   * DEFAULT list only: an explicit "Covered by stock" status filter still shows every one
-   * of them, so nothing is unreachable, just no longer the default.
+   * PLAN-plan-list-tile-sheet-one-scope.md, S6 (AC-5): reads the server's own
+   * `rec.hidden_by_default` flag instead of recomputing the rule here - the list, the
+   * Decisions tile total (`GET .../plan-row-decisions`) and the order sheet export all
+   * have to agree on which rows are hidden, and three independent re-derivations could
+   * drift. `lineBreachStatus` (`lib/orderQtyLedger.ts`) is unchanged and still drives the
+   * order-qty ledger's own "Line not breached" sentence elsewhere - only THIS path stops
+   * calling it. Hidden from the DEFAULT list only: an explicit "Covered by stock" status
+   * filter still shows every one of them, so nothing is unreachable, just no longer the
+   * default. This is `defaultVisibleLines` - what the tile counts (below) always reads,
+   * regardless of the AC-5b reveal.
    */
-  const visibleLines = useMemo(() => {
+  const defaultVisibleLines = useMemo(() => {
     if (statusFilter === 'covered_by_stock') return planLines.lines;
     const hidden = new Set(
-      planLines.lines
-        .filter(
-          (l) =>
-            l.rec.policy_type === 'reorder_level' &&
-            l.status === 'covered_by_stock' &&
-            !lineBreachStatus(l.rec, l.net).breached,
-        )
-        .map((l) => l.id),
+      planLines.lines.filter((l) => l.rec.hidden_by_default === true).map((l) => l.id),
     );
     if (hidden.size === 0) return planLines.lines;
     // ONE exception: the product's OWN row, while the product is still on the plan for
@@ -131,27 +137,47 @@ export function PlanLinesSection({
     );
   }, [planLines.lines, statusFilter]);
 
-  // Reported over `visibleLines`, NOT `planLines.lines`: the grid renders `visibleLines`
-  // (manual-mode hides not-breached covered rows by default, above), so cash figures
-  // counting every line - including ones the buyer cannot see under the current filter -
-  // could report cost for rows nowhere on screen. Always the per-warehouse (ungrouped)
+  /**
+   * PLAN-plan-list-tile-sheet-one-scope.md, AC-5b (owner, 10 Sep: "better to reveal them
+   * for flexibility"). A Filters condition asking for Rec type = "Covered by stock" (the
+   * dynamic builder or a saved segment, at any nesting depth - `filterGroupAsksForRecType`)
+   * reveals every hidden-by-default row, the same early-return shape the existing
+   * `statusFilter === 'covered_by_stock'` branch already uses. No new control, no preset:
+   * the builder's own Rec type field is the one path. This is what the GRID renders; the
+   * tile below stays on `defaultVisibleLines` - the reveal is a lens on what is already
+   * on the plan, never a change to what counts as decidable.
+   */
+  const visibleLines = useMemo(() => {
+    if (filterGroupAsksForRecType(appliedFilterGroup, 'covered_by_stock')) {
+      return planLines.lines;
+    }
+    return defaultVisibleLines;
+  }, [appliedFilterGroup, planLines.lines, defaultVisibleLines]);
+
+  // Reported over `defaultVisibleLines`, NEVER the (possibly AC-5b-revealed) `visibleLines`:
+  // cash figures counting every line - including ones the buyer cannot see by DEFAULT -
+  // could report cost for rows nowhere on the tile. Always the per-warehouse (ungrouped)
   // list, even under `groupByChannel`: S16 records a decision on the underlying member
   // recommendation ids, never a synthetic `group:<product_id>` key, so counting the
   // grouped rows here would look the decisions up under a key the map never carries.
   //
   // Keyed on the PRIMITIVE fields, not the totals object itself: a fresh `useMemo` result
-  // whenever `visibleLines` or `decisions` change identity, and a hand-rolled test double
-  // may not memoize either at all - depending on the object's identity would refire this
-  // effect, call `setState` in the caller, and re-render forever.
+  // whenever `defaultVisibleLines` or `decisions` change identity, and a hand-rolled test
+  // double may not memoize either at all - depending on the object's identity would refire
+  // this effect, call `setState` in the caller, and re-render forever.
   const reportedTotals = useMemo(
-    () => planTotals(visibleLines, planLines.decisions),
-    [visibleLines, planLines.decisions],
+    () => planTotals(defaultVisibleLines, planLines.decisions),
+    [defaultVisibleLines, planLines.decisions],
   );
   const { decided, undecided, buying, usingStock, usingPo, skipped, units, cost, unpriced } =
     reportedTotals;
   useEffect(() => {
     onTotalsChange?.({ decided, undecided, buying, usingStock, usingPo, skipped, units, cost, unpriced });
-  }, [decided, undecided, buying, usingStock, usingPo, skipped, units, cost, unpriced, onTotalsChange]);
+    // `appliedFilterGroup` is listed so a reveal/clear RE-ASSERTS the totals explicitly
+    // (AC-5b) even on the common case where the DEFAULT figures happen not to change - a
+    // caller watching `onTotalsChange` must see, on every filter change, that the tile
+    // stayed pinned to the default list rather than infer it from silence.
+  }, [decided, undecided, buying, usingStock, usingPo, skipped, units, cost, unpriced, onTotalsChange, appliedFilterGroup]);
 
   // S16: the header's "N of Total made" is the SERVER's own count (`GET
   // .../plan-row-decisions`), not derived from whatever is filtered/grouped on screen -
@@ -178,6 +204,7 @@ export function PlanLinesSection({
     planLines.decisions,
     planLines.coverFor,
     planLines.poFor,
+    planLines.economicsFor,
   );
 
   useEffect(() => {
@@ -194,7 +221,7 @@ export function PlanLinesSection({
     confirmUnpriced > 0
       ? ` ${fmtInt(confirmUnpriced)} of them carry no price yet and are drafted unpriced.`
       : ''
-  } Products nobody touched are confirmed as the plan suggested; skipped ones are left out.`;
+  } Only rows you decided are bought; untouched and skipped rows are left out.`;
 
   const doSave = async () => {
     try {
@@ -207,6 +234,41 @@ export function PlanLinesSection({
       toast.error(e instanceof Error ? e.message : 'Could not save the changes.');
     }
   };
+
+  /**
+   * S12 (round 2, 9 Sep, review fix - AC-S12.1/AC-S12.5): the SAME try/await/toast shape
+   * as the toolbar's own `doSave`, so a row's own Save gives the buyer the same feedback
+   * a bulk save already does - an unwrapped `planEdits.saveRow` left a rejected save
+   * silent, and "Saved" now says which end. `pendingPatch` is the panel's own un-blurred
+   * Buy value, flushed straight into the save (`saveRow` merges it before reading the
+   * draft - see its own doc for why this cannot go through `onEdit` first). A row with
+   * NOTHING drafted (`result === null`, review fix round 3, AC-S12.5) says so rather than
+   * firing a PUT for nothing or - the bug this closes - staying silent as if the click
+   * never happened. `savingRowIds` (also on the hook) is the per-row disabled guard the
+   * panel reads to keep a second click from firing a second PUT.
+   */
+  const doSaveRow = useCallback(async (line: PlanLine, pendingPatch?: PlanRowEdit) => {
+    try {
+      const result = await planEdits.saveRow(line, pendingPatch);
+      if (!result) {
+        toast.info('Nothing to save on this row.');
+        return;
+      }
+      toast.success('Row saved.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save this row.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planEdits.saveRow]);
+
+  const onSaveRow = useCallback(
+    (l: PlanLine, pendingPatch?: PlanRowEdit) => void doSaveRow(l, pendingPatch),
+    [doSaveRow],
+  );
+  const savingFor = useCallback(
+    (l: PlanLine) => planEdits.savingRowIds.has(l.id),
+    [planEdits.savingRowIds],
+  );
 
   const doConfirm = async () => {
     try {
@@ -243,7 +305,13 @@ export function PlanLinesSection({
       <Button
         onClick={() => setConfirmOpen(true)}
         disabled={confirmProducts === 0 || planEdits.isConfirming}
-        title="Save, then turn this plan into draft purchase orders"
+        // AC-S6.3: Confirm (0) explains itself - a buyer who has decided nothing sees why
+        // the button is dead rather than assuming the plan is broken.
+        title={
+          confirmProducts === 0
+            ? 'Decide at least one row first'
+            : 'Save, then turn this plan into draft purchase orders'
+        }
       >
         <CheckCircle2 className="size-4" />
         {`Confirm (${fmtInt(confirmProducts)})`}
@@ -277,6 +345,7 @@ export function PlanLinesSection({
         runId={runId}
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
+        onFilterGroupChange={setAppliedFilterGroup}
         decidedFilter={decidedFilter}
         onDecidedFilterChange={setDecidedFilter}
         secondaryActions={secondaryActions}
@@ -287,7 +356,8 @@ export function PlanLinesSection({
         decisions={planLines.decisions}
         edits={planEdits.edits}
         onRowEdit={planEdits.setRowEdit}
-        onResetRow={planEdits.resetRow}
+        onSaveRow={onSaveRow}
+        savingFor={savingFor}
         toolbarPrimary={toolbarPrimary}
         coverFor={planLines.coverFor}
         priceFor={planLines.priceFor}
@@ -317,11 +387,14 @@ export function PlanLinesSection({
         isBusy={planEdits.isConfirming}
         onConfirm={() => void doConfirm()}
       />
-      {/* Last, and only here: what it costs and whether that works. */}
+      {/* Last, and only here: what it costs and whether that works. PLAN-reorder-one-
+          formula.md S3/AC-13: `reportedTotals` (the tile's own default-visible figures),
+          never `planLines.totals` (every line the hook returned, hidden ones included) -
+          the footer and the tile must agree on what "the plan" is. */}
       <PlanBudgetReview
-        lines={planLines.lines}
+        lines={defaultVisibleLines}
         decisions={planLines.decisions}
-        totals={planLines.totals}
+        totals={reportedTotals}
       />
       {/* S13f: the level changes to carry into AutoCount, as one list + CSV. */}
       <div className="flex justify-end">

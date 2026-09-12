@@ -939,8 +939,10 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
   });
 
   it('Save on a changed composition, from the row, posts the whole of it (AC-L5, whole-line)', () => {
-    // Wholly from stock (AC-L5): a mix of stock and a Buy on one line is refused by
-    // `lineBlockers` and by the confirmation alike.
+    // Wholly from stock (AC-L5): the per-order sheet still refuses a mix of stock and a Buy
+    // on one line outright. The board (this dialog) may save one, but only with a stated
+    // `amend_reason` - the 8 Sep 2026 ruling - which is exactly what makes this composition
+    // (a WHOLE-LINE Buy) the simple case: nothing to justify.
     const { onDecide } = renderDialog([demand({ qty: '100' })], {
       'WESERP10B|BRW-BB': '100',
     });

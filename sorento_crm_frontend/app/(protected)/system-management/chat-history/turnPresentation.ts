@@ -13,6 +13,7 @@ import type {
   BranchKind,
   ChatbotTurn,
   TurnStage,
+  TurnStageRecord,
   TurnTraceRecord,
 } from './types/chatbotTurn.types';
 import { TURN_STAGES } from './types/chatbotTurn.types';
@@ -40,7 +41,11 @@ const OFF_TIMELINE_STAGE_LABELS: Record<string, string> = {
   delegated: 'Handover',
 };
 
-export function stageLabel(stage: string): string {
+export function stageLabel(stage: string | null | undefined): string {
+  // A trace entry with no stage is a sub-event that slipped past the stage filter, not a
+  // stage nobody named. Returning a word beats taking the whole page down with the error
+  // boundary, which is what an unguarded `stage.replace` did.
+  if (!stage) return 'Unknown';
   return (
     STAGE_LABELS[stage as TurnStage] ??
     OFF_TIMELINE_STAGE_LABELS[stage] ??
@@ -136,7 +141,7 @@ export function shortTurnId(id: string): string {
 }
 
 export type TimelineRow =
-  | { kind: 'stage'; record: TurnTraceRecord; label: string }
+  | { kind: 'stage'; record: TurnStageRecord; label: string }
   | { kind: 'not-reached'; labels: string[] };
 
 /**
@@ -148,14 +153,18 @@ export type TimelineRow =
  * rather than as a record of what someone did, so notes come out here and the panel prints
  * them under the timeline instead.
  *
- * The engine writes structured DECISIONS into the same array too (`decay`, `focus`,
- * `open_question`, `tool`, ... - `trace.TurnTrace.add`), and they are not steps either.
- * So the test is `kind` PRESENT, not `kind === 'note'`: a stage record carries no `kind`
- * at all, and testing for the one known non-stage value meant every new one arrived in the
- * timeline as a blank row.
+ * A sub-event (`kind` of `tool`, `crossdomain`, `reveals`, `decay`, `focus`,
+ * `open_question`) rides the same array and has NO `stage`. Filtering on `kind !== 'note'`
+ * let one through as a timeline row, and `stageLabel(undefined)` then took the page down.
+ * So: a stage record is one with no `kind` AND a `stage`, the same split the backend's own
+ * reader makes (`app/services/chatbot/trace_detail.py::_stage_records`).
  */
-export function stageRecords(turn: ChatbotTurn): TurnTraceRecord[] {
-  return turn.trace.filter((record) => record.kind == null);
+export function isStageRecord(record: TurnTraceRecord): record is TurnStageRecord {
+  return record.kind === undefined && typeof record.stage === 'string';
+}
+
+export function stageRecords(turn: ChatbotTurn): TurnStageRecord[] {
+  return turn.trace.filter(isStageRecord);
 }
 
 /** The notes, oldest first. Rendered as footer lines, never as timeline rows. */
@@ -285,8 +294,8 @@ export function memoryChips(record: TurnTraceRecord | undefined): MemoryChip[] {
 }
 
 /** The Remembered record, when the turn got that far. */
-export function rememberedRecord(turn: ChatbotTurn): TurnTraceRecord | undefined {
-  return turn.trace.find((r) => r.stage === 'remembered');
+export function rememberedRecord(turn: ChatbotTurn): TurnStageRecord | undefined {
+  return turn.trace.filter(isStageRecord).find((r) => r.stage === 'remembered');
 }
 
 /** AC-253: manual retry is the only retry, and only from a failed turn (R4). */

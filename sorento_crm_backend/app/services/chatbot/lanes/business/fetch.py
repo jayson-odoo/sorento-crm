@@ -1,4 +1,4 @@
-"""Port of `sub-fetch-results` + `sub-get-rag` + `sub-get-results` (S6b, AC-604 to AC-606).
+"""Port of `sub-fetch-results` + `sub-get-results` (S6b, AC-604 to AC-606).
 
 The business lane's fetch step: pick ONE tool, call it over MCP, render the answer
 deterministically. Six node bodies become six functions, line for line against the exported
@@ -6,9 +6,12 @@ JavaScript, with the same `jsc` shim S6a uses for JS truthiness / `String()` / `
 
 Three hazards are fixed here rather than reproduced, and each says so at its own site:
 
-* **H53** - `sub-get-rag`'s pgvector SQL is RETIRED. Tool search is
-  `EmbeddingReadService.search_tool_chunks` behind the `tool_search` seam, so no query
-  leaves the service layer. Nothing in this module names a table or writes SQL.
+* **H53** - `sub-get-rag` is GONE, SQL and vector alike. The tool is read straight off
+  `contracts.DOMAIN_SPEC[domain].tools[0]` (`select_tool` below), so this module names no
+  table, writes no SQL, and makes no provider call. Measured over the 740 business turns
+  in the 7 Sep 2026 prod copy, the embedding pick WAS the domain's first-listed tool on
+  every turn, and the seeding chain the search depended on cannot run in the deployed
+  backend image at all: production's tool RAG has been frozen since 2 June 2026.
 * **H52** - the MCP endpoint is `settings.ai_assistant_mcp_url`, bound in `services.py`.
   n8n bakes a raw IP endpoint into TWO nodes; this module contains no host, no port and no
   scheme at all, and `call_tool` is a pass-through onto whatever client it is handed. The
@@ -16,18 +19,19 @@ Three hazards are fixed here rather than reproduced, and each says so at its own
 * **H11** - `tool-filter.js` returns `[]` on zero tools and that empty array is
   indistinguishable from "ran and found nothing to say". `tool_filter` keeps the empty
   item list for parity (D8) and adds `outcome`, which the caller can act on.
-* **H58** - the pick is an argmax over an embedded catalogue that contains WRITE tools
-  (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals,
-  `crm_it_support_ticket_create`, `crm_ideation_turn`), and `tool_filter` takes the top hit
-  with no further test. `CHATBOT_READ_ONLY_TOOLS` below is the allow-list: the chatbot's
-  retrieval seam (`services._tool_search`) drops everything else from the candidate list,
-  and `ensure_read_only` refuses it at both call seams anyway. The POOL keeps the write
-  tools, on purpose - the in-app AI assistant retrieves them and confirms with a human
-  before each one, which is a gate this chatbot does not have.
+* **H58** - the pick used to be an argmax over an embedded catalogue that contains WRITE
+  tools (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals,
+  `crm_it_support_ticket_create`, `crm_ideation_turn`), and `tool_filter` takes the single
+  candidate with no further test. `CHATBOT_READ_ONLY_TOOLS` below is the allow-list, and
+  since the candidate is now `DOMAIN_SPEC`'s own first tool the hazard is structural
+  rather than scored: nothing outside that table can be named, and `ensure_read_only`
+  refuses anything off the list at both call seams anyway. The embedded POOL keeps the
+  write tools, on purpose - the in-app AI assistant retrieves them and confirms with a
+  human before each one, which is a gate this chatbot does not have.
 
 **H43 is moot, not fixed.** The n8n query's `$4` is `domain`, LIKE-matched against
 `source_id`, and some live call sites never bind it. In process `domain` is a parameter of
-one function call, so `domain=None` means "no filter" by construction and can never mean
+one function call, so `domain=None` means "no tool" by construction and can never mean
 "the caller forgot to wire a parameter".
 
 **H49, the tool-selection distribution.** `crm_order_management_orders_by_product_list` has
@@ -50,6 +54,11 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
+from app.services.chatbot.contracts import (
+    DOMAIN_CLAIMED_TOOLS,
+    DOMAIN_SPEC,
+    UNDOMAINED_CHATBOT_TOOLS,
+)
 from app.services.chatbot.contracts import is_timeline
 
 logger = logging.getLogger(__name__)
@@ -95,18 +104,19 @@ def _label(tool: Any) -> str:
 def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
     """ONE tool per turn: highest `similarity`, tiebreak `name` ASC.
 
-    Explicitly NOT the first array element - `sub-get-rag`'s final Code node collapses
-    `source_id` to a name and SUMS the similarities, so the SQL's best-first order stops
-    being provably maximal the moment a tool has two source ids.
+    The BODY is n8n's, unchanged and graded byte for byte against 38 captures (D8), which
+    is why the ranking is still here after the pick stopped being a ranking. `select_tool`
+    now hands it exactly one candidate off `DOMAIN_SPEC` (similarity 1.0), so the sort has
+    one element and the argmax is the identity - the node keeps working the way its
+    captures say it does, and nothing about how the candidate was chosen leaked into it.
 
     Emitting exactly one item is structural, not incidental: the per-tool fan-out that used
     to sit downstream is deleted, so two items here would run the whole fetch, compile and
     send chain twice - two WhatsApp messages to one customer.
 
-    F4 (review, 7 Sep 2026): the incoming-shipments-to-list collapse used to live here. It
-    moved to `services._tool_search` (the CRM-policy seam next to the read-only filter) so
-    this function stays a byte-for-byte ported node with no CRM-specific rule grafted onto
-    it - by the time a candidate list reaches this function it is already final.
+    By the time a candidate list reaches this function it is already final: `run_fetch`
+    stamps `_tool_pick.source` on the OUTPUT rather than reaching in here, so this stays a
+    ported node with no CRM-specific rule grafted onto it.
     """
     raw_tools = jsc.array(candidates)
     # `sort((a,b) => cmp(score(b), score(a)) || cmp(label(a), label(b)))`, and Python's
@@ -139,71 +149,58 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
     )
 
 
-def rag_query_params(
-    embedding: list[float], *, source_type: Any, limit: Any, domain: Any
-) -> dict[str, Any]:
-    """`sub-get-rag`'s first Code node: the embedding becomes the SQL's bound parameters.
+def select_tool(domain: str | None) -> list[dict[str, Any]]:
+    """The domain's tool, read off `DOMAIN_SPEC`. No embedding, no database, no network.
 
-    Ported for REPLAY rather than for use: in process there is no `$1..$4` to bind, so the
-    only consumer is `test_replay.py`. It is here because the node has 38 real captures and
-    grading it is what proves the port reads the embedding response the same way n8n does -
-    `$json.data[0].embedding`, and the pgvector literal is `[a,b,c]` with no spaces.
+    `[{"name": DOMAIN_SPEC[domain].tools[0], "similarity": 1.0}]` for a domain with a
+    non-empty `tools` tuple, `[]` for everything else: no domain, a domain outside the
+    table, and the two domains that answer from nothing (`goods_receive`, `ideate`). The
+    empty list reaches `tool_filter` and ends the turn `not_found`, exactly as a zero-row
+    search did (H11).
+
+    NULL DOMAIN IS A NARROWING, and a deliberate one: the search ran UNFILTERED when
+    `domain` was null, so such a turn could still come back with a tool, and this returns
+    nothing. Measured on `sorento_ai_automation_0907`: of 994 `business_query` turns, 0
+    reached the fetch step with a null or missing `domain_hint`, so the narrowing has no
+    measured effect. A tool picked by cosine distance alone, with no domain to answer
+    from, was never a defensible answer anyway.
+
+    **Why the vector search went (owner ruling, 8 Sep 2026: "we can drop the rag from
+    chatbot lane").** The candidate set was already this literal, and it is small: 4 tools
+    for `master_products`, 3 for the next three domains, 2 for two more, 1 for the last
+    four - median 2. Measured over every business turn in the 7 Sep 2026 prod copy
+    (`sorento_ai_automation_0907`, `chatbot.turns.trace` `_tool_pick.chosen`, 740 turns),
+    the pick was the domain's FIRST-LISTED tool on all 740; not one variant
+    (`orders_by_product_list`, `incoming_stock_by_product`, `incoming_stock_shipments`,
+    `brands_list`, `product_categories_list`, `units_of_measure_list`,
+    `promotion_attachments_list`, `promotion_products_list`,
+    `resource_attachments_catalogue`, `resource_attachments_current_stock_list`,
+    `warehouses_list`, `certificates_list`) was ever chosen. One embedding call per turn
+    was deciding a question with one answer.
+
+    It also could not be trusted to keep deciding it. The search needed a registry row and
+    an embedded chunk per tool, and that seeding chain cannot run in the deployed backend
+    image (the MCP catalogue is not in it, PR #748), so production's tool pool has been
+    frozen since 2 June 2026: every tool added after that date was unretrievable, and "last
+    in for SRT62-GM" answered "no spo_allocation matched these" with 10 fully-received
+    allocations in the table. Reading the table makes that failure class impossible instead
+    of monitored.
+
+    The FIRST entry of each `tools` tuple is therefore a contract. The rest stay where they
+    are as allow-list members for the probes and the cross-domain rung
+    (`CHATBOT_READ_ONLY_TOOLS` is derived from `DOMAIN_CLAIMED_TOOLS`), not as candidates.
+
+    A `domain` outside the parser's own declared enum should never reach this call in the
+    first place - `contracts.coerce_domain_hint` guards both ways in: the parser's emission
+    in `output_exchange.py`, and the contact's carried memory in `engine.py`. Evidence turn
+    b5b19cec-dccc-4eda-b766-1aeb1362957b arrived with `domain_hint: "purchasing"`, a TEAM
+    name, and ended `not_found`; one that got past both guards would end the same way here,
+    by falling off the table rather than by zeroing a `LIKE` filter.
     """
-    return {
-        "vector_text": "[" + ",".join(jsc.js_string(v) for v in jsc.array(embedding)) + "]",
-        "source_type": source_type,
-        "limit": limit,
-        "domain": domain,
-    }
-
-
-def collapse_tool_rows(rows: Any) -> list[dict[str, Any]]:
-    """`sub-get-rag`'s second Code node: `source_id` -> name, similarities SUMMED.
-
-    `implemented::crm_forms_management_forms_list` becomes `crm_forms_management_forms_list`
-    and every chunk of the same tool adds to one score. This is exactly why `tool_filter`
-    cannot take the SQL's first row: once a tool has two source ids the best-first order
-    stops being provably maximal.
-    """
-    summed: dict[str, dict[str, Any]] = {}
-    for entry in jsc.array(rows):
-        raw = jsc.get(entry, "source_id") or ""
-        parts = jsc.js_string(raw).split("::")
-        # `raw.split('::')[1] || raw` - the `||` is load-bearing: a source id that ends in
-        # `::` splits to an EMPTY second segment, which is falsy, and the JS falls back to
-        # the whole id rather than keying every such row under "".
-        candidate = parts[1] if len(parts) > 1 else ""
-        name = candidate if jsc.truthy(candidate) else jsc.js_string(raw)
-        if name not in summed:
-            summed[name] = {"name": name, "similarity": 0}
-        # `+= undefined` is NaN in JS, not a TypeError. A row with no similarity therefore
-        # poisons its tool's score to NaN, which `_score` then reads as -Infinity: last.
-        summed[name]["similarity"] += jsc.js_number(
-            jsc.get(entry, "similarity", jsc.UNDEFINED)
-        )
-    return list(summed.values())
-
-
-def select_tool(db: Any, *, query: str, domain: str | None, services: Any) -> list[dict[str, Any]]:
-    """`sub-get-rag`, end to end: embed the query, search, collapse to `[{name, similarity}]`.
-
-    `db` is accepted and deliberately UNUSED: the seams are already bound to a session by
-    `services.py`, and taking the parameter keeps the call site honest about the fact that a
-    session existed - while this function itself holds none across the embedding call
-    (the plan's capacity rule).
-
-    A `domain` outside the parser's own declared enum must never reach this call in the
-    first place (evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b: `domain_hint:
-    "purchasing"`, a TEAM name, zeroed `search_tool_chunks`'s `source_id LIKE
-    '%purchasing%'` filter and the turn ended `not_found`) - `contracts.coerce_domain_hint`
-    guards both ways in: the parser's emission in `output_exchange.py`, and the contact's
-    carried memory in `engine.py` (turn fca4aa5e-806b-4403-aa2e-fc2d0961fb2d parsed as
-    `incoming` and still arrived here as `purchasing` before the second guard existed). So
-    `domain` here is trusted as-is with no retry.
-    """
-    _ = db
-    embedding = services.embed(query)
-    return services.tool_search(embedding, query=query, domain=domain)
+    spec = DOMAIN_SPEC.get(domain) if domain else None
+    if spec is None or not spec.tools:
+        return []
+    return [{"name": spec.tools[0], "similarity": 1.0}]
 
 
 # --------------------------------------------------------------------------- #
@@ -323,6 +320,10 @@ TYPE_TO_PARAM: dict[str, str] = {
     "attachment_type": "attachment_type_ids",
     "attachment": "attachment_ids",
     "certificate": "certificate_ids",
+    # Three tools accept it: `crm_inventory_stock_balance_list`,
+    # `crm_inventory_warehouses_list` and
+    # `crm_procurement_spo_allocations_last_receipt_list`.
+    "warehouse": "warehouse_ids",
 }
 
 _UUID_RE = re.compile(
@@ -378,11 +379,27 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_resource_attachments_list": ("uploaded_at_from", "uploaded_at_to"),
     "crm_resource_attachments_catalogue": ("uploaded_at_from", "uploaded_at_to"),
     "crm_sla_conversation_event_logs_list": ("date_from", "date_to"),
+    "crm_procurement_po_placed_list": ("expected_date_from", "expected_date_to"),
 }
 
 ORDER_TOOLS: frozenset[str] = frozenset(
     {"crm_order_management_orders_list", "crm_order_management_orders_by_product_list"}
 )
+
+# A3/A5/A6 (chatbot-growth-r1): the tools whose `group_by` this transformer
+# passes straight through as a query param (the backend validates the axis;
+# see `ORDER_GROUP_BY_AXES` / each route's own set - not re-validated here).
+GROUP_BY_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_order_management_orders_list",
+        "crm_procurement_po_placed_list",
+    }
+)
+
+# A6: the one tool with its OWN `top_n` param (default 1, "last 3 in"); every
+# other GROUP_BY_TOOLS/ORDER_TOOLS member aliases `top_n` to `limit` instead
+# (above), since it has no `top_n` param of its own.
+TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset({"crm_procurement_spo_allocations_last_receipt_list"})
 
 # n8n hard-codes this and OVERRIDES the `semantic_input` value with it (which carried the
 # identical string in all 24 sampled executions). D5 says the respond.io space id comes
@@ -493,10 +510,12 @@ def entity_ids_transformer(
         if jsc.has(semantic_input, key):
             out[key] = semantic_input[key]
 
-    # order_status (order tools only): "outstanding" | "delivered"; omitted when null.
+    # order_status (order tools only): "outstanding" | "delivered" | "so_outstanding"
+    # (A3, AC-905); omitted when null.
     if tool_name in ORDER_TOOLS and jsc.get(semantic_input, "order_status") in (
         "outstanding",
         "delivered",
+        "so_outstanding",
     ):
         out["order_status"] = jsc.get(semantic_input, "order_status")
 
@@ -511,6 +530,56 @@ def entity_ids_transformer(
         jsc.nullish_str(a).strip() == "quantity" for a in req_attrs
     ):
         out["include_summary"] = True
+        # `include_pipeline` (fix, 7 Sep 2026): opt-in, separately from
+        # `include_summary` above, for the SAME reason `include_specs` /
+        # `include_sellable` below are opt-in rather than a server-level default - the
+        # MCP server is shared with n8n, and n8n's own quantity-ask workflow already
+        # sends `include_summary=true` today. The CRM asks for the three-line pipeline
+        # by name; a caller that only asks `include_summary` gets the summary shape it
+        # got before this plan. Both `ORDER_TOOLS` members declare the param on their
+        # ToolSpec (`catalog.py`: orders_list and orders_by_product_list), which is what
+        # keeps the MCP from stripping it - pinned by
+        # `test_growth_fix_opt_in_envelope_fields.py`.
+        out["include_pipeline"] = True
+
+    # A1/A2 (chatbot-growth-r1), opt-in from THIS caller (fix, 7 Sep 2026): these two
+    # used to be defaulted ON in `sorento_crm_mcp/server.py`'s
+    # `TOOL_DEFAULT_QUERY_PARAMS` for every caller of the shared MCP server - n8n
+    # included, which never asked for either and has no field-reveal filter of its
+    # own. Moved here so only the CRM's own turn opts in, per the reason that turn
+    # actually has:
+    #   - `include_specs`: a product SPEC question ("SRTWC8517 spec", "wattage of
+    #     X") - `check_product` intent or the `master_products` domain, the same
+    #     pair A1's presenter branch reads.
+    #   - `include_sellable`: only when the contact's OWN access grants
+    #     `inventory.sellable` (Slice C's `contact_field_reveals`, read off `ctx.access`
+    #     the same way A2's restricted-field drop reads it) - asking for a number the
+    #     renderer would then have to hide is pointless, and every other contact's call
+    #     stays the pre-A2 shape.
+    if tool_name == "crm_master_products_list" and (
+        jsc.get(semantic_input, "intent_hint") == "check_product"
+        or jsc.get(semantic_input, "domain_hint") == "master_products"
+    ):
+        out["include_specs"] = True
+    if tool_name == "crm_inventory_stock_balance_list":
+        access = trig.get("access") if isinstance(trig.get("access"), dict) else {}
+        attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
+        if "inventory.sellable" in attributes:
+            out["include_sellable"] = True
+
+    # group_by / top_n (A3, AC-909/AC-910): additive parser keys, uniform across
+    # every list tool this plan touches. `top_n` aliases to `limit` for the
+    # order tools (the tool has no `top_n` param of its own); A6's SPO tool
+    # reads `top_n` directly (see `TOP_N_DIRECT_TOOLS`).
+    group_by = jsc.get(semantic_input, "group_by")
+    if tool_name in GROUP_BY_TOOLS and jsc.truthy(group_by):
+        out["group_by"] = jsc.js_string(group_by)
+    top_n = jsc.get(semantic_input, "top_n")
+    if jsc.truthy(top_n):
+        if tool_name in TOP_N_DIRECT_TOOLS:
+            out["top_n"] = top_n
+        elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
+            out["limit"] = top_n
 
     # COERCE, THEN TRIM, and the ORDER is the whole point. `contact_id` arrives as BOTH an
     # int and a SPACE-PADDED string in production, in adjacent executions: five spine call
@@ -588,49 +657,21 @@ class ToolNotAllowed(RuntimeError):
 # The six the audit found, deliberately absent: `crm_complaint_close`, `crm_order_cancel`,
 # `crm_purchase_request_approve`, `crm_purchase_request_reject`,
 # `crm_it_support_ticket_create`, `crm_ideation_turn`. They stay in the MCP catalogue and
-# in the Tool-RAG pool - the in-app AI assistant retrieves them ON PURPOSE and gates each
+# in the in-app assistant's embedded pool - it retrieves them ON PURPOSE and gates each
 # behind a user confirmation and a permission check. The chatbot has no user to confirm
 # with, which is the whole difference.
+#
+# **Where the names live (D9, AC-931).** Still a frozen literal, for every reason above -
+# it is simply no longer a THIRD list. Each name is either claimed by exactly one domain
+# (`contracts.DOMAIN_SPEC[domain].tools`) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS`
+# as claimed by nobody on purpose, and this set is their union. This list is the ALLOW-list
+# for every seam a tool name can reach the MCP client through (the probes and the
+# cross-domain rung name their tool directly); the one tool a turn is ANSWERED from is
+# `DOMAIN_SPEC[domain].tools[0]`, read by `select_tool`.
+# `tests/chatbot/test_tool_pool_is_read_only.py` still pins the whole union against the MCP
+# catalogue's read-only set, unchanged.
 CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    {
-        "crm_certificates_list",
-        "crm_complaint_analytics",
-        "crm_complaints_list",
-        "crm_forms_management_forms_list",
-        "crm_incoming_stock_by_product",
-        "crm_incoming_stock_list",
-        "crm_incoming_stock_shipments",
-        "crm_inventory_stock_balance_list",
-        "crm_inventory_warehouses_list",
-        # POST, and still a read: the body carries the keyword because it does not fit in
-        # a query string. Same for the two below.
-        "crm_lookup_resolve",
-        "crm_marketing_promotion_attachments_list",
-        "crm_marketing_promotion_products_list",
-        "crm_marketing_promotions_list",
-        "crm_master_brands_list",
-        "crm_master_customers_list",
-        "crm_master_product_attachments_list",
-        "crm_master_product_categories_list",
-        "crm_master_products_list",
-        "crm_master_units_of_measure_list",
-        "crm_order_analytics",
-        "crm_order_management_orders_by_product_list",
-        "crm_order_management_orders_list",
-        "crm_portal_link_get",
-        "crm_project_detail",
-        "crm_project_forecast",
-        "crm_project_quotations_list",
-        "crm_projects_list",
-        "crm_resource_attachments_catalogue",
-        "crm_resource_attachments_current_stock_list",
-        "crm_resource_attachments_list",
-        "crm_sla_conversation_event_logs_list",
-        "crm_sla_conversation_tracking_dashboard",
-        "crm_sla_conversation_tracking_list",
-        "crm_system_tool_capabilities_summary",
-        "user_guides_read",
-    }
+    DOMAIN_CLAIMED_TOOLS + UNDOMAINED_CHATBOT_TOOLS
 )
 
 
@@ -658,13 +699,12 @@ def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
     names no host, no scheme and no port.
 
     **The allow-list check is HERE, at the egress, and it is not defensive coding (H58).**
-    The tool is chosen by cosine similarity and `tool_filter` takes the single top hit with
-    no further test, so until now the only thing standing between a customer's phrasing and
-    `crm_order_cancel` was that no phrasing had scored it first. The chatbot's retrieval
-    seam (`services._tool_search`) drops write tools from the candidate list, which is what
-    stops them being PICKED; this is what stops one being CALLED however it was named -
-    including the tier probe and a tool name that arrived on a payload rather than from the
-    search.
+    The tool used to be chosen by cosine similarity over a pool that contains write tools,
+    so the only thing standing between a customer's phrasing and `crm_order_cancel` was
+    that no phrasing had scored it first. `select_tool` now reads the name off
+    `DOMAIN_SPEC`, so a write tool cannot be PICKED at all; this is what stops one being
+    CALLED however else it was named - the tier probe, and any tool name that arrived on a
+    payload rather than from the domain table.
     """
     ensure_read_only(name)
     return mcp.call_tool(name, args)
@@ -748,6 +788,38 @@ def _find_payload(j: Any) -> dict[str, Any] | None:
             ):
                 return o
     return None
+
+
+def _rendered_answers(e: dict[str, Any]) -> list[Any]:
+    """The grouped rows in the order the numbered message printed them.
+
+    Same walk and same skip conditions as the group render below, so "row 2 on screen" and
+    `answers[1]` cannot disagree. Falls back to the flat `items` when a group carries none,
+    because an empty `answers` would break the positional pick outright rather than shift
+    it.
+    """
+    out: list[Any] = []
+    for grp in e.get("groups") or []:
+        if not isinstance(grp, dict) or not isinstance(grp.get("items"), list):
+            continue
+        out.extend(grp["items"])
+    return out or (e.get("items") or [])
+
+
+def group_axis(ctx: Any) -> str:
+    """The `group_by` axis this turn asked for, off the trigger's `semantic_input`.
+
+    Read twice - once to filter the grouped rows, once to decide whether the AXIS itself
+    is a restricted value - so it is one function rather than two inline digs through a
+    value that arrives as a dict on a live turn and as a JSON STRING on some captured n8n
+    triggers (`output_structurer` already has to handle both).
+    """
+    si: Any = (ctx or {}).get("semantic_input") if isinstance(ctx, dict) else None
+    if isinstance(si, str):
+        si = _safe_json(si)
+    if not isinstance(si, dict):
+        return ""
+    return jsc.js_string(si.get("group_by") or "").strip()
 
 
 def _extract_envelope(j: Any) -> dict[str, Any]:
@@ -991,6 +1063,208 @@ def _names_a_shipment(ctx: dict[str, Any]) -> bool:
     )
 
 
+#: D12 (owner ruling, 8 Sep 2026, turn 8f4a8526 "SRTJC802A-1500 product details"): the
+#: BASE fields a product answer ALWAYS carries, whatever `requested_attributes` says -
+#: item 8's `_PRODUCT_IDENTITY_LABELS` (Product Code, Company only) meant an asked word
+#: that named no base field of its own (or a wrongly-emitted `["price"]` for a message
+#: that named no property at all) dropped List Price, Dimensions, Product Name and
+#: Description from the reply. Discontinued flag and attachments are not `fields` rows
+#: at all and were never affected by this.
+_PRODUCT_IDENTITY_LABELS: frozenset[str] = frozenset(
+    {"Product Code", "Product Name", "Description", "List Price", "Dimensions", "Company"}
+)
+
+_SPEC_KEY_PREFIX = "spec:"
+
+
+def _normalize_spec_word(v: Any) -> str:
+    """Lowercase, trim, collapse `_`/`-` to a space - the same normalization on
+    both sides of a spec-vocabulary match (a registry key and a customer's own
+    word disagree on separators, never on letters)."""
+    return re.sub(r"[_\-]+", " ", jsc.nullish_str(v).strip().lower()).strip()
+
+
+#: D12: since a base field is now ALWAYS on the page (`_PRODUCT_IDENTITY_LABELS`), an
+#: asked word naming one is no longer a thing to PICK (item 8's `_BASE_FIELD_BY_ASK`
+#: is retired) - it only means "do not add a miss line for this word", because the
+#: field it names is already there. Single-token entry matches the whole ask EXACTLY;
+#: only the one multi-token entry ("list price") may be contained in a longer ask -
+#: same discipline as item 8's own matching, kept for the same reason ("seat size"
+#: must not read as a hit on "size").
+_BASE_PROPERTY_WORDS: frozenset[str] = frozenset(
+    {
+        "price", "list price", "harga", "cost",
+        "dimension", "dimensions", "size", "ukuran", "saiz",
+        "description", "name",
+    }
+)
+
+
+def _names_a_base_property(norm: str) -> bool:
+    for w in _BASE_PROPERTY_WORDS:
+        if norm == w or (" " in w and w in norm):
+            return True
+    return False
+
+
+_MISS_CODES_CAP = 5
+
+
+def _tokens(norm: str) -> set[str]:
+    return set(norm.split())
+
+
+def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
+    """A1 (AC-901/AC-902): the product spec projection, product envelopes ONLY.
+
+    A SEPARATE branch from the clearance/incoming projection above - deliberately
+    not folded into it. That one is gated on `field_vocabulary` truthiness and
+    would, for a no-attribute ask, strip every keyed field down to the identity
+    allow-list; the compact "Specs:" line below IS the no-attribute case, so
+    reusing that gate would delete the very thing this function exists to add.
+
+    No requested_attributes: every item keeps its base fields, plus ONE synthetic
+    "Specs:" field naming EVERY populated spec key, in registry order (D1, 12 Sep
+    2026 owner finding: "and N more" left no way to see the rest, so there is no
+    cap and no truncation - the field lists all of them).
+
+    With requested_attributes (item 8 / D12, 8 Sep 2026), every item ALWAYS keeps its
+    base fields (`_PRODUCT_IDENTITY_LABELS`: Product Code, Product Name, Description,
+    List Price, Dimensions, Company) - a base field is never dropped by an ask, and an
+    asked word is never "matched" to one; it is on the page regardless. Only the SPEC
+    keys are on demand, per asked word:
+      1. SPEC KEYS BY TOKEN CONTAINMENT - exact match on the normalised key or label
+         first, else every key whose key OR label tokens contain every asked token
+         ("material" reaches both `material` and `seat_material` via "Seat cover
+         material"; "seat cover material" reaches `seat_material` only), rendered in
+         registry order (the order the presenter emitted them).
+      2. ONE MISS LINE PER ASKED WORD, not per item, for a word that matched NO spec key
+         on that item - EXCEPT a word naming a base property (`_names_a_base_property`:
+         price / list price / harga / cost / dimension(s) / size / ukuran / saiz /
+         description / name), which produces no miss line at all: the field it names is
+         already on the page, so "not recorded" would contradict what the reply just
+         showed. A genuine spec miss goes into ONE `spec_misses` entry, rendered once
+         AFTER the items by `output_structurer` - "*<label>:* not recorded for A, B, C
+         (+N more)", label from the registry when the word matches a known key/label,
+         else the asked word; codes capped at `_MISS_CODES_CAP`. (Not `summary_items`:
+         that slot is the quantity-summary mode and suppresses the item rows, fetch.py's
+         items loop.)
+    An item with no spec hit for any asked word keeps its base fields only - byte
+    identity with the no-attribute path's own field set.
+    """
+    vocab_raw = e.get("spec_vocabulary")
+    vocab: dict[str, str] = vocab_raw if isinstance(vocab_raw, dict) else {}
+    # (spec_key, label, norm_key, norm_label) per registry row, registry order kept
+    vocab_rows: list[tuple[str, str, str, str]] = [
+        (str(key), str(label), _normalize_spec_word(key), _normalize_spec_word(label))
+        for key, label in vocab.items()
+    ]
+
+    def vocab_label_for(norm: str) -> str | None:
+        """The registry label a miss line names: exact match first, else the one row
+        whose key or label contains every asked token (several -> the first)."""
+        for _k, label, nk, nl in vocab_rows:
+            if norm in (nk, nl):
+                return label
+        toks = _tokens(norm)
+        for _k, label, nk, nl in vocab_rows:
+            if toks and (toks <= _tokens(nk) or toks <= _tokens(nl)):
+                return label
+        return None
+
+    # The normalised word AND the word the customer actually typed, PAIRED (review, nit
+    # 10). Two parallel lists went out of step the moment `req_attrs` carried a blank or a
+    # word that normalised away - `req_attrs[asked_norms.index(norm)]` then named a
+    # DIFFERENT attribute in the "no X recorded" sentence, and it only shows on the one
+    # phrasing that has a blank in it.
+    asked: list[tuple[str, str]] = []
+    seen_norms: set[str] = set()
+    for raw in req_attrs:
+        text = jsc.nullish_str(raw).strip()
+        if not text:
+            continue
+        norm = _normalize_spec_word(text)
+        if norm and norm not in seen_norms:
+            asked.append((norm, text))
+            seen_norms.add(norm)
+
+    missed_codes: dict[str, list[str]] = {norm: [] for norm, _ in asked}
+
+    for it in e.get("items") or []:
+        if not jsc.truthy(it) or not isinstance(jsc.get(it, "fields"), list):
+            continue
+        fields: list[dict[str, Any]] = it["fields"]
+        code = None
+        for f in fields:
+            if isinstance(f, dict) and f.get("label") == "Product Code":
+                code = f.get("value")
+                break
+        base = [
+            f
+            for f in fields
+            if not (isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX))
+        ]
+        spec_fields = [
+            f
+            for f in fields
+            if isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX)
+        ]
+
+        if not asked:
+            # No attribute asked: base fields untouched, plus the compact summary -
+            # EVERY populated spec key, in registry order, no cap (D1).
+            if spec_fields:
+                summary = ", ".join(f"{f.get('label')}: {f.get('value')}" for f in spec_fields)
+                it["fields"] = base + [{"key": "specs_summary", "label": "Specs", "value": summary}]
+            continue
+
+        # An attribute was asked: identity fields + the base fields + the spec keys it names.
+        # D12: base fields are ALWAYS kept - no ask can drop or add one.
+        kept_base = [
+            f for f in base if isinstance(f, dict) and f.get("label") in _PRODUCT_IDENTITY_LABELS
+        ]
+        spec_norms: list[tuple[dict[str, Any], str, str]] = []  # (field, norm_key, norm_label)
+        for f in spec_fields:
+            raw_key = jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):]
+            spec_norms.append((f, _normalize_spec_word(raw_key), _normalize_spec_word(f.get("label"))))
+
+        matched: list[dict[str, Any]] = []
+        seen_field_ids: set[int] = {id(f) for f in kept_base}
+        for norm, _asked_word in asked:
+            # 1. spec keys: an exact key/label match AND every key whose key or label
+            #    tokens contain every asked token - ALL of them, in registry order
+            toks = _tokens(norm)
+            contained = [
+                f
+                for f, nk, nl in spec_norms
+                if norm in (nk, nl) or (toks and (toks <= _tokens(nk) or toks <= _tokens(nl)))
+            ]
+            hit = bool(contained)
+            for f in contained:
+                if id(f) not in seen_field_ids:
+                    matched.append(f)
+                    seen_field_ids.add(id(f))
+            # 2. a spec miss - UNLESS the word names a base property, which is already
+            #    on the page (kept_base, above) and needs no "not recorded" line.
+            if not hit and not _names_a_base_property(norm):
+                missed_codes[norm].append(jsc.js_string(code))
+        it["fields"] = kept_base + matched
+
+    # 3. one miss line per asked word, rendered ONCE after the items
+    misses: list[dict[str, Any]] = []
+    for norm, asked_word in asked:
+        codes = missed_codes.get(norm) or []
+        if not codes:
+            continue
+        label = vocab_label_for(norm) or asked_word
+        listed = ", ".join(codes[:_MISS_CODES_CAP])
+        extra = len(codes) - _MISS_CODES_CAP
+        value = f"not recorded for {listed}" + (f" (+{extra} more)" if extra > 0 else "")
+        misses.append({"key": f"spec_miss:{norm}", "label": label, "value": value})
+    if misses:
+        e["spec_misses"] = misses
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -1000,6 +1274,81 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     """
     ctx = ctx if isinstance(ctx, dict) else {}
     e = _extract_envelope(result)
+
+    # -- restricted-field drop (A2/A5/A6, general rule) ---------------------- #
+    # A presenter marks a field or summary item RESTRICTED by putting its key in
+    # the envelope's `restricted_fields` (field key -> permission key, e.g.
+    # "inventory.sellable", "purchase_orders.supplier" - `sorento_crm_mcp.
+    # presenters._Builder.restrict`). Dropped here unless the contact's access
+    # grants that permission. `ctx["access"]["attributes"]` is a list; today
+    # `head/access.py::check_access` always returns it as None (Slice C wires it
+    # from `contact_field_reveals`), so None is read as the EMPTY grant set and
+    # every restricted field is hidden by construction - which is exactly what
+    # keeps a stock/PO/SPO answer byte-identical to before this rule existed
+    # (AC-903). The MCP itself stays unfiltered; this is the ONE place a
+    # restricted field is ever dropped for the chatbot.
+    restricted = e.get("restricted_fields")
+    if isinstance(restricted, dict) and restricted:
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, list) else set()
+
+        def _keep_field(f: Any) -> bool:
+            """Keep, drop, or SWAP. A restricted field that carries `granted_value` is
+            a plain field with a granted suffix (D1, the compact stock block's
+            "*Total:* 51 (O/S: 36)"): under the grant its value becomes the granted one,
+            without it the plain value stays and the suffix never reaches the reader.
+            A restricted field with no `granted_value` is dropped whole, as before."""
+            if not _has_key(f):
+                return True
+            perm = restricted.get(jsc.js_string(f["key"]))
+            if perm is None:
+                return True
+            has_granted_value = isinstance(f, dict) and "granted_value" in f
+            if perm in granted:
+                if has_granted_value:
+                    f["value"] = f.pop("granted_value")
+                return True
+            if has_granted_value:
+                f.pop("granted_value", None)
+                return True
+            return False
+
+        def _filter_rows(rows: Any) -> None:
+            for row in rows or []:
+                if jsc.truthy(row) and isinstance(jsc.get(row, "fields"), list):
+                    row["fields"] = [f for f in row["fields"] if _keep_field(f)]
+
+        _filter_rows(e.get("items"))
+        _filter_rows(e.get("summary_items"))
+        # A3/A5's GROUPED shape carries the same rows a second time, and the first
+        # cut of this rule filtered `items` only - so `group_by=product` on a PO
+        # question rendered every supplier a dealer must never see, and
+        # `group_by=supplier` printed the restricted value as the SECTION HEADING,
+        # where no field filter could ever reach it. Both are closed here: every
+        # group's rows go through the same `_keep_field`, and the AXIS itself is
+        # refused below when the grant is not held.
+        for grp in e.get("groups") or []:
+            if not (jsc.truthy(grp) and isinstance(grp, dict)):
+                continue
+            _filter_rows(grp.get("items"))
+            _filter_rows(grp.get("summary_items"))
+
+        # THE HEADING IS NOT A FIELD. A group's `label` is the axis value itself, so a
+        # restricted axis leaks by being grouped ON, whatever the rows carry. The answer
+        # is to drop the grouping and answer FLAT rather than to redact the headings:
+        # "Supplier A / Supplier B" with the names blanked still tells the dealer how many
+        # suppliers there are and which rows share one, and an ungrouped list is the
+        # honest answer to a question we may not break down.
+        # The axis NAME and the restricted FIELD KEY are the same word by construction:
+        # a tool may only group on an axis it renders as a field, and `group_by=supplier`
+        # groups on the `supplier` field the presenter marked restricted. So the lookup
+        # is the same `restricted` map, with no second table to keep in step.
+        axis = group_axis(ctx)
+        axis_perm = restricted.get(axis) if axis else None
+        if axis_perm is not None and axis_perm not in granted:
+            e["groups"] = []
+            e["group_by_dropped"] = axis
 
     # -- requested-attribute projection ------------------------------------- #
     # The CRM dumps every clearance field the caller may see, by design: it prevents the
@@ -1014,6 +1363,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         if isinstance(semantic_input.get("requested_attributes"), list)
         else []
     )
+
+    # A1 (AC-901/AC-902): the product spec projection, gated on the envelope's OWN
+    # result_type - never on `field_vocabulary`/`spec_vocabulary` truthiness, so a
+    # product with zero derived specs (no `spec_vocabulary` at all) still gets the
+    # plain today's-four-fields answer rather than being skipped by accident.
+    if jsc.js_string(e.get("result_type") or "") == "products":
+        _project_product_specs(e, req_attrs)
 
     # H46: CONTAINS the sentinel, not IS it. `contracts.is_timeline` is the one declaration
     # (S6a put it there for exactly this consumer); re-deriving it here is what let a
@@ -1234,18 +1590,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if len(action_links):
         msg += "\n"
 
-    # A quantity ask prints the SUMMARY ONLY: the two order perspectives are separate
-    # questions and the parser already separates them. The ROWS are suppressed from the
-    # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
-    # still resolves against the same page rows. And ONLY the numbered list goes: the
-    # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
-    for i, it in enumerate([] if qs_render else (e.get("items") or [])):
+    def _item_line(position: int, it: Any) -> str:
         field_lines = "\n".join(
             f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
             f"{_fmt_value(jsc.get(f, 'value'))}"
             for f in (jsc.get(it, "fields") or [])
         )
-        line = f"{i + 1}. {field_lines}"
+        line = f"{position}. {field_lines}"
         flags = jsc.get(it, "flags")
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
             line += "\n⚠️  *(PRODUCT DISCONTINUED)*"
@@ -1255,7 +1606,41 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             line += "\n\U0001f6a9  *(PENDING ALLOCATION)*"
         elif jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "partially_allocated")):
             line += "\n\U0001f6a9  *(PARTIAL ALLOCATION)*"
-        msg += line + "\n\n"
+        return line
+
+    # A3 (AC-905/AC-906): grouped sections, ONE generic branch for every tool - the
+    # presenter already mapped `groups[].rows` through the same row->item builder
+    # the flat list uses (`sorento_crm_mcp.presenters`), so this only adds a
+    # heading per bucket and keeps the running item number global across groups
+    # (a positional pick still resolves against `answers`, which stays the FLAT
+    # `e.get("items")` below - grouping is presentation only, never carried state).
+    groups_render = bool(
+        isinstance(e.get("groups"), list) and len(e["groups"]) and not qs_render
+    )
+    if groups_render:
+        position = 0
+        for grp in e["groups"]:
+            if not isinstance(grp, dict) or not isinstance(grp.get("items"), list):
+                continue
+            label = jsc.js_string(grp.get("label") or grp.get("key") or "").strip()
+            if label:
+                msg += f"*{label}*\n"
+            for it in grp["items"]:
+                position += 1
+                msg += _item_line(position, it) + "\n\n"
+
+    # A quantity ask prints the SUMMARY ONLY: the two order perspectives are separate
+    # questions and the parser already separates them. The ROWS are suppressed from the
+    # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
+    # still resolves against the same page rows. And ONLY the numbered list goes: the
+    # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
+    for i, it in enumerate([] if (qs_render or groups_render) else (e.get("items") or [])):
+        msg += _item_line(i + 1, it) + "\n\n"
+    # Item 8: the product projection's miss lines, one per asked word, AFTER the items
+    # (`_project_product_specs`). Byte-inert when the key is absent.
+    for miss in e.get("spec_misses") or []:
+        if isinstance(miss, dict):
+            msg += f"*{jsc.js_string(miss.get('label', jsc.UNDEFINED))}:* {_fmt_value(miss.get('value'))}\n\n"
 
     # -- multi-company: name the companies that came back EMPTY --------------- #
     # A FOUND row already says which company it belongs to. What the customer cannot see is
@@ -1318,11 +1703,19 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     out: dict[str, Any] = {
         "response": msg.strip(),
         "response_intro": e.get("intro"),
-        "answers": e.get("items"),
+        # GROUPED: the flat `items` order and the NUMBERED order the customer just read
+        # are two different orders, and `answers` is what a positional pick ("2") resolves
+        # against - so a grouped answer used to hand back a different record than the one
+        # numbered 2 on screen (review, should-fix 4). Flattened in RENDER order, which is
+        # the only order the customer can be talking about. Ungrouped, this is `items`
+        # unchanged, so nothing else moves.
+        "answers": _rendered_answers(e) if groups_render else e.get("items"),
     }
     # Spread-in, not defaulted: a reply with no summary keeps EXACTLY the keys it has today.
     if qs_render:
         out["summary_items"] = e["summary_items"]
+    if groups_render:
+        out["groups"] = e["groups"]
     out.update(
         {
             "attachments": e.get("attachments") or [],

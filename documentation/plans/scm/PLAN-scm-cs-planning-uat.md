@@ -660,6 +660,55 @@ The order-inquiry side (purchasing's board, place-on-PO UX) is the next planning
 - **Group borrow from another SO:** manual Amend pick only.
 - **Style:** keep it simple and straight; no over-explaining.
 
+- **AC-L5 mix on a board amendment (captain, 8 Sep 2026).** The whole-line rule stays exactly
+  as ruled 25 Aug for the ENGINE's own proposals (ladder rule 6, untouched) and for the SO
+  supply sheet - neither ever mixes stock with Buy on one line. It is LIFTED for a manual
+  amendment on the fulfilment-planning board: a planner who hand-composes stock + Buy on one
+  line and states why (`amend_reason`) may save it. `amend_reason` on the confirm line IS the
+  manual-adjustment signal (schema comment: "Absent when they took the proposal as it stood"),
+  not a separate board-only flag - the engine never proposes a mix, so any mix reaching confirm
+  is a person's own composition, and the reason is what tells purchasing the split is
+  deliberate. Without a reason the mix is still refused (422), now: "A line is either met
+  wholly from stock or wholly bought unless a reason is given. This one mixes {qty} from stock
+  with a Buy of {qty}: take the whole {qty} from stock, buy the whole {qty}, or say why this
+  differs from the proposal." Implemented in `project_supply_service.py::_check_line` (backend)
+  and `supplyComposition.ts::lineBlockers`'s `mixAllowed` option, passed only by
+  `BoardLineDecisionPanel` (the sheet's `SupplyLineCard` still refuses the mix outright, no
+  option passed). `planning_change_service` carries a frozen line's own `amend_reason` forward
+  into an auto-replanned line - it only ever REDUCES quantities on a revision, never creates a
+  mix - so the gate's meaning rests on that carry staying honest; a replan that ever composed a
+  new mix without also carrying the reason would defeat it silently. The project allowance
+  `_is_pool_share_split` checks is a PROPOSAL-time bound on what the engine offers, not a
+  confirm-time cap: at confirm the pool leg is bounded only by free stock, the five-pool net,
+  and R14, so a hand-typed share above the allowance still confirms once a reason is given (see
+  `test_the_confirm_admits_a_hand_typed_share_above_the_allowance_with_a_reason`).
+
+- **TEMPORARY: an own-group bin's capacity is not capped by the group net when a reason is
+  given (captain, 8 Sep 2026, lift TEMPORARY).** Measured on the lane DB: SO419417 line 9,
+  BT012-CR, fulfilment location BRW-BB - on hand at BRW-BB 1035, owed to sales orders in the
+  BB ownership group 6213, group net -5166. The engine proposed pool BRW 3 + Buy 9 ("Nothing
+  free at BRW-BB by the delivery date"). The planner hand-composed Reserve 3 at BRW-BB + Buy
+  9 with an amend reason; Confirm refused: "BRW-BB has nothing free for this line now, so
+  none of the 3 asked for can be reserved from it" - the group-net-seeded capacity read the
+  own bin as already spoken for by the whole group's backlog, so a Reserve could not be
+  written even though the units were sitting on the floor.
+  Rule: when the confirm line carries a non-empty `amend_reason`, a Reserve at the line's OWN
+  ownership group's bins (the fulfilment location itself, or another bin of the same group -
+  `sales_agent_service.group_of_warehouse_code(warehouse) == fact.group_code`) is NOT capped
+  by the group net. Still bounded: R14 (`_check_reserve_against_on_hand`) still refuses
+  anything past on hand less other lines' already-confirmed holds, the location gate still
+  limits the line to its own group's bins and the pools, and the confirmation's shared
+  capacity ledger still draws the take down so a later line of the same payload sees it
+  spent. Pool locations, other groups' bins, borrow, timely and Buy are unchanged.
+  Implemented in `project_supply_service.py::_check_line`, immediately before the reserve
+  loop's two group-net-based refusals. Tests: `test_a_reserve_at_an_oversold_own_bin_
+  without_a_reason_is_still_refused`, `test_a_reserve_at_an_oversold_own_bin_confirms_with_
+  a_reason`, `test_a_reason_does_not_push_a_reserve_past_on_hand` in
+  `test_so_supply_confirmation.py`. **Revisit when the BB group's book is cleaned up or when
+  a queue-jumping complaint arrives, whichever first** - this is a floor-reality escape
+  hatch for a group that cannot currently reconcile its own oversold book, not a permanent
+  reading of what "own group" capacity means.
+
 ### Open, found while building ladder v3 (25 Aug)
 
 - **RELEASE can no longer raise an order-inquiry row.** `planning_change_service._suggestion`
@@ -669,7 +718,11 @@ The order-inquiry side (purchasing's board, place-on-PO UX) is the next planning
   held ..."), and a wholly reserved one releases with nothing to tell purchasing. So the verb
   fires only on revisions frozen before AC-L5. Needs a ruling: either a release of a bought
   line should move its ORDER row to the pool (today it stays put with a DELAY row beside it),
-  or RELEASE retires with the mixes that justified it.
+  or RELEASE retires with the mixes that justified it. **Partly relieved 8 Sep 2026:** a board
+  amendment can carry a mix again when it states why, so a held composition reaching
+  `_release_rows` with both a reserve and a Buy is no longer necessarily a stale, pre-AC-L5
+  revision - it may be a live, reasoned one. The verb's own gap (nothing tells purchasing about
+  a wholly-reserved release) is unchanged and still needs the ruling above.
 - **AC-A1 needs a ruling on PLAN 3.3a, not on the rung order** - see the trail reading in the
   status block at the top of this file.
 - **The confirm-time proposal ledger tracks the own-site POOL only, not group-take capacity.**

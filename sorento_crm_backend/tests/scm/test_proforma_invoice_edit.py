@@ -223,7 +223,11 @@ def _upload_kailu(db, w: World, item_code_map: dict | None = None):
         supplier_id=str(w.supplier.id),
         actor="Ms Tee",
     )
-    return _invoices(db, w)[0]
+    # `pi_number` is now a monotonically minted sequence (S1), so ordering by it and
+    # taking the LAST one is "the one THIS call just created" - `[0]` would still be a
+    # single caller's own invoice when there is only one, but a second call for the same
+    # world (two current invoices of one supplier) needs the newest, not the oldest.
+    return _invoices(db, w)[-1]
 
 
 def test_a_changed_product_upserts_a_manual_alias_and_rebinds_every_sibling_line():
@@ -235,10 +239,12 @@ def test_a_changed_product_upserts_a_manual_alias_and_rebinds_every_sibling_line
         w = World(db)
         code = f"ZZPI-DUP-{w.tag}"
         invoice_one = _upload_kailu(db, w, {"SRTWT7443": code})
-        # Free the derived number so a second Kailu upload lands as a NEW invoice rather
-        # than a revision of this one - two current invoices of the same supplier, both
-        # carrying a line under `code`.
-        svc.update_invoice(db, str(invoice_one.id), pi_number="ZZPI-ONE")
+        # Free the identity key (S1: `supplier_ref`, not `pi_number` - a re-upload matches
+        # on it now) so a second Kailu upload lands as a NEW invoice rather than updating
+        # this one in place - two current invoices of the same supplier, both carrying a
+        # line under `code`.
+        invoice_one.supplier_ref = "ZZPI-ONE"
+        db.flush()
         invoice_two = _upload_kailu(db, w, {"SRTWT7443": code})
         assert str(invoice_two.id) != str(invoice_one.id)
 

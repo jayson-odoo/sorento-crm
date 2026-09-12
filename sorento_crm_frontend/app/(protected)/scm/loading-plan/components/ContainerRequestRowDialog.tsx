@@ -119,7 +119,7 @@ export function ContainerRequestRowDialog({
               tone="text-rose-700"
               sub={
                 <>
-                  need {fmtInt(row.open_so_need)} - pool stock {fmtInt(row.on_hand)} - SPO{' '}
+                  need {fmtInt(row.open_so_need)} - on hand {fmtInt(row.on_hand)} - SPO{' '}
                   {fmtInt(row.incoming_spo)} = {fmtInt(row.suggested_qty)}
                   <br />
                   {holdingLabel(row)}
@@ -155,24 +155,26 @@ export function ContainerRequestRowDialog({
                       </td>
                     </tr>
                   ))}
-                  {/* Muted, and its Counted column is a dash: this stock is real and it is
-                      deliberately not part of the ask, so showing it as zero would read as a
-                      missing number rather than a decision. */}
-                  <tr className="border-t border-border text-muted-foreground">
+                  {/* Counted like any site row now (R7, captain 8 Sep 2026): the ask already
+                      nets this stock, since the demand side counts the project need it
+                      covers. No longer muted - a counted row reads as counted. */}
+                  <tr className="border-t border-border">
                     <td className="py-1" title={row.group_locations.warehouse_codes.join(', ')}>
                       {row.group_locations.warehouse_codes.slice(0, 2).join(', ') || EM_DASH}
                       {row.group_locations.count > 2
                         ? `, ... (${row.group_locations.count})`
                         : ''}
                     </td>
-                    <td className="py-1">Group locations</td>
+                    <td className="py-1 text-muted-foreground">Group locations</td>
                     <td className="py-1 text-end tabular-nums">
                       {fmtInt(row.group_locations.on_hand)}
                     </td>
                     <td className="py-1 text-end tabular-nums">
                       {fmtInt(row.group_locations.incoming_spo)}
                     </td>
-                    <td className="py-1 text-end">{EM_DASH}</td>
+                    <td className="py-1 text-end tabular-nums">
+                      {fmtInt(row.group_locations.on_hand + row.group_locations.incoming_spo)}
+                    </td>
                   </tr>
                 </tbody>
               </table>

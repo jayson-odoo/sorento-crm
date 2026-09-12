@@ -1626,6 +1626,12 @@ def _partial_dym_block(  # noqa: PLR0912, PLR0915 - one ported block, kept whole
     # misleading "no".
     dym_ann = None
     for name in ("dym-annotate-partial", "dym-annotate"):
+        # The `dym-annotate` fallback is CODE-KEYED, like the partial annotator beside it.
+        # `probe_uuid_keyed` is set on the FULL lane only (`miss_suggest._dym_plan`), and the
+        # full lane's own miss is claimed by `build_suggest_offer` before this block runs, so
+        # a uuid-keyed payload does not reach here today. Widening that flag past `full` would
+        # need this block to take `build_suggest_offer`'s uuid-to-code projection too (#750),
+        # or every code below would miss `dym_probed` and render bare.
         if jsc.truthy(outcome.get(name)):
             dym_ann = outcome.get(name)
             break

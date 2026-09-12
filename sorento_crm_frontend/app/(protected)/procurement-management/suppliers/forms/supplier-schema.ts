@@ -21,7 +21,7 @@ export const SupplierSchema = z.object({
   city: z.string().max(100, { message: 'City must not exceed 100 characters.' }).optional().nullable(),
   state: z.string().max(100, { message: 'State must not exceed 100 characters.' }).optional().nullable(),
   postal_code: z.string().max(20, { message: 'Postal code must not exceed 20 characters.' }).optional().nullable(),
-  country: z.string().max(100, { message: 'Country must not exceed 100 characters.' }).optional().nullable(),
+  country_id: z.string().uuid().optional().nullable(),
   payment_terms_days: z
     .number()
     .int({ message: 'Payment terms must be a whole number.' })

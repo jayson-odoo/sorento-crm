@@ -22,12 +22,15 @@ from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
 from app.models.base import company_scope
 from app.models.portal import PortalToken
+from app.models.dealer_kit import Page
 from app.schemas.price_tag import (
     DebtorForAgentItem,
+    PortalTagSheetDesignResponse,
     PriceTagRequestCreate,
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
     PromotionLookupItem,
+    ResolvedLineData,
     TagItemLookupItem,
 )
 from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
@@ -38,6 +41,8 @@ from app.services.price_tag_request_service import (
     STATUS_APPROVED,
     STATUS_CHANGES_REQUESTED,
     STATUS_NEW,
+    STATUS_PROOF_READY,
+    STATUS_READY,
 )
 from app.services.storage_router import get_backend
 from app.services.uuid_path_param import validate_uuid_path
@@ -127,6 +132,86 @@ def portal_get_price_tag_request(
     request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     return _detail_body(db, _require_own_request(db, token, request_id))
+
+
+# ---------------------------------------------------------------------------
+# Design preview (D11)
+# ---------------------------------------------------------------------------
+
+# The design is only shown once marketing has produced one to show and the
+# salesperson's own review of it makes sense - not while it is still being
+# designed, and still visible after approval so they can look at what they
+# approved (AC-S4-4).
+_DESIGN_VISIBLE_STATUSES = frozenset(
+    {STATUS_PROOF_READY, STATUS_CHANGES_REQUESTED, STATUS_APPROVED, STATUS_READY}
+)
+
+
+@router.get(
+    "/submissions/price_tag_request/{request_id}/design",
+    response_model=PortalTagSheetDesignResponse,
+)
+def portal_get_price_tag_design(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The salesperson's real design preview (D11) - the same document AND
+    resolved line data the CRM designer reads, so the two screens can never
+    disagree about what a tag says.
+
+    404, never 403, everywhere the design is not meant to be seen yet: a
+    status the FE's own review section does not offer (``new``, ``designing``),
+    or a portal DRAFT regardless of what its status happens to be (a draft's
+    status is ``new`` anyway, but this is its own reason, not a consequence of
+    the status check) - so a design in progress never leaks its existence to
+    the portal before marketing means it to.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+    if req.portal_draft_at is not None or req.status not in _DESIGN_VISIBLE_STATUSES:
+        raise AppException(
+            status_code=404,
+            message="Price tag request not found.",
+            code="NOT_FOUND",
+        )
+    if not req.page_id:
+        raise AppException(
+            status_code=404,
+            message="No design exists for this request yet.",
+            code="NOT_FOUND",
+        )
+    page = db.query(Page).filter(Page.id == req.page_id).first()
+    if not page:
+        raise AppException(
+            status_code=404,
+            message="No design exists for this request yet.",
+            code="NOT_FOUND",
+        )
+
+    # Function-local: the resolver lives on the CRM router module, imported
+    # here rather than duplicated so the two screens can never resolve a
+    # different document for the same page (module-cycle-free the same way
+    # the export import below is).
+    from app.api.v1.dealer_kit.price_tag_requests import resolve_tag_sheet_design
+    from app.services.dealer_kit import tag_data_service
+
+    # prefer="version": the salesperson must see what was deliberately
+    # SAVED (and sent to them for review), never marketing's live
+    # in-progress autosave - the CRM designer stays draft-first (B1's own
+    # reasoning), this screen does not (review D11 follow-up).
+    doc_fields = resolve_tag_sheet_design(db, page, prefer="version")
+    # L3: same company scope as the sibling lookups (portal_lookup_tag_items,
+    # portal_lookup_promotions) - unscoped, a two-company contact's line
+    # resolution could read the OTHER company's product row for a duplicated
+    # code instead of the one this request actually points at.
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        lines = [
+            ResolvedLineData.model_validate(row)
+            for row in tag_data_service.resolve_request_line_data(db, req)
+        ]
+    return PortalTagSheetDesignResponse(**doc_fields, lines=lines)
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +381,19 @@ def portal_submit_price_tag_request(
             exc_info=True,
         )
 
+    # D8: auto-assign to whatever tracker the emit above just opened. Its own
+    # try/except - a bug here must not turn a successful submit into a
+    # failed one; the request simply stays `new` and unclaimed, same as if
+    # no active config existed at all (AC-S3-3).
+    try:
+        PriceTagRequestService.auto_assign_from_tracker(db, req)
+    except Exception:
+        logger.warning(
+            "Auto-assign from tracker failed for price_tag_request %s",
+            req.id,
+            exc_info=True,
+        )
+
     db.commit()
     return PriceTagRequestResponse.model_validate(req)
 
@@ -321,8 +419,17 @@ def portal_approve_price_tag_request(
             code="NOT_FOUND",
         )
 
+    # D12's auto-export needs a requesting user; the portal has no CRM user
+    # of its own, so this passes the request's own assignee - the marketing
+    # person who designed it, and the natural "who asked for this PDF" answer
+    # for an export the SALESPERSON'S approve click triggered.
+    if not req.assigned_to_id:
+        logger.warning(
+            "portal_approve_price_tag_request: %s has no assignee, export skipped",
+            req.id,
+        )
     result = PriceTagRequestService.transition_status(
-        db, request_id, STATUS_APPROVED,
+        db, request_id, STATUS_APPROVED, user_id=req.assigned_to_id,
     )
     db.commit()
     return PriceTagRequestResponse.model_validate(result)

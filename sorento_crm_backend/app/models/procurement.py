@@ -56,7 +56,13 @@ class Supplier(Base, CompanyScopedMixin):
     city = Column(String(100), nullable=True)
     state = Column(String(100), nullable=True)
     postal_code = Column(String(20), nullable=True)
-    country = Column(String(100), nullable=True)
+    # S2 (`PLAN-local-supplier-oi-routing.md`): replaces the free-text `country` column,
+    # NULL on every row it ever held. RESTRICT: a country still named by a supplier is not
+    # a country `CountryService.delete_country` may remove out from under it.
+    country_id = Column(
+        UUID(as_uuid=False), ForeignKey("countries.id", ondelete="RESTRICT"),
+        nullable=True, index=True,
+    )
     payment_terms_days = Column(Integer, default=30, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     # SCM (M0): denormalized latest composite supplier score (written by M2 job).
@@ -66,7 +72,16 @@ class Supplier(Base, CompanyScopedMixin):
 
     product_suppliers = relationship("ProductSupplier", back_populates="supplier")
     inbound_shipments = relationship("InboundShipment", back_populates="supplier")
-    
+    country = relationship("Country")
+
+    @property
+    def country_code(self) -> "str | None":
+        return self.country.code if self.country else None
+
+    @property
+    def country_name(self) -> "str | None":
+        return self.country.name if self.country else None
+
     __table_args__ = (
         Index(
             "uq_suppliers_company_supplier_code",
@@ -74,7 +89,6 @@ class Supplier(Base, CompanyScopedMixin):
             unique=True,
         ),
         Index("ix_suppliers_is_active", "is_active"),
-        Index("ix_suppliers_country", "country"),
         Index("ix_suppliers_city", "city"),
     )
 
@@ -406,13 +420,18 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
         # constraint that made a second factory's packing list overwrite the first's.
         # `NULLS NOT DISTINCT` (PG 15+) keeps a supplier-less line unique on the product
         # alone, so the n8n PDF path behaves exactly as it did.
+        #
+        # NON-unique since S4 (AC-D1, `scm-supplier-documents-pi-first`): a supplier's own
+        # carton split (Kailu's SRTSC14-GM shipping 50@50/ctn and 35@35/ctn) is two lines of
+        # the same (shipment, product, supplier), not one - convert writes one shipment
+        # line per matched packing row now. Still indexed, for the lookups that filter on
+        # the same three columns; renamed off the `uk_` prefix so its own name does not
+        # keep claiming a uniqueness the table no longer has.
         Index(
-            "uk_inbound_shipment_lines_ship_prod_sup",
+            "ix_inbound_shipment_lines_ship_prod_sup",
             "shipment_id",
             "product_id",
             "supplier_id",
-            unique=True,
-            postgresql_nulls_not_distinct=True,
         ),
     )
 
@@ -518,6 +537,45 @@ class SPOAllocation(Base, CompanyScopedMixin):
     #: to a held `InboundShipment` - `inbound_shipment_id` is the resolved
     #: link, this is the raw fact so a later shipment can still be relinked.
     container_number = Column(String(100), nullable=True)
+    #: The receipt a DECLARER stated for this line, as opposed to the one a GRN
+    #: proves (spo-xlsx-supersede D28c, migration 488). Written only by AutoCount's
+    #: own `qty_received` (TransferedQty) on a push and by the supersede / dedupe
+    #: carry; never by the GRN recompute, which is exactly why it exists:
+    #: `quantity_received` alone cannot say whether a figure was stated or derived,
+    #: so deleting a GRN either erased AutoCount's own statement or stranded a
+    #: redistributed share on a sibling with nothing behind it. The group recompute
+    #: writes `max(stated_received, its share of the approved picking total)`.
+    #: NULL reads as 0: every row written before this column existed stated nothing.
+    stated_received = Column(Integer, nullable=True)
+    #: When the ESB stopped naming this line (spo-xlsx-supersede D28d, migration
+    #: 488). Set by the leftover sweep (a re-push of the same DocKey no longer
+    #: states it) and by the DocKey-change path (the document was re-created, so
+    #: the old DocKey's rows are history); cleared the moment a push names the
+    #: row again. Without it a retired line is indistinguishable from a live
+    #: fully received one - it rejoined its `(spo_number, product, location)`
+    #: group, took a share of a sibling's GRN, and could be REOPENED when a GRN
+    #: was deleted, showing 58 open units on a 29-unit order. The group
+    #: recompute skips a retired row entirely.
+    retired_at = Column(DateTime(timezone=True), nullable=True)
+    # --- AutoCount linkage widen (V5, ingest-contract-2-2-so-links) ------------------
+    #: The SOURCE purchase-order line this shipping-order line was raised from,
+    #: same `"{database}:{DocKey}:{DtlKey}"` format as `source_ref` above. Raw
+    #: pass-through, never resolved into an id: `po_line_id` above already means
+    #: something narrower (a Sorento-raised SPO's own supply chain), and this is
+    #: what lets an order-inquiry row that reserved against this SPO print the
+    #: purchase order the buyer actually reads. NULL when the ESB has not stated
+    #: one; an omitted field on a re-push never clears a value already stored
+    #: (absent_vs_null, `shipping_order_ingest_service._line_values`).
+    from_po_line_ref = Column(String(255), nullable=True)
+    #: The source purchase order's own document number, alongside the ref above.
+    from_po_number = Column(String(100), nullable=True)
+    #: The exact sales-order line this shipping-order line was raised for,
+    #: same format and same B2 uniform-persistence rule as
+    #: `PurchaseOrderLine.from_so_line_ref` below - see its comment.
+    from_so_line_ref = Column(String(255), nullable=True)
+    #: The cross-book case of a sales-order line reference - see the
+    #: identical comment on `PurchaseOrderLine.from_so_external` below.
+    from_so_external = Column(JSONB, nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -526,7 +584,17 @@ class SPOAllocation(Base, CompanyScopedMixin):
     storage_zone = relationship("StorageZone", back_populates="spo_allocations")
     product = relationship("Product", back_populates="spo_allocations")
     uom = relationship("UnitOfMeasure", foreign_keys=[uom_id])
-    picking_lines = relationship("PickingLine", back_populates="spo_allocation")
+    #: `passive_deletes=True` (spo-xlsx-supersede, reviewer cleanup): the FK is
+    #: `ON DELETE SET NULL`, and without this SQLAlchemy loads this collection
+    #: on `session.delete(allocation)` and NULLs each child's
+    #: `spo_allocation_id` ITSELF - which would undo a repoint the first-push
+    #: supersede has just made (D27) whenever the collection was already in the
+    #: identity map. Leaving it to the database makes the
+    #: repoint-then-delete ordering structural rather than a matter of which
+    #: rows happened to be loaded.
+    picking_lines = relationship(
+        "PickingLine", back_populates="spo_allocation", passive_deletes=True
+    )
     
     __table_args__ = (
         Index("ix_spo_allocations_inbound_shipment_id", "inbound_shipment_id"),
@@ -767,6 +835,32 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
     line_status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # --- AutoCount linkage widen (V5, ingest-contract-2-2-so-links) ------------------
+    # B2 (review ruling): every field the wire sends is persisted uniformly on
+    # BOTH `purchase_order_lines` and `spo_allocations`, not on `spo_allocations`
+    # alone - `from_so_line_ref` in particular is the whole point of this
+    # slice, and a purchase order pushed before its sales order must not lose
+    # the exact ref forever. Same format as `source_ref` above
+    # (`"{database}:{DocKey}:{DtlKey}"`), joinable to `sales_order_lines
+    # .source_ref`. `order_link_service.write_line_ref_claims` resolves it
+    # at write time when possible; `_exact_so_line_for` re-reads it straight
+    # off this column on a later `resolve()` sweep when it was not - which is
+    # the reason it is stored here at all, not merely consumed and discarded.
+    from_so_line_ref = Column(String(255), nullable=True)
+    #: The SOURCE purchase-order line this one was raised from (an
+    #: inter-company book transfer chain), same format as the ref above -
+    #: raw pass-through, never resolved into an id.
+    from_po_line_ref = Column(String(255), nullable=True)
+    #: The source purchase order's own document number, alongside the ref.
+    from_po_number = Column(String(100), nullable=True)
+    # The cross-book case of a sales-order line reference - the sales order
+    # lives in ANOTHER AutoCount database, so its key cannot resolve here.
+    # Recorded raw, verbatim from the payload's `from_so_external` object -
+    # the smallest honest place for a fact that never becomes a Sorento id
+    # (see `order_link_service.write_line_ref_claims`'s docstring for why
+    # this is not a `scm.order_link_claim` row: that table's identity
+    # requires a real `so_number`, which a cross-book key does not carry).
+    from_so_external = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

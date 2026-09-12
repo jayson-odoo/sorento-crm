@@ -13,6 +13,11 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  ToolbarButton,
+  ToolbarDropdownButton,
+  type ToolbarTrailingAction,
+} from '../components/CanvasToolbar';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { toast } from '@/lib/toast';
@@ -36,17 +41,68 @@ vi.mock('../../services/tagTemplateService', () => ({
   restoreTemplateVersion: vi.fn(),
   getTemplateVersion: vi.fn(),
   listTemplateVersions: vi.fn(),
+  listPublishedTemplates: vi.fn(async () => []),
+}));
+
+// AC-S1-1: the template editor's Tag Size control is supposed to show the
+// SAME "Template sizes" (published templates) + "Saved sizes"
+// (`useTagSizesQuery`) grouping the request designer's own control shows -
+// mocked the same way `RequestTagDesigner.test.tsx` mocks it (a react-query
+// hook this page's own test has no `QueryClientProvider` for).
+const mockUseTagSizesQuery = vi.fn(() => ({ data: [] as unknown[] }));
+vi.mock('../../tag-sizes/hooks/useTagSizes', () => ({
+  useTagSizesQuery: (...args: unknown[]) => mockUseTagSizesQuery(...(args as [])),
+  useDeleteTagSizePreset: () => ({ run: vi.fn(), targetId: null, isPending: false }),
+  useCreateTagSize: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
 }));
 
 vi.mock('../components/TagCanvasEditor', () => ({
   TagCanvasEditor: ({
     doc,
     onLayersChange,
+    leftRail,
+    toolbarTrailing,
   }: {
     doc: { layers: { id: string }[] };
     onLayersChange?: (layers: { id: string }[]) => void;
+    // S7 moved Versions/Save/Full screen INTO the toolbar's own trailing
+    // group; S1 puts the Tag Size control in the left rail - both are real
+    // nodes the page hands this component as props, so the stand-in has to
+    // actually render them (not just accept and drop them) for a test to
+    // reach the buttons/control living inside either one.
+    leftRail?: React.ReactNode;
+    // S2 review turned `toolbarTrailing` into a data array (real arrow-key
+    // nav + the menu closing itself once an item is picked) - the stand-in
+    // renders it through the SAME real `ToolbarButton`/`ToolbarDropdownButton`
+    // `CanvasToolbar` itself uses, rather than reinventing it.
+    toolbarTrailing?: ToolbarTrailingAction[];
   }) => (
     <div data-testid="canvas-editor">
+      <div data-testid="left-rail">{leftRail}</div>
+      <div data-testid="toolbar-trailing">
+        {toolbarTrailing?.map((action) =>
+          action.kind === 'menu' ? (
+            <ToolbarDropdownButton
+              key={action.id}
+              icon={action.icon}
+              label={action.label}
+              disabled={action.disabled}
+            >
+              {action.items}
+            </ToolbarDropdownButton>
+          ) : (
+            <ToolbarButton
+              key={action.id}
+              icon={action.icon}
+              iconClassName={action.iconClassName}
+              label={action.label}
+              onClick={action.onClick}
+              disabled={action.disabled}
+              active={action.active}
+            />
+          ),
+        )}
+      </div>
       editor: {doc.layers.length} layers
       {/* Simulates an in-canvas edit that has NOT been Saved yet - the same
           stream the real canvas sends on every layer change (B1, S1). */}
@@ -103,6 +159,7 @@ vi.mock('../components/TemplateVersionsSheet', () => ({
 import {
   getTemplate,
   getTemplateVersion,
+  listPublishedTemplates,
   publishTemplate,
   restoreTemplateVersion,
   updateTemplate,
@@ -111,6 +168,7 @@ import TagTemplateEditorPage from './page';
 
 const mockGet = vi.mocked(getTemplate);
 const mockUpdate = vi.mocked(updateTemplate);
+const mockListPublished = vi.mocked(listPublishedTemplates);
 const mockPublish = vi.mocked(publishTemplate);
 const mockGetVersion = vi.mocked(getTemplateVersion);
 const mockRestore = vi.mocked(restoreTemplateVersion);
@@ -573,5 +631,107 @@ describe('draft autosave - flush points (S4, S1/S2)', () => {
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
     expect(mockUpdate.mock.calls[0][2]).toEqual({ keepalive: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S7: the header carries Publish as the only action button; Versions/Save/
+// Full screen moved into the toolbar's own trailing group (AC-S7-2).
+// ---------------------------------------------------------------------------
+
+describe('template editor chrome (S7, AC-S7-2)', () => {
+  it('the trailing toolbar group carries Versions, Save and Full screen', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    const trailing = within(screen.getByTestId('toolbar-trailing'));
+    expect(trailing.getByRole('button', { name: /Versions/ })).toBeInTheDocument();
+    expect(trailing.getByRole('button', { name: /Save/ })).toBeInTheDocument();
+    expect(trailing.getByRole('button', { name: /Full screen/ })).toBeInTheDocument();
+  });
+
+  it('the page header carries Publish as the only action button (no Versions/Save/Full screen there)', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    // Everything OUTSIDE the mocked canvas editor (and therefore outside its
+    // toolbar-trailing stand-in) is the page's own header/chrome.
+    const trailingNode = screen.getByTestId('toolbar-trailing');
+    const outsideCanvas = Array.from(document.body.querySelectorAll('button')).filter(
+      (btn) => !trailingNode.contains(btn),
+    );
+    const names = outsideCanvas.map((btn) => btn.textContent);
+    expect(names.some((t) => t?.includes('Publish'))).toBe(true);
+    expect(names.some((t) => t?.match(/^Versions/))).toBe(false);
+    expect(names.some((t) => t?.match(/^Full screen/))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S1: the Tag Size control - AC-S1-1 asks for the SAME "Template sizes" +
+// "Saved sizes" grouping the request designer's own control shows. The
+// coder's own S1 commit message notes this as a deliberate scope trim
+// ("Its preset dropdown seeds from tagSizePresets([])... which I could not
+// add without breaking that test") - this is the test that trim now has to
+// stop breaking.
+// ---------------------------------------------------------------------------
+
+describe('Tag Size control on the template editor (S1, AC-S1-1)', () => {
+  it('lists a "Template sizes" group derived from PUBLISHED templates, not just the starter fallback', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockListPublished.mockResolvedValue([
+      {
+        id: 't-diy',
+        name: 'DIY Tag',
+        family: 'ala_carte',
+        doc: { layers: [], width_mm: 70, height_mm: 45 },
+        print_size: { width_mm: 70, height_mm: 45 },
+        created_at: '2026-08-01T00:00:00Z',
+        updated_at: '2026-08-01T00:00:00Z',
+        published_version_id: 'v1',
+        published_version_no: 1,
+      } as never,
+    ]);
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    const rail = within(screen.getByTestId('left-rail'));
+    fireEvent.click(rail.getByRole('combobox'));
+
+    expect(await screen.findByText('Template sizes')).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: /DIY Tag \(70 x 45 mm\)/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('lists a "Saved sizes" group from useTagSizesQuery, same as the request designer', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockListPublished.mockResolvedValue([]);
+    mockUseTagSizesQuery.mockReturnValue({
+      data: [
+        {
+          id: 'size-1',
+          name: 'My favourite',
+          width_mm: 80,
+          height_mm: 50,
+          created_by: null,
+          created_by_name: null,
+          created_at: '2026-08-01T00:00:00Z',
+          updated_at: '2026-08-01T00:00:00Z',
+        },
+      ],
+    });
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    const rail = within(screen.getByTestId('left-rail'));
+    fireEvent.click(rail.getByRole('combobox'));
+
+    expect(await screen.findByText('Saved sizes')).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: /My favourite \(80 x 50 mm\)/ }),
+    ).toBeInTheDocument();
   });
 });

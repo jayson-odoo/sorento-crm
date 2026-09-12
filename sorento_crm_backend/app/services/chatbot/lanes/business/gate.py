@@ -52,11 +52,18 @@ ALLOWED: dict[str, list[str]] = {
         "certificate",
     ],
     "promotion": ["product", "promotion", "category", "brand"],
-    "inventory": ["product", "category", "brand"],
+    "inventory": ["product", "warehouse", "category", "brand"],
     "order": ["order", "customer_order", "transporter", "customer", "product"],
     "incoming": ["product", "inbound_shipment", "category", "brand"],
     "forms": ["form"],
     "portal_link": [],
+    # 8 Sep 2026 (chatbot-warehouse-entity-and-last-in): replaces the old unscoped
+    # pass-through (no row = "domain not in matrix", see `run_gate` below) now that the
+    # tool takes `warehouse_ids`. Side effect: `ALLOWS_EMPTY` carries no `spo_allocation`
+    # row, so a bare "last in" with ZERO entities now fails the gate instead of passing
+    # through unscoped, as it used to. Per the plan, the owner accepted this matrix as
+    # written; not adding an `ALLOWS_EMPTY` row is deliberate, not an oversight.
+    "spo_allocation": ["product", "warehouse", "category", "brand"],
 }
 
 # S1 (promotion-picker): a promotion cannot be answered by a general search. Flipping
@@ -251,6 +258,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     gate_reason = "ok"
     gate_clarification = ""
     compatible_entities: list[dict[str, Any]] = entities
+    # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
+    # per token, the incompatible types it ONLY matched - never populated for a token that
+    # also carries an allowed-type match. `token -> [types]`, so `miss_resolutions`
+    # (`miss_suggest.py`) can force such a token past its own "already resolved" guard
+    # WITHOUT this file knowing anything about the did-you-mean machinery it feeds.
+    incompatible_only: dict[str, list[str]] = {}
 
     if allowed is None:
         # `${domain}` in a JS template literal, where `domain` is `parser.domain_hint ??
@@ -260,6 +273,22 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         gate_reason = f"domain '{jsc.js_string(domain)}' not in matrix; passing through unscoped"
     else:
         compatible_entities = [e for e in entities if e["entity_type"] in allowed]
+        # Computed UNCONDITIONALLY (not only on the all-incompatible branch below): B1
+        # (turn 72146a1e "srtwc8610-sh certificate") needs it on a turn that otherwise
+        # PASSES - an attachment_type token resolved fine, so `compatible_entities` is
+        # non-empty and this domain's blanket "types [...] incompatible" branch never
+        # fires, yet the PRODUCT token's only match is still a product_set. Per-token
+        # (OR-mode `resolutions`) only; an AND-mode intersection has no single token to
+        # blame a miss on.
+        for resolution in jsc.array(resolver.get("resolutions")):
+            matches = jsc.array(jsc.get(resolution, "matches"))
+            if not matches:
+                continue
+            types = [jsc.get(m, "entity_type") for m in matches if jsc.truthy(m)]
+            if types and not any(t in allowed for t in types):
+                token = jsc.get(resolution, "token")
+                if jsc.truthy(token):
+                    incompatible_only[jsc.js_string(token)] = list(dict.fromkeys(types))
         if len(entities) == 0:
             gate_passed = ALLOWS_EMPTY.get(domain) is True
             gate_reason = (
@@ -302,8 +331,17 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     # be allowed to scope the lookup on its own: certificate_ids alone satisfies the
     # tool's narrowing tuple (OR semantics) and returns every product carrying it.
     # Resolver-derived on purpose - NOT `current_message`, a known-corrupted signal.
+    #
+    # D10c (turn 72146a1e "srtwc8610-sh certificate"): a genuinely-unresolved token is one
+    # shape of "missed"; a token whose only match is `incompatible_only` (a flyer/set code
+    # hitting `product_set`) is the SAME shape from the customer's chair - AND-mode's OWN
+    # gate never trips on it (the attachment_type token resolved fine, so `compatible_
+    # entities` is non-empty and the blanket incompatible-types branch above never runs),
+    # so this is the one place that catches it before the fetch scopes on the certificate
+    # alone and answers about products that were never the one asked about.
     if gate_passed and domain == "product_attachment":
         unresolved = [_lower_trim_nullish(t) for t in jsc.array(resolver.get("unresolved_tokens"))]
+        unresolved += [_lower_trim_nullish(t) for t in incompatible_only]
         product_raws = {
             _lower_trim_nullish(jsc.get(e, "raw"))
             for e in jsc.array(parser.get("entities"))
@@ -849,15 +887,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     # its NAME as text and that sprays siblings (exec 13212841). Fails open: applied only
     # when every pinned uuid survived resolution.
     if not require_specific:
-        pins = [
-            e
-            for e in jsc.array(parser.get("entities"))
-            if jsc.truthy(e) and jsc.get(e, "current_message") is True and jsc.truthy(jsc.get(e, "uuid"))
-        ]
-        pin_uuids = {jsc.js_string(jsc.get(e, "uuid")) for e in pins}
         # Gate entry on CARRIED pins too (exec 13705266): a customer picked two turns ago
         # comes back with current_message:false, and keying entry on this-turn pins alone
-        # skipped both the re-seat and the family widening.
+        # skipped both the re-seat and the family widening. #715 (H77/AC-825) finished
+        # the job: every reader below was widened from a this-turn-only `pins` /
+        # `pin_uuids` (now removed - dead once `pin_types`, `pin_bases`, `pin_codes` and
+        # `_keep`'s own uuid check all moved to `pins_all` / `pin_uuids_all`) to the
+        # same carried-or-current set the entry gate already used.
         pins_all = [
             e for e in jsc.array(parser.get("entities")) if jsc.truthy(e) and jsc.truthy(jsc.get(e, "uuid"))
         ]
@@ -886,7 +922,19 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 label = label if jsc.truthy(label) else None
                 compatible_entities = [*compatible_entities, {"uuid": u, "entity_type": t, "code": label}]
 
-            pin_types = {t for t in (jsc.lower_or_empty(jsc.get(e, "hint")) for e in pins) if t}
+            # Issue #715 (H77/AC-825, 7 Sep 2026): built from `pins_all`, not `pins`. A
+            # customer picked on an EARLIER turn re-enters this whole block on its
+            # CARRIED pin alone (the `pin_uuids_all` entry gate above, exec 13705266's
+            # own fix) - but `pin_types` stayed scoped to THIS-turn pins, so a carried
+            # pick left it EMPTY, and `_keep` below (`t not in pin_types: return True`)
+            # then kept every type "untouched", including every one of the resolver's
+            # own re-resolved customer rows. The re-seat half of this mechanism (using
+            # `pins_all` already) stopped the "which company" ASK; this is the half that
+            # was supposed to stop the ANSWER widening and did not - production debtor
+            # code 301-C001 is shared by 99 customer rows, the resolver returns up to
+            # its own limit (15) of them for a bare re-resolved text search, and a
+            # customer who had already picked ONE of them got orders from all 15.
+            pin_types = {t for t in (jsc.lower_or_empty(jsc.get(e, "hint")) for e in pins_all) if t}
             # Gated on ALL pins: the re-seat loop above already put every pinned uuid back,
             # so checking the wider set just confirms it did its job before the family widens.
             all_present = all(
@@ -942,11 +990,17 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     for m in flat
                     if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid"))
                 }
+                # #715: `pin_uuids_all`, not `pin_uuids` - see the `pin_types` note above.
+                # A carried pin's own row is usually ABSENT from `row_by_uuid` (the
+                # resolver's bare-text re-search does not happen to return it among its
+                # limit), so this stays empty for exactly the shape #715 is about - which
+                # is right: no OTHER base to widen to, so only the pinned uuid itself
+                # (re-seated above) survives `_keep` below.
                 pin_bases = {
                     b
                     for b in (
                         _cust_base(row_by_uuid.get(u))
-                        for u in pin_uuids
+                        for u in pin_uuids_all
                         if jsc.truthy(row_by_uuid.get(u))
                         and jsc.js_string(jsc.get(row_by_uuid.get(u), "entity_type")).lower()
                         == "customer"
@@ -962,7 +1016,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     c
                     for c in (
                         jsc.js_string(jsc.get(row_by_uuid.get(u), "canonical_code") or "").upper()
-                        for u in pin_uuids
+                        for u in pin_uuids_all
                         if jsc.truthy(row_by_uuid.get(u))
                         and jsc.js_string(jsc.get(row_by_uuid.get(u), "entity_type")).lower()
                         != "customer"
@@ -974,8 +1028,8 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     t = jsc.js_string(jsc.get(c, "entity_type")).lower()
                     if t not in pin_types:
                         return True  # other types untouched
-                    if jsc.js_string(jsc.get(c, "uuid")) in pin_uuids:
-                        return True  # the pinned row itself
+                    if jsc.js_string(jsc.get(c, "uuid")) in pin_uuids_all:
+                        return True  # the pinned row itself, this turn or carried
                     if jsc.js_string(jsc.get(c, "uuid")) in fam_added:
                         return True  # remembered family of the pick
                     if t != "customer":  # FIX C: same-code twins survive
@@ -1410,5 +1464,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     if domain in ALLOWED:
         gate_debug["allowed_lookup"] = ALLOWED[domain]
     gate_debug["entities_count"] = len(entities)
+    if incompatible_only:
+        gate_debug["incompatible_only"] = incompatible_only
     out["gate_debug"] = gate_debug
     return out

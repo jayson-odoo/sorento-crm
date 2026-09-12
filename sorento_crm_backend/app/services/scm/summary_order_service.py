@@ -14,13 +14,21 @@ did, a report row and the panel beside it could state different shortfalls for t
 product on the same screen, which is the one class of disagreement that ends trust in a
 planning tool.
 
-**The project / dealer split reads `sales_orders.order_type`**, decided while scoping this
-slice: `demand_class` is populated in 0 of 17 rows while `order_type` carries project / dealer
-on 14 of them. A row whose type is unset is counted in NEITHER aggregate and surfaced as
-unclassified rather than defaulted into one, because defaulting decides a split nobody stated.
+**The project / dealer split reads `sales_orders.demand_class`** (updated 9 Sep 2026 -
+`order_type` was the source while `demand_class` sat empty on every row; today `demand_class`
+is populated project 11,379 / retail 75,447 / NULL 466). A row whose class is unset is
+counted in NEITHER aggregate and surfaced as unclassified rather than defaulted into one,
+because defaulting decides a split nobody stated.
 
 **No ids on the wire.** Everything is addressed by human code. `run_id` is the single
 exception and it is opaque: it says which week is being read and is never rendered.
+
+**The sheet's Supplier column reads purchase-order history, not `product_suppliers`**
+(S15, PLAN-reorder-feedback-9sep.md, ruling 1, 10 Sep 2026 - `_last_po_supplier_map`).
+The link table auto-links nearly every product to one placeholder supplier (DEFAULT) on
+create/import (`resolve_default_supplier_id`), so reading it here would print "DEFAULT"
+on effectively every row; the newest PO line names who the product was actually bought
+from.
 """
 from __future__ import annotations
 
@@ -36,6 +44,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.project_so import INQUIRY_CANCELLED
 from app.models.procurement import (
     ProductSupplier,
     PurchaseOrder,
@@ -51,14 +60,18 @@ from app.models.scm import (
     ReorderRun,
     SupplierPerformance,
 )
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
-from app.services.scm import plan_grain
+from app.services.scm import cover_service, plan_grain, po_book_service
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.demand import (
     ACTIVE_DECISION_STATE,
     BUY_VERB,
     UNPLACED_INQUIRY_STATE,
 )
+from app.services.scm.pool_predicate import active_site_pool_sql
+from app.services.scm.reorder_policy import resolve_global_cover_scope
+from app.services.scm.site_pool_supply import open_po_by_product, open_spo_by_product
 from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.scm.reorder_engine import round_order_qty as eng_round_order_qty
 from app.services.scm.cost_capture_service import cost_variance
@@ -179,6 +192,7 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     computed_at = to_naive_datetime(datetime.now(MALAYSIA_TZ))
     run = _run_for(db, run_id)
     is_legacy = plan_grain.is_legacy_run(run)
+    decision_grain = plan_grain.decision_grain_of(run)
 
     # Read per LOCATION, not pre-summed: the channel breakdown, the shared supply
     # references and the location split all live on the individual frozen rows, and the
@@ -189,7 +203,9 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
             ReorderRecommendation.warehouse_id,
             ReorderRecommendation.rec_type,
             ReorderRecommendation.rounded_qty,
+            ReorderRecommendation.pool_warehouse_id,
             ReorderRecommendation.inputs,
+            ReorderRecommendation.triggered_reason,
         )
         .filter(
             ReorderRecommendation.run_id == run_id,
@@ -200,12 +216,21 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     by_product: dict[str, list] = {}
     for r in rec_rows:
         by_product.setdefault(str(r.product_id), []).append(r)
-    product_ids = [pid for pid, recs in by_product.items() if _belongs_on_the_book(recs)]
+    product_ids = [pid for pid, recs in by_product.items()
+                   if _belongs_on_the_book(recs, decision_grain)]
     if not product_ids:
         return 0
 
     positions = CoverageService(db).network_positions(product_ids)
-    demand = _demand_aggregates(db, product_ids)
+    # PLAN-reorder-one-formula.md S2/SF-2: on the RUN'S OWN WINDOW. `dealer_outstanding`
+    # itself reads the recs' frozen `retail_committed` below, which is horizoned; the line
+    # count and the ageing that sit beside it have to come from the same population or the
+    # sheet states "170 units across 8 lines" when only 1 of those lines is in the window
+    # (measured on the 0907 copy: 1381 open across 8 lines, 170 inside 01/01-31/12/2026).
+    demand = _demand_aggregates(
+        db, product_ids,
+        horizon_start=run.plan_horizon_start, horizon=run.plan_horizon_date,
+    )
     stats = _avg_daily_demand(db, product_ids)
     spare = _spare_pool(db, product_ids)
     products = {
@@ -213,9 +238,35 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         for p in db.query(Product).filter(Product.id.in_(product_ids)).all()
     }
     decimals = {} if is_legacy else _uom_decimal_places(db, product_ids)
-    constraints = {} if is_legacy else _supplier_constraints(db, product_ids)
+    # Read on every run, legacy included (owner ruling, 10 Sep): `_suggestion_text`'s
+    # mixture applies the supplier's MOQ/order multiple the same way the grid's own
+    # Decision label does, and a legacy run's suggestion should round the same way.
+    constraints = _supplier_constraints(db, product_ids)
     need_dates = {} if is_legacy else _earliest_project_need_dates(db, product_ids)
     wh_meta = _warehouse_meta(db, [r.warehouse_id for r in rec_rows])
+    # S16 (owner ruling, 10 Sep): the Suggestion column reads EXACTLY like the plan grid's
+    # Decision label - "Stock 1 + Buy 486". PLAN-reorder-one-formula.md S4/AC-4: on a run
+    # carrying the channel snapshot, it reads the row's OWN frozen `pool_on_hand` /
+    # `po_open_qty` (below) rather than re-deriving a cross-location cover proposal from
+    # scratch - that re-derivation was a SECOND netting of figures the engine's
+    # `rounded_qty` already nets once. A run with NO channel snapshot predates that
+    # guarantee - `rounded_qty` there is gross, never netted against cross-location stock
+    # or the PO book at all - so it keeps the ORIGINAL re-derivation.
+    cover_scope = resolve_global_cover_scope(db)
+    free_by_product = cover_service.free_stock_by_product(db, run_id, product_ids)
+    po_book = po_book_service.po_book_for_run(db, run_id).get("po_book") or {}
+    # S9/S14 (PLAN-reorder-feedback-9sep.md): the sheet's own columns, read once for the
+    # whole batch and frozen with everything else above - not gated on `is_legacy`, since
+    # the buyer's own book (deliveries, project customers, supply, receipts, MOQ) exists
+    # on every run whatever the plan's own front-planning contract version is.
+    inquiry = _project_inquiry_map(db, product_ids)
+    # S15 (ruling 1): the sheet's Supplier column is the LAST-PO supplier, never the
+    # `product_suppliers` link - see `_last_po_supplier_map`'s own docstring for why.
+    last_po_supplier = _last_po_supplier_map(db, product_ids)
+    po_open = open_po_by_product(db, product_ids)
+    incoming_spo = open_spo_by_product(db, product_ids)
+    last_receipt = _last_receipt_map(db, product_ids)
+    pool_on_hand = _pool_on_hand_map(db, product_ids)
     existing = {
         str(r.product_id): r
         for r in db.query(OrderSummaryRow)
@@ -235,7 +286,22 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         row.as_of = stamp_date
         row.on_hand = pos.on_hand if pos else 0
         row.project_demand = agg.get("project_qty", 0.0)
-        row.dealer_outstanding = agg.get("dealer_qty", 0.0)
+        # A run only states a breakdown its recommendations actually froze. That is not
+        # the same question as "is the run legacy": a run stamped under the contract but
+        # planned by an engine that predates the channel snapshot (the window between two
+        # deploys) has a contract version and no `project_need` anywhere, and reading its
+        # absent breakdown as zero would suggest ordering nothing for a product the plan
+        # said to buy.
+        has_channel = any("project_need" in (r.inputs or {}) for r in recs)
+        # PLAN-reorder-one-formula.md S2/AC-9: a run carrying the channel snapshot froze
+        # its OWN horizoned `retail_committed` on every recommendation - the same figure
+        # the grid's Retail column reads - so Dealer o/s prints THAT, not the unfiltered
+        # SO-book aggregate `_demand_aggregates` has no horizon on at all. A legacy run
+        # (no snapshot) has no such figure to read, so it keeps today's SO-book read.
+        row.dealer_outstanding = (
+            sum(float((r.inputs or {}).get("retail_committed") or 0.0) for r in recs)
+            if has_channel else agg.get("dealer_qty", 0.0)
+        )
         row.qty_on_order = pos.qty_on_order if pos else 0
         row.qty_in_transit = pos.qty_in_transit if pos else 0
         row.shortfall = pos.shortfall if pos else 0
@@ -247,13 +313,6 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         row.dealer_outstanding_line_count = agg.get("dealer_lines", 0)
         row.unclassified_line_count = agg.get("unclassified_lines", 0)
         row.max_days_outstanding = agg.get("max_days_outstanding")
-        # A run only states a breakdown its recommendations actually froze. That is not
-        # the same question as "is the run legacy": a run stamped under the contract but
-        # planned by an engine that predates the channel snapshot (the window between two
-        # deploys) has a contract version and no `project_need` anywhere, and reading its
-        # absent breakdown as zero would suggest ordering nothing for a product the plan
-        # said to buy.
-        has_channel = any("project_need" in (r.inputs or {}) for r in recs)
         if is_legacy or not has_channel:
             # Rounded UP to a whole unit, which is the conservative direction. Kept
             # verbatim - the BUY rows only, exactly as before channels existed - so
@@ -278,6 +337,44 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
             row.earliest_project_need_date = (
                 need_dates.get(pid) if channel["project_buy_qty"] > 0 else None
             )
+        # S9/S14: the sheet's own columns.
+        pid_inquiry = inquiry.get(pid) or {}
+        row.delivery_by_month = _months_list(pid_inquiry.get("months", {}))
+        row.project_customers = _customers_list(pid_inquiry.get("customers", {}))
+        sup = last_po_supplier.get(pid) or {}
+        row.supplier_name = sup.get("supplier_name")
+        row.moq = sup.get("moq")
+        po_bucket = po_open.get(pid) or {}
+        spo_bucket = incoming_spo.get(pid) or {}
+        row.po_open_qty = po_bucket.get("qty", 0.0)
+        row.incoming_spo_qty = spo_bucket.get("qty", 0.0)
+        # issue #796 (Slice 3): the per-document breakdown under the two totals above.
+        row.po_open_docs = po_bucket.get("docs") or []
+        row.incoming_spo_docs = spo_bucket.get("docs") or []
+        receipt = last_receipt.get(pid)
+        row.last_receipt_date = receipt["date"] if receipt else None
+        row.last_receipt_qty = receipt["qty"] if receipt else None
+        row.pool_on_hand = pool_on_hand.get(pid, 0.0)
+        # The run's OWN frozen level - the first recommendation carrying the key, even
+        # when an earlier one carries none (AC-S14.1). The engine plans against ONE
+        # product-wide level and freezes the SAME value onto every one of the product's
+        # location recommendations, so which one is "first" here is arbitrary by
+        # construction, not a choice between different levels.
+        row.reorder_level = next(
+            ((r.inputs or {}).get("reorder_level") for r in recs
+             if (r.inputs or {}).get("reorder_level") is not None),
+            None,
+        )
+        # issue #795 (owner ruling 10 Sep): the SAME words the plan grid's Decision label
+        # uses, not the engine's reason sentence - "Stock 1 + Buy 486", "Nothing".
+        row.suggestion = _suggestion_text(
+            recs, row.pool_on_hand, row.po_open_qty, has_channel=has_channel, pid=pid,
+            free_by_product=free_by_product, po_book=po_book,
+            cover_scope=cover_scope, constraints=constraints,
+            # SF-4: the Suggestion's Buy part IS the Suggested qty column beside it - one
+            # figure, set just above, never a second read of one group's `rounded_qty`.
+            suggested_qty=float(row.suggested_qty or 0.0),
+        )
         row.computed_at = computed_at
         row.source_system = "scm"
         row.source_ref = _SEED
@@ -302,26 +399,137 @@ def _quantize_up(qty: float, decimal_places: int) -> float:
     return math.ceil(round(float(qty) * scale, 6)) / scale
 
 
-def _belongs_on_the_book(recs: list) -> bool:
+def _fmt_int(value: float) -> str:
+    """"1,486" - the grid's own `fmtInt` (`Intl.NumberFormat('en-MY', {maximumFractionDigits:
+    0})`): rounded to the nearest whole unit, grouped by thousand. The sheet's Suggestion
+    column reads exactly like the plan grid's Decision label (owner, 10 Sep - "too
+    complicated"), so the number has to be formatted the same way too."""
+    return f"{round(value):,}"
+
+
+def _suggestion_text(
+    recs: list, on_hand: float, po_qty: float, *, has_channel: bool, pid: str,
+    free_by_product: dict[str, list], po_book: dict[str, list],
+    cover_scope: str, constraints: dict[str, dict], suggested_qty: float = 0.0,
+) -> str:
+    """The row's Suggestion, worded EXACTLY like the plan grid's own Decision label (owner,
+    10 Sep ruling): "Stock 1 + Buy 486", "Buy 95", "Stock 10 + PO 20 + Buy 90", "Nothing".
+
+    `recs` carries no ORDER BY from the query that built it (review fix round): prefer a
+    `buy` rec (the actionable row, and the only one the grid's own derivation ever reads),
+    then an `exception` (still a firm need, just unsourced) - both are read the SAME way,
+    since the mixture is about the QUANTITY, not the reason it could not be bought. A
+    covered/needs_level product carries neither, and reads "Nothing".
+
+    Two DIFFERENT mixtures, chosen by `has_channel` (the SAME signal `write_rows` already
+    branches `suggested_qty` on):
+
+    - PLAN-reorder-one-formula.md S4/AC-4 (a run carrying the channel snapshot): the parts
+      are a DISPLAY of what the engine's ONE formula already netted - the row's own
+      `suggested_qty` is ALREADY net of on-hand and the open PO book (since #828), so
+      `Buy` IS that figure and `Stock`/`PO` are `min(...)` clips of the SAME
+      `on_hand`/`po_qty` the row itself prints (`pool_on_hand`, `po_open_qty`) - never a
+      second netting through a fresh cover/PO-book proposal, which is exactly the
+      double-netting bug the plan's "Why" section names.
+
+      `suggested_qty` is passed IN, not re-read off one recommendation (SF-4). The column
+      is `_channel_freeze`'s sum of every sizing group's own `rounded`, rounded once more
+      against the supplier's terms; `chosen.rounded_qty` is ONE group's. A product sized
+      across two independent pools therefore printed "Buy 40" beside a Suggested qty of
+      95. One figure, read once, by both.
+    - A run with NO channel snapshot predates that guarantee: `rounded_qty` there is
+      GROSS, never netted against cross-location stock or the PO book at all, so this
+      keeps the ORIGINAL re-derivation (`cover_service.propose_cover` against the row's
+      OWN warehouse-scoped free pool, then `poOffset` against the PO book) - unaffected by
+      this fix, since a legacy run predates the one formula too.
+    """
+    chosen = (
+        next((r for r in recs if r.rec_type == "buy"), None)
+        or next((r for r in recs if r.rec_type == "exception"), None)
+    )
+    if chosen is None:
+        return "Nothing"
+    # The one figure the row's own Suggested qty column prints, on a channel run; one
+    # group's own rounded buy on a legacy one, which is what its own re-derivation below
+    # is built to start from.
+    buy_qty = (
+        float(suggested_qty or 0.0) if has_channel else float(chosen.rounded_qty or 0.0)
+    )
+    if buy_qty <= 0:
+        return "Nothing"
+
+    if has_channel:
+        on_hand = max(float(on_hand or 0.0), 0.0)
+        po_qty = max(float(po_qty or 0.0), 0.0)
+        need = buy_qty + on_hand + po_qty
+        stock_qty = min(on_hand, need)
+        use_po = min(po_qty, need - stock_qty)
+    else:
+        needed = math.ceil(buy_qty)
+        pool_warehouse_id = str(chosen.pool_warehouse_id) if chosen.pool_warehouse_id else None
+        cover = cover_service.propose_cover(
+            needed, None, free_by_product.get(pid) or [],
+            cover_scope=cover_scope, line_pool_warehouse_id=pool_warehouse_id,
+        )
+        stock_qty = cover.cover_qty
+        after_stock = cover.buy_qty if stock_qty > 0 else float(needed)
+        # `poFor`'s own key: `levelKey(line.product_id, line.warehouse_id)` -
+        # `"{product_id}:{warehouse_id}"`, `""` when the row names none (a genuine
+        # product-grain buy names no warehouse; a network buy carries one).
+        po_receipts = po_book.get(f"{pid}:{chosen.warehouse_id or ''}") or []
+        legacy_po_qty = sum(float(r.get("remaining") or 0.0) for r in po_receipts)
+        use_po = min(max(after_stock, 0.0), max(legacy_po_qty, 0.0))
+        con = constraints.get(pid) or {}
+        buy_qty = (
+            eng_round_order_qty(max(after_stock - use_po, 0.0), con.get("moq"), con.get("order_multiple"))
+            if after_stock - use_po > 0 else 0.0
+        )
+
+    parts = []
+    if stock_qty > 0:
+        parts.append(f"Stock {_fmt_int(stock_qty)}")
+    if use_po > 0:
+        parts.append(f"PO {_fmt_int(use_po)}")
+    if buy_qty > 0:
+        parts.append(f"Buy {_fmt_int(buy_qty)}")
+    return " + ".join(parts) if parts else "Nothing"
+
+
+def _belongs_on_the_book(recs: list, decision_grain: Optional[str]) -> bool:
     """Does this product get a Summary Order Report row at all?
 
-    Yes when the run SIZED a purchase for it. Yes, too, when it owes firm Project Buy the
-    run could not size: a confirmed unplaced Buy at a location with no linked supplier
-    triggers and then emits `exception` with no buy anywhere, and leaving the product off
-    the book hides a commitment CS has already made to a customer (AC-E04, AC-E06).
+    On the PRODUCT grain: yes for ANY product-grain recommendation the run produced -
+    `buy`, `exception`, `covered`, `needs_level` (issue #795, owner's ruling 10 Sep,
+    superseding AC-C2.2a's exclusion, but only for the grain the owner was looking at).
+    The owner: "include the rows with suggested quantity = 0 also, otherwise the user
+    might want to order even though we suggest 0" - a covered or needs_level product
+    still has a `suggestion` explaining the 0, and the buyer can still choose to order
+    over it (AC-9, AC-10). Measured on the local prod-copy database (10 Sep, product
+    grain): buy 374 + covered 575 + needs_level 1 lands the sheet at under 1,000 rows,
+    well inside `MAX_EXPORT_ROWS` 2000.
 
-    No for a product whose only outcome was `covered` or `needs_level`. Its actionable
-    suggestion is 0 by definition - its own stock is the answer, or nobody has set the
-    level it would be planned against - so the Product grain has nothing to decide, and
-    on the live catalogue that would put roughly 2,400 undecidable rows on an unpaginated
-    report: the information fatigue AC-C2.2a exists to prevent. Those rows remain the
-    Location grain's work, where each states its own reason.
+    On every OTHER grain (location-grain, or `None`/legacy): the OLD rule stands - a row
+    only when the run SIZED a purchase for the product, or owes firm Project Buy the run
+    could not size (review fix round, 10 Sep). A location-grain run names ONE recommendation
+    per warehouse, so a product can hold a `covered` row at every one of its bins; widening
+    admission on that grain the same way would put roughly 4,000 undecidable rows on an
+    unpaginated report and trip the export's own 2,000-row refusal - the exact fatigue
+    AC-C2.2a exists to prevent, just relocated to the grain the owner was not asking about.
 
-    Both kinds still SPEAK on the products that do get a row: a covered group at location
-    B contributes its channel readings and its member locations to a product buying at
-    location A (`_channel_freeze`). What is scoped here is whose row exists, not what a
-    row is allowed to read.
+    WHAT THE SECOND CLAUSE REACHES, since the one formula (PLAN-reorder-one-formula.md):
+    `exception` rows, and only those. `plan_basis.project_need` is now the DISPLAY split of
+    what the group SIZED (`_emit_cell` caps it at the sized quantity), so a covered
+    location-grain row carrying firm project demand reads 0 there and no longer earns a
+    Summary Order row - which is correct, because the one formula found its stock already
+    covers that demand and there is nothing to report buying. An `exception` still earns
+    one: it sized a real quantity and simply could not be sourced, and its basis says so
+    (`_emit_cell`'s exception branch passes `recommended`/`rounded`). Pinned by
+    `test_channel_read_model.py::test_project_need_is_netted_once_against_the_stock_that_covers_it`
+    (covered, no row) and `::test_confirmed_project_buy_survives_a_location_with_no_supplier`
+    (exception, a row stating 12).
     """
+    if decision_grain == plan_grain.PRODUCT_GRAIN:
+        return bool(recs)
     for r in recs:
         if r.rec_type == BUY_REC_TYPE:
             return True
@@ -385,7 +593,10 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     plan 5.3 and AC-E04 define it as and, since P3, the whole of project demand: the sheet
     leg the engine used to net alongside Retail is retired, and a sheet-origin project order
     nobody has decided is awaiting CS rather than part of any figure here. The open
-    project-class order book is separately visible as `project_demand` on the same row.
+    project-class order book is separately visible as `project_demand` on the same row -
+    the open book INSIDE THE RUN'S OWN WINDOW since SF-2, the same window `dealer_
+    outstanding` reports on, because two figures a reader compares side by side have to
+    cover the same period (`_demand_aggregates`).
     """
     buy_recs = [r for r in recs if r.rec_type == BUY_REC_TYPE]
     groups = _sizing_groups(recs)
@@ -446,13 +657,34 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     raw_need = project + retail
     moq = constraints.get("moq")
     multiple = constraints.get("order_multiple")
-    # ONCE: the supplier's terms apply to the product total, never per location and never
-    # per channel, and the quantize is the same step's last half rather than a second
-    # rounding policy.
-    suggested = _quantize_up(
-        eng_round_order_qty(raw_need, moq, multiple) if raw_need > 0 else 0.0,
-        decimal_places,
-    )
+    if groups:
+        # PLAN-reorder-one-formula.md S4/AC-4: each group's OWN `rounded` is the rounded
+        # BUY the one formula already computed - `level - net`, MOQ/multiple rounded ONCE
+        # by the engine - not `project + retail` re-derived here, which ignores on-hand,
+        # open PO and the level entirely. Summed across EVERY group the product sized
+        # (`sources`, not `retail_sources`: an unsourced firm need - `exception`, no
+        # linked supplier - still owes its own figure here, the same as `project` above
+        # reads it; AC-F11: a pool and a second, unrelated pool of the SAME product are
+        # two INDEPENDENT sizing decisions, not one), then run through the supplier's
+        # terms ONE more time: a no-op on a single already-clean group total (matching
+        # AC-4's own worked examples, moq/multiple both unset there), and the ONE
+        # application AC-F11 requires when summing several groups each rounded on its own.
+        suggested_raw = sum(float(s.get("rounded") or 0.0) for s in sources)
+        suggested = _quantize_up(
+            eng_round_order_qty(suggested_raw, moq, multiple) if suggested_raw > 0 else 0.0,
+            decimal_places,
+        )
+    else:
+        # A TRUE legacy run (no `plan_basis` at all): each row's own `rounded_qty` was
+        # independently rounded per LOCATION by the pre-channel engine, so summing them
+        # verbatim (AC-F11's own bug) would apply the supplier's terms never, or once per
+        # location instead of once for the product. Recomputed from the raw need and
+        # rounded ONCE, exactly as before this fix - unaffected by it, since a true
+        # legacy run predates the one formula too.
+        suggested = _quantize_up(
+            eng_round_order_qty(raw_need, moq, multiple) if raw_need > 0 else 0.0,
+            decimal_places,
+        )
     locations.sort(key=lambda x: (x["warehouse_code"] or ""))
     return {
         "project_buy_qty": project,
@@ -560,8 +792,253 @@ def _earliest_project_need_dates(db: Session, product_ids: list[str]) -> dict[st
     return {str(r[0]): r[1] for r in rows if r[1] is not None}
 
 
-def _demand_aggregates(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """Project and retail outstanding quantity, line counts, and the worst retail ageing.
+# =========================================================================== #
+# S9 (PLAN-reorder-feedback-9sep.md, G6 ruling) - the sheet's own columns
+# =========================================================================== #
+
+
+def _months_list(bucket: dict[Optional[str], float]) -> list[dict[str, Any]]:
+    """A month-keyed dict to the wire shape, dated months ascending and the undated
+    bucket (``None``) last - the reading a null month already gets everywhere else on
+    this row."""
+    dated = sorted(m for m in bucket if m is not None)
+    ordered = dated + ([None] if None in bucket else [])
+    return [{"month": m, "qty": round(bucket[m], 4)} for m in ordered]
+
+
+def _project_inquiry_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
+    """``{product_id: {"months": {month_or_None: qty}, "customers": {label: qty}}}`` - the
+    Order Inquiry ORDER book (S14, AC-S14.3, superseding the SO-book reading S1 gave both
+    cells): a Buy-verb row with `qty > 0`, on an ACTIVE supply decision, not cancelled -
+    raised and placed both count (placed is need already covered by a PO, which the BRW PO
+    column already shows). `delivery_by_month` and `project_customers` are both built from
+    this ONE map, so the two always tie by construction; a retail SO line carries no Order
+    Inquiry row at all and so never reaches either cell.
+
+    Not windowed by the run's own horizon: the export's own Project qty (the sum of
+    `project_customers`) has never been windowed, and windowing one cell and not the other
+    is exactly what made them disagree.
+
+    `state <> 'cancelled'` admits every OTHER state - raised, partly_linked, placed AND
+    actioned - not just the two named above; actioned is real Buy that purchasing has
+    already worked, not a state that empties the row.
+
+    The inner joins on `so_line_id` / `core_sales_order_line_id` mean an ORDER row whose
+    project line has not yet been reconciled to a core sales-order line drops out of this
+    map entirely - Project qty UNDERSTATES in that window rather than erroring, the same
+    shape a not-yet-reconciled line already has everywhere else `core_sales_order_line_id`
+    gates a read.
+
+    Raw SQL (M2, Phase 3 security review): the join lands on `so`, the CORE sales order,
+    which is company-scoped - the ORM's own isolation filter never sees a raw query, so it
+    is pinned by hand here, same as every other raw-SQL map in this module.
+    """
+    if not product_ids:
+        return {}
+    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="pim")
+    rows = db.execute(text(f"""
+        SELECT sol.product_id::text AS pid, oir.delivery_date, oir.qty,
+               c.customer_name, pj.title AS project_title
+        FROM projects.order_inquiry_rows oir
+        JOIN projects.so_supply_decisions d
+            ON d.id = oir.supply_decision_id AND d.state = :active_state
+        JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+        JOIN projects.sales_orders pso ON pso.id = psl.project_sales_order_id
+        LEFT JOIN projects.projects pj ON pj.id = pso.project_id
+        JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        LEFT JOIN customers c ON c.id = so.customer_id
+        WHERE oir.verb = :buy_verb
+          AND oir.qty > 0
+          AND oir.state <> :cancelled_state
+          AND sol.product_id::text = ANY(:pids)
+          {("AND " + co) if co else ""}
+    """), {
+        "pids": [str(p) for p in product_ids],
+        "active_state": ACTIVE_DECISION_STATE,
+        "buy_verb": BUY_VERB,
+        "cancelled_state": INQUIRY_CANCELLED,
+        **co_params,
+    }).fetchall()
+    out: dict[str, dict] = {}
+    for pid, delivery_date, qty, customer_name, project_title in rows:
+        key = str(pid)
+        bucket = out.setdefault(key, {"months": {}, "customers": {}})
+        month = delivery_date.isoformat()[:7] if delivery_date else None
+        q = float(qty or 0)
+        bucket["months"][month] = bucket["months"].get(month, 0.0) + q
+        name = f"{customer_name} / {project_title}" if (customer_name and project_title) else (
+            project_title or customer_name
+        )
+        label = name or "Unnamed customer"
+        bucket["customers"][label] = bucket["customers"].get(label, 0.0) + q
+    return out
+
+
+def _customers_list(bucket: dict[str, float]) -> list[dict[str, Any]]:
+    """A label-keyed dict to the wire shape, sorted by label - the reading `_months_list`
+    already gives the month-keyed bucket beside it."""
+    return sorted(
+        ({"label": label, "qty": round(qty, 4)} for label, qty in bucket.items()),
+        key=lambda c: c["label"],
+    )
+
+
+def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
+    """``{product_id: qty}`` of `stock.quantity_on_hand` at SITE POOL warehouses only - the
+    sheet's "BRW on hand" (S14, AC-S14.1), the same `pool_predicate` rule the PO and SPO
+    columns already read - PLUS `counts_as_available` (captain's ruling, fix round 10 Sep):
+    the SAME flag `CoverageService.network_positions` filters `on_hand` by. A site-pool
+    warehouse can still be flagged out of availability (a quarantine bin, for instance),
+    and that stock is not sellable - a buyer must not see it as BRW supply on hand.
+    `on_hand` (network-wide, project bins and unavailable locations both included) is
+    untouched and stays what the grid's own On hand column reads.
+
+    ORM, not raw SQL: `Stock` is company-scoped and this query carries no manual predicate,
+    so it relies on the ORM's own `do_orm_execute` isolation filter, same as
+    `site_pool_supply.open_spo_by_product` beside it.
+    """
+    if not product_ids:
+        return {}
+    rows = (
+        db.query(Stock.product_id, func.sum(Stock.quantity_on_hand))
+        .join(Warehouse, Warehouse.id == Stock.warehouse_id)
+        .filter(
+            Stock.product_id.in_(product_ids),
+            Warehouse.counts_as_available.is_(True),
+            text(active_site_pool_sql("warehouses")),
+        )
+        .group_by(Stock.product_id)
+        .all()
+    )
+    return {str(pid): float(total or 0.0) for pid, total in rows}
+
+
+def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
+    """``{product_id: {supplier_name, moq, order_multiple}}`` - the sheet's Supplier column
+    (S15, PLAN-reorder-feedback-9sep.md, ruling 1, 10 Sep 2026), read from PURCHASE ORDER
+    HISTORY rather than `product_suppliers`.
+
+    Measured on the prod copy 10 Sep 2026: 11,804 of 11,807 `product_suppliers` links point
+    at the ONE supplier code DEFAULT, none marked primary. The cause is
+    `resolve_default_supplier_id` (`app/services/rules/product_rules.py`) - it auto-links
+    every new or imported product to `system_settings.default_product_supplier_id`, or the
+    OLDEST supplier when nothing is configured, which is DEFAULT here. So the old link-table
+    read (`_supplier_constraints`'s own precedence, PRIMARY else any) printed "DEFAULT" on
+    effectively every row. Of the 5,353 products with PO history, only 1 has a
+    `product_suppliers` link that already agrees with its own last PO.
+
+    The newest PO line for the product (`purchase_orders.issue_date` desc, NULLs last,
+    then `created_at` desc, then `supplier_id` desc as the FINAL deterministic tiebreak -
+    two different suppliers can tie on both `issue_date` and `created_at` from a
+    same-transaction import, e.g. two products imported in one batch; without this last
+    key this query and `backfill_product_supplier_from_last_po.py`'s own primary-pick
+    could disagree on the tied row) names who it was actually bought from last, which is
+    the buyer's own reading of "Supplier". A cancelled PO does not exist for this lookup
+    (PLAN-product-supplier-all-po.md ruling 3, 10 Sep 2026) - it can never be the
+    "newest" PO that names the Supplier column, so this stays in agreement with
+    `backfill_product_supplier_from_last_po.py --all-suppliers`, which excludes cancelled
+    POs the same way. A product with NO PO history gets no entry here at all -
+    `write_rows` then leaves `supplier_name`/`moq` NULL, printing BLANK on the sheet,
+    never DEFAULT and never a link-table fallback.
+
+    `moq`/`order_multiple` are read from THAT SAME last-PO supplier's `product_suppliers`
+    link when one exists, else null - never another supplier's terms, so the Remarks
+    column's MOQ always describes the same supplier the Supplier column names.
+
+    Raw SQL for the newest-PO-line lookup (`DISTINCT ON`, the same shape `_last_receipt_map`
+    uses beside it); the moq/order_multiple lookup is plain ORM over the resolved
+    (product, supplier) pairs, no raw predicate needed since `ProductSupplier` is read
+    through the ORM's own company-scope listener.
+    """
+    if not product_ids:
+        return {}
+    co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="lps")
+    po_rows = db.execute(text(f"""
+        SELECT DISTINCT ON (pol.product_id) pol.product_id::text AS pid,
+               po.supplier_id::text AS supplier_id, s.supplier_name
+        FROM purchase_order_lines pol
+        JOIN purchase_orders po ON po.id = pol.purchase_order_id
+        JOIN suppliers s ON s.id = po.supplier_id
+        WHERE pol.product_id::text = ANY(:pids)
+          AND po.status <> 'cancelled'
+          {("AND " + co) if co else ""}
+        ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC,
+                 po.supplier_id DESC
+    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
+    if not po_rows:
+        return {}
+    by_pid = {pid: (supplier_id, name) for pid, supplier_id, name in po_rows}
+    supplier_ids = {sid for sid, _name in by_pid.values()}
+    link_rows = (
+        db.query(
+            ProductSupplier.product_id, ProductSupplier.supplier_id,
+            ProductSupplier.moq, ProductSupplier.order_multiple,
+        )
+        .filter(
+            ProductSupplier.product_id.in_(by_pid.keys()),
+            ProductSupplier.supplier_id.in_(supplier_ids),
+        )
+        .all()
+    )
+    links = {(str(p), str(s)): (moq, mult) for p, s, moq, mult in link_rows}
+    out: dict[str, dict] = {}
+    for pid, (supplier_id, name) in by_pid.items():
+        moq, multiple = links.get((pid, supplier_id), (None, None))
+        out[pid] = {"supplier_name": name, "moq": _f(moq), "order_multiple": _f(multiple)}
+    return out
+
+
+def _last_receipt_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
+    """``{product_id: {date, qty}}`` of the latest `goods_received` picking line, network-
+    wide - the sheet's "Last in" remark.
+
+    `DISTINCT ON (product_id)` picks the one row per product Postgres would otherwise hand
+    back for the whole batch to dedupe in Python - a batch of thousands of products each
+    with a receipt history is thousands of rows fetched to keep exactly one.
+    """
+    if not product_ids:
+        return {}
+    co, co_params = company_sql_predicate(db, "pl.company_id", param_prefix="lrm")
+    rows = db.execute(text(f"""
+        SELECT DISTINCT ON (pl.product_id) pl.product_id::text AS pid,
+               ph.picking_date, pl.qty_accepted
+        FROM picking_lines pl
+        JOIN picking_headers ph ON ph.id = pl.picking_header_id
+        WHERE pl.product_id::text = ANY(:pids) AND ph.picking_type = 'goods_received'
+          {("AND " + co) if co else ""}
+        ORDER BY pl.product_id, ph.picking_date DESC
+    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
+    return {pid: {"date": picking_date, "qty": _f(qty)} for pid, picking_date, qty in rows}
+
+
+def _demand_aggregates(
+    db: Session,
+    product_ids: list[str],
+    *,
+    horizon_start=None,
+    horizon=None,
+) -> dict[str, dict]:
+    """Project and retail outstanding quantity, line counts, and the worst retail ageing,
+    inside the RUN'S OWN PLANNING WINDOW.
+
+    The window is the same rule `demand.horizon_committed_select_sql`'s book leg applies,
+    spelled here in the ORM: a line whose `required_date` falls outside the run's
+    `[plan_horizon_start, plan_horizon_date]` is not counted, and a line carrying NO date
+    at all is always counted (G2 ruling, 9 Sep - unscheduled demand is still demand). A
+    NULL bind on either side lets everything through, exactly as an unhorizoned run nets.
+
+    Why it matters here (SF-2): `write_rows` prints `dealer_outstanding` off the recs'
+    frozen `retail_committed`, which IS horizoned, while the line count and the ageing
+    beside it come from this function. Unhorizoned, the sheet read "170 units across 8
+    lines" for a product whose window held exactly one of them.
+
+    The window narrows the PROJECT half too (`project_demand`, `project_demand_line_count`),
+    and that is deliberate: ONE window for the whole sheet. A reader comparing a project
+    figure against a retail figure on the same row has to be comparing the same period, and
+    a run that plans 2026 has no business reporting a 2027 order as demand it did nothing
+    about. On an unhorizoned run (both binds NULL) nothing narrows and every open line
+    counts, exactly as before.
 
     One query for the whole batch, split on the PERSISTED `sales_orders.demand_class`
     (front planning 5.2 / AC-E01). The class is the semantic owner: it is stamped by the
@@ -578,12 +1055,22 @@ def _demand_aggregates(db: Session, product_ids: list[str]) -> dict[str, dict]:
     The stored columns keep their names (`dealer_*`); the API and the screens say retail,
     which is the user's word.
     """
-    rows = (
+    # The SAME POPULATION as `demand.horizon_committed_select_sql`'s book leg, not merely
+    # the same dates (SF-3, review round 2): a line purchasing has already covered
+    # (`purchasing_status = 'covered'`) is out of the plan's own committed figure, so
+    # counting it here put a line on the sheet beside a quantity that excluded it. The
+    # outstanding quantity is `COALESCE(qty_required, qty_ordered) - qty_delivered` for
+    # the same reason - an amended line states its own required quantity, and reading
+    # `qty_ordered` alone reports the figure before the amendment.
+    outstanding = (
+        func.coalesce(SalesOrderLine.qty_required, SalesOrderLine.qty_ordered)
+        - func.coalesce(SalesOrderLine.qty_delivered, 0)
+    )
+    query = (
         db.query(
             SalesOrderLine.product_id,
             SalesOrder.demand_class,
-            SalesOrderLine.qty_ordered,
-            SalesOrderLine.qty_delivered,
+            outstanding.label("outstanding"),
             SalesOrder.order_date,
         )
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
@@ -591,10 +1078,21 @@ def _demand_aggregates(db: Session, product_ids: list[str]) -> dict[str, dict]:
             SalesOrderLine.product_id.in_(product_ids),
             SalesOrder.status == "open",
             SalesOrderLine.line_status == "open",
-            SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+            SalesOrderLine.purchasing_status != "covered",
+            outstanding > 0,
         )
-        .all()
     )
+    if horizon is not None:
+        query = query.filter(
+            or_(SalesOrderLine.required_date.is_(None),
+                SalesOrderLine.required_date <= horizon)
+        )
+    if horizon_start is not None:
+        query = query.filter(
+            or_(SalesOrderLine.required_date.is_(None),
+                SalesOrderLine.required_date >= horizon_start)
+        )
+    rows = query.all()
     today = _today()
     out: dict[str, dict] = {}
     for r in rows:
@@ -608,7 +1106,7 @@ def _demand_aggregates(db: Session, product_ids: list[str]) -> dict[str, dict]:
                 "max_days_outstanding": None,
             },
         )
-        qty = float(r.qty_ordered or 0) - float(r.qty_delivered or 0)
+        qty = float(r.outstanding or 0)
         kind = _channel_of(r.demand_class)
         if kind == PROJECT_KIND:
             acc["project_qty"] += qty
@@ -746,6 +1244,454 @@ def report(db: Session, *, run_id: Optional[str] = None) -> dict:
     }
 
 
+# =========================================================================== #
+# S9 export - the sheet, as a document (AC-S9.3)
+# =========================================================================== #
+
+#: Same order the printed sheet's own columns run in (S14, AC-S14.4), which is what makes
+#: this a printout of the buyer's paper sheet rather than a second report. "BRW" is the
+#: site pool (`pool_predicate.ACTIVE_SITE_POOL_SQL`), for on hand, PO and incoming alike.
+#: issue #795 (Slice 2, AC-7): Suggested qty + Suggestion sit immediately left of Order
+#: qty - the engine's own figure and reason, beside the buyer's pen column.
+_EXPORT_COLUMNS = (
+    "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
+    "Suggested qty", "Suggestion", "Order qty", "Delivery", "Project / customer",
+    "Supplier", "BRW PO qty", "BRW incoming qty", "Last in qty", "Last in date",
+    "Remarks",
+)
+
+_MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
+              "Nov", "Dec")
+
+
+def _qty_text(qty: Any) -> str:
+    """A quantity as the sheet prints it - a whole number stays bare, a fraction keeps
+    its own digits. Never padded, never a fixed number of decimals."""
+    q = float(qty or 0)
+    return str(int(q)) if q == int(q) else str(round(q, 4))
+
+
+def _ddmmyyyy(iso: Optional[str]) -> str:
+    if not iso:
+        return ""
+    try:
+        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        return str(iso)
+
+
+def _month_text(groups: list[dict]) -> str:
+    """"Jul - 1\\nAug - 1\\nUndated - 5" - one "Mon - qty" per line, oldest first, the
+    undated bucket always last (S14, AC-S14.5). The printed sheet's cells wrap and grow,
+    so a list of months is a list, one entry per line, never a sentence squeezed onto one."""
+    dated = [g for g in groups if g.get("month")]
+    undated = next((g for g in groups if not g.get("month")), None)
+    lines = [
+        f"{_MONTH_ABBR[int(g['month'].split('-')[1]) - 1]} - {_qty_text(g['qty'])}"
+        for g in sorted(dated, key=lambda g: g["month"])
+    ]
+    if undated:
+        lines.append(f"Undated - {_qty_text(undated['qty'])}")
+    return "\n".join(lines)
+
+
+def _customers_text(groups: list[dict]) -> str:
+    """"Acme Co / Tower A - 5\\nBeta Co - 3" - one "Name - qty" per line (S14, AC-S14.5)."""
+    return "\n".join(f"{g['label']} - {_qty_text(g['qty'])}" for g in groups)
+
+
+def _docs_text(total: Any, docs: list[dict]) -> str:
+    """"5\\nPO-A - 4\\nPO-B - 1" - the total, then one "<number> - <qty>" line per
+    open document (issue #796, AC-13), shaped like `_month_text`/`_customers_text`. The
+    bare total, with nothing to trace, when `docs` is empty (AC-14) - the H1 "quantities
+    are numbers" rule yields on these two cells only once a document exists; a product
+    with nothing open keeps the plain figure exactly as before this slice."""
+    if not docs:
+        return _qty_text(total)
+    lines = [_qty_text(total)]
+    lines.extend(f"{d['number']} - {_qty_text(d['qty'])}" for d in docs)
+    return "\n".join(lines)
+
+
+def _remarks_text(row: dict) -> str:
+    """"MOQ 1000" or blank (S14, AC-S14.4): PO qty, incoming qty, last-in qty and last-in
+    date each moved to their OWN column, so Remarks says only what has nowhere else to go.
+    `row["moq"]` is frozen from `_last_po_supplier_map` (S15), the same last-PO supplier
+    named in the Supplier column - so this figure and that name always describe one
+    supplier, never two."""
+    moq = row.get("moq")
+    return f"MOQ {_qty_text(moq)}" if moq is not None else ""
+
+
+def _project_qty(row: dict) -> float:
+    """Project qty (S14, AC-S14.4) is the SUM of `project_customers`, never
+    `project_demand` - the two must tie by construction (`_project_inquiry_map` builds
+    both from the same book), and `project_demand` reads the wider SO-book leg the sheet
+    no longer shows."""
+    return sum(float(c.get("qty") or 0) for c in (row.get("project_customers") or []))
+
+
+#: M1 (Phase 3 security review): the sheet only lists products to order - a run with
+#: thousands of covered/no-action rows must not turn "export the sheet" into a
+#: several-thousand-row document nobody asked to print. PUBLIC (no leading underscore,
+#: review fix round A, A5): the async export route reads this beside `export_guard_stats`
+#: rather than a private module attribute.
+MAX_EXPORT_ROWS = 2000
+
+#: H1 (Phase 3 security review, L4): a text cell longer than this is truncated before it
+#: reaches the workbook - Excel's own per-cell character limit is 32,767; capped well short
+#: of it so a truncated value is still obviously a summary, not an accident at the wire.
+_MAX_XLSX_TEXT = 32000
+
+#: H1: a leading character Excel/Sheets/LibreOffice will read as "this cell is a formula"
+#: on open - `=`, `+`, `-`, `@`, a literal tab or carriage return (CSV-injection's own
+#: character set, restated for xlsx). Prefixed with an apostrophe, which every one of those
+#: applications renders as "force text" and never shows in the cell itself.
+_XLSX_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _xlsx_safe_text(value: str) -> str:
+    """H1: neutralise formula injection and cap length before a string reaches openpyxl.
+
+    A leading apostrophe is what every spreadsheet application itself uses to force a
+    cell to text - typing it back in is the same defence a human would apply by hand, and
+    it survives `cell.value = ...` untouched (openpyxl does not strip it).
+    """
+    text_value = str(value)
+    if text_value.startswith(_XLSX_FORMULA_PREFIXES):
+        text_value = "'" + text_value
+    if len(text_value) > _MAX_XLSX_TEXT:
+        text_value = text_value[:_MAX_XLSX_TEXT]
+    return text_value
+
+
+def _export_rows(rows: list[dict]) -> list[tuple]:
+    """One tuple per product, in `_EXPORT_COLUMNS` order, every cell pre-formatted TEXT -
+    the PDF's own shape (S14, AC-S14.4). Order qty is the chosen figure or blank (the pen
+    column) - never the suggestion, which would print a decision nobody made. BRW on hand
+    is blank, not "0", on a run frozen before migration 504 (`pool_on_hand` NULL).
+
+    Suggested qty (issue #795, AC-8) is a MEASURED engine figure, unlike Order qty: 0
+    prints as "0", never blank, even on a row nobody has decided yet."""
+    out: list[tuple] = []
+    for row in rows:
+        chosen = row.get("chosen_qty")
+        pool_on_hand = row.get("pool_on_hand")
+        reorder_level = row.get("reorder_level")
+        receipt = row.get("last_receipt")
+        out.append((
+            row["product_code"],
+            _qty_text(pool_on_hand) if pool_on_hand is not None else "",
+            _qty_text(reorder_level) if reorder_level is not None else "",
+            _qty_text(_project_qty(row)),
+            _qty_text(row.get("dealer_outstanding")),
+            _qty_text(row.get("suggested_qty")),
+            row.get("suggestion") or "",
+            _qty_text(chosen) if chosen is not None else "",
+            _month_text(row.get("delivery_by_month") or []),
+            _customers_text(row.get("project_customers") or []),
+            row.get("supplier_name") or "",
+            _docs_text(row.get("po_open_qty"), row.get("po_open_docs") or []),
+            _docs_text(row.get("incoming_spo_qty"), row.get("incoming_spo_docs") or []),
+            _qty_text(receipt.get("qty")) if receipt else "",
+            _ddmmyyyy(receipt.get("date")) if receipt else "",
+            _remarks_text(row),
+        ))
+    return out
+
+
+def _export_xlsx_rows(rows: list[dict]) -> list[tuple]:
+    """One tuple per product, in `_EXPORT_COLUMNS` order, quantities as NUMBERS (H1) - a
+    workbook is opened to be recalculated/summed, and a text "1,234" cell defeats that the
+    moment somebody selects the column. BRW on hand / Reorder level / Order qty / Last in
+    qty / Last in date are BLANK ("") rather than 0 when the row has none (S14, AC-S14.4) -
+    a 0 there reads as a measured fact nobody measured. BRW on hand is NULL, never 0, on a
+    run frozen before migration 504 - it must print blank, not a false zero stock count.
+
+    Suggested qty (issue #795, AC-8) is a MEASURED figure like BRW on hand's siblings, not
+    a decision like Order qty: it is always a number, 0 included, never blank.
+
+    BRW PO qty / BRW incoming qty (issue #796, AC-13/AC-14) are the ONE exception to
+    "quantities are numbers": once a document exists behind the total, traceability
+    outranks summing the column, and the cell becomes `_docs_text`'s text. A row with
+    nothing open keeps the plain numeric total, unchanged."""
+    out: list[tuple] = []
+    for row in rows:
+        chosen = row.get("chosen_qty")
+        pool_on_hand = row.get("pool_on_hand")
+        reorder_level = row.get("reorder_level")
+        receipt = row.get("last_receipt")
+        po_open_qty = row.get("po_open_qty")
+        po_open_docs = row.get("po_open_docs") or []
+        incoming_spo_qty = row.get("incoming_spo_qty")
+        incoming_spo_docs = row.get("incoming_spo_docs") or []
+        out.append((
+            _xlsx_safe_text(row["product_code"]),
+            float(pool_on_hand) if pool_on_hand is not None else "",
+            float(reorder_level) if reorder_level is not None else "",
+            float(_project_qty(row)),
+            float(row.get("dealer_outstanding") or 0),
+            float(row.get("suggested_qty") or 0),
+            _xlsx_safe_text(row.get("suggestion") or ""),
+            float(chosen) if chosen is not None else "",
+            _xlsx_safe_text(_month_text(row.get("delivery_by_month") or [])),
+            _xlsx_safe_text(_customers_text(row.get("project_customers") or [])),
+            _xlsx_safe_text(row.get("supplier_name") or ""),
+            (_xlsx_safe_text(_docs_text(po_open_qty, po_open_docs)) if po_open_docs
+             else float(po_open_qty or 0)),
+            (_xlsx_safe_text(_docs_text(incoming_spo_qty, incoming_spo_docs)) if incoming_spo_docs
+             else float(incoming_spo_qty or 0)),
+            float(receipt.get("qty") or 0) if receipt else "",
+            _xlsx_safe_text(_ddmmyyyy(receipt.get("date"))) if receipt else "",
+            _xlsx_safe_text(_remarks_text(row)),
+        ))
+    return out
+
+
+#: Column indices (0-based, into `_EXPORT_COLUMNS`) that wrap one entry per line on the
+#: PDF (S14, AC-S14.7) - the two cells `_month_text`/`_customers_text` render with "\n".
+#: issue #795 (Slice 2): shifted two right by Suggested qty + Suggestion. issue #796
+#: (Slice 3): BRW PO qty / BRW incoming qty (11, 12) join the list once a document exists
+#: behind their total - `_docs_text` renders the same total-then-documents shape.
+_PDF_LIST_COLUMNS = (8, 9, 11, 12)
+#: Quantity columns, right-aligned on the PDF the way a printed sheet's numbers are. 11
+#: and 12 are NOT here (issue #796): a cell class is exclusive (`_export_pdf_html` picks
+#: "list" over "num" when both would apply), and right-aligning "PO-A - 4" under its own
+#: total reads worse than the pre-wrapped list style every other multi-line cell gets.
+_PDF_NUM_COLUMNS = (1, 2, 3, 4, 5, 7, 13)
+
+
+def _export_pdf_html(rows: list[tuple], as_of: str) -> str:
+    """The printed sheet's own HTML (S14, AC-S14.7), split out of `_render_export_pdf` so
+    the markup is assertable without a Chromium round trip: a dark, bold, white header row
+    that repeats on every page, a 1px border on every cell, the two list cells wrapping
+    one entry per line, quantities right-aligned, the product code bold.
+    """
+    from html import escape as _esc
+
+    head = "".join(f"<th>{_esc(c)}</th>" for c in _EXPORT_COLUMNS)
+    body_rows = []
+    for r in rows:
+        cells = []
+        for i, v in enumerate(r):
+            cls = "list" if i in _PDF_LIST_COLUMNS else ("num" if i in _PDF_NUM_COLUMNS else "")
+            attr = f' class="{cls}"' if cls else ""
+            text_value = _esc(str(v))
+            if i == 0:
+                text_value = f"<b>{text_value}</b>"
+            cells.append(f"<td{attr}>{text_value}</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    body = "".join(body_rows)
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+        @page {{ size: A4 landscape; margin: 10mm; }}
+        body {{ font-family: Arial, Helvetica, sans-serif; font-size: 9px; }}
+        h1 {{ font-size: 14px; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        thead {{ display: table-header-group; }}
+        th, td {{ border: 1px solid #333; padding: 4px 6px; vertical-align: middle; }}
+        th {{ background: #404040; color: #fff; font-weight: bold; text-align: center; }}
+        td.list {{ white-space: pre-line; }}
+        td.num {{ text-align: right; }}
+    </style></head><body>
+        <h1>Order Summary - {_esc(_ddmmyyyy(as_of))}</h1>
+        <table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>
+    </body></html>"""
+
+
+def _render_export_pdf(rows: list[tuple], as_of: str) -> bytes:
+    """Landscape A4, one row per product - the sheet's own columns, nothing else."""
+    from app.services.pdf_render import render_html
+
+    return render_html(_export_pdf_html(rows, as_of))
+
+
+#: The columns openpyxl writes as widths (S14, AC-S14.6) - item code readable in full,
+#: the numeric columns narrow, the two list columns wide enough to show a whole name/month
+#: without truncating on screen (row height is left unset so the app autofits the wrap).
+#: issue #795 (Slice 2): Suggested qty (F, numeric) + Suggestion (G, a one-line reason)
+#: shift every later column two right - "Project / customer" is now J.
+_XLSX_COLUMN_WIDTHS = {
+    "A": 16, "B": 11, "C": 11, "D": 11, "E": 11, "F": 11, "G": 30, "H": 11,
+    "I": 14, "J": 44, "K": 20, "L": 12, "M": 12, "N": 12, "O": 12, "P": 16,
+}
+
+
+def _render_export_xlsx(rows: list[tuple]) -> bytes:
+    """One sheet, the sheet's own columns - no month tabs or pivot, unlike the shared
+    accounting-register renderer (`app.services.reports.xlsx_renderer`), which is built for
+    a different journey (a multi-sheet monthly register) this export does not have. Every
+    cell in `rows` has already been through `_export_xlsx_rows` (numbers for quantities,
+    `_xlsx_safe_text` for strings) - this function only writes what it is given, styled
+    like the paper sheet (S14, AC-S14.6): a dark bold white header, a thin border and
+    wrapped text on every cell, frozen at A2, explicit column widths.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Order summary"
+    ws.append(list(_EXPORT_COLUMNS))
+    for r in rows:
+        ws.append(list(r))
+
+    thin = Side(style="thin")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap = Alignment(wrap_text=True, vertical="top")
+    header_font = Font(bold=True, color="FFFFFFFF")
+    header_fill = PatternFill("solid", fgColor="FF404040")
+
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
+        for cell in row:
+            cell.border = border
+            cell.alignment = wrap
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+
+    ws.freeze_panes = "A2"
+    for col, width in _XLSX_COLUMN_WIDTHS.items():
+        ws.column_dimensions[col].width = width
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _hidden_product_ids_for_run(db: Session, run_id: str) -> set[str]:
+    """PLAN-plan-list-tile-sheet-one-scope.md, S7 (AC-3): which products the run hides by
+    default, for its own PRODUCT-GRAIN recommendation rows (`warehouse_id IS NULL` -
+    `order_summary_row` is one row per product per run, the same cardinality). ORM, not raw
+    SQL, so the company isolation filter on `ReorderRecommendation` applies without a
+    hand-written predicate.
+
+    Reads the STORED `hidden_by_default` column (PLAN-reorder-one-formula.md S3/AC-12,
+    migration 512), stamped once at write time by `reorder_run_service._build_rec` off
+    `plan_scope.hidden_by_default`. The re-derivation that used to live here - five scalars
+    pulled out of `inputs` and the Python rule replayed per row - is deleted: it was the
+    fourth independent copy of one rule, and four copies is precisely what drifted apart
+    per the owner's 10 Sep measurement (list 415, tile "0 of 950", sheet 950). It also
+    costs one boolean per row instead of a JSONB extract per row (D1: the full-blob shape
+    it replaced cost 29.3 MB / 356 ms on the 12,948-rec run).
+
+    Keyed on `product_id`, not `product_code` (reviewer pass 3, round D, D2): a code
+    repeats across companies, an id does not, and `order_summary_row` already carries
+    `product_id` directly - no join to `products` is needed here at all.
+    """
+    rows = (
+        db.query(ReorderRecommendation.product_id)
+        .filter(
+            ReorderRecommendation.run_id == run_id,
+            ReorderRecommendation.warehouse_id.is_(None),
+            ReorderRecommendation.hidden_by_default.is_(True),
+        )
+        .all()
+    )
+    return {str(pid) for (pid,) in rows}
+
+
+def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
+    """What the ASYNC export route (`POST /order-summary/export`, AC-15/AC-16) needs to
+    decide the row-count refusal and name the file, WITHOUT rendering the whole report on
+    the request thread (reviewer nit, review fix round A, A5) - a `COUNT(*)`/`MAX(as_of)`
+    over `scm.order_summary_row` for the run, the exact same population `export_report`'s
+    own `len(rep["rows"])` counts (every row `write_rows` froze for the run - AC-9, owner's
+    ruling 10 Sep: every book row, not narrowed to "something to order").
+
+    Resolves `run_id` the SAME way `report()`/`export_report()` do (`_run_for` - a named
+    run or the newest completed one), so the row count, the `as_of` stamp and the resolved
+    id this returns describe the identical run the synchronous render would have used.
+
+    Company-scoped by hand (security S2/S3, UAC amended d7491d6fc): raw SQL never sees the
+    ORM isolation filter, and `OrderSummaryRow` is company-scoped - the same pattern every
+    other raw read this lane touches (`_PO_BOOK_SQL`, `explain_net`, `site_pool_supply`,
+    `purchase_trend`) already carries.
+
+    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): the count excludes hidden-by-default
+    rows - the SAME population `export_report` prints, so the guard cannot refuse (or
+    admit) a request the export would answer differently. `as_of` is unaffected by hiding
+    (every row of one frozen run shares the same stamp), so the aggregate stays a single
+    query; the hidden count is a second, narrow one, run only when there is anything to
+    subtract.
+    """
+    run = _run_for(db, run_id)
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="egs")
+    co_clause = f"AND {co}" if co else ""
+    row = db.execute(text(f"""
+        SELECT COUNT(*) AS n, MAX(as_of) AS as_of
+        FROM scm.order_summary_row WHERE run_id = :rid {co_clause}
+    """), {"rid": str(run.id), **co_params}).mappings().first()
+
+    hidden_ids = _hidden_product_ids_for_run(db, str(run.id))
+    hidden_count = 0
+    if hidden_ids:
+        co_osr, co_osr_params = company_sql_predicate(
+            db, "osr.company_id", param_prefix="egsh"
+        )
+        co_osr_clause = f"AND {co_osr}" if co_osr else ""
+        # D2: no join to `products` here - `order_summary_row` carries `product_id`
+        # directly.
+        hidden_count = db.execute(text(f"""
+            SELECT COUNT(*) FROM scm.order_summary_row osr
+            WHERE osr.run_id = :rid AND osr.product_id::text = ANY(:ids) {co_osr_clause}
+        """), {"rid": str(run.id), "ids": list(hidden_ids), **co_osr_params}).scalar() or 0
+
+    return {
+        "run_id": str(run.id),
+        "row_count": int(row["n"] or 0) - int(hidden_count),
+        "as_of": row["as_of"].isoformat() if row["as_of"] else None,
+    }
+
+
+def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[bytes, str, str]:
+    """The Order summary sheet as a document (AC-S9.3): landscape PDF or an Excel workbook,
+    the same rows and figures the grid shows, so nothing on the export is typed twice.
+    Returns ``(bytes, content_type, filename)``.
+
+    M1 (Phase 3 security review): refused above `MAX_EXPORT_ROWS` - a document that size is
+    not a sheet the buyer can print, it is a database dump wearing a PDF's clothes. Every
+    book row prints now (issue #795, AC-9, owner's ruling 10 Sep superseding the earlier
+    "something to act on" scope, `_rows_to_order`): `_belongs_on_the_book` already narrows
+    the book to products the run actually planned, and a covered/needs_level product still
+    has a `suggestion` worth printing even with nothing to order.
+
+    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): hidden-by-default rows (the SAME
+    rule the list and the Decisions tile already read) are dropped here, AFTER `report()`
+    - `report()` itself stays untouched (AC-4), so a caller reading the frozen sheet whole
+    still sees every planned product; only the printed/exported document narrows to what
+    the buyer would see on the list. `_hidden_product_ids_for_run` is keyed on
+    `product_id` (D2); `report()`'s own rows carry only `product_code` (never an id - no
+    UUID crosses this module's output), so the ids are resolved to codes with a SECOND,
+    narrow join scoped to just the hidden set - typically a handful of products, not the
+    whole run.
+    """
+    rep = report(db, run_id=run_id)
+    rows = rep["rows"]
+    hidden_ids = _hidden_product_ids_for_run(db, rep["run_id"])
+    if hidden_ids:
+        hidden_codes = {
+            code for (code,) in
+            db.query(Product.product_code).filter(Product.id.in_(hidden_ids)).all()
+        }
+        rows = [r for r in rows if r["product_code"] not in hidden_codes]
+    if len(rows) > MAX_EXPORT_ROWS:
+        raise AppException(422, "Narrow the plan first")
+    stamp = rep.get("as_of") or _today().isoformat()
+    if fmt == "pdf":
+        return (
+            _render_export_pdf(_export_rows(rows), stamp),
+            "application/pdf",
+            f"order-summary-{stamp}.pdf",
+        )
+    return (
+        _render_export_xlsx(_export_xlsx_rows(rows)),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        f"order-summary-{stamp}.xlsx",
+    )
+
+
 def _location_allocations(db: Session, row_ids: list[str]) -> dict[str, list[dict]]:
     """``{order_summary_row_id: [{warehouse_code, warehouse_name, allocated_qty}]}``.
 
@@ -827,6 +1773,29 @@ def _serialise_row(row: OrderSummaryRow, product: Product, supplier, pool,
         "retail_outstanding_line_count": row.dealer_outstanding_line_count or 0,
         "unclassified_line_count": row.unclassified_line_count or 0,
         "max_days_outstanding": row.max_days_outstanding,
+        # S9: the sheet's own columns.
+        "delivery_by_month": row.delivery_by_month or [],
+        "project_customers": row.project_customers or [],
+        # Chosen wins - the buyer's own pick - else the frozen suggestion (`row.supplier_name`
+        # is written by `write_rows`, from the primary product-supplier link, and is never
+        # overwritten by a later "decide" action so the suggestion stays legible beside it).
+        "supplier_name": (supplier.supplier_name if supplier else None) or row.supplier_name,
+        "po_open_qty": _f(row.po_open_qty) or 0.0,
+        "incoming_spo_qty": _f(row.incoming_spo_qty) or 0.0,
+        "last_receipt": (
+            {"date": row.last_receipt_date.isoformat(), "qty": _f(row.last_receipt_qty) or 0.0}
+            if row.last_receipt_date else None
+        ),
+        "moq": _f(row.moq),
+        # S14: the sheet's "BRW" reading, frozen beside the network-wide facts above.
+        "pool_on_hand": _f(row.pool_on_hand),
+        "reorder_level": _f(row.reorder_level),
+        # issue #795 (Slice 2): the engine's own reason for the row.
+        "suggestion": row.suggestion,
+        # issue #795 (Slice 3): the PO/SPO document breakdown, populated by that slice;
+        # NULL reads as "no documents" here rather than "not computed".
+        "po_open_docs": row.po_open_docs or [],
+        "incoming_spo_docs": row.incoming_spo_docs or [],
     }
 
 
@@ -1516,13 +2485,22 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
     A re-decision REPLACES the split rather than rescaling it: rescaling a previous
     apportionment compounds its rounding and would drift away from the parent, and the
     frozen inputs it is derived from have not changed.
+
+    A covered or needs_level product owns NO `buy` recommendation at all (review fix
+    round, issue #795/#796): the run never sized a purchase for it, so there is nothing
+    to replay a deficit off. A buyer can still choose to order over the suggestion
+    (AC-10), and that quantity still needs a real warehouse to land in - the fallback
+    below reads whichever product-grain recommendation the product actually has instead.
     """
     db.query(OrderSummaryLocationAllocation).filter(
         OrderSummaryLocationAllocation.order_summary_row_id == str(row.id)
     ).delete(synchronize_session=False)
 
     chosen = float(row.chosen_qty or 0)
-    all_recs = (
+    if chosen <= 0:
+        return []
+
+    buy_recs = (
         db.query(ReorderRecommendation)
         .filter(
             ReorderRecommendation.run_id == str(row.run_id),
@@ -1531,9 +2509,7 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
         )
         .all()
     )
-    recs = [r for r in all_recs if r.warehouse_id is not None]
-    if chosen <= 0 or not all_recs:
-        return []
+    recs = [r for r in buy_recs if r.warehouse_id is not None]
 
     inputs = []
     for rec in recs:
@@ -1555,7 +2531,24 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
         # buyer with a quantity and nowhere to put it (AC-F08, AC-F12). The run's own
         # frozen basis carries the member locations and the share the engine gave each,
         # which is exactly the deficit signal the per-location rows would have supplied.
-        for g in _sizing_groups(all_recs).values():
+        #
+        # `buy_recs` is empty for a covered/needs_level product - there is no buy row to
+        # read a basis off, so the fallback reads whichever product-grain recommendation
+        # type the product actually has (`CHANNEL_REC_TYPES`) instead. `_plan_basis`
+        # freezes `locations` on EVERY row it emits, buy or not - `location_suggested_qty`
+        # reads 0 for every member there (nothing was sized), and `eng_allocate` already
+        # falls back to a demand-weighted (or even) split when every deficit is 0, so the
+        # buyer's chosen quantity still lands somewhere real rather than nowhere.
+        channel_recs = buy_recs or (
+            db.query(ReorderRecommendation)
+            .filter(
+                ReorderRecommendation.run_id == str(row.run_id),
+                ReorderRecommendation.product_id == str(row.product_id),
+                ReorderRecommendation.rec_type.in_(CHANNEL_REC_TYPES),
+            )
+            .all()
+        )
+        for g in _sizing_groups(channel_recs).values():
             for loc in g.get("locations") or []:
                 if not loc.get("warehouse_id"):
                     continue
@@ -1565,6 +2558,23 @@ def _persist_location_split(db: Session, row: OrderSummaryRow) -> list[dict]:
                     "demand_rate": float(loc.get("avg_daily_demand") or 0.0),
                     "recommendation_id": None,
                 })
+        if not inputs:
+            # No frozen `plan_basis` either - a hand-built recommendation predating the
+            # freeze (or a legacy one). The recommendation's OWN `warehouse_id` is the
+            # last fact left to split against: one location per distinct warehouse a
+            # channel-type rec actually named, no deficit or demand signal to weigh them
+            # by - `eng_allocate` already falls back to an even split across inputs whose
+            # deficit and demand are both 0, so the chosen quantity still lands on a real
+            # place rather than nowhere.
+            seen: dict[str, None] = {}
+            for rec in channel_recs:
+                if rec.warehouse_id is not None:
+                    seen.setdefault(str(rec.warehouse_id), None)
+            inputs = [
+                {"warehouse_id": wid, "deficit": 0.0, "demand_rate": 0.0,
+                 "recommendation_id": None}
+                for wid in seen
+            ]
     if not inputs:
         return []
     rec_by_wid = {i["warehouse_id"]: i["recommendation_id"] for i in inputs}

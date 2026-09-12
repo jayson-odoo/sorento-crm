@@ -548,11 +548,14 @@ class TestResolveLines:
                 "debtor_name": "ZZT Dealer",
                 "needed_by_date": date.today() + timedelta(days=7),
                 "promotion_id": promotion_id,
+                # D5: show_promo_price is DERIVED from price_mode on save, not
+                # taken from the line payload - "selling" is what makes the
+                # line resolve to True.
+                "price_mode": "selling",
                 "lines": [
                     {
                         "line_type": "product",
                         "product_id": product.id,
-                        "show_promo_price": True,
                         "quantity": 1,
                     }
                 ],

@@ -135,6 +135,46 @@ export interface OrderSummaryRow {
   unclassified_line_count: number;
   /** Worst ageing in the dealer drill, so the row can flag it without listing it. */
   max_days_outstanding: number | null;
+
+  // -- S9 (`reorder-feedback-9sep.md`, G6 ruling, 9 Sep 2026): the printed sheet's own
+  // columns, frozen with the row at run time so nothing on the export is typed twice.
+  // Optional - absent on a cached response predating the field, read as "nothing to
+  // say" by every column below rather than a bare "-".
+  /** Open retail SO lines by `required_date`, plus project OI rows by `delivery_date`,
+   *  grouped by `YYYY-MM`. Undated lines group under `month: null`. Empty when there is
+   *  nothing dated. */
+  delivery_by_month?: { month: string | null; qty: number }[];
+  /** Project OI rows behind `project_demand`, grouped by customer/project title. Empty
+   *  on a row with no project demand. */
+  project_customers?: { label: string; qty: number }[];
+  /** The chosen supplier's name, else the suggested one - the sheet always names ONE,
+   *  whether or not a decision was made. Null only when neither resolves to a name. */
+  supplier_name?: string | null;
+  /** Open BRW pool PO quantity for this product. */
+  po_open_qty?: number;
+  /** Open incoming SPO quantity for this product. */
+  incoming_spo_qty?: number;
+  /** The latest `goods_received` picking line for this product, or null when it has
+   *  never been received. */
+  last_receipt?: { date: string; qty: number } | null;
+  /** The chosen supplier's MOQ, or null when there is none on file. */
+  moq?: number | null;
+  /** Site-pool stock only (S14) - the export's "BRW on hand". Null on a run frozen
+   *  before this field existed, never re-frozen since; `on_hand` above is unaffected
+   *  and stays the grid's own network-wide reading. */
+  pool_on_hand?: number | null;
+  /** The run's own frozen reorder level for this product (S14), or null when no
+   *  recommendation carried one. */
+  reorder_level?: number | null;
+  /** The engine's own one-line reason for `suggested_qty` - why 12, or why 0 (issue
+   *  #795). Null on a row nothing carries a reason for. */
+  suggestion?: string | null;
+  /** Open BRW PO lines behind `po_open_qty`, one entry per document (issue #795 Slice
+   *  3). Empty when nothing is open. */
+  po_open_docs?: { number: string; qty: number }[];
+  /** Open incoming SPO allocations behind `incoming_spo_qty`, one entry per document
+   *  (issue #795 Slice 3). Empty when nothing is open. */
+  incoming_spo_docs?: { number: string; qty: number }[];
 }
 
 /** The whole report for one run, as of one date (AC-C2.9). */

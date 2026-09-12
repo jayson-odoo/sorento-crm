@@ -80,9 +80,9 @@ describe('ReorderStatTiles - cash splits into committed vs if-all-accepted', () 
   it('shows both cash figures with their own labels', () => {
     renderTiles({ cashCommitted: 4500, cashTotal: 125000 });
     expect(screen.getByText('Cash committed so far')).toBeInTheDocument();
-    expect(screen.getByText('RM 4,500')).toBeInTheDocument();
+    expect(screen.getByText('RM 4,500.00')).toBeInTheDocument();
     expect(screen.getByText('Cash if all accepted')).toBeInTheDocument();
-    expect(screen.getByText('RM 125,000')).toBeInTheDocument();
+    expect(screen.getByText('RM 125,000.00')).toBeInTheDocument();
   });
 
   it('renders the cash tiles as non-interactive', () => {

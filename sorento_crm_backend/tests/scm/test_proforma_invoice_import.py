@@ -15,6 +15,7 @@ Every row is seeded under the `ZZPI` marker; nothing is borrowed from an existin
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date
 from io import BytesIO
@@ -32,6 +33,10 @@ from tests.scm.fixtures.proforma_shapes import (
 )
 
 MARKER = "ZZPI"
+
+#: `pi_number` is OURS since S1 - always a freshly minted `PI-{yy}{month:02d}-{NNN}`, never
+#: the supplier's own text (that is `supplier_ref` now).
+_MINTED_PI_NUMBER = re.compile(r"^PI-\d{4}-\d{3}$")
 
 
 def workbook(rows: list[list]) -> bytes:
@@ -164,7 +169,8 @@ def test_applying_the_kailu_proforma_creates_1_document_19_lines():
         invoices = _invoices(db, w)
         assert len(invoices) == 1
         inv = invoices[0]
-        assert inv.pi_number == "KL20260717"
+        assert inv.supplier_ref == "KL20260717"
+        assert _MINTED_PI_NUMBER.match(inv.pi_number)
         assert inv.invoice_date == date(2026, 7, 17)
         assert inv.currency == "CNY"
 
@@ -219,6 +225,10 @@ def test_two_suppliers_may_share_a_pi_number_without_colliding():
 
 
 def test_an_unstated_document_number_is_derived_positionally_and_is_stable():
+    """A file stating no reference is always created fresh (AC-A3, captain ruling 9 Sep) -
+    there is nothing to match an in-place replace against. A second apply of the SAME
+    ref-less file is a second, genuinely new set of five invoices, each with its own
+    minted `pi_number`; `supplier_ref` stays None on all ten."""
     with pg_session() as db:
         w = World(db)
         data = preloading_list_workbook(
@@ -233,13 +243,14 @@ def test_an_unstated_document_number_is_derived_positionally_and_is_stable():
         )
 
         invoices = _invoices(db, w)
-        assert {inv.pi_number for inv in invoices} == {
-            f"PI-2026-7-31-{i}" for i in range(1, 6)
-        }
-        # Re-upload landed on the same 5 rows, not a second set.
+        assert len(invoices) == 10
+        assert all(inv.supplier_ref is None for inv in invoices)
+        assert all(_MINTED_PI_NUMBER.match(inv.pi_number) for inv in invoices)
+        assert len({inv.pi_number for inv in invoices}) == 10
+
         assert first["documents_created"] == 5
-        assert second["documents_created"] == 0
-        assert second["documents_updated"] == 5
+        assert second["documents_created"] == 5
+        assert second["documents_updated"] == 0
 
 
 # --------------------------------------------------------------------------------- #
@@ -438,20 +449,23 @@ def test_pi_number_for_suffixes_only_when_a_sibling_shares_the_stated_number():
     doc1 = ProformaDocument(index=1, pi_number="2026JXL0726", container_no="WHSU6243088")
     doc2 = ProformaDocument(index=2, pi_number="2026JXL0726", container_no="WHSU6356079")
 
-    assert svc.pi_number_for(doc1, source_ref="x.xls", siblings=[doc1, doc2]) == (
+    # Renamed from `pi_number_for` (S1): `pi_number` stopped being the supplier's own
+    # text the moment it became a minted running number - this answers the identity key
+    # a re-upload matches on (`supplier_ref`), not the number printed on the document.
+    assert svc.supplier_ref_for(doc1, siblings=[doc1, doc2]) == (
         "2026JXL0726-WHSU6243088"
     )
-    assert svc.pi_number_for(doc2, source_ref="x.xls", siblings=[doc1, doc2]) == (
+    assert svc.supplier_ref_for(doc2, siblings=[doc1, doc2]) == (
         "2026JXL0726-WHSU6356079"
     )
 
     # A single document naming a container, with no sibling sharing its number - the
     # common case, and every fixture before Jiexia - keeps the number verbatim.
     alone = ProformaDocument(index=1, pi_number="KL20260717", container_no="ABCU1000001")
-    assert svc.pi_number_for(alone, source_ref="x.xls", siblings=[alone]) == "KL20260717"
+    assert svc.supplier_ref_for(alone, siblings=[alone]) == "KL20260717"
     # No `siblings` at all (an existing caller that never learned about the ruling)
     # behaves the same as "no sibling shares it" - never suffixes on its own say-so.
-    assert svc.pi_number_for(alone, source_ref="x.xls") == "KL20260717"
+    assert svc.supplier_ref_for(alone) == "KL20260717"
 
 
 def test_a_single_container_pi_with_a_stated_number_is_stored_verbatim_and_updates_in_place():
@@ -474,7 +488,9 @@ def test_a_single_container_pi_with_a_stated_number_is_stored_verbatim_and_updat
 
         invoices = _invoices(db, w)
         assert len(invoices) == 1
-        assert invoices[0].pi_number == f"PI-{MARKER}-1"  # verbatim, no container suffix
+        # verbatim, no container suffix - the supplier's own reference, not the minted number
+        assert invoices[0].supplier_ref == f"PI-{MARKER}-1"
+        assert _MINTED_PI_NUMBER.match(invoices[0].pi_number)
         assert invoices[0].container_ref == f"{MARKER}U9"
 
         second = svc.apply(db, data, supplier_id=str(w.supplier.id), currency="CNY")

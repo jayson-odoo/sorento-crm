@@ -18,6 +18,9 @@ class _FakeSpec:
     path: str
     method: str = "GET"
     module: str = ""
+    restricted_fields: tuple = ()
+
+
 
 
 @pytest.fixture
@@ -135,6 +138,63 @@ def test_sync_catalog_deactivates_removed_tools(db: Session, monkeypatch, cleanu
     assert row.is_active is True
 
 
+def test_sync_catalog_writes_restricted_fields(db: Session, monkeypatch, cleanup_tool_names):
+    """AC-964: a `restricted=` field on a presenter's tool reaches `mcp_tools.restricted_fields`
+    from a sync alone, with no FE change - this is the sync half of that contract, on a
+    FAKE tool declaring one (the real tools that will carry `inventory.sellable` /
+    `purchase_orders.supplier` are added by a sibling lane)."""
+    from app.services import mcp_tool_registry_service as svc
+
+    name = f"phase1_test_{uuid.uuid4().hex[:8]}"
+    cleanup_tool_names.append(name)
+    fake_specs = (
+        _FakeSpec(
+            name=name,
+            description="A tool with one restricted field.",
+            path="/api/v1/phase1/test",
+            restricted_fields=(("inventory.sellable", "Sellable stock"),),
+        ),
+    )
+    monkeypatch.setattr(svc, "_load_specs", lambda: fake_specs)
+
+    svc.sync_catalog(db)
+    db.commit()
+
+    row = db.query(McpTool).filter(McpTool.tool_name == name).one()
+    assert row.restricted_fields == [{"key": "inventory.sellable", "label": "Sellable stock"}]
+
+    # Re-sync with the field dropped: the row must follow the catalog, not keep a stale key.
+    monkeypatch.setattr(
+        svc,
+        "_load_specs",
+        lambda: (_FakeSpec(name=name, description="v2", path="/api/v1/phase1/test"),),
+    )
+    svc.sync_catalog(db)
+    db.commit()
+    db.refresh(row)
+    assert row.restricted_fields == []
+
+
+def test_sync_catalog_tool_with_nothing_restricted_syncs_empty_list(
+    db: Session, monkeypatch, cleanup_tool_names
+):
+    from app.services import mcp_tool_registry_service as svc
+
+    name = f"phase1_test_{uuid.uuid4().hex[:8]}"
+    cleanup_tool_names.append(name)
+    monkeypatch.setattr(
+        svc,
+        "_load_specs",
+        lambda: (_FakeSpec(name=name, description="v1", path="/a"),),
+    )
+
+    svc.sync_catalog(db)
+    db.commit()
+
+    row = db.query(McpTool).filter(McpTool.tool_name == name).one()
+    assert row.restricted_fields == []
+
+
 def test_sync_catalog_preserves_agent_id(db: Session, monkeypatch, cleanup_tool_names):
     from app.models.access import AccessAgent
     from app.services import mcp_tool_registry_service as svc
@@ -182,3 +242,46 @@ def test_sync_catalog_preserves_agent_id(db: Session, monkeypatch, cleanup_tool_
     # Cleanup the agent (cleanup_tool_names handles the McpTool row).
     db.query(AccessAgent).filter(AccessAgent.id == agent.id).delete()
     db.commit()
+
+
+def test_sync_catalog_stamps_chatbot_domain_from_the_tool_domain_map(
+    db: Session, monkeypatch, cleanup_tool_names
+):
+    """D17 (8 Sep 2026): `chatbot_domain` comes from
+    `app.services.mcp_tool_domains.CHATBOT_TOOL_DOMAINS`, NOT from
+    `app.services.chatbot.contracts.DOMAIN_SPEC` - `sync_catalog` is core and must
+    never import the chatbot package (AC-002). A tool in the map gets its domain, a
+    tool absent from it gets NULL (never enters a chatbot pool)."""
+    from app.services import mcp_tool_domains, mcp_tool_registry_service as svc
+
+    suffix = uuid.uuid4().hex[:8]
+    tool_a = f"phase1_test_a_{suffix}"
+    tool_b = f"phase1_test_b_{suffix}"
+    tool_c = f"phase1_test_c_{suffix}"  # absent from the map
+    cleanup_tool_names.extend([tool_a, tool_b, tool_c])
+
+    monkeypatch.setattr(
+        mcp_tool_domains,
+        "CHATBOT_TOOL_DOMAINS",
+        {tool_a: "zzt_domain_one", tool_b: "zzt_domain_two"},
+    )
+    monkeypatch.setattr(
+        svc,
+        "_load_specs",
+        lambda: (
+            _FakeSpec(name=tool_a, description="a", path="/a"),
+            _FakeSpec(name=tool_b, description="b", path="/b"),
+            _FakeSpec(name=tool_c, description="c", path="/c"),
+        ),
+    )
+
+    svc.sync_catalog(db)
+    db.commit()
+
+    rows = {
+        row.tool_name: row.chatbot_domain
+        for row in db.query(McpTool).filter(McpTool.tool_name.in_([tool_a, tool_b, tool_c]))
+    }
+    assert rows[tool_a] == "zzt_domain_one"
+    assert rows[tool_b] == "zzt_domain_two"
+    assert rows[tool_c] is None

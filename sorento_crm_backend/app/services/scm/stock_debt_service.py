@@ -44,7 +44,7 @@ from app.models.project_so import (
 from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService
-from app.services.scm import sales_agent_service
+from app.services.scm import sales_agent_service, spo_supply
 from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.planning_predicate import fulfilment_planning_predicate
@@ -718,6 +718,10 @@ class StockDebtService:
                 # `project_order_inquiry_service`). Without it a withdrawn placement went
                 # on pinning a document to a line nobody is waiting on.
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
+                # R7/AC-E12: SPOAllocation is OUTER-joined, so this passes a plain PO
+                # link (its columns come back NULL) untouched and only excludes a
+                # hold whose SPO side names a retired line.
+                *spo_supply.visible_line_clauses(),
             )
             .all()
         )

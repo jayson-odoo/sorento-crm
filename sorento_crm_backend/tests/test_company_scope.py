@@ -323,6 +323,13 @@ _COMPANY_ID_ALLOWLIST = {
     # a narrowed run - the whole point of the row is to say "notify me about
     # company X" from a session that is scoped to company Y.
     "user_product_discontinued_scopes",
+    # A scoped reference's company_id is per-company; a SHARED master's
+    # (sales_agents) is deliberately NULL - the mixin's auto-filter would hide
+    # every shared-type row from any scoped session, and its auto-stamp would
+    # reject the NULL-company insert `link()` writes for one on purpose
+    # (BL-056, autocount-brands-ingest). `IntegrationReferenceService` scopes
+    # both reads and writes explicitly instead.
+    "integration_references",
 }
 
 
@@ -376,6 +383,9 @@ def test_every_company_id_table_is_registered():
     # under every scope, while a company that adds a type of its own keeps it. Owned
     # without the shared flag would have hidden the seeds from every logged-in user
     # while an API-key caller still saw them.
+    # `countries` is owned but SHARED for the same reason: the 249-row ISO seed
+    # (`510_countries`) carries no company and has to stay visible to every scoped
+    # user, exactly like `promotion_types`'s migration-seeded kinds.
     # `product_spec_flyer_batches` is owned: a proposal batch is ONE company's pass over
     # its own flyer, and it copies the company off the reading it was started from. Its
     # proposal rows are not owned - they hang off the scoped batch, so scoping them too
@@ -502,7 +512,25 @@ def test_every_company_id_table_is_registered():
     # sales order), so it is owned outright rather than inheriting the partition through
     # `sales_orders` - a standalone read of a child-only row would otherwise be the one
     # place the parent's filter does not apply.
-    expected_owned = 129
+    #
+    # PLAN-scm-supplied-with-companions.md adds 1: `product_companion_rules` names a
+    # COMPANION product (CKSW015) and its supplier scope, and every product code in the
+    # catalogue exists once under Sorento and once under Mocha - a rule naming those
+    # products belongs to exactly one of them, the same fact `product_sets` is owned
+    # for, and the create path resolves both the companion and every host id through a
+    # company-scoped query. `product_companion_rule_hosts` is deliberately NOT owned: it
+    # reaches its scope through its parent rule, the way `product_set_members` reaches
+    # it through `product_sets`, so scoping it too would filter it twice.
+    # PLAN-scm-supplier-documents-pi-first.md adds 1: `scm.proforma_invoice_packing_line`
+    # is one row of the SUPPLIER's own packing list, filed against the invoice that prices
+    # it. Owned for the same reason `proforma_invoice_line` beside it is owned, and not
+    # left to its parent: `replace_packing_rows` deletes and reinserts the whole set BY
+    # invoice id (a re-upload is a correction), every dismiss / undo / match loads the row
+    # BY ID off a route that names only the invoice and the row, and `rebind_packing_rows`
+    # reaches rows across invoices by supplier and item code - three id-keyed paths that
+    # never pass through a scoped parent query. The mixin also stamps the company at
+    # insert, which is what keeps a row written under one scope unreadable under another.
+    expected_owned = 132
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

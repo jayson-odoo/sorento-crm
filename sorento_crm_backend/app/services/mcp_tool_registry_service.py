@@ -31,6 +31,15 @@ class SyncReport:
     deactivated: int
 
 
+def _restricted_fields(spec) -> list[dict[str, str]]:
+    """`ToolSpec.restricted_fields` (key, label) pairs, as the JSONB the table
+    stores. `getattr` default so a `_FakeSpec` fixture with no such attribute -
+    every tool that ships with nothing restricted - syncs to `[]`, not a crash.
+    """
+    pairs = getattr(spec, "restricted_fields", None) or ()
+    return [{"key": key, "label": label} for key, label in pairs]
+
+
 def _load_specs() -> Iterable:
     """Return every `ToolSpec` from the code catalog (base + per-module overlay).
 
@@ -46,6 +55,12 @@ def _load_specs() -> Iterable:
 def sync_catalog(db: Session) -> SyncReport:
     sync_started_at = datetime.utcnow()
     specs = list(_load_specs())
+    # `CHATBOT_TOOL_DOMAINS` is stamped onto `mcp_tools.chatbot_domain`, which nothing
+    # reads since the chatbot's tool search was dropped (8 Sep 2026) - see that column's
+    # own docstring. It lives in `app/services/`, not `app/services/chatbot/`:
+    # this is core, and core must never import the chatbot package (AC-002,
+    # `tests/chatbot/test_import_boundary.py`) - D17, after D15 got that backwards.
+    from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS
 
     added = 0
     updated = 0
@@ -54,6 +69,7 @@ def sync_catalog(db: Session) -> SyncReport:
         existing = (
             db.query(McpTool).filter(McpTool.tool_name == spec.name).one_or_none()
         )
+        chatbot_domain = CHATBOT_TOOL_DOMAINS.get(spec.name)
         if existing is None:
             db.add(
                 McpTool(
@@ -65,6 +81,8 @@ def sync_catalog(db: Session) -> SyncReport:
                     http_method=spec.method,
                     is_active=True,
                     last_seen_at=sync_started_at,
+                    restricted_fields=_restricted_fields(spec),
+                    chatbot_domain=chatbot_domain,
                 )
             )
             added += 1
@@ -77,6 +95,8 @@ def sync_catalog(db: Session) -> SyncReport:
         existing.http_method = spec.method
         existing.is_active = True
         existing.last_seen_at = sync_started_at
+        existing.restricted_fields = _restricted_fields(spec)
+        existing.chatbot_domain = chatbot_domain
         updated += 1
 
     db.flush()

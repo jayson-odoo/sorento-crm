@@ -512,8 +512,8 @@ export function ContainerRequestSection({
               formula="suggested = need - on hand - incoming SPO - incoming PL (not yet on an SPO)"
               terms={[
                 { name: 'Need', note: 'open SO lines, project and retail, until the plan date' },
-                { name: 'On hand', note: 'site pools only' },
-                { name: 'Incoming SPO', note: 'site pools only' },
+                { name: 'On hand', note: 'every active location' },
+                { name: 'Incoming SPO', note: 'every active location' },
                 {
                   name: 'Incoming PL',
                   note: 'unreceived packing lists, minus whatever of them already has an SPO',
@@ -612,7 +612,7 @@ export function ContainerRequestSection({
       {
         accessorKey: 'on_hand',
         header: ({ column }) => <DataGridColumnHeader title="On hand" column={column} />,
-        // Openable at zero too, unlike the demand cells: "nothing in any of the six pools" is
+        // Openable at zero too, unlike the demand cells: "nothing at any active location" is
         // the answer the location table gives, and it is the one the buyer came for.
         cell: ({ row }) => (
           <PlanNumberButton
@@ -631,7 +631,7 @@ export function ContainerRequestSection({
         cell: ({ row }) => (
           <PlanNumberButton
             value={fmtInt(row.original.incoming_spo)}
-            label="Shipping orders on their way to a site pool"
+            label="Shipping orders on their way, any active location"
             onClick={() => setDialog({ kind: 'spo', row: row.original })}
           />
         ),
@@ -1027,7 +1027,9 @@ export function ContainerRequestSection({
               loading={build.isFetching || history.isFetching}
             />
           ) : dialog.kind === 'on_hand' ? (
-            <OnHandTable productId={dialog.row.product_id} />
+            // R7 (captain 8 Sep 2026): this grid's own On hand cell counts every active
+            // location, so the lightbox behind it must too, or the total stops footing.
+            <OnHandTable productId={dialog.row.product_id} scope="all" />
           ) : dialog.kind === 'spo' ? (
             <SpoTabs supplierId={supplierId} productId={dialog.row.product_id} />
           ) : dialog.kind === 'blocks' ? (

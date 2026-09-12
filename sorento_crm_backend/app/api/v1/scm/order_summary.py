@@ -24,30 +24,45 @@ the caller's name and the id never leaves the server.
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission_with_api_key
+from app.dependencies import require_permission, require_permission_with_api_key
+from app.schemas.download import DownloadResponse
+from app.services.download_service import DownloadService
+from app.services.error_handler import AppException
+from app.services.uuid_path_param import validate_uuid_path
 from app.schemas.scm_order_summary import (
     KeyedStatusIn,
     KeyedStatusOut,
     OrderSummaryDecisionIn,
     OrderSummaryDecisionOut,
     OrderSummaryDemandDrillOut,
+    OrderSummaryExportIn,
     OrderSummaryLocationsOut,
     OrderSummaryReportOut,
     OrderSummarySuppliersOut,
     PoWorklistOut,
 )
+from app.services.scm import reorder_run_service
 from app.services.scm import summary_order_service as svc
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
 _VIEW = require_permission_with_api_key("scm.dashboard.view")
 _RUN = require_permission_with_api_key("scm.reorder.run")
+# Security S4 (review fix round A, A4): a WRITE endpoint - it creates a `user_downloads`
+# row and enqueues a background render - is never reachable by `X-API-Key` alone. Same
+# permission slug as `_VIEW` (exporting states nothing new, it only prints what the
+# report already answers), but the real-signed-in-user dependency: `app/dependencies.py`'s
+# own rule for anything that writes.
+_EXPORT = require_permission("scm.dashboard.view")
 
 
 def _actor(user: Optional[dict]) -> Optional[str]:
@@ -81,6 +96,106 @@ def get_order_summary(
     not describe. To read another week, name its run.
     """
     return svc.report(db, run_id=run_id)
+
+
+def _ddmmyyyy_compact(iso: Optional[str]) -> str:
+    """`2026-09-10` -> `10092026`, for a FILENAME (no separators). Falls back to today
+    when the run froze no rows (`report()`'s own `as_of` is then None) - the row itself
+    still needs a name, and today is the only date anyone has to stamp on it."""
+    from datetime import date as _date, datetime as _datetime
+
+    if not iso:
+        return _date.today().strftime("%d%m%Y")
+    try:
+        return _datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d%m%Y")
+    except ValueError:
+        return _date.today().strftime("%d%m%Y")
+
+
+@router.post("/order-summary/export", response_model=DownloadResponse)
+def export_order_summary(
+    payload: OrderSummaryExportIn = Body(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(_EXPORT),
+):
+    """Queue the order sheet through My Downloads (S4, G6 ruling 9 Sep 2026 - "our export
+    of the excel and pdf needs to use My Downloads process, similar to other downloading
+    buttons"). Same permission as the grid it prints (``scm.dashboard.view``): exporting
+    states nothing new, it only prints what the report already answers.
+
+    AC-16: every guard - format, a malformed run id, an absent/invisible run, too many
+    rows to order - runs SYNCHRONOUSLY here, before any ``user_downloads`` row exists, so
+    a rejected request never leaves a row behind for the drawer to show. L1/L2 (Phase 3
+    security review, carried over from the old GET): a named ``run_id`` is validated as a
+    UUID (404 on a malformed one, the same non-committal answer a genuinely-absent run
+    gets) and its visibility is checked with the SAME gate every other run-scoped route
+    uses, before the report is ever read.
+    """
+    fmt = (payload.format or "").strip().lower()
+    if fmt not in ("pdf", "xlsx"):
+        raise AppException(status_code=422, message="format must be pdf or xlsx.")
+    run_id = payload.run_id
+    if run_id:
+        run_id = validate_uuid_path(run_id, resource="Reorder run")
+        reorder_run_service.assert_run_visible(db, run_id)
+
+    # A COUNT/MAX over `scm.order_summary_row`, not a full `report()` render on the
+    # request thread (reviewer nit, review fix round A, A5) - the row-count guard (M1,
+    # Phase 3 security review) and the sheet's own `as_of` - which names the file - come
+    # off one lightweight query rather than serialising every row just to maybe refuse.
+    stats = svc.export_guard_stats(db, run_id=run_id)
+    if stats["row_count"] > svc.MAX_EXPORT_ROWS:
+        raise AppException(422, "Narrow the plan first")
+
+    kind = f"order_sheet_{fmt}"
+    # AC-16b (security S5, amended reviewer R1): one in-flight sheet per user per run PER
+    # FORMAT - the EXACT kind, so a pending PDF never blocks an Excel request for the same
+    # run (matches the AC-23 evidence: PDF then Excel back to back both succeed). No queue
+    # machinery, just a guard on what `user_downloads` already states; `has_in_flight`
+    # sweeps this user's stale rows first, so a dead worker's leftover never wedges a
+    # caller out for the rest of the 20-minute window.
+    if DownloadService(db).has_in_flight(
+        user_id=str(current_user["id"]), kind=kind,
+        source_entity_type="reorder_run", source_entity_id=stats["run_id"],
+    ):
+        fmt_label = "Excel" if fmt == "xlsx" else fmt.upper()
+        raise AppException(
+            status_code=409,
+            message=f"An order sheet ({fmt_label}) for this plan is already being "
+                    "prepared - check My Downloads.",
+        )
+
+    filename = f"order-sheet-{_ddmmyyyy_compact(stats['as_of'])}.{fmt}"
+    download = DownloadService(db).create(
+        user_id=str(current_user["id"]),
+        kind=kind,
+        source_entity_type="reorder_run",
+        source_entity_id=stats["run_id"],
+        filename=filename,
+    )
+    try:
+        from app.services.queue_service import enqueue_job
+        from app.tasks.export_tasks import generate_order_sheet
+
+        enqueue_job(
+            generate_order_sheet,
+            str(download.id),
+            stats["run_id"],
+            fmt,
+            str(current_user["id"]),
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:
+        DownloadService(db).mark_failed(
+            str(download.id), f"Could not queue order sheet generation: {e}"
+        )
+        raise AppException(
+            status_code=503,
+            message="Could not queue order sheet generation. Please try again.",
+        )
+
+    return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
 
 
 @router.get(

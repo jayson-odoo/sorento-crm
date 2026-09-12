@@ -47,6 +47,30 @@ export type OrderInquiryState =
   | 'placed';
 
 /**
+ * A "supplied with" bundle (PLAN-scm-supplied-with-companions.md): this row's product
+ * rides inside one or more other rows' own line rather than getting its own PO line,
+ * derived (never typed) by `ProjectOrderInquiryService.derive_bundles`.
+ *
+ * Owner ruling 9 Sep (UAC D10): the UI never says "host". `item_codes` is every item the
+ * rule names, in rule order - length 1 for the common case (CKSW015 with CKS1050),
+ * length 2+ for a pair rule (SC-RL with X + Y). The worklist headline reads the single
+ * code when there is one, `N items` otherwise; the lightbox names every one of them.
+ * `row_id` addresses the ANCHOR row (the rule's first matching item) - the info icon
+ * opens that row's own lightbox rather than this one's, since a fully-bundled row has no
+ * backing documents of its own to show.
+ */
+export interface OrderInquiryBundledWith {
+  row_id: string;
+  item_code: string;
+  item_codes: string[];
+  /** The anchor row's OWN coverage ("1 of 1"), resolved server-side (review round 1
+   * item 8) - never resolved client-side by scanning a page's own loaded rows, which
+   * is only ever right when the anchor happens to be on the SAME page as this row.
+   * Null when the anchor has no links of its own yet ("Not found (new order)"). */
+  anchor_headline: string | null;
+}
+
+/**
  * One placement: this row's quantity, or part of it, sitting on ONE purchase order line
  * or ONE SPO allocation (`projects.order_inquiry_links`, PLAN section 3.I). A row keeps
  * its FULL quantity and carries many links - never the split rows the cascade used to
@@ -92,6 +116,13 @@ export interface OrderInquiryLink {
   linked_by_name?: string | null;
   /** Addresses the PO popover. Null on an SPO link - there is no purchase order to open. */
   po_id?: string | null;
+  /**
+   * The purchase order an SPO link's allocation was raised FROM, per the AutoCount
+   * feed's own statement (owner's 9 Sep feedback: "if we link by SPO, where do we see
+   * the PO number of this SPO?"). Plain text, never a link yet - a later slice decides
+   * where it goes. Null on a `po`-kind link and on an SPO the book named no source for.
+   */
+  source_po_number?: string | null;
 }
 
 /**
@@ -278,6 +309,14 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   links?: OrderInquiryLink[];
   linked_qty?: string;
+  /**
+   * PLAN-scm-supplied-with-companions.md, S2. `bundled_qty` never exceeds `qty - linked_qty`
+   * (a link a person already made stays a link); `bundled_with` is null on an un-bundled
+   * row, or when a rule matched but the bundle worked out to 0 (e.g. supplier mismatch,
+   * an unmet pair, or the rule's own item is inactive).
+   */
+  bundled_qty?: string;
+  bundled_with?: OrderInquiryBundledWith | null;
   /** The document CS cited on an order back. Named on the row so the walk can honour it. */
   cited_document?: string | null;
   /** Same as `OrderInquiryRow.has_link_candidate`, for this cross-project worklist. */
@@ -721,6 +760,14 @@ export interface OrderInquiryPoDetailLine {
   qty_received: string;
   remaining: string;
   location?: string | null;
+  /**
+   * The AutoCount book's own sales-order linkage for this line - the SAME fact and the
+   * SAME fields the SCM purchase-order detail's Lines tab prints, rendered by the SAME
+   * component, so a line's linkage reads identically on both screens. Never a guess.
+   */
+  book_so_number?: string | null;
+  /** True when the book named a sales order this CRM does not hold. */
+  book_so_unresolved?: boolean | null;
 }
 
 /**
@@ -778,6 +825,12 @@ export interface OrderInquirySpoDetailLine {
    * named neither, and the cell says "no location" rather than printing a dash.
    */
   location?: string | null;
+  /**
+   * The purchase order this line was raised from, per AutoCount's own statement
+   * (owner's 9 Sep feedback). Plain text, never a link yet. Null when the book named
+   * no source.
+   */
+  source_po_number?: string | null;
 }
 
 export interface OrderInquirySpoDetail {

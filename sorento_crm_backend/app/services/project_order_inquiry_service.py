@@ -52,12 +52,18 @@ from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
+    ProductSupplier,
     PurchaseOrder,
     PurchaseOrderLine,
     SPOAllocation,
     Supplier,
 )
 from app.models.product import Product
+from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
+from app.services.product_companion_service import (
+    bundled_with_item_codes_map as _bundled_with_item_codes_map,
+    resolve_bundled_item_codes as _resolve_bundled_item_codes,
+)
 from app.models.scm import OrderLinkClaim
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
@@ -473,19 +479,28 @@ class ProjectOrderInquiryService:
         """
         inquiry = self._existing(order.id, None)
         if inquiry is None:
-            inquiry = OrderInquiry(
-                company_id=order.company_id,
-                project_sales_order_id=order.id,
-                amendment_id=None,
-                state=INQUIRY_RAISED,
-                raised_by=actor_user_id,
-                # The number is stamped by the model's own `before_insert` (there is one
-                # minting path, so no writer can forget). Numbered ONCE, on the header this
-                # order keeps: a re-confirm reuses the same inquiry (`_existing` above), so
-                # purchasing keeps quoting one number through every revision.
-            )
-            self.db.add(inquiry)
-            self.db.flush()
+            # A header is raised only when this confirmation actually has something to
+            # buy: a plan covered entirely by Reserve, Borrow or timely SPO cover has no
+            # Buy residual and opened no donor hole, so `buy_lines` and
+            # `borrow_shortfalls` are both empty and the loop below would write zero
+            # rows. Minting the header anyway burns an OI number for nothing and leaves
+            # a dangling "Order inquiries" link on the SO list that the (rows-based) OI
+            # worklist never shows anything for (prod OI-000020, local OI-000007).
+            # S3: a local Buy raises nothing, so it never justifies minting a header on
+            # its own - only an OVERSEAS residual (or a donor hole) does.
+            will_raise = any(
+                _dec(entry.get("buy_qty")) > _ZERO
+                for entry in buy_lines
+                if entry.get("origin") != "local"
+            ) or bool(borrow_shortfalls)
+            if not will_raise:
+                return {
+                    "inquiry": None,
+                    "created": 0,
+                    "exceptions": [],
+                    "settled_in_place": [],
+                }
+            inquiry = self.ensure_inquiry(order, actor_user_id=actor_user_id)
         elif actor_user_id:
             # A reconfirm RE-STAMPS the header (PLAN section H, AC-H4). The inquiry is
             # deliberately reused so purchasing keeps quoting one number, which means
@@ -505,6 +520,15 @@ class ProjectOrderInquiryService:
         # `_settle_row_in_place` declines a line whose rows it cannot read as one.
         settled_in_place: List[str] = []
         for entry in buy_lines:
+            # S3 (`PLAN-local-supplier-oi-routing.md`, AC-2.15/AC-2.17/AC-2.18): a Buy
+            # whose product is bought LOCALLY raises no Order Inquiry row and cancels
+            # none - it is neither raised nor treated as dropped. The entry STAYS in
+            # `buy_lines`, so `_retire_uncovered_rows`'s own `covered` set (built from the
+            # whole sequence, below) still names this line and an earlier raised row on
+            # it is left exactly as it is - skipping here, before that pass runs, is what
+            # keeps "local now" from reading as "line dropped from the revision".
+            if entry.get("origin") == "local":
+                continue
             line = entry["line"]
             need = _dec(entry.get("buy_qty"))
             carried = bool(entry.get("carried"))
@@ -750,6 +774,10 @@ class ProjectOrderInquiryService:
         created += shortfalls
         raised += shortfalls
         self.db.flush()
+        # PLAN-scm-supplied-with-companions.md S5 (call site 1): the revision's rows are
+        # all written now, so any companion this inquiry carries can be derived against
+        # its host(s)' fresh state.
+        self.derive_bundles(inquiry.id)
         if raised and self.task_for(inquiry.id) is None:
             self._hand_to_purchasing(order, inquiry, raised)
         return {
@@ -1028,7 +1056,13 @@ class ProjectOrderInquiryService:
                     "id": str(row.id),
                     "item_code": row.item_code,
                     "so_number": so_number,
-                    "qty": str(row.qty),
+                    # `_qty_str`, not a bare `str()`: `refresh_link_state` above may
+                    # have just re-read this row from the database (`derive_bundles`'s
+                    # own `populate_existing()`), which widens a Decimal to the
+                    # column's stored NUMERIC(15,4) scale ("25" prints back "25.0000")
+                    # - a database implementation detail this outbound context must
+                    # not leak (review round 2, CI).
+                    "qty": _qty_str(_dec(row.qty)),
                     "previous_qty": (
                         str(row.previous_qty) if row.previous_qty is not None else None
                     ),
@@ -1457,6 +1491,39 @@ class ProjectOrderInquiryService:
             else query.filter(OrderInquiry.amendment_id.is_(None))
         )
         return query.first()
+
+    def ensure_inquiry(
+        self, order: ProjectSalesOrder, *, actor_user_id: Optional[str] = None
+    ) -> OrderInquiry:
+        """Get this order's standard-demand header (`amendment_id IS NULL`), minting it.
+
+        Two callers: `refresh_for_decision`'s own gate, once it has decided a header is
+        actually needed, and `project_supply_service._place_supply_borrows`'s fallback -
+        a step-3 supply borrow's asker-side ORDER_BACK row needs a header to hang off
+        even on a confirmation whose Buy residual and donor holes were both empty (the
+        line was fully covered by borrowing somebody else's already-placed document),
+        which is a case `refresh_for_decision`'s gate cannot see because it never
+        receives the borrow composition, only the confirmed Buy and the donor holes.
+        Callers must not call this unless they are about to write at least one row: an
+        empty header is exactly the defect this method's sibling gate exists to avoid.
+        """
+        existing = self._existing(order.id, None)
+        if existing is not None:
+            return existing
+        inquiry = OrderInquiry(
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            amendment_id=None,
+            state=INQUIRY_RAISED,
+            raised_by=actor_user_id,
+            # The number is stamped by the model's own `before_insert` (there is one
+            # minting path, so no writer can forget). Numbered ONCE, on the header this
+            # order keeps: a re-confirm reuses the same inquiry (`_existing` above), so
+            # purchasing keeps quoting one number through every revision.
+        )
+        self.db.add(inquiry)
+        self.db.flush()
+        return inquiry
 
     # ----------------------------------------------------------- covering pools
 
@@ -1905,6 +1972,29 @@ class ProjectOrderInquiryService:
         candidates = self.link_candidate_products(set(product_by_row.values()))
         links_by_row = self.links_for_rows([row.id for row in rows])
         linked_by_row = self._linked_qty_by_row([row.id for row in rows])
+        # PLAN-scm-supplied-with-companions.md S5: the anchor's own item code, for the
+        # rows that carry a bundle - one query for the whole page rather than one per row.
+        anchor_ids = {row.bundled_with_row_id for row in rows if row.bundled_with_row_id}
+        anchor_item_code_by_id: Dict[str, str] = {}
+        if anchor_ids:
+            anchor_item_code_by_id = dict(
+                self.db.query(OrderInquiryRow.id, OrderInquiryRow.item_code)
+                .filter(OrderInquiryRow.id.in_(anchor_ids))
+                .all()
+            )
+        # Review round 1 item 10: the rule set behind every bundled row, resolved ONCE
+        # for the whole page rather than once per row.
+        bundle_map: Dict[str, List[str]] = {}
+        codes_by_company: Dict[str, set] = {}
+        for row in rows:
+            if row.bundled_with_row_id:
+                codes_by_company.setdefault(row.company_id, set()).add(row.item_code)
+        for company_id, codes in codes_by_company.items():
+            bundle_map.update(
+                _bundled_with_item_codes_map(
+                    self.db, company_id=company_id, companion_item_codes=codes
+                )
+            )
         out: List[Dict[str, Any]] = []
         for row in rows:
             meta = context.get(row.order_inquiry_id, {})
@@ -1935,6 +2025,26 @@ class ProjectOrderInquiryService:
                     "po_ref": row.po_ref,
                     "po_line_id": row.po_line_id,
                     "cited_document": row.cited_document,
+                    # PLAN-scm-supplied-with-companions.md S5: how much of this row
+                    # rides inside another item's own line, and which row anchors it.
+                    # `response_model` drops what it is not told about - both asserted
+                    # in `test_order_inquiry_bundles.py::test_d7`.
+                    "bundled_qty": _qty_str(_dec(row.bundled_qty)),
+                    "bundled_with": (
+                        {
+                            "row_id": row.bundled_with_row_id,
+                            "item_code": anchor_item_code_by_id.get(row.bundled_with_row_id),
+                            "item_codes": _resolve_bundled_item_codes(
+                                bundle_map,
+                                companion_item_code=row.item_code,
+                                anchor_item_code=anchor_item_code_by_id.get(
+                                    row.bundled_with_row_id
+                                ),
+                            ),
+                        }
+                        if row.bundled_with_row_id
+                        else None
+                    ),
                     # WHERE the quantity actually sits (AC-I5/AC-I9). `po_ref` above is the
                     # first of these, kept for the older readers that print one number.
                     "links": links_by_row.get(row.id, []),
@@ -1987,6 +2097,13 @@ class ProjectOrderInquiryService:
         SECOND alias of the same tables above: the first pair's join is keyed off
         `OrderInquiryLink.po_line_id`, which an SPO link never sets, so it cannot also
         answer for `SPOAllocation.po_line_id`).
+
+        `source_po_number` (owner's 9 Sep feedback): the purchase order an SPO link's
+        allocation was raised FROM, per the AutoCount feed's own statement
+        (`SPOAllocation.from_po_number`, migration 493 / contract 2.2) - a different
+        question from `purchase_order_id` above, which only ever answers for a
+        Sorento-raised SPO carrying its own resolved `po_line_id`. Plain text, null on a
+        PO-kind link and on an SPO the book named no source for.
         """
         wanted = [row_id for row_id in row_ids if row_id]
         if not wanted:
@@ -2009,6 +2126,7 @@ class ProjectOrderInquiryService:
                 SPOAllocation.issue_date,
                 SPOAllocation.expected_date,
                 SPOAllocation.location_code,
+                SPOAllocation.from_po_number,
                 SpoPO.id,
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
@@ -2035,6 +2153,10 @@ class ProjectOrderInquiryService:
                 # would otherwise keep printing its documents on the SO detail beside the
                 # revision that replaced it.
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
+                # R7/AC-E9: SPOAllocation is OUTER-joined, so this passes a plain PO
+                # link (its columns come back NULL) untouched and only excludes a
+                # link whose SPO side names a retired line.
+                *spo_supply.visible_line_clauses(),
             )
             .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
             .all()
@@ -2061,6 +2183,7 @@ class ProjectOrderInquiryService:
             spo_issue_date,
             spo_expected_date,
             spo_location_code,
+            spo_from_po_number,
             spo_purchase_order_id,
         ) in rows:
             is_spo = link.spo_allocation_id is not None
@@ -2105,6 +2228,18 @@ class ProjectOrderInquiryService:
                         if is_spo and spo_purchase_order_id
                         else (str(po_id) if po_id else None)
                     ),
+                    # Owner's 9 Sep feedback against the running lane: "if we link by
+                    # SPO, where do we see the PO number of this SPO?" - nowhere, before
+                    # this. `from_po_number` is the raw AutoCount pass-through
+                    # (`SPOAllocation.from_po_number`, migration 493 / contract 2.2), not
+                    # `purchase_order_id` above - that traces a Sorento-raised SPO's own
+                    # `po_line_id` FK, which is null for the ordinary case of a book-fed
+                    # allocation the ESB simply STATED a source document for. Plain text,
+                    # never a link yet (a later slice decides where it goes); None on a
+                    # PO-kind link and on an SPO the book named no source for - never a
+                    # guess. `from_po_line_ref` (the resolver key) is never sent - it is
+                    # not a thing a buyer reads.
+                    "source_po_number": spo_from_po_number if is_spo else None,
                 }
             )
         return out
@@ -2754,7 +2889,15 @@ class ProjectOrderInquiryService:
         Renaming the column value would have rewritten `scm.committed_v`, the worklist's
         own filter and every saved column preference to say the same thing in a different
         word, which buys nothing and breaks a bookmark.
+
+        PLAN-scm-supplied-with-companions.md S5 (call site 2, section 3.2): re-derives
+        every touched inquiry's bundles FIRST, so a host row's own link change (gaining
+        one, being cancelled, its qty dropping) is reflected in its companions' state
+        below in the SAME pass - `derive_bundles` is the one writer of `bundled_qty`,
+        never this loop.
         """
+        for inquiry_id in {row.order_inquiry_id for row in rows if row.order_inquiry_id}:
+            self.derive_bundles(inquiry_id)
         for row in rows:
             if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED):
                 # The STATE is a person's word and is left alone, but the derived display
@@ -2767,13 +2910,7 @@ class ProjectOrderInquiryService:
                 continue
             links = self._links_of(row.id)
             linked = sum((_dec(link.qty) for link in links), _ZERO)
-            need = _dec(row.qty)
-            if linked <= _ZERO:
-                row.state = INQUIRY_RAISED
-            elif linked < need:
-                row.state = INQUIRY_PARTLY_LINKED
-            else:
-                row.state = INQUIRY_PLACED
+            row.state = self._coverage_state(_dec(row.qty), linked, _dec(row.bundled_qty))
             first = links[0] if links else None
             # The FIRST link's document, by when it was made. `po_ref` has carried a PO
             # number since section G and several readers still print it; it is a display of
@@ -2786,6 +2923,266 @@ class ProjectOrderInquiryService:
                 if first is not None and first.spo_allocation_id is not None
                 else None
             )
+
+    @staticmethod
+    def _coverage_state(qty: Decimal, linked: Decimal, bundled: Decimal) -> str:
+        """`linked + bundled_qty >= qty` reads `placed`; between, `partly_linked`; none
+        of it, `raised` (plan 3.4 "State"). The one formula `refresh_link_state` and
+        `derive_bundles` both read, so the two writers of a row's coverage can never
+        come to disagree about what it means."""
+        covered = linked + bundled
+        if covered <= _ZERO:
+            return INQUIRY_RAISED
+        if covered < qty:
+            return INQUIRY_PARTLY_LINKED
+        return INQUIRY_PLACED
+
+    # --------------------------------------------------- supplied-with companions (S5)
+
+    def derive_bundles(self, inquiry_id: str) -> None:
+        """PLAN-scm-supplied-with-companions.md sections 3.2-3.3.
+
+        Recomputes `bundled_qty` / `bundled_with_row_id` (and, since coverage now reads
+        both, `state`) for every COMPANION row of this inquiry - never a host row's own
+        fields, and never a new row. Idempotent (B14): re-running it is a no-op when
+        nothing on the inquiry has changed. RESETS, never freezes: a row with no
+        applicable rule this pass (the rule was deleted or deactivated since the last
+        derivation, or a pair rule's host went missing) is written back to bundled_qty
+        0 / bundled_with_row_id NULL / state-from-links-alone, not left holding an
+        earlier pass's answer. The one exception is a row this function does not touch
+        at all: ACTIONED or CANCELLED, "a person's word about the row" exactly as
+        `refresh_link_state` reads them - an actioned companion keeps whatever it was
+        actioned with, bundle included.
+
+        Per companion row R (ORDER / ORDER_BACK, not actioned or cancelled):
+          rules  = active rules for R's product, company-scoped
+          for each rule (first match wins - the UNIQUE constraint means at most one
+                         should ever apply to a given order's supplier anyway):
+              host rows H_k = this inquiry's rows of each host product, verb in
+                              (ORDER, ORDER_BACK), state not cancelled, ack not rejected
+              every H_k must have at least one row, or the rule does not apply
+              the rule's OWN supplier scope must match (3.3), or it does not apply
+              host_cap = min over k of (sum(H_k.qty) * ratio)
+              bundled  = min(R.qty - linked(R), host_cap), never below 0
+          R.bundled_qty = bundled (0 if no rule applied)
+          R.bundled_with_row_id = the first host row of the first host key (3.2's
+                                   "display anchor"), or None
+        """
+        # FLUSH first: `populate_existing()` below reads columns straight off the
+        # database, and without this, a caller's own PENDING change on one of these
+        # rows made earlier in the SAME session (a settle, a cancel, a qty rewrite -
+        # exactly what `refresh_link_state`'s own callers do before handing it rows to
+        # refresh) would still be unflushed, so `populate_existing()` would read the
+        # OLD row back over it and silently discard the caller's write. This was a real
+        # regression (CI round 2): a board merge that raised a survivor's qty to 25 and
+        # cancelled its siblings read back qty 10 and "not cancelled" once this ran.
+        #
+        # `populate_existing()` itself still has to stay: B10 cancels a HOST row via
+        # raw SQL on this same session (`world.cancel`, the fixture's own stand-in for
+        # "the owner relinks by hand" in production) and derive_bundles has to see that
+        # NOW, not the stale `state` this session's identity map already cached the
+        # host object as - the one real, tested case its own docstring was written for.
+        # It DOES widen a re-read row's printed decimal precision to the column's
+        # stored NUMERIC(15,4) scale ("25" back as "25.0000") - real, but the caller's
+        # own job to format, not this function's: `_dispatch_changed_with_links` fixes
+        # its own read of `row.qty` with `_qty_str()` for exactly that reason.
+        self.db.flush()
+        rows = (
+            self.db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.order_inquiry_id == inquiry_id)
+            .populate_existing()
+            .all()
+        )
+        if not rows:
+            return
+        inquiry = self.db.query(OrderInquiry).filter(OrderInquiry.id == inquiry_id).first()
+        if inquiry is None:
+            return
+        company_id = inquiry.company_id
+
+        codes = {row.item_code for row in rows if row.item_code}
+        if not codes:
+            return
+        product_by_code: Dict[str, str] = {
+            code: pid
+            for pid, code in self.db.query(Product.id, Product.product_code)
+            .filter(Product.company_id == company_id, Product.product_code.in_(codes))
+            .all()
+        }
+        if not product_by_code:
+            return
+
+        def _is_host_row(row: OrderInquiryRow) -> bool:
+            return (
+                row.verb in (IV_ORDER, IV_ORDER_BACK)
+                and row.state != INQUIRY_CANCELLED
+                and row.ack_state != ACK_REJECTED
+            )
+
+        host_rows_by_product: Dict[str, List[OrderInquiryRow]] = {}
+        for row in rows:
+            if not _is_host_row(row):
+                continue
+            product_id = product_by_code.get(row.item_code)
+            if product_id:
+                host_rows_by_product.setdefault(product_id, []).append(row)
+
+        product_ids = set(product_by_code.values())
+        active_rules = (
+            self.db.query(ProductCompanionRule)
+            .filter(
+                ProductCompanionRule.company_id == company_id,
+                ProductCompanionRule.companion_product_id.in_(product_ids),
+                ProductCompanionRule.is_active.is_(True),
+            )
+            .all()
+        )
+        rules_by_companion: Dict[str, List[ProductCompanionRule]] = {}
+        for rule in active_rules:
+            rules_by_companion.setdefault(rule.companion_product_id, []).append(rule)
+        # NOT an early return when this comes up empty (a deleted or deactivated rule
+        # leaves it exactly this way): every row the loop below still walks gets reset,
+        # which is the whole point - a companion whose rule is gone must not keep a
+        # frozen bundle (B3).
+
+        hosts_by_rule: Dict[str, List[str]] = {}
+        rule_ids = [rule.id for rule in active_rules]
+        if rule_ids:
+            for host_link in (
+                self.db.query(ProductCompanionRuleHost)
+                .filter(ProductCompanionRuleHost.rule_id.in_(rule_ids))
+                .order_by(ProductCompanionRuleHost.seq.asc())
+                .all()
+            ):
+                hosts_by_rule.setdefault(host_link.rule_id, []).append(
+                    host_link.host_product_id
+                )
+
+        linked_by_row = self._linked_qty_by_row([row.id for row in rows])
+
+        for row in rows:
+            # `_refresh_link_state` never touches an ACTIONED or CANCELLED row's state -
+            # "a person's word about the row" - and this has to agree: an actioned
+            # companion keeps whatever it was actioned with, bundle included (B4).
+            if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED):
+                continue
+            if row.verb not in (IV_ORDER, IV_ORDER_BACK):
+                continue
+
+            product_id = product_by_code.get(row.item_code)
+            candidate_rules = rules_by_companion.get(product_id) if product_id else None
+
+            # Never a companion candidate, and nothing on it to reset: leave the row
+            # untouched ENTIRELY, `state` included (review round 2, CI: this used to
+            # recompute `state` from links alone for every row of the whole inquiry,
+            # not only the ones this function is actually about - a "placed with no
+            # link row" special case, or a row `refresh_link_state`'s own caller had
+            # just settled/cancelled a moment ago and not yet re-read, would get
+            # demoted back to `raised` here even though nothing about its bundle
+            # ever changed). A row that HAS a candidate rule, or still carries a
+            # bundle from an earlier pass (the reset case, B3/B16/B17), still runs
+            # the full derivation below.
+            if (
+                not candidate_rules
+                and _dec(row.bundled_qty) <= _ZERO
+                and not row.bundled_with_row_id
+            ):
+                continue
+
+            linked = linked_by_row.get(row.id, _ZERO)
+
+            bundled = _ZERO
+            anchor_row_id: Optional[str] = None
+            # First rule that actually APPLIES wins (plan 3.2's anchor is "the first
+            # host row" of the rule that matched, never the larger of several
+            # candidates) - the UNIQUE constraint means more than one active rule for
+            # the same companion only happens across different supplier scopes, and at
+            # most one supplier scope can match a given order.
+            for rule in candidate_rules or []:
+                host_ids = hosts_by_rule.get(rule.id) or []
+                if not host_ids:
+                    continue
+                host_rows_per_host = [host_rows_by_product.get(hid) or [] for hid in host_ids]
+                if any(not host_rows for host_rows in host_rows_per_host):
+                    # Not every host on this rule has a row on THIS order (B7) - the
+                    # rule does not apply.
+                    continue
+                if not self._companion_rule_supplier_matches(rule, host_rows_per_host):
+                    continue
+                host_cap: Optional[Decimal] = None
+                for host_rows in host_rows_per_host:
+                    host_total = sum((_dec(h.qty) for h in host_rows), _ZERO)
+                    cap = host_total * _dec(rule.ratio)
+                    host_cap = cap if host_cap is None else min(host_cap, cap)
+                remaining = max(_dec(row.qty) - linked, _ZERO)
+                bundled = min(remaining, host_cap if host_cap is not None else _ZERO)
+                anchor_row_id = host_rows_per_host[0][0].id
+                break
+
+            # Written every time, win or lose: a row with no applicable rule (B3 - the
+            # rule was deleted or deactivated since the last derivation, or B7 - a pair
+            # rule with one host missing) resets to ala carte rather than keeping
+            # whatever an earlier pass left on it.
+            row.bundled_qty = bundled
+            row.bundled_with_row_id = anchor_row_id if bundled > _ZERO else None
+            row.state = self._coverage_state(_dec(row.qty), linked, bundled)
+
+        self.db.flush()
+
+    def _companion_rule_supplier_matches(
+        self, rule: ProductCompanionRule, host_rows_per_host: Sequence[Sequence[OrderInquiryRow]]
+    ) -> bool:
+        """PLAN section 3.3. NULL `supplier_id` is the "just in case" scope and always
+        matches. Otherwise EVERY host on the rule must resolve to that supplier - a
+        linked host row reads the supplier of its own link; an unlinked one reads its
+        product's primary supplier."""
+        if not rule.supplier_id:
+            return True
+        for host_rows in host_rows_per_host:
+            if not any(
+                self._host_row_supplier_id(row) == rule.supplier_id for row in host_rows
+            ):
+                return False
+        return True
+
+    def _host_row_supplier_id(self, row: OrderInquiryRow) -> Optional[str]:
+        """3.3: a linked host row's supplier is the one its (first PO) link names; an
+        unlinked one's is its product's own primary supplier."""
+        links = self._links_of(row.id)
+        for link in links:
+            if link.po_line_id:
+                po_line = (
+                    self.db.query(PurchaseOrderLine)
+                    .filter(PurchaseOrderLine.id == link.po_line_id)
+                    .first()
+                )
+                if po_line is not None:
+                    po = (
+                        self.db.query(PurchaseOrder)
+                        .filter(PurchaseOrder.id == po_line.purchase_order_id)
+                        .first()
+                    )
+                    if po is not None and po.supplier_id:
+                        return po.supplier_id
+        if links:
+            # Every link resolved to no supplier (an SPO with no PO behind it) - there
+            # is nothing to match against.
+            return None
+        product_id = (
+            self.db.query(Product.id)
+            .filter(Product.company_id == row.company_id, Product.product_code == row.item_code)
+            .scalar()
+        )
+        if not product_id:
+            return None
+        return (
+            self.db.query(ProductSupplier.supplier_id)
+            .filter(
+                ProductSupplier.product_id == product_id,
+                ProductSupplier.is_primary_supplier.is_(True),
+            )
+            .scalar()
+        )
 
     def _links_of(self, row_id: str) -> List[OrderInquiryLink]:
         """This row's links, oldest first - the order "the first link" means."""
@@ -3418,6 +3815,14 @@ class ProjectOrderInquiryService:
         """The ownership groups whose OPEN PURCHASE ORDERS cannot cover their own backlog
         (ladder v4, section 1d).
 
+        SLICE H, 8 Sep 2026: a group line is `cascadable` now only when it sits at the site
+        pool (it does not - a group line is a group line precisely because it is not one)
+        or when THIS row's own SO already claims it (`own_so_claim`, G12's `own_claim`).
+        This set therefore bears on the automatic pass only through that second, narrower
+        door; its main effect is still on what `_candidates_for_row` OFFERS, which is what
+        the Link dialog lists and what a manual placement (`manual=True`) may take. Left in
+        place rather than removed for that reason.
+
         `group_net + everything still to come on the group's own purchase orders`. At or
         above zero the group has purchases nobody has claimed and a row may link to one;
         BELOW zero, every unit already on order is owed to demand the group carries and a
@@ -3475,6 +3880,13 @@ class ProjectOrderInquiryService:
     def _exempt_groups_for_row(self, row: OrderInquiryRow, product_id: str) -> set:
         """The deficit exemption THIS row has earned, and nobody else's (B1, code review
         27 Aug 2026).
+
+        SLICE H, 8 Sep 2026: the same note as `_groups_in_deficit` carries here - a group
+        line this exemption lifts is `cascadable` only if it also clears the pool-or-own-
+        claim test in `_candidate`, so the exemption mostly bears on what
+        `_candidates_for_row` OFFERS (the Link dialog) and on a manual placement, and on
+        the automatic pass only for a line THIS row's own SO already claims. Left in place
+        for that reason.
 
         A group holding an acknowledged, still-unlinked row for the product may reach its
         own purchase order however short it is, because that row is the demand somebody
@@ -3660,21 +4072,48 @@ class ProjectOrderInquiryService:
             "line_label": line_label,
             "location": location,
             "tier": tier,
-            # What the automatic pass may take (the captain, 27 Aug): the row's own site
-            # pool and better, never a sibling group or another site. A row naming no
-            # location ranks nothing and keeps the whole list, as before. G12 narrows this
-            # further for a project-bin line this row's own SO has not claimed - refused
-            # to the automatic pass however good its location tier, because the SO that
-            # claims it is the only one allowed to auto-take it.
+            # What the automatic pass may take (the owner, 8 Sep 2026 - slice H, correcting
+            # the reading of the 27 August ruling, and the captain's own S1 ruling on the
+            # review round that followed): a line claimed by THIS row's own sales order, OR
+            # one that sits at the SITE POOL. Nothing else - not the row's own project
+            # location (tier 1), not its ownership group at another site (tier 2), not a
+            # sibling location at the site (tier 4). The 27 August wording ("the site pool
+            # and better") read as a ceiling that also admitted tiers 1 and 2, and on real
+            # data that let the automatic pass take BRW-IB's own open line for SO391853 out
+            # from under it - stock standing at a project location is already spoken for by
+            # that project UNLESS this row's own SO is the one holding it.
             #
-            # There is no trial, preview or self-claiming variant of this test, and there
-            # must never be one (captain, 2 Sep 2026, on real data): the cascade writing
-            # its OWN claim for a line it did not create is how PO 202607-S0067's 114
-            # units at BRW-IB - bought for SO391853 per the AutoCount book - were taken by
-            # SO381895. A project-bin line is attributed by the SUPPLY WRITER that created
-            # it (`app/services/scm/supply_claim.py`) or by the book's own FromSODocList
-            # column, never by the pass that wants to consume it.
-            "cascadable": (own_location is None or tier <= TIER_POOL) and not project_locked,
+            # `own_so_claim` is that exception, and it is G12's own `own_claim` - not a new
+            # mechanism. `is_site_pool(segment)` is the SAME predicate `project_locked`
+            # already reads it through (`project_locked = project_bin and not own_claim`,
+            # `project_bin = not is_site_pool(...)`), never `_pool_codes()`'s FK graph:
+            # S1, the captain's own ruling, corrects the first cut of this line, which
+            # tested FK pool membership - a SECOND, different definition of "pool" living
+            # beside `project_locked`'s. `pool_predicate.is_site_pool` is written to be the
+            # one spelling of a site pool, `segment`-based; `_pool_codes()` stays, but only
+            # for `link_location_tier`'s ORDERING below, a different question entirely. The
+            # algebra: with `own_claim` true, `project_locked` is always false regardless of
+            # `project_bin`, so `own_so_claim or not project_locked` already reduces to
+            # `own_so_claim or is_site_pool(segment)` - no second field to thread in.
+            #
+            # The tier and its sub-rank are UNCHANGED and still decide the ORDER a pool is
+            # tried in (the row's own site pool before the others). The Link dialog is
+            # untouched: it still lists every tier, including a project-location line, and
+            # a buyer may take one by hand - that override path is `manual`, read below.
+            #
+            # G12's OTHER half stands: a project-bin line claimed by ANOTHER SO, or by
+            # nobody, is refused to the automatic pass however good its location tier,
+            # because the SO that claims it is the only one allowed to auto-take it.
+            #
+            # There is no trial, preview or self-claiming variant of `own_so_claim`, and
+            # there must never be one (captain, 2 Sep 2026, on real data): the cascade
+            # writing its OWN claim for a line it did not create is how PO 202607-S0067's
+            # 114 units at BRW-IB - bought for SO391853 per the AutoCount book - were taken
+            # by SO381895. `own_so_claim` is computed ONCE, upstream, off attribution the
+            # SUPPLY WRITER that created the line wrote (`app/services/scm/supply_claim.py`),
+            # the book's own FromSODocList column, or a person in the Link dialog - never by
+            # the pass that wants to consume it; this rule only READS that value.
+            "cascadable": own_so_claim or not project_locked,
             "issue_date": issue_date,
             "expected_date": expected_date,
             "remaining": remaining,
@@ -3712,25 +4151,43 @@ class ProjectOrderInquiryService:
     def _cascade_take(
         candidates: Sequence[Dict[str, Any]], need: Decimal
     ) -> List[Tuple[Dict[str, Any], Decimal]]:
-        """`min(what is left on this line, what is still needed)` off each candidate in the
-        order it was given, until the need is covered or the candidates run out.
+        """`min(what is left on this line, what is still needed)` off each CASCADABLE
+        candidate in the order it was given, until the need is covered - or NOTHING at all,
+        ruled by the owner 8 Sep 2026 (slice D): when the cascadable candidates cannot
+        cover `need` IN FULL, this returns an empty list rather than the partial cover it
+        used to.
 
-        Partial coverage is allowed and is not a failure: a `need` bigger than every
-        candidate's remaining balance combined simply returns less than `need`, and the row
-        is left PARTLY LINKED with the rest still counting as demand. Before the links
-        table there was nowhere to record that, so the row had to be split for the
-        arithmetic to work.
+        Half covering a 493-piece row and buying the other 378 strands whatever the half
+        DID cover - it cannot be re-offered to another row that needed exactly that much -
+        while leaving the row PARTLY LINKED with the balance still counting as demand. The
+        row's whole quantity going to Buy is the honest outcome when nothing on hand can
+        answer it in full; a row already `partly_linked` from before this ruling is left
+        exactly as it is (not retro-applied), and `partly_linked` stays reachable through a
+        re-deal, a book re-upload, or a manual partial taken by hand in the Link dialog -
+        none of which calls this method (`place_on_po_allocations` walks `by_target`
+        directly and is never routed through the cascade).
         """
+        cascadable_total = sum(
+            (
+                candidate["remaining"]
+                for candidate in candidates
+                if candidate.get("cascadable", True)
+            ),
+            _ZERO,
+        )
+        if cascadable_total < need:
+            return []
         still = need
         takes: List[Tuple[Dict[str, Any], Decimal]] = []
         for candidate in candidates:
             if still <= _ZERO:
                 break
-            # The cascade stops at the site pool (the captain, 27 Aug: "we should take
-            # from site pool only"). A sibling group's line, or one at another site, is
-            # still LISTED in the Link dialog - a buyer may take it by hand - but the
-            # automatic pass never does: BRW-IB's purchase is BRW-IB's, and an order at
-            # MWH-IR taking 78 of it was the case that ruled it.
+            # Only a candidate the SITE POOL owns, or one THIS row's own SO already claims,
+            # is ever taken automatically (slice H, correcting the 27 August reading - see
+            # `_candidate`'s own `cascadable`). A project-location line claimed by nobody or
+            # by another SO, a sibling group's line, or one at another site is still LISTED
+            # in the Link dialog - a buyer may take it by hand - but the automatic pass
+            # never does.
             if not candidate.get("cascadable", True):
                 continue
             remaining = candidate["remaining"]
@@ -3816,9 +4273,11 @@ class ProjectOrderInquiryService:
         return out
 
     def _unlinked_need(self, row: OrderInquiryRow) -> Decimal:
-        """What is still to be linked on this row: its quantity, less its links."""
+        """What is still to be linked on this row: its quantity, less its links, less
+        whatever rides inside another item's own line (plan 3.4 "Cascade") - a bundled
+        unit is never something the cascade goes looking for a document for."""
         linked = sum((_dec(link.qty) for link in self._links_of(row.id)), _ZERO)
-        return max(_dec(row.qty) - linked, _ZERO)
+        return max(_dec(row.qty) - linked - _dec(row.bundled_qty), _ZERO)
 
     def _write_link(
         self,

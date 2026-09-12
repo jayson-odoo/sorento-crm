@@ -39,11 +39,13 @@ from sqlalchemy.orm import Session
 from app.models.base import get_company_scope
 from app.models.scm import ReorderRecommendation, ReorderRun
 from app.services.company_scope import resolve_write_company_id
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import decision_service
 from app.services.scm import level_suggestion_service
 from app.services.scm import plan_grain
 from app.services.scm import product_economics_service
+from app.services.scm import product_supplier_service
 from app.services.scm import reorder_level_service
 from app.services.scm import reorder_run_service
 
@@ -77,10 +79,39 @@ def save_plan_edits(
     )
 
     products: set[str] = set()
+    # AC-S13.1 (review fix round 2, 9 Sep): a grouped product row's MoQ edit fans out to
+    # every member recommendation, one row per rec_id, all carrying the SAME value - the
+    # (product, supplier) link this remembers onto is resolved ONCE per product from the
+    # whole group below, never once per member (`_apply_row` calls `set_moq_override`
+    # with `remember=False` for exactly that reason: two locations of one product bought
+    # from two different suppliers must not overwrite each other's link on every save).
+    moq_rec_ids_by_product: dict[str, list[str]] = {}
+    moq_value_by_product: dict[str, Any] = {}
     for row in rows:
         rec = recs[str(row["rec_id"])]
         products.add(str(rec.product_id))
         _apply_row(db, rec, row, actor=actor, company_id=company_id)
+        if "moq" in row:
+            pid = str(rec.product_id)
+            moq_rec_ids_by_product.setdefault(pid, []).append(str(rec.id))
+            moq_value_by_product[pid] = row["moq"]
+
+    # A CLEAR (moq falsy) touches only each row's own override above and NOTHING on the
+    # link (review fix round 3 ruling, finding 3) - only a REAL figure is ever resolved
+    # and remembered.
+    moq_rec_ids_by_product = {
+        pid: rec_ids for pid, rec_ids in moq_rec_ids_by_product.items()
+        if moq_value_by_product[pid]
+    }
+    if moq_rec_ids_by_product:
+        co, co_params = company_sql_predicate(db, "company_id", param_prefix="pemq")
+        for pid, rec_ids in moq_rec_ids_by_product.items():
+            resolved_supplier = product_supplier_service.resolve_supplier_for_moq(
+                db, rec_ids, co=co, co_params=co_params)
+            if not resolved_supplier:
+                continue
+            product_supplier_service.remember_moq(
+                db, pid, resolved_supplier, float(moq_value_by_product[pid]))
 
     return {"saved_rows": len(rows), "saved_products": len(products)}
 
@@ -141,8 +172,10 @@ def _apply_row(
         )
 
     if "moq" in row:
+        # `remember=False` - `save_plan_edits` resolves and remembers the (product,
+        # supplier) link ONCE per product, across the whole fan-out group, not here.
         reorder_run_service.set_moq_override(
-            db, str(rec.id), row["moq"], commit=False
+            db, str(rec.id), row["moq"], commit=False, remember=False
         )
 
     # Both write to the row the PANEL is reading. `scm.reorder_level` is keyed

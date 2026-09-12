@@ -107,9 +107,16 @@ def _product(db, company_id: str, code: str) -> Product:
     return row
 
 
-def _warehouse(db, company_id: str, code: str) -> Warehouse:
+def _warehouse(
+    db, company_id: str, code: str, *, pool_warehouse_id: str | None = None
+) -> Warehouse:
     row = Warehouse(
-        id=_uid(), company_id=company_id, warehouse_code=code, warehouse_name=code, location="ZZT"
+        id=_uid(),
+        company_id=company_id,
+        warehouse_code=code,
+        warehouse_name=code,
+        location="ZZT",
+        pool_warehouse_id=pool_warehouse_id,
     )
     db.add(row)
     db.flush()
@@ -254,6 +261,12 @@ def _seed_world(db, company_id: str, user_id: str) -> dict:
     product = _product(db, company_id, f"ZZT-BASIN-{_uid()[:6]}")
     other_product = _product(db, company_id, f"ZZT-WC-{_uid()[:6]}")
     warehouse = _warehouse(db, company_id, f"ZZT{_uid()[:6]}")
+    # H: cascadability is decided by the FK, not the code's shape, and a warehouse only
+    # counts as a pool once something points at it via `pool_warehouse_id`. None of this
+    # file's rows carry a `stock_location` (AC-H6: a row naming none is dealt pool lines
+    # only), so `warehouse` has to genuinely be one for the automatic-pass assertions in
+    # this file to mean what they say.
+    _warehouse(db, company_id, f"ZZT{_uid()[:6]}-SIB", pool_warehouse_id=warehouse.id)
     supplier = _supplier(db, company_id, f"{MARKER} Dafuyuan")
     po = _po(db, company_id, supplier, f"ZZT-PO-{_uid()[:8]}")
     db.commit()
@@ -1132,6 +1145,13 @@ def test_a_decision_confirm_raises_the_buy_row_acknowledged_with_a_firm_link():
         )
         product = _confirm_product(db)
         warehouse = _confirm_warehouse(db, f"ZZT-CF-{_uid()[:4]}")
+        # H: what this test is actually proving - born acknowledged, firm from the moment
+        # the auto-cascade writes it - needs the cascade to WRITE something. A candidate is
+        # only ever auto-taken from a genuine POOL now (AC-H1/AC-H2), so `warehouse` has to
+        # be one, or the cascade would find its one candidate uncascadable and this test
+        # would be proving AC-H1 instead of G4/S1 (AC-H1 already has its own coverage in
+        # `test_order_inquiry_links.py`).
+        _confirm_warehouse(db, f"ZZT-CF-SIB-{_uid()[:4]}", pool_warehouse_id=warehouse.id)
         core_so = _confirm_core_so(db, company_id)
         core_line = _confirm_core_line(db, core_so, product, warehouse, qty_ordered="20")
         order = _confirm_project_so(db, project, so_id=core_so.id)

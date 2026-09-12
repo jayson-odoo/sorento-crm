@@ -1,0 +1,78 @@
+# Console cases for chatbot answer polish, 12 Sep 2026 (`feat/chatbot-answer-polish`).
+#
+# Plan `documentation/plans/chatbot/PLAN-chatbot-answer-polish-12sep.md`; UAC
+# `chatbot-answer-polish-12sep-acceptance-criteria.md` AC-1 to AC-14. Five owner findings
+# from live turns, run with `scripts/chatbot_console_check.py` against the lane backend
+# before the PR and once against production after the deploy.
+#
+# EVERY CASE CARRIES A POSITIVE `reply_contains`, per
+# `documentation/agents/chatbot-verification.md`: a case built from `branch_kind` plus
+# negatives passes on the generic error reply. Silence fails on its own, and what is
+# graded is everything the turn would SAY.
+#
+# The contact is the one whose stored envelope the script borrows (the same console
+# contact the plan's owner findings were reproduced against); override with --contact.
+# Finding 5's case assumes the console contact's stock visibility policy is DETAILED with
+# `hide_zero_locations = true`, which is how it stood on the prod copy the finding was
+# reproduced against - do not flip it for this run.
+contact: "437264483"
+
+cases:
+  # ======================================================================================
+  # Finding 4 / D4 / AC-6 / AC-8: a typed PREFIX climbs the ladder to the PO rung, and the
+  # rung's labels are bold (D3/AC-4).
+  # ======================================================================================
+  - name: finding 4 - a typed prefix (no exact suffix) still reaches the PO rung
+    text: "ETA SRTWT6236"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["*Product Code:* SRTWT6236-GY", "but PO is placed"]
+      no_uuid: true
+
+  # ======================================================================================
+  # Finding 5 / D5 / AC-9 / AC-14: detailed mode keeps an all-zero product's rows instead
+  # of reading it as unknown.
+  # ======================================================================================
+  - name: finding 5 - detailed mode states zero-everywhere, not unknown
+    text: "SRT6550-DIY ETA"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["*Quantity On Hand:* 0", "but PO is placed"]
+      no_uuid: true
+
+  # ======================================================================================
+  # Finding 1 / D1 / AC-1: no spec cap, no "and N more" on the Specs line.
+  # ======================================================================================
+  - name: finding 1 - a product with many specs lists all of them, no "more"
+    # "SRTKT71SS spec" parsed as an attachment_type ask (Technical
+    # Specifications) on this tenant's live prompt label, and a bare
+    # "SRTKT71SS" alone read as low_signal ("clarify which product code") -
+    # measured, 12 Sep 2026, console-check-1789179209/1789179271. D12's own
+    # "product details" phrasing names no property at all, so
+    # requested_attributes is empty and the turn reaches AC-1's no-attribute
+    # branch directly.
+    text: "SRTKT71SS product details"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTKT71SS", "Specs:"]
+      # The retired cap ("and N more") only ever fires for N in 1..4 (8 shown, up to 12
+      # populated keys measured) - narrower than a bare " more" so a legitimate spec
+      # value that happens to contain the word "more" cannot false-fail this case.
+      reply_not_contains: [" and 1 more", " and 2 more", " and 3 more", " and 4 more"]
+      no_uuid: true
+
+  # ======================================================================================
+  # Finding 2 / D2 / AC-3: no phantom "I have attached the file(s) below." sentence on the
+  # cross-domain block.
+  # ======================================================================================
+  - name: finding 2 - a stock ask with incoming rows never claims an attachment send
+    text: "stock CWCX7605-S-ECO"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["CWCX7605-S-ECO"]
+      reply_not_contains: ["I have attached"]
+      no_uuid: true

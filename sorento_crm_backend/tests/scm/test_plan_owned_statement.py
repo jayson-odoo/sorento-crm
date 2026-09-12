@@ -457,10 +457,11 @@ def test_a_revision_written_into_a_plan_is_stamped_with_it():
 def test_a_replace_in_place_leaves_the_invoice_with_the_plan_that_created_it():
     """SF-8: only a NEW document, or a revision, belongs to the plan that uploaded it.
 
-    Re-uploading the same file into a second plan without ticking the revision finds the
-    existing invoice by `(supplier, pi_number)` and replaces its lines in place. Stamping
-    that row would move the FIRST plan's own statement onto the second one, and the first
-    plan would silently start reading nothing.
+    The pre-loading list states no reference, and a ref-less document is always created
+    fresh (AC-A3, captain ruling 9 Sep) - there is nothing to match an in-place replace
+    against. So a second apply of the SAME file is a second, genuinely new set of
+    invoices, and being new documents they correctly belong to the plan that uploaded
+    THEM; the first plan's own statement is untouched by it.
     """
     with pg_session() as db:
         w = World(db)
@@ -481,7 +482,8 @@ def test_a_replace_in_place_leaves_the_invoice_with_the_plan_that_created_it():
         }
         assert mine
 
-        # The same file again, revisions UNTICKED: an in-place replace, not a new document.
+        # The same ref-less file again: always a fresh set of invoices (AC-A3), never an
+        # in-place replace.
         pi_svc.apply(
             db,
             data,
@@ -496,13 +498,15 @@ def test_a_replace_in_place_leaves_the_invoice_with_the_plan_that_created_it():
             .filter(ProformaInvoice.loading_plan_id == str(first.id))
             .all()
         }
-        assert still_first == mine
-        assert (
-            db.query(ProformaInvoice)
+        assert still_first == mine, "the first plan's own statement is untouched"
+        second_mine = {
+            str(pi.id)
+            for pi in db.query(ProformaInvoice)
             .filter(ProformaInvoice.loading_plan_id == str(second.id))
-            .count()
-            == 0
-        )
+            .all()
+        }
+        assert second_mine, "a fresh apply is a NEW document, so it belongs to the plan that uploaded it"
+        assert second_mine.isdisjoint(mine)
 
 
 def test_a_proforma_apply_refuses_a_plan_belonging_to_another_supplier():

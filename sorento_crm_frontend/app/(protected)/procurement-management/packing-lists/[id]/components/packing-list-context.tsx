@@ -311,6 +311,11 @@ export function PackingListProvider({
       notes: orNull(draft.notes),
       container_size_id: orNull(draft.container_size_id),
       shipment_lines: draftLines.map((line) => ({
+        // Which row this is. A converted draft can hold two lines of one product from one
+        // supplier (the supplier's own carton split), so `_upsert_shipment_lines` claims by
+        // id first; an id-less line it cannot tell apart is refused 409 `line_id_required`,
+        // which is what a split list's save used to hit. Absent on a line just added.
+        id: line.id,
         product_id: line.product_id,
         // Required and non-nullable on the line schema, so garbage text falls back to 0
         // rather than sending NaN-turned-null and 422ing on a line the operator never meant

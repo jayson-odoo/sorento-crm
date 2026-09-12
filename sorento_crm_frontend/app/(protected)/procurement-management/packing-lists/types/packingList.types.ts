@@ -231,6 +231,9 @@ export interface PackingListFormData {
   /** The Container card's own select (S5). Null clears it back to the tenant default. */
   container_size_id?: string | null;
   shipment_lines?: Array<{
+    /** The existing line's id; absent on a line just added. The backend claims by id
+     *  first, which is the only way to edit two lines of one product from one supplier. */
+    id?: string;
     product_id: string;
     quantity_shipped: number;
     /** Round-tripped on save so an edit does not strip a line's factory. */

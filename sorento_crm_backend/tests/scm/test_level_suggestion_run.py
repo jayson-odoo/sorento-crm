@@ -68,7 +68,11 @@ def _world(db, *, rising: bool):
     wid = _u()
     db.execute(text(
         "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
-        "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"),
+        # 'dealer', not 'project': S7 (G1 ruling, 9 Sep 2026) made the level suggestion
+        # retail-only (`scm.consumption_v.warehouse_segment = 'dealer'`), so a project
+        # warehouse's movement no longer counts toward it - this fixture predates that
+        # rule and needs a dealer-segment warehouse to keep proving the ADU formula.
+        "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'dealer')"),
         {"id": wid, "c": unique_code("W")[:20]})
 
     # Consumption: one 12-unit order per month across the 3-month study window
@@ -256,7 +260,8 @@ def _world_for_route(db, company_id: str) -> dict:
     db.execute(text(
         "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
         "counts_as_available, segment, company_id) "
-        "VALUES (:id, :c, :c, true, true, 'project', :co)"),
+        # 'dealer', not 'project' - see the same note in `_world` above (S7, G1 ruling).
+        "VALUES (:id, :c, :c, true, true, 'dealer', :co)"),
         {"id": wid, "c": unique_code("W")[:20], "co": company_id})
 
     for day in (date(2026, 5, 10), date(2026, 6, 10), date(2026, 7, 10)):

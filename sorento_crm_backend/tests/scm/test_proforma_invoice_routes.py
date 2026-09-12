@@ -11,6 +11,7 @@ environment this suite must not depend on (see test_coverage_routes.py, same pat
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date as _date
 
@@ -38,6 +39,10 @@ VIEW_PERMISSION = "scm.dashboard.view"
 
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MARKER = "ZZPIR"
+
+#: `pi_number` is OURS since S1 - always a freshly minted `PI-{yy}{month:02d}-{NNN}`, never
+#: the supplier's own text (that is `supplier_ref` now).
+_MINTED_PI_NUMBER = re.compile(r"^PI-\d{4}-\d{3}$")
 
 
 def _u() -> str:
@@ -206,14 +211,20 @@ def test_apply_writes_and_the_document_is_then_listed_and_fetchable(scm_app):
     assert listed.status_code == 200, listed.text
     rows = listed.json()["data"]
     assert len(rows) == 1
-    assert rows[0]["pi_number"] == "KL20260717"
+    assert _MINTED_PI_NUMBER.match(rows[0]["pi_number"])
+    # AC-A2: the supplier's own reference is the identity key now, kept apart from OUR
+    # minted `pi_number`.
+    from app.models.scm import ProformaInvoice
+
+    row = db.query(ProformaInvoice).filter(ProformaInvoice.id == rows[0]["id"]).one()
+    assert row.supplier_ref == "KL20260717"
     # AC-P4.4: a human-readable supplier identifier, not just a raw id.
     assert rows[0].get("supplier_code") == supplier.supplier_code
 
     detail = client.get(f"{URL}/{rows[0]['id']}")
     assert detail.status_code == 200, detail.text
     d = detail.json()
-    assert d["pi_number"] == "KL20260717"
+    assert d["pi_number"] == rows[0]["pi_number"]
     assert len(d["lines"]) == 19
     # AC-P4.4: no raw uuid as the only identifier - the matched line names the product
     # by its code, not `product_id`.

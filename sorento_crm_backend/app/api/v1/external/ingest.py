@@ -60,6 +60,7 @@ from app.services.project_order_inquiry_service import ProjectOrderInquiryServic
 from app.services.scm import plan_exception_service, reorder_run_service
 from app.services.scm.outstanding_diff import diff_lines
 from app.services.scm.outstanding_import_service import supersede_crm_raised_pos
+from app.services.user_service import UserPermissionService
 from app.services.shipping_order_ingest_service import (
     SHIPPING_ORDER_ENTITIES,
     ShippingOrderIngestService,
@@ -80,6 +81,9 @@ INGEST_PERMISSIONS = {
     "customers": "order_management.customers.edit",
     "products": "master_data.products.edit",
     "sales_agents": "master_data.sales_agents.edit",
+    # autocount-brands-ingest (contract 2.3), D5: ingest takes .edit, not .add,
+    # same as every sibling master.
+    "brands": "master_data.brands.edit",
     # Documents (group A3). Pushing an order through the ESB is the same act as
     # editing one on the SCM screen, so it is the same slug.
     "sales_orders": "scm.sales_orders.edit",
@@ -95,6 +99,7 @@ READ_PERMISSIONS = {
     "customers": "order_management.customers.view",
     "products": "master_data.products.view",
     "sales_agents": "master_data.sales_agents.view",
+    "brands": "master_data.brands.view",
     "sales_orders": "scm.sales_orders.view",
     "purchase_orders": "scm.purchase_orders.view",
     "shipping_orders": "scm.shipping_orders.view",
@@ -112,6 +117,7 @@ DELETE_PERMISSIONS = {
     "customers": "order_management.customers.delete",
     "products": "master_data.products.delete",
     "sales_agents": "master_data.sales_agents.delete",
+    "brands": "master_data.brands.delete",
     "sales_orders": "scm.sales_orders.delete",
     "purchase_orders": "scm.purchase_orders.delete",
     "shipping_orders": "scm.shipping_orders.delete",
@@ -187,7 +193,31 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 # router. A STRING (S4, ingest-parity-standardisation D-final): "2.1" is a
 # point release of the same major contract, and a bare int can never express
 # that - the ESB's own gate compares it as an opaque value, never arithmetic.
-CONTRACT_VERSION = "2.1"
+# "2.2" (V5, ingest-contract-2-2-so-links): from_so_line_ref/from_so_external/
+# from_po_line_ref/from_po_number added to purchase_orders and
+# shipping_orders lines, and from_so_numbers is now listed under
+# `fields_added` too (a v2-era field the ESB only now depends on reading
+# back). All additive and optional, same as every point release before it.
+# "2.3" (autocount-brands-ingest): `brands` joins ENTITY_SPECS as a
+# first-class master, with its own INGEST/READ/DELETE permission slugs -
+# additive, an ESB on 2.2 simply never sees `brands` in `entities`.
+CONTRACT_VERSION = "2.3"
+
+
+def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
+    """Whether this principal holds `DELETE_PERMISSIONS[entity]` (D30).
+
+    The service must not import FastAPI or resolve a principal of its own, so
+    the answer is computed here through the SAME `UserPermissionService` every
+    guard on this surface uses - superadmin/admin bypass included - and handed
+    over as a bool. No grant, no id, or an entity with no delete slug all
+    answer False: the safe half of D30 (rows closed, never removed).
+    """
+    slug = DELETE_PERMISSIONS.get(entity)
+    user_id = current_user.get("id")
+    if not slug or not user_id:
+        return False
+    return UserPermissionService(db).check_user_has_permission(user_id, slug)
 
 
 def _run_document_hooks(
@@ -223,6 +253,7 @@ def _run_document_hooks(
         _run_supersede_and_relink_hooks(db, service, actor=actor)
     elif entity == "shipping_orders":
         _run_shipping_order_forward_match_hook(db, service, actor=actor)
+        _run_shipping_order_shipment_refresh_hook(db, service, actor=actor)
 
 
 def _run_plan_exception_hook(db: Session, service, *, actor: Optional[str]) -> None:
@@ -361,6 +392,34 @@ def _run_shipping_order_forward_match_hook(
         logger.warning("ingest.shipping_order_forward_match_hook_failed", exc_info=True)
 
 
+def _run_shipping_order_shipment_refresh_hook(
+    db: Session, service, *, actor: Optional[str]
+) -> None:
+    """D27a: refresh `inbound_shipment_lines.line_status` for every shipment
+    whose allocations this batch changed, the way every other writer of
+    allocations does.
+
+    Its own hook, post-commit, for a mechanical reason:
+    `InboundShipmentService.refresh_shipment_line_statuses` COMMITS, and the
+    supersede that touches those shipments runs inside a per-record SAVEPOINT
+    - calling it there would commit half a batch and would make a dry run
+    write. Own try/except, like every hook here: a failed refresh must cost
+    the operator only the refresh.
+    """
+    shipment_ids = getattr(service, "shipment_ids_touched", None)
+    if not shipment_ids:
+        return
+    from app.services.procurement_service import InboundShipmentService
+
+    try:
+        inbound = InboundShipmentService(db)
+        for shipment_id in sorted(shipment_ids):
+            inbound.refresh_shipment_line_statuses(shipment_id)
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.shipping_order_shipment_refresh_hook_failed", exc_info=True)
+
+
 def _entity(entity: str) -> str:
     if entity not in SUPPORTED_ENTITIES:
         raise AppException(
@@ -437,8 +496,16 @@ def ingest_masters(
     # both different write shapes from a master row - but the envelope, the
     # batch cap, the verdicts and the dry-run rollback are the caller's
     # contract and must not fork, so the branch is here and nowhere else.
+    extra: dict = {}
     if entity in SHIPPING_ORDER_ENTITIES:
         ingester = ShippingOrderIngestService
+        # D30 (spo-xlsx-supersede): a first-push supersede REMOVES the xlsx-era
+        # rows it replaces, which is a deletion act - so it is gated on the
+        # same slug the deletions endpoint demands, resolved here (the one
+        # place that already knows what an entity name means on this surface)
+        # and passed to the service as a plain bool. Without the grant the
+        # service closes and annotates those rows instead.
+        extra["may_delete"] = _principal_may_delete(db, current_user, entity)
     elif entity in DOCUMENT_ENTITIES:
         ingester = DocumentIngestService
     else:
@@ -447,6 +514,7 @@ def ingest_masters(
         db,
         integration_id=current_user.get("integration_id"),
         company_id=company_id,
+        **extra,
     )
     try:
         result = service.ingest(entity, records, dry_run=dry_run)

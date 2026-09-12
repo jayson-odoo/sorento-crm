@@ -18,6 +18,7 @@ import {
   Loader2,
   MessageSquare,
   Plus,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -37,14 +38,13 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   SearchableSelect,
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
-import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
@@ -55,6 +55,8 @@ import type {
   PriceTagRequestLine,
   DebtorOption,
   PromotionOption,
+  PriceMode,
+  TagItemOption,
 } from '../lib/price-tag-request-service';
 import {
   lookupDebtors,
@@ -72,11 +74,25 @@ import {
 import PriceTagProofViewer from './PriceTagProofViewer';
 import POCrossCheckViewer from './POCrossCheckViewer';
 import { AttachmentDropzone } from './AttachmentDropzone';
+import {
+  AIExtractDialog,
+  type AIExtractApplyPayload,
+} from './AIExtractDialog';
+import type { AIExtractedProductLine } from '../lib/portal-client';
 import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
 import { toPreviewItem, portalFetchBytes } from '../lib/portal-preview';
-import { uploadAttachment, type PortalAttachment } from '../lib/portal-client';
+import {
+  uploadAttachment,
+  getPriceTagDesign,
+  type PortalAttachment,
+} from '../lib/portal-client';
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import { cn } from '@/lib/utils';
+
+/** Where an AI-extracted product line stands against the catalogue lookup
+ *  (D7/AC-S6-2), shown in the extract dialog's own result table. */
+type AIMatchStatus = 'loading' | 'matched_product' | 'matched_set' | 'not_found';
 
 // ---------------------------------------------------------------------------
 // Draft line (client-side, before persisting)
@@ -89,10 +105,11 @@ interface DraftLine {
   product_set_id: string | null;
   name: string;
   code: string;
-  show_promo_price: boolean;
   quantity: number;
   alternatives: { product_id: string; name: string; code: string }[];
   included_accessories: string;
+  /** Free-text note on the line (D6). */
+  remarks: string;
   guard_error: string | null;
 }
 
@@ -109,10 +126,10 @@ function emptyDraftLine(): DraftLine {
     product_set_id: null,
     name: '',
     code: '',
-    show_promo_price: true,
     quantity: 1,
     alternatives: [],
     included_accessories: '',
+    remarks: '',
     guard_error: null,
   };
 }
@@ -134,10 +151,13 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
     product_set_id: line.product_set_id,
     name: line.name,
     code: line.code,
-    show_promo_price: line.show_promo_price,
+    // show_promo_price is read-only server state, not form state: it is
+    // derived from the header's price_mode on every save (D5), so the draft
+    // never carries or resends it (review fix).
     quantity: line.quantity,
     alternatives: line.alternatives,
     included_accessories: line.included_accessories ?? '',
+    remarks: line.remarks ?? '',
     guard_error: null,
   };
 }
@@ -154,6 +174,14 @@ const MISSING_DEBTOR = 'Select the dealer these tags are for.';
 const MISSING_DEADLINE = 'Pick the date you need them by.';
 const MISSING_LINES = 'Add at least one line.';
 const EMPTY_LINE = 'Pick a set or a product for this line.';
+
+/** Statuses the real design (D11) is visible at, once one exists to show. */
+const DESIGN_PREVIEW_STATUSES = new Set([
+  'proof_ready',
+  'changes_requested',
+  'approved',
+  'ready',
+]);
 
 /**
  * The field keys a refusal named, if it named any.
@@ -229,11 +257,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Form state ----
   const [debtorCode, setDebtorCode] = useState('');
   const [promotionId, setPromotionId] = useState<string>('');
+  // Header price mode (D5): replaces the per-line "Promo price" switch.
+  // Selling requires a promotion, so clearing the promotion while Selling is
+  // chosen flips the control back to List price.
+  const [priceMode, setPriceMode] = useState<PriceMode>('list');
   const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+
+  // ---- AI extract sales order lines (D7) ----
+  const [aiExtractOpen, setAiExtractOpen] = useState(false);
+  // Per-row match state for the CURRENT extraction, indexed the same as the
+  // dialog's own `result.products` - populated as each code resolves so the
+  // dialog can show "Not found" before Apply is even clicked (AC-S6-2), and
+  // read again by the apply handler so it never re-looks-up what this
+  // already knows.
+  const [aiMatchStatuses, setAiMatchStatuses] = useState<AIMatchStatus[]>([]);
+  const aiMatchesRef = useRef<(TagItemOption | null)[]>([]);
 
   // ---- Proof review state ----
   const [changesNote, setChangesNote] = useState('');
@@ -266,6 +308,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const isDraft = Boolean(request?.portal_draft_at);
   const isEditable = isNew || isDraft;
   const isProofReady = request?.status === 'proof_ready';
+  // The design preview shows for longer than the approve/request-changes
+  // actions do (D11/AC-S4-4): once approved the salesperson can still look
+  // at what they approved, but Approve/Request Changes only make sense while
+  // the design is actually waiting on them.
+  const showDesignPreview = !!request && DESIGN_PREVIEW_STATUSES.has(request.status);
   // The id to save/flush against: the route param when one exists, else
   // whatever a create call in THIS session already answered with.
   const effectiveId = requestId ?? createdRequestId ?? undefined;
@@ -304,6 +351,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setRequest(data);
         setDebtorCode(data.debtor_code ?? '');
         setPromotionId(data.promotion_id ?? '');
+        setPriceMode(data.price_mode ?? 'list');
         // Both are nullable on a draft (D48a): an empty input, not a crash.
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
@@ -357,32 +405,96 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [],
   );
 
-  // Alternatives are products only: an OR choice on a tag names another product,
-  // never a whole set. Same call, filtered, rather than a second endpoint.
+  // ---- AI extract sales order lines (D7) ----
   //
-  // The multi-select hands back values alone, and a line stores the product's NAME
-  // and CODE beside its id (that is what the request detail and the tag print
-  // read), so every product the picker has shown is remembered here. Bounded by
-  // what one person can scroll through in one form.
-  const seenProductsRef = useRef(new Map<string, { name: string; code: string }>());
-  const fetchAlternativeOptions = useCallback(
-    async (query: string): Promise<SearchableSelectOption[]> => {
-      const items = await lookupTagItems(query);
-      const products = items.filter((i) => i.kind === 'product');
-      for (const p of products) {
-        seenProductsRef.current.set(p.id, {
-          name: p.name || p.code,
-          code: p.code,
-        });
-      }
-      return products.map((i) => ({
-        value: i.id,
-        label: i.name || i.code,
-        description: i.code,
-      }));
+  // Fires when the dialog moves to Review, so a row can already read "Not
+  // found" before Apply is clicked (AC-S6-2). Matches by exact code, trimmed
+  // and case-insensitive, against the SAME lookup the Item picker above
+  // uses - one call per code, which is fine for a sales order's page count.
+  const handleAIExtracted = useCallback(
+    (products: AIExtractedProductLine[]) => {
+      setAiMatchStatuses(products.map(() => 'loading'));
+      aiMatchesRef.current = products.map(() => null);
+      products.forEach((p, index) => {
+        const code = (p.product_code ?? '').trim();
+        const lookup = code ? lookupTagItems(code) : Promise.resolve([]);
+        lookup
+          .then((items) => {
+            const match =
+              items.find(
+                (i) => i.code.trim().toLowerCase() === code.toLowerCase(),
+              ) ?? null;
+            aiMatchesRef.current[index] = match;
+            setAiMatchStatuses((prev) => {
+              const next = [...prev];
+              next[index] = match
+                ? match.kind === 'product_set'
+                  ? 'matched_set'
+                  : 'matched_product'
+                : 'not_found';
+              return next;
+            });
+          })
+          .catch(() => {
+            aiMatchesRef.current[index] = null;
+            setAiMatchStatuses((prev) => {
+              const next = [...prev];
+              next[index] = 'not_found';
+              return next;
+            });
+          });
+      });
     },
     [],
   );
+
+  /** Apply = append one line per matched row (D7). unit_price is shown in the
+   *  dialog only and is never stored (ADR 0008) - no field in `DraftLine`
+   *  reads it. Reads the SAME matches `handleAIExtracted` already resolved,
+   *  rather than looking every code up a second time. */
+  const handleAIExtractApply = useCallback((payload: AIExtractApplyPayload) => {
+    const matches = aiMatchesRef.current;
+    const newLines: DraftLine[] = [];
+    const notFoundCodes: string[] = [];
+    payload.productLines.forEach((p, index) => {
+      const match = matches[index];
+      const code = (p.product_code ?? '').trim();
+      if (!match) {
+        if (code) notFoundCodes.push(code);
+        return;
+      }
+      const qty = p.quantity != null ? Math.max(1, Math.round(p.quantity)) : 1;
+      newLines.push({
+        key: `draft-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        line_type: match.kind,
+        product_id: match.kind === 'product' ? match.id : null,
+        product_set_id: match.kind === 'product_set' ? match.id : null,
+        name: match.name || match.code,
+        code: match.code,
+        quantity: qty,
+        alternatives: [],
+        included_accessories: '',
+        remarks: p.notes ?? '',
+        guard_error: null,
+      });
+    });
+    if (newLines.length > 0) {
+      setLines((prev) => [...prev, ...newLines]);
+      toast.success(
+        `Added ${newLines.length} line${newLines.length === 1 ? '' : 's'} from the sales order.`,
+      );
+    }
+    if (notFoundCodes.length > 0) {
+      toast.error(`Not found: ${notFoundCodes.join(', ')}`);
+    }
+    // The dialog's own alsoAttach checkbox (checked by default): the file(s)
+    // read for extraction join the SAME pending/flush path a Sales Order
+    // drop uses, so Save Draft/Submit upload them once - not here, and not
+    // twice.
+    if (payload.alsoAttach && payload.files.length > 0) {
+      setPendingFiles((prev) => [...prev, ...payload.files]);
+    }
+  }, []);
 
   // ---- Line management ----
   const addLine = useCallback(() => {
@@ -466,10 +578,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       line_type: l.line_type,
       product_id: l.product_id,
       product_set_id: l.product_set_id,
-      show_promo_price: l.show_promo_price,
       quantity: l.quantity,
       alternatives: l.alternatives,
       included_accessories: l.included_accessories || null,
+      remarks: l.remarks || null,
       product_class: null,
     }));
 
@@ -536,6 +648,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     });
   }, [debtorCode, neededByDate, lines.length]);
 
+  // Selling price only means something with a promotion behind it (D5):
+  // clearing the promotion while Selling is chosen flips the control back to
+  // List rather than leaving it pointed at a price that no longer resolves.
+  useEffect(() => {
+    if (!promotionId && priceMode === 'selling') setPriceMode('list');
+  }, [promotionId, priceMode]);
+
   // ---- PO attachments: buffer pre-draft, flush once the draft exists ----
   //
   // The legacy SubmissionForm pattern (D2): a file dropped before Save Draft or
@@ -581,6 +700,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         promotion_id: promotionId || null,
         needed_by_date: neededByDate || null,
         notes: notes || null,
+        price_mode: priceMode,
         lines: payloadLines(),
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
@@ -604,7 +724,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Delete draft ----
   const handleDeleteDraft = useCallback(async () => {
@@ -650,6 +770,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         promotion_id: promotionId || null,
         needed_by_date: neededByDate,
         notes: notes || null,
+        price_mode: priceMode,
         lines: payloadLines(),
       };
       // Same reasoning as Save Draft: a retry after a create succeeded but the
@@ -683,14 +804,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectProblems, applyFieldErrors, effectiveId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [collectProblems, applyFieldErrors, effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
     if (!requestId) return;
     try {
       await approveRequest(requestId);
-      toast.success('Proof approved');
+      toast.success('Design approved');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
     } catch {
       toast.error('Failed to approve');
@@ -747,11 +868,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // section beneath it (AC-S2-2); `RequestDetailView` no longer exists as a
   // separate layout.
   if (request && !isEditable) {
-    const hasPromotion = !!request.promotion_id;
     const attachmentPreviewItems = attachments.map(toPreviewItem);
 
     return (
-      <div className="w-full max-w-2xl mx-auto px-3 pt-4 pb-8 space-y-4">
+      <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
         <div className="flex items-center justify-between gap-2">
           <Button
             variant="ghost"
@@ -810,9 +930,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </p>
         </div>
 
-        {/* Debtor - same field, same position as the edit form, value swapped in. */}
+        {/* Customer - same field, same position as the edit form, value swapped in. */}
         <div className="space-y-1.5">
-          <Label>Debtor</Label>
+          <Label>Customer</Label>
           <p className="text-sm font-medium py-2">{request.debtor_name ?? '-'}</p>
         </div>
 
@@ -824,9 +944,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </p>
         </div>
 
-        {/* Needed by date */}
+        {/* Price mode (D5) */}
         <div className="space-y-1.5">
-          <Label>Needed by</Label>
+          <Label>Price</Label>
+          <p className="text-sm font-medium py-2">
+            {(request.price_mode ?? 'list') === 'selling'
+              ? 'Selling price'
+              : 'List price'}
+          </p>
+        </div>
+
+        {/* Need by date */}
+        <div className="space-y-1.5">
+          <Label>Need by</Label>
           <p className="text-sm font-medium py-2">
             {request.needed_by_date ?? '-'}
           </p>
@@ -856,25 +986,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               </p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] table-fixed text-sm">
+                <table className="w-full min-w-[520px] table-fixed text-sm">
                   <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                     <tr>
-                      <th className="w-7 px-2 py-2 text-left">#</th>
-                      <th className="w-[32%] px-2 py-2 text-left">Item</th>
-                      <th className="w-[12%] px-2 py-2 text-left">
+                      <th className="w-10 px-2 py-2 text-left">#</th>
+                      <th className="w-[45%] px-2 py-2 text-left">Item</th>
+                      <th className="w-[15%] px-2 py-2 text-left">
                         Qty (tags)
                       </th>
-                      <th className="w-[24%] px-2 py-2 text-left">
-                        Alternatives
-                      </th>
-                      <th className="w-[22%] px-2 py-2 text-left">
-                        Accessories
-                      </th>
-                      {hasPromotion && (
-                        <th className="w-[10%] px-2 py-2 text-left">
-                          Promo price
-                        </th>
-                      )}
+                      <th className="w-[40%] px-2 py-2 text-left">Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -899,30 +1019,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                           </div>
                         </td>
                         <td className="px-2 py-2">{line.quantity}</td>
-                        <td className="px-2 py-2 text-muted-foreground">
-                          {line.line_type === 'product_set'
-                            ? 'Not for a set'
-                            : line.alternatives.length > 0
-                              ? line.alternatives
-                                  .map((a) => a.name || a.code)
-                                  .join(', ')
-                              : '-'}
+                        <td
+                          className="px-2 py-2 text-muted-foreground truncate"
+                          title={line.remarks ?? undefined}
+                        >
+                          {line.remarks || '-'}
                         </td>
-                        <td className="px-2 py-2 text-muted-foreground">
-                          {line.included_accessories || '-'}
-                        </td>
-                        {hasPromotion && (
-                          <td className="px-2 py-2">
-                            {line.show_promo_price ? (
-                              <Check
-                                className="size-4 text-green-600"
-                                aria-label="Promo price shown"
-                              />
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </td>
-                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -932,18 +1034,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </CardContent>
         </Card>
 
-        {/* Purchase Order - same section as the edit form's dropzone, without
+        {/* Sales Order - same section as the edit form's dropzone, without
             upload controls: the files the salesperson attached, openable in
             place. Always rendered, empty state when there are none, so a
-            reader never wonders whether the form has a PO section at all. */}
+            reader never wonders whether the form has a Sales Order section at
+            all. */}
         <Card>
           <CardHeader className="py-3 px-4">
-            <CardTitle className="text-base">Purchase Order</CardTitle>
+            <CardTitle className="text-base">Sales Order</CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-1">
             {attachments.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">
-                No PO files attached.
+                No sales order files attached.
               </p>
             ) : (
               attachments.map((att, idx) => (
@@ -974,13 +1077,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           fetchBytes={portalFetchBytes}
         />
 
-        {/* Proof review appends beneath the same layout (AC-S2-2); nothing
-            below here renders for a plain read-only status. */}
+        {/* Design preview appends beneath the same layout (AC-S2-2); nothing
+            below here renders for a plain read-only status. It shows for
+            longer than the review actions do (D11/AC-S4-4). */}
+        {showDesignPreview && <ProofPreviewSection request={request} />}
+
         {isProofReady && (
           <>
-            <ProofPreviewSection request={request} />
-
-            {/* Same `attachments` state the Purchase Order card above reads
+            {/* Same `attachments` state the Sales Order card above reads
                 (not `request.attachments`, which is only ever the snapshot
                 from the initial fetch) - one source, so the two can never
                 show a different file list for the same request. */}
@@ -1001,7 +1105,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Proof Review</CardTitle>
+                <CardTitle className="text-base">Design Review</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex flex-col gap-2 sm:flex-row">
@@ -1030,7 +1134,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                   <AlertDialogTitle>Request Changes</AlertDialogTitle>
                   <AlertDialogDescription>
                     Describe what needs to be changed. The marketing team will
-                    revise the proof.
+                    revise the design.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <Textarea
@@ -1058,7 +1162,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   // ---- Edit / create form ----
   return (
-    <div className="w-full max-w-2xl mx-auto px-3 pt-4 pb-8 space-y-4">
+    <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
       <Button
         variant="ghost"
         size="sm"
@@ -1071,19 +1175,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
       </h1>
 
-      {/* Debtor */}
+      {/* Customer */}
       <div
         className="space-y-1.5"
         {...(fieldErrors.debtor ? { 'data-error-anchor': 'debtor' } : {})}
       >
-        <Label htmlFor="debtor">Debtor *</Label>
+        <Label htmlFor="debtor">Customer *</Label>
         {debtorsLoaded && debtorOptions.length === 0 ? (
           <p
             className="text-sm rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
             data-testid="no-debtors-notice"
           >
-            No debtors available. Your portal account is not linked to a sales
-            agent yet. Ask your Sorento contact to link it.
+            No customers available. Your portal account is not linked to a
+            sales agent yet. Ask your Sorento contact to link it.
           </p>
         ) : (
           <SearchableSelect
@@ -1112,12 +1216,78 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         />
       </div>
 
-      {/* Needed by date */}
+      {/* Price mode (D5): List price by default, Selling price only once a
+          promotion is picked - it has nothing to sell against otherwise. */}
+      <div className="space-y-1.5">
+        <Label id="price-mode-label">Price</Label>
+        <div
+          role="radiogroup"
+          aria-labelledby="price-mode-label"
+          className="inline-flex items-center rounded-md border p-0.5"
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={priceMode === 'list'}
+            className={cn(
+              'rounded px-3 py-1.5 text-sm transition-colors',
+              priceMode === 'list'
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-muted',
+            )}
+            onClick={() => setPriceMode('list')}
+          >
+            List price
+          </button>
+          {promotionId ? (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={priceMode === 'selling'}
+              className={cn(
+                'rounded px-3 py-1.5 text-sm transition-colors',
+                priceMode === 'selling'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+              onClick={() => setPriceMode('selling')}
+            >
+              Selling price
+            </button>
+          ) : (
+            // A native `disabled` button fires no mouse/focus events in real
+            // browsers, so a Tooltip watching it never opens. The SPAN is the
+            // trigger instead - focusable and hoverable - and the button
+            // inside it is merely inert (aria-disabled, no-op click,
+            // pointer-events-none so hover always reaches the span).
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span tabIndex={0} className="inline-block">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={false}
+                    aria-disabled="true"
+                    tabIndex={-1}
+                    onClick={(e) => e.preventDefault()}
+                    className="pointer-events-none cursor-not-allowed rounded px-3 py-1.5 text-sm text-muted-foreground opacity-50"
+                  >
+                    Selling price
+                  </button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>Select a promotion first</TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+      </div>
+
+      {/* Need by date */}
       <div
         className="space-y-1.5"
         {...(fieldErrors.neededBy ? { 'data-error-anchor': 'needed_by' } : {})}
       >
-        <Label htmlFor="needed_by_date">Needed by *</Label>
+        <Label htmlFor="needed_by_date">Need by *</Label>
         <Input
           id="needed_by_date"
           type="date"
@@ -1164,16 +1334,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="w-7 px-2 py-2 text-left">#</th>
-                    <th className="w-[30%] px-2 py-2 text-left">Item</th>
+                    <th className="w-[35%] px-2 py-2 text-left">Item</th>
                     <th className="w-[12%] px-2 py-2 text-left">Qty (tags)</th>
-                    <th className="w-[22%] px-2 py-2 text-left">
-                      Alternatives
-                    </th>
-                    <th className="w-[20%] px-2 py-2 text-left">Accessories</th>
-                    {!!promotionId && (
-                      <th className="w-[10%] px-2 py-2 text-left">Promo price</th>
-                    )}
-                    <th className="w-[16%] px-2 py-2"></th>
+                    <th className="w-[33%] px-2 py-2 text-left">Remarks</th>
+                    <th className="w-[20%] px-2 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1183,10 +1347,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       line={line}
                       index={index}
                       total={lines.length}
-                      hasPromotion={!!promotionId}
                       fetchItemOptions={fetchItemOptions}
-                      fetchAlternativeOptions={fetchAlternativeOptions}
-                      seenProducts={seenProductsRef.current}
                       onItemSelect={handleItemSelect}
                       onUpdate={updateLine}
                       onRemove={removeLine}
@@ -1211,10 +1372,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </CardContent>
       </Card>
 
-      {/* PO Upload */}
+      {/* Sales Order upload */}
       <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Purchase Order</CardTitle>
+        <CardHeader className="py-3 px-4 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+          <CardTitle className="text-base">Sales Order</CardTitle>
+          {/* Always shown, not gated on an attachment already existing here
+             (review fix): the dialog takes the file itself and, with
+             alsoAttach checked, stores it into this same section - gating
+             on an attachment first meant dropping the file in TWICE. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setAiExtractOpen(true)}
+          >
+            <Sparkles className="size-3.5 mr-1" />
+            Extract lines with AI
+          </Button>
         </CardHeader>
         <CardContent className="px-4 pb-4">
           {/* The shared portal dropzone (D2/D3): a file dropped before the draft
@@ -1231,6 +1404,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           />
         </CardContent>
       </Card>
+
+      <AIExtractDialog
+        open={aiExtractOpen}
+        onOpenChange={setAiExtractOpen}
+        kind="price_tag_request"
+        // No header fields to mirror (D7 review push-back): Customer is a
+        // select, not free text, and there is no sales order number field -
+        // an empty list here is also what keeps the dialog from claiming
+        // "Applied N fields" for fields nothing on this form reads.
+        fieldDefs={[]}
+        onApply={handleAIExtractApply}
+        onExtracted={handleAIExtracted}
+        renderRowStatus={(_p, index) => (
+          <AIMatchStatusLabel status={aiMatchStatuses[index]} />
+        )}
+      />
 
       {/* One line saying how much is outstanding, above the button that found it */}
       {(problemCount > 0 || serverMessage) && (
@@ -1310,10 +1499,7 @@ interface LineRowProps {
   line: DraftLine;
   index: number;
   total: number;
-  hasPromotion: boolean;
   fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
-  fetchAlternativeOptions: (query: string) => Promise<SearchableSelectOption[]>;
-  seenProducts: Map<string, { name: string; code: string }>;
   onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
@@ -1323,18 +1509,12 @@ interface LineRowProps {
 /**
  * One row of the lines table, on the Purchase Request pattern in `SubmissionForm`:
  * a cell per field, a trash button, and horizontal scroll on a narrow screen.
- *
- * Alternatives are disabled on a set row and say why, which is the capability the
- * Set card this replaced simply did not have.
  */
 function LineRow({
   line,
   index,
   total,
-  hasPromotion,
   fetchItemOptions,
-  fetchAlternativeOptions,
-  seenProducts,
   onItemSelect,
   onUpdate,
   onRemove,
@@ -1383,68 +1563,14 @@ function LineRow({
             aria-label={`Quantity for line ${index + 1}`}
           />
         </td>
-        <td
-          className="px-2 py-2"
-          title={
-            isSet
-              ? 'A set is printed as one thing, so it carries no OR choices.'
-              : undefined
-          }
-        >
-          <SearchableMultiSelect
-            value={line.alternatives.map((a) => a.product_id)}
-            onChange={(selected) => {
-              // Keep what the row already knows about a still-selected product,
-              // then fall back to what the picker has shown this session, so a
-              // chip never reads as a bare id.
-              const known = new Map(
-                line.alternatives.map((a) => [a.product_id, a]),
-              );
-              onUpdate(line.key, {
-                alternatives: selected.map((pid) => {
-                  const held = known.get(pid);
-                  if (held) return held;
-                  const seen = seenProducts.get(pid);
-                  return {
-                    product_id: pid,
-                    name: seen?.name ?? '',
-                    code: seen?.code ?? '',
-                  };
-                }),
-              });
-            }}
-            fetchOptions={fetchAlternativeOptions}
-            selectedOptions={line.alternatives.map((a) => ({
-              value: a.product_id,
-              label: a.name || a.code,
-              description: a.code,
-            }))}
-            disabled={isSet}
-            placeholder={isSet ? 'Not for a set' : 'Search products...'}
-            emptyMessage="No products match."
-          />
-        </td>
         <td className="px-2 py-2">
           <Input
-            value={line.included_accessories}
-            onChange={(e) =>
-              onUpdate(line.key, { included_accessories: e.target.value })
-            }
-            placeholder="e.g. Soft-close hinges"
-            aria-label={`Accessories for line ${index + 1}`}
+            value={line.remarks}
+            onChange={(e) => onUpdate(line.key, { remarks: e.target.value })}
+            placeholder="Note for this line..."
+            aria-label={`Remarks for line ${index + 1}`}
           />
         </td>
-        {hasPromotion && (
-          <td className="px-2 py-2">
-            <Switch
-              checked={line.show_promo_price}
-              onCheckedChange={(v) =>
-                onUpdate(line.key, { show_promo_price: v })
-              }
-              aria-label={`Show promo price on line ${index + 1}`}
-            />
-          </td>
-        )}
         <td className="px-2 py-2">
           <div className="flex items-center justify-end gap-0.5">
             <Button
@@ -1485,7 +1611,7 @@ function LineRow({
       </tr>
       {line.guard_error && (
         <tr>
-          <td colSpan={hasPromotion ? 7 : 6} className="px-2 pb-2">
+          <td colSpan={5} className="px-2 pb-2">
             <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
               {line.guard_error}
             </p>
@@ -1497,117 +1623,100 @@ function LineRow({
 }
 
 // ---------------------------------------------------------------------------
-// Proof preview
+// AI extract match state (D7)
+// ---------------------------------------------------------------------------
+
+/** The "Match" cell the AI extract dialog shows per row (AC-S6-2). */
+function AIMatchStatusLabel({ status }: { status: AIMatchStatus | undefined }) {
+  switch (status) {
+    case 'matched_product':
+      return <span className="text-emerald-700">Matched product</span>;
+    case 'matched_set':
+      return <span className="text-emerald-700">Matched set</span>;
+    case 'not_found':
+      return <span className="text-destructive">Not found</span>;
+    default:
+      return <span className="text-muted-foreground">Checking...</span>;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Design preview (D11)
 // ---------------------------------------------------------------------------
 
 /**
- * Renders a scaled-down proof preview of the tag sheets.
- *
- * Phase 1: builds a mock tag sheet doc from the request lines for demonstration.
- * Phase 2: fetches the actual tag sheet doc from the backend.
+ * Fetches the request's real tag sheet design and renders it through
+ * `PriceTagProofViewer` - the same `TagSheetRenderer` the CRM designer and the
+ * PDF export use, so what the salesperson sees here is what gets printed.
  */
 function ProofPreviewSection({
   request,
 }: {
   request: PriceTagRequestDetail;
 }) {
-  // Build mock resolved data from the request's lines.
-  const resolvedData: Record<string, ResolvedLineData> = {};
-  for (const line of request.lines) {
-    resolvedData[line.id] = {
-      line_id: line.id,
-      code: line.code,
-      name: line.name,
-      dimensions: '',
-      spec_lines: '',
-      list_price: null,
-      sell_price: null,
-      show_promo_price: line.show_promo_price,
-      included_accessories: line.included_accessories ?? '',
-      quantity: line.quantity,
+  const [doc, setDoc] = useState<TagSheetDoc | null>(null);
+  const [resolvedData, setResolvedData] = useState<Record<string, ResolvedLineData>>({});
+  const [loading, setLoading] = useState(true);
+  const [notAvailable, setNotAvailable] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setNotAvailable(false);
+    getPriceTagDesign(request.id)
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) {
+          setNotAvailable(true);
+          setDoc(null);
+          return;
+        }
+        const nextResolved: Record<string, ResolvedLineData> = {};
+        for (const line of data.lines) {
+          nextResolved[line.line_id] = line;
+        }
+        setResolvedData(nextResolved);
+        setDoc(data.doc);
+      })
+      .catch(() => {
+        if (!cancelled) setNotAvailable(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
     };
+  }, [request.id]);
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-base">Design Preview</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <Skeleton className="h-64 w-full" />
+        </CardContent>
+      </Card>
+    );
   }
 
-  // Phase 1: build a mock tag sheet doc. Phase 2 fetches the real one.
-  const mockDoc: TagSheetDoc = {
-    kind: 'tag_sheet',
-    imposition: {
-      preset: 'a4_3up',
-      page_width_mm: 210,
-      page_height_mm: 297,
-      bleed_mm: 3,
-      gap_mm: 2,
-    },
-    sheets: [
-      {
-        id: 's1',
-        tags: request.lines.map((line, i) => ({
-          id: `t${i}`,
-          template_id: '',
-          request_line_id: line.id,
-          x_mm: 10,
-          y_mm: 10 + i * 100,
-          width_mm: 95,
-          height_mm: 90,
-          layers: [
-            {
-              id: `l${i}-name`,
-              type: 'text' as const,
-              x_mm: 5,
-              y_mm: 5,
-              width_mm: 85,
-              height_mm: 15,
-              rotation_deg: 0,
-              z_index: 1,
-              locked: false,
-              visible: true,
-              slot_binding: 'name' as const,
-              text_override: null,
-              props: {
-                kind: 'text' as const,
-                text: line.name,
-                fontFamily: 'DM Sans',
-                fontSize: 12,
-                fontWeight: 600,
-                color: '#000000',
-                align: 'left' as const,
-                lineHeight: 1.2,
-                letterSpacing: 0,
-              },
-            },
-            {
-              id: `l${i}-code`,
-              type: 'text' as const,
-              x_mm: 5,
-              y_mm: 22,
-              width_mm: 85,
-              height_mm: 10,
-              rotation_deg: 0,
-              z_index: 2,
-              locked: false,
-              visible: true,
-              slot_binding: 'code' as const,
-              text_override: null,
-              props: {
-                kind: 'text' as const,
-                text: line.code,
-                fontFamily: 'DM Sans',
-                fontSize: 9,
-                fontWeight: 400,
-                color: '#666666',
-                align: 'left' as const,
-                lineHeight: 1.2,
-                letterSpacing: 0,
-              },
-            },
-          ],
-        })),
-      },
-    ],
-  };
+  if (notAvailable || !doc) {
+    return (
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-base">Design Preview</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <p className="text-sm text-muted-foreground text-center py-6">
+            Design not available yet.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
-  return (
-    <PriceTagProofViewer doc={mockDoc} resolvedData={resolvedData} />
-  );
+  return <PriceTagProofViewer doc={doc} resolvedData={resolvedData} />;
 }
 

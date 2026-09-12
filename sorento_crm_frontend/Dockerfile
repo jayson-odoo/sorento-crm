@@ -33,6 +33,12 @@ ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
 # Increase memory and enable parallel garbage collection
 ENV NODE_OPTIONS="--max-old-space-size=4096 --max-semi-space-size=128"
 
+# Skip tsc here: the `typecheck-frontend` CI job already runs `npm run
+# typecheck` on the runner, in parallel with the test jobs, and gates the
+# deploy on it (see next.config.mjs). A local `npm run build` still
+# type-checks since this var is unset outside the Docker build.
+ENV NEXT_SKIP_TYPECHECK=1
+
 # Build the Next.js application with BuildKit cache mount
 # Caches .next/cache and node_modules/.cache between builds for faster incremental builds
 # Disable telemetry and set production mode for faster builds

@@ -89,6 +89,11 @@ from app.services.master_ref_resolver import (
     MasterRefResolver,
     dedupe_warnings,
 )
+from app.services.project_label_rules import (
+    apply_project_label,
+    label_from_note,
+    label_from_ref,
+)
 from app.services.master_ingest_service import (
     INTERNAL_ERROR_MESSAGE,
     IngestOutcome,
@@ -602,6 +607,8 @@ class DocumentIngestService(MasterRefResolver):
         self.db.add(header)
         for column, value in header_values.items():
             setattr(header, column, value)
+        if spec.entity_type == "sales_orders":
+            self._apply_project_label(header, payload)
         self.db.flush()
 
         line_counts = self._sync_lines(spec, header, line_values, dropped_refs=dropped_refs)
@@ -745,31 +752,65 @@ class DocumentIngestService(MasterRefResolver):
         claim-writing loop is `order_link_service.write_claims_for_lines`
         (S7 dedup), shared with `ShippingOrderIngestService`'s own line
         claims - only the row fetch differs between the two.
+
+        V5 (AutoCount linkage widen): a line naming the EXACT sales-order
+        line it was raised for, via `from_so_line_ref`, resolves through
+        `order_link_service.write_line_ref_claims` - the precise-match
+        sibling of `write_claims_for_lines`, run over the SAME row fetch
+        (one query covers both fields' refs) - see its own docstring.
+
+        CALL ORDER (B1 review fix): `write_line_ref_claims` runs FIRST. It
+        can write a claim already fully resolved; `write_claims_for_lines`'s
+        own `resolve()` call only fills a STILL-missing `so_line_id` and,
+        once set, that claim is out of `resolve()`'s reach for good - the
+        reverse order let an exact ref on the same line as a
+        `from_so_numbers` entry lose to whichever line the ambiguous
+        `(so_number, item_code)` match happened to pick.
         """
-        wanted = [
+        number_wanted = [
             (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
             for line in payload.lines
             if getattr(line, "from_so_numbers", None)
         ]
-        if not wanted:
+        ref_wanted = [
+            (line.source_ref, line.from_so_line_ref)
+            for line in payload.lines
+            if getattr(line, "from_so_line_ref", None)
+        ]
+        if not number_wanted and not ref_wanted:
             return
 
-        refs = [source_ref for source_ref, _ in wanted]
+        refs = {source_ref for source_ref, _ in number_wanted} | {
+            source_ref for source_ref, _ in ref_wanted
+        }
         rows = (
             self.db.query(PurchaseOrderLine)
             .filter(
                 PurchaseOrderLine.purchase_order_id == str(header.id),
-                PurchaseOrderLine.source_ref.in_(refs),
+                PurchaseOrderLine.source_ref.in_(list(refs)),
             )
             .all()
+        )
+        # N1 review fix: one row/product-code index, shared by both calls
+        # below instead of each running its own identical `Product` query.
+        index = order_link_service.index_claim_rows(self.db, rows)
+        order_link_service.write_line_ref_claims(
+            self.db,
+            company_id=self.company_id,
+            document_number=payload.po_number,
+            rows=rows,
+            wanted=ref_wanted,
+            id_attr="po_line_id",
+            index=index,
         )
         order_link_service.write_claims_for_lines(
             self.db,
             company_id=self.company_id,
             document_number=payload.po_number,
             rows=rows,
-            wanted=wanted,
+            wanted=number_wanted,
             id_attr="po_line_id",
+            index=index,
         )
 
     def _status(self, spec: DocumentSpec, canonical: str) -> str:
@@ -788,16 +829,20 @@ class DocumentIngestService(MasterRefResolver):
         return mapped
 
     def _header(self, spec: DocumentSpec, payload: Any) -> tuple[Any, IngestOutcome]:
-        """The row this document addresses: by reference, then by number, then new."""
+        """The row this document addresses: by reference, then by number, then new.
+
+        BL-056 (D15): `self.refs` is scoped to this anchor company, so a
+        header ref linked under a DIFFERENT company never resolves here - the
+        same as a ref that was never linked - and falls through to
+        adopt-by-number/create below, landing a brand new row in THIS company.
+        The cross-company refusal this used to need
+        (`MasterRefResolver._require_same_company`) is unreachable through
+        refs now and has been removed.
+        """
         existing_id = self.refs.resolve(
             entity_type=spec.entity_type, source_ref=payload.source_ref
         )
         if existing_id is not None:
-            self._require_same_company(
-                spec.header_model,
-                existing_id,
-                f"source_ref {payload.source_ref!r}",
-            )
             return self._load(spec, existing_id), IngestOutcome.UPDATED
 
         # Within the company, and through the model: `so_number` is unique per
@@ -912,6 +957,24 @@ class DocumentIngestService(MasterRefResolver):
         if spec.doc_no_column:
             values[spec.doc_no_column] = getattr(payload, spec.number_field)
         return values
+
+    def _apply_project_label(self, header: Any, payload: Any) -> None:
+        """PLAN-so-project-label.md: the note beats the AutoCount `Ref`.
+
+        Runs on both create and update, after `internal_note` has already landed on
+        `header` from the setattr loop above - a re-push with a corrected note has to
+        move the label the same way a first push sets it. `apply_project_label`'s own
+        precedence gate is what keeps an `inquiry`-sourced label (raised higher than
+        either of these) from ever being overwritten here, and what keeps a no-note,
+        no-`ref` re-push from touching `updated_at` at all (AC-I5): neither candidate
+        below writes anything when both resolve to `None`.
+        """
+        note_label, note_source = label_from_note(getattr(header, "internal_note", None))
+        if note_label:
+            apply_project_label(header, note_label, note_source)
+            return
+        ref_label = label_from_ref(getattr(payload, "ref", None))
+        apply_project_label(header, ref_label, "ref" if ref_label else None)
 
     def _apply_customer_segment_and_region(
         self, customer_id: Optional[str], payload: Any, warnings: list[str]
@@ -1138,6 +1201,32 @@ class DocumentIngestService(MasterRefResolver):
         # every setattr site in `_sync_lines`/`_adopt_lines`. No column exists
         # for it on either line table.
         values["line_number"] = getattr(line, "line_number", None)
+        # V5 (AutoCount linkage widen, B2 review fix - uniform on both line
+        # tables): raw pass-through onto `purchase_order_lines` - see the
+        # column comments in `app/models/procurement.py`.
+        # `CanonicalSalesOrderLine` carries none of these four fields, so
+        # `model_fields_set` never contains them for a sales-order line and
+        # this whole block is a no-op there. Each is left OUT of `values`
+        # entirely when absent (absent_vs_null): an omitted field on a
+        # re-push must never clear what an earlier push recorded - proven
+        # by an explicit `null`, which DOES clear (S1 review fix), since
+        # `model_fields_set` is presence, not truthiness.
+        if "from_so_line_ref" in line.model_fields_set:
+            values["from_so_line_ref"] = line.from_so_line_ref
+        if "from_po_line_ref" in line.model_fields_set:
+            values["from_po_line_ref"] = line.from_po_line_ref
+        if "from_po_number" in line.model_fields_set:
+            values["from_po_number"] = line.from_po_number
+        if "from_so_external" in line.model_fields_set:
+            external = line.from_so_external
+            # S4 review fix: `exclude_unset=True` so a partial object (the
+            # ESB naming only `db` and `doc_key`, say) is stored exactly as
+            # sent - `model_dump()` alone fills every OTHER field of the
+            # nested model with `None`, which is not what "raw, verbatim"
+            # means and would drop a key on a later, narrower re-push.
+            values["from_so_external"] = (
+                external.model_dump(exclude_unset=True) if external is not None else None
+            )
         return values
 
     def _sync_lines(
@@ -1520,7 +1609,7 @@ class DocumentReadService:
     def __init__(self, db: Session, *, company_id: str):
         self.db = db
         self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        self.refs = IntegrationReferenceService(db, company_id=self.company_id)
 
     def current_state(self, entity_type: str, source_refs: list[str]) -> dict[str, Any]:
         # The route 404s an unknown entity (`_entity`) and dispatches to this

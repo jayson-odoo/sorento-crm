@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import func, nullslast, or_
 from sqlalchemy.orm import Session
@@ -37,6 +37,7 @@ from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
+from app.services.scm import spo_supply
 from app.services.scm.po_listing_reader import FAMILY_SPO, doc_family
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
@@ -79,16 +80,26 @@ def resolve(db: Session, *, so_numbers: Optional[set[str]] = None) -> dict:
 
     so_line_by_key, so_line_by_number = _sales_side(db, {c.so_number for c in claims})
     po_line_by_key, po_line_by_number = _purchase_side(db, {c.po_number for c in claims})
+    exact_so_line = _exact_so_line_for(db, claims)
 
     resolved = so_side = po_side = 0
     now = _now()
 
     for claim in claims:
         if claim.so_line_id is None:
-            # A claim with an item resolves to THAT line; one without (a PO note) can only
-            # name the order, so it takes the order's first line as its anchor and stays
-            # honest about the fact by having no item code.
-            line = (
+            # B2 review fix: an EXACT ref stored on the claim's purchase-side
+            # row wins over the ambiguous (so_number, item_code) match below
+            # - this is what lets a claim opened by `from_so_numbers` before
+            # its `from_so_line_ref` counterpart resolved (the PO arrived
+            # before its SO) recover the precise line on a later sweep,
+            # instead of settling for whichever of two same-item lines the
+            # dict match below happens to pick.
+            #
+            # A claim with an item otherwise resolves to THAT line; one
+            # without (a PO note) can only name the order, so it takes the
+            # order's first line as its anchor and stays honest about the
+            # fact by having no item code.
+            line = exact_so_line.get(str(claim.id)) or (
                 so_line_by_key.get((claim.so_number, claim.item_code))
                 if claim.item_code
                 else so_line_by_number.get(claim.so_number)
@@ -120,6 +131,94 @@ def resolve(db: Session, *, so_numbers: Optional[set[str]] = None) -> dict:
         "po_side": po_side,
         "still_open": sum(1 for c in claims if c.resolved_at is None),
     }
+
+
+def _exact_so_line_for(db: Session, claims: Sequence[OrderLinkClaim]) -> dict[str, SalesOrderLine]:
+    """Claim id -> the `SalesOrderLine` its purchase side's OWN stored
+    `from_so_line_ref` names, for every open claim still missing `so_line_id`
+    (B2 review fix).
+
+    A claim's purchase side (`po_line_id` or `spo_allocation_id`) may carry a
+    `from_so_line_ref` that did not resolve at write time - the sales order
+    had not been pushed yet, `write_line_ref_claims`'s normal case - and is
+    now persisted on the row (`purchase_order_lines`/`spo_allocations`) for
+    exactly this: a later sweep re-reads it and recovers the EXACT line,
+    rather than falling back to `(so_number, item_code)`, which cannot tell
+    two same-item lines of one sales order apart.
+
+    D1 (review fix - regression this function introduced): the ref column
+    lives on the PURCHASE line, one value shared by every claim that ever
+    points at that line - `from_so_numbers` can carry up to 50 entries, so
+    more than one claim can share one purchase line, each naming a
+    DIFFERENT sales order. Resolving the ref to a bare `SalesOrderLine`
+    with no check against which order it actually belongs to let a claim
+    for SO-A be assigned SO-B's line the moment SO-B's ref happened to sit
+    on the same purchase row - reachable on an ordinary first push, no
+    exotic data (`from_so_numbers=["SO-A","SO-B"]` plus a ref naming an
+    SO-B line). Fixed the same way `write_line_ref_claims` is already safe
+    by construction: `so_number` is read off the JOIN, and a resolved line
+    is trusted only when that so_number matches the CLAIM's own - never
+    the other way around, which would let a mismatched ref silently name
+    a different order.
+    """
+    out: dict[str, SalesOrderLine] = {}
+    open_claims = [c for c in claims if c.so_line_id is None]
+    if not open_claims:
+        return out
+
+    po_ids = {str(c.po_line_id) for c in open_claims if c.po_line_id}
+    spo_ids = {str(c.spo_allocation_id) for c in open_claims if c.spo_allocation_id}
+
+    ref_by_po: dict[str, str] = {}
+    if po_ids:
+        ref_by_po = dict(
+            db.query(PurchaseOrderLine.id, PurchaseOrderLine.from_so_line_ref)
+            .filter(
+                PurchaseOrderLine.id.in_(list(po_ids)),
+                PurchaseOrderLine.from_so_line_ref.isnot(None),
+            )
+            .all()
+        )
+    ref_by_spo: dict[str, str] = {}
+    if spo_ids:
+        ref_by_spo = dict(
+            db.query(SPOAllocation.id, SPOAllocation.from_so_line_ref)
+            .filter(
+                SPOAllocation.id.in_(list(spo_ids)),
+                SPOAllocation.from_so_line_ref.isnot(None),
+            )
+            .all()
+        )
+
+    all_refs = {str(v) for v in ref_by_po.values()} | {str(v) for v in ref_by_spo.values()}
+    if not all_refs:
+        return out
+
+    # D1: joined to `SalesOrder` so every resolved line carries the
+    # so_number it ACTUALLY belongs to, read off the row rather than
+    # trusted from the claim - the same shape `write_line_ref_claims` uses.
+    rows = (
+        db.query(SalesOrderLine, SalesOrder.so_number)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .filter(SalesOrderLine.source_ref.in_(list(all_refs)))
+        .all()
+    )
+    so_by_ref = {line.source_ref: (line, so_number) for line, so_number in rows}
+
+    for claim in open_claims:
+        ref = ref_by_po.get(str(claim.po_line_id)) if claim.po_line_id else None
+        if ref is None and claim.spo_allocation_id:
+            ref = ref_by_spo.get(str(claim.spo_allocation_id))
+        if ref is None:
+            continue
+        found = so_by_ref.get(ref)
+        # D1: the resolved line is trusted ONLY when its own so_number
+        # matches what THIS claim already names - a ref that resolves to a
+        # DIFFERENT sales order's line is not a match, it is data this
+        # claim has nothing to do with.
+        if found is not None and found[1] == claim.so_number:
+            out[str(claim.id)] = found[0]
+    return out
 
 
 def _purchase_side_of(claim: OrderLinkClaim) -> Optional[str]:
@@ -182,7 +281,13 @@ def _purchase_side(db: Session, po_numbers: set[str]):
     spo_rows = (
         db.query(SPOAllocation.spo_number, Product.product_code, SPOAllocation.id)
         .join(Product, Product.id == SPOAllocation.product_id)
-        .filter(SPOAllocation.spo_number.in_(list(spo_numbers)))
+        .filter(
+            SPOAllocation.spo_number.in_(list(spo_numbers)),
+            # Section 4 ruling: a claim's TARGET is never resolved onto a line
+            # AutoCount deleted - `by_key`/`by_number` below pick the first
+            # surviving row, or leave the claim unresolved on this side.
+            *spo_supply.visible_line_clauses(),
+        )
         .order_by(
             SPOAllocation.spo_number,
             Product.product_code,
@@ -307,6 +412,31 @@ def claim_book_pairing(
     return claim
 
 
+def index_claim_rows(db: Session, rows: Sequence) -> tuple[dict[str, Any], dict[str, str]]:
+    """The row-by-`source_ref` index and product-code lookup `write_claims_for_lines`
+    and `write_line_ref_claims` both need over the SAME `rows` (N1 review fix, V5).
+
+    `rows` is already fetched once by the caller (`DocumentIngestService
+    ._write_order_link_claims` / `ShippingOrderIngestService
+    ._write_order_link_claims`) before either write function runs - computed
+    HERE, once, and passed into both via their `index` parameter, rather than
+    each running its own identical `Product` query over the same rows in the
+    same request.
+    """
+    rows_by_ref = {row.source_ref: row for row in rows}
+    product_ids = {row.product_id for row in rows if row.product_id}
+    codes = (
+        dict(
+            db.query(Product.id, Product.product_code)
+            .filter(Product.id.in_(product_ids))
+            .all()
+        )
+        if product_ids
+        else {}
+    )
+    return rows_by_ref, codes
+
+
 def write_claims_for_lines(
     db: Session,
     *,
@@ -315,6 +445,7 @@ def write_claims_for_lines(
     rows: Sequence,
     wanted: list[tuple[str, list[str]]],
     id_attr: str,
+    index: Optional[tuple[dict[str, Any], dict[str, str]]] = None,
 ) -> None:
     """The shared body of a document's or a shipping order's `from_so_numbers`
     claim writing (V4, S7 dedup - previously duplicated between
@@ -329,21 +460,29 @@ def write_claims_for_lines(
     this row's id lands in - `"po_line_id"` for a purchase-order line,
     `"spo_allocation_id"` for a shipping-order line - so ONE loop serves
     both callers without either knowing about the other's table.
+
+    `index`, when passed, is `index_claim_rows(db, rows)`'s own return value,
+    shared with a sibling `write_line_ref_claims` call over the SAME `rows`
+    (N1 review fix) so the two do not each run their own identical `Product`
+    query. Computed here when the caller has no reason to share it (a lone
+    call, a test).
+
+    CALL ORDER (B1 review fix): a caller that ALSO calls `write_line_ref_claims`
+    for the same document MUST call it FIRST. That function can write a claim
+    already fully resolved (`so_line_id` known at write time); this function's
+    OWN `resolve()` call at the end only fills `so_line_id` on a claim still
+    missing one via the ambiguous `(so_number, item_code)` match, and once
+    `resolved_at` is set that claim is permanently out of `resolve()`'s reach
+    (it filters `resolved_at IS NULL`). Called in the wrong order, an exact
+    ref that arrives on the SAME line as a `from_so_numbers` entry is silently
+    discarded: `claim_placed_on_po`'s fill-never-repoint guard finds
+    `so_line_id` already set to whatever the ambiguous match picked and never
+    corrects it.
     """
     if not wanted:
         return
 
-    rows_by_ref = {row.source_ref: row for row in rows}
-    product_ids = {row.product_id for row in rows if row.product_id}
-    codes = (
-        dict(
-            db.query(Product.id, Product.product_code)
-            .filter(Product.id.in_(product_ids))
-            .all()
-        )
-        if product_ids
-        else {}
-    )
+    rows_by_ref, codes = index if index is not None else index_claim_rows(db, rows)
 
     seen: set[tuple[str, str, Optional[str]]] = set()
     so_numbers: set[str] = set()
@@ -371,6 +510,93 @@ def write_claims_for_lines(
     if so_numbers:
         db.flush()
         resolve(db, so_numbers=so_numbers)
+
+
+def write_line_ref_claims(
+    db: Session,
+    *,
+    company_id: Optional[str],
+    document_number: str,
+    rows: Sequence,
+    wanted: list[tuple[str, str]],
+    id_attr: str,
+    index: Optional[tuple[dict[str, Any], dict[str, str]]] = None,
+) -> None:
+    """V5 (AutoCount linkage widen): the exact-line sibling of
+    `write_claims_for_lines`, for a purchase-order or shipping-order line
+    that carries `from_so_line_ref` - the EXACT `sales_order_lines.source_ref`
+    it was raised for, rather than a bare SO number.
+
+    `wanted` is `(line_source_ref, from_so_line_ref)` pairs, read the same
+    way `write_claims_for_lines` reads `(line_source_ref, so_numbers)`;
+    `rows` are the already-flushed purchase-order or shipping-order line
+    rows, keyed by their OWN `source_ref`. `index` is `index_claim_rows`'s
+    return value, shared with a sibling `write_claims_for_lines` call over
+    the same `rows` (N1 review fix) - computed here when the caller has no
+    reason to share it.
+
+    A ref that resolves to a held `sales_order_lines` row writes the claim
+    with `so_line_id` FILLED at write time, through `claim_placed_on_po` -
+    the join is exact (AutoCount's own DtlKey), so there is nothing left for
+    `resolve()` to decide, and the same item appearing twice on one sales
+    order can no longer have its stock assigned to the wrong line. This is
+    deliberately NOT `claim_book_pairing`: that function's whole contract is
+    "a number, nothing more, resolution deferred" (see its own docstring),
+    and folding a sometimes-already-known `so_line_id` into it would change
+    what it means for every caller that only ever gives it a number.
+
+    A ref that does NOT resolve (the sales order has not been pushed yet -
+    the normal case, not an error) writes nothing here. There is no number
+    to open a claim WITH from a ref alone; the line's own `from_so_numbers`,
+    when the ESB also sends it, already opens one through
+    `write_claims_for_lines`, unaffected by this function running alongside
+    it - `resolve()`'s regular sweep fills that one in once the SO arrives,
+    now preferring the same exact ref (`_exact_so_line_for`) over the
+    ambiguous `(so_number, item_code)` match, since `from_po_line_ref`'s
+    sibling `from_so_line_ref` is now persisted on the purchase-side row
+    itself (B2 review fix) and survives past this call.
+
+    CALL ORDER (B1 review fix): the caller MUST call this function BEFORE
+    `write_claims_for_lines` for the same document - see that function's own
+    docstring for why the reverse order silently discards an exact ref.
+    """
+    if not wanted:
+        return
+
+    rows_by_ref, codes = index if index is not None else index_claim_rows(db, rows)
+
+    so_refs = {so_line_ref for _line_ref, so_line_ref in wanted}
+    so_line_rows = (
+        db.query(SalesOrderLine, SalesOrder.so_number)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .filter(SalesOrderLine.source_ref.in_(list(so_refs)))
+        .all()
+        if so_refs
+        else []
+    )
+    so_by_ref = {
+        so_line.source_ref: (so_line, so_number) for so_line, so_number in so_line_rows
+    }
+
+    for line_source_ref, so_line_ref in wanted:
+        row = rows_by_ref.get(line_source_ref)
+        if row is None:
+            continue
+        found = so_by_ref.get(so_line_ref)
+        if found is None:
+            continue
+        so_line, so_number = found
+        item_code = codes.get(row.product_id)
+        claim_placed_on_po(
+            db,
+            company_id=company_id,
+            so_number=so_number,
+            po_number=document_number,
+            item_code=item_code,
+            so_line_id=str(so_line.id),
+            source=SOURCE_AUTOCOUNT,
+            **{id_attr: str(row.id)},
+        )
 
 
 def _linked_by_target(db: Session, target_ids: set[str]) -> dict[str, Decimal]:
@@ -445,6 +671,125 @@ def placed_by_claim(db: Session, claim_ids: Sequence[str]) -> dict[str, Decimal]
     ):
         out[str(claim_id)] = _dec(qty)
     return out
+
+
+def book_so_numbers_by_ref(db: Session, refs: Sequence[str]) -> dict[str, str]:
+    """`from_so_line_ref` -> the sales order NUMBER it names, for the refs that resolve.
+
+    The book's own SO linkage on a purchase line is `purchase_order_lines.from_so_line_ref`
+    - AutoCount's own `"{database}:{DocKey}:{DtlKey}"`, one value, one sales order. This
+    reader turns that machine key into the number a buyer can read, and nothing else.
+
+    RESOLVED AT DOCUMENT LEVEL, against `sales_orders.source_ref`, which carries
+    `"{database}:{DocKey}"` - the ref's first TWO segments. The `DtlKey` is deliberately
+    unused here. The cell displays a sales order NUMBER, which is a property of the
+    document, so document -> number is the whole question and no `sales_order_lines` row
+    needs to exist to answer it. Resolving through the LINE table instead (an earlier cut
+    of this function did) makes a line we happen not to hold suppress a number we could
+    legitimately name: an order header ingested without its lines, or a line since
+    removed, would read as "not held" while `sales_orders` names it perfectly well.
+
+    Measured on `sorento_ai_automation_0907` (7 Sep book copy), stated precisely because
+    the first version of this note was not: of the 33,225 purchase lines carrying a ref,
+    the document-key join resolves 11,592 and leaves 21,633 unresolved. The line-level
+    join it replaced happens to resolve the SAME 11,592 today - the two agree on every
+    row, with no case where one finds an order and the other does not. So this change is
+    not a bug fix against current data; it is the correct altitude for the question, and
+    it removes the latent failure mode above before it can bite.
+
+    The document key is rebuilt from the ref's OWN first two segments rather than a
+    hardcoded `"AED_SORENTO:"`. The database name is data, not a constant - it is the
+    first field of the format - and every ref on this book happens to be `AED_SORENTO`
+    only because there is one book today. Hardcoding it would fail silently the day a
+    second one is ingested, and splitting costs nothing.
+
+    A ref that does not resolve is simply ABSENT from the result, and that absence is a
+    third state rather than an error: the sales order lives in the book but has not been
+    pushed to this CRM. The caller distinguishes it from "the book named no sales order at
+    all" by looking at the ref column itself.
+
+    ONE query for however many refs the caller asks about, so a whole document costs one
+    round trip whatever its line count (`202405-S0046` alone has 584 lines). The signature
+    is keyed by the FULL ref the caller passes in: neither service should have to know
+    that a DocKey exists, so the split lives in here.
+
+    `SalesOrder` is `CompanyScopedMixin`, so the plain ORM query below is already
+    company-scoped by the `do_orm_execute` event: another company's sales order cannot be
+    named on this company's line. No explicit `company_id` filter is needed or wanted.
+
+    No tie-break ordering, because the join cannot fan out: `sales_orders.source_ref` is
+    UNIQUE across the `AED_SORENTO:` namespace (75,600 rows, 0 duplicate keys). That is
+    the other reason this altitude is right - `sales_order_lines.source_ref` is NOT unique
+    (187 values repeat, legacy bare line numbers from an old import) and the line-level
+    version needed a deterministic ORDER BY to be total at all.
+    """
+    out: dict[str, str] = {}
+    # full ref -> its document key, and the reverse, so one query answers for every ref.
+    doc_key_of: dict[str, str] = {}
+    for raw in refs:
+        if not raw:
+            continue
+        ref = str(raw)
+        parts = ref.split(":")
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            # Not the documented `{database}:{DocKey}:{DtlKey}` shape, so there is no
+            # document key to look up. Absent from the result = unresolved, which is the
+            # honest answer for a value we cannot read.
+            continue
+        doc_key_of[ref] = f"{parts[0]}:{parts[1]}"
+    if not doc_key_of:
+        return out
+
+    rows = (
+        db.query(SalesOrder.source_ref, SalesOrder.so_number)
+        .filter(SalesOrder.source_ref.in_(sorted(set(doc_key_of.values()))))
+        .all()
+    )
+    number_of_doc = {
+        str(source_ref): so_number for source_ref, so_number in rows if so_number
+    }
+    for ref, doc_key in doc_key_of.items():
+        found = number_of_doc.get(doc_key)
+        if found:
+            out[ref] = found
+    return out
+
+
+#: Passed as `book_so_by_ref` to a serializer's line-fields helper when the caller has
+#: deliberately NOT resolved the book linkage on this path - the PO list route (review of
+#: PR #764, F2/F4): a page of orders re-resolves `sales_orders` on every keystroke and no
+#: list consumer reads the result. Distinct from an EMPTY dict, which means "resolved, and
+#: none of these refs named an order held here" - the sentinel means "not computed", and
+#: every line reads `book_so_number=None`, `book_so_unresolved=None` rather than the
+#: `False` a resolved-but-empty dict would produce. `None` is a safe sentinel here because
+#: `book_so_numbers_by_ref` never returns `None` itself, only a `dict`.
+BOOK_SO_NOT_RESOLVED = None
+
+
+def book_so_fields(ref: Optional[str], by_ref: Optional[dict[str, str]]) -> dict:
+    """The three-state `book_so_number` / `book_so_unresolved` pair for ONE line's
+    `from_so_line_ref`, against a `book_so_numbers_by_ref(...)` result (or
+    `BOOK_SO_NOT_RESOLVED`).
+
+    ONE function for both surfaces that print this fact - `PurchaseOrderService.serialize`
+    and `OrderInquiryWorklistService.get_po_detail` - which had each grown their own copy
+    of this derivation (review of PR #764, F5). A drift between the two copies is exactly
+    the failure the shared `BookSoCell` component on the frontend was built to prevent, and
+    a copy-pasted backend derivation is the same risk one layer down.
+
+    Three wire values, not two:
+      * `ref` is falsy -> `(None, False)`. The book named no sales order for this line.
+      * `ref` is set and `by_ref` names it -> `(number, False)`.
+      * `ref` is set and `by_ref` does not name it -> `(None, True)` - "linked, not held".
+      * `by_ref is BOOK_SO_NOT_RESOLVED` -> `(None, None)` on every line, whatever `ref`
+        says: this path never asked the question.
+    """
+    if by_ref is BOOK_SO_NOT_RESOLVED:
+        return {"book_so_number": None, "book_so_unresolved": None}
+    if not ref:
+        return {"book_so_number": None, "book_so_unresolved": False}
+    number = by_ref.get(ref)
+    return {"book_so_number": number, "book_so_unresolved": number is None}
 
 
 def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]:

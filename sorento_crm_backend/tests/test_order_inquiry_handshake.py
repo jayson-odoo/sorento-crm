@@ -217,6 +217,15 @@ def world():
         # not about it. The lock has its own suites: `tests/scm/test_project_bin_lock.py`
         # and `tests/test_order_inquiry_dedication.py`.
         warehouse = _warehouse(db, f"ZZT-IB-{_uid()[:4]}")
+        # SLICE H, 8 Sep 2026: the segment above keeps `warehouse` out of G12's project-
+        # bin lock, but that is a DIFFERENT test from whether it is a genuine site POOL -
+        # the automatic pass now takes only from a warehouse something else's
+        # `pool_warehouse_id` names. This suite's rows carry no `stock_location` (so no
+        # tier ranks anything), and the handshake it pins - who may link, when it is a
+        # draft, what the horizon holds back - is not about location fit, so `warehouse`
+        # has to genuinely be a pool or every cascade assertion here would fail on AC-H1
+        # instead of proving what the suite is actually about.
+        _warehouse(db, f"ZZT-IB-SIB-{_uid()[:4]}", pool_warehouse_id=warehouse.id)
         plan_run = _pin_the_plan_horizon(db, company_id)
         db.flush()
         db.commit()
@@ -354,7 +363,7 @@ def _project_committed(world, *, planned: bool) -> Decimal:
             f"{demand.horizon_committed_select_sql()}) cv "
             "WHERE cv.product_id = :pid"
         )
-        params = {"pid": str(world.product.id), "horizon": None}
+        params = {"pid": str(world.product.id), "horizon": None, "horizon_start": None}
     else:
         sql = (
             "SELECT COALESCE(SUM(project_committed), 0) FROM scm.committed_v "

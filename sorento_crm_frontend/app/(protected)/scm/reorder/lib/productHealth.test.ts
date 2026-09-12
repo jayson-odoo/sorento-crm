@@ -6,7 +6,13 @@
  * can be argued with.
  */
 import { describe, expect, it } from 'vitest';
-import { MOVEMENT_SORT, healthVerdict, moqGap, type ProductEconomics } from './productHealth';
+import {
+  MOVEMENT_SORT,
+  healthVerdict,
+  moqGap,
+  suggestedLifecycle,
+  type ProductEconomics,
+} from './productHealth';
 
 const econ = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({
   product_id: 'p1',
@@ -112,5 +118,26 @@ describe('moqGap - the pump-up, with its sell-through odds', () => {
     expect(moqGap(150, 100, 150, econ(), 6)).toBeNull();
     expect(moqGap(20, null, 20, econ(), 6)).toBeNull();
     expect(moqGap(0, 100, 0, econ(), 6)).toBeNull();
+  });
+});
+
+// ===========================================================================
+// S8 (reorder-feedback-9sep.md, G4 ruling 9 Sep 2026) - the health class defaults the
+// lifecycle radio: Dead -> Discontinue, everything else -> Keep selling.
+// ===========================================================================
+
+describe('suggestedLifecycle (AC-S8.1)', () => {
+  it('dead suggests discontinue', () => {
+    expect(suggestedLifecycle('dead')).toBe('discontinue');
+  });
+
+  it('fast_moving, slow_moving and no_history all suggest keep', () => {
+    expect(suggestedLifecycle('fast_moving')).toBe('keep');
+    expect(suggestedLifecycle('slow_moving')).toBe('keep');
+    expect(suggestedLifecycle('no_history')).toBe('keep');
+  });
+
+  it('an unknown/undefined class defaults to keep rather than discontinuing by accident', () => {
+    expect(suggestedLifecycle(undefined)).toBe('keep');
   });
 });

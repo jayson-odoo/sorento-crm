@@ -131,6 +131,7 @@ function row(over: Partial<SPODocumentRow> = {}): SPODocumentRow {
     balance: 400,
     line_count: 2,
     worst_overdue_days: 0,
+    containers: [],
     ...over,
   };
 }
@@ -240,7 +241,177 @@ describe('SPOAllocationsList - status pill + overdue formatting (AC-2)', () => {
     const onTimeRow = screen.getByText('SPO-ONTIME').closest('tr') as HTMLElement;
     const lateOverdue = within(lateRow).getByText('31d');
     expect(lateOverdue.className).toMatch(/amber/);
-    expect(within(onTimeRow).getByText('-')).toBeInTheDocument();
+
+    // Scoped to the Overdue column specifically (not just any "-" in the row) - the
+    // Container No column (AC-6) also reads "-" when a document has no container,
+    // so an unscoped `getByText('-')` on the row is now ambiguous.
+    const overdueColIndex = screen
+      .getAllByRole('columnheader')
+      .findIndex((header) => header.textContent?.includes('Overdue'));
+    expect(overdueColIndex).toBeGreaterThan(-1);
+    const onTimeOverdueCell = within(onTimeRow).getAllByRole('cell')[overdueColIndex];
+    expect(within(onTimeOverdueCell).getByText('-')).toBeInTheDocument();
+  });
+});
+
+// ── AC-S1.1: Date column right of SPO No, no sub-line under the SPO number ──
+
+describe('SPOAllocationsList - Date column (AC-S1.1)', () => {
+  it('renders a Date header and the row doc_date, dd/mm/yyyy', () => {
+    mockList([row({ id: 'SPO-1', spo_number: 'SPO-1', doc_date: '2026-08-05' })]);
+    renderList();
+
+    expect(screen.getByRole('columnheader', { name: /Date/i })).toBeInTheDocument();
+    expect(rows().getByText('05/08/2026')).toBeInTheDocument();
+  });
+
+  it('no longer stacks the date under the SPO No cell', () => {
+    mockList([row({ id: 'SPO-1', spo_number: 'SPO-1', doc_date: '2026-08-05' })]);
+    renderList();
+
+    const spoLink = screen.getByRole('link', { name: 'SPO-1' });
+    // The date used to render as a sibling <span> under the link, inside the same cell.
+    const cell = spoLink.closest('td') as HTMLElement;
+    expect(within(cell).queryByText('05/08/2026')).toBeNull();
+  });
+});
+
+// ── PLAN-spo-list-container-number.md AC-6/AC-7: Container No column + search ──
+
+describe('SPOAllocationsList - Container No column (AC-6)', () => {
+  it('renders a "Container No" column header', () => {
+    mockList([row()]);
+    renderList();
+
+    expect(screen.getByRole('columnheader', { name: /Container No/i })).toBeInTheDocument();
+  });
+
+  it('shows the first container as a link to its packing list, a "+1" pill linking to the second, and the joined title', () => {
+    mockList([
+      row({
+        id: 'SPO-CONT-2',
+        spo_number: 'SPO-CONT-2',
+        containers: [
+          { container_number: 'ZZTU1111111', shipment_id: 'S1' },
+          { container_number: 'ZZTU2222222', shipment_id: 'S2' },
+        ],
+      }),
+    ]);
+    renderList();
+
+    const rowEl = screen.getByText('SPO-CONT-2').closest('tr') as HTMLElement;
+
+    const firstLink = within(rowEl).getByRole('link', { name: 'ZZTU1111111' });
+    expect(firstLink).toHaveAttribute(
+      'href',
+      expect.stringContaining('/procurement-management/packing-lists/S1'),
+    );
+
+    const pill = within(rowEl).getByRole('link', { name: '+1' });
+    expect(pill).toHaveAttribute(
+      'href',
+      expect.stringContaining('/procurement-management/packing-lists/S2'),
+    );
+
+    expect(within(rowEl).getByTitle('ZZTU1111111, ZZTU2222222')).toBeInTheDocument();
+  });
+
+  it('collapses three or more containers into a "+2" pill that opens a popover listing the extras as links', () => {
+    mockList([
+      row({
+        id: 'SPO-CONT-3',
+        spo_number: 'SPO-CONT-3',
+        containers: [
+          { container_number: 'ZZTU1111111', shipment_id: 'S1' },
+          { container_number: 'ZZTU2222222', shipment_id: 'S2' },
+          { container_number: 'ZZTU3333333', shipment_id: 'S3' },
+        ],
+      }),
+    ]);
+    renderList();
+
+    const rowEl = screen.getByText('SPO-CONT-3').closest('tr') as HTMLElement;
+    const pill = within(rowEl).getByText('+2');
+
+    // Not yet expanded: the extra containers are not links on the page.
+    expect(screen.queryByRole('link', { name: 'ZZTU2222222' })).toBeNull();
+
+    fireEvent.click(pill);
+
+    const secondLink = screen.getByRole('link', { name: 'ZZTU2222222' });
+    expect(secondLink).toHaveAttribute(
+      'href',
+      expect.stringContaining('/procurement-management/packing-lists/S2'),
+    );
+    const thirdLink = screen.getByRole('link', { name: 'ZZTU3333333' });
+    expect(thirdLink).toHaveAttribute(
+      'href',
+      expect.stringContaining('/procurement-management/packing-lists/S3'),
+    );
+  });
+
+  it('renders a single raw (unlinked) container as plain text, no link and no pill', () => {
+    mockList([
+      row({
+        id: 'SPO-CONT-RAW',
+        spo_number: 'SPO-CONT-RAW',
+        containers: [{ container_number: 'ZZTU4444444', shipment_id: null }],
+      }),
+    ]);
+    renderList();
+
+    const rowEl = screen.getByText('SPO-CONT-RAW').closest('tr') as HTMLElement;
+    expect(within(rowEl).getByText('ZZTU4444444')).toBeInTheDocument();
+    expect(within(rowEl).queryByRole('link', { name: 'ZZTU4444444' })).toBeNull();
+    expect(within(rowEl).queryByText(/^\+\d/)).toBeNull();
+  });
+
+  it('renders "-" when the document has no container', () => {
+    mockList([
+      row({
+        id: 'SPO-CONT-NONE',
+        spo_number: 'SPO-CONT-NONE',
+        // Non-zero so this row's own Overdue cell never also reads "-" (AC-2), which
+        // would make the assertion below ambiguous about which cell it matched.
+        worst_overdue_days: 5,
+        containers: [],
+      }),
+    ]);
+    renderList();
+
+    const rowEl = screen.getByText('SPO-CONT-NONE').closest('tr') as HTMLElement;
+    expect(within(rowEl).getByText('-')).toBeInTheDocument();
+  });
+
+  it('does not trigger the row navigation when the first container link or the "+1" pill is clicked (AC-6)', () => {
+    mockList([
+      row({
+        id: 'SPO-CONT-NAV',
+        spo_number: 'SPO-CONT-NAV',
+        containers: [
+          { container_number: 'ZZTU5555555', shipment_id: 'S5' },
+          { container_number: 'ZZTU6666666', shipment_id: 'S6' },
+        ],
+      }),
+    ]);
+    renderList();
+
+    const rowEl = screen.getByText('SPO-CONT-NAV').closest('tr') as HTMLElement;
+
+    fireEvent.click(within(rowEl).getByRole('link', { name: 'ZZTU5555555' }));
+    expect(routerPush).not.toHaveBeenCalledWith(expect.stringContaining('SPO-CONT-NAV'));
+
+    fireEvent.click(within(rowEl).getByRole('link', { name: '+1' }));
+    expect(routerPush).not.toHaveBeenCalledWith(expect.stringContaining('SPO-CONT-NAV'));
+  });
+});
+
+describe('SPOAllocationsList - search placeholder mentions container (AC-7)', () => {
+  it('reads "Search SPO, product or container..."', () => {
+    mockList([row()]);
+    renderList();
+
+    expect(screen.getByPlaceholderText('Search SPO, product or container...')).toBeInTheDocument();
   });
 });
 

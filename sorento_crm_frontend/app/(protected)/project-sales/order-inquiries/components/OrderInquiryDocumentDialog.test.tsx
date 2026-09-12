@@ -1,12 +1,13 @@
 /**
- * The read-only document lightbox (R9, AC-D18/AC-D19/AC-D20): one `Dialog` for both
- * kinds, opened from the document number the "Outstanding PO/SPO" column prints. Replaces
- * the deleted `OrderInquiryPoDetailPopover` - AC-D20 is asserted by the plain fact that
- * this file imports the dialog module, not the popover one, and nothing in the tree does.
+ * The read-only document lightbox (R9, AC-D18/AC-D19/AC-D20, and slice B of
+ * `PLAN-scm-oi-reserving-feedback-8sep.md`): one `Dialog` for both kinds, opened from the
+ * document number the "Outstanding PO/SPO" column prints. Replaces the deleted
+ * `OrderInquiryPoDetailPopover` - AC-D20 is asserted by the plain fact that this file
+ * imports the dialog module, not the popover one, and nothing in the tree does.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getOrderInquiryPoDetail = vi.fn();
@@ -20,6 +21,13 @@ vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => 
     getOrderInquirySpoDetail: (...args: unknown[]) => getOrderInquirySpoDetail(...args),
   };
 });
+
+// The lines are a `PanelDataGrid` now (slice B), which reads per-user column preferences
+// through this hook - the same mock every other `PanelDataGrid` test file uses (see
+// `OrderLinesCard.test.tsx`), or the grid never resolves under jsdom.
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
 
 import {
   OrderInquiryDocumentDialog,
@@ -110,7 +118,95 @@ describe('PO lightbox body', () => {
 
     // The lines table too.
     expect(screen.getByText('BRW-BB')).toBeInTheDocument();
-    expect(screen.getByText('Open document')).toHaveAttribute('href', '/scm/purchase-orders/po-1');
+    const openLink = screen.getByText('Open document');
+    expect(openLink).toHaveAttribute('href', '/scm/purchase-orders/po-1');
+    // AC-B5: a NEW tab, so the lightbox and the list behind it are still there on return.
+    expect(openLink).toHaveAttribute('target', '_blank');
+    expect(openLink).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('AC-B1: a PO with many lines renders a fixed-layout, resizable DataGrid, not a bare table', async () => {
+    const lines = Array.from({ length: 12 }, (_, index) => ({
+      sku: `SRTWCX8605-S-RL-PJ-${index}`,
+      product_name: 'Wall hung WC',
+      qty_ordered: '10',
+      qty_received: '0',
+      remaining: '10',
+      location: 'BRW-IB',
+    }));
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-89',
+      po_number: '202405-S0045',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines,
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202405-S0045" poId="po-89" open onOpenChange={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('SRTWCX8605-S-RL-PJ-0')).toBeInTheDocument();
+    const table = document.querySelector('table[data-slot="data-grid-table"]');
+    expect(table).toBeTruthy();
+    expect(table).toHaveClass('table-fixed');
+    // AC-B4: paginates at 10 by default and states the total (12 lines here).
+    expect(screen.getByText(/1 - 10 of 12/)).toBeInTheDocument();
+    // Resizable columns leave a resize handle per header.
+    expect(document.querySelectorAll('.cursor-col-resize').length).toBeGreaterThan(0);
+  });
+
+  it('AC-B2/AC-B3: one search input narrows by product code AND by location', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-89',
+      po_number: '202405-S0045',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: null,
+      lines: [
+        {
+          sku: 'SRTWCX8605-S-RL-PJ',
+          product_name: 'Wall hung WC 8605',
+          qty_ordered: '52',
+          qty_received: '0',
+          remaining: '52',
+          location: 'BRW-IB',
+        },
+        {
+          sku: 'SRTWCX8605-S-RL-PJ',
+          product_name: 'Wall hung WC 8605',
+          qty_ordered: '2',
+          qty_received: '0',
+          remaining: '2',
+          location: 'BRW-IB',
+        },
+        {
+          sku: 'SRTWB5400',
+          product_name: 'Wall hung basin 5400',
+          qty_ordered: '10',
+          qty_received: '0',
+          remaining: '10',
+          location: 'BRW',
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202405-S0045" poId="po-89" open onOpenChange={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('SRTWB5400')).toBeInTheDocument();
+
+    const search = screen.getByPlaceholderText('Search product or location...');
+    fireEvent.change(search, { target: { value: 'SRTWCX8605-S-RL-PJ' } });
+    expect(screen.getAllByText('SRTWCX8605-S-RL-PJ')).toHaveLength(2);
+    expect(screen.queryByText('SRTWB5400')).not.toBeInTheDocument();
+
+    // AC-B3: narrowing further by location, without paging (the two open lines).
+    fireEvent.change(search, { target: { value: 'BRW-IB' } });
+    expect(screen.getAllByText('SRTWCX8605-S-RL-PJ')).toHaveLength(2);
+    expect(screen.getByText(/1 - 2 of 2/)).toBeInTheDocument();
   });
 
   it('reads an explicit empty state when no allocations exist yet', async () => {
@@ -140,6 +236,152 @@ describe('PO lightbox body', () => {
       screen.getByText('This link does not reach a purchase order in the system.'),
     ).toBeInTheDocument();
     expect(getOrderInquiryPoDetail).not.toHaveBeenCalled();
+  });
+});
+
+describe('PO lightbox lines - the book\'s own S/O linkage, a third surface for slice A', () => {
+  const detailWithLine = (extra: Record<string, unknown>) => ({
+    id: 'po-1',
+    po_number: '202607-S0105',
+    supplier_name: 'DAFUYUAN',
+    status: 'confirmed',
+    expected_date: '2026-09-01',
+    lines: [
+      {
+        sku: 'SRTWB5400',
+        product_name: 'Wall hung basin 5400',
+        qty_ordered: '35',
+        qty_received: '0',
+        remaining: '35',
+        location: 'BRW-BB',
+        ...extra,
+      },
+    ],
+    allocations: [],
+  });
+
+  it('prints the sales order the book names on the line', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({ book_so_number: 'SO391853', book_so_unresolved: false }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('SRTWB5400')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('SO391853')).toBeInTheDocument();
+  });
+
+  it('reads a muted dash when the book names no sales order, never a guess', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({ book_so_number: null, book_so_unresolved: false }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('SRTWB5400')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('-')).toBeInTheDocument();
+    expect(within(row).queryByText('Linked, not held')).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a linkage this system does not hold from no linkage at all', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({ book_so_number: null, book_so_unresolved: true }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('SRTWB5400')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Linked, not held')).toBeInTheDocument();
+    expect(within(row).queryByText('-')).not.toBeInTheDocument();
+  });
+
+  it('never renders the raw AutoCount ref, which is a machine key', async () => {
+    const { container } = renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({
+        book_so_number: null,
+        book_so_unresolved: true,
+        from_so_line_ref: 'AED_SORENTO:45322312:45322332',
+      }),
+    );
+
+    await screen.findByText('SRTWB5400');
+    expect(container.textContent).not.toContain('AED_SORENTO');
+    expect(container.textContent).not.toContain('45322312');
+    expect(document.body.textContent).not.toContain('AED_SORENTO');
+  });
+
+  it('has no "+N more" overflow, because a line carries ONE sales order', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({ book_so_number: 'SO391853', book_so_unresolved: false }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    await screen.findByText('SRTWB5400');
+    expect(document.body.textContent).not.toMatch(/\+\d+ more/);
+  });
+
+  it('renders the three states exactly as the purchase-order detail does', async () => {
+    // One fact, one presentation: both surfaces render through `BookSoCell`, so this
+    // pins the SHARED wording rather than a second copy of it drifting.
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [
+        {
+          sku: 'RESOLVED',
+          product_name: 'Resolved',
+          qty_ordered: '1',
+          qty_received: '0',
+          remaining: '1',
+          location: 'BRW-BB',
+          book_so_number: 'SO391853',
+          book_so_unresolved: false,
+        },
+        {
+          sku: 'UNRESOLVED',
+          product_name: 'Unresolved',
+          qty_ordered: '1',
+          qty_received: '0',
+          remaining: '1',
+          location: 'BRW-BB',
+          book_so_number: null,
+          book_so_unresolved: true,
+        },
+        {
+          sku: 'UNLINKED',
+          product_name: 'Unlinked',
+          qty_ordered: '1',
+          qty_received: '0',
+          remaining: '1',
+          location: 'BRW-BB',
+          book_so_number: null,
+          book_so_unresolved: false,
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const resolved = (await screen.findByText('RESOLVED')).closest('tr') as HTMLElement;
+    const unresolved = screen.getByText('UNRESOLVED').closest('tr') as HTMLElement;
+    const unlinked = screen.getByText('UNLINKED').closest('tr') as HTMLElement;
+
+    expect(within(resolved).getByText('SO391853')).toBeInTheDocument();
+    expect(within(unresolved).getByText('Linked, not held')).toBeInTheDocument();
+    expect(within(unlinked).getByText('-')).toBeInTheDocument();
   });
 });
 
@@ -203,5 +445,76 @@ describe('SPO lightbox body (AC-D19)', () => {
     );
 
     expect(await waitFor(() => screen.getByText('no location'))).toBeInTheDocument();
+  });
+
+  it('AC-B6: the SPO lightbox gets the same fixed-layout DataGrid, search and pagination', async () => {
+    const lines = Array.from({ length: 11 }, (_, index) => ({
+      sku: index === 0 ? 'SRTWCY7405-PJ' : `ZZT-${index}`,
+      product_name: 'Wall hung WC 7405',
+      allocated: '10',
+      received: '0',
+      remaining: '10',
+      location: index === 0 ? 'BRW-IB' : 'BRW',
+    }));
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/08-0061',
+      supplier_name: 'CHAOSHENG',
+      eta: '2026-09-15',
+      lines,
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="spo" document="SPO-2026/08-0061" open onOpenChange={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('SRTWCY7405-PJ')).toBeInTheDocument();
+    const table = document.querySelector('table[data-slot="data-grid-table"]');
+    expect(table).toHaveClass('table-fixed');
+    expect(screen.getByText(/1 - 10 of 11/)).toBeInTheDocument();
+
+    const search = screen.getByPlaceholderText('Search product or location...');
+    fireEvent.change(search, { target: { value: 'BRW-IB' } });
+    expect(screen.getByText('SRTWCY7405-PJ')).toBeInTheDocument();
+    expect(screen.queryByText('ZZT-1')).not.toBeInTheDocument();
+  });
+
+  it('AC-A13/AC-A14: the SPO grid names each line\'s source PO, and a muted dash when it has none', async () => {
+    // Owner's 9 Sep feedback, surface 2: the document lightbox is the other place a
+    // buyer meets an SPO, so it carries the same fact the backing-documents dialog does.
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0036',
+      supplier_name: 'CHAOSHENG',
+      eta: '2026-09-15',
+      lines: [
+        {
+          sku: 'SRTWCX8605-S-RL-PJ',
+          product_name: 'Wall hung WC 8605',
+          allocated: '52',
+          received: '0',
+          remaining: '52',
+          location: 'BRW-IB',
+          source_po_number: '202606-S0110',
+        },
+        {
+          sku: 'ZZT-0002',
+          product_name: null,
+          allocated: '10',
+          received: '0',
+          remaining: '10',
+          location: 'BRW',
+          source_po_number: null,
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="spo" document="SPO-2026/09-0036" open onOpenChange={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('202606-S0110')).toBeInTheDocument();
+    // The sourceless line reads a muted dash, never an empty cell or a guess.
+    const rows = document.querySelectorAll('tbody tr');
+    expect(rows).toHaveLength(2);
+    expect(within(rows[1] as HTMLElement).getByText('-')).toBeInTheDocument();
   });
 });

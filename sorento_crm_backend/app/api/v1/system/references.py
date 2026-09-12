@@ -1466,6 +1466,32 @@ def _result_has_zero_matches(result: dict[str, Any]) -> bool:
     return True
 
 
+def _every_caller_token_resolved(result: dict[str, Any]) -> bool:
+    """D13 (owner turn, 8 Sep 2026, "CB6622-PP?"): every token the caller supplied
+    already resolved COMPLETELY, so the spec fallback - built for a word that did NOT -
+    must never run over it. AND mode: `intersection` is non-empty and EVERY row in it
+    is `match_tier == "exact"`. AND-mode's own PRODUCT probe stamps every row
+    `match_tier="and"` (there is no exact tier on that path - see `_and_probe_product`),
+    so for a product intersection this stays a backstop and the CB6622-PP repro is
+    actually closed by `token_word_coverage_for_rows`'s own dash-normalization fix
+    (below). It is NOT idle in general: `_and_probe_warehouse` delegates to
+    `_probe_warehouse`, whose rows carry `match_tier="exact"` (8 Sep 2026,
+    chatbot-warehouse-entity-and-last-in), so a warehouse-only intersection does reach
+    this branch - which is right, an exact warehouse code is a complete answer to its own
+    token. A max-coverage row that merely CONTAINS a code word
+    (`prefix`/`substring`) is a PARTIAL answer and must stay False
+    (SA-P1, "wall hung basin" matching a code that only contains "wall hung"). OR mode:
+    every token's own resolution carries at least one match.
+    """
+    if "intersection" in result:
+        rows = result.get("intersection") or []
+        return bool(rows) and all((r or {}).get("match_tier") == "exact" for r in rows)
+    resolutions = result.get("resolutions")
+    if not isinstance(resolutions, list) or not resolutions:
+        return False
+    return all(bool(tr.get("matches")) for tr in resolutions if isinstance(tr, dict))
+
+
 def _product_words_unanswered(result: dict[str, Any]) -> bool:
     """AND-shaped result whose returned PRODUCT rows do not, between them,
     contain every word the customer used.
@@ -2096,11 +2122,28 @@ def _is_code_shaped(token: str) -> bool:
     return bool(_CODE_RE.fullmatch(word))
 
 
+def _spec_attach_token(result: dict[str, Any], tokens: list[str] | None) -> str | None:
+    """The explicit token the spec matches belong to: the FIRST caller-supplied token whose
+    resolution came back with no matches. None when the caller sent no tokens, or every
+    token matched something - the whole-query resolution then stays as it was."""
+    if not tokens:
+        return None
+    sent = {str(t or "").strip().lower() for t in tokens if str(t or "").strip()}
+    for res in result.get("resolutions") or []:
+        if not isinstance(res, dict):
+            continue
+        token = str(res.get("token") or "").strip()
+        if token.lower() in sent and not res.get("matches"):
+            return token
+    return None
+
+
 def _emit_spec_matches(
     result: dict[str, Any],
     candidates: list[dict],
     token: str,
     bound_words: set[str] | None = None,
+    attach_to: str | None = None,
 ) -> None:
     """Emit ranker candidates as ordinary product matches.
 
@@ -2170,18 +2213,57 @@ def _emit_spec_matches(
         # is rewritten to OR shape before spec search runs, so the result
         # reaching here normally has `resolutions` and no `intersection`. Kept
         # because the rewrite is a behaviour of the caller's flags, not a law.
-        result["intersection"] = spec_matches
+        #
+        # D13: an EXACT row survives, a PARTIAL one does not. A `match_tier="exact"`
+        # row is a complete answer to its own token - two tokens, one coded and
+        # found, one descriptive and not, must keep the coded one when spec search
+        # runs for the other. A non-exact row (prefix/substring code overlap, or
+        # AND-mode's own `match_tier="and"`) is exactly what spec search exists to
+        # supersede - "wall hung basin" matching a code that only CONTAINS "wall
+        # hung" has not answered the description, and keeping that row beside the
+        # real answer would clutter the reply with what `_product_words_unanswered`'s
+        # own docstring calls a non-answer. Deduped by uuid so a code the ranker ALSO
+        # surfaces is not counted twice. (AND-mode's PRODUCT probe never stamps
+        # "exact" - see `_every_caller_token_resolved` - so for a product intersection
+        # this protects an OR-mode-shaped one; `_and_probe_warehouse` does stamp exact,
+        # via `_probe_warehouse`, and a warehouse row surviving here is correct. The rule
+        # is the same either way, not a special case for one shape.)
+        existing = [
+            m for m in (result.get("intersection") or []) if (m or {}).get("match_tier") == "exact"
+        ]
+        existing_uuids = {m.get("uuid") for m in existing if isinstance(m, dict)}
+        merged = existing + [m for m in spec_matches if m.get("uuid") not in existing_uuids]
+        result["intersection"] = merged
         by_type: dict[str, list[dict[str, Any]]] = {}
-        for match in spec_matches:
+        for match in merged:
             by_type.setdefault(match["entity_type"], []).append(match)
         result["by_entity_type"] = by_type
-        result["empty"] = not spec_matches
+        result["empty"] = not merged
         # Coverage was computed inside _resolve_input over rows this branch just
         # REPLACED - recompute over what the route actually sends, or the field
         # describes rows that no longer exist. Spec rows carry no scored text,
         # so this honestly yields no claims.
         _attach_and_coverage(result)
-    result.setdefault("resolutions", []).append(spec_resolution)
+    # `attach_to` (D6): fold the matches into that explicit token's own resolution,
+    # keeping its token, instead of appending a whole-query one.
+    target = None
+    if attach_to:
+        target = next(
+            (
+                r
+                for r in (result.get("resolutions") or [])
+                if isinstance(r, dict)
+                and str(r.get("token") or "").strip().lower() == attach_to.strip().lower()
+            ),
+            None,
+        )
+    if target is not None:
+        target["matches"] = spec_matches
+        target["resolved"] = spec_resolution["resolved"]
+        target["ambiguous"] = spec_resolution["ambiguous"]
+        target.setdefault("alternatives", [])
+    else:
+        result.setdefault("resolutions", []).append(spec_resolution)
     # Something was found, so the words it answered are no longer unresolved.
     #
     # "Answered" means the CANDIDATES answered it, word by word. Membership of
@@ -2293,11 +2375,20 @@ def resolve_reference_post(
     # The response stays byte-identical for every existing caller and for every
     # request that resolves a code fully. The product probes themselves are
     # untouched: see _and_probe_product's "CODE-ONLY by design" note.
-    if payload.spec_fallback and (
-        _result_has_zero_matches(result)
-        or _product_words_unanswered(result)
-        or _has_unresolved_tokens(result)
-        or _no_product_row_answered(result, payload.domain_hint)
+    #
+    # D13: `_every_caller_token_resolved` is checked FIRST and short-circuits the
+    # whole block - every other signal here answers "is a WORD unanswered", and a
+    # query whose every token already resolved exactly has no unanswered word by
+    # definition, whatever a coverage claim over punctuation says.
+    if (
+        payload.spec_fallback
+        and not _every_caller_token_resolved(result)
+        and (
+            _result_has_zero_matches(result)
+            or _product_words_unanswered(result)
+            or _has_unresolved_tokens(result)
+            or _no_product_row_answered(result, payload.domain_hint)
+        )
     ):
         import time
 
@@ -2385,8 +2476,19 @@ def resolve_reference_post(
                 if word:
                     bound_words.add(word)
         # AND emit them as ordinary product matches (see _emit_spec_matches).
+        # D6 (owner console pass, 8 Sep 2026, turn 333c37cf "Ibwc7605 image"): with EXPLICIT
+        # `tokens`, the spec matches attach to the unresolved product token's own
+        # resolution rather than to a third, whole-query token - the lane's did-you-mean
+        # rendered that phrase token as a SECOND miss group ("Ibwc7605 image" beside
+        # "Ibwc7605"). Measured with both "image" and "photo": the attachment word is not
+        # the trigger, `spec_fallback` is. A caller that sends no `tokens` keeps today's
+        # whole-query resolution, byte for byte.
         _emit_spec_matches(
-            result, found["candidates"], payload.query or "", bound_words=bound_words
+            result,
+            found["candidates"],
+            payload.query or "",
+            bound_words=bound_words,
+            attach_to=_spec_attach_token(result, payload.tokens),
         )
         # What the customer asked for that nothing offered can satisfy. The caller says
         # "no Cabana one, here are Sorento" rather than silently substituting.

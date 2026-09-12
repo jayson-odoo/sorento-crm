@@ -222,7 +222,19 @@ class EmbeddingBackfillService:
             rows = self.db.query(InboundShipmentLine.id, InboundShipmentLine.created_at, InboundShipmentLine.updated_at).order_by(InboundShipmentLine.created_at.asc()).offset(offset).limit(limit).all()
             return [{"id": r.id, "source_key": str(r.id), "source_updated_at": r.updated_at or r.created_at} for r in rows]
         if source == "spo_allocation":
-            rows = self.db.query(SPOAllocation.id, SPOAllocation.spo_number, SPOAllocation.created_at, SPOAllocation.updated_at).order_by(SPOAllocation.created_at.asc()).offset(offset).limit(limit).all()
+            # R9: a hidden line is never queued for a fresh embed - a backfill
+            # run must not undo the deactivation `process_embedding_queue_item`
+            # gives a retired row by re-activating its document.
+            from app.services.scm import spo_supply
+
+            rows = (
+                self.db.query(SPOAllocation.id, SPOAllocation.spo_number, SPOAllocation.created_at, SPOAllocation.updated_at)
+                .filter(*spo_supply.visible_line_clauses())
+                .order_by(SPOAllocation.created_at.asc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
             return [{"id": r.id, "source_key": r.spo_number or str(r.id), "source_updated_at": r.updated_at or r.created_at} for r in rows]
         if source == "picking_header":
             rows = self.db.query(PickingHeader.id, PickingHeader.picking_number, PickingHeader.created_at, PickingHeader.updated_at).order_by(PickingHeader.created_at.asc()).offset(offset).limit(limit).all()

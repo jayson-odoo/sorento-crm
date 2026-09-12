@@ -139,7 +139,8 @@ def _refresh_run_counts(db: Session, run_id: str) -> None:
     row = db.execute(
         text(
             """
-            SELECT count(DISTINCT r.product_id) AS planned,
+            SELECT count(DISTINCT r.product_id)
+                     FILTER (WHERE NOT r.hidden_by_default) AS planned,
                    count(DISTINCT r.product_id)
                      FILTER (WHERE d.id IS NOT NULL) AS decided,
                    count(DISTINCT r.product_id)
@@ -685,42 +686,12 @@ def _confirm_location_grain(
         touched.add(po.id)
         confirmed += 1
 
-    # The rows NOBODY touched (R3), which carries no grain qualifier: "Confirm covers
-    # untouched rows as the engine suggestion". A location run's buyer who leaves a row
-    # alone expects the same "make this plan" behaviour a product run gives them, and
-    # before this an untouched rec matched neither loop above (status still `proposed`,
-    # no `PlanRowDecision`) and was silently left out. Only a BUY the engine sized counts,
-    # and a skipped or otherwise decided row has a decision already, so it never reaches
-    # here.
-    decided_ids = plan_row_rec_ids | {rec.id for rec in recs}
-    untouched_q = db.query(ReorderRecommendation).filter(
-        ReorderRecommendation.run_id == run_id,
-        ReorderRecommendation.rec_type == "buy",
-    )
-    if ids:
-        untouched_q = untouched_q.filter(ReorderRecommendation.id.in_(ids))
-    for rec in untouched_q.all():
-        if rec.id in decided_ids:
-            continue
-        qty = float(rec.rounded_qty or 0)
-        if qty <= 0:
-            continue  # the engine saying "do not buy this", not an absent decision
-        # The rec's own proposed supplier and frozen price - the same resolution the
-        # product-grain untouched branch uses, since nobody chose anything else.
-        choice = _resolve_choice(db, rec, None)
-        _remove_rec_line(db, rec.id)
-        po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
-        _upsert_line(
-            db, po, product_id=rec.product_id, warehouse_id=rec.warehouse_id,
-            source_ref=rec.id, qty=qty, unit_cost=choice["unit_cost"],
-            lead_days=choice["lead_time_days"],
-        )
-        touched.add(po.id)
-        # Recorded like any other decision, so the pill reads Confirmed and the counts
-        # catch up with the purchase order that was just drafted (same as product grain).
-        _record_confirmed_suggestion(db, [rec], qty, actor)
-        confirmed += 1
-
+    # G5 (S6, 9 Sep 2026 - "Confirm never sweeps"): reverses R3's "an untouched row
+    # confirms as the engine's suggestion", which used to sit here as a third loop over
+    # every `buy` rec neither of the two loops above had touched. `ids=[]` now confirms
+    # exactly the recs already carrying a decision (accepted/adjusted/dismissed status,
+    # or a `PlanRowDecision`) - a row nobody decided is left exactly as undecided as it
+    # was, however the engine itself would have sized it.
     db.flush()
     return {"confirmed_count": confirmed, "po_count": len(touched)}
 
@@ -790,41 +761,6 @@ def _grid_member_split(
             "demand_rate": float(rec.forecast_daily_demand or 0.0),
         })
     return eng_allocate(qty, inputs, decimal_places=0)
-
-
-def _record_confirmed_suggestion(
-    db: Session, members: list[ReorderRecommendation], qty: float, actor: Optional[str]
-) -> None:
-    """Write the decision an UNTOUCHED row was just confirmed at (R3).
-
-    Confirm is the buyer saying "make this plan", so a product nobody touched is bought at
-    exactly what the engine sized - and that IS a decision, which has to be recorded like
-    any other or the screen keeps saying nobody made one: the pill stayed on Suggested,
-    the tiles and the list's Decided column stayed short, and Confirm (N) stayed live over
-    rows that had already been drafted into a purchase order.
-
-    ``buy_qty`` is the PRODUCT's whole quantity on every member, never that member's share
-    of the split. That is the same shape ``usePlanLines.decide`` writes when a person
-    decides a grouped row (the SAME decision fanned onto every member, consolidated back
-    to one on confirm - see ``_confirm_product_grain``), so a re-confirm reads this back
-    through the grid path and drafts exactly the lines this one did.
-
-    Nothing else is stored: no supplier (the rec's proposed one stands, which is what
-    ``_resolve_choice(rec, None)`` answered above) and no unit cost (``use_last`` re-reads
-    the same frozen figure). A row that already carries a decision never reaches here.
-    """
-    now = datetime.utcnow()
-    for member in members:
-        db.add(PlanRowDecision(
-            id=str(uuid.uuid4()),
-            recommendation_id=member.id,
-            kind="buy",
-            buy_qty=qty,
-            price_mode=DEFAULT_PRICE_MODE,
-            decided_by=actor,
-            decided_at=now,
-        ))
-    db.flush()
 
 
 def _confirm_product_grain(
@@ -915,31 +851,12 @@ def _confirm_product_grain(
         ).all()
     }
 
-    # 3) the products NOBODY touched (R3, revamp plan 4.5). Confirm is the buyer saying
-    # "make this plan", so a product they left alone is bought at exactly what the engine
-    # sized - before this they had to open and re-record every row they already agreed
-    # with in order to buy any of it. Only a BUY the engine sized counts: a `covered` row
-    # is the engine saying the stock is already there, and a rounded quantity of zero is it
-    # saying do not buy this, so neither becomes a purchase for want of a decision. A
-    # SKIPPED product is excluded by construction - it HAS a decision, which is the grid
-    # path above, and that path drafts nothing for it.
-    untouched: dict[str, list] = {}
-    for rec in (
-        db.query(ReorderRecommendation)
-        .filter(
-            ReorderRecommendation.run_id == run_id,
-            ReorderRecommendation.rec_type == "buy",
-        )
-        .all()
-    ):
-        pid = str(rec.product_id)
-        if pid in grid_repr_for_product or pid in summary_rows:
-            continue
-        if float(rec.rounded_qty or 0) <= 0:
-            continue
-        untouched.setdefault(pid, []).append(rec)
-
-    product_ids = set(grid_repr_for_product) | set(summary_rows) | set(untouched)
+    # G5 (S6, 9 Sep 2026 - "Confirm never sweeps"): reverses R3's "a product nobody
+    # touched is bought at exactly what the engine sized", which used to sit here as a
+    # third source (`untouched`) alongside the grid and Summary Order Report sources
+    # below. `ids=[]` now confirms exactly the products either surface already carries a
+    # decision for - a product nobody decided is left exactly as undecided as it was.
+    product_ids = set(grid_repr_for_product) | set(summary_rows)
     if ids:
         wanted = set(ids)
 
@@ -952,7 +869,7 @@ def _confirm_product_grain(
             gd = grid_repr_for_product.get(pid)
             if gd is not None and gd[0].id in wanted:
                 return True
-            return any(rec.id in wanted for rec in untouched.get(pid, []))
+            return False
 
         product_ids = {pid for pid in product_ids if _matches(pid)}
 
@@ -1001,37 +918,7 @@ def _confirm_product_grain(
             confirmed += 1
             continue
 
-        members = untouched.get(pid)
-        if members:
-            # The engine's own suggestion, drafted the SAME way a decided product is: one
-            # draft PO per chosen supplier, the quantity split back across the group's real
-            # member warehouses so every line names one.
-            qty = float(sum(float(m.rounded_qty or 0) for m in members))
-            if qty <= 0:
-                continue
-            anchor = members[0]
-            choice = _resolve_choice(db, anchor, None)
-            po = _draft_po_for_supplier(db, choice["supplier_id"], anchor.currency)
-            split = _grid_member_split(members, qty)
-            members_by_wh = {str(m.warehouse_id): m for m in members}
-            for wid, share_qty in split.items():
-                if share_qty <= 0:
-                    continue
-                member_rec = members_by_wh.get(wid)
-                if member_rec is None:
-                    continue  # defensive - every split key comes from `members` itself
-                _upsert_line(
-                    db, po, product_id=member_rec.product_id,
-                    warehouse_id=member_rec.warehouse_id, source_ref=member_rec.id,
-                    qty=share_qty, unit_cost=choice["unit_cost"],
-                    lead_days=choice["lead_time_days"], source_system=_SRC_PRODUCT,
-                )
-                touched.add(po.id)
-            _record_confirmed_suggestion(db, members, qty, actor)
-            confirmed += 1
-            continue
-
-        row = summary_rows[pid]  # ids narrowing guarantees this exists when grid is None
+        row = summary_rows[pid]  # every pid here is either the grid's or the sheet's
         qty = float(row.chosen_qty or 0)
         if qty <= 0:
             continue  # "use the pool" - nothing to draft
@@ -1501,15 +1388,23 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     one query apiece, keyed by what the row needs (supplier id, `(product_id,
     supplier_id)`, recommendation id) rather than re-run per row.
     """
-    total = (
-        db.query(ReorderRecommendation.product_id)
+    # S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-2): a hidden-by-default row is not
+    # decidable BY DEFAULT, so it does not count toward the tile's total - "tile counts
+    # what the list show" (owner, 10 Sep). PLAN-reorder-one-formula.md S3/AC-12: reads the
+    # STORED `hidden_by_default` column (stamped once, at write time, by `_build_rec` -
+    # see its own docstring) rather than re-deriving the rule per row here - three
+    # independent re-derivations is exactly what drifted apart per the owner's 10 Sep
+    # measurement (list 415, tile "0 of 950", sheet 950).
+    candidates = (
+        db.query(ReorderRecommendation.product_id, ReorderRecommendation.hidden_by_default)
         .filter(
             ReorderRecommendation.run_id == run_id,
             ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
         )
-        .distinct()
-        .count()
+        .all()
     )
+    decidable_product_ids = {pid for pid, hidden in candidates if not hidden}
+    total = len(decidable_product_ids)
     quads = (
         db.query(PlanRowDecision, ReorderRecommendation.id,
                  ReorderRecommendation.product_id, ReorderRecommendation.inputs)

@@ -103,7 +103,7 @@ describe('ReorderRunsGrid - the columns (A1)', () => {
   it('lists a plan by when it ran, what it covered and where it is up to', () => {
     renderList();
     expect(headerNames()).toEqual([
-      'Plan', 'Sales order cut-off', 'Warehouses', 'Products', 'Lines', 'Decided',
+      'Plan', 'Sales orders needed', 'Warehouses', 'Products', 'Lines', 'Decided',
       'Status', 'Cash if all accepted',
     ]);
   });
@@ -112,7 +112,7 @@ describe('ReorderRunsGrid - the columns (A1)', () => {
     renderList();
     const row = screen.getByText(/27\/08\/2026/).closest('tr') as HTMLElement;
     expect(row.textContent).not.toContain('run-a');
-    expect(within(row).getByText('30/09/2026')).toBeInTheDocument();
+    expect(within(row).getByText('up to 30/09/2026')).toBeInTheDocument();
     expect(within(row).getByText('BRW')).toBeInTheDocument();
     // Products and Lines both read 184 on this plan, which is the normal case.
     expect(within(row).getAllByText('184')).toHaveLength(2);
@@ -142,10 +142,10 @@ describe('ReorderRunsGrid - the columns (A1)', () => {
     expect(within(row).getByText('4 warehouses')).toBeInTheDocument();
   });
 
-  it('says nothing about a cut-off the plan never carried', () => {
+  it('says "every open order" for a plan that never carried a window', () => {
     renderList([run({ plan_horizon_date: null })]);
     const row = screen.getByText(/27\/08\/2026/).closest('tr') as HTMLElement;
-    expect(within(row).getAllByText('-').length).toBeGreaterThan(0);
+    expect(within(row).getByText('every open order')).toBeInTheDocument();
   });
 });
 

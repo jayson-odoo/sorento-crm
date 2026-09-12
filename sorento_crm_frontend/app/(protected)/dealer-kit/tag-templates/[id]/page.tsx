@@ -37,10 +37,10 @@
  * covers the refreshes and closes React never hears about.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { toast } from '@/lib/toast';
-import { History, Save as SaveIcon, Upload } from 'lucide-react';
+import { History, Loader2, Maximize2, Minimize2, Save as SaveIcon, Upload } from 'lucide-react';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
@@ -67,14 +67,20 @@ import type {
 import {
   getTemplate,
   getTemplateVersion,
+  listPublishedTemplates,
   publishTemplate,
   restoreTemplateVersion,
   updateTemplate,
 } from '../../services/tagTemplateService';
+import { tagSizePresets } from '@/lib/dealer-kit/request-tags';
 import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
-import { FocusShell, FocusToggle } from '../../components/FocusMode';
+import { FocusShell } from '../../components/FocusMode';
 import { AutosaveIndicator } from '../../components/AutosaveIndicator';
+import { TagSizeControl } from '../../components/TagSizeControl';
+import type { ToolbarTrailingAction } from '../components/CanvasToolbar';
 import { useAutosave } from '@/hooks/useAutosave';
+import { useDeleteTagSizePreset, useTagSizesQuery } from '../../tag-sizes/hooks/useTagSizes';
+import { SaveAsSizeDialog } from '../../price-tag-requests/[id]/design/components/SaveAsSizeDialog';
 
 const TagCanvasEditor = dynamic(
   () => import('../components/TagCanvasEditor').then((m) => ({ default: m.TagCanvasEditor })),
@@ -117,6 +123,26 @@ export default function TagTemplateEditorPage() {
 
   /** Full screen (D11, AC-S6-1): the same `FocusShell` the room designer uses. */
   const [focus, setFocus] = useState(false);
+
+  // -- Tag size control (S1, AC-S1-1) ------------------------------------------
+
+  // The SAME "Template sizes" (every published template's own print size,
+  // this one included) + "Saved sizes" grouping the request designer's own
+  // control shows - the whole point of AC-S1-1 is that this is not a
+  // lesser copy of it.
+  const [sizePresetTemplates, setSizePresetTemplates] = useState<TagTemplate[]>([]);
+  useEffect(() => {
+    listPublishedTemplates()
+      .then(setSizePresetTemplates)
+      .catch(() => setSizePresetTemplates([]));
+  }, []);
+  const sizePresets = useMemo(
+    () => tagSizePresets(sizePresetTemplates),
+    [sizePresetTemplates],
+  );
+  const savedSizesQuery = useTagSizesQuery();
+  const deleteSavedSize = useDeleteTagSizePreset();
+  const [saveSizeOpen, setSaveSizeOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,6 +247,23 @@ export default function TagTemplateEditorPage() {
       handler();
     };
   }, [flushAutosave]);
+
+  // Resize (S1): `doc.width_mm/height_mm` updates live, no remount (AC-S1-2)
+  // - `TagCanvasEditor` reads THOSE two straight off the `doc` prop on every
+  // render, unlike `layers`, which it only seeds from `doc` once on mount.
+  // Layers are untouched (AC-S1-5). Re-arming the autosave debounce with the
+  // SAME layers is enough to carry a pure resize to the server too: the
+  // debounce's own callback reads width_mm/height_mm off `templateRef.
+  // current.doc` at fire time, which by then already has the new size.
+  const handleResizeTemplate = useCallback(
+    (width_mm: number, height_mm: number) => {
+      setTemplate((prev) =>
+        prev ? { ...prev, doc: { ...prev.doc, width_mm, height_mm } } : prev,
+      );
+      scheduleAutosave(draftLayers);
+    },
+    [draftLayers, scheduleAutosave],
+  );
 
   // Manual Save flushes first (S4): it cancels the armed debounce and waits for
   // anything already on the wire, so the button and the autosave cannot write
@@ -351,6 +394,33 @@ export default function TagTemplateEditorPage() {
 
   const isLive = Boolean(template.published_version_id);
 
+  // The canvas toolbar's own right-end group (S7): Versions, Save, Full
+  // screen. Publish stays the page header's one action button.
+  const toolbarTrailing: ToolbarTrailingAction[] = [
+    {
+      id: 'versions',
+      icon: History,
+      label: 'Versions',
+      onClick: () => setVersionsOpen(true),
+      disabled: viewingLoading,
+    },
+    {
+      id: 'save',
+      icon: saving ? Loader2 : SaveIcon,
+      iconClassName: saving ? 'animate-spin' : undefined,
+      label: saving ? 'Saving...' : 'Save',
+      onClick: handleSave,
+      disabled: saving || Boolean(viewing),
+    },
+    {
+      id: 'full-screen',
+      icon: focus ? Minimize2 : Maximize2,
+      label: focus ? 'Exit full screen' : 'Full screen',
+      onClick: () => setFocus(!focus),
+      active: focus,
+    },
+  ];
+
   return (
     <FocusShell active={focus} onExit={() => setFocus(false)}>
     <div
@@ -383,37 +453,21 @@ export default function TagTemplateEditorPage() {
               </span>
             }
             actions={
-              // flex-wrap: at 375px four buttons plus BackToList do not fit
-              // one row (S7).
+              // Publish is the ONE action button (S7, AC-S7-2); Versions,
+              // Save and Full screen moved to the canvas toolbar's own
+              // trailing group below. flex-wrap: at 375px the Saved
+              // indicator, Publish and Back to templates still do not
+              // always fit one row.
               <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setVersionsOpen(true)}
-                  disabled={viewingLoading}
-                >
-                  <History className="size-3.5" />
-                  Versions
-                </Button>
                 <AutosaveIndicator
                   status={autosaveStatus}
                   savedAt={autosaveSavedAt}
                   onRetry={retryAutosave}
                 />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSave}
-                  disabled={saving || Boolean(viewing)}
-                >
-                  <SaveIcon className="size-3.5" />
-                  {saving ? 'Saving...' : 'Save'}
-                </Button>
                 <Button size="sm" onClick={() => setPublishOpen(true)} disabled={Boolean(viewing)}>
                   <Upload className="size-3.5" />
                   Publish
                 </Button>
-                <FocusToggle active={focus} onToggle={setFocus} label="template" />
                 <BackToList listPath="/dealer-kit/tag-templates" label="Back to templates" />
               </div>
             }
@@ -441,6 +495,20 @@ export default function TagTemplateEditorPage() {
             onChange={(doc) => setDraftLayers(doc.layers)}
             onLayersChange={setDraftLayers}
             hideSaveBar
+            docId={template.id}
+            leftRail={
+              <TagSizeControl
+                width_mm={template.doc.width_mm}
+                height_mm={template.doc.height_mm}
+                presets={sizePresets}
+                savedSizes={savedSizesQuery.data}
+                onResize={handleResizeTemplate}
+                onDeleteSavedSize={(id, name) => deleteSavedSize.run({ id, subject: name })}
+                deletingSavedSizeId={deleteSavedSize.isPending ? deleteSavedSize.targetId : null}
+                onSaveAsSize={() => setSaveSizeOpen(true)}
+              />
+            }
+            toolbarTrailing={toolbarTrailing}
           />
         </div>
         {viewing && (
@@ -494,6 +562,13 @@ export default function TagTemplateEditorPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SaveAsSizeDialog
+        open={saveSizeOpen}
+        onOpenChange={setSaveSizeOpen}
+        width_mm={template.doc.width_mm}
+        height_mm={template.doc.height_mm}
+      />
     </div>
     </FocusShell>
   );

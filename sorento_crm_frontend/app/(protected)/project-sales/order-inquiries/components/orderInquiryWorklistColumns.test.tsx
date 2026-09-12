@@ -1,11 +1,13 @@
 /**
- * The list's own "Outstanding PO/SPO" column (AC-D2/AC-D3/AC-D16/AC-D17, item 5 and 11 of
- * `PLAN-scm-oi-draft-links.md`): the SAME `SupplyBar` the schedule matrix draws, off the
- * same three kinds, under the coverage headline, plus the draft/confirmed mark and the
- * per-document location-first summary. Rendered here as a bare `<table>` off
- * `useOrderInquiryWorklistColumns()` directly - just the one column, so a DataGrid's own
- * chrome (which needs `useListingColumnPreferences` mocked under jsdom, see
- * `OrderInquiriesClient.test.tsx`) never has to enter this test at all.
+ * The list's own "Outstanding PO/SPO" column (AC-A1..AC-A7, `PLAN-scm-oi-reserving-
+ * feedback-8sep.md` slice A): ONE LINE per row - the draft/confirmed mark, the coverage
+ * headline, and an info icon that opens `OrderInquiryBackingDocumentsDialog`. No
+ * `SupplyBar`, no per-document text, no lateness in the cell any more - every one of those
+ * either moved behind the icon or was dropped outright (8 Sep owner cut of the mock).
+ * Rendered here as a bare `<table>` off `useOrderInquiryWorklistColumns()` directly - just
+ * the one column, so a DataGrid's own chrome (which needs `useListingColumnPreferences`
+ * mocked under jsdom, see `OrderInquiriesClient.test.tsx`) never has to enter this test at
+ * all.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -83,8 +85,8 @@ function renderQtyCell(rows: OrderInquiryWorklistRow[]) {
   return renderRows(rows, 'qty');
 }
 
-describe('the "Outstanding PO/SPO" column: the bar (AC-I14)', () => {
-  it('draws the bar on a row wholly linked to a purchase order', () => {
+describe('the "Outstanding PO/SPO" column: one line, no bar, no late badge (slice A, 8 Sep 2026)', () => {
+  it('AC-A2: no supply-bar renders in this column, on a wholly linked row', () => {
     renderRows([
       worklistRow({
         id: 'row-linked',
@@ -96,14 +98,10 @@ describe('the "Outstanding PO/SPO" column: the bar (AC-I14)', () => {
     ]);
 
     const row = screen.getByTestId('row-row-linked');
-    const bar = within(row).getByTestId('supply-bar');
-    expect(bar).toHaveAttribute('data-decided', 'true');
-    const segments = [...bar.querySelectorAll('span[data-kind]')];
-    expect(segments).toHaveLength(1);
-    expect(segments[0].getAttribute('data-kind')).toBe('po');
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
   });
 
-  it('draws a split sky/rose bar for a row linked 5 of 8 to a purchase order', () => {
+  it('AC-A2: no supply-bar renders on a partly linked row either', () => {
     renderRows([
       worklistRow({
         id: 'row-split',
@@ -117,37 +115,91 @@ describe('the "Outstanding PO/SPO" column: the bar (AC-I14)', () => {
     ]);
 
     const row = screen.getByTestId('row-row-split');
-    const bar = within(row).getByTestId('supply-bar');
-    expect(bar).toHaveAttribute('data-decided', 'false');
-    const kinds = [...bar.querySelectorAll('span[data-kind]')].map((el) =>
-      el.getAttribute('data-kind'),
-    );
-    expect(kinds).toEqual(['po', 'buy']);
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
   });
 
-  it('draws no bar at all for a cancelled row - it owes nothing', () => {
+  it('AC-A3: no link-late element renders anywhere in the column, even on a late document', () => {
     renderRows([
-      worklistRow({ id: 'row-cancelled', qty: '6', linked_qty: '0', links: [], state: 'cancelled' }),
+      worklistRow({
+        id: 'row-late',
+        qty: '5',
+        linked_qty: '5',
+        delivery_date: '2026-08-01',
+        po_number: '202607-S0105',
+        links: [
+          {
+            id: 'l1',
+            kind: 'po',
+            document: '202607-S0105',
+            qty: '5',
+            location: 'BRW',
+            late: true,
+            late_days: 12,
+          },
+        ],
+      }),
     ]);
 
-    const row = screen.getByTestId('row-row-cancelled');
-    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
+    const row = screen.getByTestId('row-row-late');
+    expect(within(row).queryByTestId('link-late-202607-S0105')).not.toBeInTheDocument();
+    expect(row.querySelector('[title*="lands"]')).not.toBeInTheDocument();
+    expect(row.querySelector('[title*="arrives late"]')).not.toBeInTheDocument();
+  });
+
+  it('AC-A6: a row backing exactly one document prints NO document number in the cell', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-one-doc',
+        qty: '5',
+        linked_qty: '5',
+        po_number: '202607-S0105',
+        links: [{ id: 'l1', kind: 'po', document: '202607-S0105', qty: '5', location: 'BRW' }],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-one-doc');
+    expect(within(row).queryByText('202607-S0105')).not.toBeInTheDocument();
+    expect(
+      within(row).queryByTestId('document-detail-trigger-202607-S0105'),
+    ).not.toBeInTheDocument();
+    // Still offers the icon (AC-A6's other half).
+    expect(within(row).getByTestId('backing-documents-trigger-row-one-doc')).toBeInTheDocument();
+  });
+
+  it('AC-A4: the cell prints only the coverage headline and the draft/confirmed mark', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-headline',
+        qty: '493',
+        linked_qty: '115',
+        po_number: '202607-S0105',
+        links: [{ id: 'l1', kind: 'po', document: '202607-S0105', qty: '115', location: 'BRW' }],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-headline');
+    expect(within(row).getByText('115 of 493')).toBeInTheDocument();
+    expect(within(row).getByTestId('link-draft-mark')).toBeInTheDocument();
+    // No document count, no document number, nothing else: the row's own rendered text
+    // (this test isolates the `po_number` column alone, see `OneColumnOnly`) is exactly
+    // the headline and nothing more - the mark and the info icon are both icon-only, no
+    // text node of their own. A `queryByText` regex would have passed just as wrongly
+    // with a "3 documents" count present, since it never reads an icon's aria-label.
+    expect(row.textContent).toBe('115 of 493');
   });
 });
 
-describe('AC-D2: a row nothing can cover', () => {
-  it('reads "Not found (new order)" - never "Not linked", which read as an oversight', () => {
+describe('AC-A7: a row nothing can cover', () => {
+  it('reads "Not found (new order)" - never "Not linked", which read as an oversight - and shows no icon', () => {
     renderRows([worklistRow({ id: 'row-unlinked', qty: '85', linked_qty: '0', links: [] })]);
 
     const row = screen.getByTestId('row-row-unlinked');
     expect(within(row).getByText('Not found (new order)')).toBeInTheDocument();
     expect(within(row).queryByText('Not linked')).not.toBeInTheDocument();
-    // The bar still draws - a solid rose Buy segment - so the row is not a blank cell.
-    const bar = within(row).getByTestId('supply-bar');
-    expect(bar).toHaveAttribute('data-decided', 'false');
-    const segments = [...bar.querySelectorAll('span[data-kind]')];
-    expect(segments).toHaveLength(1);
-    expect(segments[0].getAttribute('data-kind')).toBe('buy');
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
+    expect(
+      within(row).queryByTestId('backing-documents-trigger-row-unlinked'),
+    ).not.toBeInTheDocument();
   });
 
   it('carries no draft/confirmed mark at all when there is nothing to mark', () => {
@@ -156,6 +208,148 @@ describe('AC-D2: a row nothing can cover', () => {
     const row = screen.getByTestId('row-row-unlinked');
     expect(within(row).queryByTestId('link-draft-mark')).not.toBeInTheDocument();
     expect(within(row).queryByTestId('link-confirmed-mark')).not.toBeInTheDocument();
+  });
+});
+
+describe('a cancelled row (coverage restored after the old SupplyBar-only case was deleted)', () => {
+  it('an unlinked cancelled row reads "Not found (new order)", the same as any other unlinked row', () => {
+    // The old bar test proved a cancelled row "owes nothing" by checking the BAR drew
+    // nothing - moot now the bar is gone from this column entirely (AC-A2). This is the
+    // replacement: the cell itself never special-cases `state`, so a cancelled row with
+    // no links reads exactly as AC-A7 describes any other one.
+    renderRows([
+      worklistRow({
+        id: 'row-cancelled-unlinked',
+        qty: '6',
+        linked_qty: '0',
+        links: [],
+        state: 'cancelled',
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-cancelled-unlinked');
+    expect(within(row).getByText('Not found (new order)')).toBeInTheDocument();
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
+    expect(
+      within(row).queryByTestId('backing-documents-trigger-row-cancelled-unlinked'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('a cancelled row that still carries links from before it was cancelled still reads its headline and icon', () => {
+    // The cell reads `links[]` as it stands, never `state` - a cancelled row whose links
+    // were never unwound (the state cancels the INSTRUCTION, not the document history)
+    // shows the same headline and icon a live row would. Pinned explicitly so a reader
+    // does not assume the cell silently hides a cancelled row's own history.
+    renderRows([
+      worklistRow({
+        id: 'row-cancelled-linked',
+        qty: '6',
+        linked_qty: '6',
+        state: 'cancelled',
+        links: [{ id: 'l1', kind: 'po', document: '202607-S0105', qty: '6', location: 'BRW' }],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-cancelled-linked');
+    expect(within(row).getByText('6 of 6')).toBeInTheDocument();
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
+    expect(
+      within(row).getByTestId('backing-documents-trigger-row-cancelled-linked'),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('AC-A5: the info icon opens the backing-documents lightbox', () => {
+  it('lists every backing document with kind, number, location, quantity, expected date and standing', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-multi',
+        qty: '493',
+        linked_qty: '115',
+        ack_state: 'acknowledged',
+        po_number: '202607-S0105',
+        links: [
+          {
+            id: 'l1',
+            kind: 'po',
+            document: '202607-S0105',
+            qty: '52',
+            location: 'BRW-IB',
+            expected_date: '2026-08-19',
+          },
+          {
+            id: 'l2',
+            kind: 'spo',
+            document: 'SPO-2026/08-0061',
+            qty: '63',
+            location: 'BRW',
+            expected_date: '2026-09-01',
+          },
+        ],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-multi');
+    fireEvent.click(screen.getByTestId('backing-documents-trigger-row-multi'));
+
+    // Rendered via a portal (Radix `Dialog`), so it is read off `screen`, not `row`.
+    const dialog = screen.getByTestId('backing-documents-row-multi');
+    expect(within(dialog).getByText('202607-S0105')).toBeInTheDocument();
+    expect(within(dialog).getByText('SPO-2026/08-0061')).toBeInTheDocument();
+    expect(dialog.textContent).toContain('BRW-IB');
+    expect(dialog.textContent).toContain('52');
+    expect(dialog.textContent).toContain('63');
+    expect(within(dialog).getAllByText('Confirmed').length).toBeGreaterThan(0);
+    // Closing returns the trigger to view without unmounting the row (AC-A5).
+    expect(row).toBeInTheDocument();
+  });
+
+  it('AC-A13/AC-A14: an SPO entry names its source PO; a PO entry and a sourceless SPO show nothing new', () => {
+    // Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO number of this
+    // SPO?" - nowhere, before this.
+    renderRows([
+      worklistRow({
+        id: 'row-source-po',
+        qty: '493',
+        linked_qty: '166',
+        ack_state: 'acknowledged',
+        links: [
+          {
+            id: 'l1',
+            kind: 'spo',
+            document: 'SPO-2026/09-0036',
+            qty: '52',
+            location: 'BRW',
+            source_po_number: '202606-S0110',
+          },
+          {
+            // A PO-kind link never carries this field - shows nothing new.
+            id: 'l2',
+            kind: 'po',
+            document: '202607-S0105',
+            qty: '63',
+            location: 'BRW-IB',
+          },
+          {
+            // An SPO the book named no source PO for - shows nothing rather than an
+            // empty label (AC-A14).
+            id: 'l3',
+            kind: 'spo',
+            document: 'SPO-2026/09-0040',
+            qty: '51',
+            location: 'BRW',
+            source_po_number: null,
+          },
+        ],
+      }),
+    ]);
+
+    fireEvent.click(screen.getByTestId('backing-documents-trigger-row-source-po'));
+    const dialog = screen.getByTestId('backing-documents-row-source-po');
+
+    expect(within(dialog).getByText('from PO 202606-S0110')).toBeInTheDocument();
+    // Exactly one "from PO" line - the sourceless SPO and the PO-kind link add none.
+    expect(within(dialog).getAllByText(/^from PO /)).toHaveLength(1);
   });
 });
 
@@ -207,13 +401,13 @@ describe('AC-D1/D3: the draft vs confirmed mark reads off ack_state, not a link 
   });
 });
 
-describe('AC-D16/AC-D17: the per-document summary reads location first, late N d', () => {
-  it('reads the pool warehouse code and quantity, the line label only in the title', () => {
+describe('AC-A1/AC-A6: the cell prints no per-document detail any more - it all moved behind the icon', () => {
+  it('a row backing three documents renders no per-document location/quantity text in the cell', () => {
     renderRows([
       worklistRow({
         id: 'row-spo',
-        qty: '1',
-        linked_qty: '1',
+        qty: '493',
+        linked_qty: '115',
         po_number: 'SPO-2026/08-0015',
         links: [
           {
@@ -222,75 +416,39 @@ describe('AC-D16/AC-D17: the per-document summary reads location first, late N d
             document: 'SPO-2026/08-0015',
             line_label: 'L14',
             location: 'BRW',
-            qty: '1',
+            qty: '52',
           },
+          { id: 'l2', kind: 'po', document: '202607-S0105', qty: '30', location: 'BRW-IB' },
+          { id: 'l3', kind: 'po', document: '202608-S0016', qty: '33', location: null },
         ],
       }),
     ]);
 
     const row = screen.getByTestId('row-row-spo');
-    // The visible text is "BRW 1" - never "L14 1".
-    expect(within(row).getByText('BRW 1')).toBeInTheDocument();
-    expect(within(row).queryByText('L14 1')).not.toBeInTheDocument();
-    // The document's title carries the label AND the location.
-    expect(within(row).getByTitle(/L14 BRW 1/)).toBeInTheDocument();
-  });
-
-  it('reads "no location" when the book named none', () => {
-    renderRows([
-      worklistRow({
-        id: 'row-noloc',
-        qty: '5',
-        linked_qty: '5',
-        po_number: '202607-S0105',
-        links: [
-          { id: 'l1', kind: 'po', document: '202607-S0105', qty: '5', location: null },
-        ],
-      }),
-    ]);
-
-    const row = screen.getByTestId('row-row-noloc');
-    expect(within(row).getByText('no location 5')).toBeInTheDocument();
-  });
-
-  it('reads "late N d" with the full dates in the title', () => {
-    renderRows([
-      worklistRow({
-        id: 'row-late',
-        qty: '5',
-        linked_qty: '5',
-        delivery_date: '2026-08-01',
-        po_number: '202607-S0105',
-        links: [
-          {
-            id: 'l1',
-            kind: 'po',
-            document: '202607-S0105',
-            qty: '5',
-            location: 'BRW',
-            late: true,
-            late_days: 12,
-          },
-        ],
-      }),
-    ]);
-
-    const row = screen.getByTestId('row-row-late');
-    const badge = within(row).getByTestId('link-late-202607-S0105');
-    expect(badge).toHaveTextContent('late 12 d');
+    // AC-A1: three documents behind one row still reads as ONE line - none of the old
+    // per-document text (location, quantity, line label) is rendered in the cell.
+    expect(within(row).queryByText(/BRW 52/)).not.toBeInTheDocument();
+    expect(within(row).queryByText('L14')).not.toBeInTheDocument();
+    expect(within(row).queryByText('no location')).not.toBeInTheDocument();
+    expect(within(row).getByText('115 of 493')).toBeInTheDocument();
+    expect(within(row).getByTestId('backing-documents-trigger-row-spo')).toBeInTheDocument();
   });
 });
 
-describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR #471)', () => {
-  it('prints only the quantity for the ordinary acknowledged row - nothing extra', () => {
+describe('the qty cell: one line, an info icon only when there is something to say (AC-A8..AC-A12, owner feedback 9 Sep 2026 against the running lane)', () => {
+  it('AC-A8: a plain acknowledged row is the quantity alone, one line, no icon', () => {
     renderQtyCell([worklistRow({ id: 'row-plain', qty: '10', ack_state: 'acknowledged' })]);
     const row = screen.getByTestId('row-row-plain');
     expect(within(row).getByText('10')).toBeInTheDocument();
-    expect(within(row).queryByText(/Rejected/)).not.toBeInTheDocument();
-    expect(within(row).queryByTestId('board-change-row-plain')).not.toBeInTheDocument();
+    // ONE LINE: the row's own rendered text is exactly the quantity, the same proof
+    // AC-A4 uses for the Outstanding column - no icon renders any text of its own.
+    expect(row.textContent).toBe('10');
+    expect(
+      within(row).queryByTestId('qty-annotation-trigger-row-plain'),
+    ).not.toBeInTheDocument();
   });
 
-  it('prints the reason under the qty for a rejected row, with who refused it', () => {
+  it('AC-A9: a rejected row shows the quantity and a warning-coloured icon, still one line', () => {
     renderQtyCell([
       worklistRow({
         id: 'row-rejected',
@@ -301,13 +459,17 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
       }),
     ]);
     const row = screen.getByTestId('row-row-rejected');
-    expect(within(row).getByText('12')).toBeInTheDocument();
-    expect(
-      within(row).getByText('Joey Ang: No supplier until November'),
-    ).toBeInTheDocument();
+    expect(row.textContent).toBe('12');
+    const trigger = within(row).getByTestId('qty-annotation-trigger-row-rejected');
+    expect(trigger.className).toContain('color-warning-accent');
+
+    fireEvent.click(trigger);
+    // Rendered via a portal (Radix `Dialog`), so it is read off `screen`, not `row`.
+    const dialog = screen.getByTestId('qty-annotation-row-rejected');
+    expect(within(dialog).getByText('Joey Ang: No supplier until November')).toBeInTheDocument();
   });
 
-  it('prints "Rejected by <name>" alone when no reason survives', () => {
+  it('AC-A9: "Rejected by <name>" alone when no reason survives', () => {
     renderQtyCell([
       worklistRow({
         id: 'row-rejected-blank',
@@ -317,18 +479,15 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
         rejected_reason: '   ',
       }),
     ]);
-    const row = screen.getByTestId('row-row-rejected-blank');
-    expect(within(row).getByText('Rejected by Joey Ang')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('qty-annotation-trigger-row-rejected-blank'));
+    const dialog = screen.getByTestId('qty-annotation-row-rejected-blank');
+    expect(within(dialog).getByText('Rejected by Joey Ang')).toBeInTheDocument();
   });
 
-  it('shows only the qty and a Changed badge for a settled row - the table is behind a lightbox now', () => {
+  it('AC-A10: a settled row shows the quantity and a MUTED icon, still one line', () => {
     // Driven by `previous_qty`, NOT `ack_state === 'changed'` (S1): a settle
     // auto-acknowledges the instant it stamps `changed_at` (G4), so the row this cell
     // reads is `acknowledged`, never `changed`, by the time the wire carries it.
-    //
-    // The Was/Now table used to render inline here; it now lives behind a lightbox
-    // (captain, 1 Sep - the inline table crowded the qty cell), so the row's own cell
-    // carries only the figure and the clickable badge, not the table's own "10"/"25".
     renderQtyCell([
       worklistRow({
         id: 'row-settled',
@@ -341,13 +500,13 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
       }),
     ]);
     const row = screen.getByTestId('row-row-settled');
-    expect(within(row).getByText('25')).toBeInTheDocument();
-    expect(within(row).getByText(/Changed/)).toBeInTheDocument();
-    expect(within(row).queryByText('10')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('board-change-row-settled')).not.toBeInTheDocument();
+    expect(row.textContent).toBe('25');
+    const trigger = within(row).getByTestId('qty-annotation-trigger-row-settled');
+    expect(trigger.className).not.toContain('color-warning-accent');
+    expect(trigger.className).toContain('text-muted-foreground');
   });
 
-  it('opens the lightbox with the Was/Now table when the Changed badge is clicked', () => {
+  it('AC-A10: opens the dialog with the Was/Now table when the icon is clicked', () => {
     renderQtyCell([
       worklistRow({
         id: 'row-settled',
@@ -360,10 +519,10 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
       }),
     ]);
 
-    fireEvent.click(screen.getByTestId('change-badge-trigger-row-settled'));
+    fireEvent.click(screen.getByTestId('qty-annotation-trigger-row-settled'));
 
-    // Rendered via a portal (Radix `Dialog`), so it is read off `screen`, not `row`.
-    const table = screen.getByTestId('board-change-row-settled');
+    const dialog = screen.getByTestId('qty-annotation-row-settled');
+    const table = within(dialog).getByTestId('board-change-row-settled');
     // "25" appears twice once open - the qty cell's own figure and the table's own Now
     // column - which is the point: both read the row's current qty and can never
     // disagree.
@@ -371,7 +530,10 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
     expect(within(table).getByText('10')).toBeInTheDocument();
   });
 
-  it('never shows the Was/Now table on a rejected row, even if it once carried a previous value', () => {
+  it('AC-A11: a row rejected after once being changed carries BOTH facts in the dialog', () => {
+    // The old rule let a rejection hide a row's change history from the reader entirely
+    // ("never shows the Was/Now table on a rejected row"). Tucked behind an icon rather
+    // than crowding the cell, there is no reason to keep hiding it - both facts show.
     renderQtyCell([
       worklistRow({
         id: 'row-rejected-with-history',
@@ -379,20 +541,159 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
         ack_state: 'rejected',
         rejected_by_name: 'Joey Ang',
         rejected_reason: 'No stock',
+        changed_at: '2026-08-05T09:00:00',
         previous_qty: '8',
         previous_delivery_date: '2026-08-01',
       }),
     ]);
     const row = screen.getByTestId('row-row-rejected-with-history');
+    expect(row.textContent).toBe('4');
+    const trigger = within(row).getByTestId(
+      'qty-annotation-trigger-row-rejected-with-history',
+    );
+    // Both apply: the warning colour wins, a rejection being the more urgent fact.
+    expect(trigger.className).toContain('color-warning-accent');
+
+    fireEvent.click(trigger);
+    const dialog = screen.getByTestId('qty-annotation-row-rejected-with-history');
+    expect(within(dialog).getByText(/No stock/)).toBeInTheDocument();
     expect(
-      within(row).queryByTestId('board-change-row-rejected-with-history'),
-    ).not.toBeInTheDocument();
-    expect(within(row).getByText(/No stock/)).toBeInTheDocument();
+      within(dialog).getByTestId('board-change-row-rejected-with-history'),
+    ).toBeInTheDocument();
   });
 
-  it('shows no Was/Now table for a row that has never been settled', () => {
+  it('AC-A8: shows no icon for a row that has never been rejected or settled', () => {
     renderQtyCell([worklistRow({ id: 'row-untouched', qty: '6', ack_state: 'acknowledged' })]);
     const row = screen.getByTestId('row-row-untouched');
-    expect(within(row).queryByTestId('board-change-row-untouched')).not.toBeInTheDocument();
+    expect(row.textContent).toBe('6');
+    expect(
+      within(row).queryByTestId('qty-annotation-trigger-row-untouched'),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)', () => {
+  it('D1: fully bundled, host on a PO reads "Included with <host> · <host coverage>"', () => {
+    renderRows([
+      worklistRow({
+        id: 'host-row',
+        item_code: 'CKS1050',
+        qty: '1',
+        linked_qty: '1',
+        links: [{ id: 'l1', kind: 'po', document: '202609-S0105', qty: '1' }],
+      }),
+      worklistRow({
+        id: 'companion-row',
+        item_code: 'CKSW015',
+        qty: '1',
+        linked_qty: '0',
+        links: [],
+        bundled_qty: '1',
+        bundled_with: {
+          row_id: 'host-row',
+          item_code: 'CKS1050',
+          item_codes: ['CKS1050'],
+          anchor_headline: '1 of 1',
+        },
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-companion-row');
+    expect(within(row).getByTitle('Included with CKS1050 · 1 of 1')).toBeInTheDocument();
+    // The info icon opens the ANCHOR row's own lightbox - it exists for this row.
+    expect(within(row).getByTestId('backing-documents-trigger-companion-row')).toBeInTheDocument();
+  });
+
+  it('D2: fully bundled, host not found reads "Included with <host> · Not found (new order)"', () => {
+    renderRows([
+      worklistRow({ id: 'host-row-2', item_code: 'CKS1050', qty: '1', linked_qty: '0', links: [] }),
+      worklistRow({
+        id: 'companion-row-2',
+        item_code: 'CKSW015',
+        qty: '1',
+        linked_qty: '0',
+        links: [],
+        bundled_qty: '1',
+        bundled_with: {
+          row_id: 'host-row-2',
+          item_code: 'CKS1050',
+          item_codes: ['CKS1050'],
+          anchor_headline: null,
+        },
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-companion-row-2');
+    expect(
+      within(row).getByTitle('Included with CKS1050 · Not found (new order)'),
+    ).toBeInTheDocument();
+  });
+
+  it('D3: partly bundled reads "<bundled> with <host> · <own linked> of <ala carte remainder>"', () => {
+    renderRows([
+      worklistRow({
+        id: 'host-row-3',
+        item_code: 'CKS1050',
+        qty: '1',
+        linked_qty: '1',
+        links: [{ id: 'l3', kind: 'po', document: '202609-S0110', qty: '1' }],
+      }),
+      worklistRow({
+        id: 'companion-row-3',
+        item_code: 'CKSW015',
+        qty: '3',
+        linked_qty: '0',
+        links: [],
+        bundled_qty: '1',
+        bundled_with: {
+          row_id: 'host-row-3',
+          item_code: 'CKS1050',
+          item_codes: ['CKS1050'],
+          anchor_headline: '1 of 1',
+        },
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-companion-row-3');
+    // qty 3, bundled 1: the ala carte remainder is 2, and none of it is linked yet.
+    expect(within(row).getByTitle('1 with CKS1050 · 0 of 2')).toBeInTheDocument();
+  });
+
+  it('D10: a pair rule, fully bundled, reads "Included with N items" - never the word "host"', () => {
+    renderRows([
+      worklistRow({
+        id: 'host-x',
+        item_code: 'X',
+        qty: '2',
+        linked_qty: '2',
+        links: [{ id: 'lx', kind: 'po', document: '202609-S0120', qty: '2' }],
+      }),
+      worklistRow({
+        id: 'host-y',
+        item_code: 'Y',
+        qty: '2',
+        linked_qty: '2',
+        links: [{ id: 'ly', kind: 'po', document: '202609-S0120', qty: '2' }],
+      }),
+      worklistRow({
+        id: 'companion-sc',
+        item_code: 'SC',
+        qty: '2',
+        linked_qty: '0',
+        links: [],
+        bundled_qty: '2',
+        // The FIRST host named on the rule is the anchor (plan 3.2) - X here.
+        bundled_with: {
+          row_id: 'host-x',
+          item_code: 'X',
+          item_codes: ['X', 'Y'],
+          anchor_headline: '2 of 2',
+        },
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-companion-sc');
+    expect(within(row).getByTitle('Included with 2 items · 2 of 2')).toBeInTheDocument();
+    expect(row.textContent?.toLowerCase()).not.toContain('host');
   });
 });

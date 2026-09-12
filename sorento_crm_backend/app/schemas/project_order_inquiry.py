@@ -16,6 +16,24 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
+class OrderInquiryBundledWithOut(BaseModel):
+    """PLAN-scm-supplied-with-companions.md S5. `row_id` addresses the ANCHOR row (the
+    rule's first matching item, plan 3.2); `item_codes` names every item the rule
+    requires, in rule order - length 1 for the common case, 2+ for a pair rule (SC-RL
+    with X + Y). The UI never says "host" (UAC D10): one item names its own code, two
+    or more read "N items", and the lightbox is where `item_codes` is shown in full."""
+
+    row_id: str
+    item_code: Optional[str] = None
+    item_codes: List[str] = []
+    #: The anchor row's OWN coverage, e.g. "1 of 1" - resolved server-side (review round
+    #: 1 item 8) so the cell never has to scan a page's own loaded rows for a match that
+    #: is only ever right when the anchor happens to be on the SAME page. Null when the
+    #: anchor has no links of its own (nothing placed for it yet); the reader's own
+    #: "Not found (new order)" fallback covers that case.
+    anchor_headline: Optional[str] = None
+
+
 class OrderInquiryLinkOut(BaseModel):
     """One placement on an order inquiry row (`projects.order_inquiry_links`, AC-I5).
 
@@ -59,6 +77,13 @@ class OrderInquiryLinkOut(BaseModel):
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
     linked_by_name: Optional[str] = None
     po_id: Optional[str] = None
+    #: The purchase order an SPO link's allocation was raised FROM, per AutoCount's own
+    #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2) - a
+    #: different question from `po_id` above, which addresses this link's OWN document.
+    #: Plain text, never a link. Null on a `po`-kind link and on an SPO the book named no
+    #: source for. Never `from_po_line_ref` - that is a resolver key, not a thing a buyer
+    #: reads, and it is deliberately never sent.
+    source_po_number: Optional[str] = None
 
 
 class OrderInquiryRowOut(BaseModel):
@@ -99,6 +124,14 @@ class OrderInquiryRowOut(BaseModel):
     #: The sum of `links[].qty`. `qty - linked_qty` is what still flows to reorder
     #: planning, and is exactly what `scm.committed_v` now nets (migration 422).
     linked_qty: str = "0"
+    #: PLAN-scm-supplied-with-companions.md S5. `bundled_qty` never exceeds
+    #: `qty - linked_qty`; `bundled_with` is null on an un-bundled row. Both declared
+    #: here because `response_model` drops a field it has not been told about
+    #: (same lesson as `ack_state` below) - `serialize_rows` already computes them for
+    #: this schema's own route (`/projects/{project_id}/order-inquiry-rows`) and they
+    #: were silently vanishing on the wire before this.
+    bundled_qty: str = "0"
+    bundled_with: Optional[OrderInquiryBundledWithOut] = None
     # Whether this row has anywhere to link to at all (the captain, 20 Aug: a "Link PO"
     # offer with nothing behind it reads as a bug, not an empty state). Verb AND product,
     # not product alone: an ORDER BACK row may link to an `spo_allocations` row as well as
@@ -260,6 +293,12 @@ class OrderInquiryWorklistRow(BaseModel):
     linked_qty: str = "0"
     #: The document CS cited on an order back, so the screen can say the walk honoured it.
     cited_document: Optional[str] = None
+    #: PLAN-scm-supplied-with-companions.md S5. `bundled_qty` never exceeds
+    #: `qty - linked_qty`; `bundled_with` is null on an un-bundled row. Both declared
+    #: here because `response_model` drops a field it has not been told about
+    #: (`test_order_inquiry_bundles.py::test_d7`).
+    bundled_qty: str = "0"
+    bundled_with: Optional[OrderInquiryBundledWithOut] = None
 
     #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with
     #: it: `awaiting`, `acknowledged`, `changed` or `rejected`. Every one of the columns
@@ -690,6 +729,22 @@ class OrderInquiryPoDetailLine(BaseModel):
     qty_received: str
     remaining: str
     location: Optional[str] = None
+    #: The book's own linkage for this line - the SAME fact and the SAME shape the SCM
+    #: purchase-order detail's Lines tab prints (`PurchaseOrderLine.book_so_number` /
+    #: `book_so_unresolved`), read here off the line's own `from_so_line_ref` and resolved
+    #: through the same reader, `order_link_service.book_so_numbers_by_ref`, so a line's
+    #: linkage does not depend on which screen it is read from. `response_model` silently
+    #: drops an undeclared field, which is exactly why both of these are declared.
+    book_so_number: Optional[str] = None
+    #: True when the book named a sales order this CRM does not hold. Three states, not
+    #: two - see `PurchaseOrderLine` in `app/schemas/scm_orders.py` for the full note.
+    #:
+    #: Stays `bool` here, unlike `PurchaseOrderLine.book_so_unresolved` (review of PR #764,
+    #: F2): `get_po_detail` is a single-document detail read with no list-mode variant, so
+    #: it always calls `book_so_numbers_by_ref` and never passes
+    #: `order_link_service.BOOK_SO_NOT_RESOLVED` - the fourth, "not computed" state that
+    #: `Optional[bool]` exists to carry on the PO route never arises on this one.
+    book_so_unresolved: bool = False
 
 
 class OrderInquiryDocumentAllocation(BaseModel):
@@ -742,6 +797,12 @@ class OrderInquirySpoDetailLine(BaseModel):
     received: str
     remaining: str
     location: Optional[str] = None
+    #: The purchase order this SPO allocation was raised FROM, per AutoCount's own
+    #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2). Plain
+    #: text, never a link - null when the book named no source for this line. Never
+    #: `from_po_line_ref` - that is a resolver key, not a thing a buyer reads, and it is
+    #: deliberately never sent.
+    source_po_number: Optional[str] = None
 
 
 class OrderInquirySpoDetail(BaseModel):

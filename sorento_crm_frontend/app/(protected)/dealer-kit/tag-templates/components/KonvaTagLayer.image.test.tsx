@@ -18,6 +18,9 @@ vi.mock('react-konva', () => {
       y?: number;
       width?: number;
       height?: number;
+      // Only `Image` carries this (S8) - captured generically so the crop
+      // prop reaches a test without a second, image-only stand-in.
+      crop?: { x: number; y: number; width: number; height: number };
     }) {
       return (
         <div
@@ -26,6 +29,7 @@ vi.mock('react-konva', () => {
           data-y={props.y ?? ''}
           data-width={props.width ?? ''}
           data-height={props.height ?? ''}
+          data-crop={props.crop ? JSON.stringify(props.crop) : ''}
         >
           {props.children}
         </div>
@@ -71,6 +75,30 @@ class StubImage {
     Promise.resolve().then(() => this.onload?.());
   }
 
+  get src() {
+    return this._src;
+  }
+}
+
+/**
+ * An image whose `onload` fires but reports 0x0 (R3, #723) - the same shape
+ * a real, not-yet-measured `HTMLImageElement` has: `naturalWidth`/
+ * `naturalHeight` (and so `.width`/`.height`) read 0 until the browser has
+ * actually decoded the source. `cropPixels` turns that into a 0x0 crop
+ * rect, and Konva's own `drawImage` throws `InvalidStateError` on a source
+ * OR destination rect with a zero dimension - the Versions sheet's "View"
+ * crash, caught only by the error boundary.
+ */
+class ZeroSizeStubImage {
+  width = 0;
+  height = 0;
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  private _src = '';
+  set src(value: string) {
+    this._src = value;
+    Promise.resolve().then(() => this.onload?.());
+  }
   get src() {
     return this._src;
   }
@@ -189,5 +217,97 @@ describe('KonvaTagLayer image fit (S3b)', () => {
     expect(image.getAttribute('data-y')).toBe('-5');
     // The outer layer Group, plus the cover-clip Group.
     expect(nodes(container, 'group')).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Crop (S8, PLAN D8, AC-S8-3/6): the `crop` prop Konva reads from is present
+// when `cropRect` is set, and `fit` places the CROPPED region, not the
+// whole picture.
+// ---------------------------------------------------------------------------
+
+describe('KonvaTagLayer image crop (S8)', () => {
+  it('no cropRect: the crop covers the whole 300x150 source image (AC-S8-6)', async () => {
+    const { container } = await renderLoaded(
+      <KonvaTagLayer
+        layer={imageLayer({ fit: 'contain' })}
+        scale={1}
+        display={{ imageUrl: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    const image = nodes(container, 'image')[0] as HTMLElement;
+    expect(JSON.parse(image.getAttribute('data-crop') || '{}')).toEqual({
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 150,
+    });
+  });
+
+  it('a cropRect resolves to the matching SOURCE-PIXEL crop (AC-S8-3)', async () => {
+    const { container } = await renderLoaded(
+      <KonvaTagLayer
+        layer={imageLayer({
+          fit: 'contain',
+          cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+        })}
+        scale={1}
+        display={{ imageUrl: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    const image = nodes(container, 'image')[0] as HTMLElement;
+    expect(JSON.parse(image.getAttribute('data-crop') || '{}')).toEqual({
+      x: 75,
+      y: 0,
+      width: 150,
+      height: 150,
+    });
+  });
+
+  it('fit computes its ratio from the CROPPED region, not the full image (AC-S8-3)', async () => {
+    // Uncropped: 300x150 -> ratio 2, boxRatio (60/20) 3 -> not wide ->
+    // drawW = h*ratio = 40 (pinned in the existing "contain" test above).
+    // Cropped to a SQUARE region (150x150, ratio 1): still not wide against
+    // boxRatio 3, but drawW is now h*1 = 20 - a different number that could
+    // only come from the cropped ratio, not the source's own 2:1.
+    const { container } = await renderLoaded(
+      <KonvaTagLayer
+        layer={imageLayer({
+          fit: 'contain',
+          cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+        })}
+        scale={1}
+        display={{ imageUrl: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    const image = nodes(container, 'image')[0] as HTMLElement;
+    expect(image.getAttribute('data-width')).toBe('20');
+    expect(image.getAttribute('data-height')).toBe('20');
+  });
+
+  it('an image that "loaded" at 0x0 never reaches Konva as a crop source (R3, #723)', async () => {
+    vi.stubGlobal('Image', ZeroSizeStubImage);
+
+    const { container } = await renderLoaded(
+      <KonvaTagLayer
+        layer={imageLayer({
+          fit: 'contain',
+          cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+        })}
+        scale={1}
+        display={{ imageUrl: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    // No `Image` node at all - a 0x0-crop `KonvaImage` (what used to reach
+    // Konva here) is exactly what threw InvalidStateError. The placeholder
+    // path (same as the "not loaded yet" `!image` case) instead: a Rect and
+    // a Text, no Image.
+    expect(nodes(container, 'image')).toHaveLength(0);
+    expect(nodes(container, 'rect')).toHaveLength(1);
+    expect(nodes(container, 'text')).toHaveLength(1);
   });
 });

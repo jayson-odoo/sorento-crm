@@ -107,6 +107,54 @@ class OrderSummaryRowOut(BaseModel):
     # NULL when nothing is outstanding, which is not the same fact as 0 days outstanding.
     max_days_outstanding: Optional[int] = None
 
+    # --- S9 (PLAN-reorder-feedback-9sep.md, G6 ruling, 9 Sep 2026): the printed sheet's
+    # own columns, frozen with the row at run time so nothing on the export is typed
+    # twice. See `summaryOrder.types.ts` for the field-for-field FE shape this mirrors. ---
+    delivery_by_month: List["DeliveryByMonthOut"] = Field(default_factory=list)
+    project_customers: List["ProjectCustomerOut"] = Field(default_factory=list)
+    # The chosen supplier's name, else the frozen suggestion - the sheet always names ONE.
+    supplier_name: Optional[str] = None
+    po_open_qty: float = 0.0
+    incoming_spo_qty: float = 0.0
+    last_receipt: Optional["LastReceiptOut"] = None
+    moq: Optional[float] = None
+
+    # --- S14 (PLAN-reorder-feedback-9sep.md Round 3, AC-S14.1): the sheet's "BRW"
+    # reading, frozen beside the network-wide facts above. ---
+    pool_on_hand: Optional[float] = None
+    reorder_level: Optional[float] = None
+
+    # --- issue #795 Slice 2: the engine's own one-line reason for the row. ---
+    suggestion: Optional[str] = None
+
+    # --- issue #795 Slice 3: the PO/SPO document breakdown under the two supply cells.
+    # Empty until that slice populates them. ---
+    po_open_docs: List["SupplyDocOut"] = Field(default_factory=list)
+    incoming_spo_docs: List["SupplyDocOut"] = Field(default_factory=list)
+
+
+class SupplyDocOut(BaseModel):
+    """One open document's remaining quantity for a product (issue #795 Slice 3) - a PO
+    number or an SPO number, never a UUID."""
+
+    number: Optional[str] = None
+    qty: float = 0.0
+
+
+class DeliveryByMonthOut(BaseModel):
+    month: Optional[str] = None
+    qty: float = 0.0
+
+
+class ProjectCustomerOut(BaseModel):
+    label: str
+    qty: float = 0.0
+
+
+class LastReceiptOut(BaseModel):
+    date: str
+    qty: float = 0.0
+
 
 class OrderSummaryReportOut(BaseModel):
     """The whole frozen report for one run (AC-C2.9)."""
@@ -225,6 +273,18 @@ class OrderSummarySuppliersOut(BaseModel):
     # The threshold behind `is_stale`, so the screen can say what stale means.
     stale_after_days: int
     candidates: List[SupplierCandidateOut] = Field(default_factory=list)
+
+
+class OrderSummaryExportIn(BaseModel):
+    """S4, PLAN-po-spo-site-pool-and-order-sheet-downloads.md (AC-15): the async export
+    request. `run_id` is opaque, same rule as every other read here; omitted means the
+    newest completed run, exactly like the GET report. `format` is validated in the route
+    (422 on anything but ``pdf``/``xlsx``) rather than here, so the message stays the
+    existing wording the old synchronous export used.
+    """
+
+    run_id: Optional[str] = None
+    format: str
 
 
 class OrderSummaryDecisionIn(BaseModel):

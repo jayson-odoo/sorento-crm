@@ -548,6 +548,112 @@ describe('PurchaseOrderDetail - the lines grid', () => {
   });
 });
 
+describe('PurchaseOrderDetail - the book\'s own S/O linkage (AC-A1/A2/A3/A8)', () => {
+  const lineWith = (extra: Record<string, unknown>) =>
+    po({ lines: [{ ...po().lines[0], ...extra }] });
+
+  it('prints the sales order the book names on the line', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: lineWith({ book_so_number: 'SO391853', book_so_unresolved: false }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('SO391853')).toBeInTheDocument();
+  });
+
+  it('reads a muted dash when the book names no sales order, never a guess', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: lineWith({ book_so_number: null, book_so_unresolved: false }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('-')).toBeInTheDocument();
+    expect(within(row).queryByText('Linked, not held')).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a linkage this system does not hold from no linkage at all', () => {
+    // The state the owner would otherwise never see: `202607-S0082` carries a ref on all
+    // 14 of its lines and resolves none of them. Collapsing this into the dash would
+    // report "nothing linked" about a document the book has linked line for line.
+    usePurchaseOrder.mockReturnValue({
+      data: lineWith({ book_so_number: null, book_so_unresolved: true }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Linked, not held')).toBeInTheDocument();
+    // And it is NOT the dash, or the two states would be indistinguishable.
+    expect(within(row).queryByText('-')).not.toBeInTheDocument();
+  });
+
+  it('never renders the raw AutoCount ref, which is a machine key', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: lineWith({
+        book_so_number: null,
+        book_so_unresolved: true,
+        // Not a field the type declares, and never one the backend sends - asserted here
+        // so a future "just print what we have" cannot pass unnoticed.
+        from_so_line_ref: 'AED_SORENTO:45322312:45322332',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = renderDetail();
+    openTab('Lines');
+
+    expect(container.textContent).not.toContain('AED_SORENTO');
+    expect(container.textContent).not.toContain('45322312');
+  });
+
+  it('has no "+N more" overflow, because a line carries ONE sales order', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: lineWith({ book_so_number: 'SO391853', book_so_unresolved: false }),
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = renderDetail();
+    openTab('Lines');
+
+    expect(container.textContent).not.toMatch(/\+\d+ more/);
+  });
+
+  it('treats an absent field as "nothing linked", never as licence to guess (AC-A4)', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: lineWith({ book_so_number: undefined, book_so_unresolved: undefined }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('-')).toBeInTheDocument();
+  });
+
+  it('does not turn the sales order into a link (a deliberate omission)', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: lineWith({ book_so_number: 'SO391853', book_so_unresolved: false }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.queryByRole('link', { name: /SO391853/ })).not.toBeInTheDocument();
+  });
+});
+
 describe('PurchaseOrderDetail - correcting the order in place', () => {
   beforeEach(() => {
     usePurchaseOrder.mockReturnValue({ data: po(), isLoading: false, isError: false });

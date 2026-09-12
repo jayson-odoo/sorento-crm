@@ -54,7 +54,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -66,6 +66,7 @@ from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.models.user import SystemSetting
 from app.schemas.canonical_masters import (
+    CanonicalBrand,
     CanonicalCustomer,
     CanonicalProductCategory,
     CanonicalSalesAgent,
@@ -75,8 +76,10 @@ from app.schemas.canonical_masters import (
     CanonicalWarehouse,
 )
 from app.services.integration_reference_service import (
+    SHARED_TABLES,
     IntegrationReferenceService,
     ReferenceConflict,
+    _is_company_scoped,
 )
 from app.services.rules import product_rules
 from app.services.rules import customer_rules
@@ -265,15 +268,13 @@ class EntitySpec:
     adopt_lookup: Optional[Callable[[Session, Any, str], Optional[str]]] = None
 
 
-# Tables where a row serves every company (``company_id`` NULL). Listed rather
-# than derived from the model, because the question here is what the RAW SQL
-# below must write, and a mixin the SQL never consults cannot answer it.
-# Everything else in ENTITY_SPECS is company-scoped.
-SHARED_TABLES = {"sales_agents"}
-
-
-def _is_company_scoped(table: str) -> bool:
-    return table not in SHARED_TABLES
+# `SHARED_TABLES` / `_is_company_scoped` (tables where a row serves every
+# company, `company_id` NULL) moved to `integration_reference_service`
+# (autocount-brands-ingest BL-056, D11): that service needs the same set for
+# its own `company_id` column, and it cannot import this module (circular -
+# this module already imports IT). Imported above, re-exported by being
+# module-level names here, so `deletion_service.py` and
+# `master_read_service.py` keep importing from where they always have.
 
 
 def _present(payload: Any, columns: dict[str, Any], *names: str) -> None:
@@ -305,6 +306,7 @@ _UNSET = object()
 
 _NOT_NULL_DEFAULTS: dict[str, dict[str, Any]] = {
     "product_categories": {"is_active": True},
+    "brands": {"is_active": True},
     "units_of_measure": {"is_active": True, "decimal_places": 0},
     "warehouses": {"is_active": True},
     "suppliers": {"is_active": True},
@@ -329,6 +331,12 @@ def _apply_not_null_defaults(entity_type: str, columns: dict[str, Any]) -> None:
 
 def _category_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     columns: dict[str, Any] = {"category_code": payload.code, "category_name": payload.name}
+    _present(payload, columns, "description", "is_active")
+    return columns
+
+
+def _brand_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
+    columns: dict[str, Any] = {"brand_code": payload.code, "brand_name": payload.name}
     _present(payload, columns, "description", "is_active")
     return columns
 
@@ -374,11 +382,38 @@ def _supplier_columns(payload: Any, db: Session, company_id: str, warnings: list
         "city",
         "state",
         "postal_code",
-        "country",
         "payment_terms_days",
         "is_active",
     )
+    # S2 (`PLAN-local-supplier-oi-routing.md`, AC-2.10): `country` is a NAME or a
+    # 2-letter CODE, case-insensitively, resolved to `country_id` here rather than
+    # carried through as free text. Unresolved -> a row warning, field left null,
+    # row still imports (masters quarantine, they never block).
+    if "country" in payload.model_fields_set:
+        raw_country = payload.country
+        columns["country_id"] = _resolve_country_id(db, raw_country) if raw_country else None
+        if raw_country and columns["country_id"] is None:
+            warnings.append(f"Country '{raw_country}' was not resolved; left blank.")
     return columns
+
+
+def _resolve_country_id(db: Session, value: str) -> Optional[str]:
+    from app.models.country import Country
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+    row = (
+        db.query(Country.id)
+        .filter(
+            or_(
+                func.lower(Country.code) == normalized.lower(),
+                func.lower(Country.name) == normalized.lower(),
+            )
+        )
+        .first()
+    )
+    return str(row[0]) if row else None
 
 
 def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
@@ -570,6 +605,12 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
         "product_categories", CanonicalProductCategory, "category_code", _category_columns,
         ProductCategory,
     ),
+    # Syncs before products (D2, plan section 3): a product's `brand_code`
+    # auto-creates on miss regardless (D9, unchanged), but a proper brands push
+    # gives it a real master row and an integration reference instead of only
+    # that placeholder. Default adoption path (D3): code only, no name rung -
+    # adopting by name would silently rewrite a hand-made brand_code.
+    "brands": EntitySpec("brands", CanonicalBrand, "brand_code", _brand_columns, Brand),
     "units_of_measure": EntitySpec(
         "units_of_measure", CanonicalUnitOfMeasure, "uom_code", _uom_columns, UnitOfMeasure
     ),
@@ -608,7 +649,7 @@ class MasterIngestService:
         # push meant for the other one would land there silently -- the failure
         # this whole anchor exists to prevent.
         self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        self.refs = IntegrationReferenceService(db, company_id=self.company_id)
         # Set for the duration of a dry-run ingest. Read by _apply to decide
         # whether to capture a before/after diff; the rollback that makes the
         # run harmless is handled in ingest().
@@ -764,9 +805,13 @@ class MasterIngestService:
         columns = spec.to_columns(payload, self.db, self.company_id, warnings)
         _apply_not_null_defaults(entity_type, columns)
 
+        # BL-056 (D15): `self.refs` is scoped to this anchor company, so a ref
+        # linked under a DIFFERENT company simply never resolves here - the
+        # same answer as one that was never linked at all. The cross-company
+        # refusal this used to need (`_require_same_company`) is unreachable
+        # through refs now and has been removed.
         existing_id = self.refs.resolve(entity_type=entity_type, source_ref=payload.source_ref)
         if existing_id is not None:
-            self._require_same_company(spec, existing_id, payload.source_ref)
             if entity_type == "products":
                 self._finalize_product_derived(payload, columns, existing_id)
             if entity_type == "customers":
@@ -982,25 +1027,6 @@ class MasterIngestService:
             self.db.add(row)
             self.db.flush()
             return str(row.id)
-
-    def _require_same_company(self, spec: EntitySpec, entity_id: str, source_ref: str) -> None:
-        """Refuse a reference that resolves into another company.
-
-        ``integration_references`` is global, so a source_ref finds its row
-        whatever company the request anchored to. Updating it would be a
-        cross-company write wearing the clothes of an ordinary re-sync, and the
-        row it overwrites belongs to a company this caller did not name. Failed
-        per record, so the rest of the batch still lands.
-        """
-        if not _is_company_scoped(spec.table):
-            return
-        owner = self.db.execute(
-            text(f"SELECT company_id FROM {spec.table} WHERE id = :id"), {"id": entity_id}
-        ).scalar()
-        if str(owner) != str(self.company_id):
-            raise ReferenceConflict(
-                f"source_ref {source_ref!r} is linked to a record in another company"
-            )
 
     def _diff(
         self, spec: EntitySpec, entity_id: str, columns: dict[str, Any]

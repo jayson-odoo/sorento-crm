@@ -282,6 +282,13 @@ class ReorderRun(Base, CompanyScopedMixin):
     # decision_grain - a per-RUN choice, not a live policy, so it cannot move under a run
     # already planned.
     plan_horizon_date = Column(Date, nullable=True)
+    # "Sales orders needed FROM" (S4, PLAN-reorder-feedback-9sep.md): demand needed BEFORE
+    # this date is excluded from the run's netting, the start-side twin of
+    # `plan_horizon_date`. NULL (the default) plans every open SO line regardless of when
+    # it was needed, unchanged from before this column existed. Demand carrying no date at
+    # all is always counted (G2, 9 Sep ruling), the same reading the end date already gives
+    # it.
+    plan_horizon_start = Column(Date, nullable=True)
     policy_snapshot_ref = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
@@ -397,6 +404,14 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
     )
     pool_warehouse_code = Column(String(50), nullable=True)
+    # PLAN-reorder-one-formula.md S3: the ONE scope rule (`plan_scope.hidden_by_default`),
+    # stamped at write time so every SQL reader (the run's own counts, the recommendations
+    # serializer, the decisions total) reads the SAME answer the Python rule already gives -
+    # never a fourth re-derivation. The Python rule stays the only RUNTIME source; this
+    # column is a cache of its own answer, not a second rule.
+    hidden_by_default = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     run = relationship("ReorderRun", back_populates="recommendations")
     overrides = relationship(
@@ -916,6 +931,56 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    # --- S9 (PLAN-reorder-feedback-9sep.md, G6 ruling): the sheet's own columns, frozen
+    # with the row at run time exactly like everything above. ---
+    #: `[{month: "2026-09" | null, qty}]` (S14, AC-S14.3, superseding the original S9
+    #: SO-book reading) - project Order Inquiry ORDER rows only (`verb = 'ORDER'`,
+    #: `qty > 0`, state not cancelled, on an ACTIVE supply decision), by `delivery_date`,
+    #: undated under a null month. A retail SO line carries no Order Inquiry row and so
+    #: never reaches this cell.
+    delivery_by_month = Column(JSONB, nullable=True)
+    #: `[{label, qty}]` (S14, AC-S14.3) - the SAME Order Inquiry book `delivery_by_month`
+    #: reads, split by customer, so the two totals always tie by construction.
+    project_customers = Column(JSONB, nullable=True)
+    #: The buyer's chosen supplier wins at READ time (`_serialise_row`); this is the
+    #: FROZEN suggestion - the primary product-supplier link, same precedence
+    #: `_supplier_constraints` already uses for MOQ.
+    supplier_name = Column(String, nullable=True)
+    #: Open PO qty (BRW pool), same book `po_book_service` reads.
+    po_open_qty = Column(Numeric, nullable=True)
+    #: Open SPO qty still to arrive, at a SITE POOL warehouse only (S14, AC-S14.2, same
+    #: `pool_predicate.ACTIVE_SITE_POOL_SQL` rule the PO column above applies) - an
+    #: allocation at a project bin or naming no warehouse is not counted.
+    incoming_spo_qty = Column(Numeric, nullable=True)
+    #: The latest `goods_received` picking line for the product, network-wide.
+    last_receipt_date = Column(Date, nullable=True)
+    last_receipt_qty = Column(Numeric, nullable=True)
+    #: The suggested supplier's own MOQ (`ProductSupplier.moq`), alongside its name above.
+    moq = Column(Numeric, nullable=True)
+
+    # --- S14 (PLAN-reorder-feedback-9sep.md Round 3, AC-S14.1): the sheet's "BRW" reading,
+    # frozen beside the network-wide facts above rather than replacing them. ---
+    #: Site-pool stock only (`pool_predicate.ACTIVE_SITE_POOL_SQL`) - the sheet's "BRW on
+    #: hand". `on_hand` above stays network-wide and is what the grid's own column reads.
+    pool_on_hand = Column(Numeric, nullable=True)
+    #: The run's OWN frozen `inputs.reorder_level` for the product - the first
+    #: recommendation that carries the key. NULL when none does (the engine plans against
+    #: one product-wide level, never a per-warehouse one).
+    reorder_level = Column(Numeric, nullable=True)
+
+    # --- issue #795 (Slice 2): the engine's own reason for the row, so a covered or
+    # needs_level row - now on the book beside a buy - still says why it suggests 0. ---
+    #: One sentence, the row's own `triggered_reason` (falling back to a short label when
+    #: a hand-built recommendation carries none).
+    suggestion = Column(Text, nullable=True)
+
+    # --- issue #795 (Slice 3): traceability under the BRW PO qty / BRW incoming qty
+    # cells. Population is Slice 3's; the columns land now so migration 508 needs no
+    # second pass. `[{"number": str, "qty": float}]`, grouped by document, sorted by
+    # number; NULL/empty until Slice 3 populates them. ---
+    po_open_docs = Column(JSONB, nullable=True)
+    incoming_spo_docs = Column(JSONB, nullable=True)
 
     __table_args__ = (
         # One row per product per run, or the report reads whichever duplicate comes back
@@ -1600,7 +1665,18 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     supplier_id = Column(
         UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
     )
+    #: OURS (S1, supplier documents / PI-first lane, 9 Sep 2026) - a monthly running number
+    #: (`PI-{yy}{month:02d}-{NNN}`, `app.services.numbering_defaults.PROFORMA_INVOICE_DOC_
+    #: TYPE`), minted once at insert and never re-derived from the file. Globally unique per
+    #: company (`uq_scm_proforma_invoice_number`) - the supplier's own reference moved to
+    #: `supplier_ref` below, which is what a re-upload now matches on.
     pi_number = Column(String(100), nullable=False)
+    #: The supplier's own reference for this document, verbatim - NULL when the file states
+    #: none (the pre-loading list's five blocks carry no invoice number at all). Identity is
+    #: now `(company, supplier, supplier_ref)`: a NULL ref never matches an existing row, so
+    #: a file stating none is always created fresh rather than matched or refused (AC-A3,
+    #: captain ruling 9 Sep).
+    supplier_ref = Column(String(100), nullable=True)
     invoice_date = Column(Date, nullable=True)
     # NULL only for a document with no priced line at all: a priced one is refused before
     # it is written unless the currency resolved (AC-P3.2). Never a house default.
@@ -1608,6 +1684,15 @@ class ProformaInvoice(Base, CompanyScopedMixin):
 
     container_ref = Column(String(100), nullable=True)
     bl_ref = Column(String(100), nullable=True)
+    #: The container's seal number (S2/S4 standing ruling, captain 9 Sep) - filled from the
+    #: packing document when the PI itself stated none, same convention `container_ref`/
+    #: `bl_ref` already follow. Read by convert's header carry-over (AC-D2c) alongside them.
+    seal_ref = Column(String(100), nullable=True)
+    #: Who the document bills (`客户名` / `Customer Name` / `客户`, ruling 28) - the fourth
+    #: header fact the supplier states and the packing list needs, carried onto the draft
+    #: with the other three. `bl_ref` holds `提单号`, which is the forwarder's SO, not a
+    #: bill of lading (6 Sep ruling) - the name is historical.
+    consignee_ref = Column(String(150), nullable=True)
 
     #: What the document totals ITSELF to when it states a total, else the sum of its lines.
     #: Stored rather than summed on read so the verification screen compares like with like.
@@ -1656,6 +1741,14 @@ class ProformaInvoice(Base, CompanyScopedMixin):
         "ProformaInvoiceLine", back_populates="invoice", cascade="all, delete-orphan",
         order_by="ProformaInvoiceLine.line_no",
     )
+    #: The supplier's own packing rows (S2, AC-B1) - the same file, or a later one attached
+    #: to this PI (AC-B5), read verbatim rather than folded into `lines`: the grains differ
+    #: (Kailu writes 12 packing rows against 11 priced lines) and a packing-list-alone file
+    #: has no PI lines of its own to become at all.
+    packing_lines = relationship(
+        "ProformaInvoicePackingLine", back_populates="invoice", cascade="all, delete-orphan",
+        order_by="ProformaInvoicePackingLine.row_no",
+    )
 
     __table_args__ = (
         Index("ix_scm_proforma_invoice_supplier", "supplier_id"),
@@ -1664,14 +1757,29 @@ class ProformaInvoice(Base, CompanyScopedMixin):
         CheckConstraint(
             "status IN ('current', 'superseded')", name="ck_scm_proforma_invoice_status"
         ),
-        # Declared on the MODEL as well as in migration 375, because a CI database is built
-        # with `create_all` and never runs a migration body: without it the guard against a
-        # doubled invoice exists in production and nowhere else (the supplier_inventory
-        # precedent).
+        # Declared on the MODEL as well as in migration 375/499/500, because a CI database is
+        # built with `create_all` and never runs a migration body: without it the guard
+        # against a doubled invoice exists in production and nowhere else (the
+        # supplier_inventory precedent). Identity moved from `pi_number` (now OURS) to
+        # `supplier_ref` (S1, AC-A3/A4) - a NULL ref never conflicts with another NULL, a
+        # plain unique index's default behaviour, which is exactly "a file with no reference
+        # never matches an existing row". Scoped to `status = 'current'` (migration 500):
+        # a revision keeps its predecessor's `supplier_ref` verbatim, and a superseded row
+        # is not a claim on that identity any more - only one CURRENT row per identity ever
+        # exists, any number of superseded ones may share the ref.
         Index(
             "uq_scm_proforma_invoice_identity",
             text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
             "supplier_id",
+            "supplier_ref",
+            unique=True,
+            postgresql_where=text("status = 'current'"),
+        ),
+        # `pi_number` is OURS and minted once - it must never collide within a company
+        # regardless of supplier (AC-A1/A4).
+        Index(
+            "uq_scm_proforma_invoice_number",
+            text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
             "pi_number",
             unique=True,
         ),
@@ -1706,7 +1814,15 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
 
     item_code = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
-    qty = Column(Numeric, nullable=False)
+    #: The `translation_memory` English for `description` (S2, text glossary lane) - NULL
+    #: for a word the memory has never seen, even an already-English one (R7). Filled by
+    #: `app.services.scm.description_translation.fill` on write and re-bound by `.rebind`
+    #: on every later memory write (migration `510_pi_description_en`).
+    description_en = Column(Text, nullable=True)
+    #: NULL on a line that names something and states a packing figure but no quantity
+    #: (captain ruling 9 Sep, S2 follow-up) - the Jinbaichuan sheet's own
+    #: container-summary row states a total CBM and nothing else.
+    qty = Column(Numeric, nullable=True)
     uom = Column(String(20), nullable=True)
     unit_price = Column(Numeric, nullable=True)
     amount = Column(Numeric, nullable=True)
@@ -1766,6 +1882,109 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     )
 
 
+class ProformaInvoicePackingLine(Base, CompanyScopedMixin):
+    """One row of the supplier's OWN packing list, verbatim (S2, AC-B1).
+
+    A packing list and its proforma invoice count differently - Kailu's 11 priced lines
+    become 12 packing rows because SRTSC14-GM ships in two cartons of different sizes, and
+    Jiexia's lid row is a packing row with no invoice line at all (it prices nothing). So
+    this is its OWN table, never folded into `ProformaInvoiceLine`, and matched onto a line
+    (`proforma_invoice_line_id`, nullable) by resolved PRODUCT rather than merged with it
+    (AC-B6): a row whose product is on no line of this PI stays unmatched, and a row whose
+    code the operator has dismissed (spares, a customs sample) lands `dismissed` without a
+    line to point at either.
+
+    `net_weight`/`gross_weight` are PER CARTON, as Kailu's own `NW`/`GW` columns state them
+    - `total_net_weight`/`total_gross_weight` are the row's own totals (`TOTAL KGS` /
+    `总毛重`), read from the file rather than re-derived, so a rounding difference on the
+    paper is what the roll-up onto the invoice line reads too (AC-B8).
+    """
+    __tablename__ = "proforma_invoice_packing_line"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    proforma_invoice_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: The matched invoice line, when this row resolved a product ALSO on the invoice
+    #: (AC-B6). NULL on an unmatched or dismissed row - there is no line to point at.
+    proforma_invoice_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice_line.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Assigned by this row's own position in the file, never read off a printed `No.`
+    #: column - that number numbers the paper, not the goods (S1's own convention for
+    #: `pi_number`, applied here to the same trap).
+    row_no = Column(Integer, nullable=False)
+
+    item_code = Column(String(100), nullable=False)
+    #: The factory's OWN model number (`洁厦型号` / `JIEXIA MODEL`), distinct from
+    #: `item_code` (`客户型号` - OUR catalogue code), same distinction `ProformaInvoiceLine`
+    #: does not carry because no PI fixture states both on one line the way a packing list
+    #: does.
+    supplier_code = Column(String(100), nullable=True)
+    description = Column(Text, nullable=True)
+    #: The `translation_memory` English for `description` (S2, text glossary lane) - NULL
+    #: for a word the memory has never seen, even an already-English one (R7). Filled by
+    #: `app.services.scm.description_translation.fill` on write and re-bound by `.rebind`
+    #: on every later memory write (migration `510_pi_description_en`).
+    description_en = Column(Text, nullable=True)
+
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    product_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
+    )
+
+    #: NULL on a row that names something and states a packing figure but no quantity
+    #: (captain ruling 9 Sep) - the Jinbaichuan container-summary row states only a total
+    #: CBM. Never invented from the row's own text.
+    qty = Column(Numeric, nullable=True)
+    cartons = Column(Numeric, nullable=True)
+    pcs_per_carton = Column(Numeric(15, 4), nullable=True)
+    carton_length_cm = Column(Numeric(10, 2), nullable=True)
+    carton_width_cm = Column(Numeric(10, 2), nullable=True)
+    carton_height_cm = Column(Numeric(10, 2), nullable=True)
+    cbm_per_carton = Column(Numeric(12, 6), nullable=True)
+    cbm_total = Column(Numeric(12, 6), nullable=True)
+    #: PER CARTON - see the class docstring.
+    net_weight = Column(Numeric(15, 4), nullable=True)
+    gross_weight = Column(Numeric(15, 4), nullable=True)
+    total_net_weight = Column(Numeric(15, 4), nullable=True)
+    total_gross_weight = Column(Numeric(15, 4), nullable=True)
+
+    material = Column(String(255), nullable=True)
+    #: The container this row's block named, when the file states one - a packing list
+    #: alone can cover more than one container (Jiexia's pair), and a row needs to say
+    #: which one it is on the same terms `PackingBlock.container_no` already does.
+    container_no = Column(String(100), nullable=True)
+    remark = Column(Text, nullable=True)
+
+    #: `matched` (resolved a product also on an invoice line), `unmatched` (resolved a
+    #: product, or none, that no line of this PI holds - AC-B6's `not_on_invoice`), or
+    #: `dismissed` (the code is a dismissed alias - AC-B6/B7). Never asked about twice: a
+    #: dismissed code lands here on every later apply without prompting again.
+    match_state = Column(String(20), nullable=False, server_default=text("'unmatched'"))
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    invoice = relationship("ProformaInvoice", back_populates="packing_lines")
+
+    __table_args__ = (
+        Index("ix_scm_pi_packing_line_invoice", "proforma_invoice_id"),
+        Index("ix_scm_pi_packing_line_line", "proforma_invoice_line_id"),
+        CheckConstraint(
+            "match_state IN ('matched', 'unmatched', 'dismissed')",
+            name="ck_scm_pi_packing_line_match_state",
+        ),
+        {"schema": "scm"},
+    )
+
+
 class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
     """Where a proforma invoice line's goods actually went: the draft inbound shipment line
     created from it (the packing-list amendment, 20 Aug evening -
@@ -1805,6 +2024,17 @@ class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("inbound_shipment_lines.id", ondelete="SET NULL"),
         nullable=True,
     )
+    #: WHICH packing row went there (ruling 31). Placement is a fact about a row - the
+    #: supplier packed 50 in one carton and 35 in another, and either can go in a box on
+    #: its own - so the row that went is recorded rather than inferred from a quantity
+    #: walked over the line's rows in order, which is only right when the selection was a
+    #: prefix of that list. NULL on a line-grain placement (a PI line no packing list
+    #: mentions) and on a skip row, neither of which names a row.
+    proforma_invoice_packing_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.proforma_invoice_packing_line.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     #: Why this line has no `inbound_shipment_line_id` - e.g. "no catalogue product match".
     #: Null on a real link.
     unmatched_reason = Column(String(255), nullable=True)
@@ -1822,6 +2052,7 @@ class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
         # (Q9). What stops a silent double convert is now the service, which compares what
         # is already placed against what the line holds - arithmetic an index cannot do.
         Index("ix_scm_pi_shipment_link_line", "proforma_invoice_line_id"),
+        Index("ix_scm_pi_shipment_link_packing_line", "proforma_invoice_packing_line_id"),
         {"schema": "scm"},
     )
 

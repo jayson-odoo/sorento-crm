@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   ClipboardList,
   FileSpreadsheet,
+  FileText,
   Loader2,
   RotateCcw,
 } from 'lucide-react';
@@ -20,9 +21,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
-import { fmtDate, fmtInt } from '../../lib/format';
+import { fmtInt } from '../../lib/format';
 import { legacyLockReason, shouldGroupByChannel } from '../lib/planGrain';
-import { runStartedLabel } from '../lib/runListing';
+import { describeWindow, runStartedLabel } from '../lib/runListing';
 import { decisionsKey } from '../hooks/useDecisions';
 import { planRowDecisionsKey } from '../hooks/usePlanLines';
 import {
@@ -32,13 +33,13 @@ import {
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { resetRunDecisions } from '../services/reorderRunService';
+import { useExportOrderSheet } from '../hooks/useSummaryOrder';
 import type { PlanTotals } from '../lib/planDecisions';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PlanHeaderTab } from './PlanHeaderTab';
 import { PlanLinesSection } from './PlanLinesSection';
 import { PoWorklistView } from './PoWorklistView';
 import { ReorderStatTiles, type ReorderPlanView as PlanViewKey } from './ReorderStatTiles';
-import { SummaryOrderReportView } from './SummaryOrderReportView';
 
 /**
  * ONE plan, at its own address (`/scm/reorder/{id}`, R1).
@@ -80,17 +81,34 @@ export function ReorderPlanView({ runId }: { runId: string }) {
   const groupByChannel = shouldGroupByChannel(item);
 
   /**
-   * R4 + R10: the three run reports and the demo reset live in the grid's own Actions menu.
-   * They are views OF this run, so they belong on this page; none of them needs a permanent
+   * R4 + R10: the run reports and the demo reset live in the grid's own Actions menu. They
+   * are views OF this run, so they belong on this page; none of them needs a permanent
    * button, and Reset planning least of all.
+   *
+   * S10 (round 2, 9 Sep) retired the Order summary PAGE - the same sheet is printed
+   * straight off this run. S4 (PLAN-po-spo-site-pool-and-order-sheet-downloads) moved the
+   * export itself onto My Downloads: `useExportOrderSheet` starts the async render and
+   * toasts, it never saves a file directly - the buyer downloads it from the drawer once
+   * the worker marks it ready. Both items disable while the request is in flight so a
+   * double click starts one export, not two (AC-21).
    */
+  const exportOrderSheet = useExportOrderSheet(runId);
+
   const actions = useMemo<ToolbarAction[]>(
     () => [
       {
-        key: 'order_summary',
-        label: 'Order summary',
+        key: 'order_sheet_pdf',
+        label: 'Order sheet PDF',
+        icon: FileText,
+        onClick: () => exportOrderSheet.mutate('pdf'),
+        disabled: exportOrderSheet.isPending,
+      },
+      {
+        key: 'order_sheet_xlsx',
+        label: 'Order sheet Excel',
         icon: FileSpreadsheet,
-        onClick: () => setView('order_summary'),
+        onClick: () => exportOrderSheet.mutate('xlsx'),
+        disabled: exportOrderSheet.isPending,
       },
       {
         key: 'plan_exceptions',
@@ -112,7 +130,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         onClick: () => setResetOpen(true),
       },
     ],
-    [],
+    [exportOrderSheet.mutate, exportOrderSheet.isPending],
   );
 
   const doReset = async () => {
@@ -193,9 +211,9 @@ export function ReorderPlanView({ runId }: { runId: string }) {
           {startedLabel ? `Plan ${startedLabel}` : 'Plan'}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {item.plan_horizon_date
-            ? `Sales order cut-off ${fmtDate(item.plan_horizon_date)}`
-            : 'No cut-off'}
+          {/* AC-S4.5: one wording helper, so the header, this subtitle and the plans
+              list never say the window three different ways. */}
+          Sales orders needed: {describeWindow(item.plan_horizon_start, item.plan_horizon_date)}
         </p>
       </div>
     </div>
@@ -292,8 +310,6 @@ export function ReorderPlanView({ runId }: { runId: string }) {
             <PlanExceptionsView runId={runId} onBack={() => setView('buy')} />
           ) : view === 'po_worklist' ? (
             <PoWorklistView runId={runId} onBack={() => setView('buy')} />
-          ) : view === 'order_summary' ? (
-            <SummaryOrderReportView runId={runId} onBack={() => setView('buy')} />
           ) : (
             <PlanLinesSection
               runId={runId}

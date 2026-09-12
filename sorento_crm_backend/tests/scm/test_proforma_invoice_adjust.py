@@ -427,16 +427,22 @@ def test_a_converted_invoice_can_no_longer_be_adjusted():
 
 def test_re_uploading_over_an_adjusted_invoice_is_refused():
     """`apply` replaces every line of the invoice it lands on. On an ADJUSTED one that
-    throws away the quantities Ms Tee trimmed, silently, on a nervous second Confirm."""
+    throws away the quantities Ms Tee trimmed, silently, on a nervous second Confirm.
+
+    A REFERENCED document (Kailu's own supplier_ref, AC-A3, captain ruling 9 Sep), not the
+    ref-less preloading list `_apply_preloading` builds - a ref-less re-upload is always
+    created fresh and never matches an existing row, so it could never exercise this
+    refusal at all."""
     with pg_session() as db:
-        _seed_container_sizes(db)
         w = World(db)
-        invoice = _apply_preloading(db, w)[0]
+        data = kailu_proforma_workbook({"SRTWT7443": w.code("A")})
+        svc.apply(db, data, supplier_id=str(w.supplier.id))
+        invoice = _invoices(db, w)[0]
         line = _lines(db, invoice.id)[0]
         svc.adjust_line(db, str(invoice.id), str(line.id), qty=380, actor="Ms Tee")
 
         with pytest.raises(AppException) as exc:
-            _apply_preloading(db, w)
+            svc.apply(db, data, supplier_id=str(w.supplier.id))
 
         assert exc.value.status_code == 409
         assert exc.value.detail["code"] == "already_adjusted"
@@ -447,39 +453,46 @@ def test_re_uploading_over_an_adjusted_invoice_is_refused():
 
 def test_re_uploading_over_a_converted_invoice_is_refused():
     """Worse than losing an adjustment: replacing the lines CASCADES the shipment links
-    away, and the invoice reads not-converted again while its goods sit on a container."""
+    away, and the invoice reads not-converted again while its goods sit on a container.
+
+    A REFERENCED document, same reasoning as the adjusted-invoice test above."""
     with pg_session() as db:
         _seed_container_sizes(db)
         w = World(db)
-        invoices = _apply_preloading(db, w)
-        invoice = invoices[4]
+        data = kailu_proforma_workbook({"SRTWT7443": w.code("A")})
+        svc.apply(db, data, supplier_id=str(w.supplier.id))
+        invoice = _invoices(db, w)[0]
         svc.convert_to_draft_shipment(db, [str(invoice.id)])
 
         with pytest.raises(AppException) as exc:
-            _apply_preloading(db, w)
+            svc.apply(db, data, supplier_id=str(w.supplier.id))
 
         assert exc.value.status_code == 409
         assert exc.value.detail["code"] == "already_converted"
 
 
 def test_re_uploading_over_a_superseded_revision_is_refused():
+    """A REFERENCED document, same reasoning as the adjusted-invoice test above."""
     with pg_session() as db:
-        _seed_container_sizes(db)
         w = World(db)
-        invoice = _apply_preloading(db, w)[0]
+        data = kailu_proforma_workbook({"SRTWT7443": w.code("A")})
+        svc.apply(db, data, supplier_id=str(w.supplier.id))
+        invoice = _invoices(db, w)[0]
         invoice.status = "superseded"
         db.flush()
 
         with pytest.raises(AppException) as exc:
-            _apply_preloading(db, w)
+            svc.apply(db, data, supplier_id=str(w.supplier.id))
 
         assert exc.value.status_code == 409
         assert exc.value.detail["code"] == "superseded"
 
 
 def test_a_plain_re_upload_of_an_untouched_invoice_still_replaces_its_lines():
-    """The idempotency AC-P1.4 rests on (the same file uploaded twice lands on the same
-    invoices) - untouched means untouched, and that path is not narrowed."""
+    """A ref-less file is always created fresh (AC-A3, captain ruling 9 Sep) - there is
+    nothing to match an in-place replace against, so AC-P1.4's idempotency does not apply
+    to it: a second apply of the SAME ref-less file is a second, genuinely new set of five
+    invoices, and the first five are untouched by it."""
     with pg_session() as db:
         _seed_container_sizes(db)
         w = World(db)
@@ -487,8 +500,9 @@ def test_a_plain_re_upload_of_an_untouched_invoice_still_replaces_its_lines():
 
         again = _apply_preloading(db, w)
 
-        assert len(again) == len(first) == 5
-        assert {i.id for i in again} == {i.id for i in first}
+        assert len(first) == 5
+        assert len(again) == 10
+        assert {i.id for i in first} <= {i.id for i in again}
 
 
 # --------------------------------------------------------------------------------- #

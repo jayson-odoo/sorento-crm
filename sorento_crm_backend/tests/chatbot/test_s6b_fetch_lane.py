@@ -6,7 +6,7 @@ that module or one of its functions - that is the correct red reason. A failure 
 other reason (a typo in a fixture path, a wrong assertion) is a defect in THIS file, not
 evidence the port is done.
 
-Scope: `sub-fetch-results` (tool search -> tool-filter -> tier probe -> entity-ids-transformer
+Scope: `sub-fetch-results` (tool pick -> tool-filter -> tier probe -> entity-ids-transformer
 -> MCPRuntimeClient -> output-structurer -> fetch-result). S6a's resolve+gate (already merged
 into this branch) is the caller; S6c's answer/miss lane is NOT built yet, so the "result" arm
 of `fetch_result` only hands the fetch payload back to n8n via `delegate_payload` - it does not
@@ -18,16 +18,18 @@ check, not an equality check - `contracts.is_timeline` is the one place this is 
 S6b must consume it, not re-derive it), H49 (verify the live tool-selection distribution before porting
 any per-tool branch - `crm_order_management_orders_by_product_list` was never selected in the
 captures graded so far), H52 (the MCP call goes through the CONFIGURED url,
-`settings.ai_assistant_mcp_url`, never a literal IP or scheme), H53 (tool search is
-`EmbeddingReadService` in-process, never raw SQL from this package).
+`settings.ai_assistant_mcp_url`, never a literal IP or scheme), H53 (there is no tool
+search at all since 8 Sep 2026 - the tool is read off `contracts.DOMAIN_SPEC` - so this
+package still issues no SQL and names no table).
 
 **Contract this file assumes and asserts** (S6a set the precedent - see
 `lanes/business/services.py`'s `ResolveGateServices` and its own `_probe()` docstring, which
 names this exact seam as "S6b's fetch, over MCPRuntimeClient (D10)"):
 
     app.services.chatbot.lanes.business.fetch
-        select_tool(db, *, query: str, domain: str | None, services: FetchServices)
-            -> list[{"name": str, "similarity": float}]
+        select_tool(domain: str | None) -> list[{"name": str, "similarity": float}]
+            One candidate, `DOMAIN_SPEC[domain].tools[0]`, or none. `select_tool`'s own
+            per-domain grading lives in `test_tool_pick_from_domain_spec.py`.
         tool_filter(candidates: list[dict], *, has_product: bool | None) -> ToolPick
             ToolPick.items  : the n8n item list, [] or [{"json": {...best, "_tool_pick": {...}}}]
                               - BYTE-EQUAL to today (D8 parity)
@@ -40,8 +42,8 @@ names this exact seam as "S6b's fetch, over MCPRuntimeClient (D10)"):
         fetch_result(item: dict, *, tool=None, tier_probe=None) -> dict  (adds `_fetch_arm`)
 
     app.services.chatbot.lanes.business.services
-        FetchServices(embed, tool_search, mcp_call)  - dataclass, same shape as
-        `ResolveGateServices`.
+        FetchServices(mcp_call)  - dataclass, same shape as `ResolveGateServices`. It
+        carried `embed` / `tool_search` until the tool RAG was dropped.
 
     app.services.chatbot.lanes.business (package init, alongside `run_until_exit`)
         run_fetch(payload, *, services: FetchServices, dry_run: bool) -> dict
@@ -116,143 +118,67 @@ def _import_migration_312():
 
 
 # --------------------------------------------------------------------------- #
-# AC-604 - tool selection: EmbeddingReadService in-process, max-similarity pick, H11
+# AC-604 - tool selection: the domain's own first tool, H11 on an empty pick
 # --------------------------------------------------------------------------- #
 
 
 class TestToolSearch:
-    def test_tool_search_uses_embedding_service_not_sql(self, monkeypatch):
-        """`select_tool` calls the `tool_search` seam with the EMBEDDED query.
+    def test_the_pick_is_a_table_read_with_no_seam_and_no_sql(self):
+        """`select_tool` reads `contracts.DOMAIN_SPEC` and touches nothing else.
 
-        H53: nothing in `fetch.py` talks to `embedding_chunks` or issues raw SQL - the n8n
-        node's own `$1..$4` query (`sub-get-rag-live`'s "Execute a SQL query") stays retired,
-        replaced end to end by `EmbeddingReadService.search_tool_candidates` behind the
-        `tool_search` seam.
+        H53: `sub-get-rag`'s pgvector query stayed retired and the service call that
+        replaced it is now gone too - measured over the 740 business turns in the 7 Sep
+        2026 prod copy, the similarity pick was the domain's FIRST-LISTED tool on every
+        turn, so the search was deciding a question with one answer (and could not even
+        run in the deployed image, whose backend has no MCP catalogue to seed from).
+        Per-domain grading lives in `test_tool_pick_from_domain_spec.py`; what this file
+        keeps is the static hazard check.
 
         H43: the n8n query's `$4` is `domain`, LIKE-matched against `source_id`, and is
-        genuinely missing on some call sites live (the hazard). That cannot exist in the
-        in-process port: `domain` is bound directly into the one function call, so a
-        `domain=None` here means "no filter" by construction, never "the caller forgot to
-        wire a parameter" - which is why the plan calls H43 `moot` rather than `fix`.
+        genuinely missing on some call sites live (the hazard). It cannot exist here:
+        `domain` is the only parameter, so `domain=None` means "no tool" by construction,
+        never "the caller forgot to wire a parameter".
         """
         fetch = _import_fetch()
-        FetchServices = _import_fetch_services()
 
-        embed_calls: list[str] = []
-        search_calls: list[dict[str, Any]] = []
-
-        def fake_embed(query: str) -> list[float]:
-            embed_calls.append(query)
-            return [0.1, 0.2, 0.3]
-
-        def fake_tool_search(embedding: list[float], *, query: str, domain: str | None):
-            search_calls.append({"embedding": embedding, "query": query, "domain": domain})
-            return [{"name": "crm_master_products_list", "similarity": 0.9}]
-
-        services = FetchServices(
-            embed=fake_embed,
-            tool_search=fake_tool_search,
-            mcp_call=lambda *a, **k: pytest.fail("mcp_call must not be reached by select_tool"),
-        )
-
-        result = fetch.select_tool(
-            db=None, query="price for SRTWC8517", domain=None, services=services
-        )
-
-        assert embed_calls == ["price for SRTWC8517"]
-        assert search_calls == [
-            {"embedding": [0.1, 0.2, 0.3], "query": "price for SRTWC8517", "domain": None}
+        assert fetch.select_tool("master_products") == [
+            {"name": "crm_master_products_list", "similarity": 1.0}
         ]
-        assert result == [{"name": "crm_master_products_list", "similarity": 0.9}]
-
-        # H43: a tier-pick turn passes a domain filter (the resolved gate's own
-        # `tier_pick_domain`, e.g. "promotion") - the seam receives it verbatim, never a
-        # guessed or omitted value.
-        search_calls.clear()
-        fetch.select_tool(db=None, query="promo", domain="promotion", services=services)
-        assert search_calls[0]["domain"] == "promotion"
+        assert fetch.select_tool(None) == []
 
         source = _fetch_source()
         assert "embedding_chunks" not in source, "fetch.py must not name the raw table (H53)"
         assert not re.search(r"\bSELECT\b", source, re.IGNORECASE), (
-            "fetch.py must not issue SQL directly - tool search stays behind "
-            "EmbeddingReadService (H53)"
+            "fetch.py must not issue SQL directly - the tool is read off DOMAIN_SPEC (H53)"
         )
 
     # ----------------------------------------------------------------------- #
-    # F4 (review, 7 Sep 2026) - the incoming-shipments collapse moved from
-    # `fetch.tool_filter` to `services._tool_search`'s own CRM-policy seam, and
-    # narrowed: only `crm_incoming_stock_shipments` collapses, never `..._by_product`.
+    # F4 (review, 7 Sep 2026) - the incoming-shipments-to-list collapse. It was a
+    # policy seam in `services.py` that renamed `crm_incoming_stock_shipments` when it
+    # won the similarity pick; there is no similarity pick left, so the rule it
+    # enforced is now a property of the domain table itself.
     # ----------------------------------------------------------------------- #
 
-    def test_shipments_candidate_is_renamed_with_collapsed_from(self):
-        """Evidence turn 147d6888-d313-4612-a32f-364cec119ec4: the shipments tool's header
-        carries no clearance checkpoints and no `field_access` block, so it can never render
-        the container timeline - only the list tool can."""
-        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
+    def test_an_incoming_turn_always_reads_the_list_tool(self):
+        """Evidence turn 147d6888-d313-4612-a32f-364cec119ec4: "incoming TIIU6323920"
+        picked `crm_incoming_stock_shipments` (0.4675) over `crm_incoming_stock_list`
+        (0.4537). The shipments tool's header carries no clearance checkpoints and no
+        `field_access` block, so it can never render the container timeline - only the
+        list tool can, and only the list tool is `tools[0]`."""
+        from app.services.chatbot.contracts import DOMAIN_SPEC
 
-        result = _collapse_incoming_shipments(
-            [{"name": "crm_incoming_stock_shipments", "similarity": 0.4675}]
-        )
+        fetch = _import_fetch()
 
-        assert result == [
-            {
-                "name": "crm_incoming_stock_list",
-                "similarity": 0.4675,
-                "collapsed_from": "crm_incoming_stock_shipments",
-            }
+        assert fetch.select_tool("incoming") == [
+            {"name": "crm_incoming_stock_list", "similarity": 1.0}
         ]
-
-    def test_by_product_candidate_is_untouched(self):
-        """`crm_incoming_stock_by_product` renders batch numbers and the catalog routes
-        product asks to it on purpose - it is a real answer, not a stand-in for the list."""
-        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
-
-        result = _collapse_incoming_shipments(
-            [{"name": "crm_incoming_stock_by_product", "similarity": 0.51}]
+        # Both other incoming tools stay in the tuple as allow-list members (a probe may
+        # name `crm_incoming_stock_by_product`, which renders batch numbers on purpose)
+        # and neither can be selected.
+        assert DOMAIN_SPEC["incoming"].tools[1:] == (
+            "crm_incoming_stock_by_product",
+            "crm_incoming_stock_shipments",
         )
-
-        assert result == [{"name": "crm_incoming_stock_by_product", "similarity": 0.51}]
-
-    def test_list_candidate_is_untouched(self):
-        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
-
-        result = _collapse_incoming_shipments(
-            [{"name": "crm_incoming_stock_list", "similarity": 0.9}]
-        )
-
-        assert result == [{"name": "crm_incoming_stock_list", "similarity": 0.9}]
-
-    def test_shipments_and_list_both_present_keeps_higher_similarity_under_list_name(self):
-        """When BOTH the shipments and list tools are candidates the same turn, the
-        collapsed name must never appear twice - the higher-similarity one wins under the
-        list name and the other is dropped."""
-        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
-
-        result = _collapse_incoming_shipments(
-            [
-                {"name": "crm_incoming_stock_shipments", "similarity": 0.4675},
-                {"name": "crm_incoming_stock_list", "similarity": 0.4537},
-            ]
-        )
-
-        assert result == [
-            {
-                "name": "crm_incoming_stock_list",
-                "similarity": 0.4675,
-                "collapsed_from": "crm_incoming_stock_shipments",
-            }
-        ]
-
-        # And the reverse: the list tool already has the higher similarity, so it keeps
-        # its OWN row untouched (no `collapsed_from`) rather than the shipments row.
-        result_reversed = _collapse_incoming_shipments(
-            [
-                {"name": "crm_incoming_stock_shipments", "similarity": 0.30},
-                {"name": "crm_incoming_stock_list", "similarity": 0.9},
-            ]
-        )
-        assert result_reversed == [{"name": "crm_incoming_stock_list", "similarity": 0.9}]
 
     def test_tool_filter_picks_max_similarity_tiebreak_name(self):
         """AC-604: max `similarity` wins; an exact tie breaks on `name` ASC (deterministic)."""
@@ -1082,42 +1008,35 @@ class TestToolDistribution:
 class TestCapacity:
     def test_no_session_across_mcp_call(self, counting_session_factory):
         """The plan's capacity rule, restated for S6b: 'never hold a DB session across LLM
-        or MCP I/O'. `select_tool` (the embedding read) and `call_tool` (the MCP round trip)
-        must both run with zero sessions open on the factory the caller handed in.
+        or MCP I/O'. `call_tool` (the MCP round trip) must run with zero sessions open on
+        the factory the caller handed in.
+
+        `select_tool` used to be the other half of this test, because it embedded the
+        customer's message through a provider. It reads `DOMAIN_SPEC` now: there is no I/O
+        to hold a session across, which is a stronger guarantee than the one this asserted.
         """
         fetch = _import_fetch()
         FetchServices = _import_fetch_services()
 
-        observed_during_embed: list[int] = []
         observed_during_mcp: list[int] = []
-
-        def fake_embed(query: str) -> list[float]:
-            observed_during_embed.append(counting_session_factory.state["open"])
-            return [0.1]
-
-        def fake_tool_search(embedding, *, query, domain):
-            return [{"name": "crm_master_products_list", "similarity": 0.5}]
 
         def fake_mcp_call(name, args):
             observed_during_mcp.append(counting_session_factory.state["open"])
             return "{}"
 
-        services = FetchServices(
-            embed=fake_embed, tool_search=fake_tool_search, mcp_call=fake_mcp_call
-        )
+        services = FetchServices(mcp_call=fake_mcp_call)
+        assert services.mcp_call is fake_mcp_call
 
         # The session is opened, used to build `services` (a real production binding takes
-        # `db`), and MUST be closed before the embed/MCP calls below run.
+        # `db`), and MUST be closed before the MCP call below runs.
         db = counting_session_factory()
         db.close()
 
-        fetch.select_tool(db=None, query="x", domain=None, services=services)
+        assert fetch.select_tool("master_products") == [
+            {"name": "crm_master_products_list", "similarity": 1.0}
+        ]
         fetch.call_tool("crm_master_products_list", {}, mcp=type("M", (), {"call_tool": staticmethod(fake_mcp_call)})())
 
-        assert observed_during_embed == [0], (
-            "a DB session was open during the embedding call - fetch.py must not hold one "
-            "across provider I/O"
-        )
         assert observed_during_mcp == [0], (
             "a DB session was open during the MCP call - fetch.py must not hold one across "
             "MCP I/O"
@@ -1152,23 +1071,19 @@ class TestDryRun:
 
         mcp_reads: list[str] = []
 
-        def fake_embed(query: str) -> list[float]:
-            return [0.1]
-
-        def fake_tool_search(embedding, *, query, domain):
-            return [{"name": "crm_master_products_list", "similarity": 0.5}]
-
         def fake_mcp_call(name, args):
             mcp_reads.append(name)
             return '{"answers": []}'
 
-        services = FetchServices(
-            embed=fake_embed, tool_search=fake_tool_search, mcp_call=fake_mcp_call
-        )
+        services = FetchServices(mcp_call=fake_mcp_call)
 
         continue_payload = {
             "_exit_kind": "continue",
             "gate": {"compatible_entities": [{"uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310", "entity_type": "product", "code": "SRTWB7096"}]},
+            # The domain is what names the tool now, so a payload that reaches the read
+            # has to carry one - this is the parser emission a "spec for SRTWB7096" turn
+            # arrives with.
+            "ctx": {"parse": {"output": {"domain_hint": "master_products"}}},
         }
 
         from app.services.chatbot.lanes import business
@@ -1195,13 +1110,16 @@ class TestEngineDispatch:
     @staticmethod
     def _services(mcp_result: str = '{"answers": []}'):
         FetchServices = _import_fetch_services()
-        return FetchServices(
-            embed=lambda query: [0.1],
-            tool_search=lambda embedding, *, query, domain: [
-                {"name": "crm_master_products_list", "similarity": 0.9}
-            ],
-            mcp_call=lambda name, args: mcp_result,
-        )
+        return FetchServices(mcp_call=lambda name, args: mcp_result)
+
+    @staticmethod
+    def _master_products_ctx() -> dict:
+        """The parser emission whose domain names `crm_master_products_list`.
+
+        Every payload below that reaches the read carries it: `select_tool` picks off
+        `domain_hint`, so a payload without one ends `not_found` before any tool is called.
+        """
+        return {"parse": {"output": {"domain_hint": "master_products"}}}
 
     def test_fetch_arm_tier_ask_does_not_delegate_business_query(self):
         """`_fetch_arm == 'tier-ask'`: the turn needs the customer to pick an access tier
@@ -1238,9 +1156,9 @@ class TestEngineDispatch:
         payload = {
             "_exit_kind": "continue",
             "gate": {"compatible_entities": [{"uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310", "entity_type": "product", "code": "SRTWB7096"}]},
+            "ctx": self._master_products_ctx(),
         }
-        services = self._services()
-        services = type(services)(embed=services.embed, tool_search=services.tool_search, mcp_call=erroring_mcp_call)
+        services = type(self._services())(mcp_call=erroring_mcp_call)
 
         fragment = business.run_fetch(payload, services=services, dry_run=False)
 
@@ -1258,6 +1176,7 @@ class TestEngineDispatch:
         payload = {
             "_exit_kind": "continue",
             "gate": {"compatible_entities": [{"uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310", "entity_type": "product", "code": "SRTWB7096"}]},
+            "ctx": self._master_products_ctx(),
         }
         fragment = business.run_fetch(
             payload,
@@ -1294,13 +1213,7 @@ class TestEngineDispatch:
             calls.append((name, dict(args)))
             return '{"answers": [{"title": "unrelated file"}], "has_result": true}'
 
-        services = FetchServices(
-            embed=lambda query: [0.1],
-            tool_search=lambda embedding, *, query, domain: [
-                {"name": "crm_resource_attachments_list", "similarity": 0.9}
-            ],
-            mcp_call=recording_mcp_call,
-        )
+        services = FetchServices(mcp_call=recording_mcp_call)
 
         payload = {
             "_exit_kind": "continue",

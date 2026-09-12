@@ -8,7 +8,7 @@ import type { ContainerRequestSummary } from './containerRequestSummary';
  * The five figures above the grid (PLAN section 2b, AC-A2.1) - the same cards the fulfilment
  * board opens with, reading the loading plan's own vocabulary.
  *
- * They carry the colour swatches, which is why there is no separate legend (r4): pool stock
+ * They carry the colour swatches, which is why there is no separate legend (r4): on hand
  * emerald, SPO violet, the ask rose, exactly as the board paints those three kinds.
  */
 export function ContainerRequestStatCards({
@@ -33,9 +33,9 @@ export function ContainerRequestStatCards({
         sub={horizonDate ? `until ${horizonDate}` : undefined}
       />
       <StatCard
-        testId="stat-pool"
-        label="BRW On Hand"
-        value={fmtInt(summary.fromPool)}
+        testId="stat-on-hand"
+        label="On hand"
+        value={fmtInt(summary.fromOnHand)}
         swatch="bg-emerald-500"
         tone="text-emerald-700"
       />

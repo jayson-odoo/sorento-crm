@@ -43,6 +43,13 @@ class ToolSpec:
     domain: str = ""  # Logical domain ("products", "orders", "procurement", ...).
     related_tools: tuple[str, ...] = ()  # Cross-references (surviving tools only).
     escalation_team: str = ""  # "sales" | "support" | "warehouse" | "procurement" | "".
+    # Field-reveal keys this tool's presenter marks `restricted=<key>` in
+    # `field_vocabulary`, one (key, label) pair per gated field - e.g.
+    # `(("inventory.sellable", "Outstanding SO on stock answers"),)`. Static, not read off a live
+    # response: `mcp_tool_registry_service.sync_catalog` copies this straight into
+    # `mcp_tools.restricted_fields` without ever calling the tool. Empty for a tool
+    # with nothing restricted (the common case).
+    restricted_fields: tuple[tuple[str, str], ...] = ()
 
 
 # Paths match [sorento_crm_backend/app/api/v1/__init__.py](sorento_crm_backend/app/api/v1/__init__.py) prefixes.
@@ -73,6 +80,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "spec sentence) and `sources` (per key: derived | human | category, i.e. where the "
             "value came from). Null on a product with no derived specs, which means 'not recorded', never "
             "'does not have it'. Default false; omit it for a plain price/dimension listing.\n\n"
+            "SPEC LIST (A1, chatbot-growth-r1): pass `include_specs=true` to add "
+            "`specs: [{key, label, value, unit, rank_weight}]` - only populated keys, ordered by "
+            "rank_weight desc then label. Default false; omit it for a plain price/dimension listing. "
+            "Distinct from `include_specifications` above (this is the ranked-list shape the render "
+            "presenter appends as fields; that one is the sentence/values block for a catalogue "
+            "editor).\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -87,7 +100,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             # Declared, not passed through: the compiled tool builds its signature
             # from THIS tuple, so a param missing here never reaches the backend
             # however well the description documents it.
-            "include_specifications",
+            "include_specifications", "include_specs",
             "sort", "dir",
             "contact_id", "space_id",
         ),
@@ -458,16 +471,30 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'50' after being asked how many), pass that number as `requested_qty`. Some contacts are "
             "answered yes/no against it instead of with quantities, and without it the reply can only "
             "ask how many units they need.\n\n"
+            "OUTSTANDING SO: pass `include_sellable=true` to add `Outstanding` (that warehouse row's "
+            "own open sales-order quantity, not yet a delivery order) to every stock row, and an "
+            "`(O/S: n)` suffix on the compact block's Total and warehouse lines. Default false. "
+            "Field-reveal gated downstream (`inventory.sellable`), not by this tool.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results. "
             "Pass BOTH or NEITHER: `contact_id` without `space_id` returns no rows."
         ),
         "/api/v1/inventory/stock/balance",
         (),
-        ("page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator", "quantity_value", "status", "requested_qty", "contact_id", "space_id"),
+        (
+            "page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator",
+            "quantity_value", "status", "requested_qty", "include_sellable", "contact_id", "space_id",
+        ),
         domain="inventory",
         related_tools=("crm_inventory_warehouses_list",),
         escalation_team="warehouse",
+        # A2 (chatbot-growth-r1): `open_so_qty` / `sellable` are `restricted="inventory.
+        # sellable"` in the presenter (`sorento_crm_mcp/presenters.py::_stock`); this is
+        # the STATIC declaration `mcp_tool_registry_service.sync_catalog` reads into
+        # `mcp_tools.restricted_fields`, which is what the Contacts > Access > Field
+        # reveals checklist (Slice C) lists and grants against. Without it the checklist
+        # has nothing to show and PUT refuses every key as unknown.
+        restricted_fields=(("inventory.sellable", "Outstanding SO on stock answers"),),
     ),
     ToolSpec(
         "crm_inventory_warehouses_list",
@@ -499,15 +526,27 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `product_ids` - orders containing any of these products\n"
             "  • `transporter_ids` - transporters (Order.transporter_id, text fallback for legacy rows)\n"
             "Date window: actual_delivery_date_from / actual_delivery_date_to.\n"
-            "DELIVERY BUCKET: `order_status` = 'outstanding' | 'delivered' (omit for all). "
+            "DELIVERY BUCKET: `order_status` = 'outstanding' | 'delivered' | 'so_outstanding' (omit for "
+            "all, over `orders`). 'so_outstanding' is a DIFFERENT bucket over `sales_order_lines` "
+            "(qty_ordered - qty_delivered > 0, still open, no DO created yet AT ALL) - rows carry "
+            "so_number/product_code/outstanding_qty/order_date/customer/requested_delivery_date instead "
+            "of the usual order fields. Use for 'SO outstanding', 'ordered but no DO', 'belum DO', "
+            "'还没出DO'.\n"
             "QUANTITY ASK: pass `include_summary=true` when the user asks HOW MANY / how much a customer "
             "took of a product — the response then carries `summary` (filter-wide delivered/pending "
-            "quantity per product, counts, customers, delivered date span, and the span of DO dates over "
-            "every DO in the row, delivered or not). Omit for a plain DO list. "
-            "'outstanding' = NOT yet delivered (New Order, Processing, In Transit, Cancelled, or a "
+            "quantity per product, counts, customers, delivered date span, the span of DO dates over "
+            "every DO in the row delivered or not). Add `include_pipeline=true` alongside it for the "
+            "three-line SO outstanding / DO open / delivered pipeline (so_outstanding_qty/"
+            "so_outstanding_count over open SO lines for the same customer_ids/product_ids scope, folded "
+            "into `summary`); default false, independent of `include_summary`. Omit both for a plain DO "
+            "list. 'outstanding' = NOT yet delivered (New Order, Processing, In Transit, Cancelled, or a "
             "delivery date under a non-delivered status); 'delivered' = status delivered/completed AND "
             "actual_delivery_date set. Use for 'outstanding/pending/undelivered orders', 'belum hantar', "
             "'not delivered yet'. AND'd with the other filters.\n\n"
+            "GROUPING: `group_by` = customer | transporter | date | product renders headed sections "
+            "instead of (alongside) the flat list - use for 'DO by transporter this week', 'open DO by "
+            "customer'. Applies to every bucket. `sort`/`dir`/`limit` narrow and order the rows before "
+            "grouping.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -515,7 +554,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
-            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary", "sort", "dir",
+            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
+            "include_pipeline", "group_by", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="orders",
@@ -533,6 +573,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "OPTIONAL UUID FILTERS: `customer_ids`, `transporter_ids` (canonical UUIDs). "
             "Date window: actual_delivery_date_from / actual_delivery_date_to (YYYY-MM-DD). "
             "For 'any incoming for product X' use crm_incoming_stock_by_product instead.\n\n"
+            "QUANTITY ASK: pass `include_summary=true` when the user asks HOW MANY / how much a customer "
+            "took of a product - the response then carries `summary` (per product and per customer x "
+            "product delivered/pending quantity, counts, date spans). Add `include_pipeline=true` "
+            "alongside it to fold `so_outstanding_qty` (open SO lines not yet a DO, same "
+            "customer_ids/product_ids scope) into EVERY `summary.products` and `summary.groups` row; "
+            "default false, independent of `include_summary`. Omit both for a plain DO list.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -540,8 +586,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "product_ids", "customer_ids", "transporter_ids",
-            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary", "sort", "dir",
-            "contact_id", "space_id",
+            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
+            "include_pipeline", "sort", "dir", "contact_id", "space_id",
         ),
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product"),
@@ -963,6 +1009,93 @@ CATALOG: tuple[ToolSpec, ...] = (
         module="procurement",
         external=True,
         domain="procurement",
+    ),
+    # --- procurement: purchase orders placed (A5, chatbot-growth-r1) ---
+    ToolSpec(
+        "crm_procurement_po_placed_list",
+        (
+            "List PURCHASE ORDER lines PLACED but not yet fully received (qty_ordered - "
+            "qty_received > 0, line open) - 'PO for X', 'PO placed, not yet shipped', 'what did "
+            "we order from the supplier'. Each row carries po_number, product_code, "
+            "ordered_qty, outstanding_qty, po_date, location, and supplier "
+            "(RESTRICTED - a dealer never sees it, only a contact holding "
+            "purchase_orders.supplier).\n\n"
+            "NEVER NETTED against incoming: `spo_allocations.po_line_id` is NULL on every row, "
+            "so this tool NEVER subtracts what has already arrived - for that use "
+            "crm_procurement_spo_allocations_last_receipt_list, and for Foundre's rule ('no stock, no "
+            "incoming, but a PO is placed') the CRM probes this tool itself.\n\n"
+            "FILTER BY UUID: `product_ids` (canonical product UUIDs, csv / JSON / repeated). "
+            "Date window: expected_date_from / expected_date_to (filters only; the expected "
+            "date is not rendered in the reply).\n\n"
+            "GROUPING: `group_by` = product | supplier | date renders headed sections. "
+            "`include_summary=true` adds `summary` (po_placed_qty/po_placed_count over the "
+            "filtered lines).\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/procurement/purchase-orders/placed",
+        (),
+        (
+            "limit", "product_ids", "expected_date_from", "expected_date_to",
+            "group_by", "include_summary", "sort", "dir",
+            "contact_id", "space_id",
+        ),
+        domain="purchase_order",
+        related_tools=("crm_procurement_spo_allocations_last_receipt_list",),
+        escalation_team="procurement",
+        # A5 (chatbot-growth-r1): `supplier` is `restricted="purchase_orders.supplier"` in
+        # the presenter; this is the static declaration the catalog sync reads into
+        # `mcp_tools.restricted_fields` for the Field reveals checklist (Slice C). See the
+        # matching note on `crm_inventory_stock_balance_list` above.
+        restricted_fields=(
+            ("purchase_orders.supplier", "PO supplier"),
+            # 8 Sep 2026: on-order information is per contact. Enforced by the CRM's
+            # chatbot lane (`lanes/business/answer._apply_crossdomain_rung` skips the PO
+            # rung of a stock answer without it), NOT by a presenter `restrict` - the
+            # direct PO ask keeps its own (supplier-only) gating. Declared here so the
+            # Contacts > Access > Field reveals card lists it.
+            ("purchase_orders.placed", "PO placed (on order) on stock answers"),
+        ),
+    ),
+    # --- procurement: the last SPO line per product (A6, chatbot-growth-r1; reworded
+    # 8 Sep 2026, chatbot-warehouse-entity-and-last-in - it is no longer a receipt read) ---
+    ToolSpec(
+        "crm_procurement_spo_allocations_last_receipt_list",
+        (
+            "The last SPO line PER PRODUCT, by the SPO's expected date - 'last in for X', "
+            "'last incoming qty', '上次进货', 'last 3 in'. GR never decides WHICH line "
+            "answers: the ordering is purely the SPO's own delivery date, and a product "
+            "whose latest line is still open (nothing received) still answers. GR is "
+            "REPORTED on the line that answered, when there is any.\n\n"
+            "Each row reads in this order: spo_number; container_number (present ONLY "
+            "when the line was ingested from a shipping order that named its container - "
+            "an older line has no such field); product_code; spo_quantity (the "
+            "ordered quantity); gr_quantity (the received quantity, present ONLY when "
+            "something has actually been received - an open line has no such field); "
+            "spo_date (the SPO date that answered) with spo_date_source naming which "
+            "column it came from ('expected' = expected_date, 'issued' = issue_date when "
+            "expected_date is empty, 'recorded' = neither is set, so created_at answered "
+            "and the field is labelled 'SPO Date (recorded)' so it is not read as a "
+            "promised delivery); gr_date (the goods-received date, present ONLY when an "
+            "APPROVED GRN header points at the line - it comes from picking_lines -> "
+            "picking_headers.picking_date with picking_status 'approved'; a line received "
+            "through the ESB-stated path has a gr_quantity and no gr_date, which is "
+            "normal); and warehouse.\n\n"
+            "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
+            "repeated), both optional; `warehouse_ids` narrows BEFORE the pick. `top_n` "
+            "(default 1) = lines per product when `product_ids` is given, else lines "
+            "overall - 'last 3 in' for a resolved product FAMILY returns up to `top_n` "
+            "lines for EACH member, not `top_n` rows overall; 'last 3 in' with NO product "
+            "named returns the 3 newest lines across every product, NOT 3 per product.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/procurement/spo-allocations/last-receipt",
+        (),
+        ("product_ids", "warehouse_ids", "top_n", "contact_id", "space_id"),
+        domain="spo_allocation",
+        related_tools=("crm_procurement_po_placed_list", "crm_incoming_stock_by_product"),
+        escalation_team="procurement",
     ),
     # --- project sales (read-only; AC-K1 / AC-K2) ---
     ToolSpec(

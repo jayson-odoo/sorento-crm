@@ -103,6 +103,19 @@ describe('levelTerms', () => {
       { label: 'Safety', value: '140 (14 d)' },
     ]);
   });
+
+  // S7 (reorder-feedback-9sep.md, G1 ruling, 9 Sep 2026): retail-only ADU.
+  it('AC-S7.2: appends "(retail)" when the basis says the ADU counted retail deliveries only', () => {
+    expect(levelTerms(entry({ basis: { ...entry().basis, retail_only: true } }))).toEqual([
+      { label: 'ADU', value: '10 / day (retail)' },
+      { label: 'Lead time', value: '30 d' },
+      { label: 'Safety', value: '140 (14 d)' },
+    ]);
+  });
+
+  it('says nothing extra when the basis carries no retail_only flag (cached response)', () => {
+    expect(levelTerms(entry())[0].value).toBe('10 / day');
+  });
 });
 
 describe('levelKey', () => {

@@ -41,7 +41,6 @@ from app.services.scm import (
     consolidated_packing_list,
     supplier_code_alias_service,
     loading_plan_service,
-    packing_list_service,
     shipment_line_photos,
     spo_conversion_service,
     supplier_document_service,
@@ -811,98 +810,31 @@ class SpoCreateRequest(BaseModel):
     )
 
 
-@router.post("/packing-lists/preview")
-async def preview_packing_list(
-    file: UploadFile = File(..., description="The pre-load list or packing list"),
-    supplier_id: Optional[str] = Form(None),
-    currency: Optional[str] = Form(
-        None, description="Only needed when neither the file nor the price list says"
-    ),
-    _user: dict = Depends(_WRITE),
-    db: Session = Depends(get_db),
-):
-    """Every container block the file holds, and what each would create. Writes nothing.
-
-    Takes the supplier and the currency the apply will take, so the preview can say which
-    money the prices are in before anything is written rather than after.
-    """
-    return packing_list_service.preview(
-        db,
-        await read_upload(file),
-        source_ref=file.filename,
-        supplier_id=supplier_id,
-        currency=currency,
-    )
-
-
-@router.post("/packing-lists/apply")
-async def apply_packing_list(
-    file: UploadFile = File(..., description="The same file the preview was taken from"),
-    supplier_id: Optional[str] = Form(
-        None, description="Whose packing list this is. Required unless validate_only."
-    ),
-    shipment_date: Optional[str] = Form(None),
-    currency: Optional[str] = Form(
-        None, description="Only needed when neither the file nor the price list says"
-    ),
-    validate_only: bool = Query(
-        False,
-        description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
-    ),
-    current_user: dict = Depends(_WRITE),
-    db: Session = Depends(get_db),
-):
-    """One inbound shipment per container block. Re-uploading the same file updates in place.
-
-    The supplier is required on the writing path and refused before the file is even read.
-    A packing list arrives from one factory, and an upload that will not say which one
-    cannot be told apart from the container's whole contents - so it would replace the
-    other factories' lines, which is the data loss the per-supplier line exists to end.
-    `validate_only` writes nothing and may therefore omit it.
-    """
-    supplier = (supplier_id or "").strip()
-    if not validate_only and not supplier:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "supplier_id is required: a packing list is uploaded as one supplier so it "
-                "can never replace another supplier's lines"
-            ),
-        )
-    data = await read_upload(file)
-    if validate_only:
-        return packing_list_service.validate(
-            db, data, source_ref=file.filename, supplier_id=supplier_id, currency=currency
-        )
-
-    parsed_date = None
-    if shipment_date:
+def _block_attach(raw: Optional[str]) -> dict[tuple[str, int], str]:
+    """`[{"file": name, "block_index": 0, "invoice_id": "..."}]` as the service wants it
+    (AC-B13): which invoice the operator picked for ONE packing-list block. A JSON form
+    field rather than a repeated one because it is a list of triples, and the dialog posts
+    the whole list every time it changes one of them."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise AppException(422, "attach_to_blocks must be a JSON array", detail="attach_to_blocks") from exc
+    if not isinstance(parsed, list):
+        raise AppException(422, "attach_to_blocks must be a JSON array", detail="attach_to_blocks")
+    out: dict[tuple[str, int], str] = {}
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("file")
+        invoice_id = entry.get("invoice_id")
         try:
-            parsed_date = date.fromisoformat(shipment_date)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="shipment_date must be YYYY-MM-DD",
-            )
-
-    # `file_in_drive=True` here means a real network PUT to storage (`_file_the_upload`
-    # in the service) - must not run directly on the event loop, same reasoning and same
-    # fix as the generic attachment upload route (`attachments.py`, the WORKER TIMEOUT /
-    # cascading-504 incident): one slow upload would otherwise freeze every other request
-    # this worker is holding.
-    out = await run_in_threadpool(
-        packing_list_service.apply,
-        db,
-        data,
-        supplier_id=supplier,
-        shipment_date=parsed_date,
-        currency=currency,
-        source_ref=file.filename,
-        content_type=file.content_type,
-        file_in_drive=True,
-        actor_id=current_user.get("id"),
-    )
-    db.commit()
+            index = int(entry.get("block_index"))
+        except (TypeError, ValueError):
+            continue
+        if name and invoice_id:
+            out[(str(name), index)] = str(invoice_id)
     return out
 
 
@@ -912,6 +844,16 @@ async def preview_supplier_documents(
     supplier_id: Optional[str] = Form(None),
     currency: Optional[str] = Form(
         None, description="Only needed when neither the file nor the price list says"
+    ),
+    attach_to: Optional[str] = Form(
+        None, description="One proforma invoice for the whole upload (AC-B10)"
+    ),
+    attach_to_blocks: Optional[str] = Form(
+        None,
+        description=(
+            "JSON array of {file, block_index, invoice_id} - the Attaches-to pick on one "
+            "packing-list block (AC-B13)"
+        ),
     ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
@@ -928,7 +870,13 @@ async def preview_supplier_documents(
     """
     read = [(f.filename, await read_upload(f)) for f in files]
     out = await run_in_threadpool(
-        supplier_document_service.preview, db, read, supplier_id=supplier_id, currency=currency,
+        supplier_document_service.preview,
+        db,
+        read,
+        supplier_id=supplier_id,
+        currency=currency,
+        attach_to=attach_to,
+        block_attach=_block_attach(attach_to_blocks),
     )
     db.commit()
     return out
@@ -948,11 +896,22 @@ async def apply_supplier_documents(
             "translation cells (R16)"
         ),
     ),
+    attach_to: Optional[str] = Form(
+        None, description="One proforma invoice for the whole upload (AC-B10)"
+    ),
+    attach_to_blocks: Optional[str] = Form(
+        None,
+        description=(
+            "JSON array of {file, block_index, invoice_id} - the Attaches-to pick on one "
+            "packing-list block (AC-B13)"
+        ),
+    ),
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Proforma invoices first, then packing lists, then price links (R12-R14). Each file
-    is filed in Drive under its own type (Proforma Invoice / Packing List)."""
+    """Proforma invoices first, then packing lists (S2). Each file is filed in Drive under
+    its own type (Proforma Invoice / Packing List) and linked to the invoice it belongs to;
+    a packing list's rows land on that invoice, and no shipment is created here (AC-C1)."""
     read = [(f.filename, await read_upload(f), f.content_type) for f in files]
     parsed_translations = None
     if translations:
@@ -971,6 +930,8 @@ async def apply_supplier_documents(
         actor_id=current_user.get("id"),
         actor_name=_actor(current_user),
         translations=parsed_translations,
+        attach_to=attach_to,
+        block_attach=_block_attach(attach_to_blocks),
     )
     db.commit()
     return out
@@ -1083,16 +1044,6 @@ def list_inbound_shipments(
         ],
         "total": len(rows),
     }
-
-
-@router.get("/inbound-shipments/{shipment_id}/allocation-suggestion")
-def allocation_suggestion(
-    shipment_id: str,
-    _user: dict = Depends(_READ),
-    db: Session = Depends(get_db),
-):
-    """Per shipment line, the proposed Supply PO line and location, with its alternatives."""
-    return allocation_suggestion_service.suggest(db, shipment_id)
 
 
 @router.get("/inbound-shipments/{shipment_id}/packing-list")

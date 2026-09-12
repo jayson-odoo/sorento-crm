@@ -144,6 +144,17 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     "crm_marketing_promotions_list": {"serving_policy": "true"},
     "crm_marketing_promotion_products_list": {"serving_policy": "true"},
     "crm_marketing_promotion_attachments_list": {"serving_policy": "true"},
+    # A1/A2 (chatbot-growth-r1) used to default `include_specs` / `include_sellable`
+    # ON here for every caller through this ONE shared MCP server - which is n8n's
+    # production business logic AND the CRM's own chatbot lane, not the CRM alone.
+    # REMOVED (fix, 7 Sep 2026): a server-level default cannot tell the two apart, so
+    # n8n started getting `open_so_qty`/`sellable` on every stock row and a spec wall
+    # on every product row the day this shipped, with only the CRM's OWN renderer
+    # honouring `restricted_fields` - n8n's prints fields as given. The CRM lane now
+    # sends these two explicitly, per turn, from `lanes/business/fetch.py`'s
+    # `entity_ids_transformer` (sellable gated on the contact's own
+    # `inventory.sellable` grant, specs on a product-check intent/domain); n8n never
+    # sends them, so its calls are unchanged from before this plan.
 }
 
 # Tools whose responses are blocked / row-filtered to ACTIVE promotions only.

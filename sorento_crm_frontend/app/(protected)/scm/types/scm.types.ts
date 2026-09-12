@@ -438,6 +438,13 @@ export interface SalesOrder {
   source?: SalesOrderSource;
   /** The project the Order Inquiry sheet named when no customer of that name existed. */
   internal_note?: string | null;
+  /** The human-readable project name, resolved from whichever source ranked highest -
+   *  the Order Inquiry sheet, the AutoCount note, its `Ref`, or a delivery address. Never
+   *  a UUID. `null` when nothing has ever named a project for this order. */
+  project_label?: string | null;
+  /** Which of the four rules wrote `project_label` - decides the muted word shown next to
+   *  it (`Inquiry sheet` / `Note` / `AutoCount ref` / `Delivery address`). */
+  project_label_source?: 'inquiry' | 'note' | 'ref' | 'delivery' | null;
   /** Every distinct location its lines ship from. Plural: one order can land in two. */
   stock_locations?: string[];
   /** The planning class this order was classified into, or `null` when nobody has ever
@@ -593,6 +600,21 @@ export interface PurchaseOrderLine {
   line_total?: string | null;
   /** The currency the figures above are IN. Blank predates the book having more than one. */
   currency?: string | null;
+  /**
+   * The AutoCount book's own sales-order linkage for this LINE, read off the line's own
+   * `from_so_line_ref` - ONE sales order, never a list, because the book records a
+   * purchase line as raised for a single sales-order line. Distinct from
+   * `PurchaseOrderLineAllocation.dedicated_to` below, which is who RESERVED the line
+   * through our own order-inquiry flow. A line can carry one, the other, both or neither.
+   *
+   * `null` both when the book named no sales order at all and when it named one this CRM
+   * does not hold; `book_so_unresolved` is what tells those two apart
+   * (`PLAN-scm-book-linkage-on-document-lines.md`).
+   */
+  book_so_number?: string | null;
+  /** True when the book named a sales order this CRM does not hold. Three display states,
+   *  not two - see `BookSoCell`. */
+  book_so_unresolved?: boolean | null;
 }
 
 /**

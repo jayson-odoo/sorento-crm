@@ -720,6 +720,49 @@ def test_drill_matches_the_frozen_row_under_a_horizon(scm_app):
     )
 
 
+def test_drill_excludes_a_line_before_the_runs_start_and_project_total_ties(scm_app):
+    """S4 (PLAN-reorder-feedback-9sep.md) - `plan_horizon_start` threaded into the drill.
+
+    A retail SO line dated before the run's own start must be as invisible here as a
+    horizoned-OUT line already is (the test above): the drill has to speak the same window
+    `inputs.committed` was frozen against on BOTH sides, not only the end.
+    """
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-STR1")
+    pid = _mk_product(db, f"ZZTP-STR1-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _so(db, pid, wid, 15, order_type="retail", number="ZZTSO-STR-BEFORE",
+        required_date=date(2025, 1, 1))
+    _so(db, pid, wid, 40, order_type="retail", number="ZZTSO-STR-INSIDE",
+        required_date=date(2026, 6, 1))
+    _link(db, pid, _mk_supplier(db, "ZZT Str1 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-STR1"], enqueue=False,
+                             plan_horizon_start=date(2026, 1, 1))
+    svc.run_reorder(created["run_id"], db=db)
+    # No `wid` pin (unlike the horizon-end sibling above): the global default policy on
+    # this database resolves a single-warehouse product to the PRODUCT-grain basis
+    # (`plan_basis.scope == 'product'`, `warehouse_id IS NULL` on the row itself) rather
+    # than a per-location one - a fact of the shared reorder policy, not of this test.
+    rec = _rec_row(db, created["run_id"], pid)
+    assert float((rec["inputs"] or {}).get("committed")) == 40.0, (
+        "the run's own frozen committed figure must already exclude the 2025 line"
+    )
+
+    out = dbs.demand_for_recommendation(db, str(rec["id"]))
+
+    assert out["committed_total"] == 40.0, "must match the run's own start-windowed figure"
+    assert [l["so_number"] for l in out["lines"]] == ["ZZTSO-STR-INSIDE"], (
+        "the pre-start line must not appear in the drill either"
+    )
+    assert out["project_total"] == float((rec["inputs"] or {}).get("project_committed") or 0), (
+        "the project/retail split must still tie to the run's own frozen figure "
+        "under a start-windowed run"
+    )
+
+
 def test_drill_keeps_a_horizoned_pool_row_from_reading_as_a_sibling_pool(scm_app):
     """S1's own example: a pooled row, sized by the run under a horizon. Without the
     fix, a beyond-horizon line at the row's OWN location inflates `total_for([wid])`
@@ -1213,3 +1256,134 @@ def test_a_confirmed_leg_line_always_has_an_inquiry_row(scm_app):
     confirmed = [l for l in out["lines"] if l["source"] == "order_inquiry_confirmed"]
     assert len(confirmed) == 1
     assert confirmed[0]["has_inquiry_row"] is True
+
+
+# =============================================================================
+# S3 (reorder-feedback-9sep) - the FORM leg's own project demand (AC-S3.2/S3.3)
+# =============================================================================
+#
+# The module docstring above still says the third leg is "Not yet shown here... 0 such
+# rows exist on the dev copy today". `demand.py`'s `horizon_committed_select_sql` has
+# counted it in `project_committed` since P3 - this is the popover catching up so the
+# lightbox total agrees with the row it hangs on, the same parity S3's other half
+# (`PlanRowDialogs.tsx`'s `scope=product`) restores on the FE side.
+
+def _form_leg_row(db, *, item_code, stock_location, qty, delivery_date, so_line_id=None,
+                  bundled_qty=0):
+    """A bare CS Order Inquiry Form row with NO supply decision - `demand.py`'s FORM leg,
+    read straight off the row's own item code and stock location rather than through any
+    sales order. Raw SQL, like `test_committed_v_migration_chain`'s own form-leg fixture,
+    so `company_id` is explicit and matches the DB-defaulted `SORENTO_COMPANY_ID` every
+    `_mk_product`/`_mk_warehouse` row in this file already carries (migration 306).
+    """
+    from tests.scm.conftest import SORENTO_COMPANY_ID
+
+    pso_id = str(uuid.uuid4())
+    inquiry_id = str(uuid.uuid4())
+    row_id = str(uuid.uuid4())
+    db.execute(text(
+        "INSERT INTO projects.sales_orders (id, company_id, provisional_ref, status, "
+        "created_at, updated_at) VALUES (:i, :c, :ref, 'draft', now(), now())"
+    ), {"i": pso_id, "c": SORENTO_COMPANY_ID, "ref": f"ZZTPSO-{pso_id[:8]}"})
+    db.execute(text(
+        "INSERT INTO projects.order_inquiries (id, company_id, inquiry_no, "
+        "project_sales_order_id, state, raised_at) "
+        "VALUES (:i, :c, :n, :p, 'raised', now())"
+    ), {"i": inquiry_id, "c": SORENTO_COMPANY_ID, "n": f"OI-ZZT{inquiry_id[:6]}", "p": pso_id})
+    db.execute(text(
+        "INSERT INTO projects.order_inquiry_rows (id, company_id, order_inquiry_id, "
+        "so_line_id, item_code, qty, verb, stock_location, state, ack_state, "
+        "delivery_date, redirected_to_pool, bundled_qty, created_at) "
+        "VALUES (:i, :c, :inq, :sl, :item, :qty, 'ORDER', :loc, 'raised', 'acknowledged', "
+        ":dd, false, :bundled, now())"
+    ), {"i": row_id, "c": SORENTO_COMPANY_ID, "inq": inquiry_id, "sl": so_line_id,
+        "item": item_code, "qty": qty, "loc": stock_location, "dd": delivery_date,
+        "bundled": bundled_qty})
+    return row_id
+
+
+def test_a_form_leg_row_is_the_rows_only_project_demand_and_the_run_agrees_with_it(
+    scm_app,
+):
+    """AC-S3.3: a product whose ONLY project demand is one form-leg row (no supply
+    decision) already lifts the run's own `project_committed` - `horizon_committed_select_
+    sql` has counted this leg since P3. The popover does not, yet: before the fix this
+    lists NOTHING and totals 0.0 while the row beside it says 25, the exact "Project 3, 0
+    open" the plan section 4 measured fact describes."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-FORM1")
+    code = f"ZZTP-FORM1-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, code)
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, "ZZT Form1 Supplier"), moq=None, mult=None)
+    _form_leg_row(db, item_code=code, stock_location="ZZTW-FORM1", qty=25,
+                  delivery_date=date(2026, 10, 1))
+    db.flush()
+
+    rec = _rec_row(db, _run(db, ["ZZTW-FORM1"]), pid)
+    assert float((rec["inputs"] or {}).get("project_committed")) == 25.0, (
+        "the run's own frozen figure already includes the form leg"
+    )
+
+    out = dbs.demand_for_recommendation(db, str(rec["id"]), channel="project")
+
+    form_lines = [l for l in out["lines"] if l["source"] == "order_inquiry_form"]
+    assert len(form_lines) == 1, "the popover must list the form-leg row, not just the SO book"
+    assert form_lines[0]["qty"] == 25.0
+    assert form_lines[0]["required_date"] == "2026-10-01", "needed == the row's delivery_date"
+    assert out["committed_total"] == 25.0 == out["project_total"], (
+        "the lightbox total must equal the row's own Project figure"
+    )
+
+
+def test_a_bundled_form_leg_row_never_reaches_reorder_planning(scm_app):
+    """B3 (Phase 3 fix round): the form leg must subtract `oir.bundled_qty` exactly as
+    main's `demand.py` form leg does (`PLAN-scm-supplied-with-companions.md` ruling 6) -
+    a bundled unit never reaches reorder planning, so the popover and the run's own
+    frozen figure must agree that a fully-bundled row counts as nothing."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-FORMBND")
+    code = f"ZZTP-FORMBND-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, code)
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, "ZZT FormBnd Supplier"), moq=None, mult=None)
+    # 25 raised, 10 already bundled onto a companion - only the 15 remainder is demand.
+    _form_leg_row(db, item_code=code, stock_location="ZZTW-FORMBND", qty=25,
+                  delivery_date=date(2026, 10, 1), bundled_qty=10)
+    db.flush()
+
+    rec = _rec_row(db, _run(db, ["ZZTW-FORMBND"]), pid)
+    assert float((rec["inputs"] or {}).get("project_committed")) == 15.0, (
+        "the run's own frozen figure must already net out the bundled 10"
+    )
+
+    out = dbs.demand_for_recommendation(db, str(rec["id"]), channel="project")
+
+    form_lines = [l for l in out["lines"] if l["source"] == "order_inquiry_form"]
+    assert len(form_lines) == 1
+    assert form_lines[0]["qty"] == 15.0, "the popover must list the un-bundled remainder"
+    assert out["committed_total"] == 15.0 == out["project_total"]
+
+
+def test_a_fully_bundled_form_leg_row_earns_no_row_at_all(scm_app):
+    """The gate side of B3: a row bundled to zero remainder must not trigger a plan row
+    either - `oir.qty > COALESCE(linked, 0) + oir.bundled_qty` is the same admission test
+    `demand.py`'s form leg applies."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-FORMFULL")
+    code = f"ZZTP-FORMFULL-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, code)
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, "ZZT FormFull Supplier"), moq=None, mult=None)
+    _form_leg_row(db, item_code=code, stock_location="ZZTW-FORMFULL", qty=25,
+                  delivery_date=date(2026, 10, 1), bundled_qty=25)
+    db.flush()
+
+    run_id = _run(db, ["ZZTW-FORMFULL"])
+    rec = db.execute(text(
+        "SELECT 1 FROM scm.reorder_recommendation WHERE run_id = :r AND product_id = :p"
+    ), {"r": run_id, "p": pid}).first()
+    assert rec is None, "a fully bundled form row earns no row at all"

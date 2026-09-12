@@ -50,10 +50,23 @@ SAFETY / IDEMPOTENCY
 - Re-running is safe: once linked, allocation availability drops to 0, so a leftover
   NULL line finds an empty pool and is left as-is. A second run reports zero changes.
 
+COMPANY SCOPE (AC-X31, spo-xlsx-supersede delta round)
+-------------------------------------------------------
+Every table this touches is company-scoped, and a plain `python scripts/...`
+process has never imported the app's startup path - so the scope filter is not
+installed at all and the session's scope is UNSET, which is FAIL-CLOSED
+(`false()`): the closing `sync_received_for_spo_number` now states its own
+company predicate and would read nothing. The script therefore registers the
+listeners itself and pins ONE company for the whole run, the same shape
+`scripts/dedupe_spo_xlsx_superseded.py` uses. `--company <code>` selects it;
+without it the incumbent company is used, which is where every pre-
+multi-company row lives (see `company_scope.resolve_write_company_id`).
+
 Run from sorento_crm_backend/ AFTER deploying the import_tasks.py matcher fix:
     python scripts/backfill_grn_spo_allocation_links.py --dry-run
     python scripts/backfill_grn_spo_allocation_links.py            # apply all approved
     python scripts/backfill_grn_spo_allocation_links.py --grn GR-2026/07-0037
+    python scripts/backfill_grn_spo_allocation_links.py --company MOCHA
 """
 from __future__ import annotations
 
@@ -67,7 +80,10 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import SessionLocal
+from app.models.base import company_scope
+from app.models.company import Company
 from app.models.procurement import PickingHeader, PickingLine, SPOAllocation
+from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
 from app.services.procurement_service import (
     PickingHeaderService,
     _spo_match_key,
@@ -146,10 +162,36 @@ def main() -> int:
                         help="Limit to this GRN picking_number (repeatable).")
     parser.add_argument("--include-unapproved", action="store_true",
                         help="Also process non-approved GRNs (default: approved only).")
+    parser.add_argument("--company", default=None,
+                        help="Company CODE to run against (default: the incumbent company).")
     args = parser.parse_args()
+
+    # AC-X31: install the scope filter, then pin one company for the whole run -
+    # see COMPANY SCOPE in the module docstring.
+    register_company_scope_listeners()
 
     db = SessionLocal()
     proc = PickingHeaderService(db)
+
+    company_id = DEFAULT_COMPANY_ID
+    if args.company:
+        company = db.query(Company).filter(Company.code == args.company).first()
+        if company is None:
+            print(f"no company with code {args.company!r}")
+            db.close()
+            return 1
+        company_id = str(company.id)
+    print(f"company scope: {args.company or 'incumbent'} ({company_id})")
+
+    try:
+        with company_scope(db, frozenset({company_id})):
+            return _run(db, proc, args)
+    finally:
+        db.close()
+
+
+def _run(db, proc: PickingHeaderService, args) -> int:
+    """The sweep itself, under the caller's pinned company scope."""
 
     headers_q = db.query(PickingHeader).filter(
         PickingHeader.picking_type == "goods_received",
@@ -271,7 +313,6 @@ def main() -> int:
         print(f"unapproved GRNs skipped (have null lines): {skipped_unapproved} "
               f"(use --include-unapproved to process)")
 
-    db.close()
     return 0
 
 

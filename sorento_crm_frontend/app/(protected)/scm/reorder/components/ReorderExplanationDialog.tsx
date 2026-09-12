@@ -108,6 +108,7 @@ const SELECTION_LABEL: Record<string, string> = {
   primary: 'primary supplier',
   best_score: 'best performance score',
   lowest_cost: 'lowest cost',
+  last_purchase: 'last purchase',
 };
 
 /** One derivation line: a label, its value, and a short plain-language "why". */

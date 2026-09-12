@@ -342,14 +342,16 @@ describe('BoardLineDecisionPanel: an approved draft carries the suggested compos
  *
  * D7 (captain, 3 Sep) supersedes the FIRST half of that: Buy now follows the remainder, so
  * dropping BRW-AM to 5 no longer leaves the line "short" - the 4 it gave up moves into a
- * derived Buy of 4 (`edit()`), which balances the line again. What still refuses Save is the
- * whole-line rule itself: neither location here states a pool allowance (`LOCATIONS` carries
- * no `where: 'site_pool'` row), so 20 from stock beside a Buy of 4 is the mix R-C exists to
- * refuse, and it is refused for that reason rather than for falling short.
+ * derived Buy of 4 (`edit()`), which balances the line again.
+ *
+ * The 8 Sep 2026 ruling supersedes what used to be the SECOND half: 20 from stock beside a
+ * derived Buy of 4 no longer refuses outright (`lineBlockers(draft, poolLimits,
+ * { mixAllowed: true })` on this panel) - it is a legal hand composition here, gated the same
+ * way any other amendment already is, by `amend_reason` (`amendNeedsReason`).
  */
 describe('BoardLineDecisionPanel: the balance hint and Save gating (C7, D7)', () => {
-  it('moves the gap into a derived Buy instead of reading short, and still refuses to save the mix', () => {
-    renderPanel();
+  it('moves the gap into a derived Buy instead of reading short, and asks for a reason rather than refusing the mix (8 Sep 2026)', () => {
+    const { onDecide } = renderPanel();
 
     fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
       target: { value: '5' },
@@ -362,11 +364,28 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7, D7)', ()
       'Buy 4',
     );
     expect(
-      screen.getByText(/either met wholly from stock or wholly bought/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Save decision' }),
-    ).toBeDisabled();
+      screen.queryByText(/either met wholly from stock or wholly bought/),
+    ).not.toBeInTheDocument();
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Customer takes 5 now, the rest on the next shipment.' },
+    });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'amended',
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '5' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '15' }),
+        ]),
+        buy_qty: '4',
+        reason: 'Customer takes 5 now, the rest on the next shipment.',
+      }),
+    );
   });
 
   it('shows "N over" once a composition exceeds it', () => {

@@ -12,11 +12,10 @@
  * member recommendation exactly as `usePlanLines.decide` / `.updateMoq` already do.
  */
 import { roundBuyQty } from './orderQtyLedger';
-import { NO_COVER, type CoverProposal } from './coverPlan';
-import { poOffset, type PoReceipt } from './poCover';
 import type { PlanLine } from './planLine';
 import { decidedCost, groupDecisionState, type PlanDecision, type PlanDecisionMap } from './planDecisions';
 import { isGroupedLine } from './planLineGrouping';
+import { suggestedLifecycle, type ProductEconomics } from './productHealth';
 import { fmtInt } from '../../lib/format';
 import type { PlanRowPriceMode } from '../types/decisions.types';
 
@@ -56,38 +55,44 @@ export function hasRowEdit(edit: PlanRowEdit | undefined): boolean {
 }
 
 /**
- * The engine's own mixture for a line: stock first (what is already free), then the open PO
- * book, then a buy for what is left, rounded to the supplier's MOQ and order multiple.
+ * The engine's own mixture for a line - ONE FORMULA (PLAN-reorder-one-formula.md, AC-5):
+ * `Stock S + PO P + Buy B` is a DISPLAY of what the engine's own net already consumed,
+ * never a second netting. Read off the line's own FROZEN fields alone (`on_hand`,
+ * `outstanding_po`, `recommended_qty`) - no `cover`/`poReceipts` pair from outside, which
+ * is what let the grid re-net a figure the engine (since #828) already nets once.
+ *
+ * `recommended_qty` is the engine's raw, unrounded gap (`need - on_hand - PO`, clipped at
+ * 0); reconstructing `need = recommended_qty + on_hand + PO` and then re-deriving
+ * `S = min(on_hand, need)` / `P = min(PO, need - S)` is algebraically a no-op when there
+ * IS a buy (S/P/B sum back to `need` by construction) and, for a `covered` row
+ * (`recommended_qty` 0 or absent), the gate below reads "Nothing" outright rather than
+ * reconstructing a `need` the clip-at-0 step already threw away - exactly the "Nothing"
+ * a covered row prints everywhere else (AC-4's sheet, the plan pill).
  *
  * Lifted out of the old decision cell so the pill, the panel and Confirm all read ONE
  * derivation - a button that says 14 and records 20 was the worse half of that bug.
+ *
+ * WARNING: the `stock` part this returns is the own-pool FACT, for DISPLAY only (it
+ * carries no `sources`, because the row's own pool is not a location it borrows from).
+ * It must never reach `decide()`: the server counts `stock_takes`, so a decision carrying
+ * a stock quantity nothing names is refused 422 as "a mixture needs more than one part".
+ * What is persisted is `{buy, po?, stock?}` where `stock` means a CROSS-LOCATION borrow
+ * with real sources - see `PlanRowPanel`, which reads this for the numbers it shows and
+ * builds what it saves separately.
  */
-export function suggestedDecisionFor(
-  line: PlanLine,
-  cover: CoverProposal = NO_COVER,
-  poReceipts: PoReceipt[] = [],
-): PlanDecision {
-  const needed = Math.ceil(line.order_qty);
-  const stockQty = cover.coverQty;
-  const afterStock = stockQty > 0 ? cover.buyQty : needed;
-  const poQty = poReceipts.reduce((t, r) => t + r.remaining, 0);
-  const { usePo, buy } = poOffset(afterStock, poQty);
-  const buyQty = roundBuyQty(buy, line.order_qty_inputs);
+export function suggestedDecisionFor(line: PlanLine): PlanDecision {
+  const rawBuy = line.rec.recommended_qty ?? line.order_qty;
+  if (!(rawBuy > 0)) return {};
+  const onHand = line.rec.on_hand ?? 0;
+  const po = line.rec.outstanding_po ?? 0;
+  const need = rawBuy + onHand + po;
+  const stockQty = Math.min(onHand, need);
+  const poQty = Math.min(po, need - stockQty);
+  const buyQty = roundBuyQty(rawBuy, line.order_qty_inputs);
   return {
     ...(buyQty > 0 ? { buy: buyQty } : {}),
-    ...(stockQty > 0
-      ? {
-          stock: {
-            qty: stockQty,
-            sources: cover.sources.map((s) => ({
-              warehouse_id: s.warehouse_id,
-              warehouse_code: s.warehouse_code,
-              qty: s.qty,
-            })),
-          },
-        }
-      : {}),
-    ...(usePo > 0 ? { po: usePo } : {}),
+    ...(stockQty > 0 ? { stock: { qty: stockQty, sources: [] } } : {}),
+    ...(poQty > 0 ? { po: poQty } : {}),
   };
 }
 
@@ -176,11 +181,15 @@ export function editedProductCount(edits: PlanRowEditMap, lines: PlanLine[]): nu
 /**
  * What Confirm would send: how many PRODUCTS and how much cash.
  *
- * Every purchasable row with a BUY counts - edited, already saved, or untouched (R3: an
- * untouched row confirms as the engine's suggestion). Three kinds are left out, because
- * Confirm would draft nothing for them: a skipped row, a row whose mixture is all stock or
- * all open PO, and a row already confirmed into a draft purchase order that nobody has
- * edited since.
+ * Every purchasable row with a BUY counts - edited or already saved, NEVER an untouched
+ * one (G5, S6, 9 Sep 2026: "Confirm never sweeps" - this reverses R3's "an untouched row
+ * confirms as the engine's suggestion"). A row nobody decided - no drafted edit, no
+ * persisted decision - is simply not counted, however the engine itself would have sized
+ * it; the `suggestedDecisionFor` fallback that used to sit here is gone rather than left
+ * unused, so a future caller cannot wire the sweep back in without reading why it left.
+ * Left out for the same reason as before: a skipped row, a row whose mixture is all stock
+ * or all open PO (Confirm would draft nothing for it), and a row already confirmed into a
+ * draft purchase order that nobody has edited since.
  *
  * `cash` is what the buys can be costed at; `unpriced` counts the ones that cannot be, and
  * they are never summed as zero - a line we cannot price still has to be bought, it simply
@@ -192,16 +201,19 @@ export interface ConfirmSummary {
   unpriced: number;
 }
 
-export function confirmSummary(
+/**
+ * Every row Confirm would actually draft a purchase-order line for (G5) - decided, not
+ * skipped, with something to buy. `confirmSummary` reduces this into counts/cash;
+ * `withConfirmLifecycle` (S8) uses the same set to know which rows get the health
+ * suggestion written on Confirm, even where the buyer never touched the radio for them.
+ * The ONE rule lives here so the two never drift apart.
+ */
+export function confirmableLines(
   edits: PlanRowEditMap,
   decisions: PlanDecisionMap,
   lines: PlanLine[],
-  coverFor?: (line: PlanLine) => CoverProposal,
-  poFor?: (line: PlanLine) => PoReceipt[],
-): ConfirmSummary {
-  const products = new Set<string>();
-  let cash = 0;
-  let unpriced = 0;
+): PlanLine[] {
+  const out: PlanLine[] = [];
   for (const line of lines) {
     if (!line.purchasable) continue;
     const edit = edits[line.id];
@@ -210,20 +222,62 @@ export function confirmSummary(
     // reconciles it to the same line, so counting it left the button live over a plan
     // with no work in it - "Confirm (2)" on two rows that both read Confirmed.
     if (!hasRowEdit(edit) && persisted?.confirmed) continue;
-    const effective =
-      edit?.decision ??
-      persisted ??
-      suggestedDecisionFor(line, coverFor?.(line) ?? NO_COVER, poFor?.(line) ?? []);
+    // G5: no engine-suggestion fallback - a row with neither a drafted edit nor a
+    // persisted decision is undecided, and Confirm does not touch it.
+    const effective = edit?.decision ?? persisted;
+    if (!effective) continue;
     if (effective.skip) continue;
     // Counted only where there is something to BUY. Confirm drafts purchase orders, and a
     // row covered entirely from stock or an open PO drafts nothing at all - so counting it
     // made the button read "Confirm (12)" and produce three lines, and left it live over a
     // plan where every remaining row was already covered.
     if ((effective.buy ?? 0) <= 0) continue;
+    out.push(line);
+  }
+  return out;
+}
+
+export function confirmSummary(
+  edits: PlanRowEditMap,
+  decisions: PlanDecisionMap,
+  lines: PlanLine[],
+): ConfirmSummary {
+  const products = new Set<string>();
+  let cash = 0;
+  let unpriced = 0;
+  for (const line of confirmableLines(edits, decisions, lines)) {
+    const effective = (edits[line.id]?.decision ?? decisionForLine(line, decisions))!;
     products.add(line.product_id ?? line.id);
     const cost = decidedCost(line, { buy: effective.buy });
     if (cost === null) unpriced += 1;
     else cash += cost;
   }
   return { products: products.size, cash, unpriced };
+}
+
+/**
+ * The draft map, with a health suggestion filled in for every row Confirm is about to
+ * draft (G4, S8, 9 Sep 2026: "the preselected suggestion persists on Confirm"). A
+ * suggestion is a suggestion right up until the moment a product is actually bought - the
+ * buyer never had to click the radio to mean it, and a row nobody is confirming gets
+ * nothing written (only `confirmableLines` qualifies). A row where the buyer DID answer
+ * (`edit.lifecycle` set to `'keep'` or `'discontinue'`) is left exactly as they left it -
+ * the radio never writes `null` (there is no "withdraw" control), so that branch of the
+ * check is a defensive `!== undefined` test, not a real, reachable withdrawal path today.
+ */
+export function withConfirmLifecycle(
+  edits: PlanRowEditMap,
+  decisions: PlanDecisionMap,
+  lines: PlanLine[],
+  economicsFor?: (line: PlanLine) => ProductEconomics | undefined,
+): PlanRowEditMap {
+  const augmented: Record<string, PlanRowEdit | undefined> = { ...edits };
+  for (const line of confirmableLines(edits, decisions, lines)) {
+    const edit = edits[line.id];
+    if (edit?.lifecycle !== undefined) continue;
+    const econ = economicsFor?.(line);
+    const lifecycle = econ?.lifecycle_decision ?? suggestedLifecycle(econ?.movement_class);
+    augmented[line.id] = { ...edit, lifecycle };
+  }
+  return augmented;
 }

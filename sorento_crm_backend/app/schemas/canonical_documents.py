@@ -34,10 +34,32 @@ from typing import Annotated, Any, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.canonical_masters import _Canonical
+from app.utils.rtf import strip_rtf
 
 #: Each entry of `from_so_numbers` (V4) - length-capped like every other
 #: document number on this surface, never a full row on its own.
 _SoNumber = Annotated[str, Field(max_length=100)]
+
+
+class _SalesOrderExternalRef(BaseModel):
+    """The cross-book case of `from_so_line_ref` (V5): the sales order lives
+    in ANOTHER AutoCount database, so its key does not resolve here. Recorded
+    raw and NEVER resolved into a Sorento id - the key belongs to a book this
+    system does not hold, and there is nothing local to point it at.
+
+    `db` is required WHEN THIS OBJECT IS PRESENT: a cross-book ref naming no
+    book cannot be told apart from any other, so the object as a whole stays
+    optional at the line's own field rather than this one being optional
+    inside it. `doc_key`/`doc_no`/`dtl_key` are whatever the ESB knows about
+    the OTHER book's document - none of them a join key here.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    db: str = Field(..., min_length=1, max_length=100)
+    doc_key: Optional[int] = None
+    doc_no: Optional[str] = Field(None, max_length=100)
+    dtl_key: Optional[int] = None
 
 
 class _CanonicalLine(BaseModel):
@@ -100,6 +122,34 @@ class CanonicalPurchaseOrderLine(_CanonicalLine):
     # a bad one. Absent or `[]` both mean "nothing to claim" (schema pin,
     # AC-V4 tests) - never a trigger of its own.
     from_so_numbers: Optional[list[_SoNumber]] = Field(None, max_length=50)
+    # V5 (AutoCount linkage widen): the EXACT sales-order line this purchase
+    # line was raised for, when it lives in the SAME database - joinable to
+    # `sales_order_lines.source_ref`, same convention as this line's own
+    # `source_ref` (`"{database}:{DocKey}:{DtlKey}"`). A resolvable ref lets
+    # the claim resolver skip the number+item-code match `from_so_numbers`
+    # relies on, which cannot tell apart two lines of the same item on one
+    # sales order. Absent when it is simply not yet known - NOT mutually
+    # exclusive with `from_so_external` below (retracted guarantee, see its
+    # own comment): the two come from different AutoCount columns and can
+    # both be sent on one line.
+    from_so_line_ref: Optional[str] = Field(None, max_length=255)
+    # V5: the cross-book case - see `_SalesOrderExternalRef`. MAY be present
+    # ALONGSIDE `from_so_line_ref` on the SAME line - AutoCount's
+    # `FromSODtlKey` (same-book, gives `from_so_line_ref`) and the ICB
+    # plugin's UDFs (gives this field) are different columns describing
+    # different books, and a line raised from a same-book sales order AND
+    # tagged by the ICB plugin legitimately carries both (the ESB withdrew
+    # an earlier guarantee that this never happens - no validator was ever
+    # written to enforce it, so there is nothing to relax here beyond this
+    # comment). The two never describe the SAME book; this one is recorded
+    # and never resolved into a Sorento id, because its key belongs to a
+    # database Sorento does not hold.
+    from_so_external: Optional[_SalesOrderExternalRef] = None
+    # V5: the SOURCE purchase-order line this one was raised from (an
+    # inter-company book transfer chain), same `source_ref` format.
+    from_po_line_ref: Optional[str] = Field(None, max_length=255)
+    # V5: the source purchase order's own document number.
+    from_po_number: Optional[str] = Field(None, max_length=100)
 
     @field_validator("from_so_numbers")
     @classmethod
@@ -180,8 +230,47 @@ class CanonicalSalesOrder(_CanonicalDocument):
     order_type: Optional[str] = Field(None, max_length=50)
     doc_date: Optional[date] = None
     requested_delivery_date: Optional[date] = None
-    internal_note: Optional[str] = None
+    # Capped so an unbounded note cannot reach `label_from_note` on every push (security
+    # review, SPL-B1) - AutoCount's own note control has never printed anything close to
+    # 8000 characters. The cap is enforced AFTER the validator below strips the RTF
+    # wrapper, not before it: a legitimately short note under RTF markup can easily run
+    # past 8000 raw characters and must not be rejected for it.
+    internal_note: Optional[str] = Field(None, max_length=8000)
+    # AutoCount `SO.Ref` - PLAN-so-project-label.md. Free text, and read for a project
+    # name (rule 3, `app.services.project_label_rules.label_from_ref`) only when the note
+    # names none. Same precedent as `CanonicalShippingOrder.container_number` below,
+    # which carries `PO.Ref` for the same reason: a field AutoCount already prints that
+    # this contract had never accepted before.
+    ref: Optional[str] = Field(None, max_length=255)
     lines: list[CanonicalSalesOrderLine] = Field(default_factory=list, max_length=2000)
+
+    @field_validator("internal_note", mode="before")
+    @classmethod
+    def _plain_text_note(cls, value: Any) -> Any:
+        """AutoCount's note control pushes raw RTF - cleaned here, once, at the edge.
+
+        Every reader (`SalesOrderDetail`, `project_fulfilment_board_service`, SCM, MCP)
+        reads the stored column, so a validator here is what keeps them all plain rather
+        than each one re-deriving it from `{\\rtf1...}`.
+
+        `mode="before"` - runs BEFORE the field's own `max_length=8000`, and truncates to
+        it here rather than letting that check reject the push: RTF markup routinely runs
+        several times longer than the plain text it wraps, so a legitimately short note is
+        rejected on its raw byte count if the cap is checked before stripping. Truncating
+        (not rejecting) the rare oversized PLAIN note is the same choice `label_from_ref`
+        and every other free-text field on this contract makes - cap the input, do not
+        fail the document over a note nobody reads past the first paragraph anyway.
+
+        A non-string value (an int, a list) is passed through unchanged so Pydantic's own
+        type check still raises its usual 422 on it - `mode="before"` sees the raw JSON
+        value, not the `Optional[str]` this field declares.
+        """
+        if not isinstance(value, str):
+            return value
+        plain = strip_rtf(value)
+        if plain and len(plain) > 8000:
+            plain = plain[:8000]
+        return plain
 
 
 class CanonicalPurchaseOrder(_CanonicalDocument):
@@ -220,6 +309,13 @@ class CanonicalShippingOrderLine(_CanonicalLine):
     # purchase-order line does (`resolve()` decides which purchase table by
     # `spo_number`'s own family, not by which entity pushed the claim).
     from_so_numbers: Optional[list[_SoNumber]] = Field(None, max_length=50)
+    # V5, same fields and same rules as `CanonicalPurchaseOrderLine`'s own -
+    # a shipping-order line dedicates against a sales order, and is raised
+    # from a purchase order, exactly the way a purchase-order line is.
+    from_so_line_ref: Optional[str] = Field(None, max_length=255)
+    from_so_external: Optional[_SalesOrderExternalRef] = None
+    from_po_line_ref: Optional[str] = Field(None, max_length=255)
+    from_po_number: Optional[str] = Field(None, max_length=100)
 
     @field_validator("from_so_numbers")
     @classmethod

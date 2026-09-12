@@ -18,7 +18,7 @@ export const PRICE_TAG_STATUS_PILL_CLASS: Record<string, string> = {
 const PRICE_TAG_STATUS_LABEL: Record<string, string> = {
   new: 'New',
   designing: 'Designing',
-  proof_ready: 'Proof Ready',
+  proof_ready: 'Design Ready',
   changes_requested: 'Changes Requested',
   approved: 'Approved',
   ready: 'Ready',

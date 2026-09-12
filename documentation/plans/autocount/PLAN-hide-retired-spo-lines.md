@@ -1,0 +1,382 @@
+# PLAN: hide retired SPO allocation lines from the UI
+
+Status: IN PROGRESS 2026-09-08 (user's call). UAC: `hide-retired-spo-lines-acceptance-criteria.md`.
+Depends on: PR #740 (D28d `spo_allocations.retired_at`), MERGED a5d4bcac2 2026-09-07T23:16Z.
+
+## 1. Why
+
+SPO-2026/09-0036 shows two C-FHSS14 lines at BRW, 4412 and 3912, and the operator cannot tell
+them apart. The 4412 line is a DtlKey AutoCount no longer has: it edited the line after the first
+push, so the ingest closed the old row (D3/D11: a leftover is closed, never deleted, because a GRN
+line or a claim may point at it) and created the replacement. The row is correct and it is already
+out of reorder planning, but the interface shows it as ordinary supply.
+
+Measured on that document: 33 products, 38,777 units genuinely open, 5,393 units across four
+retired lines, so the header Total qty reads 44,170. The line grid also disagrees with its own
+header, because `get_document` computes the document Balance over outstanding lines only while each
+line's own balance is `max(allocated - received, 0)` regardless of status.
+
+User's decision (2026-09-08): hide these rows rather than label them. "AutoCount really don't have
+these lines."
+
+## 2. Rules
+
+- **R1 Hide retired, never merely closed.** The hidden set is `retired_at IS NOT NULL`. A line closed
+  because it was fully received stays visible: AutoCount has that line, and it is the record of what
+  arrived. A cancelled document keeps its current behaviour, out of scope here.
+- **R2 A retired line that carries a receipt stays visible.** `quantity_received > 0` means stock
+  physically arrived against that line. Hiding it would hide real goods. Under D28c the receipt is
+  frozen on retirement, so this case is stable rather than transitional.
+- **R3 Hidden means hidden from listings, not from the record.** A GRN, an order-link claim or an
+  order-inquiry link that points at a retired row still resolves it and still renders it in its own
+  detail view. Only the SPO document lines tab, the SPO allocations grid and the document rollups
+  drop it.
+- **R4 Rollups follow the same set.** `total_allocated` and `total_received` exclude hidden lines.
+  Document Balance already excludes them (outstanding-only) and does not change.
+- **R5 Line balance follows line status**, hidden or not: a line that is not outstanding reads
+  balance 0, so the grid can never again disagree with its header.
+- **R6 One predicate, one place.** `spo_supply` owns the "visible line" clause the way it already
+  owns `open_incoming_clauses()`; the detail builder, the grid and the rollups import it.
+
+## 3. Backfill
+
+Rows retired before #740 deploys carry no marker. One-off script, dry-run first, same shape as
+`scripts/dedupe_spo_xlsx_superseded.py`: set `retired_at = coalesce(updated_at, now())` where
+`source_system = 'autocount'` AND `line_status = 'closed'` AND
+`coalesce(receipt_status,'pending') <> 'fully_received'` AND `quantity_received = 0` AND
+`retired_at IS NULL`. The receipt and status columns are the only evidence of WHY a row was closed,
+and the three conditions together mean "closed without having been received", which is retirement.
+Report per document before writing.
+
+### 3a. Named residual of the `fully_received` exclusion
+
+A pre-#740 line that was genuinely retired AND happens to be fully received is out of the backfill's
+reach for good, because nothing distinguishes it from a live fully received line that AutoCount
+still names. It keeps `retired_at` NULL, so `_is_live_group_member` treats it as live: it joins its
+group, can take a Seq-order share of a sibling's goods-received note, and can reopen when that note
+is deleted. That is the pre-#740 status quo rather than a regression, it self-heals the next time
+AutoCount pushes the number, and the population is zero on the production copy. The decision is to
+resolve an undecidable case toward the safer default and leave that subpopulation unrepaired, not
+to claim it cannot exist.
+
+## 4. Slices
+
+- S1 [BE] `spo_supply.visible_line_clauses()` + R5 line balance + R4 rollups, with tests.
+- S2 [BE] backfill script, dry-run first.
+- S3 [FE] nothing to build if the backend stops returning the rows; verify the lines tab, the
+  allocations grid and the document header in a browser at 375px and 1280px.
+- S4 operate: merge, deploy, run the backfill dry-run, then apply, then re-check SPO-2026/09-0036.
+  **Before anyone calls AC-H8 done, the production dry run must NAME SPO-2026/09-0036 with its four
+  rows.** It is in no local database, so the rule has never been exercised against the shape that
+  motivated it. The rule also fires only while each retired line's replacement is still
+  `line_status='open'`: if a replacement has since been received and closed, the old line stays
+  visible and the next ESB push naming the document is what stamps it. Read the per-row evidence
+  (AC-H18) for a few documents against AutoCount before `--apply`.
+
+## 5. Decided
+
+The All tab hides retired lines too (user, 2026-09-08: "hide the retired rows everywhere"). A
+document's full history stays reachable in the database and through any read that resolves an
+allocation by its own id (R3), but no listing offers it.
+
+## 6. Display read sites (measured, `app/services/procurement_service.py`)
+
+| line | reader | what changes |
+| --- | --- | --- |
+| 1716 | `list_allocations` | the flat grid |
+| 1830 | `list_allocations_grouped_by_shipment` | grid grouped by shipment |
+| 1970 | `list_allocations_grouped_by_spo_number` | grid grouped by document |
+| 2152 | `list_documents` | header rollups, `total_allocated` at 2264 / 2299 |
+| 2424 | `get_document` | the lines list and `total_allocated` / `total_received` at 2673 |
+| 1129 | per-product allocated total | check whether it is a display or a planning read |
+
+Every planning reader already excludes these rows, because a retired line is closed and
+`spo_supply.open_incoming_clauses()` requires open. Only the display readers above show them.
+
+## 7. As-built (S1, coder)
+
+`spo_supply.visible_line_clauses()` added beside `open_incoming_clauses()`:
+`or_(SPOAllocation.retired_at.is_(None), func.coalesce(SPOAllocation.quantity_received, 0) > 0)`.
+Imported and applied (`from app.services.scm import spo_supply`) at every reader in section 6
+except line 1129, decided below:
+
+- `list_allocations` - added to the shared `filters` list (was empty by default, now seeded
+  with the visible clause).
+- `list_allocations_grouped_by_shipment` - applied twice: to `shipment_filters` (a shipment
+  whose only allocations are hidden must not appear as a group of its own) and to
+  `allocation_filters` (`matched_spo_allocations_count` counts visible rows only).
+- `list_allocations_grouped_by_spo_number` - added to the one shared `filters` list, which
+  already fed both the distinct-`spo_number` count/page query and the per-page allocation load.
+- `list_documents` - `total_allocated`, `total_received` and `line_count` in the SELECT list
+  (originally lines 2264/2265/2274, now shifted) are gated on a new `is_visible` expression
+  (`and_(*spo_supply.visible_line_clauses())`) via `CASE WHEN is_visible THEN ... ELSE 0/NULL
+  END`; the `sort_map`'s `total_allocated`/`line_count` entries (originally 2299) were updated
+  the same way so sorting by either agrees with what is displayed. `has_outstanding`/`balance`/
+  `worst_overdue_days`/`earliest_eta` were already computed from `open_incoming_clauses()`
+  (line_status-gated), so a retired-closed line was already excluded from them; unchanged.
+- `get_document` - the main `rows` query's `.filter(...)` gained
+  `*spo_supply.visible_line_clauses()` alongside `SPOAllocation.spo_number == spo_number`. A
+  document whose every line is hidden now 404s (`handle_not_found`) the same way a document
+  with zero rows always has - no AC exercises this edge, noted here since it is a natural
+  consequence of R1 rather than a designed behaviour.
+
+**R5 fix**: `get_document`'s per-line loop computed `balance = max(allocated - received, 0)`
+unconditionally, before `outstanding` was even known. Reordered so `outstanding` is computed
+first and `balance` is gated on it: `balance = max(allocated - received, 0) if outstanding else
+0`. `total_allocated`/`total_received` at the bottom of `get_document` already summed only
+over `lines` (now the filtered set) and needed no further change; `balance_sum` already summed
+`outstanding_lines` only.
+
+**Step 3 (per-line balance on the grid readers)**: `SPOAllocationResponse` /
+`SPOAllocationWithShippedResponse` (used by `list_allocations`,
+`list_allocations_grouped_by_shipment`, `list_allocations_grouped_by_spo_number`) carry no
+`balance` field at all - only `SPODocumentLine` (used by `get_document`) declares one. R5 is
+therefore scoped to `get_document`; nothing to change on the three grid readers because they
+never expose a per-line balance to disagree with anything.
+
+**Line 1129 decision (`InboundShipmentService.refresh_shipment_line_statuses`,
+`totals_alloc = func.sum(SPOAllocation.allocated_quantity)` grouped by product for one
+shipment)**: left UNCHANGED, ruled a planning/reconciliation read, not a display read. It
+already applies no `line_status` filter at all today - a fully-received CLOSED line's
+allocated quantity counts towards a container's expected total exactly as much as an open
+one's, because the figure means "what this container was assigned to carry", a fact fixed at
+allocation time, not a live listing of which lines a user currently sees. Excluding a hidden
+row here would be a second, different question (which R6 warns against answering twice) and
+is not covered by any AC-H test. Residual: a retired, zero-received line that WAS linked to a
+shipment before retirement (rare - the ingest never clears `inbound_shipment_id` on retirement)
+still inflates that container's `spo_allocated_quantity`, which could hold a physically
+complete container at a non-`received` `line_status` forever. Not observed on
+SPO-2026/09-0036 (no shipment booked on the retired lines there) and not in scope for this
+plan; flagged for a future ticket if it surfaces on real data.
+
+**R3 confirmation (GRN/picking read paths)**: `SPOAllocationService.get_grn` (by GRN id/
+picking_number, `joinedload`/`selectinload(PickingLine.spo_allocation)`) and
+`list_picking_lines` (a GRN-lines listing, not an SPO-document listing) apply no filter on
+`retired_at` and were left untouched - both resolve an allocation via a picking line's own FK,
+matching R3 exactly. AC-H5 exercises `get_grn`.
+
+**Backfill script** (`scripts/backfill_retired_spo_lines.py`): modelled on
+`dedupe_spo_xlsx_superseded.py`'s shape (`register_company_scope_listeners` +
+`company_scope(db, frozenset({company_id}))`, `run(db, company_id, dry_run=True) -> dict`,
+`main()` with `--company/--dry-run/--apply`, dry run rolls back, one commit per document, a
+per-document report line then a summary). Selection uses `func.coalesce` on
+`receipt_status`/`quantity_received` in SQL (not a Python `!=`/`==` filter) because a plain
+SQL `!=` against a NULL evaluates to UNKNOWN and silently drops the row instead of including
+it - the UAC's own condition is written as `coalesce(...) <> ...` for exactly this reason.
+`retired_at = coalesce(updated_at, now())`, done in Python per row since `updated_at` is a
+naive `DateTime(timezone=False)` column and `retired_at` is `DateTime(timezone=True)`:
+`row.updated_at.replace(tzinfo=timezone.utc)` when set (matching the app's existing
+`datetime.utcnow()` writers of `updated_at`), else `datetime.now(timezone.utc)`.
+
+## 8. Round 2 rulings (security review, 2026-09-08)
+
+- **B1.** The backfill's evidence is not "closed and never received", which four writers produce.
+  It is "AutoCount replaced this line": a `source_ref` on the row, plus an OPEN sibling in its own
+  `(company, spo_number, product_id, upper(location_code))` group created strictly later. A
+  cancelled document has no open sibling anywhere, and an absence-closed line has no later sibling,
+  so both drop out. Anything that cannot be told apart is left alone: the ingest's own leftover
+  sweep stamps it on the next push. The docstring's "exactly two reasons" claim is deleted and the
+  four closers are named instead.
+- **B2.** A receipt approved after retirement never reached `quantity_received`, because the
+  recompute skips a retired row entirely, so R2's guard read a column the retirement path had
+  abandoned. A retired `autocount` row is now written from its OWN approved picking lines with the
+  D28c floor, `max(stated_received, own approved total)`, and `may_reopen=False`. It still takes no
+  share of its group, and AC-X40 still holds because the floor covers a later deletion.
+
+## 9. Round 3 rulings (reviewer, 2026-09-08)
+
+The reviewer measured the old predicate against the lane copy of production: it matched exactly two
+rows, both lines of SPO-2023/09-0046, a cancelled document with a single DocKey and no sibling. Its
+only effect would have been to make one whole document disappear. Round 2's narrowing stands.
+
+- **B2, the ghost row.** Fixed at the listing end: `list_documents` gates document MEMBERSHIP, not
+  only its aggregates, so a document with no visible line does not list. `get_document` keeps its
+  404, which is then consistent rather than contradictory: the document has no visible lines, and
+  neither surface offers it.
+- **S1.** `is_outstanding` in `list_documents` is built from `visible_line_clauses()` as well, so
+  Balance, status, worst overdue and earliest ETA cannot count a row the detail page does not
+  return. This closes the last structural gap rather than relying on "retired implies closed",
+  which no constraint enforces.
+- **S2.** `_document_supplier_rollup` counts visible lines only, matching `get_document`.
+- **N1 accepted, not deferred.** The packing-list detail's related-SPO strip is a listing and the
+  user's decision was every listing, so it takes the clause too.
+- **N2.** The backfill keeps `print` for its per-document report: it is an operator-facing report
+  like the dedupe script's, not application logging.
+
+## 10a. As-built (round 2 + round 3, coder)
+
+**B1** (`scripts/backfill_retired_spo_lines.py`): `_candidate_rows` rewritten. Base predicate is
+now `company_id`, `source_system='autocount'`, `line_status='closed'`, `source_ref IS NOT NULL`,
+`retired_at IS NULL` (the receipt/`quantity_received` conditions from round 1 are GONE - they were
+the wrong evidence, not a second narrowing on top of the right one). A single extra query loads
+every OPEN autocount row for the company, indexed by `procurement_service._spo_allocation_group_key`
+(imported, not restated) to the latest `created_at` per group; a candidate is eligible only when its
+own group key has an entry with `created_at` strictly later than the candidate's own. Docstring
+rewritten: the "a line closes for exactly two reasons" claim is gone, replaced by the four closers
+(a receipt; the outstanding book's absence sweep; a cancelled document; the deletion service on a
+referenced row) and the positive replacement-sibling evidence.
+
+**B2** (`PickingHeaderService._sync_received_for_allocations`, `app/services/procurement_service.py`):
+the `if alloc.retired_at is not None: continue` branch now calls
+`self._write_received(alloc, max(int(alloc.stated_received or 0), self.compute_received_for_allocation(str(alloc.id))), may_reopen=False)`
+before continuing - so a retired row still recomputes off its OWN approved picking lines (never a
+group share), floored by whatever was stated for it before retirement, and can never reopen. AC-X40
+(`tests/test_spo_xlsx_supersede.py`) still passes unmodified: the floor covers the GRN-delete case
+the same way the old "never touched" behaviour did, by different means.
+
+**Round 3, all in `app/services/procurement_service.py` unless noted:**
+
+- `list_documents`: `is_visible` now defined before `is_outstanding` and folded into it
+  (`is_outstanding = and_(is_visible, *open_incoming_clauses(), allocated > received)`), so Balance,
+  status, worst-overdue and earliest-ETA can never count a hidden row regardless of its own
+  `line_status`. A new `visible_line_count_expr` (the same expression `line_count` already computed)
+  is shared by the SELECT label, the `sort_map` entry, and a new unconditional
+  `rollup.having(visible_line_count_expr > 0)` applied BEFORE the state-specific `having` - a document
+  with zero visible lines now drops out of every state (`outstanding`/`completed`/`all`), matching
+  `get_document`'s 404 for the same number instead of listing a 0-line row that errors on open.
+- `_document_supplier_rollup`: gained `*spo_supply.visible_line_clauses()` in its `.filter(...)`, so
+  the majority-supplier tie-break counts the same lines `get_document`'s own `supplier_counts` does.
+- `app/api/v1/procurement/packing_lists.py` (`get_packing_list`): both the per-product `totals` query
+  (feeds `line.spo_allocated_quantity`) and the `allocations` query (feeds
+  `line.related_spo_allocations`, the related-SPO strip) gained `*spo_supply.visible_line_clauses()`.
+  A retired line no longer inflates the shipment line's allocated total or appears in the strip.
+
+Verified: `tests/test_spo_xlsx_supersede.py` (53 passed, AC-X40 included), the root-path group and
+the `tests/scm/` group from section "verification commands" below both green before and after these
+four changes; `tests/test_migration_466_shipment_line_description.py`,
+`tests/test_shipment_lines_follow_header_company.py`, `tests/test_consolidated_packing_list.py`,
+`tests/test_packing_list_multi_supplier.py` (packing-list detail readers) unaffected.
+
+## 10. Round 4 rulings (security review of the delta, 2026-09-08)
+
+- **Both proposed fixes are taken.** The retired branch gets the same ownership gate its sibling
+  has, and the backfill freezes the receipt before stamping. Either alone closes the hole; together
+  they make the invariant structural rather than dependent on which writer retired the row.
+- **The backfill never stamps a `fully_received` row.** Dropping the receipt predicate let a live
+  line that AutoCount still names qualify, if a later open sibling happened to exist. A received
+  line is visible under R2 whether marked or not, so the marker buys nothing there and costs the
+  row its share of the group's receipt.
+- **The packing list is filtered on both halves** (`refresh_shipment_line_statuses`' persisted
+  `spo_allocated_quantity` as well as the response), reversing the section 6 note that left it
+  alone. The two halves disagreeing inside one payload is worse than either choice, and the user's
+  decision was every listing.
+
+## 11. AC-H17 is gated on evidence (reviewer, 2026-09-08)
+
+`refresh_shipment_line_statuses` is not a display read: it persists `inbound_shipment_lines`'
+`spo_allocated_quantity` and the `line_status` derived from it, and that column is what the
+incoming-stock signal n8n consumes is built on. Filtering it changes stored values on real data, and
+a container whose expected total is partly made of retired rows flips status the first time anyone
+opens a packing list after the deploy.
+
+The ruling stands, because the direction of the change is toward truth: a line AutoCount deleted is
+not arriving, so counting it as expected supply overstates the container and the badge alike. But it
+ships with evidence, not on argument:
+
+- the count of `inbound_shipment_lines` whose derived `line_status` changes, measured on the
+  production copy, reported before merge;
+- the list of downstream consumers of `spo_allocated_quantity` and that `line_status`, with a
+  statement for each that the filtered figure is the one it wants;
+- the same count re-reported from production after the deploy, as the operate step's own check.
+
+If the measured change is large or a consumer needs the unfiltered figure, AC-H17 splits out of this
+lane and the packing list keeps one population on both halves by reverting the response-side filter
+instead.
+
+## 12. Round 5 rulings: AC-H17 splits, the badge joins (reviewer's consumer check, 2026-09-08)
+
+The measurement cannot be taken locally. The production copy carries no retired row and no packing
+list content at all, so its zeros are by construction on two independent grounds, not by safety. The
+reviewer's read-only differential query goes to the user as a production ask instead.
+
+The consumer check settled it without the number:
+
+- **`container_request_service.PL_UNALLOCATED_SQL` subtracts `spo_allocated_quantity` from the
+  reorder ask.** Filtering the persisted column raises the unallocated figure, so the engine nets
+  more and asks a supplier for less. That is a purchasing decision changing as a side effect of a
+  display lane, and `allocation_suggestion_service` moves with it. Out of scope: **AC-H17 is
+  narrowed to the response only.** The packing list recomputes both the quantity and the status it
+  REPORTS from the visible set, so one payload carries one population, and the stored column keeps
+  feeding the engine untouched until a lane with SCM eyes decides it deliberately. The reviewer's
+  query is attached to that future lane, not to this one.
+- **The badge does not read that column at all.** `incoming_stock_service._warehouse_allocations_for`
+  queries `spo_allocations` directly with no line-status or retirement test, so citing the n8n badge
+  as a reason for AC-H17 was simply wrong. The badge has its own hole, and it is the same defect as
+  the incident: supply AutoCount deleted still counted. **AC-H19 fixes it here**, because it is a
+  read with no persisted column and no purchasing arithmetic behind it.
+
+## 13. As-built (round 4 + round 5, coder)
+
+**Item 1, ownership gate (AC-H14, `PickingHeaderService._sync_received_for_allocations`,
+`app/services/procurement_service.py`)**: the retired branch now carries the SAME gate its
+non-AutoCount sibling twenty lines below already has - `if alloc_id not in released and not
+self._allocation_has_picking_line(alloc_id): continue` - inserted before the `_write_received`
+call, so a retired row nothing picks against and nobody released is left untouched instead of
+being written `max(stated 0, own picking total 0) = 0`. AC-H10's two tests (a picking line
+exists in both) still pass unmodified.
+
+**Item 2, backfill freeze (AC-H15, `scripts/backfill_retired_spo_lines.py`)**: `run()`'s write
+loop now computes `frozen = max(int(row.stated_received or 0), int(row.quantity_received or 0))`
+and assigns it to `row.stated_received` when positive, BEFORE `row.retired_at = stamp` - the
+same order `shipping_order_ingest_service.py` and `dedupe_spo_xlsx_superseded.py` use.
+
+**Item 3, no live line stamped (AC-H16, same file)**: `_candidate_rows`' base filter gained
+`func.coalesce(SPOAllocation.receipt_status, RECEIPT_PENDING) != RECEIPT_FULLY_RECEIVED` - not a
+return of round 1's dropped predicate (no `quantity_received = 0` requirement), only an exclusion
+of a row that is ALREADY the record of a completed receipt, which the sibling test alone could
+wrongly qualify (a live, fully-received line with a coincidental later open sibling for the same
+product/location).
+
+**AC-H18 (dry-run per-row evidence, addition mid-round-4)**: `_candidate_rows` now returns
+`list[tuple[SPOAllocation, SPOAllocation]]` (candidate, justifying sibling) instead of a bare
+row list - `latest_open_by_group` indexes the SIBLING ROW itself (not just its `created_at`), so
+its `source_ref` is available to print. `run()`'s per-document loop gained an inner per-row
+`print(...)` naming the candidate's id/`source_ref`/`source_doc_ref`/`created_at`/
+`quantity_received`/`receipt_status` and the justifying sibling's `source_ref`/`created_at`,
+before the per-document heading's summary counters; unconditional (both `--dry-run` and
+`--apply` print it, since the loop that builds the lines is shared and printing costs nothing on
+either path).
+
+**Item 4 (round 4, packing list) - REVERTED before landing, replaced by round 5's AC-H17
+(narrowed) + AC-H19:**
+
+Round 4 item 4 asked to also filter `refresh_shipment_line_statuses`'s `totals_alloc`
+(`app/services/procurement_service.py` ~1128-1132), the PERSISTED column. Before making that
+change, per the round-4 addendum's own instruction, the consumer check below was run. It found a
+real conflict, so line 1130 was never touched (confirmed by `git diff HEAD` showing no edit to
+`refresh_shipment_line_statuses` at any point in this lane) and round 5 formally ruled it out of
+scope (PLAN section 12).
+
+**Consumer inventory (`inbound_shipment_lines.spo_allocated_quantity` and its derived
+`line_status`), as requested:**
+
+| consumer | file | wants filtered? |
+| --- | --- | --- |
+| packing-list detail response | `app/api/v1/procurement/packing_lists.py` `get_packing_list` | YES - already re-queries with `visible_line_clauses()` (round 3 N1) and, as of this round, recomputes the response's `line_status` from the same filtered total (AC-H17, narrowed to the response only, nothing persisted) |
+| reorder/unallocated-gap arithmetic | `app/services/scm/container_request_service.py` `PL_UNALLOCATED_SQL` (~line 132), netted into the reorder ask (~line 1018), surfaced as `incoming_pl_unallocated` | NO - subtracts the persisted column from `quantity_shipped` to net supply already committed; filtering it raises the unallocated figure and nets MORE, moving a purchasing number as a side effect of a display lane |
+| allocation-decision validation | `app/services/scm/allocation_suggestion_service.py` (`outstanding = quantity_shipped - spo_allocated_quantity`, a hard 422 if a submitted split does not sum to it) | NO - moves with `container_request_service` (same persisted column, same reorder-adjacent arithmetic); narrowing it risks prompting an operator to double-allocate physical stock already covered by a retired-but-real predecessor line |
+| shipment "open"/"received" listing filter | `app/services/procurement_service.py` (`InboundShipment.shipment_lines.any(InboundShipmentLine.line_status != "received")`, ~line 840/844) | reads the SAME persisted `line_status` the two reorder consumers above depend on being unfiltered - left alone with them, not assessed independently, since splitting one reader of a shared column from its writer was not on the table |
+| n8n incoming-stock badge / `unallocated_quantity` gap | `app/services/incoming_stock_service.py` `_warehouse_allocations_for` | Originally cited as the reason for AC-H17 (round 4); the consumer check found this claim FALSE - this method never reads `inbound_shipment_lines.spo_allocated_quantity` or `line_status` at all, it runs its OWN direct `SPOAllocation` query. It is a genuine, SEPARATE consumer of raw `SPOAllocation` rows though, and DOES want the visible set - fixed directly (AC-H19), see below |
+| `incoming_stock_service.grn_records` (two `SPOAllocation` queries, ~953-1008) | same file | sibling check requested by round 5: NOT filtered, correctly - both are R3's "resolves via a GRN pick" carve-out ("has a GRN been created for this SPO/product"), not a quantity rollup; a retired allocation's `spo_number`/id is still the right key to find its GRN by |
+
+**Row-count measurement**: could not be taken meaningfully on the lane's local Postgres -
+`inbound_shipment_lines` holds 0 rows there (verified: a read-only differential query joining
+`spo_allocations` filtered/unfiltered by `visible_line_clauses()` against every
+`inbound_shipment_lines` row returned 0 total rows, 0 rows where the two allocation totals
+differ, 0 rows where the derived status differs). PLAN section 12 already recorded this as
+"by construction on two independent grounds, not by safety" and routed the real measurement to
+the user as a production-only ask; not repeated here.
+
+**AC-H17 (revised, `app/api/v1/procurement/packing_lists.py`)**: `get_packing_list`'s per-line
+loop now also computes `line.line_status` via `compute_inbound_shipment_line_status(quantity_shipped,
+visible_alloc, recv)` (imported from `procurement_service`) and sets it on the in-memory response
+object only - the same `setattr`-not-persisted pattern the `spo_allocated_quantity` and
+`quantity_received` overrides two lines above it already use. `refresh_shipment_line_statuses`'
+own persisted write (called earlier in the same route, via `service.refresh_shipment_line_statuses`)
+is untouched.
+
+**AC-H19 (`app/services/incoming_stock_service.py`)**: `_warehouse_allocations_for`'s query
+gained `*spo_supply.visible_line_clauses()` in its `.filter(...)`. This is the query behind both
+the n8n incoming-stock badge's per-warehouse allocation list and `_unallocated_quantity`'s gap
+(the gap widens now that a retired allocation no longer counts as coverage). No persisted column,
+no purchasing arithmetic - a pure read, filtered the same way every other listing in this lane is.

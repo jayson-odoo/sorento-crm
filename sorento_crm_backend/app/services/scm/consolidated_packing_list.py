@@ -363,7 +363,6 @@ _HEADER_BLOCK_ROW_HEIGHT = {12: 31.5}
 _FMT_2DP = "0.00"
 _FMT_2DP_RED = "0.00;[Red]0.00"
 _FMT_MONEY = "#,##0.00"
-_FMT_MONEY_RED = "#,##0.00;[Red]#,##0.00"
 _FMT_SUBTOTAL_INT = "0_);[Red]\\(0\\)"
 _FMT_SUBTOTAL_2DP = "0.00_);[Red]\\(0.00\\)"
 _FMT_DATE = "[$-14409]dd/mm/yyyy;@"
@@ -752,41 +751,10 @@ def to_xlsx(payload: dict) -> bytes:
         cell.value = f"=SUM({refs})" if refs else 0
     row += 2
 
-    # ---- the split: what each company's share of the container is ---------- #
-    # No CLEARANCE / INSURANCE / CHINA FREIGHT here any more (R17, purchasing
-    # consolidation batch 6 Sep 2026, AC-H2): the costs section is not needed on screen
-    # or in the export. CBM and TOTAL AMOUNT stay - they are operational totals, not
-    # costs, and the export still says how much of the container is whose.
-    company_rows: dict[str, int] = {}
-    for company in COMPANIES:
-        rows_for = [r for c, r in subtotal_rows if c == company]
-        cbm_ref = ",".join(f"M{r}" for r in rows_for)
-        amount_ref = ",".join(f"U{r}" for r in rows_for)
-        style_row(row)
-        style(row, 12).value = company
-        style(row, 13, bold=True, fmt=_FMT_MONEY_RED).value = (
-            f"=SUM({cbm_ref})" if cbm_ref else 0
-        )
-        style(row, 20).value = company
-        style(row, 21, bold=True, fmt=_FMT_MONEY_RED).value = (
-            f"=SUM({amount_ref})" if amount_ref else 0
-        )
-        company_rows[company] = row
-        row += 1
-
-    split_rows = [company_rows[c] for c in COMPANIES]
-    style_row(row)
-    for column in ("M", "U"):
-        cell = style(row, _LETTERS.index(column) + 1, bold=True, fmt=_FMT_MONEY_RED)
-        cell.value = "=" + "+".join(f"{column}{r}" for r in split_rows)
-    row += 1
-
-    style_row(row, bold=True)
-    for column, label in (
-        (13, "CBM"),
-        (21, "TOTAL AMOUNT"),
-    ):
-        ws.cell(row=row, column=column, value=label)
+    # No per-company block (ruling 30, captain on :3084): the sheet is the container's
+    # LINES and what they add up to. Who owes what is an invoicing question answered where
+    # the invoices are, and a CBM/amount split printed here was read as a cost apportionment
+    # it had already stopped being (R17 took the costs out on 6 Sep).
     # The three identifiers a forwarder quotes back at us, in the wording their own
     # paperwork uses.
     ws.cell(row=row, column=3, value=f"订单号:{header.get('forwarder_order_ref') or ''}")

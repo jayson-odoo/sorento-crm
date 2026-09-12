@@ -7,6 +7,22 @@ import uuid
 from app.schemas.resources import AttachmentTypeSimple
 
 
+def _validate_uuid_format(v: Optional[str]) -> Optional[str]:
+    """N2: a malformed `country_id` is a 422 at the schema boundary, never a raw FK
+    violation or a 500 from a query that could not cast it. Validates the FORMAT only and
+    returns the string unchanged - `SupplierResponse` inherits `SupplierBase`, and a type
+    change to `uuid.UUID` here would make its own `country_id` a `UUID` object that no
+    longer compares equal to the ORM's plain string id.
+    """
+    if v is None:
+        return v
+    try:
+        uuid.UUID(str(v))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("country_id must be a valid UUID")
+    return v
+
+
 class SupplierBase(BaseModel):
     supplier_code: str
     supplier_name: str
@@ -19,9 +35,13 @@ class SupplierBase(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     postal_code: Optional[str] = None
-    country: Optional[str] = None
+    # S2 (`PLAN-local-supplier-oi-routing.md`): replaces the free-text `country`.
+    # 422 (never a raw FK violation) on an id `SupplierService` cannot resolve.
+    country_id: Optional[str] = None
     payment_terms_days: Optional[int] = 30
     is_active: bool = True
+
+    _validate_country_id = field_validator("country_id")(_validate_uuid_format)
 
 
 class SupplierCreate(SupplierBase):
@@ -39,9 +59,11 @@ class SupplierUpdate(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     postal_code: Optional[str] = None
-    country: Optional[str] = None
+    country_id: Optional[str] = None
     payment_terms_days: Optional[int] = None
     is_active: Optional[bool] = None
+
+    _validate_country_id = field_validator("country_id")(_validate_uuid_format)
 
 
 class SupplierSimple(BaseModel):
@@ -57,7 +79,11 @@ class SupplierResponse(SupplierBase):
     id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+    # Read-only, joined off `country_id` (`Supplier.country_code`/`country_name`
+    # properties) - the client never computes or sends these back.
+    country_code: Optional[str] = None
+    country_name: Optional[str] = None
+
     class Config:
         from_attributes = True
 
@@ -204,7 +230,11 @@ class InboundShipmentLineBase(BaseModel):
 
 
 class InboundShipmentLineCreate(InboundShipmentLineBase):
-    pass
+    # An EDIT names which existing line it means (S4, AC-D4) - two lines can now share
+    # every other field (Kailu's own carton split), and only the id tells them apart.
+    # Absent on a genuinely new line; `_upsert_shipment_lines` falls back to its
+    # (product, supplier) matching when it is not given or does not resolve.
+    id: Optional[str] = None
 
 
 class InboundShipmentLineResponse(InboundShipmentLineBase):
@@ -663,11 +693,26 @@ class SPODocumentLine(BaseModel):
     grns: List[LinkedGRNSimple] = []
     #: R23, AC-J2 - the PO this line pulled from, null on a line with no `po_line_id`.
     po: Optional[SPODocumentLinePO] = None
+    #: The AutoCount book's own source purchase-order NUMBER, straight off
+    #: `spo_allocations.from_po_number` - text, never resolved into `po` above
+    #: (`PLAN-scm-book-linkage-on-document-lines.md` Slice B). Written by the live ingest
+    #: (`ShippingOrderIngestService`/`DocumentIngestService`, contract 2.2) whenever the
+    #: book names one; `None` means the book itself named no source document for that
+    #: line, never that nothing has written it yet.
+    from_po_number: Optional[str] = None
     #: R23, AC-J2 - every sales order this allocation covers, empty when none.
     so_covered: List[SPODocumentLineSOCovered] = []
 
     class Config:
         from_attributes = True
+
+
+class SPODocumentContainer(BaseModel):
+    """One distinct container over a document's visible lines (PLAN-spo-list-container-
+    number.md AC-1). `shipment_id` is null for a raw, unlinked
+    `spo_allocations.container_number`."""
+    container_number: str
+    shipment_id: Optional[str] = None
 
 
 class SPODocumentRow(BaseModel):
@@ -692,6 +737,9 @@ class SPODocumentRow(BaseModel):
     line_count: int
     #: Max `overdue_days` over the document's OUTSTANDING lines; 0 when none are late.
     worst_overdue_days: int
+    #: Distinct containers over the document's visible lines, sorted by container
+    #: number (PLAN-spo-list-container-number.md AC-1/AC-2).
+    containers: List[SPODocumentContainer] = []
 
 
 class SPODocumentLinkagePackingList(BaseModel):

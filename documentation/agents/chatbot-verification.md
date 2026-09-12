@@ -7,10 +7,32 @@ before the PR is opened, and once against PRODUCTION after the deploy; the outpu
 the PR (or the deploy note). A case that fails is a finding to fix or to explain - never one to
 soften.
 
+**Run it after EVERY deploy, not only a chatbot PR's own (LESSONS-LEARNT.md #103).** The
+chatbot's entity resolver is SHARED with every other admin-data reference table (`AttachmentType`,
+`Customer`, `Product`, ...), so a migration that seeds or edits a row in one of those tables can
+change chatbot resolution even when its own PR has no chatbot file in the diff - #707's
+`485_shipment_line_photo_type.py` (an unrelated SCM feature) deployed alongside #713 and broke
+"photo" resolution three minutes after the deploy, and `git diff` on #713's own files showed
+nothing wrong, because nothing in #713 was. A deploy that touches ANY reference table the
+resolver searches is chatbot-relevant.
+
 ```bash
 cd sorento_crm_backend
 venv/bin/python scripts/chatbot_console_check.py \
     tests/chatbot/console_cases/2026-09-06.yaml --base-url http://127.0.0.1:8004
+```
+
+**`--say` is the same runner without a file**, for trying something by hand. Repeat it and
+the repeats are ONE conversation - each reply's session variables feed the next turn exactly
+as a YAML `turns:` list does - and each turn prints its branch, reply, `send_message` texts,
+quick replies and a one-line trace (tool + args, cross-domain rungs, reveals dropped).
+Nothing is graded and nothing extra is written; `--contact` defaults to whoever the bot
+last answered.
+
+```bash
+venv/bin/python scripts/chatbot_console_check.py \
+    --say "check stock srtwc286" --say "PO?" --base-url http://127.0.0.1:8004
+# add --prompt-version <ai_prompt_versions.id> to try an UNPROMOTED prompt (dry run only)
 ```
 
 Every turn is a dry run (`is_test`, `test_run_id`), so nothing outside `chatbot.turns` is written

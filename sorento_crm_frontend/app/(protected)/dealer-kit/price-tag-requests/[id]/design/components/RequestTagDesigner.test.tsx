@@ -10,12 +10,17 @@
  */
 
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PRODUCT_BLOCK_SIZE } from '@/lib/dealer-kit/product-block';
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
+import {
+  ToolbarButton,
+  ToolbarDropdownButton,
+  type ToolbarTrailingAction,
+} from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { toast } from '@/lib/toast';
@@ -65,10 +70,19 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
     doc,
     onLayersChange,
     leftRail,
+    toolbarTrailing,
   }: {
     doc: TagTemplateDoc;
     onLayersChange?: (layers: TagLayer[]) => void;
     leftRail?: React.ReactNode;
+    // S7 moved Full screen / the Template dropdown / Save INTO the toolbar's
+    // own trailing group - the stand-in has to actually render it (not just
+    // accept and drop it) for a test to reach those buttons. S2 review
+    // turned `toolbarTrailing` into a data array (real arrow-key nav + the
+    // menu closing itself once an item is picked, S2), so the stand-in
+    // renders it through the SAME real `ToolbarButton`/`ToolbarDropdownButton`
+    // `CanvasToolbar` itself uses for its inline group, rather than reinventing it.
+    toolbarTrailing?: ToolbarTrailingAction[];
   }) => {
     canvasDocs.push({ doc });
     const [layers, setLayers] = React.useState<TagLayer[]>(doc.layers);
@@ -84,6 +98,30 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
       <div data-testid="canvas-editor">
         canvas open
         {leftRail}
+        <div data-testid="toolbar-trailing">
+          {toolbarTrailing?.map((action) =>
+            action.kind === 'menu' ? (
+              <ToolbarDropdownButton
+                key={action.id}
+                icon={action.icon}
+                label={action.label}
+                disabled={action.disabled}
+              >
+                {action.items}
+              </ToolbarDropdownButton>
+            ) : (
+              <ToolbarButton
+                key={action.id}
+                icon={action.icon}
+                iconClassName={action.iconClassName}
+                label={action.label}
+                onClick={action.onClick}
+                disabled={action.disabled}
+                active={action.active}
+              />
+            ),
+          )}
+        </div>
         <button
           type="button"
           onClick={() => {
@@ -151,6 +189,12 @@ vi.mock('./ArrangeSheetView', () => ({
 vi.mock('../../../../services/tagTemplateService', () => ({
   listPublishedTemplates: vi.fn(),
   createTemplateFromTag: vi.fn(),
+  // S6 "Update <template>": PUT the draft, then POST publish. Both unused by
+  // most tests in this file (the Template dropdown's own flow is covered by
+  // RequestTagDesigner.update-template.test.tsx), present here only so
+  // importing them does not crash a render that merely shows the dropdown.
+  updateTemplate: vi.fn(),
+  publishTemplate: vi.fn(),
 }));
 vi.mock('../../../../services/priceTagRequestService', () => ({
   resolveRequestLines: vi.fn(),
@@ -439,6 +483,65 @@ describe('RequestTagDesigner - full screen (AC-S6-1)', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(document.querySelector('[data-dk-focus-mode]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One CTA (S7, AC-S7-1/S7-6): the request bar's right side holds the Saved
+// indicator and exactly one button, Mark design ready (r7 renamed "proof"
+// to "design" throughout - PLAN-price-tag-r7-request-ux D9). Full screen,
+// the Template dropdown and Save moved into the canvas toolbar's own
+// trailing group.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - one CTA in the request bar (S7, AC-S7-1)', () => {
+  it('the request bar holds exactly one button in designing state - Mark design ready', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+
+    renderDesigner(request({ status: 'designing' }));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    // The request bar is everything OUTSIDE the mocked canvas editor (and
+    // therefore outside its toolbar-trailing stand-in) - the page's own
+    // chrome, not the canvas's.
+    const canvas = screen.getByTestId('canvas-editor');
+    const barButtons = Array.from(document.body.querySelectorAll('button')).filter(
+      (btn) => !canvas.contains(btn),
+    );
+    const names = barButtons.map((btn) => btn.textContent?.trim());
+
+    expect(names.filter((t) => t?.includes('Mark design ready'))).toHaveLength(1);
+    // Nothing else button-shaped sits out here - Back and the Design/Arrange
+    // toggle are navigation, not "the one action", and are asserted
+    // separately below by name.
+    expect(names.some((t) => t?.includes('Full screen'))).toBe(false);
+    expect(names.some((t) => t === 'Save')).toBe(false);
+  });
+
+  it('Full screen, the Template dropdown and Save are all found INSIDE the canvas toolbar (AC-S7-6)', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+
+    renderDesigner();
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const trailing = screen.getByTestId('toolbar-trailing');
+    expect(within(trailing).getByRole('button', { name: /Full screen/ })).toBeInTheDocument();
+    expect(within(trailing).getByRole('button', { name: /Save/ })).toBeInTheDocument();
+    expect(within(trailing).getByRole('button', { name: 'Template' })).toBeInTheDocument();
+  });
+
+  it('the Design/Arrange mode toggle and Back stay in the request bar - navigation, not the CTA', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+
+    renderDesigner();
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    expect(screen.getByRole('button', { name: 'Design' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Arrange' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /PT-000001/ })).toBeInTheDocument();
   });
 });
 

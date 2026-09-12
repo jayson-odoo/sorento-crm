@@ -194,8 +194,10 @@ export function DocTable({ children }: { children: ReactNode }) {
   );
 }
 
-/** What a body says when a drill has no SPO on its way to a pool for this product. */
-export const NO_SPO_TO_POOL = 'No SPO is on its way to a site pool for this product.';
+/** What a body says when a drill has no SPO on its way to any active location for this
+ *  product (R7, captain 8 Sep 2026: this used to say "a site pool" - the drill now counts
+ *  a project bin too, so "nothing" has to mean nothing anywhere, not nothing in a pool). */
+export const NO_SPO_TO_POOL = 'No SPO is on its way for this product.';
 
 function textCell(value: string | null | undefined) {
   return value ? value : <span className="text-muted-foreground">{EM_DASH}</span>;
@@ -617,28 +619,51 @@ interface OnHandLocation {
 }
 
 /**
- * Reorder planning's On hand lightbox, verbatim (AC-B3 / AC-G3): the SITE POOL rows only,
+ * The container-request grid's On hand lightbox and the SPO planner's own (AC-B3 / AC-G3),
  * each expanding to the documents standing behind that location.
  *
- * Pools only, because a project bin holds stock already spoken for by an Order Inquiry, and
- * counting it here would disagree with the cell, which nets pools alone. A response with no
- * pool row at all falls back to everything it was given, rather than showing an empty table
- * for a product that plainly has stock somewhere.
+ * `scope` has NO default on purpose - a caller states which cell it is footing rather than
+ * silently inheriting whatever this file's last edit left in place:
+ *
+ * - `'all'` (both current callers - `ContainerRequestSection`, `SpoPlannerTable`): EVERY
+ *   active location, site pool and project bin alike (R7, captain 8 Sep 2026, reverses
+ *   F2/26 Aug). Those two cells' own netting widened to count a project bin's stock -
+ *   `container_request_service._stock_context`'s docstring is the record - because the
+ *   demand side already counts the project need that stock covers; a lightbox that still
+ *   dropped the bin would stop footing the cell it opened from.
+ * - `'pools'`: the SITE POOL rows only. Nothing in this file currently asks for it - the
+ *   REORDER screen's own On hand lightbox never widened, but it keeps a private, unexported
+ *   `OnHandTable` in `reorder/components/PlanRowDialogs.tsx` rather than importing this one,
+ *   so `'pools'` exists here for completeness and any future caller that genuinely needs the
+ *   old rule, not for a caller that exists today.
+ *
+ * A response with no pool row at all, under `'pools'`, falls back to everything it was
+ * given, rather than showing an empty table for a product that plainly has stock somewhere.
  *
  * Builds its own `useReactTable` rather than going through `DrillTable`: the expanding row
  * needs TanStack's own expanded-row state, which `DrillTable`'s callers never do.
  */
-export function OnHandTable({ productId }: { productId: string }) {
+export function OnHandTable({
+  productId,
+  scope,
+}: {
+  productId: string;
+  scope: 'all' | 'pools';
+}) {
   const stock = useLocationStock(productId, Boolean(productId));
   const [openRow, setOpenRow] = useState<string | null>(null);
 
   const rows = useMemo(() => {
     const locations = (stock.data?.locations ?? []) as OnHandLocation[];
-    const pools = locations.filter((l) => l.is_pool);
-    return pools.length ? pools : locations;
-  }, [stock.data]);
+    if (scope === 'pools') {
+      const pools = locations.filter((l) => l.is_pool);
+      return pools.length ? pools : locations;
+    }
+    return locations;
+  }, [stock.data, scope]);
 
   const total = rows.reduce((sum, l) => sum + (l.on_hand || 0), 0);
+  const footerLabel = scope === 'pools' ? 'Site pools' : 'Every active location';
 
   const columns = useMemo<ColumnDef<OnHandLocation>[]>(
     () => [
@@ -662,7 +687,7 @@ export function OnHandTable({ productId }: { productId: string }) {
             {textCell(row.original.warehouse_code)}
           </span>
         ),
-        footer: () => <span className="text-muted-foreground">Site pools</span>,
+        footer: () => <span className="text-muted-foreground">{footerLabel}</span>,
         size: 120,
         meta: {
           skeleton: SKELETON_CELL,
@@ -733,7 +758,7 @@ export function OnHandTable({ productId }: { productId: string }) {
         meta: RIGHT,
       },
     ],
-    [productId, total],
+    [productId, total, footerLabel],
   );
 
   const expanded: ExpandedState = openRow ? { [openRow]: true } : {};
@@ -868,6 +893,11 @@ function spoRowId(r: ContainerRequestDrillSpoRow, i: number): string {
  * service's docstring for why the reader is `spo_allocations` and not the purchase-order
  * table (migration 420 moved every SPO document out of it). The open tab foots to that same
  * total; the history tab has none to defer to, so it sums its own rows (AC-J3).
+ *
+ * EVERY active location, site pool and project bin alike (R7, captain 8 Sep 2026, reverses
+ * F2/26 Aug) - `container_request_drill._spo_rows`' docstring is the record. Both current
+ * callers (`ContainerRequestSection`, `SpoPlannerTable`) open this off a cell that widened
+ * the same way, so there is no narrower variant to choose between here.
  */
 export function SpoTabs({ supplierId, productId }: { supplierId: string; productId: string }) {
   const drill = useContainerRequestDrill(supplierId, productId, 'spo');
@@ -883,8 +913,9 @@ export function SpoTabs({ supplierId, productId }: { supplierId: string; product
     <Tabs defaultValue="open">
       <TabsList variant="line">
         {/* S3: the count of rows read as "how many documents", when the number the cell
-            actually names is the quantity they carry. */}
-        <TabsTrigger value="open">{`Open to pools (${fmtInt(openTotal)})`}</TabsTrigger>
+            actually names is the quantity they carry. Plain "Open" (R7, captain 8 Sep
+            2026), never "to pools" - a row here may be on its way to a project bin. */}
+        <TabsTrigger value="open">{`Open (${fmtInt(openTotal)})`}</TabsTrigger>
         <TabsTrigger value="history">{`History (${fmtInt(historyTotal)})`}</TabsTrigger>
       </TabsList>
       <TabsContent value="open">

@@ -51,6 +51,7 @@ from app.models.product import Product
 from app.models.scm import OrderLinkClaim
 from app.services import import_outcome_codes as oc
 from app.services.import_outcome import ImportOutcome
+from app.services.project_label_rules import apply_project_label, label_from_inquiry_cell
 from app.services.project_order_inquiry_reader import OrderInquiryResult, read_order_inquiry
 from app.services.scm import upload_validation as val
 from app.services.scm.demand_class import class_of
@@ -399,6 +400,13 @@ def _create_orders(db: Session, parsed, now: datetime,
 
     for number, rows in by_number.items():
         order = existing.get(number)
+        # PLAN-so-project-label.md: the project half of the cell, read the SAME way
+        # whichever branch below the order falls into - owned elsewhere, refreshed, or
+        # newly created. `None` when no row for this SO names a project at all (customer
+        # only, no slash) or the cell has no project half; `apply_project_label`'s own
+        # precedence gate leaves a customer-only cell's order untouched (AC-O3).
+        project = next((r.project for r in rows if r.project), "")
+        project_label = label_from_inquiry_cell(project) if project else None
         if order is not None and (order.source_system or "") != SOURCE_SYSTEM:
             # Somebody else's order. The caller still annotates it; quantities and dates
             # stay theirs. ONE column is stamped all the same: the inquiry naming this
@@ -410,6 +418,8 @@ def _create_orders(db: Session, parsed, now: datetime,
             # withdrawing the demand.
             if order.demand_origin != SOURCE_SYSTEM:
                 order.demand_origin = SOURCE_SYSTEM
+            if project_label:
+                apply_project_label(order, project_label, "inquiry")
             orders_owned_elsewhere += 1
             # Per ROW, so the job's counts are a count of source rows. The row is not a
             # failure - the sheet still writes its location and its purchase-order claim
@@ -437,7 +447,6 @@ def _create_orders(db: Session, parsed, now: datetime,
             continue
 
         if order is None:
-            project = next((r.project for r in rows if r.project), "")
             dates = [r.delivery_date for r in rows if r.delivery_date]
             # This sheet's rows ARE project demand, so a row naming a project states the
             # order type `project`; a row naming none states nothing, which is not the same
@@ -471,8 +480,12 @@ def _create_orders(db: Session, parsed, now: datetime,
             db.flush()
             existing[number] = order
             orders_created += 1
+            if project_label:
+                apply_project_label(order, project_label, "inquiry")
             current: dict[tuple[str, Optional[date]], list[SalesOrderLine]] = {}
         else:
+            if project_label:
+                apply_project_label(order, project_label, "inquiry")
             # Keyed by the INSTALMENT, not the item. One sales-order line called off across
             # six dates is six rows here, and keying on the item alone made every tab that
             # mentioned the line insert another one.

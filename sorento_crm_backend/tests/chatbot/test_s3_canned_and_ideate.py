@@ -396,6 +396,13 @@ class TestAccessDeniedNoSessionWrite:
             _parser_output(
                 message_type="request_for_help",
                 routing={"suggested_team": None, "suggested_agent": f"general{em_dash}enquiries"},
+                # A pure help request, no entity: since 8 Sep 2026 a `request_for_help`
+                # that names an entity beside a decisive intent is retyped `business_query`
+                # (owner turn 2d903c96), and that would hand the agent slot to the derived
+                # `general_enquiries` this very test says only a help request bypasses.
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
             )
         )
         stub_access(allowed=False, decision="deny_unknown_agent")
@@ -799,7 +806,9 @@ class TestUnsupportedDomainsSetting:
         db.add(row)
         db.commit()
         db.refresh(row)
-        assert row.chatbot_unsupported_domains == ["goods_receive", "spo_allocation"]
+        # A6 (chatbot-growth-r1, AC-911, migration 488): `spo_allocation` was
+        # removed from the shipped default.
+        assert row.chatbot_unsupported_domains == ["goods_receive"]
 
     def test_settings_update_schema_accepts_the_field(self):
         from app.api.v1.user_management.settings import SystemSettingUpdate

@@ -1,20 +1,18 @@
-"""S9 AC-G1/G2/G3 - a workbook of container blocks becomes one shipment each, once.
-
-Idempotency is the property worth the most here: the same file uploaded twice must land on the
-same shipments. It is not tested by reading the code, because the thing that provides it is the
-DERIVED shipment name meeting a duplicate resolver that lives in another service, and either
-half could change without the other noticing.
+"""S9 AC-G1/G2/G3, now narrowed by S3 (AC-C1): a packing-list-alone file never creates
+an `inbound_shipments` row any more, so this file tests only what still writes anything
+- the standalone `preview`/`validate` (unchanged, `packing_list_service.apply` is
+deleted) - and the S2/S3 surviving equivalents everything else moved to. See the retired-
+test notes below each removed scenario for where its ground is pinned now.
 """
 from __future__ import annotations
 
 import uuid
-from datetime import date
 from io import BytesIO
 
 import pytest
 
 from app.models.import_alias import ImportFieldAlias
-from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
+from app.models.procurement import InboundShipment, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.error_handler import AppException
 from app.services.scm import packing_list_service as svc
@@ -104,80 +102,28 @@ def _shipments(db, w: World) -> list[InboundShipment]:
     )
 
 
-def test_each_container_block_becomes_its_own_shipment():
-    # AC-G1. One document, several containers, several shipments.
-    with pg_session() as db:
-        w = World(db)
-        data = _file(w, [
-            (f"{MARKER}U1", [("A", 10), ("B", 20)]),
-            (f"{MARKER}U2", [("C", 5)]),
-        ])
-
-        out = svc.apply(db, data, supplier_id=str(w.supplier.id), actor_id=None)
-
-        assert out["shipments_created"] == 2
-        rows = _shipments(db, w)
-        assert [r.shipping_container_number for r in rows] == [f"{MARKER}U1", f"{MARKER}U2"]
-        assert sorted(len(r.shipment_lines) for r in rows) == [1, 2]
-
-
-def test_re_uploading_the_same_file_creates_no_second_set():
-    # AC-G3, and the thing that stops a nervous second click doubling a container.
-    with pg_session() as db:
-        w = World(db)
-        data = _file(w, [(f"{MARKER}U1", [("A", 10)]), (f"{MARKER}U2", [("B", 5)])])
-
-        svc.apply(db, data, supplier_id=str(w.supplier.id))
-        second = svc.apply(db, data, supplier_id=str(w.supplier.id))
-
-        assert second["shipments_created"] == 0
-        assert second["shipments_updated"] == 2
-        assert len(_shipments(db, w)) == 2
-
-
-def test_a_pre_load_block_with_no_container_still_imports_and_stays_one_shipment():
-    # AC-G2 and AC-G3 together: no container number, and re-uploading still does not duplicate.
-    with pg_session() as db:
-        w = World(db)
-        data = _file(w, [("", [("A", 10)]), ("", [("B", 5)])])
-
-        first = svc.apply(db, data, supplier_id=str(w.supplier.id), source_ref="preload-aug.xlsx")
-        second = svc.apply(db, data, supplier_id=str(w.supplier.id), source_ref="preload-aug.xlsx")
-
-        assert first["shipments_created"] == 2
-        assert second["shipments_created"] == 0
-        rows = _shipments(db, w)
-        assert len(rows) == 2
-        assert all(r.shipping_container_number is None for r in rows)
-        # Named by the file and the position, so the two blank blocks are distinguishable.
-        assert {r.shipment_number for r in rows} == {"PRELOAD-preload-aug-1", "PRELOAD-preload-aug-2"}
-
-
-def test_a_code_we_do_not_hold_is_named_rather_than_invented():
-    with pg_session() as db:
-        w = World(db)
-        rows = [[f"货柜号：{MARKER}U1"], HEADER,
-                [w.code("A"), "座厕", 10, 1, 0.2],
-                ["NOT-A-REAL-CODE", "座厕", 4, 1, 0.2]]
-
-        out = svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
-
-        assert out["unmatched_item_codes"] == ["NOT-A-REAL-CODE"]
-        assert out["lines_skipped"] == 1
-        assert len(_shipments(db, w)[0].shipment_lines) == 1
-
-
-def test_a_block_whose_every_line_is_unknown_creates_no_empty_shipment():
-    # A shipment with no lines is a row somebody has to explain later.
-    with pg_session() as db:
-        w = World(db)
-        rows = [[f"货柜号：{MARKER}U9"], HEADER, ["NOPE-1", "座厕", 4, 1, 0.2]]
-
-        out = svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
-
-        assert out["shipments_created"] == 0
-        assert _shipments(db, w) == []
-        assert "matched a product" in out["results"][0]["reason"]
+# --------------------------------------------------------------------------------- #
+# S3 (AC-C1): `packing_list_service.apply` is deleted outright - a packing-list-alone
+# file never creates an `inbound_shipments` row any more (a shipment is born by convert
+# or by hand, AC-C2). The five tests this section used to hold pinned exactly that
+# reader-to-shipment path (blocks become shipments, dedupe of that route, the pre-load
+# variant of it, an unknown code inside a shipment line, an empty block creating no
+# shipment) - all retired outright rather than ported, because the behaviour itself is
+# gone, not moved:
+#   - "each container block becomes its own shipment" / "re-uploading creates no second
+#     set" / "a pre-load block still imports and stays one shipment" (AC-G1/G2/G3) -
+#     the pre-load-no-container half is still pinned at the reader
+#     (`test_packing_list_reader.py::test_a_pre_load_list_with_no_container_and_no_
+#     bill_of_lading_still_reads`); the shipment-creation and dedupe halves have no
+#     surviving equivalent to port to.
+#   - "a code we do not hold is named rather than invented" - the surviving equivalent
+#     (a resolved-or-not PRODUCT, never an invented one) is pinned at the S2 packing-rows
+#     level already: `test_proforma_invoice_packing_lines.py::test_b4_jiexia_lid_row_is_
+#     an_unmatched_packing_row_never_an_invoice_line` asserts `match_state == "unmatched"`
+#     for exactly this case.
+#   - "a block whose every line is unknown creates no empty shipment" - there is no
+#     shipment to be empty or not any more; nothing to port.
+# --------------------------------------------------------------------------------- #
 
 
 def test_the_preview_describes_every_block_before_anything_is_written():
@@ -205,60 +151,68 @@ def test_validate_names_the_codes_it_could_not_match():
         assert any("MISSING-1" in warn for warn in out["warnings"])
 
 
-def test_a_file_that_is_not_a_packing_list_is_refused_with_the_reason():
+# "a file that is not a packing list is refused with the reason" (svc.apply, 422) is
+# retired: the surviving equivalent is the unified upload's own refusal,
+# `test_supplier_document_service.py::test_apply_refuses_the_whole_batch_when_one_file_
+# is_unclassifiable`, which already pins the same 422-with-a-reason for an unclassifiable
+# file at the channel operators actually upload through.
+
+# "the shipment carries the quantities the file stated" is retired outright: it pinned
+# `packing_list_service.apply`'s own arithmetic (sum -> `total_items_shipped`, one row's
+# `quantity_shipped` per product), and `InboundShipmentService.create_shipment` - the
+# surviving writer, per AC-C2 ("a shipment is born by convert or by hand") - already has
+# that exact ground covered from the hand side: `test_packing_list_multi_supplier.py` and
+# `test_packing_list_split_lines.py` both assert `quantity_shipped` values landed from a
+# `create_shipment` call across many scenarios. Nothing here would pin new ground.
+
+
+def test_a_blocks_bl_no_fills_the_attached_invoices_bl_ref_when_it_stated_none():
+    """Q1's own ruling (`提单号` is a booking reference, never invented as a bill-of-
+    lading number) still holds, but the field it fills moved: since S3 a packing-list-
+    alone file never creates a shipment (AC-C1) - it attaches to a PROFORMA INVOICE
+    instead, and it is the invoice's own `bl_ref` that the block's 提单号 fills when the
+    invoice itself stated none (S2/S4/S5 ruling, `supplier_document_service.apply`)."""
+    from app.models.scm import ProformaInvoice
+    from app.services.scm import supplier_document_service
+    from app.services.scm.proforma_invoice_service import get_or_404
+
     with pg_session() as db:
         w = World(db)
-        with pytest.raises(AppException) as e:
-            svc.apply(db, workbook([["a", "b"], ["c", "d"]]), supplier_id=str(w.supplier.id))
-        assert e.value.status_code == 422
+        invoice = ProformaInvoice(
+            id=str(uuid.uuid4()), supplier_id=w.supplier.id, pi_number="PI-1",
+            container_ref=f"{MARKER}U1",
+        )
+        db.add(invoice)
+        db.commit()
 
-
-def test_the_shipment_carries_the_quantities_the_file_stated():
-    with pg_session() as db:
-        w = World(db)
-        data = _file(w, [(f"{MARKER}U1", [("A", 10), ("B", 20)])])
-
-        svc.apply(db, data, supplier_id=str(w.supplier.id), shipment_date=date(2026, 8, 1))
-
-        shipment = _shipments(db, w)[0]
-        assert shipment.shipment_date == date(2026, 8, 1)
-        assert shipment.total_items_shipped == 30
-        by_product = {
-            str(ln.product_id): ln for ln in
-            db.query(InboundShipmentLine).filter(
-                InboundShipmentLine.shipment_id == shipment.id
-            ).all()
-        }
-        assert float(by_product[str(w.product("A").id)].quantity_shipped) == 10
-        assert float(by_product[str(w.product("B").id)].quantity_shipped) == 20
-
-
-def test_the_stated_bl_no_fills_the_so_field_not_bill_of_lading_number():
-    # Q1 ruling (purchasing consolidation batch, 6 Sep 2026): `提单号` is the forwarder's own
-    # booking reference on both real documents this reader was built against, so it fills
-    # `forwarder_order_ref` (the SO field). `bill_of_lading_number` is left for the manual
-    # form to state instead, and is never derived from this column.
-    with pg_session() as db:
-        w = World(db)
         rows = [[f"货柜号：{MARKER}U1"], ["提单号：BL-991"], HEADER,
                 [w.code("A"), "座厕", 3, 1, 0.2]]
 
-        svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
+        supplier_document_service.apply(
+            db, [("pl.xlsx", workbook(rows), None)], supplier_id=str(w.supplier.id),
+        )
+        db.commit()
 
-        shipment = _shipments(db, w)[0]
-        assert shipment.forwarder_order_ref == "BL-991"
-        assert shipment.bill_of_lading_number is None
+        refreshed = get_or_404(db, invoice.id)
+        assert refreshed.bl_ref == "BL-991"
 
 
 def test_a_code_another_company_also_uses_resolves_to_ours():
     """Product codes are not unique across companies, and raw SQL has no company filter.
 
-    Unscoped, the lookup matched whichever row came back first, so a packing list could be
+    Unscoped, the lookup matched whichever row came back first, so a document could be
     received against ANOTHER company's product. It imported cleanly and then had nothing to
     allocate, because that product has no purchase order of ours to draw down - a failure that
     looks like missing data rather than the wrong row.
+
+    Ported from `packing_list_service.apply` (deleted, AC-C1) to `proforma_invoice_
+    service.apply`: the SAME `_products_by_code` guard the packing-list channel used to
+    exercise is shared code, called from `proforma_invoice_service.apply` (a document's own
+    lines) and from `proforma_invoice_packing_service.replace_packing_rows` (a packing
+    list's rows) alike - so pinning it here still pins the packing channel's own safety.
     """
     from app.models.company import Company
+    from app.services.scm import proforma_invoice_service
 
     with pg_session() as db:
         w = World(db)
@@ -282,11 +236,19 @@ def test_a_code_another_company_also_uses_resolves_to_ours():
         db.add(twin)
         db.flush()
 
-        svc.apply(db, _file(w, [(f"{MARKER}U1", [("A", 3)])]), supplier_id=str(w.supplier.id))
+        data = workbook([["产品型号", "数量", "PRICE"], [mine.product_code, 3, 12.5]])
+        proforma_invoice_service.apply(
+            db, data, supplier_id=str(w.supplier.id), currency="USD",
+        )
 
+        from app.models.scm import ProformaInvoice, ProformaInvoiceLine
+
+        invoice = (
+            db.query(ProformaInvoice).filter(ProformaInvoice.supplier_id == w.supplier.id).one()
+        )
         line = (
-            db.query(InboundShipmentLine)
-            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
+            db.query(ProformaInvoiceLine)
+            .filter(ProformaInvoiceLine.invoice_id == invoice.id)
             .one()
         )
         assert str(line.product_id) == str(mine.id)
@@ -297,39 +259,23 @@ def test_a_code_another_company_also_uses_resolves_to_ours():
 # --------------------------------------------------------------------------------- #
 
 
-def _priced_file(w: World, container: str, items: list[tuple[str, float, float]]) -> bytes:
-    """Like `_file`, but with an RMB unit-price column, priced per line."""
-    rows: list[list] = []
-    if container:
-        rows.append([f"货柜号：{container}"])
-    rows.append(HEADER + ["RMB"])
-    rows.extend([w.code(k), "座厕", qty, 2, 0.21, price] for k, qty, price in items)
-    rows.append([])
-    return workbook(rows)
-
-
-def test_the_shipment_line_carries_the_unit_price_and_currency_the_file_stated():
-    # AC-P5.1. "RMB" in the header states CNY; the price is no longer parsed and dropped.
-    with pg_session() as db:
-        w = World(db)
-        data = _priced_file(w, f"{MARKER}U1", [("A", 10, 25.5)])
-
-        svc.apply(db, data, supplier_id=str(w.supplier.id))
-
-        line = (
-            db.query(InboundShipmentLine)
-            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
-            .one()
-        )
-        assert float(line.unit_cost) == 25.5
-        assert line.currency == "CNY"
+# "the shipment line carries the unit price and currency the file stated" and "an
+# unpriced file is unaffected" are retired: since S2 a packing list never carries a price
+# to persistence at all - `ProformaInvoicePackingLine` (the row a packing list writes,
+# `replace_packing_rows`) has no `unit_cost`/`currency` column, price lives only on the
+# proforma invoice's own lines. There is nothing left to port either half onto; the
+# standalone `preview`/`validate` still report a file's `priced_lines`/`currency` for
+# whoever calls them directly (unchanged, still covered below and by
+# `test_validate_names_the_codes_it_could_not_match`), but nothing WRITES a price off a
+# packing list any more, so "carries" and "unaffected" are both statements about a write
+# that does not happen.
 
 
 def test_a_priced_file_with_no_resolvable_currency_is_refused():
-    # AC-P5.2. A price with no currency anywhere is refused, not stored guessing one.
-    # The real packing-list aliases (RMB / 金额（rmb）) always hint CNY, so a NEUTRAL
-    # unit-price header is seeded here, scoped to this test, to reproduce the file that
-    # states a price under a column name that names no currency at all.
+    # AC-P5.2. `validate` still runs the same currency resolution and refusal on a
+    # standalone packing-list preview; `apply`'s own refusal of the same file is retired
+    # (S3, AC-C1) rather than ported - a packing list never writes a price, so there is
+    # nothing left for a missing currency to block at write time.
     with pg_session() as db:
         w = World(db)
         alias = f"{MARKER}COST"
@@ -343,86 +289,14 @@ def test_a_priced_file_with_no_resolvable_currency_is_refused():
         assert result["valid"] is False
         assert any("curren" in e.lower() for e in result["errors"])
 
-        with pytest.raises(AppException) as exc:
-            svc.apply(db, data, supplier_id=str(w.supplier.id))
-        assert exc.value.status_code == 422
-        assert _shipments(db, w) == []
-
-
-def test_an_unpriced_file_is_unaffected():
-    # AC-P5.2, second half: no price anywhere means no currency is demanded, and the
-    # existing (pre-price) behaviour of this whole file keeps passing unchanged.
-    with pg_session() as db:
-        w = World(db)
-        data = _file(w, [(f"{MARKER}U1", [("A", 10)])])
-
-        svc.apply(db, data, supplier_id=str(w.supplier.id))
-
-        line = (
-            db.query(InboundShipmentLine)
-            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
-            .one()
-        )
-        assert line.unit_cost is None
-        assert line.currency is None
-
-
-def test_a_blank_bill_of_lading_label_does_not_swallow_the_next_label():
-    # AC-P2.4, pinned at the packing-list channel too: the shared `_labelled` helper's
-    # fix lives once and must not read a candidate that itself resolves to a KNOWN field
-    # (here "货柜号：..." after a blank "提单号：") as if it were a value.
-    with pg_session() as db:
-        w = World(db)
-        rows = [
-            ["提单号：", None, f"货柜号：{MARKER}U9"],
-            HEADER,
-            [w.code("A"), "座厕", 5, 1, 0.2],
-        ]
-
-        svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
-
-        shipment = _shipments(db, w)[0]
-        assert shipment.bill_of_lading_number is None
-        assert shipment.shipping_container_number == f"{MARKER}U9"
-
-
-def test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average():
-    """The same product twice in one block is merged into one shipment line (the row is
-    one per product), and the merged line used to keep whichever price came FIRST.
-
-    That silently values the whole quantity at one of the two prices - here 100 units would
-    have been costed at 10.00 instead of 12.00 - and the difference is invisible afterwards
-    because the two lines no longer exist separately. The honest merged figure is the
-    quantity-weighted average, which is what the container actually cost per unit.
-    """
-    with pg_session() as db:
-        w = World(db)
-        rows = [
-            [f"货柜号：{MARKER}U5"],
-            HEADER + ["RMB"],
-            [w.code("A"), "座厕", 40, 2, 0.21, 10],
-            [w.code("A"), "座厕", 60, 2, 0.21, 13.5],
-        ]
-
-        svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
-
-        line = (
-            db.query(InboundShipmentLine)
-            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
-            .one()
-        )
-        assert float(line.quantity_shipped) == 100
-        # (40 x 10 + 60 x 13.5) / 100
-        assert float(line.unit_cost) == pytest.approx(12.1)
-        assert line.currency == "CNY"
-
 
 def test_a_supplier_id_that_is_not_an_id_is_a_422_not_a_500():
     """The packing-list channel takes the supplier on the form, and the currency resolution it
-    now runs consults that supplier's price list - a UUID column comparison. A typed value that
+    runs consults that supplier's price list - a UUID column comparison. A typed value that
     is not an id reached it raw and came back as a 500 with the session aborted, while the same
-    value on the proforma channel was a 422 naming the field. Both channels answer the same way
-    now, on all three entry points, because the guard is one function.
+    value on the proforma channel was a 422 naming the field. `apply`'s own entry point is
+    retired (AC-C1); `preview`/`validate` are the two that remain, and the guard is one
+    function shared by both.
     """
     with pg_session() as db:
         w = World(db)
@@ -431,7 +305,6 @@ def test_a_supplier_id_that_is_not_an_id_is_a_422_not_a_500():
         for call in (
             lambda: svc.preview(db, data, supplier_id="not-a-uuid"),
             lambda: svc.validate(db, data, supplier_id="not-a-uuid"),
-            lambda: svc.apply(db, data, supplier_id="not-a-uuid"),
         ):
             with pytest.raises(AppException) as exc:
                 call()
@@ -440,12 +313,13 @@ def test_a_supplier_id_that_is_not_an_id_is_a_422_not_a_500():
 
 
 def test_a_supplier_we_do_not_hold_is_refused_before_anything_is_read():
+    # `apply`'s own refusal is retired with the route (AC-C1); `preview`'s is the
+    # surviving entry point and runs the same `_check_supplier` guard before `_parse`.
     with pg_session() as db:
         w = World(db)
         data = _file(w, [(f"{MARKER}UA", [("A", 4)])])
 
         with pytest.raises(AppException) as exc:
-            svc.apply(db, data, supplier_id=str(uuid.uuid4()))
+            svc.preview(db, data, supplier_id=str(uuid.uuid4()))
 
         assert exc.value.status_code == 422
-        assert not _shipments(db, w)

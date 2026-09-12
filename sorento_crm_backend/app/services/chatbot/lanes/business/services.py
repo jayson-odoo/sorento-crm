@@ -1,8 +1,8 @@
 """The three I/O seams `sub-resolve-and-gate` has, as injectable callables.
 
-n8n makes them two HTTP calls and two `executeWorkflow` calls; the port makes them
-in-process service calls. They are grouped here rather than reached for inline so a test
-can replay a captured turn with NO database, NO MCP server and NO network - which is what
+n8n makes them two HTTP calls, an `executeWorkflow` call and an MCP client node; the port
+makes them in-process service calls. They are grouped here rather than reached for inline
+so a test can replay a captured turn with NO database, NO MCP server and NO network - which is what
 makes the 254-fixture replay a pure function over JSON (AC-602).
 
 | n8n node | this seam | CRM service |
@@ -10,8 +10,14 @@ makes the 254-fixture replay a pure function over JSON (AC-602).
 | `get-access-types` (httpRequest) | `access_types` | `ContactAccessTypeService.resolve_active_access_levels_for_contact` |
 | `resolve-entity` (httpRequest) | `resolve_entity` | the function behind `POST /api/v1/system/references/resolve` |
 | `probe-incoming` / `probe-customer-orders` (executeWorkflow) | `probe` | S6b's fetch, over `MCPRuntimeClient` (D10) |
-| `Execute 'sub-get-rag'` (executeWorkflow -> pgvector SQL) | `embed` + `tool_search` | `EmbeddingReadService.search_tool_chunks` (H53) |
 | `MCP Client1` (mcpClient, raw IP) | `mcp_call` | `MCPRuntimeClient` at `settings.ai_assistant_mcp_url` (H52) |
+
+`Execute 'sub-get-rag'` (executeWorkflow -> an embedding call plus pgvector SQL) has NO
+seam: the tool is read off `contracts.DOMAIN_SPEC[domain].tools[0]` in `fetch.select_tool`,
+which touches neither a provider nor the database (H53). Measured over the 740 business
+turns in the 7 Sep 2026 prod copy, the search picked that first-listed tool every time,
+and its seeding chain cannot run in the deployed backend image at all - so the seam was
+paying for an embedding call per turn to answer a question with one answer.
 
 `space_id` is the default respond workspace's, not n8n's hard-coded `364817` (D5).
 """
@@ -44,16 +50,6 @@ class ProbeFn(Protocol):
         semantic_input: dict[str, Any],
         user_prompt: str,
     ) -> Any: ...
-
-
-class EmbedFn(Protocol):
-    def __call__(self, query: str) -> list[float]: ...
-
-
-class ToolSearchFn(Protocol):
-    def __call__(
-        self, embedding: list[float], *, query: str, domain: str | None
-    ) -> list[dict[str, Any]]: ...
 
 
 class McpCallFn(Protocol):
@@ -93,15 +89,16 @@ class AnswerServices:
 
 @dataclass(frozen=True)
 class FetchServices:
-    """S6b's three seams, same shape as `ResolveGateServices` for the same reason.
+    """S6b's ONE seam, same shape as `ResolveGateServices` for the same reason.
 
-    `embed` and `tool_search` are two halves of what `sub-get-rag` was (embed the prompt,
-    then search) and they are separate because only the first is provider I/O: a test that
-    wants a deterministic ranking stubs `tool_search` and leaves the embedding alone.
+    It was three. `embed` and `tool_search` were the two halves of `sub-get-rag` (embed the
+    prompt, then search the tool pool) and both are gone: `fetch.select_tool` reads the
+    domain's tool off `contracts.DOMAIN_SPEC`, so the only I/O the fetch step still does is
+    the MCP call. A bundle with one field is kept as a dataclass rather than collapsed to a
+    bare callable because every lane takes a bundle and the next seam this step grows
+    belongs in it.
     """
 
-    embed: EmbedFn
-    tool_search: ToolSearchFn
     mcp_call: McpCallFn
 
 
@@ -217,130 +214,6 @@ def _probe(db: Session | None = None) -> ProbeFn:
     return call
 
 
-class EmbeddingUnavailable(RuntimeError):
-    """No embedding provider is configured, so no tool can be chosen this turn."""
-
-
-def _embed(db: Session) -> EmbedFn:
-    def call(query: str) -> list[float]:
-        """`text-embedding-3-small`, through the shared LLM provider.
-
-        NOT `app.api.v1.external.rag._embed_query`: that is a router private, and it raises
-        `HTTPException` - a web-layer failure shape that would surface from inside a turn as
-        a status code nobody asked for. The provider is the same model the RAG endpoint
-        uses, so the vector is identical; only the failure semantics change, to a lane
-        error the engine already knows how to record.
-        """
-        from app.config import settings
-        from app.services.llm_provider import get_provider
-
-        if not settings.openai_api_key:
-            raise EmbeddingUnavailable(
-                "no embedding provider is configured, so no MCP tool can be selected"
-            )
-        provider = get_provider("openai", settings.openai_api_key)
-        vector = provider.embed(query)
-        if not vector:
-            raise EmbeddingUnavailable("the embedding provider returned an empty vector")
-        return list(vector)
-
-    return call
-
-
-# F4 (review, 7 Sep 2026, evidence turn 147d6888-d313-4612-a32f-364cec119ec4): "incoming
-# TIIU6323920" picked `crm_incoming_stock_shipments` (0.4675) over `crm_incoming_stock_list`
-# (0.4537). The shipments tool's header carries no clearance checkpoints and no
-# `field_access` block, so the container timeline can never render from it -
-# `apply_field_access` (`app/api/v1/incoming_stock.py` `/list`) is the only place clearance
-# gating is wired, and the n8n spine this engine replaced called only the list tool.
-# `crm_incoming_stock_by_product` is DELIBERATELY untouched: it renders batch numbers and
-# the catalog routes product asks to it on purpose, so it is a real answer, not a stand-in.
-_INCOMING_SHIPMENTS_TOOL = "crm_incoming_stock_shipments"
-_INCOMING_LIST_TOOL = "crm_incoming_stock_list"
-
-
-def _tool_similarity(tool: dict[str, Any]) -> float:
-    try:
-        return float(tool.get("similarity", float("-inf")))
-    except (TypeError, ValueError):
-        return float("-inf")
-
-
-def _collapse_incoming_shipments(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Rename `crm_incoming_stock_shipments` to `crm_incoming_stock_list` in place, keeping
-    its similarity and recording `collapsed_from` on the renamed candidate.
-
-    Renaming rather than appending a second row means the collapsed name never duplicates:
-    when BOTH tools are candidates in the same turn, whichever has the HIGHER similarity
-    wins and keeps the list tool's name; the other is dropped. Every other tool (including
-    `crm_incoming_stock_by_product`) passes through unchanged.
-    """
-    by_name: dict[str, dict[str, Any]] = {}
-    for tool in tools:
-        name = tool.get("name")
-        if name == _INCOMING_SHIPMENTS_TOOL:
-            candidate = {**tool, "name": _INCOMING_LIST_TOOL, "collapsed_from": name}
-            name = _INCOMING_LIST_TOOL
-        else:
-            candidate = tool
-        existing = by_name.get(name)
-        if existing is None or _tool_similarity(candidate) > _tool_similarity(existing):
-            by_name[name] = candidate
-    return list(by_name.values())
-
-
-def _tool_search(db: Session) -> ToolSearchFn:
-    def call(
-        embedding: list[float], *, query: str, domain: str | None
-    ) -> list[dict[str, Any]]:
-        """`sub-get-rag`'s SQL plus both of its Code nodes, in one service call (H53).
-
-        The two Code nodes did the interesting half: the second collapses `source_id` to
-        the tool name after `implemented::` and SUMS the similarities per name, which is
-        why `tool-filter` cannot simply take the first row. The fold itself is
-        `fetch.collapse_tool_rows` (a ported node with its own 38 captures); this seam is
-        the half that must not leave the service layer - the query.
-
-        **H58: the READ-ONLY filter is here, on the CHATBOT's own retrieval.** The
-        `mcp_tool` pool is shared with the in-app AI assistant, which retrieves its four
-        record actions from it ON PURPOSE (`record_action_bootstrap`) and gates them behind
-        a user confirmation and a permission check - so the pool must keep them and the
-        chatbot must not see them. This seam rather than `fetch.tool_filter` for two
-        reasons: `tool_filter` is a ported node graded byte-for-byte against 38 captures
-        (D8) and this rule is not part of what that node does, and filtering BEFORE the
-        pick means a write tool is not even listed among `_tool_pick.rejected`, so nothing
-        downstream can reach for one.
-
-        The filter runs AFTER the SQL `limit`, so a query whose neighbours are write tools
-        yields fewer than five candidates and can end at `not_found` - which is an
-        answerable outcome (H11), and the right one: the chatbot has nothing to say about a
-        question whose only matches were actions it may not take.
-
-        **F4: the incoming-shipments collapse also lives here, right after the read-only
-        filter.** This is the CRM policy seam this docstring already names for exactly this
-        kind of rule - `tool_filter` (`fetch.py`) stays a byte-for-byte ported node with no
-        CRM-specific knowledge grafted onto it.
-        """
-        from app.services.embedding_service import EmbeddingReadService
-
-        from app.services.chatbot.lanes.business.fetch import (
-            CHATBOT_READ_ONLY_TOOLS,
-            collapse_tool_rows,
-        )
-
-        rows = EmbeddingReadService(db).search_tool_chunks(
-            embedding, source_type="mcp_tool", limit=5, domain=domain
-        )
-        read_only = [
-            tool
-            for tool in collapse_tool_rows(rows)
-            if tool.get("name") in CHATBOT_READ_ONLY_TOOLS
-        ]
-        return _collapse_incoming_shipments(read_only)
-
-    return call
-
-
 def _mcp_call(db: Session | None = None) -> McpCallFn:
     def call(name: str, args: dict[str, Any]) -> Any:
         """One MCP tool call at the CONFIGURED url (H52, D10).
@@ -353,7 +226,9 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
         the probes reach for the bundle directly (`answer.mcp_probe`, `miss_suggest`'s
         three, the did-you-mean probe) and go nowhere near the ported call node. This is
         the single choke point where a tool name becomes an MCP request, so it is where the
-        rule has to hold. The probes name read tools and are unaffected.
+        rule has to hold. The probes name read tools and are unaffected, and so is the
+        fetch step, whose tool is `DOMAIN_SPEC`'s own and therefore on the list by
+        construction.
 
         **The PARSE is here too, for the same reason the read-only check is.**
         `MCPRuntimeClient.call_tool` returns a STRING - `"\\n".join` of the `content[]`
@@ -503,8 +378,12 @@ def answer_services_for(session_factory: Any) -> AnswerServices:
 
 
 def fetch_services(db: Session) -> FetchServices:
-    """S6b's bundle. One session, bound at the call site, held across no provider I/O."""
-    return FetchServices(embed=_embed(db), tool_search=_tool_search(db), mcp_call=_mcp_call(db))
+    """S6b's bundle. The session is taken and never used: `_mcp_call` is a network call.
+
+    The parameter stays so the engine's call site reads like every other lane's, and so the
+    day this step grows a seam that does need a session there is one to bind it to.
+    """
+    return FetchServices(mcp_call=_mcp_call(db))
 
 
 def fetch_space_id(db: Session) -> str | None:

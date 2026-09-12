@@ -963,7 +963,7 @@ class TestErrorArmRendersTheMissLane:
             status = "done"
             stage = "remembered"
 
-        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False):
+        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False, lane_trace=None):
             captured["fragments"] = fragments
             return _Completed()
 
@@ -1045,7 +1045,7 @@ class TestErrorArmRendersTheMissLane:
             status = "done"
             stage = "remembered"
 
-        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False):
+        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False, lane_trace=None):
             captured["fragments"] = fragments
             return _Completed()
 
@@ -1378,9 +1378,10 @@ class TestThirdCodeWithNoStockAndNoIncomingIsNamedWithEscalation:
         assert "no stock" in block.lower() and "no incoming" in block.lower(), (
             f"MSK11A-QT must be stated as having no stock and no incoming: {block!r}"
         )
-        assert "escalate" in block.lower(), (
-            "an escalation offer must be present for the code with nothing on either "
-            f"side: {block!r}"
+        # The offer is written ONCE by `tail/compose.crossdomain_compose` from
+        # `block["team"]` (8 Sep 2026): the block itself names the absence only.
+        assert "escalate" not in block.lower(), (
+            f"the cross-domain block must not carry the offer itself: {block!r}"
         )
 
 
@@ -2496,18 +2497,20 @@ class TestAttachmentDedupeAndFilenameDisambiguation:
 
 
 # --------------------------------------------------------------------------- #
-# Owner console defect G2: the status-aware not-found miss message IS ported (in
-# `answer.py`'s `not_found_error_message`, lines ~2308-2341 - NOT `miss_suggest.py`, which
-# has no such text at all: grepped, absent). But the port deliberately DROPS the estimated
-# delivery date - `eta_text` is computed then `del eta_text`'d with a comment claiming
-# parity with the old JS - while the owner's own ruling wants the date INCLUDED: "Order
-# <code> (<customer>) hasn't been delivered yet - current status: <status> (estimated
-# delivery <date>)".
+# Owner ruling 10 Sep 2026 REVERSES the 6 Sep 2026 ruling below (kept as history: the
+# G2 pass had wanted the estimated delivery date SAID alongside the status). Measured
+# fact since: `orders.estimated_delivery_date` is not a real promise - the import stamps
+# it as `order_date + 2 business days` (`order_service.py` ~2824) on every master row, not
+# a carrier-confirmed date. It may still show in the CRM UI (order list / detail), but it
+# must never reach the chatbot / turn API - `not_found_error_message`'s delivered-status
+# arm must name the status and stop there: "Order <code> (<customer>) hasn't been
+# delivered yet - current status: <status>. Would you like me to escalate to <team>
+# team?", with no "(estimated delivery <date>)" suffix at all.
 # --------------------------------------------------------------------------- #
 
 
-class TestStatusAwareMissMessageIncludesTheEtaDate:
-    def test_a_delivered_status_filter_miss_names_status_and_estimated_delivery_date(
+class TestStatusAwareMissMessageOmitsTheEtaDate:
+    def test_a_delivered_status_filter_miss_names_status_and_omits_estimated_delivery_date(
         self,
     ) -> None:
         from app.services.chatbot.lanes.business.answer import not_found_error_message
@@ -2551,9 +2554,12 @@ class TestStatusAwareMissMessageIncludesTheEtaDate:
         assert "current status: processing" in message, (
             f"the current status must be named: {message!r}"
         )
-        assert "2026-09-10" in message, (
-            "the owner's ruling wants the estimated delivery date in the message too, "
-            f"not just the status: {message!r}"
+        assert "2026-09-10" not in message, (
+            "owner ruling 10 Sep 2026: the stamped estimated delivery date is not a real "
+            f"promise and must not reach the turn output: {message!r}"
+        )
+        assert "estimated delivery" not in message, (
+            f"no estimated-delivery phrasing at all in the miss message: {message!r}"
         )
 
 
@@ -2750,7 +2756,7 @@ class TestAZeroStockCodeIsNamedBeforeTheIncomingBlock:
         assert "No stock for MSK11A-QT." not in block, (
             f"the both-empty case must not also emit the one-sided line: {block!r}"
         )
-        assert "escalate" in block.lower(), block
+        assert "escalate" not in block.lower(), block  # compose writes the offer (8 Sep 2026)
 
     def test_a_code_the_primary_render_did_echo_is_not_called_missing(self) -> None:
         """Guard: `missing` means "the primary render did not echo this code", which is

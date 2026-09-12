@@ -437,6 +437,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'master_data.units_of_measure.view',
           },
           {
+            title: 'Countries',
+            path: '/master-data-management/countries',
+            permission: 'master_data.countries.view',
+          },
+          {
             title: 'Certificates',
             path: '/master-data-management/certificates',
             permission: 'master_data.certificates.view',
@@ -856,6 +861,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'system.chat_history.view',
           },
           {
+            title: 'Chatbot Console',
+            path: '/system-management/chatbot-console',
+            permission: 'system.chat_history.view',
+          },
+          {
             title: 'Email Event Configs',
             path: '/system-management/email-event-configs',
             permission: 'system.email_event_configs.view',
@@ -894,6 +904,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Running Numbers',
             path: '/system-management/numbering-rules',
             permission: 'system.numbering_rules.view',
+          },
+          {
+            title: 'Import Column Mappings',
+            path: '/system-management/import-field-aliases',
+            permission: 'system.import_field_aliases.view',
           },
           {
             title: 'Status Graphs',
@@ -1698,6 +1713,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       path: '/master-data-management/units-of-measure',
       permission: 'master_data.units_of_measure.view',
     },
+    {
+      title: 'Countries',
+      path: '/master-data-management/countries',
+      permission: 'master_data.countries.view',
+    },
     ],
   },
   {
@@ -2079,6 +2099,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'system.chat_history.view',
       },
       {
+        title: 'Chatbot Console',
+        path: '/system-management/chatbot-console',
+        permission: 'system.chat_history.view',
+      },
+      {
         title: 'API Call Log',
         path: '/system-management/api-call-logs',
         permission: 'system_management.api_call_log.view',
@@ -2107,6 +2132,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Running Numbers',
         path: '/system-management/numbering-rules',
         permission: 'system.numbering_rules.view',
+      },
+      {
+        title: 'Import Column Mappings',
+        path: '/system-management/import-field-aliases',
+        permission: 'system.import_field_aliases.view',
       },
       {
         title: 'Status Graphs',

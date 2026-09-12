@@ -78,7 +78,7 @@ describe('ProductListDialog', () => {
     }
     expect(within(dialog).getByText(/1 product$/)).toBeInTheDocument();
     // valuation renders (not the em-dash)
-    expect(within(dialog).getByText('RM 1,500')).toBeInTheDocument();
+    expect(within(dialog).getByText('RM 1,500.00')).toBeInTheDocument();
   });
 
   it('renders "-" for a null valuation', () => {

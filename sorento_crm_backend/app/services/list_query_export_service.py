@@ -37,6 +37,15 @@ def _value_from_obj(obj: Any, compile_key: str) -> Any:
     return _json_safe(getattr(obj, attr, None))
 
 
+def _value_from_supplier(obj: Any, compile_key: str) -> Any:
+    """S2 (`PLAN-local-supplier-oi-routing.md`): `country.name` is the joined name, read off
+    the model's own `country_name` property - `suppliers.country` (the free-text column
+    `_value_from_obj`'s plain `getattr(obj, attr)` used to read) is gone."""
+    if compile_key == "country.name":
+        return _json_safe(getattr(obj, "country_name", None))
+    return _value_from_obj(obj, compile_key)
+
+
 def _value_from_workflow_def(obj: Any, compile_key: str) -> Any:
     _, attr = compile_key.split(".", 1)
     return _json_safe(getattr(obj, attr, None))
@@ -258,7 +267,7 @@ class ListQueryExportService:
         return out
 
     def _export_suppliers(self, selected: list, clause: Optional[Any], req: ListExportRequest) -> List[Dict[str, Any]]:
-        q = self.db.query(Supplier)
+        q = self.db.query(Supplier).options(joinedload(Supplier.country))
         if req.quick_search:
             q = q.filter(
                 or_(
@@ -288,7 +297,7 @@ class ListQueryExportService:
             row = {}
             for m in selected:
                 key = m.export_column_name or m.field_key
-                row[key] = _value_from_obj(s, m.compile_key)
+                row[key] = _value_from_supplier(s, m.compile_key)
             out.append(row)
         return out
 

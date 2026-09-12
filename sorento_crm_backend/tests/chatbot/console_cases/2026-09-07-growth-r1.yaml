@@ -1,0 +1,622 @@
+# Console cases for chatbot growth r1, lane 1 (`feat/chatbot-growth-data`).
+#
+# Plan `documentation/plans/chatbot/PLAN-chatbot-growth-r1.md` Slice A; UAC AC-901 to
+# AC-911 and AC-921 / AC-922. One case per capability this lane adds and per phrasing the
+# parser had to learn, run with `scripts/chatbot_console_check.py` against a lane backend
+# before the PR and once against production after the deploy.
+#
+# EVERY CASE CARRIES A POSITIVE `reply_contains`, per `documentation/agents/chatbot-verification.md`:
+# a case built from `branch_kind` plus negatives passes on the generic error reply. Silence
+# fails on its own, and what is graded is everything the turn would SAY.
+#
+# ---------------------------------------------------------------------------------------
+# RUN IT TWICE. The parser vocabulary this lane adds ships as an UNLABELLED prompt version
+# (migration `490_chatbot_parser_growth`), so the tenant's live parser does not know
+# `so_outstanding`, `purchase_order` / `check_po`, the SPO "last in" phrasing, `group_by` or
+# `top_n` until the owner moves the `production` label. Both answers matter:
+#
+#   # what the tenant gets TODAY (the labelled prompt)
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-07-growth-r1.yaml --base-url http://127.0.0.1:8004
+#
+#   # what it gets AFTER the label moves (nothing is promoted; dry-run only)
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-07-growth-r1.yaml --base-url http://127.0.0.1:8004 \
+#       --prompt-version <the id 490 published for the body this tenant's label sits on>
+#
+# A case marked `# NEW VOCABULARY` below is EXPECTED to fail the first run and pass the
+# second. That is the check working: it is the measurement of what the label move buys, and
+# it is why the flag exists. Every other case must pass BOTH runs - those grade the tools,
+# the presenters and the renderer, which need no prompt change.
+# ---------------------------------------------------------------------------------------
+#
+# THE CODES AND CUSTOMERS ARE REAL, picked off the local prod copy with SQL rather than
+# invented, because a case naming a code the database does not hold grades the miss lane. The
+# query that chose each is in the comment above its case. `SRTWC8517` and `SRTWC286` (the
+# codes the plan uses as examples) are NOT in this database - `SELECT product_code FROM
+# products WHERE product_code IN ('SRTWC8517','SRTWC286')` returns nothing - so every case
+# below substitutes a real one.
+#
+# C-FH14 does the heavy lifting on purpose: it is the one code that carries stock, open PO
+# lines and received SPO allocations at once, so the stock / PO / last-in cases and the
+# multi-turn carry all name the same product and a difference between them is the feature,
+# not the data.
+#
+# The contact is the one whose stored envelope the script borrows; override with --contact.
+#
+# SETUP THE SCRIPT CANNOT DO (8 Sep 2026): the A7 zero-stock ladder cases assume the console
+# contact's stock visibility policy is DETAILED (`stock_visibility_policies.mode`). Under a
+# per-contact `compact` row the backend answers every code with a Total block (`*Total:* 0`)
+# and the miss ladder never runs, so those cases read "Stock summary..." and fail for a
+# reason that is not the lane's. The owner keeps a compact row on this contact for their own
+# grading; flip it to detailed for a graded run and restore it after. The PO rung also needs
+# the contact to hold `purchase_orders.placed` (Contacts > Access > Field reveals).
+contact: "437264483"
+
+cases:
+  # ======================================================================================
+  # A1 - specs on the EXISTING products tool (AC-901, AC-902). No spec tool exists.
+  # ======================================================================================
+
+  # SELECT p.product_code, count(*) FROM product_specifications ps
+  #   JOIN products p ON p.id = ps.product_id
+  #   JOIN LATERAL jsonb_each(ps.values) v(k, val) ON true
+  #   WHERE val::text NOT IN ('null','""') GROUP BY 1 ORDER BY 2 DESC LIMIT 6;
+  # -> SRTKT73SS carries 26 populated spec keys, second only to a colour variant.
+  # A bare "spec" used to be read as a requested ATTRIBUTE, so this took the one-key
+  # branch and answered "no dimension recorded for ..." instead of AC-901's compact
+  # "Specs:" line. The addendum now says so in one rule ("A BARE SPEC ASKS FOR ALL OF
+  # THEM"), which is why this case is `# NEW VOCABULARY`: it grades the label move too.
+  - name: A1 spec ask shows the compact Specs line  # NEW VOCABULARY (bare-spec rule)
+    text: "SRTKT73SS spec"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTKT73SS", "Specs:"]
+      no_uuid: true
+
+  # SELECT r.spec_key, r.label, v.val FROM product_specifications ps
+  #   JOIN products p ON p.id=ps.product_id
+  #   JOIN LATERAL jsonb_each(ps.values) v(k,val) ON true
+  #   JOIN product_spec_registry r ON r.spec_key=v.k
+  #   WHERE p.product_code='SRTKT73SS' AND val::text NOT IN ('null','""');
+  # -> steel_grade = '304', registry label "Steel grade".
+  #
+  # FINDING, measured 8 Sep 2026: under the LIVE prompt the two A1 phrasings are UNSTABLE
+  # and swap - one run answers "SRTKT73SS spec" with a single key and "steel grade of
+  # SRTKT73SS" with the full list, the next run does the reverse - because the live
+  # REQUESTED ATTRIBUTES section has no rule for a bare "spec" and no vocabulary entry for
+  # "steel grade", so the model guesses (it emits `["dimension"]`, a word the registry has
+  # no key for, and gets the honest "no dimension recorded for <code>" miss). Under the
+  # PINNED version both settle: "spec" renders the compact Specs line and "steel grade"
+  # renders "*Steel grade:* 304". Both A1 cases are therefore `# NEW VOCABULARY` - the
+  # bare-spec rule the addendum adds is what makes the pair deterministic.
+  - name: A1 one-key spec ask answers that key only  # NEW VOCABULARY (bare-spec rule)
+    text: "steel grade of SRTKT73SS"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTKT73SS", "304"]
+      no_uuid: true
+
+  # Item 8 (8 Sep 2026). "list price of X" -> requested_attributes ["price"]: the
+  # projection kept identity fields + matched SPEC keys only, so the presenter's own
+  # "List Price" line was dropped and the answer said "no price recorded". Base fields
+  # now come first. SELECT list_price FROM products WHERE product_code='SRTWC286-SH' -> 1260.
+  # D12 superseded item 8's mechanism (base fields are now ALWAYS on the page, never
+  # selected by the ask), but this case's own expectation still holds exactly as written.
+  - name: item 8 - list price of a product reaches the base List Price field  # NEW VOCABULARY
+    text: "list price of SRTWC286-SH"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTWC286-SH", "List Price"]
+      reply_not_contains: ["recorded for"]
+      no_uuid: true
+
+  # D12 (owner ruling, 8 Sep 2026, turn 8f4a8526): "product details" names NO property
+  # (prompt fix, both bodies) - `requested_attributes` reaches the projection empty,
+  # which is the no-attribute path and always carried every base field. Before this fix
+  # the parser emitted `["price"]` for "product details" and the projection (item 8's
+  # own mechanism) then dropped List Price and Dimensions from the reply.
+  - name: D12 - product details names no property, base fields still show  # NEW VOCABULARY
+    text: "SRTJC802A-1500 product details"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTJC802A-1500", "*List Price:*", "*Dimensions:*"]
+      no_uuid: true
+
+  # Owner turn 0682154e: "seat cover material of srtwc286" -> ["material"]; the registry
+  # has seat_material "Seat cover material" AND material "Material", equality matched
+  # neither, and seven items each said "no material recorded". Token containment reaches
+  # every key that contains the word, and a miss is said once, after the items, for the
+  # codes without a value ("*Material:* not recorded for ..."). The one-line rule is
+  # pinned in pytest (test_product_spec_projection.py); yaml can only say it appears.
+  - name: item 8 - seat cover material reaches the key that contains it  # NEW VOCABULARY
+    text: "seat cover material of srtwc286"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["Seat cover material"]
+      reply_not_contains: ["no material recorded"]
+      no_uuid: true
+
+  # E2 (owner turn b377b18e, 8 Sep 2026): "Catalog Sorento" - a document-class word
+  # ("catalog") plus a brand/company name ("Sorento") - is a resource_attachment ask, not
+  # a promotion one. The lane already resolved and sent both catalogue attachments; the
+  # prompt gains one sentence in the resource_attachment domain description (both bodies)
+  # saying so directly, so the parser stops needing the lucky read.
+  #   SELECT id, original_filename FROM attachments WHERE id IN
+  #     ('9a379ec6-a1fe-483f-9bd8-dc2c6e10f459', '102d1278-7c18-461c-8400-43415946e882');
+  #   -> "SORENTO CATALOGUE 2024 (SEARCHABLE)_compressed.pdf", "Mocha Catalogue FA 300924.pdf"
+  - name: E2 - Catalog Sorento is a resource attachment ask, not promotion  # NEW VOCABULARY
+    text: "Catalog Sorento"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains:
+        - "I have attached"
+        - "SORENTO CATALOGUE 2024"
+        - "Mocha Catalogue FA 300924"
+      no_uuid: true
+
+  # D6 (owner pass on the restored DB, turn 333c37cf): "Ibwc7605 image" rendered TWO
+  # did-you-mean groups ("Ibwc7605" and a whole-phrase "Ibwc7605 image") with the
+  # multi-miss wording. The resolver's spec_fallback keyed its matches on the whole query
+  # beside the lane's explicit tokens (with "image" and "photo" alike); they now fold into
+  # the unresolved token, and the parser's attachment_type canonical_code is the taxonomy
+  # value ("image" -> photo). One group, the single-miss wording, code quick replies.
+  # D7 (owner ruling on the restored-DB pass): the ladder is stock -> incoming -> PO from
+  # either side. "hav incoming?" after a zero-stock ask used to stop at "No incoming and no
+  # stock for X." because the 489 ladder had no PO rung on `incoming`; migration 491 adds
+  # it. Same PO placed key gate, one offer.
+  # RE-DERIVED 8 Sep 2026: `CB2904` (the original code) now has 1,100 on hand, so it no
+  # longer climbs a zero-stock ladder at all. `BRC22802W-MY` (0 stock / 2 open PO lines /
+  # 0 unshipped SPO / 0 incoming - the same re-derivation query as the A7 section above)
+  # replaces it; same zero+zero+PO shape the case was built to grade.
+  - name: D7 - an incoming ask on a zero-stock code climbs to the PO rung
+    cold: true
+    turns:
+      - text: "check stock BRC22802W-MY"
+        expect:
+          branch_kind: business_query
+          # Owner ruling, 11 Sep 2026: the structured field block per row.
+          reply_contains: ["BRC22802W-MY", "but PO is placed", "Product Code:", "Ordered:", "Outstanding:", "PO date:"]
+          reply_not_contains: ["pcs", "expected"]  # D11
+          no_uuid: true
+      - text: "hav incoming?"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["No incoming and no stock for BRC22802W-MY, but PO is placed:", "Product Code:", "Ordered:", "Outstanding:", "PO date:"]
+          # Owner ruling, 11 Sep 2026: the structured field block only, no heading,
+          # no "pcs", no expected date.
+          reply_not_contains: ["No incoming and no stock for BRC22802W-MY.", "pcs", "expected"]
+          no_uuid: true
+
+  - name: D6 - a code miss with an attachment word is one did-you-mean group  # NEW VOCABULARY
+    text: "Ibwc7605 image"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["Couldn't find \"Ibwc7605\" (product)", "Did you mean", "Reply with a code to continue"]
+      reply_not_contains: ["Reply a number to pick", "Ibwc7605 image\" (product)"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A2 - stock, and the field-reveal gate (AC-903). `check_access` returns
+  # `attributes: None` until Slice C, so EVERY restricted field is hidden by construction
+  # and this reply must be the one the contact got before this lane existed.
+  # ======================================================================================
+
+  # SELECT p.product_code, sum(s.quantity_on_hand) FROM stock s
+  #   JOIN products p ON p.id=s.product_id WHERE p.product_code='C-FH14' GROUP BY 1;
+  # -> 17858 on hand.
+  - name: A2 stock for a contact with no grant is unchanged
+    text: "check stock C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["C-FH14"]
+      reply_not_contains: ["Open SO", "Sellable"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A3 - the SO outstanding bucket and the angles (AC-905, AC-905b, AC-906).
+  # ======================================================================================
+
+  # SELECT c.customer_name, count(*) FROM sales_order_lines sl
+  #   JOIN sales_orders so ON so.id = sl.sales_order_id
+  #   JOIN customers c ON c.id = so.customer_id
+  #   WHERE sl.line_status='open' AND (sl.qty_ordered - sl.qty_delivered) > 0
+  #   GROUP BY 1 ORDER BY 2 DESC LIMIT 6;
+  # -> BUIMACO SDN BHD has 947 open SO lines, the largest non-project account.
+  - name: A3 outstanding SO for a customer  # NEW VOCABULARY (order_status=so_outstanding)
+    text: "outstanding SO for BUIMACO"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["BUIMACO"]
+      no_uuid: true
+
+  - name: A3 belum DO is the same bucket in Malay  # NEW VOCABULARY
+    text: "BUIMACO punya order yang belum DO ada apa"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["BUIMACO"]
+      no_uuid: true
+
+  # SELECT c.customer_name, p.product_code,
+  #        count(*) FILTER (WHERE o.actual_delivery_date IS NOT NULL) delivered,
+  #        count(*) FILTER (WHERE o.actual_delivery_date IS NULL) open_do
+  #   FROM order_lines ol JOIN orders o ON o.id = ol.order_id
+  #   JOIN customers c ON c.id = o.customer_id JOIN products p ON p.id = ol.product_id
+  #   WHERE EXISTS (SELECT 1 FROM sales_order_lines sl JOIN sales_orders so ON so.id=sl.sales_order_id
+  #                 WHERE so.customer_id = o.customer_id AND sl.product_id = ol.product_id
+  #                   AND sl.line_status='open' AND (sl.qty_ordered-sl.qty_delivered)>0)
+  #   GROUP BY 1,2 ORDER BY 4 DESC LIMIT 6;
+  # -> KENWEALTH TRADING SDN BHD (PROJECT) + C-FH14 is the one pair with rows in ALL THREE
+  #    buckets (15 delivered, 16 open DO, open SO lines), which is what the pipeline needs.
+  - name: A3 how many did the customer take - three-line pipeline  # NEW VOCABULARY
+    text: "how many did KENWEALTH TRADING take of C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      # D8: the three-line block is gone; the rows carry the SO block then the DO block
+      reply_contains: ["SO:", "Ordered:", "SO Outstanding", "Delivered"]
+      reply_not_contains: ["DO open (not yet delivered)"]
+      no_uuid: true
+
+  # Owner turn 98912914 (8 Sep): the same question with a customer whose name resolves to
+  # several accounts and a code that resolves to a FAMILY (17 `SRTWC286*` variants) picks
+  # `crm_order_management_orders_by_product_list`, not `_orders_list`. That tool dropped
+  # `include_pipeline` end to end (route param, service, ToolSpec), so the answer had the
+  # per customer x product DO rows and no SO line at all. The SO figure now rides on EVERY
+  # products[]/groups[] row and prints after Pending Qty - as a row field, not the
+  # three-line pipeline, which keys on a TOP-LEVEL number and would print DO counts as
+  # quantities across the 3 variants in this row.
+  #   SELECT o.debtor_name, p.product_code, count(distinct o.id) FROM order_lines ol
+  #     JOIN orders o ON o.id = ol.order_id JOIN products p ON p.id = ol.product_id
+  #     WHERE o.debtor_name ILIKE '%heng seng hardware%' AND p.product_code ILIKE 'srtwc286%'
+  #     GROUP BY 1,2;
+  #   -> HENG SENG HARDWARE SDN BHD [A/C III] x SRTWC286-SH / -SH-150 / -SH-200 (6 / 2 / 4 DOs);
+  #      no open SO line for the pair today, so the field reads 0 - the LABEL is what is graded.
+  # D8 (owner screenshot, orders LIST tool, all customers x SRTWT8201): the rows carried the
+  # DO block only and the struck three-line block sat on top. The list route now stamps the
+  # SO block per row like the by-product route, and the block is gone from the render.
+  - name: D8 - all customers of a code on the orders list carry the SO block per row  # NEW VOCABULARY
+    text: "how many did all customers take of SRTWT8201"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["*SO:*", "*Ordered:*", "SRTWT8201"]
+      reply_not_contains: ["DO open (not yet delivered)"]
+      no_uuid: true
+
+  - name: A3 how many did the customer take - by-product tool carries the SO line per row  # NEW VOCABULARY
+    text: "how many did heng seng hardware take of srtwc286"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SO Outstanding", "Transferred to DO", "SRTWC286"]
+      no_uuid: true
+
+  # `gate.ALLOWS_EMPTY['order'] is False`, so a bare "open DO by customer" has nothing to
+  # scope and is refused before the tool runs. The product is the scope; the ANGLE is what
+  # this case grades.
+  - name: A3 open DO grouped by customer renders headed sections  # NEW VOCABULARY (group_by)
+    text: "open DO by customer for C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["C-FH14"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A5 - PO placed, and D4: a dealer never sees the supplier (AC-907).
+  # ======================================================================================
+
+  # RE-DERIVED 8 Sep 2026 against the restored prod copy. FOUND (E1, coordinator D-fix
+  # round): the actual cause of "But no purchase_order matched these" on C-FH14 AND
+  # SRTWC8517 alike was neither Mocha-only scope nor kind=spo being skipped (both
+  # measured clean - the service and the resolver work correctly given the right
+  # product_ids) - it was that `crm_procurement_po_placed_list` and
+  # `crm_procurement_spo_allocations_last_receipt_list` had NO embeddings on this
+  # restored copy at all (measured: embedding_documents had 112 mcp_tool rows,
+  # embedding_chunks 236, neither containing a source_id for either tool - the
+  # deploy's tool-seed step was never run here), so the chatbot's tool search could
+  # never retrieve either tool for ANY phrasing. Seeded via
+  # `app.scripts.seed_mcp_tool_capabilities --only <tool>` + a direct
+  # `process_embedding_queue_item` call per new queue row (the DB's embedding_queue
+  # carries a 5,894-row pending backlog from other lanes; a whole-queue drain would
+  # have processed that too). Verified live: "any PO for SRTWT7445-LV-NEW", "last in
+  # for C-FH14", "last 3 received for C-FH14", "PO for SRTWC8517" and the owner's own
+  # "Srt62-Gm last stock in quantity and date" all now answer correctly.
+  # SELECT p.product_code, count(*), sum(pl.qty_ordered - pl.qty_received)
+  #   FROM purchase_order_lines pl JOIN products p ON p.id = pl.product_id
+  #   WHERE pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0 AND p.product_code = 'C-FH14'
+  #   GROUP BY 1;
+  # -> C-FH14 still has 138 open PO lines for 11,928 pcs (unchanged in shape, only the
+  #    count grew). A5's own direct-PO-ask example: SRTWT7445-LV-NEW, which the ladder
+  #    re-derivation below also measured with 26 open PO lines.
+  - name: A5 PO for a product, and no supplier for a dealer  # NEW VOCABULARY (check_po)
+    text: "any PO for SRTWT7445-LV-NEW"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTWT7445-LV-NEW", "PO Number"]
+      reply_not_contains: ["Supplier"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A6 - the SPO last receipt (AC-908). The date LABEL names the column that answered;
+  # on this database that is always "Received" - the recorded timestamp, the label lost its
+  # "(recorded)" on 8 Sep 2026 (owner, D5) - (A0's measurement: both shipment
+  # date columns are populated on 1 of 79,747 received rows).
+  # ======================================================================================
+
+  # SELECT p.product_code, count(*) FROM spo_allocations a JOIN products p ON p.id = a.product_id
+  #   WHERE a.receipt_status='fully_received' GROUP BY 1 ORDER BY 2 DESC LIMIT 6;
+  # -> C-FH14 has 1,569 fully_received allocations; CKS1050 has 1,254.
+  - name: A6 last in for a product  # NEW VOCABULARY (check_spo "last in")
+    text: "last in for C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["C-FH14", "Quantity Received"]
+      no_uuid: true
+
+  # FINDING: "last 3 IN for C-FH14" retrieves the INCOMING tools, not the SPO one - "in"
+  # is the incoming domain's own switch word and outweighs the addendum's "last 3 in" cue.
+  # "last 3 received" reaches `crm_procurement_spo_allocations_last_receipt_list`, which is
+  # what this case now sends. The cue stays in the prompt (it is the owner's phrasing) and
+  # the disambiguation is a dialogue-lane question, not something the additive addendum can
+  # settle.
+  - name: A6 last 3 received returns three  # NEW VOCABULARY (top_n)
+    text: "last 3 received for C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["C-FH14", "Quantity Received"]
+      no_uuid: true
+
+  - name: A6 the same question in Chinese  # NEW VOCABULARY
+    text: "CKS1050 上次进货多少"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["CKS1050"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A7 - the cross-domain ladder, Foundre's rule (AC-921, AC-922).
+  # ======================================================================================
+  #
+  # Two more shapes measured 8 Sep 2026 (coordinator ask), for the record - neither has a
+  # console case, since no existing case needs them and inventing one is not this fix's job:
+  #   zero stock + zero incoming + unshipped SPO ONLY (no open PO line):
+  #     SELECT p.product_code, COALESCE(spo.unshipped_spo,0) FROM products p
+  #     LEFT JOIN (SELECT product_id, count(*) unshipped_spo FROM spo_allocations
+  #                  WHERE receipt_status='pending' GROUP BY product_id) spo ON spo.product_id=p.id
+  #     LEFT JOIN (SELECT product_id, sum(quantity_on_hand) on_hand FROM stock GROUP BY product_id) s ON s.product_id=p.id
+  #     LEFT JOIN (SELECT product_id, count(*) n FROM purchase_order_lines
+  #                  WHERE line_status='open' AND (qty_ordered-qty_received)>0 GROUP BY product_id) po ON po.product_id=p.id
+  #     WHERE COALESCE(s.on_hand,0)=0 AND COALESCE(po.n,0)=0 AND COALESCE(spo.unshipped_spo,0)>0;
+  #     -> BF60015-AL-BL (1 unshipped SPO), SRTWC7406-LID (1), CBMC66738 (1) all qualify.
+  #   mixed PO + SPO on the SAME code: every code with both today also carries stock
+  #     (SRTWB1515: 97 on hand, 40 open PO lines, 8 unshipped SPO is the largest) - no
+  #     ZERO-stock code on this database currently carries both PO and SPO at once.
+
+  # RE-DERIVED 8 Sep 2026 against the restored prod copy. `CB2904` (this case's original
+  # code) now HAS stock (1,100 on hand - the copy moved on since the query below was last
+  # run), so it no longer demonstrates the zero-stock rung at all. New query, re-run
+  # against the current DATABASE_URL:
+  #
+  # SELECT p.product_code,
+  #   COALESCE(s.on_hand,0) on_hand, COALESCE(po.open_po_lines,0) open_po_lines,
+  #   COALESCE(spo.unshipped_spo,0) unshipped_spo, COALESCE(inc.incoming_lines,0) incoming_lines
+  # FROM products p
+  # LEFT JOIN (SELECT product_id, sum(quantity_on_hand) on_hand FROM stock GROUP BY product_id) s ON s.product_id=p.id
+  # LEFT JOIN (SELECT product_id, count(*) open_po_lines FROM purchase_order_lines
+  #              WHERE line_status='open' AND (qty_ordered-qty_received)>0 GROUP BY product_id) po ON po.product_id=p.id
+  # LEFT JOIN (SELECT product_id, count(*) unshipped_spo FROM spo_allocations
+  #              WHERE receipt_status='pending' GROUP BY product_id) spo ON spo.product_id=p.id
+  # LEFT JOIN (SELECT isl.product_id, count(*) incoming_lines FROM inbound_shipment_lines isl
+  #              JOIN inbound_shipments ish ON ish.id=isl.shipment_id
+  #              WHERE ish.shipment_status <> 'received' GROUP BY isl.product_id) inc ON inc.product_id=p.id
+  # WHERE p.product_code IN ('CB2904','MSK11A-QT','CWCX1009-SH','SRTWT7445-LV-NEW','SRTWB103','BRC22802W-MY','CHS3220');
+  #
+  # ->  BRC22802W-MY   0 / 2  / 0 / 0   (zero stock, zero incoming, an open PO - the
+  #                                      owner's own screenshot case)
+  #     CB2904      1100 / 0  / 0 / 1   (has stock now - no longer a zero-stock example)
+  #     CHS3220        2 / 0  / 0 / 0   (has stock - unrelated to this ladder)
+  #     CWCX1009-SH    0 / 15 / 0 / 3   (zero stock, but now HAS incoming - stops there)
+  #     MSK11A-QT      0 / 2  / 0 / 1   (zero stock, but now HAS incoming - stops there)
+  #     SRTWB103       0 / 0  / 0 / 0   (still the three-way miss - unchanged)
+  #     SRTWT7445-LV-NEW 0 / 26 / 0 / 1 (zero stock, but now HAS incoming - stops there)
+  #
+  # `BRC22802W-MY` replaces `CB2904` as the clean zero+zero+PO example. The three
+  # "suffixed code" cases below no longer reach the PO rung at all (all three now have an
+  # incoming line) - they are re-purposed to the SAME suffixed-code shape climbing to the
+  # INCOMING rung instead, which is a real, present-tense scenario on this database and
+  # keeps their original point (a hyphen-suffixed code still reaches SOME rung).
+  - name: A7 no stock, no incoming, but PO is placed
+    text: "check stock BRC22802W-MY"
+    cold: true
+    expect:
+      branch_kind: business_query
+      # Owner ruling, 11 Sep 2026: the structured field block per row.
+      reply_contains: ["BRC22802W-MY", "but PO is placed", "Product Code:", "Ordered:", "Outstanding:", "PO date:"]
+      reply_not_contains: ["Supplier", "pcs", "expected"]
+      no_uuid: true
+
+  # SRTWB103 re-verified 8 Sep 2026 against the current DATABASE_URL by the same query
+  # above: still 0 stock / 0 open PO / 0 unshipped SPO / 0 incoming - unchanged.
+  - name: A7 nothing on any rung says so and offers to escalate
+    text: "check stock SRTWB103"
+    cold: true
+    expect:
+      branch_kind: business_query
+      # Item 5 (8 Sep 2026): the rung reads PO lines AND unshipped SPO allocations, so the
+      # three-way miss says "nothing on order" (was "no PO for"). No zero-stock product on
+      # the copy has an unshipped SPO (measured 7 Sep), so this reworded miss is the only
+      # console coverage; the on-order wording is pinned in pytest.
+      reply_contains: ["No stock, no incoming and nothing on order for SRTWB103"]
+      no_uuid: true
+
+  # RE-PURPOSED 8 Sep 2026 (see the re-derivation comment above): all three suffixed codes
+  # now carry an incoming line, so the ladder stops at "incoming", never reaching "PO is
+  # placed" - a hyphen-suffixed code still reaching the FIRST rung it hits is the surviving
+  # half of the original point (the resolver-tier investigation these three were built for
+  # is closed; see git history for the original "SUFFIXED-CODE PROBE" measurement).
+  - name: A7 suffixed code SRTWT7445-LV-NEW reaches the incoming rung
+    text: "check stock SRTWT7445-LV-NEW"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTWT7445-LV-NEW"]
+      reply_not_contains: ["No stock and no incoming"]
+      no_uuid: true
+
+  - name: A7 suffixed code MSK11A-QT reaches the incoming rung
+    text: "check stock MSK11A-QT"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["MSK11A-QT"]
+      reply_not_contains: ["No stock and no incoming"]
+      no_uuid: true
+
+  - name: A7 suffixed code CWCX1009-SH reaches the incoming rung
+    text: "check stock CWCX1009-SH"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["CWCX1009-SH"]
+      reply_not_contains: ["No stock and no incoming"]
+      no_uuid: true
+
+  # WAS `expected_red_until: feat/chatbot-growth-dialogue`, and the marker is GONE because
+  # the run reported XPASS - which is the flag doing its job: a marker that outlives its
+  # fix is a lie. The 8 Sep escalation-confirmation guard is what fixed it. The turn-2 ask
+  # used to be read as a "yes" to the pending escalate offer (`request_for_help` +
+  # `is_escalation_confirmation: true`), so it never reached the PO tool at all; with the
+  # guard it is a business ask and the carried product answers it.
+  - name: stock then PO carries the product
+    cold: true
+    turns:
+      - text: "check stock C-FH14"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["C-FH14"]
+          no_uuid: true
+      - text: "any PO for it?"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["C-FH14"]
+          no_uuid: true
+
+  # OWNER REPORT, 8 Sep 2026 (the :8080 hands-on run), both defects in one conversation.
+  # Turn 1 ends with "Would you like me to escalate to Mocha warehouse team?". Turn 2 then
+  # hit BOTH: the code was typed as an ORDER entity (dropped by the purchase_order
+  # blocklist, so the lane answered about a product carried from an earlier turn), and the
+  # message was read as an answer to the pending offer - first as a YES (out_of_scope),
+  # then, once that was defused, as a NO ("Escalation declined."). A new business ask is
+  # neither. Turn 3 checks the same typing fix on the SPO tool.
+  - name: owner 8 Sep - stock, then PO for another code, then last in
+    cold: true
+    turns:
+      - text: "check stock srtwc286"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWC286"]
+          no_uuid: true
+      - text: "PO for SRTWC8517"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWC8517"]
+          reply_not_contains: ["Escalation declined", "out of the scope", "Supplier"]
+          no_uuid: true
+      - text: "last in for SRTWC8517"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWC8517"]
+          no_uuid: true
+
+  # Owner turns 2d903c96 -> 17d38019 (8 Sep): after a stock answer that ends in an escalate
+  # offer, "delivery to hanlim" came back `request_for_help` with both hints null and only
+  # the customer entity, the lane went out_of_scope, and the next turn was read as a YES to
+  # the offer. A delivery word beside a customer name is an order ask, whatever the model
+  # stamps: `output_exchange` retypes it off the switch-word table, and the parser prompt
+  # now says so in the request_for_help definition itself.
+  #   SELECT c.customer_name, co.name, count(o.id) FROM customers c JOIN companies co ON
+  #     co.id = c.company_id LEFT JOIN orders o ON o.customer_id = c.id
+  #     WHERE c.customer_name ILIKE '%hanlim%' GROUP BY 1,2 ORDER BY 3 DESC;
+  #   -> HANLIM TRADING SDN BHD [A/C I] 121 DOs (Sorento), and a Mocha ledger with rows too.
+  #
+  # WAS RED TWICE for reasons this case measured on its way in: `crm_order_analytics` won
+  # the pick (0.497) and could never be answered (3b took it out of the pool), then the
+  # by-product tool won (0.485) with no product narrower and answered an empty page (item 7
+  # drops it from a customer-only order pool). XPASS on console-check-1788805573, marker
+  # removed: the reply is the orders list ("Here are the orders I found. 1. *Order Number:*
+  # 202607-3796 ...").
+  - name: owner 8 Sep - a delivery word plus a name over an escalate offer is an order ask
+    cold: true
+    turns:
+      - text: "check stock C-FH14"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["C-FH14"]
+          no_uuid: true
+      - text: "delivery to hanlim"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["HANLIM"]
+          reply_not_contains: ["escalat"]
+          no_uuid: true
+
+  # D10 (owner console pass, 8 Sep 2026, turn 69d9900e). `SRTWC8610-SH` is a product SET
+  # code (`product_sets.set_code`); no product of that code exists. The gate marks a token
+  # whose only match is an incompatible type (`gate_debug.incompatible_only`) so the miss
+  # lane treats it as unresolved rather than as a flat refusal (item 1); `output_exchange`
+  # retypes a shipment/order-hinted product-shaped code to `product` under `incoming` so
+  # the parser's own mistake does not compound it (item 2); and (D10b)
+  # `entity_resolver.py`'s trigram "did-you-mean" search now runs for a token whose only
+  # match is a type the caller did not ask for (the `caller_types` check beside the
+  # existing `if tr.matches: continue`), which is what actually surfaces SRTWC8611 /
+  # SRTWC8613 / SRTWC8614 - the set's own two member products (SRTWCX8610-SH,
+  # SRTWCY8610-SH) are excluded from that list, they are part of what the customer
+  # already named, not an alternative to it.
+  - name: D10 - a product-set-only code on an incoming ask offers its real siblings
+    text: "srtwc8610-sh hav incoming?"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["srtwc8610-sh", "Did you mean", "SRTWC8611", "SRTWC8613", "SRTWC8614"]
+      no_uuid: true
+
+  # D10c (owner console pass, 8 Sep 2026, turn 72146a1e). AND mode, two tokens: the
+  # product token resolves ONLY to `product_set` and the attachment_type token resolves
+  # fine ("certificate" -> Certification) - so the blanket incompatible-types branch never
+  # fires (`compatible_entities` is non-empty, it just lacks a `product`) and the turn
+  # used to fetch certificates scoped to nothing about the product, answering "no
+  # certificate matched these" for a subject silently dropped from the reply. B1 (the
+  # attachment-subject-gate in gate.py) now also treats an `incompatible_only` product
+  # token as a missed subject, so this reaches the SAME did-you-mean as the incoming turn,
+  # annotated against the certificate ask.
+  - name: D10c - a product-set collision beside a resolved attachment type still gets its DYM
+    # Owner call, 8 Sep 2026: parse variance on this turn, not a code defect. The gate is
+    # proven on the EXACT captured payload of turn c91db3bf-6fb9-48f2-b004-4c134687f788 -
+    # feeding it straight into `run_gate` returns `gate_passed=False` with
+    # `gate_debug.incompatible_only == {"srtwc8610-sh": ["product_set"]}`, exactly the
+    # mechanism this case grades - so a cold graded run occasionally parsing this same
+    # phrase differently (missing the "no certificate" annotation) is the model, not this
+    # lane. Remove the moment two consecutive graded runs pass it.
+    expected_red_until: "parse variance on the certificate turn (gate proven on the captured payload, turn c91db3bf-6fb9-48f2-b004-4c134687f788)"
+    text: "srtwc8610-sh certificate"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["srtwc8610-sh", "Did you mean", "SRTWC8611", "SRTWC8613", "SRTWC8614", "no certificate"]
+      no_uuid: true

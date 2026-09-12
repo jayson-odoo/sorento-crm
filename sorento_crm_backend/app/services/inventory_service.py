@@ -1,10 +1,13 @@
 """Inventory service for business logic."""
-from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_, tuple_
-from typing import Optional
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, or_, and_, tuple_, select
+from typing import Optional, TYPE_CHECKING
 import time
 import uuid
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from app.services.stock_visibility import Policy
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.product import Product
 from app.schemas.inventory import (
@@ -672,8 +675,8 @@ class StockService:
                 demand, and refusing the call would lose the question ("how many
                 units do you need?") along with the number.
         """
-        from sqlalchemy import false as sa_false, or_, func
-        from app.services.stock_visibility import resolve_policy
+        from sqlalchemy import or_, func
+        from app.services.stock_visibility import resolve_policy, warehouse_criterion
 
         if requested_qty is not None and requested_qty < 1:
             requested_qty = None
@@ -745,11 +748,11 @@ class StockService:
         # The policy narrows what company scope already allowed; it never widens.
         # An empty allow-list is a real configuration ("this contact is told about
         # no stock at all"), so it filters to nothing rather than being ignored.
-        if policy is not None and policy.warehouse_ids is not None:
-            if policy.warehouse_ids:
-                q = q.filter(Stock.warehouse_id.in_(list(policy.warehouse_ids)))
-            else:
-                q = q.filter(sa_false())
+        # `warehouse_criterion` also carries the "all except these" exclusion
+        # (PLAN stock-visibility-exclude-locations) - a no-op when the policy
+        # names neither list.
+        if policy is not None:
+            q = q.filter(warehouse_criterion(policy, Stock.warehouse_id))
 
         # `hide_zero_locations` on the DETAILED mode is a row filter: a location
         # holding none of the product is a line the reader has no use for. The two
@@ -761,12 +764,44 @@ class StockService:
         # that cannot be true, and the person who can fix it is the one reading
         # this listing. Every row filtering out simply takes the empty path the
         # caller already handles.
+        #
+        # D5 (12 Sep 2026, finding 5): a zero row drops ONLY for a product that HAS
+        # stock somewhere the contact can see. A product zero at every visible
+        # location keeps its rows - the same "none left, not never found" rule
+        # `_apply_stock_visibility` states for compact/availability mode two
+        # sections below (its own comment there). Without this, "SRT6550-DIY ETA"
+        # read as "No incoming and no stock" (unknown product) in detailed mode
+        # while compact correctly printed "*Total:* 0 (O/S: 21) ... but PO is
+        # placed" for the same all-zero product.
+        #
+        # The EXISTS carries the SAME warehouse criterion AND the same active-warehouse
+        # restriction as the outer query, plus an EXPLICIT `company_id` equality, all
+        # mandatory: issue #832 is a correlated EXISTS escaping the `do_orm_execute`
+        # company-scope filter, so a sibling row in another company, a warehouse this
+        # policy excludes, or a warehouse the outer query never shows at all because it
+        # is `is_active=False` must not count as "has stock somewhere" - an inactive
+        # location is outside the visible set, so stock sitting there is as unseen as
+        # stock in an excluded one, and it counts only inside this filter's own
+        # subquery, never through the ORM-level auto-filter, which a correlated EXISTS
+        # does not go through.
         if (
             policy is not None
             and policy.hide_zero_locations
             and policy.mode == "detailed"
         ):
-            q = q.filter(Stock.quantity_on_hand != 0)
+            s2 = aliased(Stock)
+            has_stock_elsewhere = (
+                select(s2.id)
+                .where(
+                    s2.product_id == Stock.product_id,
+                    s2.company_id == Stock.company_id,
+                    warehouse_criterion(policy, s2.warehouse_id),
+                    s2.warehouse.has(Warehouse.is_active.is_(True)),
+                    s2.quantity_on_hand != 0,
+                )
+                .exists()
+            )
+            q = q.filter(or_(Stock.quantity_on_hand != 0, ~has_stock_elsewhere))
 
         resolved_wh_ids = resolve_identifier(
             self.db,
@@ -999,7 +1034,7 @@ class StockService:
             try:
                 alternatives = self._stock_entity_alternatives(
                     resolved_input_product_ids,
-                    allowed_warehouse_ids=(policy.warehouse_ids if policy else None),
+                    policy=policy,
                 )
             except Exception:
                 import logging
@@ -1011,6 +1046,136 @@ class StockService:
                 payload["alternatives"] = alternatives
                 payload["relaxed_axis"] = "entity"
         return payload
+
+    def warehouse_ids_by_code(self, codes: list[str]) -> dict[str, str]:
+        """`{warehouse_code: id}` for the codes given (D1): the compact stock block names
+        locations by code, and the per-warehouse open SO is keyed by id."""
+        codes = [str(c) for c in codes if c]
+        if not codes:
+            return {}
+        rows = self.db.query(Warehouse.warehouse_code, Warehouse.id).filter(Warehouse.warehouse_code.in_(codes)).all()
+        return {str(code): str(wid) for code, wid in rows}
+
+    def on_hand_total_by_product(self, product_ids: list[str]) -> dict[str, int]:
+        """`quantity_on_hand` summed over EVERY warehouse row of each product (review round
+        2, S2): the per-product "Available" line must never be a sum over the returned
+        PAGE, which is short of the truth for a product held in more warehouses than the
+        page limit. Company scope ANDed in by hand - a column-only aggregate is where the
+        session listener's scope is lost (`order_service.stamp_order_summary`)."""
+        from app.services.company_scope import build_company_predicate, get_company_scope
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+        q = self.db.query(Stock.product_id, func.sum(Stock.quantity_on_hand)).filter(
+            Stock.product_id.in_(ids)
+        )
+        pred = build_company_predicate(Stock, get_company_scope(self.db))
+        if pred is not None:
+            q = q.filter(pred)
+        return {str(pid): int(qty or 0) for pid, qty in q.group_by(Stock.product_id).all()}
+
+    def no_feed_company_ids(self) -> set[str]:
+        """Every company whose AutoCount SO feed is not connected
+        (``companies.so_feed_live = false``) - the gate ``_with_sellable`` uses to
+        withhold ``open_so_qty`` / ``sellable`` for their rows (PLAN
+        company-so-feed-flag). No ``company_ids`` filter: the table holds a
+        handful of rows, so this is cheaper called once than filtered by
+        candidate ids on every stock page - and an empty result lets the caller
+        skip `company_id_by_product` entirely on the common (all-feed-on) path."""
+        from app.models.company import Company
+
+        rows = self.db.query(Company.id).filter(Company.so_feed_live.is_(False)).all()
+        return {str(r[0]) for r in rows}
+
+    def company_id_by_product(self, product_ids: list[str]) -> dict[str, str]:
+        """``{product_id: company_id}`` for the products given - a compact or
+        synthesised summary entry carries no company of its own, so the feed gate
+        resolves it through the product (PLAN company-so-feed-flag)."""
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+        rows = (
+            self.db.query(Product.id, Product.company_id)
+            .filter(Product.id.in_(ids))
+            .all()
+        )
+        return {str(pid): str(cid) for pid, cid in rows if cid}
+
+    def open_so_qty_by_product(self, product_ids: list[str]) -> dict[str, int]:
+        """Open (not-yet-DO'd) SO quantity per PRODUCT, across every warehouse (A2).
+
+        The product TOTAL. `open_so_qty_by_product_warehouse` is the per-warehouse
+        split; both exist because a per-warehouse row and the product summary row
+        are two different questions and the review found the first cut answering
+        the second one everywhere (should-fix 5).
+
+        An open DO (created, not yet delivered) is NOT subtracted here - AutoCount
+        deducts stock at DO creation, so it is already out of `on_hand` (AC-904b).
+        """
+        from app.models.order import SalesOrderLine
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+        delta = SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered
+        rows = (
+            self.db.query(SalesOrderLine.product_id, func.sum(delta).label("open_qty"))
+            .filter(
+                SalesOrderLine.product_id.in_(ids),
+                SalesOrderLine.line_status == "open",
+                delta > 0,
+            )
+            .group_by(SalesOrderLine.product_id)
+            .all()
+        )
+        return {str(pid): int(qty or 0) for pid, qty in rows}
+
+    def open_so_qty_by_product_warehouse(
+        self, product_ids: list[str]
+    ) -> tuple[dict[tuple[str, str], int], dict[str, int]]:
+        """The same open SO quantity, split the way the plan says to spend it (A2).
+
+        Returns `({(product_id, warehouse_id): qty}, {product_id: unlocated_qty})`.
+
+        The first cut subtracted the PRODUCT-WIDE open SO from EVERY per-warehouse row,
+        so a product with 100 open SO across two warehouses read as 100 unsellable in
+        each - "Sellable 0 (oversold by 80)" against a warehouse holding 20, which is
+        arithmetic the customer can see is wrong. The plan is explicit: per warehouse
+        where the SO line has one, and the remainder (lines with no `warehouse_id`) on
+        the PRODUCT TOTAL row only, never spread across the warehouse rows. A0 measured
+        that remainder at 0.8% of open lines, which is why it is a small correction and
+        not a redesign - but a small correction applied to every row is still wrong on
+        every row.
+        """
+        from app.models.order import SalesOrderLine
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}, {}
+        delta = SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered
+        rows = (
+            self.db.query(
+                SalesOrderLine.product_id,
+                SalesOrderLine.warehouse_id,
+                func.sum(delta).label("open_qty"),
+            )
+            .filter(
+                SalesOrderLine.product_id.in_(ids),
+                SalesOrderLine.line_status == "open",
+                delta > 0,
+            )
+            .group_by(SalesOrderLine.product_id, SalesOrderLine.warehouse_id)
+            .all()
+        )
+        by_pair: dict[tuple[str, str], int] = {}
+        unlocated: dict[str, int] = {}
+        for pid, wid, qty in rows:
+            if wid:
+                by_pair[(str(pid), str(wid))] = int(qty or 0)
+            else:
+                unlocated[str(pid)] = unlocated.get(str(pid), 0) + int(qty or 0)
+        return by_pair, unlocated
 
     # ------------------------------------------------------ stock visibility
 
@@ -1034,6 +1199,7 @@ class StockService:
         direct MCP caller, so empty is the only shape that cannot leak.
         """
         from sqlalchemy import func, or_ as sa_or
+        from app.services.stock_visibility import warehouse_criterion
 
         payload["stock_visibility"] = {
             "mode": policy.mode,
@@ -1043,26 +1209,31 @@ class StockService:
             "hide_zero_locations": policy.hide_zero_locations,
         }
         if policy.mode != "availability":
-            # NULL stays null on the wire: "every location" is a different answer
-            # from "these named ones", and collapsing it to a list would make the
-            # admin card show a snapshot that silently stops tracking new
-            # warehouses. Inactive locations are dropped: the listing never
-            # answers from one, so naming it promises a place no row can come from.
+            # NULL stays null on the wire ONLY when the policy names neither list -
+            # "every location" is a different answer from "these named ones", and
+            # collapsing it to a list would make the admin card show a snapshot
+            # that silently stops tracking new warehouses. An exclude-only policy
+            # is a NAMED set too (every active warehouse except these), so it
+            # echoes the same way an include list does - the same
+            # `warehouse_criterion` the balance itself filters with, so the
+            # echoed codes are exactly what the balance can cover. Inactive
+            # locations are dropped: the listing never answers from one, so
+            # naming it promises a place no row can come from.
             #
             # The dealer mode omits the key entirely. It is a list of the exact
             # locations that mode exists to keep out of the reply, and an echo is
             # still a disclosure.
             warehouse_codes = None
-            if policy.warehouse_ids is not None:
+            if policy.warehouse_ids is not None or policy.excluded_warehouse_ids is not None:
                 warehouse_codes = sorted(
                     code
                     for (code,) in self.db.query(Warehouse.warehouse_code)
                     .filter(
-                        Warehouse.id.in_(list(policy.warehouse_ids)),
                         Warehouse.is_active.is_(True),
+                        warehouse_criterion(policy, Warehouse.id),
                     )
                     .all()
-                ) if policy.warehouse_ids else []
+                )
             payload["stock_visibility"]["warehouse_codes"] = warehouse_codes
 
         # n8n's "_Data last updated_" footer reads the MCP envelope's
@@ -1201,7 +1372,7 @@ class StockService:
         self,
         product_ids: set[str],
         *,
-        allowed_warehouse_ids: Optional[frozenset[str]] = None,
+        policy: Optional["Policy"] = None,
     ) -> list[dict]:
         """Data-bearing variant/neighbour alternatives for an empty stock result.
 
@@ -1211,11 +1382,14 @@ class StockService:
         SYSTEM_ADJUSTMENT-zero exclusion the listing uses (a system-adjusted-to-0 row is
         qoh == 0, so excluded).
 
-        ``allowed_warehouse_ids`` narrows that gate to the locations the caller's
-        visibility policy allows (None = all of them, the staff/legacy case). A
-        suggestion judged on hidden stock is a promise the next question cannot
-        keep: the contact asks about the neighbour and is told there is none.
+        ``policy`` narrows that gate to the locations the caller's visibility policy
+        allows (None = all of them, the staff/legacy case), through the same
+        `warehouse_criterion` the main listing filters with - include list AND/OR
+        exclusion. A suggestion judged on hidden stock is a promise the next question
+        cannot keep: the contact asks about the neighbour and is told there is none.
         """
+        from app.services.stock_visibility import warehouse_criterion
+
         if len(product_ids) != 1:
             return []
         pid = next(iter(product_ids))
@@ -1235,10 +1409,8 @@ class StockService:
                 Stock.quantity_on_hand > 0,
                 Stock.warehouse.has(Warehouse.is_active.is_(True)),
             )
-            if allowed_warehouse_ids is not None:
-                if not allowed_warehouse_ids:
-                    return set()
-                q = q.filter(Stock.warehouse_id.in_(list(allowed_warehouse_ids)))
+            if policy is not None:
+                q = q.filter(warehouse_criterion(policy, Stock.warehouse_id))
             rows = q.distinct().all()
             return {str(row.product_id) for row in rows}
 

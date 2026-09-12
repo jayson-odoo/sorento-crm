@@ -11,7 +11,7 @@ goods under their own heading, one line nobody stated a pack size for), exported
 `build()` + `to_xlsx()`, and compared against the reference for: the header block, the two-row
 column header with its merges, column widths, row heights, fonts, number formats, the per-line
 formulas, the block amount merged down its rows, the subtotals, the rule row, the grand total,
-the SORENTO / MOCHA footer and the 订单号 / 柜号 / 封号 lines.
+the grand total and the 订单号 / 柜号 / 封号 lines.
 
 WHERE THE REFERENCE DISAGREES WITH ITSELF, one form is picked and named here:
 
@@ -34,8 +34,9 @@ freezes nothing, matching the reference exactly.
 R17 (purchasing consolidation batch, 6 Sep 2026, AC-H2): the CLEARANCE / INSURANCE / CHINA
 FREIGHT footer cells are a second deliberate divergence - "Costs section not needed" (captain).
 The reference apportions them; this builder no longer does, on purpose, everywhere below.
-The CBM and TOTAL AMOUNT company split rows are NOT costs and stay exactly as the reference
-prints them.
+Ruling 30 (captain on :3084, 10 Sep) is the third: the per-company CBM / TOTAL AMOUNT block
+below the grand total is gone too. What the sheet prints is the container's lines and what
+they add up to; who owes what is answered where the invoices are.
 """
 from __future__ import annotations
 
@@ -530,57 +531,48 @@ def test_the_grand_total_sums_the_subtotals_and_prints_them_the_reference_way(
 # --------------------------------------------------------------------------------- #
 
 
-def _footer_rows(out) -> tuple[int, int, int, int]:
-    """(sorento, mocha, totals, labels), by the CBM label the reference puts on the last."""
-    labels = next(
+def _forwarder_row(out) -> int:
+    """The row the three forwarder identifiers start on. Found by the FIRST of them: the
+    per-company block that used to sit above them (and gave this helper its landmark) went
+    with ruling 30."""
+    return next(
         r
         for r in range(out.max_row, svc._FIRST_LINE_ROW, -1)
-        if out.cell(row=r, column=13).value == "CBM"
+        if str(out.cell(row=r, column=3).value or "").startswith("订单号")
     )
-    return labels - 3, labels - 2, labels - 1, labels
 
 
-def test_the_footer_totals_cbm_and_amount_but_no_longer_apportions_costs(sheet):
-    """R17 / AC-H2: the footer keeps CBM and TOTAL AMOUNT per company - real operational
-    totals, not costs - and drops CLEARANCE / INSURANCE / CHINA FREIGHT entirely, even
-    though the seeded shipment carries `clearance_cost` / `china_freight_cost` /
-    `insurance_rate`. Diverges from `reference` on purpose (module docstring) - the
-    reference workbook still apportions them, this builder no longer does."""
+def test_the_footer_is_the_grand_total_and_nothing_per_company(sheet):
+    """Ruling 30 (captain on :3084): the sheet is the container's LINES and what they add
+    up to. The per-company CBM / TOTAL AMOUNT block is gone - who owes what is answered
+    where the invoices are - and the costs went with R17 on 6 Sep. Diverges from
+    `reference` on purpose (module docstring): the reference workbook still prints both."""
     out, _world = sheet
-    sorento, mocha, totals, labels = _footer_rows(out)
     total_row = _grand_total_row(out)
 
-    assert out[f"L{sorento}"].value == "SORENTO"
-    assert out[f"T{sorento}"].value == "SORENTO"
-    assert out[f"L{mocha}"].value == "MOCHA"
-    assert out[f"T{mocha}"].value == "MOCHA"
-    for r in (sorento, mocha):
-        assert out[f"M{r}"].value is not None, "CBM per company must still total"
-        assert out[f"U{r}"].value is not None, "TOTAL AMOUNT per company must still total"
-        for column in ("N", "O", "P"):
-            assert out[f"{column}{r}"].value is None, f"{column}{r} must be empty"
-
-    for column in ("M", "U"):
-        assert out[f"{column}{totals}"].value == f"={column}{sorento}+{column}{mocha}"
-        assert out[f"{column}{totals}"].font.b is True
-    for column in ("N", "O", "P"):
-        assert out[f"{column}{totals}"].value is None
-
-    for column, label in (("M", "CBM"), ("U", "TOTAL AMOUNT")):
-        assert out[f"{column}{labels}"].value == label
-    for column in ("N", "O", "P"):
-        assert out[f"{column}{labels}"].value is None
-    # Not merely blank in the payload - the ratio to the (now cost-free) grand total row
-    # is not even computed, so a stray reference to it cannot resurface later.
     assert total_row > 0
+    # The grand total still totals, off the subtotals.
+    for column in ("F", "G", "H", "M", "P", "Q", "U"):
+        assert out[f"{column}{total_row}"].value is not None, f"{column} must still total"
+
+    printed = [
+        str(cell.value)
+        for row in out.iter_rows(min_row=total_row)
+        for cell in row
+        if isinstance(cell.value, str)
+    ]
+    assert "SORENTO" not in printed
+    assert "MOCHA" not in printed
+    assert "CBM" not in printed
+    assert "TOTAL AMOUNT" not in printed
 
 
 def test_the_three_forwarder_lines_are_written_the_reference_way(sheet, reference):
     out, _world = sheet
-    _s, _m, _t, labels = _footer_rows(out)
-    assert out[f"C{labels}"].value == reference["C86"].value == "订单号:CNH1098313"
-    assert out[f"C{labels + 1}"].value == reference["C87"].value == "柜号:FSCU8103365"
-    assert out[f"C{labels + 2}"].value == reference["C88"].value == "封号:J0713349"
+    first = _forwarder_row(out)
+    assert out[f"C{first}"].value == reference["C86"].value == "订单号:CNH1098313"
+    assert out[f"C{first + 1}"].value == reference["C87"].value == "柜号:FSCU8103365"
+    assert out[f"C{first + 2}"].value == reference["C88"].value == "封号:J0713349"
 
 
 # --------------------------------------------------------------------------------- #

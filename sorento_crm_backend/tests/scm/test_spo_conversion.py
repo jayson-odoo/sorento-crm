@@ -116,7 +116,9 @@ class World:
     ) -> Warehouse:
         """A location. `segment='project'` is a GROUP bin (stock there is spoken for) and
         `is_active=False` is a CLOSED location - eleven of those exist on the live book.
-        Neither is a site pool, so neither belongs in the planner's context figures."""
+        Neither is a site pool; a closed one holds nothing this screen's context figures can
+        count either (R7, captain 8 Sep 2026 - a project bin counts, a closed location never
+        does)."""
         if key not in self.warehouses:
             w = Warehouse(
                 id=_u(), warehouse_code=f"{MARKER}-{key}-{self.tag}"[:50],
@@ -427,13 +429,14 @@ def test_on_hand_and_incoming_spo_are_context_only_and_do_not_net_the_suggested_
         assert line["suggested_qty"] == 60, "on_hand/incoming_spo must not reduce this"
 
 
-def test_context_figures_count_active_site_pools_only():
-    """AC-G3, sum = cell. Both context cells open a dialog that lists ACTIVE POOL rows only
-    (`location_stock_service.location_stock_for_product` for On hand, `container_request_
-    drill`'s own `w.is_active AND _POOL` for Incoming SPO), so a cell counting a closed
-    location or a project bin sends the reader to a total that does not match what she
-    clicked. 50 at the pool is the whole of both figures; the 30 in a project bin and the 40
-    in a closed location are not in either."""
+def test_context_figures_count_every_active_location():
+    """R7 (captain 8 Sep 2026): the container request grid this screen is opened from now
+    nets on_hand / incoming_spo at every active location, site pool and project bin alike, so
+    this screen's own context figures widen the same way - DISPLAY consistency only, since
+    neither figure feeds `suggested_qty` here (see the doctrine-correction test above). A
+    closed location still holds no supply anybody can pick, so it is still excluded: 50 at the
+    pool plus 30 in a project bin is 80 for both figures; the 40 in a closed location is in
+    neither."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
@@ -451,8 +454,8 @@ def test_context_figures_count_active_site_pools_only():
         out = svc.suggest(db, str(shipment.id))
 
         line = _line(out, str(lines[0].id))
-        assert line["on_hand"] == 50
-        assert line["incoming_spo"] == 50
+        assert line["on_hand"] == 80
+        assert line["incoming_spo"] == 80
 
 
 def test_an_ample_po_caps_the_suggested_qty_at_packed_not_beyond_it():

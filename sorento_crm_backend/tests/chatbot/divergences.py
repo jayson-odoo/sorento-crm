@@ -221,6 +221,13 @@ DIVERGENCES: list[Divergence] = [
         strip_paths=(
             ("_xdBlock", "block"),
             ("_xdBlock", "any"),
+            # A7 (chatbot-growth-r1): new diagnostic keys, see the blanket entry at the
+            # bottom of this file for the full reason.
+            ("_xdBlock", "nothing_codes"),
+            ("_xdBlock", "nothing_note"),
+            ("_xdBlock", "nothing_missing"),
+            # 11 Sep 2026, second ruling (R2): one more new diagnostic key, same class.
+            ("_xdBlock", "zero_codes"),
         ),
     ),
     # OWNER CONSOLE PASS 4, item G (6 Sep 2026): a requested code the PRIMARY domain
@@ -248,7 +255,16 @@ DIVERGENCES: list[Divergence] = [
                 "('No stock for <code>.'), where n8n said nothing at all. Field-scoped to "
                 "`_xdBlock.block`; every other key of the render is still compared."
             ),
-            strip_paths=(("_xdBlock", "block"),),
+            strip_paths=(
+                ("_xdBlock", "block"),
+                # A7 (chatbot-growth-r1): new diagnostic keys, see the blanket entry at
+                # the bottom of this file for the full reason.
+                ("_xdBlock", "nothing_codes"),
+                ("_xdBlock", "nothing_note"),
+                ("_xdBlock", "nothing_missing"),
+                # 11 Sep 2026, second ruling (R2): one more new diagnostic key, same class.
+                ("_xdBlock", "zero_codes"),
+            ),
         )
         for name in (
             "exec-13484326",
@@ -319,6 +335,50 @@ DIVERGENCES: list[Divergence] = [
             ("dym_ambiguous_uuids",),
             ("dym_probe_meta", "key_mode"),
         ),
+    ),
+    # ------------------------------------------------------------------ #
+    # ISSUE #750 (owner, 8 Sep 2026): the `product_attachment` pickers stamp
+    # "- has Product Photos" / "- no Product Photos" per line. The annotator keys
+    # that probe PER UUID (Fix 4 / Fix 5, because one product code can belong to
+    # two companies) and every render prints CODES, so `dym-annotate` now carries
+    # the planner's own `(uuid, code, company)` map for the composer to translate
+    # with, plus the resolved type's name for the noun. Neither key can be
+    # fixture-visible: n8n's own body emits neither, so every capture of this node
+    # records their absence by construction.
+    #
+    # Measured over the whole graded corpus for this node (16 captures): exactly 5
+    # emit either key, they are exactly the 5 that now differ, and on all 5 the
+    # ADDITION is the only disagreement - every other key is byte-equal. The other
+    # 11 are untouched (10 equal, `exec-13469053` its own pre-existing entry), and
+    # `build-suggest-offer`'s own captures stay byte-equal because that node strips
+    # both keys again with the rest of `_DYM_CTRL_KEYS`. Field-scoped, so a real
+    # change to `dym_available_codes`, `dym_probe_meta` or the passed-through
+    # not-found payload still fails here. Pinned by
+    # tests/chatbot/test_product_attachment_picker_stamp.py.
+    *(
+        Divergence(
+            node="dym-annotate",
+            fixture=name,
+            hazard="issue #750 (product_attachment picker stamp, 8 Sep 2026)",
+            reason=(
+                "the node carries `dym_probe_row_keys` (the uuid-to-code map the "
+                "renders need, since this domain is probed per uuid) and "
+                "`dym_probe_type_name` (the resolved attachment type, so the line "
+                "reads 'Product Photos' rather than the customer's own word). Live "
+                "emits neither. Field-scoped to those two keys."
+            ),
+            strip_paths=(
+                ("dym_probe_row_keys",),
+                ("dym_probe_type_name",),
+            ),
+        )
+        for name in (
+            "ms-14992829",
+            "ms-14993042",
+            "ms-15144245",
+            "ms-15151889",
+            "ms-15157100",
+        )
     ),
     # ------------------------------------------------------------------ #
     # OWNER RULING K, rule 4 (6 Sep 2026): a BARE entity turn is typed by the
@@ -541,6 +601,70 @@ DIVERGENCES: list[Divergence] = [
         ),
         strip_paths=(("output", "escalation"),),
     ),
+    # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
+    # an `incoming`-domain entity hinted `inbound_shipment` or `order` whose raw is
+    # product-code-shaped (and not a real ISO 6346 container number) is retyped to
+    # `product` before the resolver has to referee the parser's own guess - n8n's live
+    # body has no such arm, so it left the model's `inbound_shipment` hint standing. This
+    # capture ("MWC7625-SH") is the one graded corpus member the retype actually fires
+    # on. Field-scoped to the entity list and the retype's own diagnostic; the domain,
+    # the intent and everything else on the capture still grades byte for byte. Pinned by
+    # `tests/chatbot/test_growth_r1_review_fixes.py::TestD10AnIncomingAskTypesTheCodeAsAProduct`.
+    Divergence(
+        node="output_exchange",
+        fixture="exec-13488887",
+        hazard="owner ruling D10 (8 Sep 2026, AC-816-adjacent)",
+        reason=(
+            "the capture records the model's own `inbound_shipment` hint for a "
+            "product-shaped code under `incoming`; the port retypes it to `product` "
+            "before resolution. Field-scoped to the entity list and "
+            "`incoming_hint_retyped_to_product`."
+        ),
+        strip_paths=(
+            ("output", "entities"),
+            ("output", "incoming_hint_retyped_to_product"),
+        ),
+    ),
+    # PLAN-broaden-domain-switch (exec 15121180, 9 Sep 2026): "ANY INCOMING" after a stock
+    # turn on SRTWT04A came back domain_hint incoming / intent_hint check_incoming /
+    # broaden_axis all / scope_intent broaden / entity_op clear - a COHERENT (incoming,
+    # check_incoming) pair, which the AXIS BROADEN restore used to overwrite back to
+    # inventory because it could not tell that shape apart from a genuine "all products"
+    # wander. The port now keeps the model's own domain and reuses the carried SRTWT04A
+    # (its `product` hint is not blocked under `incoming`), which is exactly the fix. The
+    # capture PINS THE DEFECT: `domain_hint`, `intent_hint`, `routing`, `entities`,
+    # `entity_op` / `entity_op_applied`, `broaden_axis`, `scope_intent`,
+    # `broaden_axis_domain_restored` and the new `domain_switch_over_broaden` diagnostic
+    # all move; `domain_signal_source` does not (it is computed off the model's own raw
+    # emission BEFORE the restore/switch block runs, so it reads "intent_explicit" on both
+    # sides) and stays out of the list. Behaviour pinned by
+    # test_output_exchange_rules.py's "R7" section (AC-1, AC-2, AC-3, AC-5, AC-6, AC-7,
+    # AC-11, AC-12, AC-13) - AC-4 is the pre-existing "R4" test
+    # (`test_r4_widening_one_axis_keeps_the_question_it_was_asked_about`), not R7.
+    Divergence(
+        node="output_exchange",
+        fixture="parser-15121180",
+        hazard="PLAN-broaden-domain-switch",
+        reason=(
+            "the capture pins the pre-fix answer: a coherent (incoming, check_incoming) "
+            "pair beside broaden_axis restored to the PRIOR domain (inventory) and cleared "
+            "the carried product. The port now reads it as a domain switch, not a wander, "
+            "and reuses the carried entity. Field-scoped to the fields the switch rule "
+            "moves."
+        ),
+        strip_paths=(
+            ("output", "domain_hint"),
+            ("output", "intent_hint"),
+            ("output", "broaden_axis"),
+            ("output", "scope_intent"),
+            ("output", "entity_op"),
+            ("output", "entity_op_applied"),
+            ("output", "entities"),
+            ("output", "broaden_axis_domain_restored"),
+            ("output", "domain_switch_over_broaden"),
+            ("output", "routing"),
+        ),
+    ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this
     # is the same class as the `pending` marker above and is handled the same
@@ -575,7 +699,144 @@ DIVERGENCES: list[Divergence] = [
             # over a `suggest_offer` roster is merged through `apply_dym_pick` instead of
             # replacing the scope. n8n has no such arm either.
             ("output", "suggest_offer_pick_merged"),
+            # Console pass 5, item B2 (H80/AC-829): stamped by
+            # `resolve_gate.resolve_bare_reply_under_member_offer` when a bare reply under
+            # an open member_offer resolved against the RESOLVER and replaced a half of
+            # the carried pair. Same class as the five above - a key no capture can
+            # contain, because `sub-resolve-and-gate` has no equivalent arm at all.
+            ("output", "bare_member_offer_entity_resolved"),
         ),
+    ),
+    # A7 (chatbot-growth-r1, AC-921/AC-922): `crossdomain_render`'s `_xdBlock` gained three
+    # diagnostic keys - `nothing_codes`, `nothing_note`, `nothing_missing` - so
+    # `run_crossdomain`'s NEW ladder rung (the purchase_order probe after the existing
+    # inventory<->incoming one) can act on exactly the codes the first probe found nothing
+    # for, without re-deriving them. n8n has no ladder and no equivalent keys; every
+    # existing capture predates A7, so no capture can carry them. Same class as the
+    # owner-ruling-K diagnostics above (a key no capture can contain), field-scoped so the
+    # rest of `_xdBlock` (`block`, `any`, `team`, `origin`, ...) still grades byte-exact.
+    # Behaviour pinned by test_crossdomain_ladder.py, not by these fixtures.
+    Divergence(
+        node="crossdomain-render",
+        fixture=None,
+        hazard="A7 (AC-921/AC-922) - added diagnostics",
+        reason=(
+            "`nothing_codes` / `nothing_note` / `nothing_missing` are new keys the port "
+            "adds to `_xdBlock` for the cross-domain ladder's next rung to read; n8n's "
+            "node has no ladder and no equivalent, so no capture can carry them. "
+            "`zero_codes` (11 Sep 2026, second ruling, R2) joined them the same way: which "
+            "of `nothing_codes` read 0 at every location rather than genuinely absent, a "
+            "distinction n8n's node never draws."
+        ),
+        strip_paths=(
+            ("_xdBlock", "nothing_codes"),
+            ("_xdBlock", "nothing_note"),
+            ("_xdBlock", "nothing_missing"),
+            ("_xdBlock", "zero_codes"),
+        ),
+    ),
+    # A6 (chatbot-growth-r1, AC-911): `spo_allocation` is no longer in
+    # `DEFAULT_UNSUPPORTED_DOMAINS` - `crm_procurement_spo_allocations_last_receipt_list` answers
+    # "last in" now, so a turn asking about it routes to `business_query` instead of
+    # `not_supported`. This capture is exactly that case (test_run_id
+    # "rs1b4-01-notsupported"), so the whole item diverges (branch_kind and the
+    # access-check fields it carries) - blanket, because the hazard changes what this
+    # turn IS, not one field of it. Owner-approved 7 Sep 2026 (this plan). Behaviour
+    # pinned by test_crossdomain_ladder.py::TestAC911SPOAllocationDomainNoLongerUnsupported
+    # and route.py's own DEFAULT_UNSUPPORTED_DOMAINS.
+    Divergence(
+        node="route-turn",
+        fixture="rs1b4-01-notsupported",
+        hazard="A6 (AC-911)",
+        reason=(
+            "spo_allocation was unblocked from DEFAULT_UNSUPPORTED_DOMAINS, so this "
+            "capture's domain now routes to business_query instead of the captured "
+            "not_supported - the deliberate point of A6."
+        ),
+    ),
+    # AC-1 (chatbot-warehouse-entity-and-last-in, 8 Sep 2026): `ALLOWED` gained
+    # "warehouse" on `inventory` and a whole `spo_allocation` row, so the gate's DEBUG
+    # ECHO of the matrix lists one more type than every capture taken before the change.
+    # `gate_debug.allowed_lookup` is `ALLOWED[domain]` copied onto the output. No capture
+    # in the corpus feeds it into a decision; the one reader that derives anything from it
+    # (`answer.py`'s needs-scope message, which turns the allowed types into the "give me a
+    # product code or warehouse" option list) is graded separately, by
+    # tests/chatbot/test_warehouse_entity.py::TestZeroEntitySpoAllocationAsksInsteadOfFanningOut.
+    #
+    # FIELD-SCOPED to that one key, deliberately: `gate_passed`, `gate_reason`,
+    # `compatible_entities`, `require_specific` and every other byte are still graded, and
+    # no corpus capture carries a warehouse entity for the new type to change one of them
+    # (measured 8 Sep 2026: with the matrix row reverted, all 135 vendored replays pass,
+    # so the echo is the ONLY thing the matrix change moves). The five nested copies are
+    # the same object seen through the `resolve-exit-*` item's own spreads
+    # (`gate`, `ctx.gate`, `ctx_resolved`, `ctx_resolved.ctx.gate`), which is why one
+    # hazard needs five paths.
+    #
+    # Behaviour pinned by tests/chatbot/test_warehouse_entity.py::TestGateKeepsWarehouse.
+    *(
+        Divergence(
+            node=node,
+            fixture=None,
+            hazard="AC-1 (chatbot-warehouse-entity-and-last-in)",
+            reason=(
+                "ALLOWED gained 'warehouse' on inventory and a spo_allocation row, so "
+                "gate_debug.allowed_lookup - the gate's read-only echo of the matrix - "
+                "lists one more type than a capture taken before the change. Nothing "
+                "else about the node moves."
+            ),
+            strip_paths=(
+                ("gate_debug", "allowed_lookup"),
+                ("gate", "gate_debug", "allowed_lookup"),
+                ("ctx", "gate", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+            ),
+        )
+        for node in (
+            "disallowed-entity-gate",
+            "resolve-exit-continue",
+            "resolve-exit-not-found",
+            "resolve-exit-offer",
+            "sub-resolve-and-gate",
+        )
+    ),
+    # D4 (chatbot-answer-polish, 12 Sep 2026, finding 4): `crossdomain_zeroset`'s
+    # non-`resolutions` branch now requests an intersection product when a typed token
+    # PREFIXES its normalised code (>= 4 chars), not only on equality - n8n's node only
+    # ever compared for equality, so a typed prefix like "MMC544" never requested its
+    # family member "MMC544-AL-BL" at all (owner finding: "ETA SRTWT6236" never probed
+    # SRTWT6236-GY's open PO line). Both captures below are real intersections where a
+    # typed token is a >= 4 character prefix of a canonical_code the n8n capture treated
+    # as unrequested; this port now requests them, which is the deliberate point of D4.
+    # Field-scoped to `_xd` (`exec-13479632`) or, more narrowly, to `_xd.requested` alone
+    # (`exec-13481094`, review fix round: only `requested` moves on this capture -
+    # `active`/`missing`/`probe_entities` are unaffected here, unlike `exec-13479632` where
+    # the prefix match is what makes the branch active at all); every other key of the
+    # validator item still grades byte for byte. Behaviour pinned by
+    # tests/chatbot/test_crossdomain_ladder.py::TestOwner12SepTypedPrefixIsRequested.
+    Divergence(
+        node="crossdomain-zeroset",
+        fixture="exec-13479632",
+        hazard="D4 (chatbot-answer-polish, 12 Sep 2026, finding 4)",
+        reason=(
+            "a typed token that PREFIXES an intersection product's canonical_code "
+            "(>= 4 chars) now requests it, where n8n's node only matched on equality. "
+            "Field-scoped to `_xd`."
+        ),
+        strip_paths=(("_xd",),),
+    ),
+    Divergence(
+        node="crossdomain-zeroset",
+        fixture="exec-13481094",
+        hazard="D4 (chatbot-answer-polish, 12 Sep 2026, finding 4)",
+        reason=(
+            "a second, ALREADY-satisfied typed token in this capture's intersection now "
+            "also prefix-matches a sibling canonical_code, so `_xd.requested` gains that "
+            "sibling where n8n's node named the first token alone. `active` stays False "
+            "either way (the primary render already returned the code), so field-scoped "
+            "to `_xd.requested` only."
+        ),
+        strip_paths=(("_xd", "requested"),),
     ),
 ]
 
@@ -681,6 +942,27 @@ CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD = Divergence(
 )
 
 
+# Owner ruling 11 Sep 2026, second ruling (R2): a code whose stock rows are ALL 0 is now
+# treated as absent for the cross-domain ladder, so it climbs and the block says so - the
+# n8n block never drew this distinction at all. Fixture-visible: three of the six item-G
+# captures (`exec-14119800`, `exec-14120400`, `exec-14122546`, registered above) are, in
+# real data, exactly this shape - a returned code whose cross-probed rows are all 0. Fix
+# round (nit 14): a zero-flagged code no longer earns item-G's own AC-820 line at ALL (the
+# zero sentence two paragraphs later already says the same thing, so printing both would
+# be a duplicate) - for these three the item-G line is GONE, replaced by the zero
+# sentence, not kept alongside it.
+# `TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine` (test_s6c_engine_paths.py)
+# reads which is which off `_xdBlock.zero_codes`, itself derived per capture via
+# `answer._rows_all_zero` on the code's own probed rows rather than a hard-coded fixture
+# list, so a fourth zero capture added later gets the same treatment with no test change.
+CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS = Divergence(
+    node="crossdomain-render",
+    fixture=None,
+    hazard="R2 (11 Sep 2026, second ruling)",
+    reason="stock at 0 everywhere is treated as absent for the ladder; the n8n block never said so.",
+)
+
+
 # S6c. `build-suggest-offer`'s sibling picker breaks a has-incoming tie with
 # `String(a.code).localeCompare(String(b.code))`; the port uses Python's code-point
 # order. ICU treats punctuation and case differently: node sorts
@@ -750,23 +1032,26 @@ BROADEN_ALL_IS_A_CLARIFICATION = Divergence(
 )
 
 
-# Owner console pass, 6 Sep 2026. `not-found-error-message`'s status-aware arm derives
-# `eta` (` (estimated delivery <date>)`) and then never uses it - the JS computes the string
-# and drops it on the floor. The owner's ruling wants the date said: "Order <code>
-# (<customer>) hasn't been delivered yet - current status: <status> (estimated delivery
-# <date>)". The value is on the resolved order's own display, so nothing extra is read.
+# H61 reversed (owner ruling, 10 Sep 2026). The 6 Sep 2026 owner console pass had wanted
+# the delivered-status miss message to STATE the estimated delivery date the JS computes
+# and discards. That ruling is now reversed: `orders.estimated_delivery_date` is not a
+# real promise - the import stamps it as `order_date + 2 business days`
+# (`order_service.py` ~2824) on every master row - so the CRM UI may keep showing it, but
+# the chatbot / turn API must not say it. The delivered-status arm names the order and its
+# current status only: "Order <code> (<customer>) hasn't been delivered yet - current
+# status: <status>. Would you like me to escalate to <team> team?", with no ETA suffix.
 #
 # Not fixture-visible: no graded `not-found-error-message` capture reaches the
 # `order_status: 'delivered'` arm with an estimated delivery date on the match. Pinned by
-# tests/chatbot/test_s6c_answer_lane.py::TestStatusAwareMissMessageIncludesTheEtaDate.
-STATUS_MISS_MESSAGE_STATES_THE_ETA = Divergence(
+# tests/chatbot/test_s6c_answer_lane.py::TestStatusAwareMissMessageOmitsTheEtaDate.
+STATUS_MISS_MESSAGE_OMITS_THE_ETA = Divergence(
     node="not-found-error-message",
     fixture=None,
-    hazard="H61 (owner console pass, 6 Sep 2026)",
+    hazard="H61 reversed (owner ruling, 10 Sep 2026)",
     reason=(
-        "the delivered-status miss message states the estimated delivery date the JS "
-        "derives and discards. Not fixture-visible: no capture reaches that arm with a "
-        "date on the resolved order."
+        "the delivered-status miss message must NOT state the estimated delivery date: "
+        "the import stamps it as order_date + 2 business days, not a real promise. Not "
+        "fixture-visible: no capture reaches that arm with a date on the resolved order."
     ),
 )
 
@@ -799,6 +1084,90 @@ ESCALATION_ROUTES_BY_STAFF_LOOKUP = Divergence(
         "a named person routes to their own team by staff lookup, and a null-team ask with "
         "a previous routing asks instead of inheriting it. Live has neither gate. Not "
         "fixture-visible: the gate is in `run()`, and the four graded nodes are unchanged."
+    ),
+)
+
+
+# Owner console pass 5, item B1 (7 Sep 2026, H79/AC-828). `entity_op == "reuse"`'s
+# `broaden_axis == "date"` wipe unconditionally nulled `date_filter_start` /
+# `date_filter_end` / `date_mode` whenever `broaden_axis` was `"date"`, even when the
+# SAME parser output already carried a concrete date this turn (prod turns e4381b0d /
+# 98526b81, "last month" under an open member_offer, `user_goal: "trying to specify the
+# date range as last month"`). The wipe now only fires when the turn ALSO supplied no
+# date of its own (gated on `has_current_date`, already computed one line above and
+# already used by the sibling `elif`, just never consulted by this one).
+#
+# Not fixture-visible: no captured `output_exchange` fixture anywhere in the corpus
+# carries `broaden_axis: "date"` at all (grepped the whole corpus, zero hits), so no
+# replay can show either the old or the new behaviour - the shape reached production
+# without ever being captured. Pinned by
+# tests/chatbot/test_pass5_item2_member_offer_business_query_filter_route.py::
+# TestB1LastMonthUnderMemberOfferKeepsTheParsersOwnDateFilter.
+BROADEN_AXIS_DATE_KEEPS_A_CONCRETE_DATE_THIS_TURN = Divergence(
+    node="output_exchange",
+    fixture=None,
+    hazard="H79 (owner console pass 5, 7 Sep 2026)",
+    reason=(
+        "broaden_axis == 'date' no longer wipes date_filter_start/end/mode when the "
+        "SAME parser output already set a concrete date this turn. Not fixture-visible: "
+        "no capture in the corpus carries broaden_axis: 'date' at all."
+    ),
+)
+
+
+# Owner console pass 5, item B2 (7 Sep 2026, H80/AC-829, D11 inventory row R-b). A bare
+# reply under an open `member_offer` that the parser extracted NOTHING from (prod turn
+# 6ea9fd1a, "rpacc" - `entities: []`) is now sent to the RESOLVER as one token
+# (`resolve_gate.resolve_bare_reply_under_member_offer`, between the resolver seam and
+# the gate) and, on an unambiguous match, REPLACES the matching half of the carried
+# entity pair - a mechanism `sub-resolve-and-gate` has no equivalent of at all.
+#
+# Not fixture-visible: this is a NEW resolver round trip with no n8n counterpart, so no
+# `sub-resolve-and-gate` capture can show it either firing or not - the node's own
+# graded shape (`ctx_resolved.ctx.parse.output.entities`) only diverges on a turn this
+# precise precondition matches (open member_offer, zero entities named this turn, a
+# bare reply of four words or fewer), and the full corpus replay stays green because no
+# capture has that shape. Pinned by
+# tests/chatbot/test_pass5_item2_member_offer_business_query_filter_route.py::
+# TestB2ABareProductCodeUnderTheOfferNarrowsTheProduct.
+BARE_MEMBER_OFFER_REPLY_ASKS_THE_RESOLVER = Divergence(
+    node="sub-resolve-and-gate",
+    fixture=None,
+    hazard="H80 (owner console pass 5, 7 Sep 2026)",
+    reason=(
+        "a bare reply under an open member_offer with zero entities of its own is sent "
+        "to the resolver as one token and replaces the matching half of the carried "
+        "pair on an unambiguous match. n8n has no such arm. Not fixture-visible: no "
+        "capture has the precondition shape (open offer, zero entities, a short bare "
+        "reply)."
+    ),
+)
+
+
+# Issue #715 (H77/AC-825, closed console pass 5, 7 Sep 2026). `gate.py`'s own "A PINNED
+# PICK WINS OVER FUZZY RE-RESOLUTION" mechanism widened `pin_types` / `pin_bases` /
+# `pin_codes` and `_keep`'s own uuid check from this-turn-only `pins` / `pin_uuids` to
+# carried-or-current `pins_all` / `pin_uuids_all` - a carried customer pick now REPLACES
+# the resolver's own re-resolved rows for a shared debtor code, never merges with them.
+#
+# Not fixture-visible: reachable only when a carried customer pin's debtor code is
+# shared by MULTIPLE distinct accounts the resolver's bare re-search returns (production
+# scale - one code shared by 99 rows); no seedable-at-test-scale capture can show it,
+# and no corpus fixture happens to carry that shape either (the 182 graded
+# `disallowed-entity-gate` captures are unchanged). Pinned by
+# tests/chatbot/test_pass4_item2_last_month_keeps_customer_scope.py::
+# TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver.
+CARRIED_CUSTOMER_PIN_REPLACES_SHARED_DEBTOR_CODE_ROWS = Divergence(
+    node="disallowed-entity-gate",
+    fixture=None,
+    hazard="H77 (issue #715, closed console pass 5, 7 Sep 2026)",
+    reason=(
+        "a carried customer pin's filter (pin_types / pin_bases / pin_codes / _keep's "
+        "uuid check) now reads pins_all / pin_uuids_all instead of this-turn-only pins / "
+        "pin_uuids, so the resolver's own wrong rows for a shared debtor code are "
+        "REPLACED by the picked uuid. Not fixture-visible: no corpus capture carries a "
+        "carried pin over a debtor code shared by several distinct resolver rows; the "
+        "182 graded disallowed-entity-gate captures are unchanged."
     ),
 )
 

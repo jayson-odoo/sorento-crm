@@ -283,6 +283,34 @@ class TestManualSaveSnapshotsTheDraft:
         assert resp.status_code == 200, resp.text
         assert len(_versions(db, request.id)) == 1
 
+    def test_changes_requested_to_proof_ready_also_snapshots_the_draft(self, api):
+        """Live bug: `VALID_TRANSITIONS` only allowed changes_requested ->
+        designing, so marketing revising a request the salesperson sent
+        back and clicking Mark design ready directly (the FE's own CTA
+        shows at designing OR changes_requested and posts proof_ready with
+        no forced detour) got a 409. Fixed by widening the transition
+        graph - this proves the SAME snapshot behaviour
+        `test_marking_the_proof_ready_snapshots_a_draft_the_user_never_saved`
+        covers for the designing case also holds from changes_requested.
+        """
+        client, db = api
+        request = _claimed_request(client, db)
+        PriceTagRequestService.transition_status(db, request.id, "proof_ready")
+        PriceTagRequestService.transition_status(db, request.id, "changes_requested")
+        db.commit()
+        client.put(f"{_BASE}/{request.id}/design/draft", json={"doc": _doc("wip")})
+
+        resp = client.post(
+            f"{_BASE}/{request.id}/transition", json={"status": "proof_ready"}
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "proof_ready"
+        versions = _versions(db, request.id)
+        assert len(versions) == 1
+        assert versions[0].doc == _doc("wip")
+        assert _draft_doc(db, request.id) is None
+
 
 # ---------------------------------------------------------------------------
 # GET precedence: reopening the designer lands on the work in progress

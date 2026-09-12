@@ -13,6 +13,7 @@ import {
   Banknote,
   Barcode,
   Boxes,
+  ChevronDown,
   Copy,
   Expand,
   Group,
@@ -23,6 +24,7 @@ import {
   Sparkles,
   ImageIcon,
   Minus,
+  MoreHorizontal,
   Plus,
   Redo2,
   RectangleHorizontal,
@@ -33,13 +35,59 @@ import {
   Undo2,
   Ungroup,
 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
 /** Which pointer tool is active (D35). */
 export type CanvasTool = 'select' | 'hand';
+
+/**
+ * One `trailing` entry (S7, S2 review): a plain button by default, or a
+ * `kind: 'menu'` one for the Template dropdown - its `items` are the same
+ * `DropdownMenuItem`s `ToolbarDropdownButton` already takes as children.
+ *
+ * An array of these, not `ReactNode`, because the SAME action set has to
+ * render twice - once as `ToolbarButton`s inline, once as real
+ * `DropdownMenuItem`s in the overflow menu below `md` - and a raw `<button>`
+ * dropped into a `DropdownMenuContent` is invisible to Radix's own item
+ * list: no arrow-key navigation, and selecting it never closes the menu
+ * (S2 review).
+ */
+export interface ToolbarTrailingButtonAction {
+  kind?: 'button';
+  id: string;
+  icon: React.ComponentType<{ className?: string }>;
+  /** Extra classes on the icon itself - `animate-spin` while Save is in flight. */
+  iconClassName?: string;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+}
+
+export interface ToolbarTrailingMenuAction {
+  kind: 'menu';
+  id: string;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  disabled?: boolean;
+  /** `DropdownMenuItem`s - the menu's own options. */
+  items: ReactNode;
+}
+
+export type ToolbarTrailingAction = ToolbarTrailingButtonAction | ToolbarTrailingMenuAction;
 
 interface CanvasToolbarProps {
   tool: CanvasTool;
@@ -71,10 +119,26 @@ interface CanvasToolbarProps {
   hasSelection: boolean;
   hasMultiSelection: boolean;
   selectionIsGroup: boolean;
+  /**
+   * Right-aligned actions, one more `ToolbarButton` group at the right end
+   * (S7, AC-S7-6) - Full screen / the Template dropdown / Save for the
+   * request designer, Versions / Save / Full screen for the template page.
+   * Absent (or empty) renders nothing extra, same toolbar as before this
+   * round.
+   */
+  trailing?: ToolbarTrailingAction[];
 }
 
-function ToolbarButton({
+/**
+ * One icon button, tooltip carrying the label and shortcut - the shape
+ * every tool-group button in this toolbar already uses. Exported so the
+ * `trailing` slot's own buttons (Full screen, the Template dropdown, Save -
+ * S7) read as one more group of these rather than a row of outlined text
+ * chips (AC-S7-6).
+ */
+export function ToolbarButton({
   icon: Icon,
+  iconClassName,
   label,
   onClick,
   disabled,
@@ -82,6 +146,8 @@ function ToolbarButton({
   active,
 }: {
   icon: React.ComponentType<{ className?: string }>;
+  /** Extra classes on the icon itself - `animate-spin` while Save is in flight. */
+  iconClassName?: string;
   label: string;
   onClick: () => void;
   disabled?: boolean;
@@ -104,7 +170,7 @@ function ToolbarButton({
           disabled={disabled}
           aria-pressed={active}
         >
-          <Icon className="size-4" />
+          <Icon className={cn('size-4', iconClassName)} />
           <span className="sr-only">{label}</span>
         </Button>
       </TooltipTrigger>
@@ -113,6 +179,49 @@ function ToolbarButton({
         {shortcut && <span className="ml-2 text-muted-foreground">{shortcut}</span>}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+/**
+ * `ToolbarButton`'s dropdown sibling (S6): the Template menu opens a
+ * `DropdownMenu` instead of firing a click straight away, with a small
+ * caret added so the trigger still reads as this button, just one that
+ * opens a menu - not a different kind of control in the row.
+ */
+export function ToolbarDropdownButton({
+  icon: Icon,
+  label,
+  disabled,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-auto shrink-0 gap-0.5 px-1.5"
+              disabled={disabled}
+              aria-label={label}
+            >
+              <Icon className="size-4" />
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-xs">
+          {label}
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end">{children}</DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -146,6 +255,7 @@ export function CanvasToolbar({
   hasSelection,
   hasMultiSelection,
   selectionIsGroup,
+  trailing,
 }: CanvasToolbarProps) {
   return (
     // `relative` is load-bearing, not decoration (r4d): each button's label is
@@ -161,7 +271,7 @@ export function CanvasToolbar({
         label="Select"
         onClick={() => onToolChange('select')}
         active={tool === 'select'}
-        shortcut="V"
+        shortcut="V • Arrow 0.25mm, Shift 1mm, Alt 0.1mm"
       />
       <ToolbarButton
         icon={Hand}
@@ -269,6 +379,100 @@ export function CanvasToolbar({
         onClick={onUngroupSelected}
         disabled={!selectionIsGroup}
       />
+
+      {trailing && trailing.length > 0 && (
+        <>
+          {/* `ml-auto` pushes this group to the true right end (AC-S7-6)
+              rather than sitting flush after Ungroup - the row scrolls
+              (`overflow-x-auto` on the outer div) rather than clipping it
+              at 375px, same as every other group here.
+
+              Below `md` this inline copy of `trailing` is hidden and the
+              single overflow trigger just after it (also `ml-auto`, so
+              whichever of the two is actually in flow still lands at the
+              right end) takes over instead - collapsing three-plus icon
+              buttons into one at a width this toolbar already scrolls
+              sideways to fit (S7, grill G3, AC-S7-3). Both render the SAME
+              `trailing` actions, as real `DropdownMenuItem`s in the overflow
+              case (not a raw button dropped into `DropdownMenuContent`, S2
+              review) - so the menu gets arrow-key navigation and closes
+              itself once an item is picked, same as every other menu. */}
+          <div
+            data-testid="toolbar-trailing-inline"
+            className="ml-auto hidden shrink-0 items-center gap-1 md:flex"
+          >
+            <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+            {trailing.map((action) =>
+              action.kind === 'menu' ? (
+                <ToolbarDropdownButton
+                  key={action.id}
+                  icon={action.icon}
+                  label={action.label}
+                  disabled={action.disabled}
+                >
+                  {action.items}
+                </ToolbarDropdownButton>
+              ) : (
+                <ToolbarButton
+                  key={action.id}
+                  icon={action.icon}
+                  iconClassName={action.iconClassName}
+                  label={action.label}
+                  onClick={action.onClick}
+                  disabled={action.disabled}
+                  active={action.active}
+                />
+              ),
+            )}
+          </div>
+          <DropdownMenu>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid="toolbar-trailing-overflow-trigger"
+                    className="ml-auto h-8 w-8 shrink-0 p-0 md:hidden"
+                  >
+                    <MoreHorizontal className="size-4" />
+                    <span className="sr-only">More actions</span>
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">
+                More actions
+              </TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end">
+              {trailing.map((action) => {
+                const Icon = action.icon;
+                if (action.kind === 'menu') {
+                  return (
+                    <DropdownMenuSub key={action.id}>
+                      <DropdownMenuSubTrigger disabled={action.disabled}>
+                        <Icon className="size-4" />
+                        {action.label}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>{action.items}</DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  );
+                }
+                return (
+                  <DropdownMenuItem
+                    key={action.id}
+                    onSelect={action.onClick}
+                    disabled={action.disabled}
+                  >
+                    <Icon className={cn('size-4', action.iconClassName)} />
+                    {action.label}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      )}
     </div>
   );
 }

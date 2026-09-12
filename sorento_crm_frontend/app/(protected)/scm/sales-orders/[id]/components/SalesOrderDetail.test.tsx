@@ -285,6 +285,65 @@ describe('SalesOrderDetail - states', () => {
     expect(screen.queryByText('Market segment')).not.toBeInTheDocument();
   });
 
+  it('shows the project label under the SO number, and nothing when there is none (AC-F2)', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: 'BAMBOO RESIDENCE / KUALA LUMPUR' }),
+      isLoading: false,
+      isError: false,
+    });
+    const { unmount } = renderDetail();
+    // Switching off the General tab proves this is the HEADER's own subtitle, not the
+    // Order card's "Project" field (which only exists on that tab) - the header is read-
+    // only metadata and must survive whichever tab is open.
+    openTab('Lines');
+    expect(screen.getByText('BAMBOO RESIDENCE / KUALA LUMPUR')).toBeInTheDocument();
+    unmount();
+
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    expect(screen.queryByText(/RESIDENCE|KUALA LUMPUR/)).not.toBeInTheDocument();
+  });
+
+  it('the Order card names the project with its muted source word, or a dash (AC-F3)', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: 'BAMBOO RESIDENCE / KUALA LUMPUR', project_label_source: 'inquiry' }),
+      isLoading: false,
+      isError: false,
+    });
+    const { unmount } = renderDetail();
+    // Order type's own value (`demandClassBadge`) also reads "Project" for a project-class
+    // order, so the FIELD's own label span is picked out by its exact class rather than by
+    // text alone - `screen.getByText('Project')` would otherwise match both.
+    const field = () =>
+      (screen.getByText('Project', { selector: 'span.text-xs.text-muted-foreground' }).closest(
+        'div',
+      ) as HTMLElement);
+    expect(within(field()).getByText('BAMBOO RESIDENCE / KUALA LUMPUR')).toBeInTheDocument();
+    expect(within(field()).getByText('· Inquiry sheet')).toBeInTheDocument();
+    unmount();
+
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: 'TAIGA RESIDENCE', project_label_source: 'note' }),
+      isLoading: false,
+      isError: false,
+    });
+    const second = renderDetail();
+    expect(within(field()).getByText('· Note')).toBeInTheDocument();
+    second.unmount();
+
+    useSalesOrder.mockReturnValue({
+      data: so({ project_label: null, project_label_source: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    expect(within(field()).getByText('-')).toBeInTheDocument();
+  });
+
   it('states what the order is worth, in ringgit, and a dash when nobody priced it', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     const { unmount } = renderDetail();
@@ -881,7 +940,14 @@ describe('SalesOrderDetail - the order type round trip', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
 
-    expect(screen.getByText('Project')).toBeInTheDocument();
+    // Scoped to the Order type FIELD's own wrapper, not a bare `getByText('Project')` -
+    // the Order card also carries its own "Project" field (PLAN-so-project-label.md) whose
+    // label reads the same word as this pill's project-class VALUE, and an unscoped query
+    // cannot tell a field's name from a value.
+    const orderTypeField = screen
+      .getByText('Order type', { selector: 'span.text-xs.text-muted-foreground' })
+      .closest('div') as HTMLElement;
+    expect(within(orderTypeField).getByText('Project')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent('Project');
 
@@ -949,6 +1015,25 @@ describe('SalesOrderDetail - the note', () => {
     });
     renderDetail();
     expect(screen.getByText('A COMPANY NOT IN THE CRM / 300-NOSUCH')).toBeInTheDocument();
+  });
+
+  it('renders a paragraph break as an actual line break, not a run-on sentence', () => {
+    // The backend now sends plain text with `\n` line breaks (AutoCount's RTF push is
+    // stripped at ingest) - `whitespace-pre-wrap` is what turns that into visible lines
+    // instead of collapsing them into one, the way a bare `<p>` would; `break-words`
+    // is the repo convention alongside it, so a long unbroken token (a URL, a run-on
+    // reference number) cannot overflow the card at 375px.
+    useSalesOrder.mockReturnValue({
+      data: so({ internal_note: 'LINE ONE\nLINE TWO' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    const note = screen.getByText(
+      (_, element) => element?.tagName === 'P' && element.textContent === 'LINE ONE\nLINE TWO'
+    );
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveClass('whitespace-pre-wrap');
   });
 });
 
@@ -1717,5 +1802,124 @@ describe('SalesOrderDetail - two links to the same SPO line', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Linked to SKU-PLANNED' }));
 
     expect(within(screen.getByRole('dialog')).getAllByText('14/09/2026')).toHaveLength(2);
+  });
+});
+
+describe('SalesOrderDetail - removing a line', () => {
+  /**
+   * The backend already refuses a removal that would orphan a project sales order or a
+   * purchase order claim (409 `SO_LINE_LINKED_TO_PROJECT` / `SO_LINE_LINKED_TO_CLAIM`) - the
+   * mutation's own error toast covers that, so nothing here re-asserts a 409 path; these
+   * cover the FE half: the control removes immediately with no confirmation, the omission on
+   * Save, and the two ways out (a guard, and Cancel) that must never lose or silently drop a
+   * line.
+   */
+  const TWO_LINES: SalesOrderLine[] = [
+    {
+      id: 'l-1', sku: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm',
+      qty_ordered: 320, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+      line_status: 'open', required_date: '2026-08-30', unit_price: '100.00',
+      discount: '15.00', line_total: '31985.00',
+    },
+    {
+      id: 'l-2', sku: 'TAP-CHR-12', product_name: 'Chrome pillar tap',
+      qty_ordered: 45, qty_delivered: 0, uom: 'PCS', warehouse_code: 'KL-01',
+      line_status: 'open', required_date: '2026-09-04', unit_price: '20.00',
+      discount: null, line_total: null,
+    },
+  ];
+
+  function renderTwoLines() {
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: TWO_LINES, line_count: 2, open_line_count: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+  }
+
+  // The row is found the same way the price/discount tests above find it: by one of its own
+  // inputs, since the Product cell is a select in an edit session and its text is no longer
+  // the bare SKU.
+  const rowFor = (sku: string) =>
+    screen.getByLabelText(`Unit price on ${sku}`).closest('tr') as HTMLElement;
+
+  it('shows no remove control outside an edit session', () => {
+    renderTwoLines();
+    openTab('Lines');
+
+    expect(screen.queryByRole('button', { name: 'Remove line' })).not.toBeInTheDocument();
+  });
+
+  it('removes the row immediately, with no dialog, and the totals follow', () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
+
+    // No confirmation - nothing is written until Save, and Cancel restores the row.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Unit price on CW-BASIN-450')).toBeInTheDocument();
+    // 320 + 45 = 365 before; 320 after the removed line drops out of the footer sum (both
+    // Qty ordered and Outstanding qty read 320 here, since nothing has been delivered).
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    expect(within(foot).getAllByText('320').length).toBeGreaterThan(0);
+    expect(within(foot).queryByText('365')).not.toBeInTheDocument();
+  });
+
+  it('saves the remaining lines only, so the BE deletes the omitted one', async () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
+    expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    // A removal changes the LINE COUNT, so `lines` is always sent - never omitted the way a
+    // header-only save omits it.
+    expect(body.lines).toHaveLength(1);
+    expect(body.lines.some((l: { id: string }) => l.id === 'l-2')).toBe(false);
+    expect(body.lines[0]).toMatchObject({ id: 'l-1', sku: 'CW-BASIN-450' });
+  });
+
+  it('refuses to remove the last line', () => {
+    // The default fixture carries exactly one line.
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(
+      within(rowFor('CW-BASIN-450')).getByRole('button', { name: 'Remove line' }),
+    );
+
+    expect(screen.getByText('An order needs at least one line.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Nothing removed - the only line is still on the grid.
+    expect(screen.getByLabelText('Unit price on CW-BASIN-450')).toBeInTheDocument();
+  });
+
+  it('keeps the session open and the row visible again after Cancel', () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
+    expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    // Cancel discarded the whole session, including the removal - the read view shows both
+    // lines exactly as loaded.
+    expect(screen.getByRole('button', { name: /^Edit$/ })).toBeInTheDocument();
+    openTab('Lines');
+    expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
+    expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
+    expect(updateSalesOrderMutateAsync).not.toHaveBeenCalled();
   });
 });

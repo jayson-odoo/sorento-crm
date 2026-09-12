@@ -165,10 +165,15 @@ function renderGrid(
     toolbarPrimary?: React.ReactNode;
     live?: boolean;
     groupByChannel?: boolean;
+    /** S2 (9 Sep 2026): the "Decided"/"Status" presets left the Filters popover - the
+     *  grid still reads them, but only as controlled props from a caller (the summary
+     *  tiles, in production). Tests that used to drive the popover's own select now set
+     *  this directly, the same way `PlanLinesSection` does. */
+    decidedFilter?: 'all' | 'undecided' | 'decided';
   } = {},
 ) {
   const onRowEdit = vi.fn();
-  const onResetRow = vi.fn();
+  const onSaveRow = vi.fn();
   const coverFor = (l: PlanLine) =>
     l.purchasable ? coverForLine(l, opts.free ?? []) : NO_COVER;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -186,8 +191,8 @@ function renderGrid(
           onRowEdit(l, patch);
           setEdits((prev) => ({ ...prev, [l.id]: { ...prev[l.id], ...patch } }));
         }}
-        onResetRow={(l: PlanLine) => {
-          onResetRow(l);
+        onSaveRow={(l: PlanLine) => {
+          onSaveRow(l);
           setEdits((prev) => {
             const next = { ...prev };
             delete next[l.id];
@@ -202,6 +207,9 @@ function renderGrid(
         decisionsReadOnly={opts.decisionsReadOnly}
         readOnlyReason={opts.readOnlyReason ?? null}
         groupByChannel={opts.groupByChannel}
+        {...(opts.decidedFilter !== undefined
+          ? { decidedFilter: opts.decidedFilter, onDecidedFilterChange: () => {} }
+          : {})}
       />
     );
   }
@@ -211,7 +219,7 @@ function renderGrid(
       <Harness />
     </QueryClientProvider>,
   );
-  return { onRowEdit, onResetRow };
+  return { onRowEdit, onSaveRow };
 }
 
 const headerNames = () =>
@@ -264,7 +272,9 @@ describe('PlanLinesGrid - the Decision cell is a pill (C6)', () => {
   const pill = (state: string) => screen.getByTestId(`decision-pill-${state}`);
 
   it('reads Suggested with the engine mixture when nobody has touched the row', () => {
-    renderGrid([line({ order_qty: 31 })]);
+    // `recommended_qty` is what the ONE FORMULA reads for the raw buy (PLAN-reorder-one-
+    // formula.md) - carried alongside `order_qty` here for realism.
+    renderGrid([line({ order_qty: 31, recommended_qty: 31 })]);
     expect(pill('suggested')).toHaveTextContent('Suggested');
     expect(pill('suggested')).toHaveTextContent('Buy 31');
   });
@@ -353,7 +363,9 @@ describe('PlanLinesGrid - the six lightboxes (F1)', () => {
   });
 
   it('Project opens the project orders', () => {
-    renderGrid([line({ project_need: 4 })]);
+    // The column states the RAW open demand (`project_committed`), not the bought split -
+    // see the column's own note in PlanLinesGrid.tsx.
+    renderGrid([line({ project_committed: 4, project_need: 0 })]);
     openNumber(/^Project demand - open the orders behind it$/);
     expect(screen.getByRole('dialog')).toHaveTextContent('Project demand - SKU-1');
   });
@@ -411,18 +423,25 @@ describe('PlanLinesGrid - the panel edits a draft, never the backend (D2-D9)', (
     expect(screen.getByTestId('decision-pill-unsaved')).toBeInTheDocument();
   });
 
-  it('states the caps beside the two capped inputs (D2)', () => {
+  it('caps the PO input at the open book, and states BRW as a fact beside it (D2)', () => {
     renderGrid([line()], { poFor: () => [{ po_number: 'PO-1', status: 'open', expected_date: null, remaining: 40 }] });
     fireEvent.click(screen.getByText('SKU-1'));
-    expect(screen.getByText(/pool available/)).toBeInTheDocument();
-    expect(screen.getByText(/open 40/)).toBeInTheDocument();
+    // ONE FORMULA: the row's own pool is a FACT (already inside the engine's net), so BRW
+    // carries no input to cap. The PO the buyer trusts is capped at the open book.
+    const cover = screen.getByText('Cover').closest('section') as HTMLElement;
+    expect(within(cover).queryByLabelText('BRW')).not.toBeInTheDocument();
+    expect(within(cover).getByText('BRW')).toBeInTheDocument();
+    expect((screen.getByLabelText('PO') as HTMLInputElement).max).toBe('40');
   });
 
-  it('SPO arriving is a read-only fact, never an input (R2, D2)', () => {
+  it('SPO is a read-only fact, never an input (R2, D2)', () => {
     renderGrid([line({ incoming_spo: 12 })]);
     fireEvent.click(screen.getByText('SKU-1'));
-    expect(screen.getByText(/SPO arriving/)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/SPO arriving/)).not.toBeInTheDocument();
+    // Scoped to the Cover zone - the collapsed row's own SPO column header reads the
+    // same three letters.
+    const cover = screen.getByText('Cover').closest('section') as HTMLElement;
+    expect(within(cover).getByText('SPO')).toBeInTheDocument();
+    expect(within(cover).queryByLabelText('SPO')).not.toBeInTheDocument();
   });
 
   it('hints only when the mixture differs from the suggestion (D2)', () => {
@@ -431,11 +450,11 @@ describe('PlanLinesGrid - the panel edits a draft, never the backend (D2-D9)', (
     expect(screen.queryByText(/over suggested|short of suggested/)).not.toBeInTheDocument();
   });
 
-  it('Use suggestion drops the row draft', () => {
-    const { onResetRow } = renderGrid([line()], { edits: { r1: { decision: { buy: 9 } } } });
+  it('Save persists the row draft (S12, round 2, 9 Sep - was "Use suggestion")', () => {
+    const { onSaveRow } = renderGrid([line()], { edits: { r1: { decision: { buy: 9 } } } });
     fireEvent.click(screen.getByText('SKU-1'));
-    fireEvent.click(screen.getByRole('button', { name: 'Use suggestion' }));
-    expect(onResetRow).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSaveRow).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1' }));
   });
 
   it('Skip records a skip on the draft', () => {
@@ -482,13 +501,39 @@ describe('PlanLinesGrid - the toolbar (C2)', () => {
     expect(screen.getByRole('button', { name: 'Confirm (20)' })).toBeInTheDocument();
   });
 
-  it('keeps the price and level filters so the hidden fields stay findable (R8)', async () => {
-    renderGrid([line()]);
+  // R8's "price and level filters" preset selects are gone (S2, AC-S2.1, 9 Sep 2026) -
+  // the Filters popover carries the dynamic builder alone; see
+  // 'the Filters popover carries the builder alone (AC-S2.1)' below.
+});
+
+describe('PlanLinesGrid - the Filters popover carries the builder alone (AC-S2.1)', () => {
+  const openFilters = () => {
     const trigger = screen.getByRole('button', { name: /Filters/i });
-    // Radix opens its menu on pointerdown, not on click.
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
-    expect(await screen.findByLabelText('Suggested price')).toBeInTheDocument();
-    expect(screen.getByLabelText('AutoCount level')).toBeInTheDocument();
+  };
+
+  it('shows the dynamic filter builder and none of the five retired preset selects', async () => {
+    renderGrid([line()]);
+    openFilters();
+
+    expect(await screen.findByTestId('dynamic-filter-group')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Status')).toBeNull();
+    expect(screen.queryByLabelText('Decision')).toBeNull();
+    expect(screen.queryByLabelText('Suggested price')).toBeNull();
+    expect(screen.queryByLabelText('Suggested action')).toBeNull();
+    expect(screen.queryByLabelText('AutoCount level')).toBeNull();
+  });
+
+  it('rec type and decision state are reachable as builder fields', async () => {
+    renderGrid([line()]);
+    openFilters();
+    await screen.findByTestId('dynamic-filter-group');
+
+    // Adding a condition exposes the field picker's own options (same pattern as
+    // `dynamicFilterAndSavedViews.reusability.test.tsx`).
+    fireEvent.click(screen.getByRole('button', { name: /^Condition$/i }));
+    expect(screen.getByText('Rec type')).toBeInTheDocument();
+    expect(screen.getByText('Decision state')).toBeInTheDocument();
   });
 });
 
@@ -506,11 +551,6 @@ describe('PlanLinesGrid - the Decided filter reads GROUPED rows (S3 perf, AC-3.5
     warehouse_name: 'Petaling Jaya', sku: 'SKU-GROUP',
   });
 
-  const openFilters = () => {
-    const trigger = screen.getByRole('button', { name: /Filters/i });
-    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
-  };
-
   it('renders ONE row for the group when only one member is decided, not two', () => {
     renderGrid([memberA, memberB], {
       groupByChannel: true,
@@ -520,35 +560,35 @@ describe('PlanLinesGrid - the Decided filter reads GROUPED rows (S3 perf, AC-3.5
     expect(screen.getAllByText('SKU-GROUP')).toHaveLength(1);
   });
 
-  it('a partially-decided group counts as DECIDED under "Already decided" (any member rule)', async () => {
+  // S2 (9 Sep 2026): the "Decision" preset select left the Filters popover - the
+  // grid's OWN decided-filter is now driven only by a controlled prop (the summary
+  // tiles do this in production; `PlanLinesGrid.test.tsx`'s harness forwards
+  // `decidedFilter` the same way). `evaluateFilterGroup`'s own "Decision state"
+  // builder field is the popover's replacement and has no bearing on this rule.
+
+  it('a partially-decided group counts as DECIDED under "Already decided" (any member rule)', () => {
     renderGrid([memberA, memberB], {
       groupByChannel: true,
       decisions: { a: { buy: 10 } }, // only member 'a' decided, 'b' is not
-    });
-    openFilters();
-    fireEvent.change(await screen.findByLabelText('Decision'), {
-      target: { value: 'decided' },
+      decidedFilter: 'decided',
     });
     expect(screen.getByText('SKU-GROUP')).toBeInTheDocument();
   });
 
-  it('the SAME partially-decided group disappears under "Still to decide"', async () => {
+  it('the SAME partially-decided group disappears under "Still to decide"', () => {
     renderGrid([memberA, memberB], {
       groupByChannel: true,
       decisions: { a: { buy: 10 } },
-    });
-    openFilters();
-    fireEvent.change(await screen.findByLabelText('Decision'), {
-      target: { value: 'undecided' },
+      decidedFilter: 'undecided',
     });
     expect(screen.queryByText('SKU-GROUP')).not.toBeInTheDocument();
   });
 
-  it('a group with NO member decided is undecided, and vanishes from "Already decided"', async () => {
-    renderGrid([memberA, memberB], { groupByChannel: true, decisions: {} });
-    openFilters();
-    fireEvent.change(await screen.findByLabelText('Decision'), {
-      target: { value: 'decided' },
+  it('a group with NO member decided is undecided, and vanishes from "Already decided"', () => {
+    renderGrid([memberA, memberB], {
+      groupByChannel: true,
+      decisions: {},
+      decidedFilter: 'decided',
     });
     expect(screen.queryByText('SKU-GROUP')).not.toBeInTheDocument();
   });

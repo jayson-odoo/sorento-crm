@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -41,7 +42,11 @@ _REQUIRED_COLUMNS = ("item_code", "qty")
 #: Fields that describe the CONTAINER rather than a line. They may appear as columns in the
 #: table or as labelled cells above it; either way they belong to the block, not the row.
 #: `seal_no` and `consignee` are R13 additions (purchasing consolidation batch, lane C).
-_BLOCK_FIELDS = ("container_no", "bl_no", "seal_no", "consignee")
+#: `pi_number`/`invoice_date` are S2 additions (AC-B5): the file's own stated invoice
+#: number/date, when it states one - what the packing-list-alone attach resolution matches
+#: a proforma invoice by, same convention `proforma_invoice_reader._BLOCK_FIELDS` already
+#: uses for its own five.
+_BLOCK_FIELDS = ("container_no", "bl_no", "seal_no", "consignee", "pi_number", "invoice_date")
 
 #: A cell may state TWO block fields side by side (`箱号:WHSU6243088 / 封签号:WHA4528193`,
 #: the Jiexia sample). Split on the supplier's own separator BEFORE the label test, so both
@@ -75,12 +80,48 @@ _PL_TITLE_MARKERS = ("装箱单", "PACKING LIST")
 #: a labelled cell.
 _TOTALS_ROW_RE = re.compile(r"^(SUB[\s-]*)?TOTAL\b", re.IGNORECASE)
 
+#: Duplicated from `proforma_invoice_reader._DATE_FORMATS` rather than imported (S2, AC-B5):
+#: that module already imports FROM this one (`_header_map`/`_is_header`/`_labelled`/
+#: `_number`/`_shipper_of`/`_text`/`_FOOTER_FIELD`), so the reverse import would cycle.
+_DATE_FORMATS = (
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
+    "%d.%m.%Y",
+    "%Y.%m.%d",
+    "%Y/%m/%d",
+    "%d/%m/%Y",
+)
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
 
 @dataclass
 class PackingLine:
     row_number: int
     item_code: str
-    qty: float
+    #: `None` on a row that names something and states a packing figure (cartons, CBM, a
+    #: weight) but no quantity - the Jinbaichuan sheet's own container-summary row
+    #: (`家豪拼柜41个盆`, "jiahao's consolidated container, 41 basins") states only a total
+    #: CBM. Still a packing row (S2, AC-B3): the qty just is not one of the figures it
+    #: states. Never invented from the text - `qty` stays exactly what the file states,
+    #: same "never zeroed, never guessed" rule every other measure on this line follows.
+    qty: Optional[float]
     product_name: Optional[str] = None
     spec: Optional[str] = None
     cartons: Optional[float] = None
@@ -100,6 +141,26 @@ class PackingLine:
     #: used to split one table into blocks; the block is what owns the container from then on.
     container_no: Optional[str] = None
 
+    #: S2 (AC-B1/B8) - what a `ProformaInvoicePackingLine` row and its roll-up onto the
+    #: invoice line need, that this reader parsed the alias for (migration 375's own kailu
+    #: aliases) but never consumed until now.
+    material: Optional[str] = None
+    pcs_per_carton: Optional[float] = None
+    carton_length_cm: Optional[float] = None
+    carton_width_cm: Optional[float] = None
+    carton_height_cm: Optional[float] = None
+    cbm_per_carton: Optional[float] = None
+    #: PER CARTON, same trap the alias's own migration comment names: `NW`/`GW` on this
+    #: shape are per-carton, never the row's own weight - `net_weight`/`gross_weight` above
+    #: stay the per-LINE figure the OTHER shapes (Jiexia) state.
+    carton_net_weight: Optional[float] = None
+    carton_gross_weight: Optional[float] = None
+    #: The row's own total (`TOTAL KGS` / `总毛重`) - carton weight x carton count, as the
+    #: file states it rather than re-derived, so a rounding difference on the paper is what
+    #: the roll-up reads too.
+    total_net_weight: Optional[float] = None
+    total_gross_weight: Optional[float] = None
+
 
 @dataclass
 class PackingBlock:
@@ -114,6 +175,12 @@ class PackingBlock:
     #: Who is billed (`客户：`, R13). Stated once, above the first block, and carried onto
     #: every later block in the same file - a packing list never bills two customers.
     consignee: Optional[str] = None
+    #: S2 (AC-B5) - the file's own stated invoice number/date, when it states one, PER
+    #: block (Jiexia states one invoice number per container, never file-wide - unlike
+    #: `consignee`, this is never carried over from an earlier block). What the
+    #: packing-list-alone attach resolution matches a proforma invoice by.
+    pi_number: Optional[str] = None
+    invoice_date: Optional[date] = None
     #: The row the block's table starts on. Part of its identity when it has no container
     #: number, and the only thing that distinguishes two otherwise identical pre-load blocks.
     header_row: int = 0
@@ -125,7 +192,9 @@ class PackingBlock:
 
     @property
     def total_qty(self) -> float:
-        return sum(ln.qty for ln in self.lines)
+        # A qty-less row (a container-summary line stating only a packing figure, captain
+        # ruling 9 Sep) contributes nothing here - never invented.
+        return sum(ln.qty for ln in self.lines if ln.qty is not None)
 
     @property
     def total_cartons(self) -> Optional[float]:
@@ -207,6 +276,35 @@ def _header_map(raw: list, resolver: AliasResolver) -> dict[int, str]:
         f = resolver.field_for_header(cell)
         if f:
             out[pos] = f
+    return out
+
+
+def _with_carton_dims(
+    mapped: dict[int, str], all_rows: list, header_idx: int
+) -> dict[int, str]:
+    """Splice the carton L/W/H columns into a header row's own mapping (S2, AC-B1/B8).
+
+    Kailu's own shape writes `包装规格cm` (aliased to `packing_dim`) as ONE header cell over
+    THREE physical columns, with the sub-header naming each one (`L` / `W` / `H`) on the row
+    directly beneath it - the two blank cells either side of `packing_dim` in THIS row carry
+    no alias of their own, so `_header_map` alone never sees them. The sub-header row itself
+    is never mistaken for a line or a note afterwards: it carries no item code, so
+    `_line_from` already returns `None` for it.
+    """
+    dim_pos = next((p for p, f in mapped.items() if f == "packing_dim"), None)
+    if dim_pos is None or header_idx + 1 >= len(all_rows):
+        return mapped
+    sub = all_rows[header_idx + 1]
+    labels = tuple(
+        (_text(sub[p]) or "").strip().upper() if p < len(sub) else ""
+        for p in (dim_pos, dim_pos + 1, dim_pos + 2)
+    )
+    if labels != ("L", "W", "H"):
+        return mapped
+    out = dict(mapped)
+    out[dim_pos] = "carton_length_cm"
+    out[dim_pos + 1] = "carton_width_cm"
+    out[dim_pos + 2] = "carton_height_cm"
     return out
 
 
@@ -314,9 +412,29 @@ def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optiona
             vals[f] = raw[pos]
 
     code = _text(vals.get("item_code"))
+    description = _text(vals.get("product_name"))
+    # Truncated to the column's own width (`item_code String(100)` on every table this
+    # feeds): a row with no code falls back to its DESCRIPTION, and a supplier's
+    # sentence-long 品名 then overflowed the insert with a DataError nobody could read
+    # back to the row that caused it.
+    identifier = (code or description or "")[:100] or None
     qty = _number(vals.get("qty"))
-    if not code or qty is None:
+    if not identifier:
         return None
+    if qty is None:
+        # Captain ruling 9 Sep: a code/description with NO quantity but SOME packing
+        # figure is still a packing row (qty stays None) - only a row with NEITHER is
+        # the accessory-note shape `_note_from` keeps instead.
+        has_packing_figure = any(
+            _number(vals.get(f)) is not None
+            for f in (
+                "cartons", "cbm_total", "cbm_per_unit", "net_weight", "gross_weight",
+                "cbm_per_carton", "carton_net_weight", "carton_gross_weight",
+                "total_net_weight", "total_gross_weight",
+            )
+        )
+        if not has_packing_figure:
+            return None
 
     cbm_total = _number(vals.get("cbm_total"))
     per_unit = _number(vals.get("cbm_per_unit"))
@@ -328,7 +446,7 @@ def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optiona
 
     return PackingLine(
         row_number=row_number,
-        item_code=code,
+        item_code=identifier,
         qty=qty,
         product_name=_text(vals.get("product_name")),
         spec=_text(vals.get("spec")),
@@ -343,6 +461,16 @@ def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optiona
         remark=_text(vals.get("remark")),
         supplier_code=_text(vals.get("supplier_code")),
         container_no=_text(vals.get("container_no")),
+        material=_text(vals.get("material")),
+        pcs_per_carton=_number(vals.get("pcs_per_carton")),
+        carton_length_cm=_number(vals.get("carton_length_cm")),
+        carton_width_cm=_number(vals.get("carton_width_cm")),
+        carton_height_cm=_number(vals.get("carton_height_cm")),
+        cbm_per_carton=_number(vals.get("cbm_per_carton")),
+        carton_net_weight=_number(vals.get("carton_net_weight")),
+        carton_gross_weight=_number(vals.get("carton_gross_weight")),
+        total_net_weight=_number(vals.get("total_net_weight")),
+        total_gross_weight=_number(vals.get("total_gross_weight")),
     )
 
 
@@ -447,6 +575,8 @@ def read_workbook(
                 bl_no=pending.get("bl_no"),
                 seal_no=pending.get("seal_no"),
                 consignee=pending.get("consignee") or sticky_consignee,
+                pi_number=pending.get("pi_number"),
+                invoice_date=_parse_date(pending.get("invoice_date")),
                 header_row=row_number,
             )
             result.blocks.append(current)
@@ -459,6 +589,10 @@ def read_workbook(
                 current.seal_no = pending["seal_no"]
             if pending.get("consignee"):
                 current.consignee = pending["consignee"]
+            if pending.get("pi_number"):
+                current.pi_number = pending["pi_number"]
+            if pending.get("invoice_date"):
+                current.invoice_date = _parse_date(pending["invoice_date"])
         if current is not None and current.consignee:
             sticky_consignee = current.consignee
         pending = {}
@@ -487,13 +621,15 @@ def read_workbook(
                 ]
                 result.currency_hint = price_column_currency(raw, mapped)
             saw_header = True
-            col_field = mapped
+            col_field = _with_carton_dims(mapped, all_rows, idx)
             current = PackingBlock(
                 index=len(result.blocks) + 1,
                 container_no=pending.get("container_no"),
                 bl_no=pending.get("bl_no"),
                 seal_no=pending.get("seal_no"),
                 consignee=pending.get("consignee") or sticky_consignee,
+                pi_number=pending.get("pi_number"),
+                invoice_date=_parse_date(pending.get("invoice_date")),
                 header_row=row_number,
             )
             result.blocks.append(current)

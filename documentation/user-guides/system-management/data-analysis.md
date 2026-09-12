@@ -171,6 +171,12 @@ AutoCount pushes).
 * On a customer: its **market segment** and **region**.
 * On a shipping order (SPO): the **container number**.
 
+**On a supplier, a `country` field is resolved, not just stored:** the integration can send a
+country as a full name (`Malaysia`) or a 2-letter code (`MY`), case-insensitively, and it is
+matched against **[Products → Reference Data → Countries](../product/countries.md)**. A value
+that does not match anything there is reported as a row warning and left blank - it does not
+stop the rest of the row from importing.
+
 **Absent vs. null, on every field the integration can send:** a field the push simply does not
 mention leaves that column exactly as it was; a field sent as an explicit empty value (null, or a
 blank string) clears it, the same thing a blank cell means on the matching upload.

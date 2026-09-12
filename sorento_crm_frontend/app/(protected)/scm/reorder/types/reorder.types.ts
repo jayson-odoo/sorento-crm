@@ -185,6 +185,14 @@ export interface ReorderRecommendation {
    *  one superseded, but the suggestion changed - flagged so the buyer decides again
    *  rather than trusting a carried figure. Absent/false on a run nobody re-planned. */
   needs_recheck?: boolean;
+  /** PLAN-plan-list-tile-sheet-one-scope.md, S6 (AC-1): true when the SAME rule
+   *  `PlanLinesSection.visibleLines` used to recompute client-side already hides this row
+   *  by default (a covered, manual-basis row whose net sits above its level - "not my
+   *  business", owner 12 Aug 2026). The list, the Decisions tile total and the order sheet
+   *  all read this ONE server-computed flag, so the three cannot disagree. Until the
+   *  backend sends it (S6, Phase 2), absent/undefined means SHOWN - the pre-existing
+   *  behaviour, never a silent hide. */
+  hidden_by_default?: boolean;
   /** Disposition action (disposition rows only). */
   disposition_action: DispositionAction | null;
   /** Advisory transfer hint, e.g. "consider transfer 60: WH-JB → WH-KL". */
@@ -230,8 +238,9 @@ export interface ReorderRecommendation {
    * supported that basis since before S1, this type simply had not caught up to it.
    */
   policy_type: ReorderReason | 'reorder_level' | null;
-  /** Which supplier-selection rule chose the supplier. */
-  supplier_selection: 'primary' | 'best_score' | 'lowest_cost' | null;
+  /** Which supplier-selection rule chose the supplier. `last_purchase` (G7 / AC-S13.6)
+   *  overrides the policy's own strategy whenever a last-purchase supplier is on file. */
+  supplier_selection: 'primary' | 'best_score' | 'lowest_cost' | 'last_purchase' | null;
   /**
    * Why this supplier and not the runner-up, frozen at run time.
    *
@@ -337,6 +346,11 @@ export interface ReorderRecommendation {
   last_purchase_date?: string | null;
   last_purchase_ref?: string | null;
   last_purchase_basis?: 'own_segment' | 'unattributed' | 'never_purchased' | null;
+  /** Who this purchase actually named (S11, round 2, 9 Sep) - lets the panel prefill its
+   *  supplier select to the LAST PURCHASE supplier rather than the engine's own default
+   *  link. Absent on a run frozen before this field existed (no backfill). */
+  last_purchase_supplier_code?: string | null;
+  last_purchase_supplier_name?: string | null;
   /** `ADU x lead time + 14 days of safety`. Never applied on the buyer's behalf. */
   suggested_level?: number | null;
   suggestion_basis?: {
@@ -426,7 +440,10 @@ export interface ReorderRun {
   decision_grain?: 'product' | 'location' | null;
   /** `1` on a front-planning run, NULL on a legacy one - what makes a run read-only. */
   front_planning_contract_version?: number | null;
-  /** The "Sales order cut-off" this run was launched with (`YYYY-MM-DD`), or null. */
+  /** S4 (9 Sep 2026): the window's START this run was launched with (`YYYY-MM-DD`), or
+   *  null - no lower bound. */
+  plan_horizon_start?: string | null;
+  /** The "Sales orders needed" To-date this run was launched with (`YYYY-MM-DD`), or null. */
   plan_horizon_date?: string | null;
   /** When the engine started - the plan header's "Plan dd/mm/yyyy HH:mm" (C1). */
   started_at?: string | null;
@@ -465,4 +482,10 @@ export interface CreateReorderRunRequest {
    * is always still counted.
    */
   plan_horizon_date?: string | null;
+  /**
+   * S4 (9 Sep 2026): the window's START. Omitted/undefined means no lower bound - a
+   * line dated before it still counts (G2 ruling), the same reading an undated line
+   * already gets.
+   */
+  plan_horizon_start?: string | null;
 }

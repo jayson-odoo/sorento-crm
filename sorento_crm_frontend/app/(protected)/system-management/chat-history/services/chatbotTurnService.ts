@@ -77,6 +77,15 @@
  * the reason rather than offer one that always 409s. It is one boolean the screen needs at
  * the same moment it needs the turns, which is why it is not a route of its own.
  *
+ * GET /api/v1/system/chatbot/turns/{id}
+ *   Permission: `system.chat_history.view`. The row above plus a normalised
+ *   `trace_detail` (chatbot growth r1, Slice D): `{stages, parse, decay,
+ *   open_question, focus, tool, crossdomain, reveals, session}`. Kinds no lane
+ *   has written yet (`tool`, `crossdomain`, `reveals`, `decay`, `focus`,
+ *   `open_question`) come back `null` / `[]`, never an error - the drawer
+ *   renders an empty section for them. `stages` sorts the FAILING stage first
+ *   on a failed turn. 404 for an unknown id.
+ *
  * Two properties the UI depends on and the endpoint owes:
  *
  * - `summary` and `why` are sentences the ENGINE composed from structured state (D11).
@@ -92,6 +101,7 @@ import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type {
   ChatbotTurn,
+  ChatbotTurnDetail,
   ChatbotTurnFilters,
   ChatbotTurnListResponse,
   FailedContactListResponse,
@@ -133,6 +143,13 @@ export async function getFailedChatbotContacts(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load contacts with failed turns'));
   }
+  return response.json();
+}
+
+/** One turn's row plus its normalised `trace_detail` (Slice D, AC-970). */
+export async function getChatbotTurn(turnId: string): Promise<ChatbotTurnDetail> {
+  const response = await apiFetch(`/api/v1/system/chatbot/turns/${turnId}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load turn detail'));
   return response.json();
 }
 

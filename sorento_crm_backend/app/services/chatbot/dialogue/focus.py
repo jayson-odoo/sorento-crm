@@ -581,9 +581,24 @@ def date_restated_only(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
     Two things stop the exception: `broaden_axis = "date"`, where the customer asked for the
     window to be dropped and restoring it answers the opposite of the question, and a
     date-widen re-attach, which nulls the window on purpose a few lines earlier.
+
+    Owner console pass 5, item B1 (7 Sep 2026, H79/AC-828), carried over from the deleted
+    executor arm this rule replaced: `broaden_axis == "date"` is the PARSER's read of the
+    turn's SHAPE, not proof the turn named no date - captures e4381b0d / 98526b81 ("last
+    month") set `broaden_axis: "date"` AND a concrete `date_filter_start` /
+    `date_filter_end` in the SAME parser output. Wiping the window unconditionally
+    answered "all dates" to a turn that had just given one, so the wipe fires only when
+    the turn ALSO supplied no date of its own; a turn that did falls through to the block
+    below and takes the window from its own message. A date-widen re-attach names no date
+    by construction (`compute_date_widen` only fires on a bare widen phrase), so it needs
+    no such guard.
     """
     o = turn.o
-    if jsc.lower_or_empty(o.get("broaden_axis")) == "date" or turn.date_widened:
+    has_current_date = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(
+        o.get("date_filter_end")
+    )
+    all_time = jsc.lower_or_empty(o.get("broaden_axis")) == "date"
+    if (all_time and not has_current_date) or turn.date_widened:
         o["date_filter_start"] = None
         o["date_filter_end"] = None
         o["date_mode"] = None

@@ -219,7 +219,7 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Any, Optional, Sequence
 
-from sqlalchemy import func, or_, text
+from sqlalchemy import and_, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -243,8 +243,8 @@ from app.services.numbering_defaults import (
     seed_crm_spo_rule,
 )
 from app.services.numbering_service import NumberingService
+from app.services.rules import shipping_order_rules
 from app.services.scm.demand_class import PROJECT as _DEMAND_CLASS_PROJECT
-from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
 logger = logging.getLogger(__name__)
@@ -254,8 +254,11 @@ logger = logging.getLogger(__name__)
 #: `scm_spo_history`, `scm_upload`) and from the reorder engine's own draft marker
 #: (`scm_recommendation`) - see the module docstring for every consumer this was checked
 #: against (`po_ordered_v`, `on_order_v`, `purchase_order_service._source_label`,
-#: `outstanding_import_service`'s history guard).
-SOURCE_SYSTEM = "crm_spo"
+#: `outstanding_import_service`'s history guard). Since D25c (security round 6) the SAME
+#: marker also lands on the `spo_allocations` rows this module raises, so the string
+#: itself lives in `shipping_order_rules` beside the other allocation source-system
+#: vocabulary and is re-exported here under the name every existing consumer imports.
+SOURCE_SYSTEM = shipping_order_rules.CRM_SPO_SOURCE_SYSTEM
 
 #: A CRM SPO counts as "ordered" the moment it exists (the module docstring) - so it is
 #: created ACTIVE + OPEN, never a draft a later Confirm step would have to promote. Mirrors
@@ -829,6 +832,33 @@ def _spo_so_coverage_rows(
     return out
 
 
+def _hidden_spo_line_ids(db: Session, po_line_ids) -> set[str]:
+    """Which of these CRM SPO lines' own `spo_allocations` rows are ENTIRELY hidden
+    (R7/AC-E17) - a po_line_id with at least one VISIBLE allocation is not hidden, and
+    a po_line_id with no allocation row at all (nothing allocated yet) is not hidden
+    either. Only a po_line_id whose every EXISTING allocation fails
+    `spo_supply.visible_line_clauses()` earns a place here.
+    """
+    ids = {str(i) for i in po_line_ids if i}
+    if not ids:
+        return set()
+    from app.services.scm import spo_supply
+
+    visible_ids: set[str] = set()
+    hidden_ids: set[str] = set()
+    for po_line_id, is_visible in (
+        db.query(
+            SPOAllocation.po_line_id,
+            and_(*spo_supply.visible_line_clauses()).label("is_visible"),
+        )
+        .filter(SPOAllocation.po_line_id.in_(ids))
+        .all()
+    ):
+        key = str(po_line_id)
+        (visible_ids if is_visible else hidden_ids).add(key)
+    return hidden_ids - visible_ids
+
+
 def _spo_cover_by_so_line(db: Session, product_id: str) -> dict[str, list[dict]]:
     """Every CRM SPO line pointed at a retail sales-order line for THIS product, oldest SPO
     number first - `{so_line_id: [{"spo_number", "qty"}]}` (S5, `so_coverage[].taken_qty` /
@@ -842,11 +872,19 @@ def _spo_cover_by_so_line(db: Session, product_id: str) -> dict[str, list[dict]]
     A thin grouping over `_spo_so_coverage_rows`, which does the actual read. An unwound SPO
     takes its lines with it, so its record disappears with it, which is correct: the promise
     was undone.
+
+    R7/AC-E17: shares its row scan with `coverage_for_so_lines`, whose own hidden-line
+    handling this mirrors via `_hidden_spo_line_ids` - a po_line_id whose only allocation(s)
+    are retired is dropped here too, or the planner's `taken_by` would still name an SPO
+    the sales order's "Linked to" column (`coverage_for_so_lines`) already hides, exactly
+    the disagreement that module's own docstring says can never happen.
     """
+    rows = _spo_so_coverage_rows(db, product_id=product_id)
+    hidden = _hidden_spo_line_ids(db, {po_line_id for _so, _spo, _qty, po_line_id, _po_id in rows})
     out: dict[str, list[dict]] = {}
-    for so_line_id, spo_number, qty, _po_line_id, _purchase_order_id in _spo_so_coverage_rows(
-        db, product_id=product_id
-    ):
+    for so_line_id, spo_number, qty, po_line_id, _purchase_order_id in rows:
+        if po_line_id in hidden:
+            continue
         out.setdefault(so_line_id, []).append({"spo_number": spo_number, "qty": qty})
     return out
 
@@ -880,12 +918,20 @@ def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, 
     if not rows:
         return {}
 
+    from app.services.scm import spo_supply
+
     po_line_ids = {po_line_id for _so, _spo, _qty, po_line_id, _po_id in rows}
     alloc_by_line: dict[str, tuple[Optional[str], Optional[_date]]] = {}
-    for po_line_id, warehouse_code, eta in (
+    # R7/AC-E10: a po_line_id whose ONLY allocation row(s) are retired never earns a
+    # slot in `alloc_by_line`, and that emptiness is what marks the cover-strip entry
+    # itself hidden below - a po_line_id with no allocation row AT ALL (nothing
+    # allocated yet) stays visible with `location=None`, unchanged from before.
+    seen_hidden_only: set[str] = set()
+    for po_line_id, warehouse_code, eta, is_visible in (
         db.query(
             SPOAllocation.po_line_id, Warehouse.warehouse_code,
             InboundShipment.estimated_arrival_date,
+            and_(*spo_supply.visible_line_clauses()).label("is_visible"),
         )
         .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
         .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
@@ -893,12 +939,19 @@ def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, 
         .order_by(SPOAllocation.id.asc())
         .all()
     ):
-        # First allocation for this SPO line wins (a split line has several) - the docstring's
-        # own "first if several".
-        alloc_by_line.setdefault(str(po_line_id), (warehouse_code, eta))
+        key = str(po_line_id)
+        if is_visible:
+            # First VISIBLE allocation for this SPO line wins (a split line has
+            # several) - the docstring's own "first if several".
+            alloc_by_line.setdefault(key, (warehouse_code, eta))
+        elif key not in alloc_by_line:
+            seen_hidden_only.add(key)
+    seen_hidden_only -= set(alloc_by_line.keys())
 
     out: dict[str, list[dict]] = {}
     for so_line_id, spo_number, qty, po_line_id, purchase_order_id in rows:
+        if po_line_id in seen_hidden_only:
+            continue
         warehouse_code, eta = alloc_by_line.get(po_line_id, (None, None))
         out.setdefault(so_line_id, []).append({
             "kind": "spo",
@@ -916,17 +969,8 @@ def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, 
     return out
 
 
-#: The site-pool test, from the one module that spells it (`pool_predicate`). It was copied
-#: here, and into two other files, on the reasoning `_stock_context` below gives for copying
-#: its whole query - but this one line is not that: both cells this module prints open a
-#: dialog counting ACTIVE POOL rows only (`location_stock_service.location_stock_for_product`
-#: for On hand, `container_request_drill` for Incoming SPO), so the cells count the same
-#: locations or they cannot foot, and a rule that must be identical is one rule.
-_ACTIVE_POOL = ACTIVE_SITE_POOL_SQL
-
-
 def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """On hand + incoming SPO, per product, at ACTIVE SITE POOLS - COPIED from
+    """On hand + incoming SPO, per product, at EVERY ACTIVE LOCATION - COPIED from
     `container_request_service._stock_context` rather than imported (same reasoning that
     module gives for copying `loading_plan_service._catalogue_cbm`: two lanes touching the
     same file is a worse cost than a few duplicated lines). Same figures, same views, so this
@@ -936,17 +980,18 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
     figure feeds `suggested_qty` any more. Kept because it is cheap (one query, already paid
     for by every earlier version of this module) and still useful to see beside the ask.
 
-    Context still has to foot to the dialog it opens (AC-G3: "sum = cell"). Both figures used
-    to sum every warehouse the net-position view names, while the On hand lightbox lists
-    active pool locations only and the Incoming SPO dialog filters `w.is_active AND _POOL` -
-    so the planner printed one number and the reader who clicked it landed on another. Closed
-    locations and project bins leave the cells here for the same reason they left the
-    container request's (`_ACTIVE_POOL` above)."""
+    Widened from ACTIVE SITE POOLS ONLY to every active location (R7, captain 8 Sep 2026),
+    the same change `container_request_service._stock_context` and `container_request_drill.
+    _spo_rows` made: this screen is opened FROM the container request grid, whose own On hand /
+    Incoming SPO now count project bins too, so a narrower figure here would contradict the
+    grid it was opened from. DISPLAY consistency only - `suggested_qty` on this screen does not
+    net either figure (see above), so widening it changes no converted quantity. Closed
+    locations are still excluded, `w.is_active` alone now does that job."""
     if not product_ids:
         return {}
     prod_scope, prod_params = company_sql_predicate(db, "p.company_id", param_prefix="scp")
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="scw")
-    where = ["np.product_id::text = ANY(:pids)", _ACTIVE_POOL]
+    where = ["np.product_id::text = ANY(:pids)", "w.is_active"]
     if prod_scope:
         where.append(prod_scope)
     if wh_scope:
@@ -1187,6 +1232,8 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
     # the same shape `project_order_inquiry_service.links_for_rows` states for a project
     # row's own "Linked to" column, read locally rather than imported (that module is the
     # large stateful class the module docstring already gives the reason not to import).
+    from app.services.scm import spo_supply
+
     spo_names: dict[str, list[str]] = {}
     for row_id, spo_number in (
         db.query(OrderInquiryLink.row_id, SPOAllocation.spo_number)
@@ -1194,6 +1241,8 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
         .filter(
             OrderInquiryLink.row_id.in_(row_ids),
             SPOAllocation.spo_number.isnot(None),
+            # R7/AC-E9: a retired line's number does not name what is "taken by".
+            *spo_supply.visible_line_clauses(),
         )
         .all()
     ):
@@ -2255,6 +2304,11 @@ def _write_allocations(
             created_by=actor_user_id,
             forward_match=False,
             commit=commit,
+            # D25c (security round 6): ONE row per PO line, not an Excel
+            # aggregate - stamped so the first-push supersede never mistakes it
+            # for one and severs the PO linkage. A service argument, not a
+            # request field (security round 7).
+            source_system=SOURCE_SYSTEM,
         )
         company_id = str(allocation.company_id) if allocation.company_id is not None else None
         written.append({
@@ -2571,6 +2625,13 @@ def _own_state(
             "so_takes": so_takes,
         }
 
+    # R7 amended, round 2 (AC-E16): this is a WRITER's view, read by `revise` (the SPO
+    # edit SAVE) as well as by `planner_state` (the display) - a save that could not see
+    # a hidden allocation would neither update nor delete it and would insert a SECOND
+    # row for the same (shipment line, warehouse), risking the unique constraint and
+    # double-counting in `refresh_shipment_line_statuses`'s deliberately unfiltered
+    # totals. `visible_line_clauses()` is applied by `planner_state` instead, on its own
+    # DISPLAY copy of this state, never here.
     alloc_rows = (
         db.query(SPOAllocation)
         .filter(SPOAllocation.po_line_id.in_(list(line_by_po_line.keys())))
@@ -2635,6 +2696,8 @@ def planner_state(db: Session, shipment_id: str, purchase_order_id: str) -> dict
     ticks come from `so_takes` - and recomputing it against a quantity nobody has typed yet
     would state a default this screen is not going to apply.
     """
+    from app.services.scm import spo_supply
+
     shipment, po, links = _spo_scope(db, shipment_id, purchase_order_id)
     own = _own_state(db, po, links)
 
@@ -2674,6 +2737,17 @@ def planner_state(db: Session, shipment_id: str, purchase_order_id: str) -> dict
         held = own.get(sid)
         if held is None:
             continue
+        # R7 amended, round 2 (AC-E16): `_own_state` hands back EVERY allocation on
+        # purpose - `revise` (the save) reads `held` directly and must see a hidden
+        # one to update or delete it rather than insert a duplicate. This DISPLAY
+        # read is the one place the clause belongs, so a retired-only landing does
+        # not show in the split editor or the received rollup below.
+        visible_allocations = [
+            a for a in held["allocations"] if spo_supply.is_visible_allocation(a)
+        ]
+        visible_received = sum(
+            float(a.quantity_received or 0) for a in visible_allocations
+        )
         item_code, product_name = products.get(str(ln.product_id), (None, None))
         packed = float(ln.quantity_shipped or 0)
         already = already_spo.get(sid, {"qty": 0.0, "spo_numbers": []})
@@ -2756,7 +2830,7 @@ def planner_state(db: Session, shipment_id: str, purchase_order_id: str) -> dict
         options = list(location["options"])
         known = {o["warehouse_id"] for o in options}
         splits: list[dict] = []
-        for allocation in held["allocations"]:
+        for allocation in visible_allocations:
             if not allocation.warehouse_id:
                 continue
             warehouse_id = str(allocation.warehouse_id)
@@ -2815,7 +2889,7 @@ def planner_state(db: Session, shipment_id: str, purchase_order_id: str) -> dict
             "so_takes": [
                 {"key": key, "qty": qty} for key, qty in sorted(held["so_takes"].items())
             ],
-            "received_qty": held["received"],
+            "received_qty": visible_received,
         })
 
     return {
@@ -2876,6 +2950,8 @@ def revise(
     `qty_ordered` over the header's lines on read - so "the header total" recomputes itself
     the moment the lines above do.
     """
+    from app.services.scm import spo_supply
+
     shipment, po, links = _spo_scope(db, shipment_id, purchase_order_id, for_update=True)
     own = _own_state(db, po, links)
 
@@ -3072,6 +3148,11 @@ def revise(
 
     for sid in dropped:
         held = own[sid]
+        # NOT the AC-E18 guard (round 4 addendum) - deliberately unfiltered. This
+        # is the whole SPO LINE going, not one split within a kept line: every
+        # allocation under it, hidden ones included, is going with it, the same
+        # way `held["po_line"]` and `links[sid]` two lines down are. There is no
+        # "operator only meant the visible half" reading of dropping a line.
         for allocation in held["allocations"]:
             db.delete(allocation)
             removed_allocations += 1
@@ -3100,6 +3181,37 @@ def revise(
 
         wanted = {s["warehouse_id"]: s["qty"] for s in entry["splits"]}
         for allocation in held["allocations"]:
+            # AC-E18 (round 4 + addendum, R7's third clause): a HIDDEN allocation
+            # takes NO PART in this reconciliation at all - skipped before it can
+            # even be MATCHED against `wanted`, not only before it could be
+            # deleted. Checked per ROW, on the allocation itself, never on
+            # whether its warehouse is absent from `wanted`, because two
+            # different shapes both put a hidden row where a warehouse-presence
+            # check would miss it: (a) its warehouse is absent from the
+            # submitted splits entirely, since `planner_state` never showed it
+            # to the browser; (b) a VISIBLE and a HIDDEN allocation share the
+            # SAME warehouse on one line - `wanted` is keyed by warehouse id and
+            # its entry is consumed by whichever row this loop reaches FIRST
+            # (`wanted.pop`), so gating only the delete branch would still let a
+            # hidden row reached first silently STEAL the operator's split
+            # (mutating a row that must stay untouched) and push its VISIBLE
+            # sibling into the delete branch instead. Skipping the hidden row
+            # entirely - never matched, never updated, never deleted - is the
+            # only guard that survives both shapes: its own warehouse slot in
+            # `wanted` stays unconsumed for whichever VISIBLE allocation (or new
+            # insert) actually owns it. Neither shape is a decision the operator
+            # made about this row - it is our own filtering coming back at us.
+            # Deleting it would also destroy its frozen `stated_received`
+            # (D28c) and the `source_doc_ref` identity the ingest needs to
+            # un-retire it on the next push - not merely a row disappearing from
+            # this screen, but the ingest's own memory of it. Unreachable on
+            # today's data - no allocation carries a `po_line_id`, so
+            # `held["allocations"]` is always empty here - and fixed anyway:
+            # "unreachable today" is the exact reasoning already rejected for
+            # `_own_state` in round 2, and it is the reasoning that produced the
+            # defect this whole lane exists to fix.
+            if not spo_supply.is_visible_allocation(allocation):
+                continue
             warehouse_id = str(allocation.warehouse_id) if allocation.warehouse_id else ""
             if warehouse_id in wanted:
                 allocation.allocated_quantity = int(round(wanted.pop(warehouse_id)))

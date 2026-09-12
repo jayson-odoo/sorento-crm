@@ -46,6 +46,14 @@ SCOPED_TOOLS: frozenset[str] = frozenset({
     "crm_projects_list",
     "crm_project_detail",
     "crm_project_quotations_list",
+    # Growth r1 A5 / A6 (review blocker 3). Both read OWNED rows - purchase_order_lines
+    # carry `company_name` and spo_allocations are per company - and both are reachable
+    # from a WhatsApp turn, which is the caller company scope exists for. Without the two
+    # params declared, FastMCP drops them (`extra="ignore"`) and
+    # `_resolve_api_key_scope` falls through to every company, so a dealer's "PO for X"
+    # would have answered across the whole group.
+    "crm_procurement_po_placed_list",
+    "crm_procurement_spo_allocations_last_receipt_list",
 })
 
 # AC-F8 - global (non-owned-data) tools that MUST NOT gain the scope params.

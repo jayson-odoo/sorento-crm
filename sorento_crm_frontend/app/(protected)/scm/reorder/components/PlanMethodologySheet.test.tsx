@@ -71,9 +71,9 @@ describe('PlanMethodologySheet', () => {
     fireEvent.click(screen.getAllByText(/See this run's numbers/)[0]);
 
     const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('RM 300,000')).toBeInTheDocument();
-    expect(within(dialog).getByText('RM 226,464')).toBeInTheDocument();
-    expect(within(dialog).getByText('RM 73,536')).toBeInTheDocument();
+    expect(within(dialog).getByText('RM 300,000.00')).toBeInTheDocument();
+    expect(within(dialog).getByText('RM 226,464.00')).toBeInTheDocument();
+    expect(within(dialog).getByText('RM 73,536.00')).toBeInTheDocument();
   });
 
   it('degrades gracefully with no run context', () => {

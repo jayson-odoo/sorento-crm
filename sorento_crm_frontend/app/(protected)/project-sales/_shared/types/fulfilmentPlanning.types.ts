@@ -379,6 +379,13 @@ export interface BorrowCandidate {
   lower_ranked?: boolean;
   /** The donor shares this line's own sales agent (section 8) - offered at any rank. */
   same_agent?: boolean;
+  /**
+   * The SAME location facts the Grid Location table states for this warehouse (S4,
+   * `PLAN-local-supplier-oi-routing.md`), so the manual Borrow modal renders a source as that
+   * table rather than doing its own arithmetic. Absent on a donor the server has not wired
+   * this for yet - the modal falls back to the plain fields above.
+   */
+  location?: BoardCellLocation;
 }
 
 /** The components as they were frozen at confirmation, read back on a confirmed order. */
@@ -402,6 +409,13 @@ export interface SupplyLine {
   uom?: string | null;
   /** The core line's current open fulfilment quantity (AC-B01), in the line UOM. */
   open_qty: string;
+  /**
+   * Whether the product's supplier sits in the home country (S3,
+   * `PLAN-local-supplier-oi-routing.md`). A `local` Buy raises no Order Inquiry row on
+   * confirm - the sheet marks it with a `Local` pill and nothing else changes. Absent on a
+   * server that has not wired origin resolution yet.
+   */
+  buy_origin?: 'local' | 'overseas';
   required_date?: string | null;
   /**
    * Warehouse CODE of the line's fulfilment location, read off the CORE sales-order line's
@@ -1277,6 +1291,14 @@ export interface BoardContribution {
    * An empty list when nothing was lent, never absent, so the cell has one shape to read.
    */
   lent_to?: BoardLineLending[];
+  /**
+   * Whether the product's supplier sits in the home country (S3,
+   * `PLAN-local-supplier-oi-routing.md`), computed once per product for the whole board. A
+   * `local` Buy raises no Order Inquiry row on confirm; the List view and the ladder options
+   * table mark it with a `Local` pill. Absent on a server that has not wired origin
+   * resolution yet.
+   */
+  buy_origin?: 'local' | 'overseas';
 }
 
 /** What the engine suggested for one line, in the same shape a source is stated in. */
@@ -1448,6 +1470,13 @@ export interface BoardBorrowCandidate {
   lower_ranked?: boolean;
   /** The donor shares this line's own sales agent (section 8) - offered at any rank. */
   same_agent?: boolean;
+  /**
+   * The SAME location facts the Grid Location table states for this warehouse (S4,
+   * `PLAN-local-supplier-oi-routing.md`), threaded through `borrowCandidatesOf` onto
+   * `BorrowCandidate.location` for the manual Borrow modal. Absent on a server that has not
+   * wired this yet.
+   */
+  location?: BoardCellLocation;
 }
 
 /** One incoming purchase leg at a location, with the document that carries it. */

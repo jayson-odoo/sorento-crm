@@ -52,6 +52,10 @@ class PackingListCreateResponse(BaseModel):
     # signal that n8n and other consumers can read without diving into log warnings.
     unknown_product_codes: List[str] = []
     already_existed: bool = False
+    #: Set when this update left the shipment's LINES alone (AC-D4b): a converted draft's
+    #: lines come from its proforma invoices, and the forwarder's own upload updates the
+    #: header only. Null on every other call, including a fresh create.
+    lines_skipped_reason: Optional[str] = None
     message: Optional[str] = None
 
 

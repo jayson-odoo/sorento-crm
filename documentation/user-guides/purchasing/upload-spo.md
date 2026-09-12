@@ -37,6 +37,28 @@ AutoCount integration writes the same container number and gets the same linking
 created by this upload is adopted rather than duplicated if the integration later restates the
 same SPO number, product and warehouse, and the reverse holds too.
 
+The first time the AutoCount integration pushes a shipping order that was uploaded from Excel,
+its own lines REPLACE the uploaded rows for that product and warehouse: AutoCount states one line
+per order line, where the upload held one summed row, so the uploaded row is retired and the
+received quantity it carried is spread across the AutoCount lines in line order, keeping the
+container link. Anything already attached to an uploaded row - a GRN receipt, a sales-order link,
+an order-inquiry placement - moves to the first AutoCount line for that product and warehouse, so
+nothing is lost. A product and warehouse AutoCount states no line for keeps its uploaded row,
+closed, and so does one whose AutoCount quantities come to less than what the row already
+received. Retired rows are deleted when the integration is permitted to delete shipping orders,
+and otherwise stay in the list, closed, with a note saying which AutoCount document replaced
+them.
+
+## Reading the list and a document
+
+On the **SPO Allocations** list, a **Date** column (the document date) sits right of **SPO No**
+and sorts like any other column; the SPO No cell itself is one line, no date stacked under it.
+
+Open a document to see its **Lines** tab. Every column - Product, Warehouse, Plan, Packing
+List, Status, PO, SO - sorts when you click its header, and a search box ("Search product or
+warehouse") narrows the lines to those matching a product code/name or warehouse code/name.
+Clear the search to see every line again.
+
 ## How you'll see progress
 
 Once a job is queued, the **SPO Allocations** page shows a **Latest SPO import** panel above the table. It updates with the job status (queued, running, completed, failed) and row counts in real time. Refresh the page if you don't see it.

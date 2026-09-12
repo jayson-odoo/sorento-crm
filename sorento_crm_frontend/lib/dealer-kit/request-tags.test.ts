@@ -21,6 +21,7 @@ import { IMPOSITION_PRESETS, defaultTextProps } from './tag-template-types';
 import { PRODUCT_BLOCK_SIZE, SET_BLOCK_SIZE } from './product-block';
 import {
   applyDesignToAllLines,
+  applyDesignToSiblings,
   autoArrange,
   copiesOf,
   defaultTemplateFor,
@@ -1074,5 +1075,122 @@ describe('applyDesignToAllLines', () => {
 
     const group = next.l2.layers.find((l) => l.props.kind === 'group');
     expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l2' } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyDesignToSiblings - "Update <template>" with the sibling checkbox on
+// (S6, PLAN D6, AC-S6-4/5)
+// ---------------------------------------------------------------------------
+
+describe('applyDesignToSiblings', () => {
+  function sourceTag(overrides: Partial<PlacedTag> = {}): PlacedTag {
+    return {
+      id: 'tag-src',
+      template_id: 't-sink',
+      request_line_id: 'l1',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 95,
+      height_mm: 44.5,
+      layers: [
+        { ...textLayer('code', 1), text_override: 'Hand typed' },
+        groupLayer('group', ['code']),
+      ],
+      ...overrides,
+    };
+  }
+
+  it('updates every OTHER line whose CURRENT tag matches the template being republished', () => {
+    const tags = {
+      l1: sourceTag(),
+      l2: placed('old-l2', 'l2', 't-sink'),
+      l3: placed('old-l3', 'l3', 't-sink'),
+    };
+    const lines = [productLine('l1'), productLine('l2'), productLine('l3')];
+
+    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+
+    expect(next.l2.template_id).toBe('t-sink');
+    expect(next.l2.width_mm).toBe(95);
+    expect(next.l2.height_mm).toBe(44.5);
+    const group2 = next.l2.layers.find((l) => l.props.kind === 'group');
+    expect(group2?.props).toMatchObject({ binding: { product_id: 'p-l2' } });
+    expect(next.l3.template_id).toBe('t-sink');
+  });
+
+  it('leaves a line on a DIFFERENT template untouched', () => {
+    const other = placed('old-l2', 'l2', 't-wc');
+    const tags = { l1: sourceTag(), l2: other };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+
+    expect(next.l2).toBe(other);
+  });
+
+  it('leaves a line with NO tag at all untouched - Update never gives a line its first tag', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+
+    expect(next.l2).toBeUndefined();
+  });
+
+  it("never touches the source line's own tag", () => {
+    const source = sourceTag();
+    const tags = { l1: source, l2: placed('old-l2', 'l2', 't-sink') };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+
+    expect(next.l1).toBe(source);
+  });
+
+  it('keeps a sibling tag at its own position - Update carries the design, not the layout', () => {
+    const tags = {
+      l1: sourceTag(),
+      l2: { ...placed('old-l2', 'l2', 't-sink'), x_mm: 12, y_mm: 34, pinned: true },
+    };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+
+    expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34, pinned: true });
+  });
+
+  it('gives every updated sibling a fresh tag id, and fresh layer ids shared with nobody', () => {
+    const tags = {
+      l1: sourceTag(),
+      l2: placed('old-l2', 'l2', 't-sink'),
+    };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+
+    expect(next.l2.id).not.toBe('old-l2');
+    const l2Ids = next.l2.layers.map((l) => l.id);
+    expect(l2Ids).not.toEqual(expect.arrayContaining(['code', 'group']));
+  });
+
+  it('binds a set-line sibling to its own set, not the source line\'s product', () => {
+    const tags = {
+      l1: sourceTag(),
+      l2: placed('old-l2', 'l2', 't-sink'),
+    };
+    const lines = [productLine('l1'), setLine('l2')];
+
+    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+
+    const group = next.l2.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l2' } });
+  });
+
+  it('answers the map unchanged when the source line has no tag', () => {
+    const tags = { l2: placed('old-l2', 'l2', 't-sink') };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    expect(applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId)).toBe(tags);
   });
 });

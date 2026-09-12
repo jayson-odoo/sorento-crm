@@ -118,6 +118,7 @@ def _policy_row(
     *,
     mode: str,
     warehouse_ids=None,
+    excluded_warehouse_ids=None,
     contact=None,
     access_type=None,
     hide_zero_locations: bool = False,
@@ -128,6 +129,7 @@ def _policy_row(
         access_type_code=access_type.code if access_type else None,
         mode=mode,
         warehouse_ids=warehouse_ids,
+        excluded_warehouse_ids=excluded_warehouse_ids,
         hide_zero_locations=hide_zero_locations,
     )
     db.add(row)
@@ -169,6 +171,22 @@ _MIGRATION = (
     / "416_stock_visibility_policy_stock_visibility_policies.py"
 )
 
+#: AC-1. Adds `excluded_warehouse_ids` and the CHECK
+#: `ck_stock_visibility_policies_one_location_rule` on top of 416.
+_MIGRATION_508 = (
+    pathlib.Path(__file__).resolve().parents[1]
+    / "alembic"
+    / "versions"
+    / "508_stock_visibility_excl_wh.py"
+)
+
+
+def _load_migration(path: pathlib.Path, module_name: str):
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 def _seed_from_migration(db) -> None:
     """Run ONLY the migration's seed half against the blank schema.
@@ -177,36 +195,73 @@ def _seed_from_migration(db) -> None:
     LESSONS `create_all skips migration seeds`), so the seed has to be invoked
     explicitly to be tested at all.
     """
-    spec = importlib.util.spec_from_file_location("migration_416", _MIGRATION)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_migration(_MIGRATION, "migration_416")
     module.seed_default_row(db.connection())
 
 
 def test_migration_builds_the_table_the_model_expects(db):
     """`create_all` and the migration are two independent descriptions of the same
     table, and only one of them runs in production. Drop the created one, run the
-    real `upgrade()` in its place, and use the ORM against the result - a CHECK or
-    a partial unique that only exists on the model would fail here."""
+    real `upgrade()`s in their place (416 then 508), and use the ORM against the
+    result - a CHECK or a partial unique that only exists on the model would fail
+    here.
+
+    AC-1: 508 adds `excluded_warehouse_ids` and the CHECK
+    `ck_stock_visibility_policies_one_location_rule`
+    (`warehouse_ids IS NULL OR excluded_warehouse_ids IS NULL`); the seeded
+    default row reads `("detailed", None, None)`.
+
+    The contact is created BEFORE the DROP TABLE, and each `pytest.raises`
+    assertion below rolls back only its OWN savepoint (`db.begin_nested()`),
+    never the whole session. A plain `db.rollback()` between the two
+    assertions - the first draft of this test - discards the DROP TABLE and
+    both `upgrade()`s along with the failed insert, because this session joins
+    the outer (per-test) transaction as one savepoint (`blank_session`,
+    `join_transaction_mode="create_savepoint"`): rolling back reverts the
+    table back to the one `create_all` declared from the ORM model, and the
+    second assertion then passes against THAT table's CHECK rather than the
+    migration's - green even with `op.create_check_constraint` deleted from
+    508.
+    """
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from sqlalchemy import text as sa_text
     from sqlalchemy.exc import IntegrityError
 
+    contact = _contact(db)
+    db.flush()
+
     db.execute(sa_text("DROP TABLE stock_visibility_policies"))
-    spec = importlib.util.spec_from_file_location("migration_416_upgrade", _MIGRATION)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module_416 = _load_migration(_MIGRATION, "migration_416_upgrade")
+    module_508 = _load_migration(_MIGRATION_508, "migration_508_upgrade")
     context = MigrationContext.configure(db.connection())
     with Operations.context(context):
-        module.upgrade()
+        module_416.upgrade()
+        module_508.upgrade()
 
     seeded = db.query(StockVisibilityPolicy).all()
-    assert [(row.mode, row.warehouse_ids) for row in seeded] == [("detailed", None)]
+    assert [
+        (row.mode, row.warehouse_ids, row.excluded_warehouse_ids) for row in seeded
+    ] == [("detailed", None, None)]
 
+    sp = db.begin_nested()
     with pytest.raises(IntegrityError):
         _policy_row(db, mode="availability")
         db.flush()
+    sp.rollback()
+
+    sp = db.begin_nested()
+    with pytest.raises(IntegrityError):
+        _policy_row(
+            db,
+            mode="detailed",
+            warehouse_ids=[str(uuid.uuid4())],
+            excluded_warehouse_ids=[str(uuid.uuid4())],
+            contact=contact,
+        )
+        db.flush()
+    sp.rollback()
+
     db.rollback()
 
 
@@ -867,7 +922,7 @@ def test_contact_policy_upsert(client, db):
 
     first = client.put(
         f"{BASE}/contacts/{contact.id}",
-        json={"mode": "compact", "warehouse_ids": [brw.id, brw_bb.id]},
+        json={"mode": "compact", "warehouse_ids": [brw.id, brw_bb.id], "excluded_warehouse_ids": None},
     )
     assert first.status_code == 200
     body = first.json()
@@ -877,7 +932,7 @@ def test_contact_policy_upsert(client, db):
 
     second = client.put(
         f"{BASE}/contacts/{contact.id}",
-        json={"mode": "availability", "warehouse_ids": [dc1.id]},
+        json={"mode": "availability", "warehouse_ids": [dc1.id], "excluded_warehouse_ids": None},
     )
     assert [w["code"] for w in second.json()["override"]["warehouses"]] == ["ZZTDC1"]
     assert second.json()["effective"]["mode"] == "availability"
@@ -940,7 +995,7 @@ def test_access_type_policy_roundtrip(client, db):
 
     saved = client.put(
         f"{BASE}/access-types/{dealer.code}",
-        json={"mode": "availability", "warehouse_ids": [brw.id, dc1.id]},
+        json={"mode": "availability", "warehouse_ids": [brw.id, dc1.id], "excluded_warehouse_ids": None},
     ).json()
     assert saved["effective"]["mode"] == "availability"
     assert saved["effective"]["source"] == "access_type"
@@ -958,7 +1013,7 @@ def test_default_policy_routes(client, db):
     assert body["override"] == body["effective"]
     assert body["effective"]["source"] == "default"
 
-    saved = client.put(f"{BASE}/default", json={"mode": "compact", "warehouse_ids": None}).json()
+    saved = client.put(f"{BASE}/default", json={"mode": "compact", "warehouse_ids": None, "excluded_warehouse_ids": None}).json()
     assert saved["effective"]["mode"] == "compact"
     assert saved["override"]["warehouses"] is None
 
@@ -973,25 +1028,25 @@ def test_policy_validation(client, db):
 
     unknown_type = client.put(
         f"{BASE}/access-types/ZZT-NO-SUCH-CODE",
-        json={"mode": "compact", "warehouse_ids": None},
+        json={"mode": "compact", "warehouse_ids": None, "excluded_warehouse_ids": None},
     )
     assert unknown_type.status_code == 404
 
     bad_mode = client.put(
         f"{BASE}/contacts/{contact.id}",
-        json={"mode": "summary", "warehouse_ids": None},
+        json={"mode": "summary", "warehouse_ids": None, "excluded_warehouse_ids": None},
     )
     assert bad_mode.status_code == 422
 
     bad_warehouse = client.put(
         f"{BASE}/contacts/{contact.id}",
-        json={"mode": "compact", "warehouse_ids": [str(uuid.uuid4())]},
+        json={"mode": "compact", "warehouse_ids": [str(uuid.uuid4())], "excluded_warehouse_ids": None},
     )
     assert bad_warehouse.status_code == 422
 
     unknown_contact = client.put(
         f"{BASE}/contacts/ZZT-NO-SUCH-CONTACT",
-        json={"mode": "compact", "warehouse_ids": None},
+        json={"mode": "compact", "warehouse_ids": None, "excluded_warehouse_ids": None},
     )
     assert unknown_contact.status_code == 404
 
@@ -1082,7 +1137,7 @@ def test_policy_rbac(db, monkeypatch):
         assert (
             anonymous.put(
                 f"{BASE}/contacts/{contact.id}",
-                json={"mode": "compact", "warehouse_ids": None},
+                json={"mode": "compact", "warehouse_ids": None, "excluded_warehouse_ids": None},
             ).status_code
             == 401
         )
@@ -1100,7 +1155,7 @@ def test_policy_rbac(db, monkeypatch):
         assert (
             reader.put(
                 f"{BASE}/contacts/{contact.id}",
-                json={"mode": "compact", "warehouse_ids": None},
+                json={"mode": "compact", "warehouse_ids": None, "excluded_warehouse_ids": None},
             ).status_code
             == 403
         )
@@ -1433,7 +1488,7 @@ def test_contact_tier_routes_disambiguate_with_a_space_id(client, db):
     saved = client.put(
         f"{BASE}/contacts/12341234",
         params={"space_id": "364817"},
-        json={"mode": "availability", "warehouse_ids": None},
+        json={"mode": "availability", "warehouse_ids": None, "excluded_warehouse_ids": None},
     )
     assert saved.status_code == 200
     assert saved.json()["override"]["mode"] == "availability"
@@ -1459,7 +1514,7 @@ def test_a_malformed_warehouse_id_is_rejected_not_a_500(client, db):
 
     response = client.put(
         f"{BASE}/contacts/{contact.id}",
-        json={"mode": "compact", "warehouse_ids": ["not-a-uuid"]},
+        json={"mode": "compact", "warehouse_ids": ["not-a-uuid"], "excluded_warehouse_ids": None},
     )
 
     assert response.status_code == 422
@@ -1495,7 +1550,7 @@ def test_policy_writes_and_deletes_are_audited(client, db):
     db.flush()
 
     client.put(
-        f"{BASE}/contacts/{contact.id}", json={"mode": "compact", "warehouse_ids": None}
+        f"{BASE}/contacts/{contact.id}", json={"mode": "compact", "warehouse_ids": None, "excluded_warehouse_ids": None}
     )
     row_id = str(
         db.query(StockVisibilityPolicy.id)
@@ -1555,7 +1610,7 @@ def test_a_warehouse_from_another_company_can_be_saved(client, db):
 
     response = client.put(
         f"{BASE}/contacts/{contact.id}",
-        json={"mode": "compact", "warehouse_ids": [mocha_wh.id]},
+        json={"mode": "compact", "warehouse_ids": [mocha_wh.id], "excluded_warehouse_ids": None},
     )
 
     assert response.status_code == 200, response.json()
@@ -1715,18 +1770,22 @@ def test_detailed_without_the_flag_still_shows_the_zero_rows(db):
 
 
 def test_detailed_hide_zero_takes_the_existing_empty_path(db):
-    """B17. Every row of the request filtered out is the same answer as no row at
-    all: `data: []`, `total: 0`, `empty: true`. The mode is unchanged, so the
-    caller gets the empty shape it already handles rather than a new one."""
+    """B17 (re-added, review fix round - D5 does not reverse this). The product
+    HAS stock (5 at BRW), but the REQUEST itself is narrowed to a DIFFERENT
+    warehouse (BRW-BB, via the `warehouse_id` argument) where it has no row at
+    all - not a zero row, no row. That is the plain "nothing matched this
+    filter" shape, unrelated to D5's zero-everywhere rule, and it still takes
+    the existing empty path: `data: []`, `total: 0`, `empty: true`."""
     brw, brw_bb, _ = _three_warehouses(db)
     p = product(db, company_id=DEFAULT_COMPANY_ID)
-    for wh in (brw, brw_bb):
-        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=5)
     contact = _contact(db)
     _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
     db.flush()
 
-    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, warehouse_id=brw_bb.id
+    )
 
     assert result["data"] == []
     assert result["pagination"]["total"] == 0
@@ -1788,6 +1847,150 @@ def test_compact_keeps_a_product_whose_every_location_is_zero(db):
     assert block["locations"] == []
     # It carries an answer, so it is not the "nothing found" shape (B15).
     assert result["empty"] is False
+
+
+# ================================ AC-9..AC-12 (12 Sep 2026): detailed hide-zero
+# keeps a product that is zero EVERYWHERE, the same "none left, not never
+# found" rule `compact` already applies (finding 5 / D5).
+
+
+def test_detailed_hide_zero_keeps_a_product_zero_at_every_location(db):
+    """AC-9. Two warehouses, both reading 0 - the product is zero EVERYWHERE for
+    this contact, so both rows must still return (today's unconditional
+    `!= 0` filter drops both; this is the regression the plan calls finding 5)."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id}
+    assert result["pagination"]["total"] == 2
+
+
+def test_detailed_hide_zero_still_drops_zero_beside_real_stock(db):
+    """AC-10 (regression pin - passes today already). 5 at BRW, 0 at BRW-BB: the
+    product HAS stock somewhere, so the zero row is still dropped."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=5)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw_bb.id, on_hand=0)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id}
+    assert result["pagination"]["total"] == 1
+
+
+def test_detailed_hide_zero_negative_row_stays_and_the_zero_sibling_still_drops(db):
+    """AC-11 (regression pin - passes today already). -2 at BRW, 0 at BRW-BB: the
+    negative row is never dropped (existing rule), and the product is not zero
+    everywhere (a negative is not zero), so the BRW-BB zero row still drops."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=-2)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw_bb.id, on_hand=0)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id}
+    assert result["pagination"]["total"] == 1
+
+
+def test_detailed_hide_zero_all_zero_ignores_stock_in_an_inactive_warehouse(db):
+    """AC-12 (inactive-warehouse half, review fix round). The AC-9 product also
+    holds 5 in a THIRD test warehouse that is `is_active=False` - the outer
+    query already excludes inactive warehouses
+    (`Stock.warehouse.has(Warehouse.is_active.is_(True))`), and the
+    zero-everywhere predicate must carry that SAME criterion, or the inactive
+    row still counts as "has stock somewhere" and wrongly drops the two active
+    0 rows."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    inactive_wh = _wh(db, unique_code("INACTWH")[:50])
+    inactive_wh.is_active = False
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=inactive_wh.id, on_hand=5)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id}
+    assert result["pagination"]["total"] == 2
+
+
+def test_detailed_hide_zero_all_zero_ignores_stock_in_an_excluded_warehouse(db):
+    """AC-12 (excluded-warehouse half). The AC-9 product also holds 7 in a
+    warehouse the policy EXCLUDES - that stock must not count as "has stock
+    somewhere" for a contact who can never see it, so the two 0 rows still
+    return. Pins D5's own warning: the zero-everywhere predicate must carry the
+    SAME warehouse criterion as the outer query, explicitly."""
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=dc1.id, on_hand=7)
+    contact = _contact(db)
+    _policy_row(
+        db, mode="detailed", contact=contact, hide_zero_locations=True,
+        excluded_warehouse_ids=[dc1.id],
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id}
+    assert result["pagination"]["total"] == 2
+
+
+def test_detailed_hide_zero_all_zero_ignores_stock_in_another_company(db):
+    """AC-12 (another-company half). A row in ANOTHER company, sharing the SAME
+    `product_id` (a data shape that should never make a product "has stock
+    somewhere" for a DIFFERENT company's contact), must not count either.
+
+    Company scope is pinned to BOTH companies (review fix round): under a
+    single-company scope, `with_loader_criteria(..., include_aliases=True)`
+    already hides the Mocha row inside the EXISTS on its own, so the test would
+    stay green even with the predicate's `s2.company_id == Stock.company_id`
+    clause deleted - it would not be pinning anything. With both companies in
+    scope the loader criteria injects nothing, so this is the ONLY thing left
+    to keep the Mocha row from being read as "stock somewhere": mentally
+    delete the predicate and the Mocha row makes the product look non-zero
+    everywhere, and the two 0 rows would vanish along with the Mocha row
+    itself (the query already scopes `product_ids=[p.id]` company-blind, but
+    the visibility policy's OWN row filter is what must exclude it). All three
+    rows return - the two 0 rows genuinely visible to this Sorento contact,
+    and the Mocha row because the query itself is scoped to both companies
+    here (this is a service-level unit test, not a company-scoped API path)."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    brw, brw_bb, _ = _three_warehouses(db)
+    mocha_wh = _wh(db, unique_code("MCHWH")[:50], company_id=MOCHA_ID)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    stock(db, company_id=MOCHA_ID, product_id=p.id, warehouse_id=mocha_wh.id, on_hand=7)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id, mocha_wh.id}
+    assert result["pagination"]["total"] == 3
 
 
 def test_availability_ignores_hide_zero_locations(db):
@@ -1865,6 +2068,7 @@ def test_hide_zero_locations_round_trips_through_the_put(client, db):
         json={
             "mode": "compact",
             "warehouse_ids": [brw.id],
+            "excluded_warehouse_ids": None,
             "hide_zero_locations": True,
         },
     )
@@ -1895,11 +2099,11 @@ def test_a_put_that_omits_hide_zero_locations_reads_as_false(client, db):
 
     client.put(
         f"{BASE}/contacts/{contact.id}",
-        json={"mode": "compact", "warehouse_ids": None, "hide_zero_locations": True},
+        json={"mode": "compact", "warehouse_ids": None, "excluded_warehouse_ids": None, "hide_zero_locations": True},
     )
     body = client.put(
         f"{BASE}/contacts/{contact.id}",
-        json={"mode": "compact", "warehouse_ids": None},
+        json={"mode": "compact", "warehouse_ids": None, "excluded_warehouse_ids": None},
     ).json()
 
     assert body["override"]["hide_zero_locations"] is False
@@ -1920,13 +2124,13 @@ def test_the_other_two_tiers_carry_the_flag_too(client, db):
 
     access_type = client.put(
         f"{BASE}/access-types/{dealer.code}",
-        json={"mode": "compact", "warehouse_ids": None, "hide_zero_locations": True},
+        json={"mode": "compact", "warehouse_ids": None, "excluded_warehouse_ids": None, "hide_zero_locations": True},
     ).json()
     assert access_type["effective"]["hide_zero_locations"] is True
 
     default = client.put(
         f"{BASE}/default",
-        json={"mode": "detailed", "warehouse_ids": None, "hide_zero_locations": True},
+        json={"mode": "detailed", "warehouse_ids": None, "excluded_warehouse_ids": None, "hide_zero_locations": True},
     ).json()
     assert default["effective"]["hide_zero_locations"] is True
     assert client.get(f"{BASE}/default").json()["effective"]["hide_zero_locations"] is True
@@ -1962,3 +2166,353 @@ def test_the_response_model_declares_hide_zero_locations(client, db):
     assert body["stock_summary"][0]["locations"] == [
         {"warehouse_code": "ZZTBRW", "quantity_on_hand": 12}
     ]
+
+
+# ============================================ excluded locations ("all except these")
+#
+# PLAN-stock-visibility-exclude-locations, UAC AC-2 .. AC-12. `warehouse_ids` is the
+# include list unchanged; `excluded_warehouse_ids` is the new sibling: every ACTIVE
+# warehouse except the ones named, including one created after the policy was saved.
+# The CHECK enforcing "one rule or the other, never both" is asserted inside
+# `test_migration_builds_the_table_the_model_expects` (AC-1) above.
+
+
+def test_excluded_warehouses_hide_only_those(db):
+    """AC-2. Detailed balance for a contact excluding A, with stock at A and B:
+    only B's rows return. The echoed `warehouse_codes` names the non-excluded
+    ACTIVE codes - an exclusion is a named set too (every active warehouse
+    except these), so it echoes the same way an include list does; it is only
+    null when the policy carries neither list at all."""
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 500), (brw_bb, 200), (dc1, 999)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", excluded_warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw_bb.id, dc1.id}
+    assert result["pagination"]["total"] == 2
+    assert result["stock_visibility"]["warehouse_codes"] == ["ZZTBRW-BB", "ZZTDC1"]
+
+
+def test_an_excluded_policy_sees_a_warehouse_created_later(db):
+    """AC-3. A warehouse created (with stock) AFTER the exclusion was saved is
+    visible to the contact without any change to the policy row - the whole
+    point of "all except these" over an include list that would otherwise need
+    editing every time a location is added."""
+    brw, _, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=500)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", excluded_warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    new_wh = _wh(db, "ZZTNEW")
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=new_wh.id, on_hand=42)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {new_wh.id}
+
+
+def test_access_types_union_their_exclusions(db):
+    """AC-4. Two access types excluding different warehouses merge to the UNION
+    of what is withheld - the same direction hiding already wins in every other
+    merge on this policy (mode rank, `hide_zero_locations`)."""
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    contact = _contact(db)
+    one = _access_type(db, unique_code("t1")[:50], "Type one")
+    two = _access_type(db, unique_code("t2")[:50], "Type two")
+    _tag(db, contact, one)
+    _tag(db, contact, two)
+    _policy_row(db, mode="detailed", excluded_warehouse_ids=[brw.id], access_type=one)
+    _policy_row(db, mode="detailed", excluded_warehouse_ids=[brw_bb.id], access_type=two)
+
+    policy = resolve_policy(db, contact.id)
+    assert policy.excluded_warehouse_ids == frozenset({brw.id, brw_bb.id})
+
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 500), (brw_bb, 200), (dc1, 999)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+    assert {row.warehouse_id for row in result["data"]} == {dc1.id}
+
+
+def test_include_and_exclude_across_access_types_compose(db):
+    """AC-5. One access type includes {A, B}, another excludes {B}: the merge
+    carries BOTH rules and enforcement applies the include first, then the
+    exclude on top of it - only A survives."""
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    contact = _contact(db)
+    includer = _access_type(db, unique_code("t1")[:50], "Includer")
+    excluder = _access_type(db, unique_code("t2")[:50], "Excluder")
+    _tag(db, contact, includer)
+    _tag(db, contact, excluder)
+    _policy_row(db, mode="detailed", warehouse_ids=[brw.id, brw_bb.id], access_type=includer)
+    _policy_row(db, mode="detailed", excluded_warehouse_ids=[brw_bb.id], access_type=excluder)
+
+    policy = resolve_policy(db, contact.id)
+    assert policy.warehouse_ids == frozenset({brw.id, brw_bb.id})
+    assert policy.excluded_warehouse_ids == frozenset({brw_bb.id})
+
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 500), (brw_bb, 200), (dc1, 999)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+    assert {row.warehouse_id for row in result["data"]} == {brw.id}
+    # The merged policy carries an include AND an exclude; the echoed codes must
+    # not name the one the exclusion withheld even though it was on the include
+    # list too.
+    assert "ZZTBRW-BB" not in result["stock_visibility"]["warehouse_codes"]
+
+
+def test_contact_exclusion_beats_access_type_include(db):
+    """AC-6. The contact override wins WHOLE, same as every other field on this
+    row: an access type naming {A, B} as the include list is beaten outright by
+    a contact-level exclusion of {A} - B's rows return, and so does a third
+    warehouse the access type never mentioned."""
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    contact = _contact(db)
+    dealer = _access_type(db, unique_code("dealer")[:50], "Dealer")
+    _tag(db, contact, dealer)
+    _policy_row(db, mode="detailed", warehouse_ids=[brw.id, brw_bb.id], access_type=dealer)
+    _policy_row(db, mode="detailed", excluded_warehouse_ids=[brw.id], contact=contact)
+
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 500), (brw_bb, 200), (dc1, 999)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+    assert {row.warehouse_id for row in result["data"]} == {brw_bb.id, dc1.id}
+
+
+def test_compact_honours_exclusion(db):
+    """AC-7, compact half. The excluded location's line and its quantity are
+    absent from the summary block; the total covers only the rest."""
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 500), (brw_bb, 200), (dc1, 999)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    contact = _contact(db)
+    _policy_row(db, mode="compact", excluded_warehouse_ids=[dc1.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    block = result["stock_summary"][0]
+    assert block["locations"] == [
+        {"warehouse_code": "ZZTBRW", "quantity_on_hand": 500},
+        {"warehouse_code": "ZZTBRW-BB", "quantity_on_hand": 200},
+    ]
+    assert block["total_on_hand"] == 700
+
+
+def test_availability_no_ignores_excluded_warehouses(db):
+    """AC-7, availability half. 999 sitting at the one EXCLUDED location is not
+    this contact's stock - with nowhere else to look, 50 asked for is a no."""
+    _, _, dc1 = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=dc1.id, on_hand=999)
+    contact = _contact(db)
+    _policy_row(db, mode="availability", excluded_warehouse_ids=[dc1.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, requested_qty=50
+    )
+
+    assert result["stock_availability"][0]["available"] is False
+
+
+def test_detailed_alternatives_skip_excluded_stock(db, monkeypatch):
+    """AC-8. The data-miss probe's has-data gate must honour an EXCLUDE policy
+    the same way it already honours an include list (see
+    `test_detailed_alternatives_only_count_stock_the_policy_allows`): a
+    neighbour whose only stock sits at an excluded warehouse is not worth
+    suggesting - the next question about it cannot be answered either."""
+    capture: dict = {}
+    _neighbour_probe(monkeypatch, returns=[], capture=capture)
+    brw, _, dc1 = _three_warehouses(db)
+    asked = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-ASKED")
+    allowed = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-ALLOWED")
+    hidden = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-HIDDEN")
+    stock(
+        db, company_id=DEFAULT_COMPANY_ID, product_id=allowed.id, warehouse_id=brw.id, on_hand=5
+    )
+    stock(
+        db, company_id=DEFAULT_COMPANY_ID, product_id=hidden.id, warehouse_id=dc1.id, on_hand=500
+    )
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", excluded_warehouse_ids=[dc1.id], contact=contact)
+    db.flush()
+
+    StockService(db).list_stock(product_ids=[asked.id], contact_id=contact.id)
+
+    assert capture["code"] == asked.product_code
+    assert capture["has_data"]([allowed.id, hidden.id]) == {allowed.id}
+
+
+def test_put_rejects_include_and_exclude_together(client, db):
+    """AC-9. Both non-null is not a valid rule, and the message is exact - not
+    a generic 422 the admin has to decode."""
+    contact = _contact(db)
+    db.flush()
+
+    response = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={
+            "mode": "compact",
+            "warehouse_ids": [str(uuid.uuid4())],
+            "excluded_warehouse_ids": [str(uuid.uuid4())],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["message"] == "Pick locations to include or to exclude, not both."
+
+
+def test_the_upsert_body_must_state_its_exclusions(client, db):
+    """AC-9. `excluded_warehouse_ids` is REQUIRED, same reasoning as
+    `warehouse_ids`: a PUT replaces the whole row, so an omitted key must not
+    silently change a stored exclusion by accident."""
+    contact = _contact(db)
+    db.flush()
+
+    response = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={"mode": "compact", "warehouse_ids": None},
+    )
+
+    assert response.status_code == 422
+
+
+def test_a_malformed_excluded_warehouse_id_is_rejected_not_a_500(client, db):
+    """AC-9. Same treatment as a malformed `warehouse_ids` entry - a 422 naming
+    the bad value, never a 500."""
+    contact = _contact(db)
+    db.flush()
+
+    response = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={
+            "mode": "compact",
+            "warehouse_ids": None,
+            "excluded_warehouse_ids": ["not-a-uuid"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "not-a-uuid" in json.dumps(response.json())
+
+
+def test_excluded_warehouse_ids_round_trip_on_every_tier(client, db):
+    """AC-10. Round-trips on the contact, access-type and default tiers alike -
+    one card, one shape, three rows - and the write is audited like every
+    other field on this table."""
+    from app.models.audit import AuditLog
+    from app.services.audit_service import register_audit_listeners
+
+    register_audit_listeners()
+    brw, _, _ = _three_warehouses(db)
+    contact = _contact(db)
+    dealer = _access_type(db, unique_code("dealer")[:50], "Dealer")
+    db.flush()
+
+    for path in (
+        f"{BASE}/contacts/{contact.id}",
+        f"{BASE}/access-types/{dealer.code}",
+        f"{BASE}/default",
+    ):
+        saved = client.put(
+            path,
+            json={
+                "mode": "detailed",
+                "warehouse_ids": None,
+                "excluded_warehouse_ids": [brw.id],
+            },
+        )
+        assert saved.status_code == 200, saved.json()
+        override = saved.json()["override"]
+        assert override["excluded_warehouses"] == [
+            {"id": brw.id, "code": "ZZTBRW", "name": "Warehouse"}
+        ]
+        assert override["warehouses"] is None
+
+        read_back = client.get(path).json()["override"]
+        assert read_back["excluded_warehouses"] == [
+            {"id": brw.id, "code": "ZZTBRW", "name": "Warehouse"}
+        ]
+        assert read_back["warehouses"] is None
+
+    row_id = str(
+        db.query(StockVisibilityPolicy.id)
+        .filter(StockVisibilityPolicy.contact_id == contact.id)
+        .scalar()
+    )
+    entries = (
+        db.query(AuditLog)
+        .filter(AuditLog.entity_id == row_id)
+        .order_by(AuditLog.changed_at)
+        .all()
+    )
+    # Not just THAT a row was written (a CREATE fires for any new policy) - the
+    # audited change record must actually carry the field this test is about, or
+    # a column excluded from `_model_to_audit_dict` would pass a weaker check
+    # silently.
+    create_entries = [entry for entry in entries if entry.action == "CREATE"]
+    assert create_entries, "expected a CREATE audit row for the new contact override"
+    assert create_entries[0].new_values.get("excluded_warehouse_ids") == [brw.id]
+
+
+def test_the_response_model_declares_excluded_warehouses(client, db):
+    """AC-11. `response_model` silently drops undeclared fields, so this is
+    asserted on the SCHEMA and on a real response body."""
+    from app.schemas.stock_visibility import StockVisibilityPolicyOut
+
+    assert "excluded_warehouses" in StockVisibilityPolicyOut.model_fields
+
+    brw, _, _ = _three_warehouses(db)
+    contact = _contact(db)
+    db.flush()
+
+    body = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={"mode": "detailed", "warehouse_ids": None, "excluded_warehouse_ids": [brw.id]},
+    ).json()
+
+    assert body["override"]["excluded_warehouses"] == [
+        {"id": brw.id, "code": "ZZTBRW", "name": "Warehouse"}
+    ]
+
+
+def test_an_empty_exclusion_is_stored_and_means_all(client, db):
+    """AC-12. `[]` under Exclude is a real, storable value distinct from
+    `null` on the wire, and it enforces the same as "every active warehouse" -
+    the opposite of what `[]` means under Include, which is "none at all"."""
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    contact = _contact(db)
+    db.flush()
+
+    saved = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={"mode": "detailed", "warehouse_ids": None, "excluded_warehouse_ids": []},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["override"]["excluded_warehouses"] == []
+
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 500), (brw_bb, 200), (dc1, 999)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id, dc1.id}

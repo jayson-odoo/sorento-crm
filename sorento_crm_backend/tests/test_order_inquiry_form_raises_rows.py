@@ -280,17 +280,25 @@ FORM = (
 
 @pytest.fixture()
 def documents(world):
-    """Everything the form's remarks name, plus a decoy that would win on date alone."""
+    """Everything the form's remarks name, plus a decoy that would win on date alone.
+
+    Every document this fixture means the AUTOMATIC pass to reach sits at the POOL, "BRW",
+    never at the row's own "BRW-IB" (slice H, 8 Sep 2026: the automatic pass takes from the
+    site pool alone, so a project-location document is never auto-linked whatever it is
+    cited as - see `PLAN-scm-oi-reserving-feedback-8sep.md`). These four tests are about
+    citation RANKING, not location fit, so the destinations only need to be reachable at
+    all.
+    """
     world.purchase_order(
-        "202604-S0083", date(2026, 4, 28), [(ITEM_X, "BRW-IB", 25, date(2026, 8, 19))]
+        "202604-S0083", date(2026, 4, 28), [(ITEM_X, "BRW", 25, date(2026, 8, 19))]
     )
     # Issued EARLIER and arriving EARLIER, so the cascade's own Q7 ordering (PO issue date
     # first) would take it - and must not, because CS named the other one.
     world.purchase_order(
-        f"{MARKER}-DECOY", date(2026, 1, 5), [(ITEM_X, "BRW-IB", 500, date(2026, 5, 1))]
+        f"{MARKER}-DECOY", date(2026, 1, 5), [(ITEM_X, "BRW", 500, date(2026, 5, 1))]
     )
     world.purchase_order(
-        "202606-S0082", date(2026, 6, 22), [(ITEM_Y, "BRW-IB", 46, date(2026, 9, 4))]
+        "202606-S0082", date(2026, 6, 22), [(ITEM_Y, "BRW", 46, date(2026, 9, 4))]
     )
     # At the POOL, which is where a linkable shipping order sits (R11,
     # `PLAN-scm-oi-draft-links.md`): an allocation already at a site's own group is spoken
@@ -540,14 +548,17 @@ def test_every_citation_is_tried_before_the_generic_walk_in_the_order_written(
     `cited_document` column, so the second is written onto the note and read back by the
     walk. Both must outrank the generic candidate the tiers and dates would otherwise pick.
 
-    The decoy here is a BRW-IB line of the same product on a purchase order issued earlier
+    The decoy here is a POOL line of the same product on a purchase order issued earlier
     and arriving earlier than either cited document - so under the cascade's own Q7 ordering
     it wins outright, and under a citation that is a FLAG rather than a RANK the two cited
-    documents fall into one bucket and the dates pick between them.
+    documents fall into one bucket and the dates pick between them. At the pool rather than
+    at "BRW-IB" (slice H, 8 Sep 2026) so it is a genuine competing candidate rather than one
+    the automatic pass would refuse anyway - this test is about citation RANK, not location
+    fit.
     """
     world.purchase_order(
         f"{MARKER}-Y-DECOY", date(2026, 1, 3),
-        [(ITEM_Y, "BRW-IB", 500, date(2026, 5, 1))],
+        [(ITEM_Y, "BRW", 500, date(2026, 5, 1))],
     )
     world.db.flush()
     # Acknowledged HERE rather than through the fixture, so the decoy is on the book before

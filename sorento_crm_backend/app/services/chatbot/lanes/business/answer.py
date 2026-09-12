@@ -32,7 +32,7 @@ from functools import cmp_to_key
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.lanes.business.fetch import space_id_or_default
+from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
 
 # The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
 # `miss_suggest` owns them because that is where their node lives; this file imports them
@@ -370,6 +370,57 @@ def _field_val(item: Any, label: str) -> Any:
     return jsc.get(field, "value") if jsc.truthy(field) else None
 
 
+def _field_by_key(it: Any, k: str) -> Any:
+    f = jsc.find(jsc.get(it, "fields") or [], lambda x: jsc.has(x, "key") and x["key"] == k)
+    return jsc.get(f, "value") if jsc.truthy(f) else None
+
+
+def _field_pref(it: Any, k: str, *labels: str) -> Any:
+    v = _field_by_key(it, k)
+    if v is not None:
+        return v
+    for label in labels:
+        lv = _field_val(it, label)
+        if lv is not None:
+            return lv
+    return None
+
+
+def _row_qty(it: Any) -> float:
+    """A row's own quantity, `NaN` when it carries none at all.
+
+    Reads `quantity_on_hand` / "quantity on hand" (the DETAILED stock row's own field)
+    first, then `total_on_hand` / "Total" (the COMPACT presenter's per-product total,
+    owner ruling 11 Sep 2026, second ruling, R2 fix round) - a compact reply's own
+    "Total: 0" is exactly as zero as a detailed row reading 0 at every location. AVAILABLE
+    mode carries no quantity field at all, by design (the point of that mode is never
+    stating one), so it stays unreachable here on purpose - `value` there is always the
+    plain number even under `include_sellable`; only the COMPACT presenter's own
+    `granted_value` ever carries the "(O/S: n)" suffix (`_stock_compact`,
+    sorento_crm_mcp/presenters.py), and this function never reads that key.
+
+    `?? NaN`, not `?? 0`: `fieldPref` returns `None` when every key/label tried is
+    ABSENT, and `Number(None)` is 0 in JS - which would make "some row has a quantity"
+    true for a row that carries none, sorting an incoming-only reply (ETA rows, no
+    quantity field at all) by a phantom zero instead of by ETA. `jsc.js_number` reads the
+    same `UNDEFINED` sentinel as `NaN`, matching that JS behaviour exactly.
+    """
+    value = _field_pref(it, "quantity_on_hand", "quantity on hand")
+    if value is None:
+        value = _field_pref(it, "total_on_hand", "Total")
+    n = jsc.js_number(jsc.UNDEFINED if value is None else value)
+    return float("nan") if jsc.is_nan(n) else float(n)
+
+
+def _rows_all_zero(rows: list[Any]) -> bool:
+    """Owner ruling 11 Sep 2026, second ruling, R2: at least one row carries a parseable
+    quantity, and every parseable quantity reads exactly 0. A row set with no parseable
+    quantity at all (an availability-mode row, or an incoming row with no
+    `quantity_on_hand` field) is never "zero" - it simply says nothing about quantity."""
+    parseable = [q for q in (_row_qty(it) for it in (rows or [])) if not jsc.is_nan(q)]
+    return bool(parseable) and all(q == 0 for q in parseable)
+
+
 def crossdomain_zeroset(
     item: dict[str, Any] | None,
     *,
@@ -412,10 +463,16 @@ def crossdomain_zeroset(
         env = env["output"]
     items = _envelope_items(env)
     returned_codes: set[str] = set()
+    # Owner ruling 11 Sep 2026, second ruling, R2: the PRIMARY reply's own rows, grouped
+    # by code, so a stock-origin turn can tell "returned but every row reads 0 on hand"
+    # from "genuinely found" below.
+    by_code: dict[str, list[Any]] = {}
     for it in items:
         v = _field_val(it, "product code")
         if v is not None and jsc.js_string(v).strip() not in ("", _EMPTY_VALUE):
-            returned_codes.add(_norm_code(v))
+            code = _norm_code(v)
+            returned_codes.add(code)
+            by_code.setdefault(code, []).append(it)
 
     # The REQUESTED set: TYPED-exact UNION DYM-PICKED. Deliberately NOT
     # `compatible_entities`, which drops `match_tier` and carries resolver-expanded
@@ -498,7 +555,24 @@ def crossdomain_zeroset(
             elif len(prods) == 1 and jsc.truthy(jsc.get(prods[0], "canonical_code")):
                 add(jsc.get(prods[0], "canonical_code"), jsc.get(prods[0], "uuid"), False)
     else:
-        tokens = {_norm_code(t) for t in jsc.array(rz.get("tokens"))}
+        # SEPARATOR-INSENSITIVE, and that is the whole of issue #736. The RESOLVER strips
+        # dashes and spaces off a product token before it resolves it, so a customer's
+        # "SRTWT7445-LV-NEW" arrives here as the token `SRTWT7445LVNEW` while the match it
+        # resolved to carries `canonical_code: "SRTWT7445-LV-NEW"`. `_norm_code` only
+        # strips and upper-cases, so the membership test below could never be true for a
+        # code with a separator in it: `requested` stayed empty, `missing` with it,
+        # `active` came out False, and `run_crossdomain` returned before probing anything.
+        # Foundre's rule was therefore OFF for every hyphenated code - most of the
+        # catalogue - while it worked for `CB2904`, whose token and canonical code are the
+        # same string. Measured on two live turns whose traces are otherwise identical
+        # field for field (console-check-1788789839).
+        #
+        # `_type_norm` is the key the rest of this file already compares these two sides
+        # through, and its own docstring names this exact mismatch; this call site was
+        # simply the one that did not use it. Applied to BOTH sides of the test only - the
+        # `_n` key that reaches persisted state and the `by_code` lookup against the tool's
+        # own output still use `_norm_code`, so no emitted value changes shape.
+        tokens = {_type_norm(t) for t in jsc.array(rz.get("tokens"))}
         if isinstance(rz.get("intersection"), list):
             intersection: list[Any] = rz["intersection"]
         elif jsc.truthy(rz.get("by_entity_type")):
@@ -508,9 +582,9 @@ def crossdomain_zeroset(
         else:
             intersection = []
         for m in intersection:
-            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _norm_code(
-                jsc.get(m, "canonical_code")
-            ) in tokens:
+            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _token_requests(
+                _type_norm(jsc.get(m, "canonical_code")), tokens
+            ):
                 add(jsc.get(m, "canonical_code"), jsc.get(m, "uuid"), False)
 
     # DYM-PICKED (strict): prior cumulative picks plus this turn's pick.
@@ -562,10 +636,27 @@ def crossdomain_zeroset(
     missing: list[dict[str, Any]] = []
     for rq in requested:
         if rq["strict"]:
-            ok = rq["_n"] in returned_codes
+            matched_codes = [rq["_n"]] if rq["_n"] in returned_codes else []
         else:
-            ok = any(rc == rq["_n"] or rc.startswith(rq["_n"]) for rc in returned_codes)
+            matched_codes = [rc for rc in returned_codes if rc == rq["_n"] or rc.startswith(rq["_n"])]
+        ok = bool(matched_codes)
         if ok:
+            # Owner ruling 11 Sep 2026, second ruling, R2: stock-origin only (`dh ==
+            # "inventory"`) - a code the primary reply DID return, but whose own rows all
+            # read 0 on hand, is not genuinely "found"; it becomes a `missing` entry too
+            # (keys otherwise as a normal miss, `zero: True` added), so the ladder still
+            # probes for it while it stays in `returned_codes` (the primary render did
+            # echo it, and still does).
+            if dh == "inventory":
+                matched_rows = [it for rc in matched_codes for it in by_code.get(rc, [])]
+                if _rows_all_zero(matched_rows):
+                    miss = {
+                        "code": rq["code"], "uuid": rq["uuid"], "_n": rq["_n"],
+                        "entity_type": "product", "zero": True,
+                    }
+                    if len(rq["uuids"]) > 1:
+                        miss["uuids"] = list(rq["uuids"])
+                    missing.append(miss)
             continue
         miss = {"code": rq["code"], "uuid": rq["uuid"], "_n": rq["_n"], "entity_type": "product"}
         # Added ONLY when the code really spans companies, so a single-company turn's
@@ -602,6 +693,7 @@ def crossdomain_probe_args(
     entities_names: Any,
     contact_id: Any,
     space_id: Any = None,
+    granted: Any = None,
 ) -> dict[str, Any]:
     """`crossdomain-probe`'s `sub-get-results` inputs, key for key.
 
@@ -611,6 +703,14 @@ def crossdomain_probe_args(
     `space_id` goes through the SAME fallback the fetch and the did-you-mean probes use
     (`fetch.space_id_or_default`), so an install with no default respond workspace row
     cannot have this probe send `null` while the other three send n8n's literal.
+
+    `granted` (owner ruling 11 Sep 2026, second ruling, R1): the contact's granted
+    field-reveal keys, same set `_apply_crossdomain_rung` already reads. A non-empty
+    list/tuple/set stamps `"access": {"attributes": [...]}` on the args, which
+    `entity_ids_transformer` (`fetch.py`) reads to set `include_sellable` - so the FIRST
+    cross-domain probe's stock rows carry Outstanding exactly like a direct stock ask.
+    Omitted entirely when `granted` is empty or not one of those types, so every existing
+    call site's args stay byte-identical.
     """
     xd = zeroset if isinstance(zeroset, dict) else {}
     qf = parser if isinstance(parser, dict) else {}
@@ -621,7 +721,7 @@ def crossdomain_probe_args(
     else:
         access_levels = list(parser_levels)
     codes = ", ".join(jsc.js_string(jsc.get(e, "code")) for e in jsc.array(xd.get("probe_entities")))
-    return {
+    args: dict[str, Any] = {
         "tool": xd.get("other_tool"),
         "contact_id": contact_id,
         "entities": xd.get("probe_entities"),
@@ -640,6 +740,9 @@ def crossdomain_probe_args(
             f"{jsc.js_string(xd.get('other_tool'))}) for: {codes}"
         ),
     }
+    if isinstance(granted, (list, tuple, set, frozenset)) and len(granted) > 0:
+        args["access"] = {"attributes": list(granted)}
+    return args
 
 
 def _fmt_xd_value(v: Any) -> str:
@@ -655,6 +758,23 @@ def _fmt_xd_value(v: Any) -> str:
     if isinstance(v, list):
         return ", ".join(_fmt_xd_value(x) for x in v)
     return jsc.js_string(v)
+
+
+def _field_render_value(f: Any) -> Any:
+    """`granted_value` when a field carries one, else `value` - owner ruling 11 Sep 2026,
+    second ruling (R1 fix round). The compact stock presenter puts a contact's "(O/S: n)"
+    Outstanding suffix on `granted_value`, never on `value` (`_stock_compact`,
+    sorento_crm_mcp/presenters.py), because that field is normally RESTRICTED and an
+    ungranted caller of the tool directly is meant to read the plain `value` instead.
+    This render has no field drop of its own to apply that restriction selectively, so it
+    is safe here ONLY because `granted_value` never reaches a row unless the SAME probe
+    already asked `include_sellable` - which `crossdomain_probe_args` (R1) only ever does
+    for a contact that holds the grant. Any future `include_*` added to
+    `crossdomain_probe_args` must gate on the grant the same way, or a value meant for one
+    contact could render here for another through this otherwise-ungated path.
+    """
+    v = jsc.get(f, "granted_value")
+    return v if v is not None else jsc.get(f, "value")
 
 
 def crossdomain_render(
@@ -691,26 +811,16 @@ def crossdomain_render(
 
     items = _envelope_items(env)
 
-    def field_by_key(it: Any, k: str) -> Any:
-        f = jsc.find(jsc.get(it, "fields") or [], lambda x: jsc.has(x, "key") and x["key"] == k)
-        return jsc.get(f, "value") if jsc.truthy(f) else None
-
-    def field_pref(it: Any, k: str, *labels: str) -> Any:
-        v = field_by_key(it, k)
-        if v is not None:
-            return v
-        for label in labels:
-            lv = _field_val(it, label)
-            if lv is not None:
-                return lv
-        return None
-
     by_code: dict[str, list[Any]] = {}
     for it in items:
         c = jsc.nullish_str(_field_val(it, "product code")).strip()
         if not c or c == _EMPTY_VALUE:
             continue
         by_code.setdefault(c.upper(), []).append(it)
+
+    # Owner ruling 11 Sep 2026, second ruling, R2: needed inside the missing-loop below,
+    # not only for the sentence built after it.
+    origin_incoming = zs.get("origin_domain") == "incoming"
 
     blocks: list[str] = []
     # Codes that came back empty on BOTH sides. Owner ruling (6 Sep 2026): name them and
@@ -719,6 +829,10 @@ def crossdomain_render(
     # ASKED about - one with no uuid was never probed, so "no incoming" would be an absence
     # nothing established - so only a PROBED code earns the negative line.
     nothing: list[str] = []
+    # A7: the FULL `missing` entries behind `nothing` (code, uuid, uuids) - kept alongside
+    # the label list so `run_crossdomain` can build the next ladder rung's probe entities
+    # without re-deriving which codes qualify.
+    nothing_missing: list[dict[str, Any]] = []
     # Owner console pass 4, item G (6 Sep 2026): codes the OTHER domain answered, which the
     # primary one did not. Turn 858c9c54 named MSK11A-QT only inside "But there is INCOMING
     # stock (ETA) ...", so a stock question came back as two codes' stock and then an
@@ -728,47 +842,61 @@ def crossdomain_render(
     # the code and that the other domain was actually probed for it.
     only_other: list[str] = []
     for m in jsc.array(zs.get("missing")):
-        rows = list(by_code.get(jsc.get(m, "_n"), []))
+        n = jsc.get(m, "_n")
+        zero = jsc.truthy(jsc.get(m, "zero"))
+        # Finding 7 (11 Sep 2026, second ruling fix round): a ZERO-flagged entry's rows
+        # are looked up the SAME way `crossdomain_zeroset` matched it in the first place -
+        # every `by_code` key equal to OR prefixed by `_n`, not the exact key alone (a
+        # typed prefix code, e.g. "SRTWC8517" flagged zero from its own "-PJ" sibling's
+        # rows, must find that SAME sibling's rows on the OTHER side too). A plain entry
+        # keeps the exact lookup - pre-existing, untouched.
+        if zero:
+            rows = [it for code_key, its in by_code.items() if code_key == n or code_key.startswith(n) for it in its]
+        else:
+            rows = list(by_code.get(n, []))
         if not rows:
             code = jsc.get(m, "code") or jsc.get(m, "_n")
             if jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(code) and not _ms_is_uuid(code):
                 label = jsc.js_string(code)
                 if label not in nothing:
                     nothing.append(label)
+                    # Nit 11: copy, same as the R2(b) branch below - `m` is still `zs`'s
+                    # own entry, and a caller here must not mutate it by aliasing.
+                    nothing_missing.append(dict(m))
             continue
         code = jsc.get(m, "code") or jsc.get(m, "_n")
-        if jsc.truthy(code) and not _ms_is_uuid(code):
+        # Owner ruling 11 Sep 2026, second ruling, R2(b)/nit 14 (fix round): incoming-
+        # origin only - the OTHER domain (stock) DID answer, but every row reads 0 on
+        # hand, which is not really "found" either. The rows still render below; the code
+        # ALSO climbs, same as a genuine miss, stamped on a COPY so the original `missing`
+        # entry (still `zs`'s own) is untouched. A zero code (either kind) never earns
+        # AC-820's own "no {primary} for X" only-other line either way - the zero sentence
+        # two paragraphs later already says the same thing, so printing both would be a
+        # duplicate.
+        if origin_incoming and not zero and _rows_all_zero(rows):
+            zero = True
+            if jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(code) and not _ms_is_uuid(code):
+                label = jsc.js_string(code)
+                if label not in nothing:
+                    nothing.append(label)
+                    nothing_missing.append({**m, "zero": True})
+        if not zero and jsc.truthy(code) and not _ms_is_uuid(code):
             label = jsc.js_string(code)
             if label not in only_other:
                 only_other.append(label)
 
-        def qty(it: Any) -> float:
-            """`Number(fieldPref(it, 'quantity_on_hand', 'quantity on hand') ?? NaN)`.
-
-            The `?? NaN` is the whole branch test. `fieldPref` returns `null` when the key
-            and every label are ABSENT, and `Number(null)` is 0 - which would make "some
-            row has a quantity" true for a set that carries none, and the incoming
-            direction (`crm_incoming_stock_list` emits `estimated_arrival_date` and no
-            `quantity_on_hand` at all) would inherit the CRM's jittery row order instead
-            of sorting by soonest ETA. The miss is carried as `undefined`, which
-            `jsc.js_number` reads as NaN exactly as JS does.
-            """
-            value = field_pref(it, "quantity_on_hand", "quantity on hand")
-            n = jsc.js_number(jsc.UNDEFINED if value is None else value)
-            return float("nan") if jsc.is_nan(n) else float(n)
-
         def eta(it: Any) -> str:
             return jsc.nullish_str(
-                field_pref(it, "estimated_arrival_date", "eta", "estimated arrival date")
+                _field_pref(it, "estimated_arrival_date", "eta", "estimated arrival date")
             )
 
-        if any(not jsc.is_nan(qty(it)) for it in rows):
-            rows.sort(key=lambda it: -(0 if jsc.is_nan(qty(it)) else qty(it)))
+        if any(not jsc.is_nan(_row_qty(it)) for it in rows):
+            rows.sort(key=lambda it: -(0 if jsc.is_nan(_row_qty(it)) else _row_qty(it)))
         elif any(eta(it) for it in rows):
             rows.sort(key=eta)
         for it in rows:
             field_lines = "\n".join(
-                f"*{jsc.get(f, 'label')}:* {_fmt_xd_value(jsc.get(f, 'value'))}"
+                f"*{jsc.get(f, 'label')}:* {_fmt_xd_value(_field_render_value(f))}"
                 for f in (jsc.get(it, "fields") or [])
             )
             if not field_lines:
@@ -790,8 +918,17 @@ def crossdomain_render(
         if zs.get("origin_domain") == "incoming"
         else "But there is INCOMING stock (ETA) for the requested products:"
     )
+    # D2 (12 Sep 2026 owner finding): no "I have attached the file(s) below." sentence.
+    # `compose.crossdomain_compose` folds `block["block"]` (TEXT ONLY) into the reply, and
+    # the send lane reads `envelope.attachments` off the PRIMARY answer alone
+    # (`engine._attachments_src`) - the cross-domain probe's own envelope never reaches a
+    # send, so the sentence was never true. `xd_files` still feeds `_xdBlock["attachments"]`
+    # below - review fix round: NOT dropped after all (see the reviewer note below the
+    # `_xdBlock` literal) - the key is graded byte-for-byte by the crossdomain-render
+    # corpus replay (`test_s6c_answer_lane.py`/`test_s6c_engine_paths.py`, six registered
+    # captures), so removing it turns 12 green replays red; only the claim that the files
+    # were SENT is gone.
     xd_files = env["attachments"] if isinstance(jsc.get(env, "attachments"), list) else []
-    mention = "\n\n" + "I have attached the file(s) below." if (blocks and xd_files) else ""
 
     silent_note = ""
     lookup_cos = (
@@ -834,7 +971,6 @@ def crossdomain_render(
     named_codes = [c for c in jsc.array(zs.get("returned_codes")) if jsc.truthy(c)]
     can_state_absence = bool(named_codes) or jsc.get(passthrough, "has_result") is not True
 
-    origin_incoming = zs.get("origin_domain") == "incoming"
     primary_word = "incoming" if origin_incoming else "stock"
     other_word = "stock" if origin_incoming else "incoming"
 
@@ -847,19 +983,34 @@ def crossdomain_render(
     if only_other and can_state_absence:
         only_other_note = f"No {primary_word} for {', '.join(only_other)}."
 
+    # NO OFFER SENTENCE HERE (8 Sep 2026, turns 0184d84d / 5f73ddb0 / 90a1637a): the block
+    # used to end "...Would you like me to escalate to X team?" and `tail/compose.
+    # crossdomain_compose` appended the LOCKED phrase again from `block["team"]`, so the
+    # customer read the question twice. Compose is the one writer of the offer, on the
+    # partial-answer branch from `team` below and on the total-miss branch from the miss
+    # sentence it slots this block above; this render only states what is absent.
+    #
+    # Owner ruling 11 Sep 2026, second ruling, R2(d): `nothing` splits into a PLAIN group
+    # (genuinely absent on both sides) and a ZERO group (stock reads 0 everywhere) so each
+    # gets its own wording - "no stock" is not honest about a code that DOES have a row,
+    # just not one with anything on it. `zero_labels`/`plain_labels` are parallel to
+    # `nothing`/`nothing_missing` (same append order, same length), so a zip is enough.
+    zero_labels = [c for c, m in zip(nothing, nothing_missing) if jsc.truthy(jsc.get(m, "zero"))]
+    plain_labels = [c for c, m in zip(nothing, nothing_missing) if not jsc.truthy(jsc.get(m, "zero"))]
     nothing_note = ""
-    if nothing and can_state_absence:
-        team = zs.get("team")
-        offer = (
-            f" Would you like me to escalate to {jsc.js_string(team)} team?"
-            if jsc.truthy(team)
-            else " Would you like me to escalate this?"
-        )
-        nothing_note = (
-            f"No {primary_word} and no {other_word} for {', '.join(nothing)}.{offer}"
-        )
+    if can_state_absence:
+        sentences: list[str] = []
+        if plain_labels:
+            sentences.append(f"No {primary_word} and no {other_word} for {', '.join(plain_labels)}.")
+        if zero_labels:
+            sentences.append(
+                f"No incoming and stock is 0 at every location for {', '.join(zero_labels)}."
+                if origin_incoming
+                else f"Stock is 0 at every location and no incoming for {', '.join(zero_labels)}."
+            )
+        nothing_note = " ".join(sentences)
 
-    body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else ""
+    body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note) if blocks else ""
     if body and only_other_note:
         body = f"{only_other_note}\n\n{body}"
     if nothing_note:
@@ -873,8 +1024,369 @@ def crossdomain_render(
         "origin": zs.get("origin_domain") or None,
         "probed_rows": len(items),
         "rendered_rows": len(blocks),
+        # A7: the codes with NOTHING on either side, and the sentence built for them - so
+        # `run_crossdomain` can try a NEXT ladder rung (e.g. purchase_order) for exactly
+        # these codes and, if that rung answers, swap this sentence for its own without
+        # re-deriving which codes it is even about. Additive - nothing here reads them yet
+        # when the ladder has no further rung, so this render's own wording is unchanged.
+        #
+        # GATED ON `can_state_absence`, exactly as `nothing_note` and `only_other_note`
+        # are, and the first cut of A7 was not (review, blocker 2). "Missing" means the
+        # PRIMARY render did not ECHO the code, which is only the same statement as "this
+        # code has nothing" when the render is product-keyed or empty. A warehouse
+        # breakdown answers about the code without ever printing it, so an ungated list
+        # let the ladder append "No stock and no incoming for X, but a PO is placed"
+        # underneath the stock it had just shown - the exact defect `can_state_absence`
+        # exists to prevent, reintroduced one rung further along. Empty here means the
+        # rung never runs, which is the right answer: there is nothing we can honestly
+        # say is absent.
+        "nothing_codes": list(nothing) if can_state_absence else [],
+        "nothing_note": nothing_note,
+        # Same gate, same reason: the rung reads this to build its probe entities, so
+        # leaving it populated while `nothing_codes` is empty would only invite the
+        # next reader to make the mistake again.
+        "nothing_missing": list(nothing_missing) if can_state_absence else [],
+        # Owner ruling 11 Sep 2026, second ruling, R2(c): which of `nothing_codes` were
+        # zero-at-every-location rather than genuinely absent - same gate, so a reader of
+        # `nothing_codes` that ignores this key still sees exactly today's list.
+        "zero_codes": list(zero_labels) if can_state_absence else [],
     }
     return out
+
+
+#: A7: rungs beyond the hard-coded inventory<->incoming pair. Keyed by the rung NAME as it
+#: appears in `system_settings.chatbot_crossdomain_ladder` (a JSON list of strings, admin
+#: editable) - "incoming" is not here because that rung is the EXISTING hard probe above,
+#: never a second lookup. Only "purchase_order" exists today; a ladder entry naming
+#: anything else is simply never reached (no tool to call), which is the same "widen only
+#: with an entry" shape `_CHATBOT_COLUMN_DEFAULTS` uses elsewhere.
+_CROSSDOMAIN_RUNG_TOOL: dict[str, str] = {"purchase_order": "crm_procurement_po_placed_list"}
+_CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
+#: Item 5 (8 Sep 2026): the rung's tool returns PO lines AND unshipped SPO allocations
+#: (`kind` "po" / "spo", carried on the item's own top-level `kind` key since the 11 Sep
+#: 2026 ruling - no rendered Source field), so its sentences speak of what is ON ORDER
+#: rather than of a document type - `_CROSSDOMAIN_RUNG_WORD` ("no PO for X") went with
+#: that.
+#: The field-reveal key a contact must hold for the rung to run at all (8 Sep 2026). A rung
+#: with no row here is ungated.
+_CROSSDOMAIN_RUNG_GRANT: dict[str, str] = {"purchase_order": "purchase_orders.placed"}
+#: The shipped ladder (migration 491, D7): stock -> incoming -> PO from either side. The
+#: DATABASE row is where the default lives; `engine._crossdomain_ladder` hands this out
+#: only for a settings row that carries no usable ladder (a `create_all` schema), never
+#: for a direct `run_crossdomain` call with none (H52 keeps that the pre-A7 single pair).
+DEFAULT_CROSSDOMAIN_LADDER: dict[str, list[str]] = {
+    "inventory": ["incoming", "purchase_order"],
+    "incoming": ["inventory", "purchase_order"],
+}
+
+
+def _next_crossdomain_rung(origin_domain: Any, *, ladder: dict[str, list[str]] | None) -> str | None:
+    """The rung AFTER the hard-coded inventory<->incoming probe, or None.
+
+    `ladder` is `None` when the caller passed none (H52: no ladder configured = the
+    pre-A7 single hard pair, unchanged - `TestCrossdomainProbe::
+    test_zeroset_active_triggers_exactly_one_probe...` pins this for a direct
+    `run_crossdomain` call with no `crossdomain_ladder` argument). In production
+    `engine._crossdomain_ladder` reads the REAL row, which carries the shipped default
+    (migration 489) the moment a settings row exists - so this function owns no default
+    of its own; the DATABASE row is the one place the default lives.
+
+    `ladder[origin][0]` is always the domain the hard probe above already asked (AC-923: a
+    tenant configuring `{"inventory": ["incoming"]}` has no second entry, so this returns
+    None and the PO rung never runs). Only the first name after it is tried - one further
+    rung per turn, same as the existing probe.
+    """
+    if not isinstance(ladder, dict):
+        return None
+    rungs = ladder.get(jsc.js_string(origin_domain))
+    if not isinstance(rungs, list) or len(rungs) < 2:
+        return None
+    for name in rungs[1:]:
+        if name in _CROSSDOMAIN_RUNG_TOOL:
+            return name
+    return None
+
+
+def _crossdomain_rung_probe_args(
+    missing: list[dict[str, Any]],
+    *,
+    rung: str,
+    parser: dict[str, Any] | None,
+    contact_id: Any,
+    space_id: Any,
+) -> dict[str, Any]:
+    """Same shape as `crossdomain_probe_args`, over the codes still `nothing` after the
+    first rung - never the full `missing` set, so a code the incoming probe already
+    answered is not re-asked about."""
+    qf = parser if isinstance(parser, dict) else {}
+    entities: list[dict[str, Any]] = []
+    for m in missing:
+        us = m["uuids"] if isinstance(m.get("uuids"), list) and m["uuids"] else (
+            [m["uuid"]] if jsc.truthy(m.get("uuid")) else []
+        )
+        entities.extend({"uuid": u, "entity_type": "product", "code": m.get("code")} for u in us)
+    codes = ", ".join(jsc.js_string(m.get("code")) for m in missing)
+    tool = _CROSSDOMAIN_RUNG_TOOL[rung]
+    return {
+        "tool": tool,
+        "contact_id": contact_id,
+        "entities": entities,
+        "semantic_input": {
+            "message_type": qf.get("message_type") if qf.get("message_type") is not None else None,
+            "intent_hint": qf.get("intent_hint") if qf.get("intent_hint") is not None else None,
+            "domain_hint": qf.get("domain_hint") if qf.get("domain_hint") is not None else None,
+            "user_goal": qf.get("user_goal") if qf.get("user_goal") is not None else None,
+            "contact_id": jsc.js_string(contact_id) if contact_id is not None else None,
+            "space_id": space_id_or_default(space_id),
+        },
+        "user_prompt": f"cross-domain probe (crossdomain -> {rung}) for: {codes}",
+    }
+
+
+def _crossdomain_rung_rows(
+    probe_result: Any, *, missing: list[dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
+    """Which of `missing`'s codes the rung answered, and the rung row per row.
+
+    Returns `{CODE: [row, ...]}` - only codes the rung actually found rows for, each row
+    `kind` "po" or "spo" (item 5; a row with no top-level `kind` key is a PO row, today's
+    shape - owner ruling 11 Sep 2026). Never renders `supplier`: the field template
+    simply does not name it, which is what keeps a dealer from ever seeing it here
+    without threading the field-reveal grant into this probe.
+    """
+    env: Any = probe_result if jsc.truthy(probe_result) else {}
+    if jsc.truthy(env) and isinstance(jsc.get(env, "output"), dict):
+        env = env["output"]
+    items = _envelope_items(env)
+    by_code: dict[str, list[Any]] = {}
+    for it in items:
+        c = jsc.nullish_str(_field_val(it, "product code")).strip()
+        if not c or c == _EMPTY_VALUE:
+            continue
+        by_code.setdefault(c.upper(), []).append(it)
+
+    def field_by_key(it: Any, k: str) -> Any:
+        f = jsc.find(jsc.get(it, "fields") or [], lambda x: jsc.has(x, "key") and x["key"] == k)
+        return jsc.get(f, "value") if jsc.truthy(f) else None
+
+    out: dict[str, list[dict[str, Any]]] = {}
+    for m in missing:
+        code = jsc.js_string(m.get("code") or m.get("_n"))
+        rows = by_code.get(code.upper(), [])
+        if not rows:
+            continue
+        out[code] = [_crossdomain_rung_row(it, field_by_key) for it in rows]
+    return out
+
+
+def _crossdomain_rung_row(it: Any, field_by_key: Any) -> dict[str, Any]:
+    """One rung row as `{kind, number, product_code, ordered_qty, qty, po_date,
+    location}` - `kind` "po" or "spo". Owner ruling (11 Sep 2026): `kind` reads ONLY the
+    ITEM's own top-level key (the presenter no longer renders a Source field at all, so
+    there is nothing left to fall back to); a row with no top-level `kind` is a PO row,
+    today's shape. Rendering is `_crossdomain_rung_text`, which lays out one field per
+    line per row."""
+    kind = "spo" if jsc.js_string(jsc.get(it, "kind") or "").strip().upper() == "SPO" else "po"
+    return {
+        "kind": kind,
+        "number": field_by_key(it, "po_number"),
+        "product_code": field_by_key(it, "product_code"),
+        "ordered_qty": field_by_key(it, "ordered_qty"),
+        "qty": field_by_key(it, "outstanding_qty"),
+        "po_date": field_by_key(it, "po_date"),
+        "location": field_by_key(it, "location"),
+    }
+
+
+def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
+    """D3 (12 Sep 2026 owner finding): one field per line per row - `*Product Code:*`,
+    `*Ordered:*`, `*Outstanding:*`, `*PO date:*`, `*Location:*`, bold labels like every
+    other field line in the reply - rows separated by ONE blank line. A null/empty
+    `ordered_qty`, `po_date` or `location` OMITS that line entirely (never a placeholder,
+    never `_fmt_xd_value`'s own "-"); `Product Code` and `Outstanding` always print. No
+    per-document heading naming the PO/SPO number, and no "pcs":
+
+        *Product Code:* SRTWC191-G3
+        *Ordered:* 30
+        *Outstanding:* 30
+        *PO date:* 2026-08-10
+        *Location:* KL-WH
+    """
+    blocks: list[str] = []
+    for row in rows:
+        lines = [f"*Product Code:* {_fmt_xd_value(row.get('product_code'))}"]
+        ordered_qty = row.get("ordered_qty")
+        if ordered_qty not in (None, ""):
+            lines.append(f"*Ordered:* {_fmt_xd_value(ordered_qty)}")
+        lines.append(f"*Outstanding:* {_fmt_xd_value(row.get('qty'))}")
+        po_date = row.get("po_date")
+        if po_date not in (None, ""):
+            lines.append(f"*PO date:* {_fmt_xd_value(po_date)}")
+        location = row.get("location")
+        if location not in (None, ""):
+            lines.append(f"*Location:* {_fmt_xd_value(location)}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def _apply_crossdomain_rung(
+    render: dict[str, Any],
+    *,
+    xd: dict[str, Any],
+    parser: dict[str, Any] | None,
+    services: Any,
+    contact_id: Any,
+    space_id: Any,
+    ladder: dict[str, list[str]] | None,
+    trace: Any = None,
+    granted: Any = None,
+) -> None:
+    """Mutates `render["_xdBlock"]` in place: tries the ladder's next rung for the codes
+    the first probe found NOTHING for, and swaps the "no X and no Y" sentence for the
+    rung's own wording when it answers (AC-921/AC-922).
+
+    A no-op (H62/AC-924 kept byte-identical) when: the origin has no further rung
+    (AC-923), or the first probe found something for every requested code
+    (`nothing_codes` empty), or the rung probe itself fails - the SAME degrade-not-crash
+    contract the first probe already has.
+    """
+    block = render.get("_xdBlock") if isinstance(render, dict) else None
+    if not isinstance(block, dict):
+        return
+    nothing_codes = block.get("nothing_codes") or []
+    if not nothing_codes:
+        return
+    rung = _next_crossdomain_rung(xd.get("origin_domain"), ladder=ladder)
+    if rung is None:
+        return
+    # PER-CONTACT GATE (8 Sep 2026): on-order information is a field reveal, key
+    # `purchase_orders.placed`, granted on Contacts > Access. `granted` is the contact's
+    # granted key list (`ctx["access"]["attributes"]`, the same set `fetch.py`'s field drop
+    # reads; None is the empty set, as there). Without the grant the rung does not run
+    # at all - no probe, no PO lines - and the block stays the ladder-off shape. The
+    # DIRECT PO ask is not gated by this key; it keeps its supplier-only gating.
+    need = _CROSSDOMAIN_RUNG_GRANT.get(rung)
+    granted_set = set(granted) if isinstance(granted, (list, tuple, set, frozenset)) else set()
+    if need and need not in granted_set:
+        if trace is not None:
+            trace.add("crossdomain", {"rung": rung, "skipped": "not_granted", "needs": need})
+        return
+    missing = block.get("nothing_missing") or []
+    args = _crossdomain_rung_probe_args(
+        missing, rung=rung, parser=parser, contact_id=contact_id, space_id=space_id
+    )
+    try:
+        probe_result = services.mcp_probe(args["tool"], args)
+    except Exception:  # noqa: BLE001 - degrades to the existing nothing_note, never a dead turn
+        logger.warning("chatbot: cross-domain %s rung probe did not run", rung, exc_info=True)
+        return
+    lines_by_code = _crossdomain_rung_rows(
+        probe_result if isinstance(probe_result, dict) else {}, missing=missing
+    )
+    # D7: the wording follows the customer's own climb - from an incoming ask the first
+    # absence is "incoming", then "stock"; from a stock ask the reverse.
+    origin_incoming = xd.get("origin_domain") == "incoming"
+    first_word, second_word = ("incoming", "stock") if origin_incoming else ("stock", "incoming")
+
+    # Owner ruling 11 Sep 2026, second ruling, R2: `nothing_codes` splits by the SAME
+    # `zero` flag `crossdomain_render` stamped on the parallel `nothing_missing` list, so
+    # each group earns its own wording - a zero-everywhere code was never really "found",
+    # but "no stock" is not honest about a code that DOES have a row, just not one with
+    # anything on it.
+    zero_by_code = {
+        jsc.js_string(jsc.get(m, "code") or jsc.get(m, "_n")): jsc.truthy(jsc.get(m, "zero"))
+        for m in missing
+    }
+    plain_codes = [c for c in nothing_codes if not zero_by_code.get(c)]
+    zero_codes = [c for c in nothing_codes if zero_by_code.get(c)]
+
+    def _group_parts(codes: list[str], *, lead: str, trail: str) -> list[str]:
+        """One group's paragraph(s): a found sentence (`{lead} and {trail} for X,
+        {header}:` plus the rung's own block) when the rung answered any of `codes`, a
+        still-nothing sentence (`{lead}, {trail} and nothing on order for X.`) for the
+        rest - AC-922's wording, one step further than the first probe's "no X and no Y".
+        Item 5: "nothing on order" - PO lines and unshipped SPO allocations alike."""
+        if not codes:
+            return []
+        found = [c for c in codes if c in lines_by_code]
+        still_nothing = [c for c in codes if c not in lines_by_code]
+        parts: list[str] = []
+        if found:
+            found_rows = [row for c in found for row in lines_by_code[c]]
+            po_lines = _crossdomain_rung_text(found_rows)
+            # The header names what the rows ARE: "PO is placed" (D2: no article, the
+            # owner's wording) when any row is a PO line, "stock is on order from the
+            # supplier" when every row is an unshipped SPO allocation (item 5).
+            header = (
+                "but stock is on order from the supplier"
+                if found_rows and all(r.get("kind") == "spo" for r in found_rows)
+                else "but PO is placed"
+            )
+            parts.append(f"{lead} and {trail} for {', '.join(found)}, {header}:\n{po_lines}")
+        if still_nothing:
+            parts.append(f"{lead}, {trail} and nothing on order for {', '.join(still_nothing)}.")
+        return parts
+
+    # D7's own pair, for the plain group - "No incoming and no stock" from an incoming
+    # ask. The zero group always names "stock is 0 at every location" for the stock half
+    # and "no incoming"/"No incoming" for the other, in the SAME lead/trail order D7 gives
+    # the plain group.
+    zero_lead, zero_trail = (
+        ("No incoming", "stock is 0 at every location")
+        if origin_incoming
+        else ("Stock is 0 at every location", "no incoming")
+    )
+    parts = _group_parts(plain_codes, lead=f"No {first_word}", trail=f"no {second_word}")
+    parts += _group_parts(zero_codes, lead=zero_lead, trail=zero_trail)
+    new_note = "\n\n".join(parts)
+
+    old_note = block.get("nothing_note") or ""
+    old_block_text = block.get("block") or ""
+    if old_note and old_block_text.endswith(old_note):
+        new_block_text = old_block_text[: -len(old_note)] + new_note
+    elif old_block_text:
+        new_block_text = f"{old_block_text}\n\n{new_note}"
+    else:
+        new_block_text = new_note
+    block["block"] = new_block_text
+    block["any"] = True
+    block["nothing_note"] = new_note
+    block["rung"] = rung
+    # THE OFFER AND THE ROUTING HAVE TO NAME THE SAME TEAM (review, should-fix 8). The
+    # sentence just written says "escalate to purchasing team" because a PO is what
+    # answered, while `tail/pending.escalation_team` reads the TURN's routing - which for
+    # a stock question is `warehouse`. The customer would have been told one team and
+    # handed to another, which is the H64 shape: a discriminator produced in one place and
+    # ignored in the other. The rung is what answered, so the rung's team is the turn's
+    # team from here on; stamped on the parser's own routing, which is the one field
+    # `escalation_team` and `escalate_catalog` both read.
+    rung_team = _CROSSDOMAIN_RUNG_TEAM.get(rung)
+    if rung_team:
+        block["team"] = rung_team
+        if isinstance(parser, dict):
+            routing = parser.get("routing")
+            if not isinstance(routing, dict):
+                routing = {}
+                parser["routing"] = routing
+            routing["suggested_team"] = rung_team
+            # Said out loud on the trace: a turn whose team changed mid-lane with no
+            # record of why is the kind of thing an operator cannot reconstruct.
+            parser["crossdomain_rung_team"] = rung_team
+    if trace is not None:
+        # A9: the ladder's OWN probe, over exactly the codes the first probe found
+        # nothing for - `run_crossdomain` records the first (hard-coded) probe
+        # itself, so this is the second `crossdomain` event when it fires.
+        row_count = sum(len(v) for v in lines_by_code.values())
+        trace.add(
+            "crossdomain",
+            {
+                "rung": rung,
+                "tool": args.get("tool"),
+                "args": args,
+                "rows": row_count,
+                "rendered": new_note,
+            },
+        )
 
 
 def run_crossdomain(
@@ -888,12 +1400,20 @@ def run_crossdomain(
     contact_id: Any,
     space_id: Any = None,
     dry_run: bool = False,
+    crossdomain_ladder: dict[str, list[str]] | None = None,
+    trace: Any = None,
+    granted: Any = None,
 ) -> dict[str, Any]:
-    """`crossdomain-zeroset -> crossdomain-gate -> crossdomain-probe -> crossdomain-render`.
+    """`crossdomain-zeroset -> crossdomain-gate -> crossdomain-probe -> crossdomain-render`,
+    then A7's further ladder rung (`_apply_crossdomain_rung`) when the first probe still
+    left codes with nothing on either side.
 
-    D14: a dry run makes the SAME probe. The read is what a test turn has to reproduce, or
-    console and clone testing prove nothing about production; the writes are what D14
+    D14: a dry run makes the SAME probe(s). The read is what a test turn has to reproduce,
+    or console and clone testing prove nothing about production; the writes are what D14
     suppresses, and this lane has none.
+
+    `trace` (A9, chatbot-growth-r1): the turn's live `TurnTrace`, optional - `None` is a
+    no-op, same contract as `run_fetch`'s own `trace` parameter.
     """
     zeroset = crossdomain_zeroset(
         validator_result, parser=parser, resolved=resolved, session_block=session_block
@@ -907,6 +1427,7 @@ def run_crossdomain(
         entities_names=entities_names,
         contact_id=contact_id,
         space_id=space_id,
+        granted=granted,
     )
     try:
         probe_result = services.mcp_probe(args["tool"], args)
@@ -917,6 +1438,30 @@ def run_crossdomain(
         probe_result if isinstance(probe_result, dict) else {},
         zeroset=xd,
         validator=validator_result,
+    )
+    if trace is not None:
+        block = render.get("_xdBlock") if isinstance(render, dict) else {}
+        block = block if isinstance(block, dict) else {}
+        trace.add(
+            "crossdomain",
+            {
+                "rung": xd.get("other_tool"),  # the hard-coded first probe names its rung by tool
+                "tool": args.get("tool"),
+                "args": args,
+                "rows": block.get("probed_rows"),
+                "rendered": block.get("block"),
+            },
+        )
+    _apply_crossdomain_rung(
+        render,
+        xd=xd,
+        parser=parser,
+        services=services,
+        contact_id=contact_id,
+        space_id=space_id,
+        ladder=crossdomain_ladder,
+        trace=trace,
+        granted=granted,
     )
     return {"zeroset": zeroset, "render": render}
 
@@ -1648,7 +2193,25 @@ _SCOPE_WORD = {
     "promotion": "promotion",
     "goods_receive": "goods receipt",
     "master_products": "product",
+    # 8 Sep 2026: `spo_allocation` reaches this branch now that its gate row requires a
+    # scoping entity, and with no word here the raw domain key printed to the customer.
+    "spo_allocation": "SPO line",
 }
+
+
+def _domain_takes_a_date_filter(domain: Any) -> bool:
+    """Does any tool this domain can call accept a date range?
+
+    Derived from the two declarations that already answer it - `DOMAIN_SPEC[domain].tools`
+    and `fetch.DATE_PARAMS` - rather than from a third hand-kept list that would drift
+    away from both. `spo_allocation`'s only tool
+    (`crm_procurement_spo_allocations_last_receipt_list`) takes no date parameter, so the
+    scoping ask offered the customer a filter nothing downstream could have applied.
+    """
+    from app.services.chatbot.contracts import DOMAIN_SPEC
+
+    spec = DOMAIN_SPEC.get(jsc.js_string(domain if jsc.truthy(domain) else "").lower())
+    return any(tool in DATE_PARAMS for tool in (spec.tools if spec is not None else ()))
 
 # `allowed_lookup` holds the resolver's INTERNAL entity types. Printing them raw asks the
 # customer to speak our schema, and several are the same thing to them.
@@ -1710,6 +2273,11 @@ def _human_list(values: list) -> str:
         return "a valid value"
     if len(kept) == 1:
         return jsc.js_string(kept[0])
+    if len(kept) == 2:
+        # "A or B", never "A, or B". A two-item list has no series to separate, so the
+        # comma is a tell that a three-item helper wrote the sentence (review S5,
+        # 8 Sep 2026: "Give me a product code, or warehouse, and I can look it up").
+        return f"{jsc.js_string(kept[0])} or {jsc.js_string(kept[1])}"
     head = ", ".join(jsc.js_string(v) for v in kept[:-1])
     return f"{head}, or {jsc.js_string(kept[-1])}"
 
@@ -1734,6 +2302,29 @@ def _type_norm(value: Any) -> str:
     "SRT2405-CR". This is the key both sides are compared through.
     """
     return _TYPE_NORM_RE.sub("", jsc.nullish_str(value)).lower()
+
+
+# A token shorter than this never PREFIX-matches (D4/AC-7): "SRT" would otherwise request
+# every product in the intersection, since most of the catalogue's codes start with it.
+_TOKEN_PREFIX_MIN_LEN = 4
+
+
+def _token_requests(norm_code: str, tokens: set[str]) -> bool:
+    """D4 (12 Sep 2026, finding 4): does a typed token request this intersection product?
+
+    Owner finding, 12 Sep 2026: "ETA SRTWT6236" resolved (tier `and`) to the one family
+    member SRTWT6236-GY, but `crossdomain_zeroset`'s non-`resolutions` branch only asked
+    "does `_type_norm(canonical_code)` EQUAL a typed token" - the prefix never matched, so
+    `requested` stayed empty, `_xd.active` was False, and nothing probed the incoming or
+    PO ladder at all, though SRTWT6236-GY has an open PO line. The `missing` loop two
+    screens down already treats a typed code as satisfied by any `startswith` family
+    member, so the two halves disagreed about what "requested" means. Fixed here: a
+    product is requested when a typed token EQUALS its normalised code, OR when a token of
+    at least `_TOKEN_PREFIX_MIN_LEN` characters is a PREFIX of it.
+    """
+    if norm_code in tokens:
+        return True
+    return any(len(t) >= _TOKEN_PREFIX_MIN_LEN and norm_code.startswith(t) for t in tokens)
 
 
 def _prettify_type(value: Any) -> str:
@@ -1864,7 +2455,11 @@ def not_found_error_message(
                 asked.append(word)
         # The date range is one MORE option, so it belongs INSIDE the list; appending it after
         # a finished list produced "a order number, transporter, or customer, or a date range".
-        options = (asked[:3] if asked else ["customer", "product code"]) + ["date range"]
+        # Offered only where the domain's own tool takes one - see
+        # `_domain_takes_a_date_filter`.
+        options = (asked[:3] if asked else ["customer", "product code"]) + (
+            ["date range"] if _domain_takes_a_date_filter(domain_hint) else []
+        )
         article = "an" if _VOWEL_HEAD_RE.match(options[0]) else "a"
         escalate_message = (
             f"That would search every {scope_word} we have - I need at least one filter to "
@@ -2454,18 +3049,15 @@ def not_found_error_message(
                         f" ({jsc.js_string(customer)})" if jsc.truthy(customer) else ""
                     )
                     if order_status == "delivered":
-                        eta = jsc.get(display, "estimated_delivery_date")
-                        eta_text = f" (estimated delivery {jsc.js_string(eta)})" if jsc.truthy(eta) else ""
                         status = jsc.get(display, "status")
                         status_text = f" - current status: {jsc.js_string(status)}" if jsc.truthy(status) else ""
-                        # The JS derives `eta` here and then never uses it. Owner ruling
-                        # (6 Sep 2026): the date is the one fact the customer asking "has it
-                        # been delivered" actually wants, so it is stated alongside the
-                        # status. The resolved order's OWN display carries it, so nothing is
-                        # re-read to say it.
+                        # Owner ruling (10 Sep 2026, reverses the 6 Sep 2026 ruling):
+                        # `orders.estimated_delivery_date` is not a real promise - the
+                        # import stamps it as order_date + 2 business days
+                        # (`order_service.py` ~2824). The CRM UI may keep showing it, but
+                        # the chatbot / turn output must not state it.
                         escalate_message = (
-                            f"Order {label} hasn't been delivered yet{status_text}"
-                            f"{eta_text}. "
+                            f"Order {label} hasn't been delivered yet{status_text}. "
                             f"Would you like me to escalate to {team} team?"
                         )
                     else:
@@ -2531,6 +3123,10 @@ _DYM_CTRL_KEYS = (
     "dym_probe_meta",
     "dym_capped_codes",
     "probe_cap_applied",
+    # #750: the two keys `dym-annotate` carries for THIS node's own uuid-to-code projection
+    # and its noun. Stripped here with the rest, so the object this node emits is unchanged.
+    "dym_probe_row_keys",
+    "dym_probe_type_name",
 )
 
 _YES = "Yes, escalate"
@@ -2541,6 +3137,71 @@ _DATE_LIKE_DMY_RE = re.compile(r"^[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{2,4}\Z")
 _ALNUM_ANY_RE = re.compile(r"[a-z0-9]", re.IGNORECASE)
 _PICKER_LINE_RE = re.compile(r"^\s*[0-9]+\.\s+(.+?)\s*\Z")
 _CERT_PREFIX_RE = re.compile(r"^cert", re.IGNORECASE)
+# `gate.py`'s own "CODE (Company)" suffix, appended to a picker line whose code is duplicated
+# across companies (`product_attachment` only). The label is what the customer picks on, so it
+# is never rewritten here - it is only read back apart, to find which twin the line names.
+_COMPANY_SUFFIX_RE = re.compile(r"^\s*(.+?)\s*\(([^()]+)\)\s*\Z")
+
+
+def _dym_code_space(dym_ann: Any, dym_meta: Any) -> tuple[set[str], set[str]]:
+    """`(probed, has)` for a UUID-keyed probe, keyed the way the renders key: by CODE.
+
+    `product_attachment` is stamped per uuid (Fix 4 / Fix 5) because one product code can
+    belong to two companies, and the answer rows carry no product id. The renders print codes,
+    so the two uuid sets are projected back through the planner's own `(uuid, code, company)`
+    rows, which `dym-annotate` carries for exactly this.
+
+    Two keys per row, both only when they name ONE uuid: the bare `code` (what D1 prints and
+    what an unsuffixed picker line reads), and the `code|company` composite (what a
+    company-suffixed picker line reads). A code owned by two uuids therefore has no bare key
+    and renders BARE unless the line itself says which company, and an owner the annotator
+    could not attribute (`dym_ambiguous_uuids` / `dym_ambiguous_codes`, F1) is dropped from
+    both. Never guess: a false "has" costs the customer a dead-end pick.
+    """
+    probed_uuids = {_ms_norm(u) for u in jsc.array(jsc.get(dym_meta, "probed"))}
+    has_uuids = {_ms_norm(u) for u in jsc.array(jsc.get(dym_ann, "dym_available_codes"))}
+    ambiguous_uuids = {_ms_norm(u) for u in jsc.array(jsc.get(dym_ann, "dym_ambiguous_uuids"))}
+    ambiguous_codes = {_ms_norm(c) for c in jsc.array(jsc.get(dym_ann, "dym_ambiguous_codes"))}
+
+    owners: dict[str, set[str]] = {}
+    for row in jsc.array(jsc.get(dym_ann, "dym_probe_row_keys")):
+        code = _ms_norm(jsc.get(row, "code"))
+        uuid = _ms_norm(jsc.get(row, "uuid"))
+        if not code or not uuid or code in ambiguous_codes or uuid in ambiguous_uuids:
+            continue
+        owners.setdefault(code, set()).add(uuid)
+        owners.setdefault(f"{code}|{_ms_norm(jsc.get(row, 'company'))}", set()).add(uuid)
+
+    probed: set[str] = set()
+    has: set[str] = set()
+    for key, uuids in owners.items():
+        if len(uuids) != 1:
+            continue  # two owners behind one key: nothing to attribute the answer row to
+        uuid = next(iter(uuids))
+        if uuid not in probed_uuids:
+            continue
+        probed.add(key)
+        if uuid in has_uuids:
+            has.add(key)
+    return probed, has
+
+
+def _dym_lookup(label: Any, keys: set[str]) -> str | None:
+    """The key `label` was probed / found under, or None.
+
+    The bare label first, so a code-keyed turn resolves exactly as it did before this existed;
+    then the `code|company` composite a "CODE (Company)" picker line implies.
+    """
+    text = jsc.js_string(label)
+    key = _ms_norm(text)
+    if key in keys:
+        return key
+    match = _COMPANY_SUFFIX_RE.match(text)
+    if match:
+        composite = f"{_ms_norm(match.group(1))}|{_ms_norm(match.group(2))}"
+        if composite in keys:
+            return composite
+    return None
 
 # `entity-ids-transformer`'s own TYPE_TO_PARAM keys. A type added there and not here merely
 # fails OPEN (no silence), which is the safe direction.
@@ -2941,12 +3602,28 @@ def build_suggest_offer(
     dym_ann = dym_annotate if isinstance(dym_annotate, dict) else None
     dym_meta = jsc.get(dym_ann, "dym_probe_meta") if dym_ann is not None else None
     dym_ok = bool(jsc.truthy(dym_ann) and jsc.truthy(dym_meta) and jsc.get(dym_meta, "ok") is True)
-    dym_has = {_ms_norm(c) for c in jsc.array(jsc.get(dym_ann, "dym_available_codes"))} if dym_ok else set()
-    dym_probed = {_ms_norm(c) for c in jsc.array(jsc.get(dym_meta, "probed"))} if dym_ok else set()
+    # #750: `product_attachment` is stamped PER UUID (`probe_uuid_keyed`, Fix 4 / Fix 5), and
+    # every surface below keys by the CODE it printed, so the two sets are projected into code
+    # space ONCE, here, and the three renders are untouched. A code that cannot be attributed
+    # to exactly one uuid stays OUT of both sets and renders bare, which is the same promise
+    # the annotator's own F1 amendment makes.
+    if dym_ok and jsc.get(dym_meta, "key_mode") == "uuid":
+        dym_probed, dym_has = _dym_code_space(dym_ann, dym_meta)
+    elif dym_ok:
+        dym_has = {_ms_norm(c) for c in jsc.array(jsc.get(dym_ann, "dym_available_codes"))}
+        dym_probed = {_ms_norm(c) for c in jsc.array(jsc.get(dym_meta, "probed"))}
+    else:
+        dym_has = set()
+        dym_probed = set()
     # Normalise the certificate family for the customer-facing suffix ONLY - `attachment_noun`
     # itself is left alone so D2's "No {noun} for {code}" text stays byte-identical.
     if dym_ok:
         noun_source = jsc.get(dym_meta, "noun")
+        if not jsc.truthy(noun_source):
+            # #750: the RESOLVED attachment type the probe was scoped to, before the
+            # customer's own word for it. `attachment_noun()` stays the last resort, so a
+            # turn whose probe carried no type entity reads exactly as it does today.
+            noun_source = jsc.get(dym_ann, "dym_probe_type_name")
         noun_source = noun_source if jsc.truthy(noun_source) else attachment_noun()
         text = jsc.nullish_str(noun_source).strip()
         dym_noun: Any = "certificate" if _CERT_PREFIX_RE.match(text) else (text or "document")
@@ -2955,8 +3632,8 @@ def build_suggest_offer(
 
     # 4th surface: the REQUIRE-SPECIFIC PICKER. The gate renders a numbered list into
     # `gate_clarification`, which the miss renderer copies verbatim into `escalate_message`.
-    # D1 never fires on these turns, which is why the surface stayed bare while D1 annotated
-    # the very same codes. NO reordering: the numbers are the pick affordance, suffixes only.
+    # D1 never fires on these turns, which is why this surface needs its own pass over the
+    # rendered text. NO reordering: the numbers are the pick affordance, suffixes only.
     if require_spec and dym_ok and isinstance(out.get("escalate_message"), str) and out["escalate_message"]:
         lines = []
         for line in out["escalate_message"].split("\n"):
@@ -2966,8 +3643,8 @@ def build_suggest_offer(
             if not match:
                 lines.append(line)  # header / non-item line
                 continue
-            key = _ms_norm(match.group(1))
-            if key not in dym_probed:
+            key = _dym_lookup(match.group(1), dym_probed)
+            if key is None:
                 lines.append(line)  # unprobed (e.g. multi-uuid) renders BARE
                 continue
             lines.append(line + (f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"))
@@ -3033,9 +3710,9 @@ def build_suggest_offer(
                 # preserved by construction. The suffix never touches `p.label`, so
                 # `suggest_last_result_set[].label` stays BARE and the numbered pick still
                 # round-trips on idx / value. Unprobed renders BARE, never a misleading "no".
-                key = _ms_norm(jsc.get(match, "canonical_code"))
+                key = _dym_lookup(jsc.get(match, "canonical_code"), dym_probed) if dym_ok else None
                 sfx = ""
-                if dym_ok and key in dym_probed:
+                if key is not None:
                     sfx = f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
                 cand_lines.append(f"  {idx}. {jsc.js_string(pick['label'])}{sfx}")
                 out["suggest_last_result_set"].append(
@@ -3150,20 +3827,25 @@ def build_suggest_offer(
                 # and the pick round trip stay index-consistent. `suggest_quick_reply` stays
                 # BARE CODES: the pick round-trips on that exact button string.
                 dym_annotate_on = dym_ok and any(
-                    _ms_norm(jsc.get(p["m"], "canonical_code")) in dym_probed for p in picks
+                    _dym_lookup(jsc.get(p["m"], "canonical_code"), dym_probed) is not None
+                    for p in picks
                 )
                 if dym_annotate_on:
                     # STABLE PARTITION, no tiebreak: a comparator tiebreak here would
                     # alphabetise and destroy the resolver's similarity ranking.
-                    picks.sort(key=lambda p: 0 if _ms_norm(jsc.get(p["m"], "canonical_code")) in dym_has else 1)
+                    picks.sort(
+                        key=lambda p: 0
+                        if _dym_lookup(jsc.get(p["m"], "canonical_code"), dym_has) is not None
+                        else 1
+                    )
                 codes = [jsc.get(p["m"], "canonical_code") for p in picks]
                 if dym_annotate_on:
                     dym_lines = []
                     for i, p in enumerate(picks):
                         code = jsc.js_string(jsc.get(p["m"], "canonical_code"))
-                        key = _ms_norm(code)
+                        key = _dym_lookup(code, dym_probed)
                         sfx = ""
-                        if key in dym_probed:
+                        if key is not None:
                             sfx = f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
                         dym_lines.append(f"{i + 1}. {code}{sfx}")
                     out["suggest_response"] = (

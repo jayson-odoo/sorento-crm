@@ -14,9 +14,13 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  // Don't fail build on TypeScript errors (only for build, not dev)
+  // The Docker image build skips tsc (NEXT_SKIP_TYPECHECK=1, set only in the
+  // frontend Dockerfile's builder stage) because the `typecheck-frontend` CI
+  // job runs `tsc --noEmit` on the runner in parallel with the test jobs and
+  // gates the deploy on it. A local `npm run build` still type-checks: the
+  // env var is unset outside the Docker build.
   typescript: {
-    ignoreBuildErrors: false, // Keep this false to catch real TS errors
+    ignoreBuildErrors: process.env.NEXT_SKIP_TYPECHECK === '1',
   },
   // lucide-react is on Next's built-in optimizePackageImports list; @remixicon/react is not,
   // so its barrel imports would otherwise pull the whole icon set into every dev compile.

@@ -179,3 +179,32 @@ describe('two rows deleted in quick succession', () => {
     expect(toastDismiss).toHaveBeenCalledWith('pending-action-pa-brand-a');
   });
 });
+
+describe('cancelling a single row leaves the button usable again', () => {
+  it('isPending returns to false once the cancel settles, even though targetId still names the row', async () => {
+    // A real defect (supplied-with companions, review round 2): a consumer reading
+    // ONLY `targetId === row.id` for its own "disabled"/"spinner" prop stayed stuck
+    // after Cancel, because `targetId` is never cleared back to null - by design,
+    // per the two-row test above, so a re-point mid-countdown is not read as the
+    // FIRST action ending. The correct read is always `targetId === row.id &&
+    // isPending` (`ProductSuppliersSection.tsx`'s own pattern) - this pins that
+    // `isPending` really does go back to false, so that combination re-enables.
+    const { result } = renderRowDeletion();
+
+    await act(async () => {
+      result.current.run({ id: 'brand-a', subject: 'Acme' });
+    });
+    await waitFor(() => expect(raised).toHaveLength(1));
+    expect(result.current.targetId).toBe('brand-a');
+    expect(result.current.isPending).toBe(true);
+
+    await act(async () => {
+      raised[0].onCancel();
+    });
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    // targetId is NOT reset - the two-row test above depends on that - so a
+    // consumer must gate on isPending too, not on targetId alone.
+    expect(result.current.targetId).toBe('brand-a');
+  });
+});
