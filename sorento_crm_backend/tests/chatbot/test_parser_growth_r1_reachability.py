@@ -38,6 +38,7 @@ from app.services.chatbot.lanes.business.fetch import (
 )
 from app.services.chatbot_parser_prompt import (
     GROWTH_R1_ADDENDUM,
+    LAST_COST_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
     SEMANTIC_PARSER_PROMPT_SLIM,
 )
@@ -144,12 +145,16 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         """Migration 490 publishes BOTH texts because prod's `production` label is on the
         FULL body and dev's is on the SLIM one.
 
-        `in`, not `.endswith`, since 12 Sep 2026 (PLAN-chatbot-last-purchase-cost.md):
-        `LAST_COST_ADDENDUM` now stacks AFTER this one on both bodies, the same way this
-        addendum itself stacked after the live text - "appended" was never a claim about
-        being the LAST thing appended."""
-        assert GROWTH_R1_ADDENDUM in SEMANTIC_PARSER_PROMPT
-        assert GROWTH_R1_ADDENDUM in SEMANTIC_PARSER_PROMPT_SLIM
+        The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping
+        `LAST_COST_ADDENDUM` first: that one now stacks AFTER `GROWTH_R1_ADDENDUM` on
+        both bodies, the same way this addendum itself stacked after the live text, so
+        `GROWTH_R1_ADDENDUM` is still exactly the tail once the later addendum is off."""
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(LAST_COST_ADDENDUM).endswith(
+            GROWTH_R1_ADDENDUM
+        )
+        assert SEMANTIC_PARSER_PROMPT_SLIM.removesuffix(LAST_COST_ADDENDUM).endswith(
+            GROWTH_R1_ADDENDUM
+        )
 
     @pytest.mark.parametrize("key", ["group_by", "top_n"])
     def test_the_output_block_declares_each_new_key(self, key: str) -> None:
