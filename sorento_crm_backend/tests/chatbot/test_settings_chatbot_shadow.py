@@ -77,6 +77,25 @@ def _seed_settings_row(db) -> None:
     db.commit()
 
 
+def _seed_prompt_version(db, *, name: str = "chatbot_semantic_parser", version: int = 3) -> None:
+    """A real `ai_prompt_versions` row the PUT's `resolve_shadow_version` can find - the
+    endpoint validates the version exists (422 otherwise) rather than saving a name
+    nothing shadows."""
+    from app.models.ai_prompt import AIPromptVersion
+
+    db.add(
+        AIPromptVersion(
+            id=str(uuid.uuid4()),
+            name=name,
+            version=version,
+            type="text",
+            template=f"{MARKER} prompt body",
+            variables=[],
+        )
+    )
+    db.commit()
+
+
 class TestBothDictBuildersCarryTheColumn:
     def test_get_carries_the_field_before_anybody_sets_it(self, settings_api, db):
         _seed_settings_row(db)
@@ -89,6 +108,7 @@ class TestBothDictBuildersCarryTheColumn:
 
     def test_the_put_path_round_trips_the_version(self, settings_api, db):
         _seed_settings_row(db)
+        _seed_prompt_version(db)
         saved = settings_api.post(
             SETTINGS_GENERAL_ENDPOINT,
             json={"chatbot_parser_shadow_version": "chatbot_semantic_parser@3"},
@@ -98,8 +118,24 @@ class TestBothDictBuildersCarryTheColumn:
         body = settings_api.get(SETTINGS_ENDPOINT).json()["settings"]
         assert body["chatbot_parser_shadow_version"] == "chatbot_semantic_parser@3"
 
+    def test_a_version_that_does_not_exist_is_422(self, settings_api, db):
+        """AC-1027: a shadow version naming nothing is refused at the PUT, not saved and
+        left producing a row of `failed` shadow parses nobody is watching."""
+        _seed_settings_row(db)
+        resp = settings_api.post(
+            SETTINGS_GENERAL_ENDPOINT,
+            json={"chatbot_parser_shadow_version": "chatbot_semantic_parser@999"},
+        )
+        assert resp.status_code == 422, resp.text
+
+        body = settings_api.get(SETTINGS_ENDPOINT).json()["settings"]
+        assert body["chatbot_parser_shadow_version"] is None, (
+            "a rejected version must not be saved"
+        )
+
     def test_it_can_be_cleared(self, settings_api, db):
         _seed_settings_row(db)
+        _seed_prompt_version(db)
         settings_api.post(
             SETTINGS_GENERAL_ENDPOINT,
             json={"chatbot_parser_shadow_version": "chatbot_semantic_parser@3"},
