@@ -1,6 +1,6 @@
 # PLAN: a planning change is raised only for a line someone has decided on
 
-**Status:** IN REVIEW, 12 September 2026. Gate, pill filter and migration 513 landed on lane/main-so-changes-12sep; reviewer clean on logic, fix round (S1 failed-row predicate, N2 create-batch-only-when-kept, migration test) in flight. Captain's call on the local prod copy: 1,307 of
+**Status:** READY FOR PR, 12 September 2026. Gate, pill filter, migration 513 (retry-safe, Core-built, tested) on lane/main-so-changes-12sep at c44c6666e, main merged and re-parented, reviewer clean; awaiting the user's click-through on :3050 and the PR. Captain's call on the local prod copy: 1,307 of
 1,308 pending planning-change rows on live sit on lines with no held decision and no inquiry
 row, so the `Changed` pill on the SCM Sales Orders list sends the reader to a board with
 nothing to re-decide.
