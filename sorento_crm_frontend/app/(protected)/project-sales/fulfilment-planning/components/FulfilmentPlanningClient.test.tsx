@@ -1231,9 +1231,7 @@ describe('FulfilmentPlanningClient: the Changed pill (AC-B7)', () => {
         row({
           id: 'pso-changed',
           so_number: 'SO381895',
-          // Not yet on `FulfilmentPlanningRow` (frontend type) - the whole point of this
-          // being red until the type/plumbing lands.
-          ...( { planning_change_batch_id: 'pcb-so381895' } as Partial<FulfilmentPlanningRow>),
+          planning_change_batch_id: 'pcb-so381895',
         }),
       ]),
     );

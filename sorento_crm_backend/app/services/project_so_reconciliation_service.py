@@ -1303,7 +1303,7 @@ class ProjectSOReconciliationService:
         # (`planning_change_service.pending_batch_id_by_sales_order`,
         # `PLAN-scm-board-picks-up-pending-change.md`) - one query for the page, not one
         # per row.
-        page_so_ids = [r["sales_order_id"] for r in data if r.get("sales_order_id")]
+        page_so_ids = list({r["sales_order_id"] for r in data if r.get("sales_order_id")})
         pending_by_so = planning_change_service.pending_batch_id_by_sales_order(
             self.db, page_so_ids,
         )

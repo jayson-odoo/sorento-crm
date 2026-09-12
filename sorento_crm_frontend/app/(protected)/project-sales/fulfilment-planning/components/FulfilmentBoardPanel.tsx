@@ -76,7 +76,10 @@ import type {
   BoardRowAxis,
   ConfirmManyOrderResult,
 } from '../../_shared/types/fulfilmentPlanning.types';
-import type { PlanningChangeBatch } from '../../_shared/types/planningChange.types';
+import type {
+  PlanningChangeBatch,
+  PlanningChangeOrder,
+} from '../../_shared/types/planningChange.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { BoardTransfersPanel } from './BoardTransfersPanel';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
@@ -256,36 +259,67 @@ export function FulfilmentBoardPanel({
     if (batchId) ids.add(batchId);
     return Array.from(ids);
   }, [rawBoard.data, batchId]);
-  const batchQueries = usePlanningChangeBatchesByIds(boardBatchIds);
-  const loadedBatches = React.useMemo(
-    () => batchQueries.map((query) => query.data).filter((data): data is PlanningChangeBatch => Boolean(data)),
-    [batchQueries],
-  );
+  const loadedBatches = usePlanningChangeBatchesByIds(boardBatchIds);
+
+  /**
+   * One entry PER SO NUMBER, deduped across every loaded batch (S1, reviewer's pass on
+   * 39a5d8b07): a deep link's URL `?batch=` can name an APPLIED batch for an order the
+   * board's own `pending_change_batch_id` union ALSO names a PENDING one for (the
+   * planning-changes list still links the applied batch after a newer change was raised
+   * for the same order) - unioning both ids in `boardBatchIds` then loads both, and the
+   * order would otherwise appear TWICE: once from each batch. The PENDING batch wins,
+   * because that is the one with something left to decide; between two pending (or two
+   * applied) batches on the same order, the NEWEST `created_at` wins. The other batch's
+   * row for that order is dropped entirely - not merged - so the cell renders once.
+   */
+  const bySoNumber = React.useMemo(() => {
+    const out = new Map<string, { batch: PlanningChangeBatch; order: PlanningChangeOrder }>();
+    for (const batch of loadedBatches) {
+      for (const order of batch.orders ?? []) {
+        const existing = out.get(order.so_number);
+        if (!existing) {
+          out.set(order.so_number, { batch, order });
+          continue;
+        }
+        const existingPending = !existing.batch.applied_at;
+        const candidatePending = !batch.applied_at;
+        if (existingPending !== candidatePending) {
+          // Exactly one is pending: it wins outright, whichever `created_at` is newer.
+          if (candidatePending) out.set(order.so_number, { batch, order });
+          continue;
+        }
+        // Both pending or both applied: the newer batch is the one still worth reading.
+        if (new Date(batch.created_at).getTime() > new Date(existing.batch.created_at).getTime()) {
+          out.set(order.so_number, { batch, order });
+        }
+      }
+    }
+    return out;
+  }, [loadedBatches]);
+
   /** The one batch this order belongs to, or null - a `replan`/applied lookup never guesses. */
   const batchIdBySoNumber = React.useMemo(() => {
     const map = new Map<string, string>();
-    for (const batch of loadedBatches) {
-      for (const order of batch.orders ?? []) map.set(order.so_number, batch.id);
-    }
+    for (const [soNumber, entry] of bySoNumber) map.set(soNumber, entry.batch.id);
     return map;
-  }, [loadedBatches]);
+  }, [bySoNumber]);
 
   /**
    * The board as the CHANGED lines make it: a line the book has moved is no longer covered
    * by the decision taken for it, so it arrives undecided carrying the batch's own fresh
    * proposal (`uncoverChangedLines`). Identity on every board with no batch loaded.
    *
-   * Merged across EVERY loaded batch (AC-B3): `uncoverChangedLines`, `preMarkedKeys` and
-   * `annotationsByCell` all take `Pick<PlanningChangeBatch, 'orders'>` and never read the
-   * batch's own id, so a flattened `orders[]` from two different batches reads exactly like
-   * one bigger batch to all three.
+   * Merged across EVERY loaded batch (AC-B3), one row per so_number after the dedup above -
+   * `uncoverChangedLines`, `preMarkedKeys` and `annotationsByCell` all take
+   * `Pick<PlanningChangeBatch, 'orders'>` and never read the batch's own id, so this
+   * flattened `orders[]` reads exactly like one bigger batch to all three.
    */
   const changeBatchData: Pick<PlanningChangeBatch, 'orders'> | null = React.useMemo(
     () =>
-      loadedBatches.length > 0
-        ? { orders: loadedBatches.flatMap((batch) => batch.orders) }
+      bySoNumber.size > 0
+        ? { orders: Array.from(bySoNumber.values(), (entry) => entry.order) }
         : null,
-    [loadedBatches],
+    [bySoNumber],
   );
   const board = React.useMemo(
     () => ({
@@ -822,12 +856,22 @@ export function FulfilmentBoardPanel({
         return;
       }
 
-      // Per-order `batch_id` above answers AC-P3-4/AC-B5 on its own; the body-level
-      // `batch_id` here is kept ONLY for a single-batch board (backward compatible with a
-      // server that has not deployed the per-order field yet) - with two batches on the
-      // board there is no one id to put at the body level (AC-B3).
+      // Per-order `batch_id` above answers AC-P3-4/AC-B5 on its own. The body-level
+      // `batch_id` is kept ONLY when EVERY order in THIS press carries that SAME id
+      // (backward compatible with a server that has not deployed the per-order field
+      // yet) - reviewer finding B1 (39a5d8b07): `singleBatch` (how many batches the BOARD
+      // loaded) is the wrong question here, because a board can load exactly one batch
+      // while still sending an order that batch names NOTHING for (that order's own
+      // `orderBatchId` is `null`), and a body-level id there would contradict the very
+      // order carrying `null` right beside it. Checked on THIS press's `orders`, not on
+      // `loadedBatches`.
+      const firstOrderBatchId = orders[0]?.batch_id ?? null;
+      const bodyBatchId =
+        firstOrderBatchId && orders.every((order) => order.batch_id === firstOrderBatchId)
+          ? firstOrderBatchId
+          : null;
       const result = await confirmMany.mutateAsync(
-        singleBatch ? { orders, batch_id: singleBatch.id } : { orders },
+        bodyBatchId ? { orders, batch_id: bodyBatchId } : { orders },
       );
       setBatchResults([...skipped, ...result.results]);
 
@@ -880,16 +924,7 @@ export function FulfilmentBoardPanel({
     } finally {
       setConfirmingAll(false);
     }
-  }, [
-    board,
-    allContributions,
-    draft,
-    adopt,
-    confirmMany,
-    appliedSoNumbers,
-    batchIdBySoNumber,
-    singleBatch,
-  ]);
+  }, [board, allContributions, draft, adopt, confirmMany, appliedSoNumbers, batchIdBySoNumber]);
 
   /**
    * The rows on screen, and the rows the selection holds.

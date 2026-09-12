@@ -397,21 +397,27 @@ def confirm_all(
     an empty result rather than a refusal; a board with nothing approved yet is not an error.
 
     `batch_id` travels PER ORDER now (`PLAN-scm-board-picks-up-pending-change.md`, change 4,
-    AC-B5/AC-B6): a board can show two orders on two different pending batches, so each
-    order resolves `entry.batch_id or payload.batch_id` on its own - the body-level id is
-    only the fallback a caller that has not moved to the per-order shape still sends. An
-    order that resolves to a batch takes the same apply the per-order Confirm takes for a
-    `?batch=` board (one press, one call, one revision, batch rows marked applied); an
-    order with neither confirms as an ordinary revision beside it.
+    AC-B5/AC-B6). The body-level `batch_id` is the LEGACY shape and only applies when NO
+    order in the payload names its own: the instant any order carries `batch_id` (even an
+    explicit `null`, meaning "this order has none"), the body-level id is ignored for every
+    order that did not name one - it must not silently inherit a batch another order in the
+    same press answered (reviewer finding B1, 39a5d8b07: the frontend already sends both a
+    body-level id AND a per-order `null` on a mixed board, and `entry.batch_id or
+    payload.batch_id` could not tell "this order legitimately has none" from "this order
+    said nothing", so it tried to apply order A's batch against order B, which held none of
+    its rows). An order that resolves to a batch takes the same apply the per-order Confirm
+    takes for a `?batch=` board (one press, one call, one revision, batch rows marked
+    applied); an order with neither confirms as an ordinary revision beside it.
     """
     try:
         if not payload.orders:
             return {"results": []}
         actor_id = current_user["id"]
         supply = ProjectSupplyService(db)
+        any_per_order = any(entry.batch_id for entry in payload.orders)
 
         def write_one(order, entry):
-            resolved_batch_id = entry.batch_id or payload.batch_id
+            resolved_batch_id = entry.batch_id or (None if any_per_order else payload.batch_id)
             if resolved_batch_id:
                 return _confirm_a_planning_change(
                     db, order, _BatchedEntry(list(entry.lines), resolved_batch_id), actor_id

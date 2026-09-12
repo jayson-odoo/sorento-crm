@@ -216,3 +216,94 @@ def test_with_planning_changes_regression_guard_still_returns_the_batch_id(api):
 
     rows = SalesOrderService(db).with_planning_changes([{"id": str(so.id)}])
     assert rows[0]["planning_change_batch_id"] == str(batch.id)
+
+
+# --------------------------------------------------------------------------- #
+# B1 (blocker, reviewer's pass on 39a5d8b07): body-level batch_id must not
+# override an order's own EXPLICIT null when the body mixes both shapes - the
+# shape the current frontend sends when the board has loaded exactly one batch
+# (`FulfilmentBoardPanel.tsx`'s confirmMany call still sends `batch_id` on the
+# body alongside per-order `batch_id`s). `entry.batch_id or payload.batch_id`
+# cannot tell "B legitimately has none" from "B did not say", so it silently
+# tries to apply batch X against order B, which holds no rows of it.
+# --------------------------------------------------------------------------- #
+
+
+def _seed_mixed_batch_and_ordinary_orders(client, world):
+    """Order A: pending batch X (held, release). Order B: an ordinary, undecided,
+    adopted line with nothing to do with X - a ready-to-confirm reserve."""
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=200)
+    a_so, _a_core, a_order, _a_line, a_batch, a_payload = _held_release_batch(
+        client, world, qty="40",
+    )
+    b_so, _b_core, b_order, b_line = _adopted_line(db, world, qty="15", line_no=2)
+    b_payload = _line_payload(
+        b_line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "15"}],
+    )
+    return a_order, a_batch, a_payload, b_order, b_payload
+
+
+def _assert_a_applied_b_ordinary(db, a_order, a_batch, b_order, response):
+    from app.models.project_so import SOSupplyDecision
+
+    assert response.status_code == 200, response.text
+    results_by_pso = {r["pso_id"]: r for r in response.json()["results"]}
+
+    a_result = results_by_pso[str(a_order.id)]
+    assert a_result["ok"] is True, a_result
+
+    b_result = results_by_pso[str(b_order.id)]
+    assert b_result["ok"] is True, b_result
+    assert "already applied" not in (b_result.get("error") or ""), b_result
+
+    db.expire_all()
+    a_row = db.query(PlanningChangeRow).filter_by(batch_id=a_batch.id).one()
+    assert a_row.applied_state == PLANNING_CHANGE_STATE_APPLIED, a_row.applied_state
+
+    assert db.query(PlanningChangeRow).filter_by(
+        project_sales_order_id=str(b_order.id)
+    ).count() == 0
+
+    b_decisions = (
+        db.query(SOSupplyDecision).filter_by(project_sales_order_id=b_order.id).count()
+    )
+    assert b_decisions >= 1, "expected an ordinary supply decision for order B"
+
+
+def test_b1_mixed_body_and_per_order_batch_id_a_first(api):
+    """A named first in `orders`, matching the body-level `batch_id`; B follows with an
+    explicit per-order `batch_id: null`."""
+    client, world = api
+    db = world.db
+    a_order, a_batch, a_payload, b_order, b_payload = _seed_mixed_batch_and_ordinary_orders(
+        client, world,
+    )
+
+    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json={
+        "orders": [
+            {"pso_id": a_order.id, "lines": [a_payload], "batch_id": str(a_batch.id)},
+            {"pso_id": b_order.id, "lines": [b_payload], "batch_id": None},
+        ],
+        "batch_id": str(a_batch.id),
+    })
+    _assert_a_applied_b_ordinary(db, a_order, a_batch, b_order, response)
+
+
+def test_b1_mixed_body_and_per_order_batch_id_b_first(api):
+    """Same body, orders REVERSED - the reviewer's finding was order-dependent, so both
+    sequences are pinned rather than just the one that happened to be tried first."""
+    client, world = api
+    db = world.db
+    a_order, a_batch, a_payload, b_order, b_payload = _seed_mixed_batch_and_ordinary_orders(
+        client, world,
+    )
+
+    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json={
+        "orders": [
+            {"pso_id": b_order.id, "lines": [b_payload], "batch_id": None},
+            {"pso_id": a_order.id, "lines": [a_payload], "batch_id": str(a_batch.id)},
+        ],
+        "batch_id": str(a_batch.id),
+    })
+    _assert_a_applied_b_ordinary(db, a_order, a_batch, b_order, response)
