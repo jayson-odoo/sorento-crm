@@ -979,19 +979,33 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # `previous` is what stops the clock restarting: the legacy lifecycle carries a roster
     # across turns that build no offer of their own, so a question re-derived from it every
     # turn would be permanently one turn old and its TTL would never be reached.
-    variables["open_question"] = pending_open_question.from_state(
-        variables,
-        asked_at_turn=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
-        # The question that was open when the turn STARTED, off the head's own read. Not
-        # `prev.open_question`: a session written before this key existed has none, and the
-        # head derives one from the legacy marker in that case - which is exactly the
-        # situation where a carried question must not be lost.
-        previous=jsc.get(jsc.get(ctx, "parse"), "_open_question_before")
-        or jsc.get(prev, "open_question"),
-        # `output_exchange._apply_open_question` stamps this when a handler resolved the
-        # question this turn. A consumed question is never re-armed.
-        answered=jsc.truthy(jsc.get(qf, "open_question_answered")),
-    )
+    # THE LANE'S OWN QUESTION WINS (L1-S3d). A lane that asked something froze the rows it
+    # showed at the moment it showed them and handed the question back on its fragment; the
+    # tail persists that, unchanged. The derivation below is the fallback for the lanes that
+    # have not been converted yet and for a replay fixture that feeds this function a node
+    # output composed before the conversion - it goes with the last of them (step 4).
+    asked = jsc.get(sug, "open_question") if jsc.truthy(sug) else None
+    if isinstance(asked, dict) and asked.get("kind"):
+        variables["open_question"] = {
+            **asked,
+            "asked_at_turn": int(
+                jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0
+            ),
+        }
+    else:
+        variables["open_question"] = pending_open_question.from_state(
+            variables,
+            asked_at_turn=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
+            # The question that was open when the turn STARTED, off the head's own read. Not
+            # `prev.open_question`: a session written before this key existed has none, and the
+            # head derives one from the legacy marker in that case - which is exactly the
+            # situation where a carried question must not be lost.
+            previous=jsc.get(jsc.get(ctx, "parse"), "_open_question_before")
+            or jsc.get(prev, "open_question"),
+            # `output_exchange._apply_open_question` stamps this when a handler resolved the
+            # question this turn. A consumed question is never re-armed.
+            answered=jsc.truthy(jsc.get(qf, "open_question_answered")),
+        )
 
     # THE ROWS THE SENDER RENDERS travel with the TURN, not with the memory (L1-S3).
     # `sub-sendmsg` reaches for `result_set` by name (AC-207) and it used to read it off
