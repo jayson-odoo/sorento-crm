@@ -100,6 +100,15 @@ _EMBEDDING_SKIP_TOOLS: set[str] = {
     # mcp_tools row out of RAG + auto-removes it from ai_assistant_configs
     # enabled_tools on the next `_sync_enabled_tools` pass.
     "crm_incoming_stock_grn",
+    # SF1 (security review, PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026): purchase
+    # cost is per-contact RESTRICTED (`purchase_orders.cost`), and the gate lives ONLY
+    # in the chatbot lane (`lanes/business.run_fetch`'s whole-domain check). RAG
+    # tool-search - the in-app assistant's embedding pick, and n8n's cosine pick for
+    # anything outside the chatbot's own `DOMAIN_SPEC -> select_tool` path - has NO
+    # field-reveal drop, so a retrieved call would answer with an unfiltered cost
+    # figure to whoever the assistant is running as. Kept out of the pool until a
+    # permission-aware assistant path exists; reversible by removing this line then.
+    "crm_procurement_po_last_cost_list",
 }
 
 
@@ -1239,9 +1248,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "product_code, po_quantity, po_date, unit_cost, discount_per_unit (only "
             "when the line carries a positive discount), unit_cost_after_discount, and "
             "warehouse (only when the line names one). Cancelled lines and cancelled "
-            "POs are excluded. All three money fields are RESTRICTED to a contact "
-            "holding purchase_orders.cost. top_n defaults to 1; 'last 3 purchase cost' "
-            "is top_n=3."
+            "POs are excluded. top_n defaults to 1; 'last 3 purchase cost' is top_n=3."
         ),
         typical_user_questions=(
             "What did we last pay for SRTWC8517?",
