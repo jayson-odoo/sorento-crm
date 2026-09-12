@@ -76,8 +76,10 @@ entities and is not re-tested here.
   for a ref linked only in B -> `not_found`. (Replaces AC-A1-7 in `test_external_company_anchor_scope.py`.)
 - **AC-19b [T]** Documents: a header `source_ref` linked only in B, pushed under A -> `created` (new
   header row in A, B untouched; `test_ingest_documents.py:782-800`). A ladder ref (`customer_ref`,
-  `supplier_ref`, a line's `product_ref`) linked only in B -> `retryable`, with that field named in
-  `errors`, nothing written (`test_ingest_documents.py:883`, `test_ingest_documents_v2_resolution.py:460,
+  `supplier_ref`, a line's `product_ref`) linked only in B is simply UNKNOWN under A and takes the
+  ladder an unknown ref already takes: sent alone -> `retryable`, with that field named in `errors`,
+  nothing written; sent WITH a code/name -> the code/name rung applies inside A exactly as for any
+  unsynced master (no cross-company peek exists to tell the two apart) (`test_ingest_documents.py:883`, `test_ingest_documents_v2_resolution.py:460,
   :475`). All four replace the old "outside this company anchor" `failed` verdicts. Deletions under A of a ref linked only in B
   stay `not_found` (`test_ingest_deletions.py:435` unchanged).
 - **AC-20 [T]** Shared agents: `agent:X` pushed under SRT then under MOCHA -> `created` then `updated`,

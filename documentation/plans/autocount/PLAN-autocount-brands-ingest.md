@@ -1,6 +1,6 @@
 # PLAN - AutoCount `brands` ingest entity (contract 2.3)
 
-**Status:** APPROVED 2026-09-12 (owner go; internal grill x2 on Opus folded in). BUILDING: tester writing red tests in lane autocount-brands.
+**Status:** BUILT 2026-09-12 (owner go; grilled x2 on Opus). Phase 3 review + security review done; fix round in flight; PR next.
 
 **UAC:** `autocount-brands-ingest-acceptance-criteria.md` (alongside).
 **Origin:** cross-session brief from foundryx-shared-service-57, their plan
@@ -154,7 +154,11 @@ Decisions:
      raises `MissingReference` -> the document is **retryable**, not `failed`. Correct from A's view:
      that master has not been synced INTO A yet, exactly the sequencing verdict an unsynced customer
      already gets; the ESB drains it once it pushes the master under A's own prefix. With per-company
-     prefixes the case never arises in practice.
+     prefixes the case never arises in practice. Ruling 2026-09-12 (fix round 2): NO cross-company
+     peek to tell "linked elsewhere" from "unknown" (the coder's first cut added one as
+     `MissingReference.unconditional`; removed). A B-only ref sent WITH a code/name takes the
+     code/name rung inside A like any unknown ref; the mapping it writes is A's own, which is the
+     point of BL-056.
   All three `_require_same_company` sites become unreachable through refs and are removed. Test
   edits: `test_external_company_anchor_scope.py:529-552` (flip to `created`; on `products`, not
   `warehouses`: create_all cannot hold one warehouse code in two companies, see `:483`),
