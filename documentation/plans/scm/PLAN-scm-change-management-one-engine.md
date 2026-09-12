@@ -541,3 +541,69 @@ did.
 Every target, note and label carries an SO number, a document number or a warehouse code.
 No id reaches a sentence: `_row_target_words` resolves a receiving row to `<SO> ORDER <qty>`,
 and the pool row says `Reallocated from <SO> line <n>`.
+
+### E. Slice D review round (13 September 2026), D1 to D7
+
+**D1. A reallocation that cannot be carried out fails the order, and the pool row carries
+the product.** `_execute_reallocations` no longer swallows anything. A refusal propagates,
+so the apply's per-order savepoint rolls back: the order is named in `failed_orders`, each of
+its rows reads `applied_state = failed` with the message, and every row the attempt wrote
+(the pool-location row above all) rolls back with it. The failure it existed to hide was
+real: `_pool_row_for` addressed the row by the change row's `item_code` (whatever the book
+called the item), `place_on_po_allocations` resolves a row with no sales-order line through
+`products.product_code`, and the mismatch refused with `order_inquiry_no_product` - leaving
+an unlinked raised ORDER row at the pool, which reads as NEW demand, while the freed purchase
+order quantity sat unclaimed and the apply reported success. The pool row now carries the
+PRODUCT'S own code, read from the line, and is born company-stamped and acknowledged the way
+`_raise_borrow_shortfalls` raises the donor's order-back.
+
+**D2. Freed quantity on a line nobody decided moves too, and it is composed, not
+improvised.** The seam chosen is the COMPOSE side: when the line holds nothing (`held` has no
+buy) but has a placed quantity larger than the fresh proposal's Buy, the suggestion emits the
+`reallocate` component for the difference, and apply executes it through rule 6's three
+routes exactly like any other. The alternative (executing from the links the confirm's
+refresh is about to drop) was rejected because it would move quantity the board never said
+would move: every reallocation must be a named instruction the reader saw before confirming.
+
+**The freed quantity is dealt PER PURCHASE-ORDER LINE.** One sales-order line's placed
+quantity routinely sits on several purchase-order lines (the G2 cascade splits a 432 across a
+300 and a 132), and each of those has only its own quantity to give;
+`place_on_po_allocations` refuses the whole amount against the first with
+`order_inquiry_po_line_short`, and nothing moves. `_document_links_by_row` therefore keeps
+`planning row id -> [{po_line_id, document, qty}]` in link order, read BEFORE the confirm
+trims it, and `_take_document_shares` draws the freed amount off those lines in turn. The
+destination is still ONE row - a receiving waiting row, or one pool-location row for the
+whole leftover - with as many links underneath it as the quantity came off. The words name
+the documents actually used, joined with "and", never an id.
+
+**D3. The moved reserve does not belong to the receiving decision.** `_move_reserve` writes
+the receiving `SOLineAllocation` with `decision_id = None`: it is a hold that survives the
+next decision rather than a line of one, the same as any hold the engine's `_hold_query`
+predicate counts. The receiving order's ACTIVE decision has its `line_snapshots` settled for
+that line (the component becomes `reserve <qty>` where it read `buy <qty>`), so the carry
+keeps the reserve rather than re-proposing the buy it no longer needs.
+
+**D4. `exclude_line_ids` is threaded into apply.** The lines this same batch is re-deciding
+are not candidates to receive what it frees - otherwise a reallocation hands quantity to a
+line that is about to be uncovered in the next breath.
+
+**D5. What actually happened is recorded in words.** Every executed target lands in the
+row's `result_json` under `reallocated`, because a later read of the live world can pick a
+different row than the one that received it - the record is what the row says it did, not
+what a re-query would guess.
+
+**D6. The receiving row's state is refreshed after it is reduced**, through the service's own
+`refresh_link_state`, so a row whose unlinked remainder reaches zero reads `placed` instead of
+staying `partly_linked`.
+
+**D7. A freed SPO share is unallocated, never re-dealt.** Only an ORDER BACK row may carry an
+SPO allocation (`place_on_po_allocations`'s own rule), so there is no waiting ORDER row and no
+pool-location row that could receive one: there is nowhere to re-deal it TO. The suggestion
+therefore reads "Release SPO <n> <qty>, unallocated for purchasing", apply removes the
+allocation link so the incoming list shows the share unallocated, and `result_json` records
+that. NEVER RECORD AN INSTRUCTION NOT CARRIED OUT is the rule this serves, and it is why the
+old "Reallocate SPO" wording is gone.
+
+**Left alone, named.** `_purchasing_user_ids` has no company filter. It is pre-existing, it
+predates this lane, and widening it here would change who gets notified on an unrelated
+journey: it needs its own change with its own evidence.
