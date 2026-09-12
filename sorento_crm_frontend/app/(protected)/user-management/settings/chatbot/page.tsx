@@ -34,6 +34,14 @@ function promptVersionLabel(version: { version: number; label: string | null; ba
   return [`v${version.version}`, version.base, version.label].filter(Boolean).join(' \u00b7 ');
 }
 
+/** What the SETTING stores: the prompt key and the version number, which is what the
+ *  backend resolves and what an operator can read back. Never the version's uuid. */
+const PARSER_PROMPT_KEY = 'chatbot_semantic_parser';
+
+function shadowVersionValue(version: { version: number }): string {
+  return `${PARSER_PROMPT_KEY}@${version.version}`;
+}
+
 /**
  * Settings -> Chatbot (AC-809, AC-810).
  *
@@ -59,7 +67,7 @@ export default function ChatbotSettingsPage() {
   const promptVersionOptions = useMemo<SearchableSelectOption[]>(
     () =>
       (promptVersionsQuery.data ?? []).map((version) => ({
-        value: version.id,
+        value: shadowVersionValue(version),
         label: promptVersionLabel(version),
       })),
     [promptVersionsQuery.data],

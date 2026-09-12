@@ -38,11 +38,11 @@ import { extractApiError } from '@/lib/api-client';
  *   POST /api/v1/user-management/settings/general
  *     `chatbot_parser_shadow_version`: string | null   (null clears it)
  *
- * The VALUE is an `AIPromptVersion.id` from
- * `GET /api/v1/system/chatbot/console/prompt-versions` (the `chatbot_semantic_parser`
- * versions, newest first) - the same handle the chatbot console pins for a test run. It
- * is an id on the wire and never on the screen: the select renders "v18 - full -
- * production", so the rule that no UUID reaches the UI holds.
+ * The VALUE is `"<prompt key>@<version>"` - `chatbot_semantic_parser@18` - built from the
+ * versions `GET /api/v1/system/chatbot/console/prompt-versions` returns (newest first).
+ * NOT the version's uuid: the value is read back on the settings screen and again on every
+ * shadow turn's trace, and a name plus a number says which prompt and which version of it
+ * without a lookup. The select renders "v18 - full - production".
  *
  * Null means no shadow parse runs at all. Set, every real turn ALSO runs that version and
  * writes a second `chatbot.turns` row with `ingress = "shadow"`; a shadow failure never
@@ -71,7 +71,7 @@ export interface ChatbotSettings {
   /**
    * AC-1027. The `chatbot_semantic_parser` version every real turn ALSO runs, in the
    * background, so the owner can watch a new parser's answers beside the live one before
-   * promoting it. Null = no shadow parse. An `AIPromptVersion.id`, never shown as one.
+   * promoting it. `"<prompt key>@<version>"`, or null for no shadow parse at all.
    */
   chatbot_parser_shadow_version: string | null;
 }

@@ -37,6 +37,7 @@ from app.config import settings
 from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import dispatch, jsc, trace as trace_mod
+from app.services.chatbot import shadow
 from app.services.chatbot.dialogue import clearing as clearing_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
@@ -933,6 +934,19 @@ def run_turn(
                     raise
                 return _duplicate_result(winner)
             turn_id = str(row.id)
+
+        # AC-1027. The shadow parse starts HERE: the live row exists, so the observation can
+        # name the turn it shadows, and nothing downstream waits on it. Fire-and-forget, and
+        # it cannot fail this turn - `shadow.fire` catches everything, including its own
+        # enqueue.
+        shadow.fire(
+            envelope,
+            session_factory=session_factory,
+            shadow_version=switches.chatbot_parser_shadow_version,
+            contact_respond_id=contact_respond_id,
+            live_message_id=message_id,
+            offloaded=bool(getattr(settings, "chatbot_turn_on_worker", False)),
+        )
 
         # The stage the turn is currently in, for the catch-all below. A plain list because
         # the inner stages update it and the handler reads it.
@@ -2717,6 +2731,10 @@ class _TurnSwitches:
     # ladder in by hand, so nothing saw it. This is the "a new DB column must reach every
     # manual builder" lesson one builder further along than the two it usually names.
     chatbot_crossdomain_ladder: Any = None
+    # AC-1027. Which parser version runs in the shadow, `<prompt key>@<version>`, or None
+    # for off. Read on the SAME row as everything above so a turn cannot answer under one
+    # snapshot and be shadowed under another.
+    chatbot_parser_shadow_version: Any = None
 
 
 def _read_switches(db: Session) -> _TurnSwitches:
@@ -2735,6 +2753,7 @@ def _read_switches(db: Session) -> _TurnSwitches:
         ),
         chatbot_ordering_enabled=bool(getattr(row, "chatbot_ordering_enabled", False)),
         chatbot_crossdomain_ladder=getattr(row, "chatbot_crossdomain_ladder", None),
+        chatbot_parser_shadow_version=getattr(row, "chatbot_parser_shadow_version", None),
     )
 
 
