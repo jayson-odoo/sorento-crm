@@ -608,7 +608,19 @@ def _roster_of(stored: dict, context: str) -> list[dict[str, Any]]:
 
 
 def _siblings_to_keep(stored: dict, context: str, dym_offer: dict) -> list[dict[str, Any]]:
-    """The prior entities the pick must not throw away, minus the tokens it answers."""
+    """The prior entities the pick must not throw away, minus the tokens it answers.
+
+    Issue #708 / AC-1017: "SRTKS6091 and SRTKS8091 got stock?" resolves one code and offers
+    a picker for the other, so the pick's answer is ONE product and the turn's scope is TWO.
+    The sibling that already resolved has to survive, or the reply answers half the
+    question the customer asked.
+
+    WHERE the siblings come from changed with the five-key session (L1-S3): they are
+    `focus.products`, which is what the conversation is about, and the legacy `entities`
+    key is only read for a session written before that shape existed. Both are filtered by
+    the SAME rule - drop the token the picker was raised for, keep the rest - so which
+    source answered cannot change what is kept.
+    """
     candidates = [c for c in jsc.array(dym_offer.get("candidates")) if isinstance(c, dict)]
     if context != "suggest_offer" or not candidates:
         return []
@@ -619,11 +631,22 @@ def _siblings_to_keep(stored: dict, context: str, dym_offer: dict) -> list[dict[
             _code_key({"canonical_code": candidate.get("for_raw")}),
         }
     source_keys -= {""}
-    return [
-        e
-        for e in jsc.array(stored.get("entities"))
-        if isinstance(e, dict) and _code_key(e) not in source_keys
-    ]
+    prior = _prior_entities(stored)
+    return [e for e in prior if isinstance(e, dict) and _code_key(e) not in source_keys]
+
+
+def _prior_entities(stored: dict) -> list[Any]:
+    """What the conversation was about before this turn: `focus.products` first.
+
+    The legacy `entities` key is the fallback and nothing writes it any more; a session
+    that still carries one was written by an older build or by n8n.
+    """
+    focus = stored.get("focus")
+    slot = focus.get("products") if isinstance(focus, dict) else None
+    value = slot.get("value") if isinstance(slot, dict) else None
+    if isinstance(value, list) and value:
+        return value
+    return jsc.array(stored.get("entities"))
 
 
 def _rows_are_customers(rows: list[dict[str, Any]]) -> bool:

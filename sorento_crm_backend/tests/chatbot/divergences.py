@@ -45,13 +45,20 @@ class Divergence:
 # `selection_context`, `last_result_set`, `dym_offer` and `pending` included - which is
 # the point: `open_question` is DERIVED from those, so any drift between them would show
 # up as one of them moving.
+# L1-S3 (AC-1001, AC-1033, owner decision D8): the WHOLE `variables` object, because the
+# node stopped persisting a turn's diagnostics. What it writes is the five keys the
+# conversation IS - focus, open question, ideation, access levels, contains_flyer - and the
+# 34 keys every capture carries described ONE TURN, which a turn that has been answered has
+# nothing left to say about. No capture predates that decision and none ever can.
+#
+# FIELD-SCOPED, and the field is the only one that moved: `user_response`, `quick_reply` and
+# every other byte of the item are still compared, so what the CUSTOMER is shown is graded
+# exactly as before. The five keys themselves are asserted by
+# `tests/chatbot/test_session_shape.py` and the world grader's
+# `map_expected_variables_to_five_keys`.
 _PORT_ONLY_SESSION_KEYS: tuple[tuple[str, ...], ...] = (
-    ("reply", "session_patch", "variables", "pending"),  # the shipping seal
-    ("variables", "pending"),  # a pre-RS-3 capture, unwrapped by the runner
-    ("reply", "session_patch", "variables", "focus"),
-    ("variables", "focus"),
-    ("reply", "session_patch", "variables", "open_question"),
-    ("variables", "open_question"),
+    ("reply", "session_patch", "variables"),  # the shipping seal
+    ("variables",),  # a pre-RS-3 capture, unwrapped by the runner
 )
 
 
@@ -164,7 +171,7 @@ DIVERGENCES: list[Divergence] = [
     Divergence(
         node="compile-current-state",
         fixture=None,
-        hazard="H13/H14 (R3) + growth r1 slice B3 (AC-951)",
+        hazard="H13/H14 (R3), growth r1 slice B3 (AC-951), L1-S3 (AC-1001 / AC-1033, D8)",
         reason=(
             "the port writes three session keys the JS had no equivalent of. `pending` is "
             "the R3 marker, so the next turn can ask 'is an escalation offer open?' of "

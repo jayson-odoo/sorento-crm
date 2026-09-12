@@ -1467,6 +1467,16 @@ def _run_stages(  # noqa: PLR0915
     # text, and not a mirror of the legacy keys (D8). One writer, one reader.
     stage[0] = "answered"
     open_question_before = variables.get("open_question")
+    if "open_question" not in variables:
+        # A session written BEFORE the five-key shape - by an older build, or by n8n - has
+        # no slot, and the customer looking at that roster must still be able to answer it.
+        # `from_state` derives the question the legacy keys describe, once, at READ time. A
+        # PRESENT key wins, `None` included: that means the slot was there and was cleared,
+        # and deriving over it would resurrect the question that was just cleared. This is
+        # not a mirror (D8) - nothing writes those keys any more.
+        open_question_before = open_question_mod.from_state(
+            variables, asked_at_turn=max(0, turn_no - 1)
+        )
     open_question_before = (
         open_question_before if isinstance(open_question_before, dict) else None
     )

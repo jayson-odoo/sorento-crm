@@ -584,16 +584,11 @@ def is_timeline(requested_attributes: Any) -> bool:
         for key in requested_attributes
     )
 
-# `pending` marker kinds (R3). These replace the two frozen string contracts the JS
-# matched with a regex over the previous reply.
-PENDING_KINDS = (
-    "escalation_offer",
-    "team_clarify",
-    "company_clarify",
-    "tier_ask",
-    "member_offer",
-)
-PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
+# The five `pending` marker kinds are DELETED (AC-1019). What the bot is waiting for is
+# `open_question`, typed, with its own frozen options and one handler per kind; a second
+# marker beside it was the two-writers defect this lane exists to end.
+
+
 
 # --------------------------------------------------------------------------- #
 # Dialogue state (growth r1, slice B: ONE focus object, ONE open question)
@@ -655,6 +650,7 @@ OpenQuestionKind = Literal[OPEN_QUESTION_KINDS]  # type: ignore[valid-type]
 # `free` takes the customer's own words through `free_text`.
 OPEN_QUESTION_EXPECTS = ("pick", "yes_no", "free")
 OpenQuestionExpects = Literal[OPEN_QUESTION_EXPECTS]  # type: ignore[valid-type]
+
 
 
 class FocusSlot(BaseModel):
@@ -745,120 +741,46 @@ class OpenQuestion(BaseModel):
 # --------------------------------------------------------------------------- #
 
 SESSION_VAR_KEYS = (
-    "message_type",
-    "intent_hint",
-    "domain_hint",
-    "user_goal",
-    "query_scope",
-    "query_brands",
-    "access_levels",
-    "entities",
-    "routing",
-    "escalation",
-    "response",
-    "last_result_set",
-    "selection_context",
-    "date_filter_start",
-    "date_filter_end",
-    "date_mode",
-    "requested_attributes",
-    "match_mode",
-    "contains_flyer",
-    "dym_offer",
-    "dym_candidates",
-    "ideation",
-    "dym_last_result_set",
-    "tier_menu",
-    "picker_last_result_set",
-    "picker_families",
-    "picker_domain",
-    "picker_selection_context",
-    "picker_families_carried",
-    "routing_roster_plan",
-    "routing_brand",
-    "routing_brand_source",
-    "routing_company",
-    "routing_companies",
-    # R3: the persisted marker that replaces the frozen-string reads.
-    "pending",
-    # Growth r1 slice B: the dialogue state, ONE writer per layer (D6/D7). `pending`,
-    # `dym_offer`, `selection_context` and the `picker_*` keys above stay for one
-    # release as MIRRORS derived from `open_question` (AC-951), so every existing world
-    # still grades while the corpus is re-derived.
     "focus",
     "open_question",
+    "ideation",
+    "access_levels",
+    "contains_flyer",
 )
 
 
-class Pending(BaseModel):
-    """What the bot is waiting for, recorded rather than re-read out of its own words."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: PendingKind
-    team: str | None = None
-    domain: str | None = None
-    # `member_offer` only: how many more turns the roster stays on the customer's screen
-    # (AC-816 rule 1, `tail/pending.MEMBER_OFFER_TTL`). Absent on every other kind, and on
-    # a marker written by n8n, which has no clock - the reader treats absence as "open".
-    ttl: int | None = None
-    # `team_clarify` only (AC-821 / AC-822): the teams the ask actually OFFERED, as
-    # `{team, label}` - the slug the router acts on beside the exact string the customer
-    # saw on the quick reply. One list, so a tap can never resolve to a team the ask did
-    # not name, and `output_exchange._team_clarify_pick` can compare the reply against OUR
-    # OWN string by equality instead of trying to understand it. Absent on a marker written
-    # before this shipped, which is why that reader treats absence as "parser answer only".
-    options: list[dict[str, Any]] | None = None
+# `Pending` is DELETED with the marker (AC-1019). `contracts.OpenQuestion` is the one
+# record of what the bot asked.
 
 
 class SessionVars(BaseModel):
-    """`respond_contacts.session_vars.variables`, allowlisted (H15, AC-203).
+    """`respond_contacts.session_vars.variables`, and it is FIVE KEYS (AC-1001, D8).
 
-    `extra = "forbid"` is what stops a harness key or a stray diagnostic leaking into a
-    customer's session: the JS built a fresh object literal per writer, so anything a
-    writer happened to set survived. The tail (S2) is what enforces this on the write
-    path; S1 only reads.
+    `extra = "forbid"` is what stops a harness key, a stray diagnostic or a legacy mirror
+    leaking into a customer's session: the JS built a fresh object literal per writer, so
+    anything a writer happened to set survived, and the 34-key version of this model was
+    that habit written down.
+
+    The five are what the conversation IS - what it is about (`focus`), what the bot is
+    waiting for (`open_question`), the draft the contact may come back to (`ideation`),
+    what they are allowed to see (`access_levels`) and whether their last message carried a
+    flyer. Everything the old shape carried beside them described ONE TURN
+    (`message_type`, `user_goal`, `routing`, `response`, the dym / picker / pending
+    machinery) and is re-derived from the parse each turn, so persisting it could only ever
+    let an old turn answer a new one.
+
+    NO MIRRORS (D8). A reader that wants the legacy shape of a world's expectation maps it
+    in ONE place, `tests/chatbot/worlds.py`, which is where the translation can be read and
+    argued with.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    message_type: Any = None
-    intent_hint: Any = None
-    domain_hint: Any = None
-    user_goal: Any = None
-    query_scope: Any = None
-    query_brands: Any = None
-    access_levels: Any = None
-    entities: Any = None
-    routing: Any = None
-    escalation: Any = None
-    response: Any = None
-    last_result_set: Any = None
-    selection_context: Any = None
-    date_filter_start: Any = None
-    date_filter_end: Any = None
-    date_mode: Any = None
-    requested_attributes: Any = None
-    match_mode: Any = None
-    contains_flyer: Any = None
-    dym_offer: Any = None
-    dym_candidates: Any = None
-    ideation: Any = None
-    dym_last_result_set: Any = None
-    tier_menu: Any = None
-    picker_last_result_set: Any = None
-    picker_families: Any = None
-    picker_domain: Any = None
-    picker_selection_context: Any = None
-    picker_families_carried: Any = None
-    routing_roster_plan: Any = None
-    routing_brand: Any = None
-    routing_brand_source: Any = None
-    routing_company: Any = None
-    routing_companies: Any = None
-    pending: Pending | None = None
     focus: Focus | None = None
     open_question: OpenQuestion | None = None
+    ideation: Any = None
+    access_levels: Any = None
+    contains_flyer: Any = None
 
 
 # The widths the `chatbot.turns` columns actually have. Validated on the way IN so an

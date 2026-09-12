@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc, topic
+from app.services.chatbot.contracts import SESSION_VAR_KEYS
 from app.services.chatbot.dialogue import open_question as pending_open_question
 from app.services.chatbot.tail import pending as pending_marker
 
@@ -988,6 +989,19 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         # question this turn. A consumed question is never re-armed.
         answered=jsc.truthy(jsc.get(qf, "open_question_answered")),
     )
+
+    # ---- AC-1001: FIVE KEYS LEAVE THIS FUNCTION, and nothing else ---------- #
+    # Everything above still runs, and it still decides the reply text, the quick replies
+    # and the roster the customer is looking at. What changes is what is REMEMBERED: the
+    # 34-key bag described one turn, and a turn that has been answered has nothing left to
+    # say to the next one. What the conversation IS - its focus, its open question, an
+    # open draft, what the contact may see, whether they sent a flyer - is the whole of
+    # what carries (D8).
+    #
+    # The legacy keys are computed and then dropped rather than never computed: the
+    # did-you-mean lifecycle above uses them to decide THIS turn's roster, and its
+    # eight-rule order is graded against captures. They stop being persisted here.
+    output["variables"] = {key: variables.get(key) for key in SESSION_VAR_KEYS}
 
     sanitize_em_dash(output)
     # The node's output IS a serialised n8n item, so `undefined` becomes an absent key
