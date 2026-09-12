@@ -33,6 +33,14 @@ from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.document_ingest_service import DocumentIngestService
 from tests._pg_fixture import blank_session
 
+from tests.scm.test_planning_change_diff_parity import (  # noqa: F401  (api is the fixture)
+    _freeze_with_a_full_buy,
+    _linked_line,
+    _product,
+    _rows_for,
+    api,
+)
+
 MARKER = "zzt-ingestlineid"
 
 
@@ -95,3 +103,80 @@ def test_ingest_capture_carries_line_ids():
         "the AFTER capture must carry line_id too - `diff_lines` pairs a before/after "
         "sharing the SAME line_id first (Slice A rule 5)"
     )
+
+
+# --------------------------------------------------------------------------- #
+# R2-S1b (round 2): the ingest trigger reads a product swap as one
+# product_changed row, exactly like the manual-edit trigger.
+#
+# Route taken: FALLBACK, as the brief invites. The pure HTTP route
+# (`POST /external/ingest/sales_orders`) never ADOPTS the pushed order onto
+# `projects.sales_orders` by itself - adoption is a separate step nothing in
+# that call chain triggers - so `build_batch`'s held-or-inquiry gate
+# (`app/services/planning_change_service.py`, `_build_row`) can never see a
+# row to keep without ALSO driving project adoption AND a confirmed supply
+# decision through `project_supply_service` on top of the ingest route: three
+# services chained together for what this one test needs to prove, well past
+# "smallest unit". Instead: `DocumentIngestService._capture_planning_diff
+# _before` / `_after` - the exact methods `_run_planning_change_hook`
+# (`app/api/v1/external/ingest.py` ~299-330) reads off the service - are
+# called directly around an in-place product mutation on a HELD core line,
+# then `diff_lines` and `build_batch` are called with the SAME arguments
+# `_run_planning_change_hook` passes them. Everything downstream of the two
+# capture calls is the real production code path; only the HTTP layer and
+# project adoption are skipped.
+#
+# Expected today: GREEN. R-S1 (line_id on the captures, `fd618f6f7`) already
+# landed, and AC-A5's line_id pairing / product_changed mapping already cover
+# the rest (`test_outstanding_diff_line_identity.py`,
+# `test_planning_change_batch_kind_parity.py`). Kept here as the AC-A5 guard
+# for the INGEST trigger specifically - the one path none of those other
+# files drives through the ingest service's own capture methods.
+# --------------------------------------------------------------------------- #
+
+def test_ingest_product_swap_reads_as_one_product_changed_row(api):
+    from app.services import planning_change_service
+    from app.services.scm.outstanding_diff import diff_lines
+
+    world, project = api
+    db = world.db
+    core_so, core_line, product, order, mirror_line = _linked_line(
+        world, project, qty_ordered=72,
+    )
+    _freeze_with_a_full_buy(db, world, order, mirror_line)
+    new_product = _product(db)
+
+    svc = DocumentIngestService(db, None, company_id=world.company_id)
+    payload = SimpleNamespace(so_number=core_so.so_number)
+
+    svc._capture_planning_diff_before(core_so, payload)
+    core_line.product_id = new_product.id
+    db.flush()
+    svc._capture_planning_diff_after(core_so, payload)
+
+    # The SAME two calls `_run_planning_change_hook` makes off the service's own
+    # `so_diff_before`/`so_diff_after` and `so_header_id_by_number`.
+    diff = diff_lines(svc.so_diff_before, svc.so_diff_after)
+    applied_line_ids: dict[int, str] = {}
+    for change in diff.changes:
+        line_id = (change.after.row_ref if change.after else None) or (
+            change.before.row_ref if change.before else None
+        )
+        if line_id:
+            applied_line_ids[id(change)] = line_id
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids=applied_line_ids,
+        order_ids={core_so.so_number: str(core_so.id)},
+        actor=world.actor, import_job_id=None, file_name=None,
+    )
+    db.commit()
+
+    assert batch is not None, "a held line's product swap must still raise a batch"
+    rows = _rows_for(db, batch.id)
+    assert len(rows) == 1, [r.kind for r in rows]
+    row = rows[0]
+    assert row.kind == "product_changed"
+    assert row.from_json["item_code"] == product.product_code
+    assert row.to_json["item_code"] == new_product.product_code
+    assert not any(r.kind == "cancelled" for r in rows)
+    assert not any(r.kind == "added" for r in rows)

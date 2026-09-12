@@ -1922,4 +1922,34 @@ describe('SalesOrderDetail - removing a line', () => {
     expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
     expect(updateSalesOrderMutateAsync).not.toHaveBeenCalled();
   });
+
+  // R2-S5c (`PLAN-scm-change-management-one-engine.md`, Slice A review round 2): a
+  // removal or a qty-to-zero edit leaves the CORE line `line_status: 'cancelled'` rather
+  // than deleting it (R-S5/R-B1), so it can still arrive on this same order's next load,
+  // inside an edit session, sitting beside lines that are still open. It must render
+  // read-only - not another line the planner can edit or remove again.
+  it('renders a cancelled line read-only, with no remove control, during an edit session', () => {
+    const THREE_LINES: SalesOrderLine[] = [
+      ...TWO_LINES,
+      {
+        id: 'l-3', sku: 'BASIN-OLD-99', product_name: 'Retired basin', qty_ordered: 72,
+        qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'cancelled',
+        required_date: '2026-08-01', unit_price: '50.00', discount: null, line_total: null,
+      },
+    ];
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: THREE_LINES, line_count: 3, open_line_count: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    expect(screen.queryByLabelText('Product on BASIN-OLD-99')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Unit price on BASIN-OLD-99')).not.toBeInTheDocument();
+    // Only the two OPEN lines get a remove control - a cancelled line cannot be removed
+    // again.
+    expect(screen.getAllByRole('button', { name: 'Remove line' })).toHaveLength(2);
+  });
 });

@@ -702,3 +702,58 @@ def test_create_rejects_a_zero_qty_line(api):
         _restore_api_client(originals)
 
     assert response.status_code == 422, response.text
+
+
+# --------------------------------------------------------------------------- #
+# R2-N1 (round 2): re-sending an already-zero line, unchanged, must not cancel
+# it - `_upsert_lines`'s qty-to-zero cancel (R-S5) keys on the NEW value alone
+# (`if float(ln.qty_ordered or 0) <= 0`), so an AutoCount-style line already at
+# 0 (25,738 of them on the prod copy) gets cancelled the instant an unrelated
+# line on the SAME order is edited in the same save. The fix is `old > 0 >=
+# new` - a transition, not a bare value check.
+# --------------------------------------------------------------------------- #
+
+def test_re_sending_an_already_zero_line_does_not_cancel_it(api):
+    world, _project = api
+    db = world.db
+    core_so, core_line_a, product_a, order, mirror_line_a = _adopted_line(
+        world, qty_ordered=72,
+    )
+    _freeze_with_a_full_buy(db, world, order, mirror_line_a)
+
+    product_b = _product(db)
+    core_line_b = SalesOrderLine(
+        id=_uid(), company_id=world.company_id, sales_order_id=core_so.id,
+        product_id=product_b.id, warehouse_id=world.own_wh.id,
+        qty_ordered=Decimal("0"), qty_delivered=Decimal("0"), line_status="open",
+        source_system="autocount", line_total=Decimal("500.00"),
+    )
+    db.add(core_line_b)
+    db.commit()
+
+    result = SalesOrderService(db).update(
+        core_so.id,
+        SalesOrderUpdate(lines=[
+            {"id": core_line_a.id, "sku": product_a.product_code, "qty_ordered": 80},
+            {"id": core_line_b.id, "sku": product_b.product_code, "qty_ordered": 0},
+        ]),
+        user_id=world.actor,
+    )
+
+    lines_by_id = {str(ln["id"]): ln for ln in result["lines"]}
+    assert lines_by_id[str(core_line_b.id)]["line_status"] == "open", (
+        "an already-zero line resent unchanged must stay open, not be cancelled "
+        "as a side effect of an unrelated line's edit"
+    )
+    assert result["total_amount"] is not None
+    assert float(result["total_amount"]) == 500.0, (
+        "B's own line_total must still count toward the order's total - it was never "
+        "cancelled"
+    )
+
+    envelope = result["planning_change_batch"]
+    assert envelope is not None
+    batch = db.get(PlanningChangeBatch, envelope["id"])
+    rows = _rows_for(db, batch.id)
+    assert len(rows) == 1, [r.kind for r in rows]
+    assert rows[0].kind == "qty_up", rows[0].kind
