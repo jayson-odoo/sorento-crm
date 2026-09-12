@@ -16,10 +16,12 @@ A focus slot is cleared by exactly three things, and each one is something that 
 2. **`topic_reset`.** "another one" / "别的" clears every axis except the tier and the
    brands, which are constraints the customer put on themselves rather than answers to the
    question being asked (AC-1008).
-3. **The Respond.io conversation-closed event.** The conversation is over, so everything it
-   was about goes, the open question included. `sla_service` clears the contact directly
-   when the last open ticket resolves; this arm is what a turn arriving WITH the marker
-   does, so the two paths cannot disagree about what "closed" means.
+There is no third cause, and there used to be an arm here for one. A Respond.io
+conversation close IS handled - by `sla_service`, at the moment the last open ticket
+resolves, which writes the cleared state straight onto the contact. A turn arriving later
+therefore READS a clear session and has nothing to clear, so the arm never fired in
+production and could only ever have disagreed with the path that does the work
+(AC-1003).
 
 The open question follows the same rule from the other side (AC-1020): a casual or
 low-signal message leaves it open, however many of them arrive; a message that carries an
@@ -34,9 +36,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from app.services.chatbot.contracts import FOCUS_SLOTS
 from app.services.chatbot.dialogue import intake
-from app.services.chatbot.dialogue.focus import RESET_KEEPS, _SLOT_BY_HINT
+from app.services.chatbot.dialogue.focus import RESET_KEEPS, SLOT_BY_HINT
 
 
 class _TraceSink(Protocol):
@@ -46,11 +47,10 @@ class _TraceSink(Protocol):
 def apply(
     session: Any,
     parse: Any,
-    conversation_closed: bool = False,
     *,
     trace: _TraceSink | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Apply the three causes to the stored state, returning `(session, trace_lines)`.
+    """Apply the two causes to the stored state, returning `(session, trace_lines)`.
 
     `session` is `respond_contacts.session_vars.variables` as it was read - a plain dict,
     never a model, because a session written by an older build is legal input and must not
@@ -72,33 +72,6 @@ def apply(
     question = stored.get("open_question")
     question = question if isinstance(question, dict) and question.get("kind") else None
     lines: list[dict[str, Any]] = []
-
-    if conversation_closed:
-        for name in list(focus):
-            if _is_empty(focus[name].get("value")):
-                continue
-            lines.append(
-                _line(
-                    name,
-                    "the Respond.io conversation was closed, so what it was about is "
-                    "cleared before the next message",
-                )
-            )
-            focus.pop(name)
-        # Every slot goes, including the ones that were already empty: after a close the
-        # state must be indistinguishable from a contact who has never written.
-        focus = {}
-        if question is not None:
-            lines.append(
-                _line(
-                    "open_question",
-                    "the Respond.io conversation was closed, so the question it was "
-                    "waiting on is cleared rather than answered by the next message",
-                )
-            )
-            question = None
-        _trace(trace, lines)
-        return {**stored, "focus": focus, "open_question": question}, lines
 
     if emission.get("topic_reset") is True:
         for name in list(focus):
@@ -218,7 +191,7 @@ def _slot_of(entity: dict[str, Any]) -> str | None:
     hint = str(entity.get("hint") or "").strip().lower()
     if hint == "product":
         return "products"
-    return _SLOT_BY_HINT.get(hint)
+    return SLOT_BY_HINT.get(hint)
 
 
 def _is_a_new_ask(emission: dict[str, Any]) -> bool:
@@ -293,7 +266,3 @@ def _int(value: Any, default: int) -> int:
 def _is_empty(value: Any) -> bool:
     return value is None or value == [] or value == {} or value == ""
 
-
-# `FOCUS_SLOTS` is imported for the module's own contract, not for a loop: a slot name
-# that is not in it cannot be cleared here because it cannot be set anywhere else.
-_ = FOCUS_SLOTS

@@ -234,8 +234,6 @@ def render_user_message(prompt: dict[str, Any]) -> str:
     """
     return (
         f"message_type: {jsc.js_string(prompt.get('message_type'))}  \n"
-        f"intent_hint: {jsc.js_string(prompt.get('intent_hint'))}  \n"
-        f"domain_hint: {jsc.js_string(prompt.get('domain_hint'))}   \n"
         f"user_goal: {jsc.js_string(prompt.get('user_goal'))}   \n"
         f"entities: {json.dumps(prompt.get('entities'), separators=(',', ':'))}   \n"
         f"session_vars: {json.dumps(prompt.get('session_vars'), separators=(',', ':'))}  "

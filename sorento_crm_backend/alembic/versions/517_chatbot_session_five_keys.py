@@ -16,7 +16,13 @@ a pure function so it can be driven on literal dicts by
 **Self-contained on purpose.** It imports nothing from `app.services.chatbot`: a migration is
 frozen history, and a rule it borrowed would change under it the next time that package moves.
 
-Batched 500 rows by id. No row locking: this runs with the API down, on deploy.
+**KEYSET batches of 500, by id.** It used to SELECT every row with a `session_vars` at all
+and hold the whole conversion in a list before writing any of it, so the memory it needed
+grew with the contact table - on a tenant with a large one that is the migration itself
+falling over on deploy, which is the worst possible moment. `WHERE id > :last ORDER BY id
+LIMIT 500` reads and writes one bounded page at a time. One transaction still (alembic's
+own), so a failure rolls the whole conversion back rather than leaving half the tenant in
+each shape. No row locking: this runs with the API down.
 
 Revision ID: 517_chatbot_session_5key
 Revises: 516_chatbot_parser_v3_asks
@@ -209,40 +215,47 @@ def convert(session_vars: Any) -> dict[str, Any] | None:
 
 def upgrade() -> None:
     bind = op.get_bind()
-    rows = bind.execute(
-        sa.text(
-            "SELECT id, session_vars FROM respond_contacts "
-            "WHERE session_vars IS NOT NULL ORDER BY id"
-        )
-    ).fetchall()
+    seen = converted_count = 0
+    last_id: Any = None
 
-    pending_updates: list[dict[str, Any]] = []
-    for row in rows:
-        raw = row.session_vars
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except Exception:
+    while True:
+        page = bind.execute(
+            sa.text(
+                "SELECT id, session_vars FROM respond_contacts "
+                "WHERE session_vars IS NOT NULL "
+                + ("AND id > :last " if last_id is not None else "")
+                + "ORDER BY id LIMIT :limit"
+            ),
+            {"limit": BATCH, **({"last": last_id} if last_id is not None else {})},
+        ).fetchall()
+        if not page:
+            break
+        last_id = page[-1].id
+        seen += len(page)
+
+        for row in page:
+            raw = row.session_vars
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except Exception:
+                    continue
+            converted = convert(raw)
+            if converted is None:
                 continue
-        converted = convert(raw)
-        if converted is None:
-            continue
-        pending_updates.append({"id": row.id, "sv": json.dumps(converted)})
-
-    for start in range(0, len(pending_updates), BATCH):
-        batch = pending_updates[start : start + BATCH]
-        for update in batch:
             bind.execute(
                 sa.text(
                     "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
                     "WHERE id = :id"
                 ),
-                update,
+                {"id": row.id, "sv": json.dumps(converted)},
             )
+            converted_count += 1
+
     logger.info(
         "converted %s of %s stored chatbot sessions to the five-key shape",
-        len(pending_updates),
-        len(rows),
+        converted_count,
+        seen,
     )
 
 

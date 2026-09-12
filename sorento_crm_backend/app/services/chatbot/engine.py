@@ -1668,7 +1668,7 @@ def _run_stages(  # noqa: PLR0915
         # question clears it, with a trace line, and is handled as a new ask. A casual or
         # low-signal message leaves it open however many of them arrive.
         variables, cleared_question = clearing_mod.apply(
-            variables, qf, conversation_closed=False, trace=turn_trace
+            variables, qf, trace=turn_trace
         )
         if cleared_question:
             open_question_before = None

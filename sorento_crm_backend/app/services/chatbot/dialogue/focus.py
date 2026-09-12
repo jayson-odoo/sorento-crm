@@ -73,7 +73,7 @@ from app.services.chatbot.contracts import FOCUS_SLOTS
 
 # The entity hint that owns each single-value axis. `products` is handled apart because it
 # is the one axis that legitimately holds several values at once.
-_SLOT_BY_HINT: dict[str, str] = {
+SLOT_BY_HINT: dict[str, str] = {
     "customer": "customer",
     "transporter": "transporter",
     "warehouse": "warehouse",
@@ -217,7 +217,7 @@ def from_session(variables: Any, *, turn_no: int) -> dict[str, Any]:
 
     entities = [e for e in jsc.array(stored.get("entities")) if jsc.truthy(e)]
     put("products", [e for e in entities if jsc.lower_or_empty(jsc.get(e, "hint")) == "product"])
-    for hint, name in _SLOT_BY_HINT.items():
+    for hint, name in SLOT_BY_HINT.items():
         match = next(
             (e for e in entities if jsc.lower_or_empty(jsc.get(e, "hint")) == hint), None
         )
@@ -290,7 +290,7 @@ def replace_same_axis(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
     if products:
         _set(focus, "products", products, turn, out, rule="replace_same_axis", source=source)
 
-    for hint, name in _SLOT_BY_HINT.items():
+    for hint, name in SLOT_BY_HINT.items():
         named = next((e for e in current if jsc.lower_or_empty(jsc.get(e, "hint")) == hint), None)
         if named is not None and _confident_enough(focus, name, [named], turn):
             _set(focus, name, named, turn, out, rule="replace_same_axis", source=source)
@@ -600,7 +600,7 @@ def _slot_of(entity: Any) -> str | None:
     hint = jsc.lower_or_empty(jsc.get(entity, "hint"))
     if hint == "product":
         return "products"
-    return _SLOT_BY_HINT.get(hint)
+    return SLOT_BY_HINT.get(hint)
 
 
 def domains_from_asks(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:

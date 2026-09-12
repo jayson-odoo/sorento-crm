@@ -236,8 +236,8 @@ DOMAIN_SUBJECT_AXIS: dict[str, str] = {
     "portal_link": "doc",
 }
 
-# Domain -> the entity HINT naming that domain's own subject. Read by the AXIS BROADEN
-# restore and by the reference-positions block; hoisted so there is one copy.
+# Domain -> the entity HINT naming that domain's own subject. Read by the
+# reference-positions block; hoisted so there is one copy.
 DOMAIN_SUBJECT_HINT: dict[str, str] = {
     "product_attachment": "product",
     "master_products": "product",
@@ -363,8 +363,7 @@ DOMAIN_BLOCKED_HINTS: dict[str, list[str]] = {
 # PLAN-broaden-domain-switch (owner ruling, 8 Sep 2026): the domains a "wander" actually
 # lands on. A wander names a KIND of thing ("all products"), never an ACTIVITY - nobody
 # reaches `incoming`, `order`, `promotion`, `inventory`, `goods_receive`, `purchase_order`
-# or `forms` by naming a kind of thing. Read by the AXIS BROADEN block below to decide
-# whether a coherent (domain, intent) pair beside `broaden_axis` is a genuine switch.
+# or `forms` by naming a kind of thing.
 CATALOGUE_DOMAINS = frozenset({"master_products", "product_attachment", "resource_attachment"})
 
 # OWNER RULING K, rule 3 (2026-09-06): which entity types are a FILTER on a carried
@@ -643,9 +642,6 @@ _FENCE_RE = re.compile(r"```[\s\S]*?```")
 _FENCE_MARK_RE = re.compile(r"```json?|```")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
-
-# `_switch_word_domain` is DELETED (AC-1032). A domain word is an ASK under parser v3 and
-# `dialogue/focus.domains_from_asks` is the one rule that acts on it.
 
 # U+2010..U+2015, U+2212, U+FE58, U+FE63, U+FF0D - the copy-paste dashes Excel / Word /
 # Sheets / PDF emit instead of ASCII '-' (observed live, exec 12053189).
@@ -1551,13 +1547,6 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["date_widen_applied"] = True
 
     prev_state_domain = jsc.get(parent_input.get("previous_conversation_state"), "domain_hint") or None
-
-    # The AXIS BROADEN RESTORE is DELETED (AC-1032). It existed because a widen turn
-    # ("all products" after an order question) came back naming the catalogue domain and
-    # the executor then dropped the customer with it - a carry deciding a domain, which is
-    # the defect the dialogue state exists to end. Under parser v3 a widen names no ask, so
-    # `domains_from_asks` leaves the alive domains exactly where they were and there is
-    # nothing to restore. `broaden_axis` itself is gone from the v3 schema.
 
     # -- ENTITY OPERATION EXECUTOR (op + axis-aware replace/combine) --------------------- #
     # Set by the `reuse` arm below and read by the focus rules at the `#6` position, which
@@ -2486,8 +2475,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     #
     # The signal is the PARSE, not a re-reading of the customer's words: v3 says it in
     # `asks[].domain` and v1 says it in the RAW `domain_hint`, before any carry could have
-    # supplied one. `_switch_word_domain` re-tokenised the message to answer the same
-    # question a second way, which is exactly the two-writers defect AC-1032 deletes.
+    # supplied one.
     switch_word_domain_now = _domain_named_this_message(o, parser_raw_snapshot)
     entity_named_now = jsc.is_array(o.get("entities")) and any(
         jsc.get(e, "current_message") is True for e in o["entities"]
@@ -3254,10 +3242,6 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             before = len(o["entities"])
             o["entities"] = [e for e in o["entities"] if sn(jsc.get(e, "raw")) not in superseded]
             o["dym_superseded_dropped"] = before - len(o["entities"])
-
-    # The AXIS BROADEN FINAL PASS is DELETED with the restore above (AC-1032). Both halves
-    # existed to undo what `broaden_axis` had done earlier in the same function; v3 emits no
-    # such key, and what a customer widens is now a slot the focus rules clear by name.
 
     output["_parser_raw"] = parser_raw_snapshot
     return output
