@@ -1,6 +1,6 @@
 # UAC - Loading plan Lines tab feedback, 12 Sep 2026
 
-**Status:** APPROVED 12 Sep 2026. Plan: `PLAN-scm-loading-plan-lines-feedback-12sep.md`.
+**Status:** MERGED 12 Sep 2026 in PR #849. Plan: `PLAN-scm-loading-plan-lines-feedback-12sep.md`.
 
 ## Journey
 
