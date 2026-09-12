@@ -6,7 +6,7 @@
  * =============================================================================
  *
  * GET /api/v1/system/chatbot/turns
- *     ?contact_respond_id=&from=&to=&status=&limit=&cursor=
+ *     ?contact_respond_id=&from=&to=&status=&ingress=&limit=&cursor=
  *   Permission: `system.chat_history.view`. Newest first, keyset-paged.
  *   `limit` defaults to 50, max 200. `cursor` is the opaque `next_cursor` of the
  *   previous page; `next_cursor` is null on the last page. An unknown `status` is
@@ -51,6 +51,43 @@
  *     "retry_available": true,
  *     "retry_unavailable_reason": "<sentence>" | null
  *   }
+ *
+ * ---------------------------------------------------------------------------
+ * EXPECTED CONTRACT - the shadow window (L1-S4, AC-1027 / AC-1029 / AC-1030)
+ * ---------------------------------------------------------------------------
+ *
+ * NOT IMPLEMENTED YET. Phase 1 builds the Shadow filter, the drift badge, the summary
+ * line and the drawer's second parse column against the mock at the bottom of this file;
+ * Phase 2 adds the endpoint half and the mock goes with this note.
+ *
+ * `ingress` joins the existing filters and takes one of
+ * `webhook | poller | retry | console | shadow`. An unknown value is 422, the same as
+ * `status`.
+ *
+ * EVERY row (live and shadow) gains one field:
+ *
+ *   "domains": ["inventory", "incoming"] | null
+ *      the parse's `asks[]` flattened, in the order the dealer said them. `null` on a
+ *      turn parsed before v3 - which is NOT `[]` ("named no domain"), because the drift
+ *      comparison must not read "we cannot tell" as "these differ".
+ *
+ * A SHADOW row (`ingress: "shadow"`) also carries:
+ *
+ *   "shadow_of": "wamid.xxx"        the LIVE turn's `message_id`, which is what pairs
+ *                                   the two sides. Null on every live row.
+ *
+ * and it carries no reply: `response` is null, nothing was sent, no session was written
+ * and no escalation was raised. Its parse rides `trace` like any other turn's.
+ *
+ * With `ingress=shadow` the response gains a summary over the WHOLE filtered range, not
+ * over the page:
+ *
+ *   "summary": { "count": 42, "branch_parity": 0.97, "asks_parity": 0.91 } | null
+ *
+ * Parities are fractions of the shadow rows that could be paired with a live row, and
+ * either may be null when nothing in the range could be compared. `null` for the whole
+ * object when the filter was not `shadow`. It is computed server-side because the browser
+ * holds one page and the owner is asking about the window.
  *
  * GET /api/v1/system/chatbot/turns/failed-contacts?from=&to=
  *   Permission: `system.chat_history.view`. Feeds the LIST's "Failed turns only"
@@ -100,6 +137,7 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type {
+  BranchKind,
   ChatbotTurn,
   ChatbotTurnDetail,
   ChatbotTurnFilters,
@@ -126,12 +164,19 @@ export async function getChatbotTurns(
     from: filters.from,
     to: filters.to,
     status: filters.status,
+    ingress: filters.ingress,
     limit: filters.limit,
     cursor: filters.cursor,
   });
+  // PHASE 1 MOCK: nothing serves `ingress=shadow` yet, and asking the real endpoint for
+  // it would 422 rather than show the screen. Delete this branch, and `mockShadowTurns`
+  // with it, when the endpoint lands.
+  if (filters.ingress === 'shadow') return mockShadowTurns(filters);
   const response = await apiFetch(`/api/v1/system/chatbot/turns?${query}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load turns'));
-  return response.json();
+  const body: ChatbotTurnListResponse = await response.json();
+  rememberLiveTurns(filters.contact_respond_id, body.items);
+  return body;
 }
 
 /** AC-255: which contacts have a failed turn in the range, and what stopped last. */
@@ -172,4 +217,66 @@ export function indexTurnsByMessageId(turns: ChatbotTurn[]): Map<string, Chatbot
     if (!byMessage.has(turn.message_id)) byMessage.set(turn.message_id, turn);
   }
   return byMessage;
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 1 MOCK - the shadow window. DEBT, not done.
+// ---------------------------------------------------------------------------
+// Everything below exists so the Shadow filter, the drift badge and the summary line can
+// be tuned with no backend, and it goes in one delete when the endpoint lands (with the
+// `filters.ingress === 'shadow'` branch above and the EXPECTED CONTRACT note at the top).
+//
+// It shadows the REAL turns the contact already has rather than inventing message ids,
+// because the pairing is the whole feature: a shadow row nothing can be compared with
+// would make the badge and the parities untestable. So the live answer is remembered as
+// it goes past, and the shadow rows are derived from it.
+//
+// The three states the screen owes, and how to reach each one:
+//   success - a contact with turns; every 3rd row drifts on branch, every 5th on domains
+//   empty   - a contact whose turns have not been loaded, or who has none
+//   error   - a contact whose respond id ends in 9 (a stand-in for the endpoint failing)
+const mockLiveTurns = new Map<string, ChatbotTurn[]>();
+
+function rememberLiveTurns(contactId: string | undefined, items: ChatbotTurn[]): void {
+  if (contactId) mockLiveTurns.set(contactId, items);
+}
+
+const MOCK_BRANCH_DRIFT: BranchKind = 'clarify_menu';
+
+function mockShadowTurns(filters: ChatbotTurnFilters): Promise<ChatbotTurnListResponse> {
+  const contactId = filters.contact_respond_id ?? '';
+  if (contactId.endsWith('9')) {
+    return Promise.reject(new Error('Shadow turns could not be loaded'));
+  }
+  const live = mockLiveTurns.get(contactId) ?? [];
+  const items: ChatbotTurn[] = live
+    .filter((turn) => Boolean(turn.message_id))
+    .map((turn, index) => {
+      const branchDrift = index % 3 === 0;
+      const domainDrift = index % 5 === 0;
+      const domains = turn.domains ?? ['inventory'];
+      return {
+        ...turn,
+        id: `shadow-${turn.id}`,
+        ingress: 'shadow' as const,
+        shadow_of: turn.message_id,
+        branch_kind: branchDrift ? MOCK_BRANCH_DRIFT : turn.branch_kind,
+        domains: domainDrift ? [...domains].reverse().concat('purchase_order') : domains,
+        response: null,
+      };
+    });
+  const paired = items.length;
+  const drifted = items.filter((_, index) => index % 3 === 0).length;
+  const asksDrifted = items.filter((_, index) => index % 5 === 0).length;
+  return Promise.resolve({
+    items,
+    next_cursor: null,
+    summary: paired
+      ? {
+          count: paired,
+          branch_parity: (paired - drifted) / paired,
+          asks_parity: (paired - asksDrifted) / paired,
+        }
+      : null,
+  });
 }

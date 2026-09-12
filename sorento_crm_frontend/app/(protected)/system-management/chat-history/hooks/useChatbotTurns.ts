@@ -10,7 +10,8 @@ import {
   indexTurnsByMessageId,
   retryChatbotTurn,
 } from '../services/chatbotTurnService';
-import type { FailedContactFilters } from '../types/chatbotTurn.types';
+import { driftByMessageId, shadowByMessageId, shadowSummaryLine } from '../shadowDrift';
+import type { ChatbotTurn, FailedContactFilters } from '../types/chatbotTurn.types';
 
 export const CHATBOT_TURNS_KEY = ['chatbot-turns'] as const;
 
@@ -46,6 +47,41 @@ export function useChatbotTurns(contactId: string | null) {
     : (query.data?.retry_unavailable_reason ?? null);
 
   return { ...query, byMessageId, retryUnavailableReason };
+}
+
+/**
+ * AC-1029 / AC-1030. The SHADOW parses for one contact, paired with its live turns.
+ *
+ * `enabled` for the same reason `useFailedChatbotContacts` is: the shadow window is a
+ * thing the owner opens deliberately during a promotion watch, and nothing else on the
+ * screen needs a second page of turns.
+ *
+ * The pairing is done here rather than in a component because both readers need it from
+ * the same answer - the badge asks "did THIS turn drift" and the header line asks "how
+ * often did any of them" - and computing it twice is how the two start disagreeing.
+ */
+export function useShadowChatbotTurns(
+  contactId: string | null,
+  liveByMessageId: Map<string, ChatbotTurn>,
+  enabled: boolean,
+) {
+  const query = useQuery({
+    queryKey: [...CHATBOT_TURNS_KEY, 'shadow', contactId],
+    queryFn: () =>
+      getChatbotTurns({ contact_respond_id: contactId as string, ingress: 'shadow', limit: 200 }),
+    enabled: Boolean(contactId) && enabled,
+    staleTime: 15_000,
+  });
+
+  const items = useMemo(() => query.data?.items ?? [], [query.data]);
+  const driftByMessage = useMemo(
+    () => driftByMessageId(items, liveByMessageId),
+    [items, liveByMessageId],
+  );
+  const shadowByMessage = useMemo(() => shadowByMessageId(items), [items]);
+  const summaryLine = shadowSummaryLine(query.data?.summary);
+
+  return { ...query, items, driftByMessage, shadowByMessage, summaryLine };
 }
 
 /**

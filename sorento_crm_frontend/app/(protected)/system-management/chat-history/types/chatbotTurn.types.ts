@@ -126,6 +126,15 @@ export interface TurnResponseBody {
   actions?: Record<string, unknown>[] | null;
 }
 
+/**
+ * How the turn arrived. `shadow` (L1-S4, AC-1027) is the odd one: it is not a delivery at
+ * all but a SECOND parse of a live turn, run under the version named by
+ * `system_settings.chatbot_parser_shadow_version`. A shadow row sends nothing, writes no
+ * session and escalates nothing; it exists to be compared with the live row it names in
+ * `shadow_of`.
+ */
+export type TurnIngress = 'webhook' | 'poller' | 'retry' | 'console' | 'shadow';
+
 export interface ChatbotTurn {
   id: string;
   contact_respond_id: string;
@@ -142,7 +151,7 @@ export interface ChatbotTurn {
   // be there. Requiring them would only force every caller that legitimately does not
   // have one - a test factory, a narrower projection, a response from before the column
   // existed - to invent a value, which is how a type stops describing reality.
-  ingress?: 'webhook' | 'poller' | 'retry' | 'console';
+  ingress?: TurnIngress;
   error?: string | null;
   created_at: string;
   started_at?: string | null;
@@ -151,6 +160,32 @@ export interface ChatbotTurn {
   retry_requested_at?: string | null;
   trace: TurnTraceRecord[];
   response: TurnResponseBody | null;
+  /**
+   * AC-1027. On a shadow row, the `message_id` of the LIVE turn it parsed again. Null on
+   * every live row, which is what pairs the two sides for the drift comparison.
+   */
+  shadow_of?: string | null;
+  /**
+   * AC-1029. The domains this turn's parse asked about, flattened from `asks[]` and kept
+   * in the order the dealer said them. Null on a turn parsed before v3 - which is NOT the
+   * same as `[]` ("this parse named no domain"), so the drift comparison treats an
+   * unknown side as no drift rather than as a difference.
+   */
+  domains?: string[] | null;
+}
+
+/**
+ * AC-1030. How the shadow window is going over the filtered range, computed by the
+ * endpoint over the shadow rows joined to their live rows - not in the browser, which
+ * only ever holds one page.
+ *
+ * Parities are fractions (0 to 1). Null on a range with no shadow row to compare, which
+ * the line says in words rather than printing "0%".
+ */
+export interface ShadowTurnSummary {
+  count: number;
+  branch_parity: number | null;
+  asks_parity: number | null;
 }
 
 export interface ChatbotTurnListResponse {
@@ -164,6 +199,8 @@ export interface ChatbotTurnListResponse {
    */
   retry_available?: boolean;
   retry_unavailable_reason?: string | null;
+  /** AC-1030. Present only when the request filtered on `ingress=shadow`. */
+  summary?: ShadowTurnSummary | null;
 }
 
 export interface ChatbotTurnFilters {
@@ -171,6 +208,11 @@ export interface ChatbotTurnFilters {
   from?: string;
   to?: string;
   status?: TurnStatus;
+  /**
+   * AC-1029. Narrows to one arrival kind. `shadow` is what the console's Shadow filter
+   * sends, and it is the only value that also brings back `summary`.
+   */
+  ingress?: TurnIngress;
   /** Page size. The endpoint defaults to 50 and caps at 200. */
   limit?: number;
   /** The previous page's opaque `next_cursor`. */

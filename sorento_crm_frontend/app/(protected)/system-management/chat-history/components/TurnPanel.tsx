@@ -21,6 +21,7 @@ import {
   turnNotes,
 } from '../turnPresentation';
 import type { ChatbotTurn, TurnStageRecord } from '../types/chatbotTurn.types';
+import type { DriftAxis } from '../shadowDrift';
 
 /**
  * The turn trace under one incoming message (AC-251 to AC-256).
@@ -36,11 +37,20 @@ import type { ChatbotTurn, TurnStageRecord } from '../types/chatbotTurn.types';
 export function TurnPanel({
   turn,
   retryUnavailableReason = null,
+  shadowOn = false,
+  shadowTurn,
+  drift,
 }: {
   turn: ChatbotTurn;
   /** Environment-level: Retry is not wired here at all. Disables the button with a reason
    *  rather than offering one that always 409s. */
   retryUnavailableReason?: string | null;
+  /** AC-1029. The Shadow filter is on, so this turn says how its shadow parse compared. */
+  shadowOn?: boolean;
+  /** The shadow row for this turn, when one exists. */
+  shadowTurn?: ChatbotTurn;
+  /** Which axes the shadow parse drifted on. `[]` = the two parses agreed. */
+  drift?: DriftAxis[];
 }) {
   const [open, setOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -89,6 +99,20 @@ export function TurnPanel({
               test
             </Badge>
           )}
+          {/* AC-1029. Three states, said apart: the shadow parse differed and on what,
+              it agreed, or there is no shadow row for this turn at all. */}
+          {shadowOn &&
+            (drift && drift.length > 0 ? (
+              <Badge variant="warning" appearance="light" size="sm" data-testid="shadow-drift">
+                shadow differs: {drift.join(', ')}
+              </Badge>
+            ) : shadowTurn ? (
+              <Badge variant="secondary" appearance="light" size="sm" data-testid="shadow-drift">
+                shadow agrees
+              </Badge>
+            ) : (
+              <span className="text-2xs text-muted-foreground">no shadow parse</span>
+            ))}
           {duration && (
             <span className="text-xs text-muted-foreground tabular-nums">{duration}</span>
           )}
@@ -117,6 +141,7 @@ export function TurnPanel({
 
       <TurnDetailDrawer
         turnId={detailOpen ? turn.id : null}
+        shadowTurnId={shadowTurn?.id ?? null}
         onOpenChange={(o) => !o && setDetailOpen(false)}
       />
 

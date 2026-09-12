@@ -17,9 +17,21 @@ import type { StateTrace } from '../types/chatHistory.types';
  * mirroring `v_turn_state_transition`) plus the raw jsonb in a searchable viewer
  * (Cmd/Ctrl+F), the same pattern as the AI-assistant trace inspector.
  */
-export function StateTracePanel({ trace }: { trace: StateTrace }) {
+export function StateTracePanel({
+  trace,
+  shadow = null,
+}: {
+  trace: StateTrace;
+  /**
+   * AC-1029. The SHADOW parse of the same message, when the Shadow filter is on and a
+   * shadow row exists. Given the same shape as `trace`, so both columns of the Parser
+   * drift row are derived by `deriveStateSummary` rather than by two different rules.
+   */
+  shadow?: StateTrace | null;
+}) {
   const [open, setOpen] = useState(false);
   const summary = useMemo(() => deriveStateSummary(trace), [trace]);
+  const shadowSummary = useMemo(() => deriveStateSummary(shadow), [shadow]);
   const raw = useMemo(() => JSON.stringify(trace, null, 2), [trace]);
 
   if (!summary) return null;
@@ -56,7 +68,20 @@ export function StateTracePanel({ trace }: { trace: StateTrace }) {
           <ChipRow label="Lost" chips={summary.entitiesLost} tone="destructive" emptyIsNull />
           <ChipRow label="Gained" chips={summary.entitiesGained} tone="success" emptyIsNull />
           <ChipRow label="Flags" chips={summary.causeFlags} tone="secondary" />
-          <ChipRow label="Parser drift" chips={summary.parserDrift} tone="warning" nullMeans="raw not captured" />
+          {/* AC-1029: two columns once a shadow parse exists, so "what post-processing
+              changed" can be read for the live version and the one being trialled without
+              opening two screens. One column when nothing is shadowing this turn - an
+              empty second column would read as "the shadow found nothing". */}
+          {shadow ? (
+            <Row label="Parser drift">
+              <div className="grid grid-cols-2 gap-2" data-testid="parser-drift-columns">
+                <DriftColumn title="live" chips={summary.parserDrift} />
+                <DriftColumn title="shadow" chips={shadowSummary?.parserDrift ?? null} />
+              </div>
+            </Row>
+          ) : (
+            <ChipRow label="Parser drift" chips={summary.parserDrift} tone="warning" nullMeans="raw not captured" />
+          )}
           <div>
             <div className="text-[11px] font-medium text-muted-foreground mb-1">Raw trace</div>
             <SearchableCode
@@ -65,6 +90,30 @@ export function StateTracePanel({ trace }: { trace: StateTrace }) {
               data-testid="state-trace-raw"
             />
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One side of the two-column Parser drift row. Same chips, said per version. */
+function DriftColumn({ title, chips }: { title: string; chips: string[] | null }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70">{title}</div>
+      {chips === null ? (
+        <span className="text-[11px] italic text-muted-foreground/70">
+          {title === 'shadow' ? 'no shadow parse' : 'raw not captured'}
+        </span>
+      ) : chips.length === 0 ? (
+        <span className="text-[11px] text-muted-foreground/70">none</span>
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {chips.map((c) => (
+            <Badge key={c} variant="warning" className="h-4 px-1 text-[10px] font-normal">
+              {c}
+            </Badge>
+          ))}
         </div>
       )}
     </div>
