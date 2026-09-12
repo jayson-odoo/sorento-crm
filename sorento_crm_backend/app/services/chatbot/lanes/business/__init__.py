@@ -503,6 +503,31 @@ def run_fetch(
         tool_name = "crm_outstanding_report"
         tool_item = {"name": tool_name, "_tool_pick": {"source": "outstanding_override"}}
 
+        # -- AC-1119 (reviewer N5): the code the customer TYPED is the subject -- #
+        # The gate hands this report the whole prefix FAMILY: a single product token
+        # takes the resolver's OR-mode, which calls a candidate exact only when
+        # `match_tier == "exact"` - a tier `entity_resolver._prefix_probe_product` never
+        # stamps (product rows come back "prefix" / "substring" / "trgm"). AND-mode has
+        # the right rule already (`gate.py`: `prod_exacts` = canonical_code EQUALS a
+        # typed token), OR-mode does not, so `SRTWT7445` and its eight siblings all
+        # arrived and the transformer took whichever was FIRST - on the prod copy,
+        # `SRTWT7445-LV-GM`. Picked here rather than in the shared gate: this is the
+        # report's own contract (exact code, no sibling expansion), and every other
+        # domain keeps the family it deliberately widened to.
+        typed_codes = {
+            jsc.js_string(e.get("raw") or "").strip().casefold()
+            for e in jsc.array(parse_output.get("entities"))
+            if isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "product"
+        }
+        typed_codes.discard("")
+        for e in jsc.array(entities):
+            if not isinstance(e, dict) or e.get("entity_type") != "product":
+                continue
+            code = e.get("code") or e.get("canonical_code")
+            if jsc.truthy(code) and jsc.js_string(code).strip().casefold() in typed_codes:
+                semantic_input["outstanding_product_code"] = jsc.js_string(code)
+                break
+
         # -- S4c (D5, AC-1133 pipeline half): the location word, before any fetch -- #
         # Read off the RAW parsed entities (`parse_output`), never the gated
         # `entities`/`compatible_entities` above - those only ever carry what the

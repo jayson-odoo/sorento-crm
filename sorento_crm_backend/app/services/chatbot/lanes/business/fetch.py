@@ -569,15 +569,24 @@ def entity_ids_transformer(
     if tool_name == "crm_outstanding_report":
         out.pop("product_ids", None)
         out.pop("warehouse_ids", None)
-        for e in jsc.array(entities):
-            if jsc.js_string(jsc.get(e, "entity_type")) == "product":
-                # `gate.py` renames the resolver's `canonical_code` to `code` when it
-                # builds `compatible_entities`; a caller that hands entities straight
-                # in (this module's own tests) still spells it `canonical_code`.
-                code = jsc.get(e, "code") or jsc.get(e, "canonical_code")
-                if jsc.truthy(code):
-                    out["product_code"] = jsc.js_string(code)
-                break
+        # AC-1119 (reviewer N5): the code the customer TYPED, when the lane matched one
+        # of the gate's products to it exactly (`run_fetch`). Only when nothing matched
+        # exactly does the first product stand - a prefix or spec-search hit is the only
+        # candidate there, and refusing to answer it would be a worse answer than
+        # naming it.
+        typed_code = jsc.get(semantic_input, "outstanding_product_code")
+        if jsc.truthy(typed_code):
+            out["product_code"] = jsc.js_string(typed_code)
+        else:
+            for e in jsc.array(entities):
+                if jsc.js_string(jsc.get(e, "entity_type")) == "product":
+                    # `gate.py` renames the resolver's `canonical_code` to `code` when it
+                    # builds `compatible_entities`; a caller that hands entities straight
+                    # in (this module's own tests) still spells it `canonical_code`.
+                    code = jsc.get(e, "code") or jsc.get(e, "canonical_code")
+                    if jsc.truthy(code):
+                        out["product_code"] = jsc.js_string(code)
+                    break
         scope = jsc.get(semantic_input, "outstanding_scope")
         if jsc.truthy(scope):
             out["scope"] = jsc.js_string(scope)

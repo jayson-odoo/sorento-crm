@@ -160,6 +160,10 @@ def _report_route_body(report: dict[str, Any], args: dict[str, Any]) -> dict[str
         body["do_by_location"] = []
         body["do_by_customer"] = []
         body["do_rows"] = []
+    # AC-1119: the route echoes the EXACTLY resolved `product_code` back on the body
+    # (`outstanding_report_service._resolve_product`), which is what the header prints.
+    if args.get("product_code"):
+        body["product_code"] = args["product_code"]
     body["warehouse_codes"] = list(args.get("warehouse_codes") or [])
     body["location_token"] = args.get("location_token")
     body["so_refused"] = bool(args.get("so_refused"))
@@ -293,8 +297,14 @@ def _run_turn(
     attributes: list[str] | None = None,
     matches: dict[str, dict[str, Any]] | None = None,
     mcp_response: Any = None,
+    real_resolver: bool = False,
 ):
-    """One real `engine.run_turn`, business lane on, parser/access/resolver/MCP faked."""
+    """One real `engine.run_turn`, business lane on, parser/access/resolver/MCP faked.
+
+    `real_resolver=True` leaves the RESOLVER alone (the real
+    `business_services.production_services`, which reads the seeded `products` table
+    through `POST /api/v1/system/references/resolve` in process) - the only way to grade
+    which product code a typed token actually lands on (AC-1119, reviewer N5)."""
     _enable_business_lane(session_factory)
     monkeypatch.setattr(
         engine_mod,
@@ -319,9 +329,21 @@ def _run_turn(
     monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: qf)
 
     call, captured = _capturing_mcp(mcp_response)
-    _wire_business_services(
-        monkeypatch, resolve_services=_resolve_services(matches or {}), mcp_call=call
-    )
+    if real_resolver:
+        monkeypatch.setattr(
+            engine_mod.business_services, "fetch_services", lambda db: FetchServices(mcp_call=call)
+        )
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "answer_services_for",
+            lambda session_factory: AnswerServices(
+                mcp_probe=lambda name, args: {"data": []}, family_fetch=lambda query: {"data": []}
+            ),
+        )
+    else:
+        _wire_business_services(
+            monkeypatch, resolve_services=_resolve_services(matches or {}), mcp_call=call
+        )
 
     envelope = _envelope()
     envelope.message["message"]["messageId"] = msg_id
@@ -535,6 +557,63 @@ class TestLocationTokenPipeline:
         _name, args = captured[0]
         assert args.get("warehouse_codes") == ["BRW"], (
             f"an exact warehouse-code token must resolve to itself only, no other code: {args}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# AC-1119 - the typed code wins over its family siblings (reviewer N5)
+# --------------------------------------------------------------------------- #
+
+
+class TestExactProductCodeWinsOverSiblings:
+    """Console run 3: the owner typed `SRTWT7445`, which exists exactly on the prod copy,
+    and the report ran for `SRTWT7445-LV-GM`. AC-1119 pins the ROUTE to exact-code, and
+    the route obeys it - the substitution happens UPSTREAM, in entity resolution, so the
+    route never sees the code the customer typed. Graded here through the REAL resolver
+    (`real_resolver=True`), which is the only place the substitution is visible."""
+
+    def _seed_products(self, session_factory) -> None:
+        from tests._mc_lookup_seed import product as seed_product
+
+        # The SIBLINGS are inserted first on purpose: the resolver's prefix probe has no
+        # ORDER BY, so the family comes back in insertion order and the lane used to take
+        # whichever product landed first. On the prod copy that was `SRTWT7445-LV-GM`.
+        db = session_factory()
+        for code in ("ZZT7445-LV-GM", "ZZT7445-NL", "ZZT7445"):
+            seed_product(db, company_id=DEFAULT_COMPANY_ID, code=code)
+        db.commit()
+
+    def test_the_typed_code_is_what_the_report_runs_for(self, session_factory, monkeypatch) -> None:
+        self._seed_products(session_factory)
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status="so_outstanding",
+                entities=[
+                    {
+                        "raw": "Zzt7445", "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="Zzt7445 sales order outstanding",
+            msg_id="ZZT-outstanding-exact-code-1",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+            real_resolver=True,
+        )
+        assert captured, "the report must run: the typed code exists, so nothing is ambiguous"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", name
+        assert args.get("product_code") == "ZZT7445", (
+            f"the code the customer typed exists exactly, so it is the subject - never a "
+            f"family sibling: {args}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert reply.startswith("Product: ZZT7445\n"), (
+            f"the header must name the code the customer typed: {reply!r}"
         )
 
 
