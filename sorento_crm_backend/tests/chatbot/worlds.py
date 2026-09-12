@@ -1130,13 +1130,14 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
         acs=("AC-944",),
         why=(
             "A picker of three products is offered. '2' resolves to the SECOND FROZEN "
-            "option, and a second pick against the same list still resolves. That second "
-            "half is deviation 5 in the plan and the UAC, accepted by the owner on 7 Sep "
-            "2026: AC-944 as written says a repeat pick becomes a new message, and owner "
-            "ruling K rule 1 - shipped a month earlier from a production transcript where "
-            "the second pick had nothing to resolve against - says an offer the customer "
-            "can still SEE survives being answered. A pick does not consume the roster; "
-            "the TTL does, which the decay worlds grade."
+            "option. The 7 Sep deviation 5 (a second pick against the same list still "
+            "resolving, on owner ruling K rule 1's authority) is SUPERSEDED by the 12 Sep "
+            "UAC: AC-1014 says a pick resolves the entity and CLOSES the question - "
+            "'2' again with no open question alive is a new message, not a second pick, "
+            "which is what turn 3 now grades. `test_focus_worlds.py::"
+            "focus-picker-two-resolves-then-two-again-is-a-new-message` already asserts "
+            "the same rule directly; this world keeps it end to end through a real "
+            "three-turn chain."
         ),
         turns=(
             OwnerTurn(
@@ -1190,7 +1191,7 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
                     "anaphora": False,
                     "topic_reset": False,
                 },
-                expect={"answered": "product_pick", "focus_products": ["SRTKS8091-A"]},
+                expect={"answered": None, "focus_products": ["SRTKS8091-B"]},
             ),
         ),
     ),
