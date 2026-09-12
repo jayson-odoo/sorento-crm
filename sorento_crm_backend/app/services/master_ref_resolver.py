@@ -20,11 +20,13 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
+from app.models.integration_reference import IntegrationReference
 from app.models.order import Customer
 from app.models.procurement import Supplier
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.services.integration_reference_service import (
+    DEFAULT_SOURCE_SYSTEM,
     IntegrationReferenceService,
     ReferenceConflict,
 )
@@ -120,14 +122,19 @@ class MasterRefResolver:
         this used to need (`_require_same_company`) is unreachable through
         refs now and has been removed.
 
-        AC-19b: a ref linked in ANOTHER company is marked `unconditional`
-        (checked with a throwaway UNANCHORED service - the pre-BL-056 global
-        lookup, see `IntegrationReferenceService.resolve`) so `_resolve_
-        master` re-raises it even when a code/name was ALSO sent, instead of
-        falling through to them the way a genuinely-unknown ref does
-        (AC-V1-3/5) - sending more identifying information must not turn a
-        cross-company sequencing artefact into a silent back-create/unresolved
-        warning under the wrong company.
+        AC-19b: a ref that exists in ANOTHER company is marked
+        `unconditional`, a plain existence check against the table itself
+        (never through `self.refs`, which now refuses to search across
+        companies at all - D14, strict) so `_resolve_master` re-raises it
+        even when a code/name was ALSO sent, instead of falling through to
+        them the way a genuinely-unknown ref does (AC-V1-3/5). Origin/main's
+        `_require_same_company` (removed - see the note above) achieved the
+        same end differently: it raised `ReferenceConflict`, a DIFFERENT
+        exception `except MissingReference` below never caught, so a
+        cross-company ref never reached the code/name fallback either. Since
+        BL-056 folds "cross-company" and "genuinely unknown" into the SAME
+        `entity_id is None` signal from one `resolve()` call, this flag is
+        what keeps those two cases as distinct as they always were.
         """
         if source_ref is None or source_ref == "":
             return None
@@ -139,9 +146,13 @@ class MasterRefResolver:
         )
         if entity_id is None:
             known_elsewhere = (
-                IntegrationReferenceService(self.db).resolve(
-                    entity_type=model.__tablename__, source_ref=source_ref
+                self.db.query(IntegrationReference.id)
+                .filter(
+                    IntegrationReference.source_system == DEFAULT_SOURCE_SYSTEM,
+                    IntegrationReference.entity_type == model.__tablename__,
+                    IntegrationReference.source_ref == source_ref,
                 )
+                .first()
                 is not None
             )
             raise MissingReference(field, source_ref, unconditional=known_elsewhere)

@@ -104,13 +104,12 @@ def _require_supported(entity_type: str) -> str:
 class IntegrationReferenceService:
     def __init__(self, db: Session, *, company_id: Optional[str] = None):
         self.db = db
-        # BL-056 (D14): the anchor company a scoped `resolve()`/`link()` reads
-        # and writes under. Every real caller (the six ingest/read/deletion
-        # constructors) always has one. Left `None` only by a caller with no
-        # anchor of its own to give - `resolve()` then falls back to the
-        # pre-BL-056 global lookup (nothing to narrow BY without one) and
-        # `link()` infers the entity's own company instead - see
-        # `_anchor_for_link`.
+        # BL-056 (D14, strict - captain's ruling on fix round 1): the anchor
+        # company a scoped `resolve()`/`link()` reads and writes under. Every
+        # real caller (the six ingest/read/deletion constructors) always has
+        # one. A scoped call with no anchor raises `ValueError` rather than
+        # guessing - never a global fallback, never inferred from the entity's
+        # own row.
         self.company_id = company_id
 
     # ------------------------------------------------------------------ write
@@ -136,7 +135,7 @@ class IntegrationReferenceService:
         brand new row, never a conflict with this one.
         """
         _require_supported(entity_type)
-        anchor = self._anchor_for_link(entity_type, entity_id)
+        anchor = self._require_anchor_if_scoped(entity_type)
 
         existing_query = self.db.query(IntegrationReference).filter(
             IntegrationReference.source_system == source_system,
@@ -201,32 +200,23 @@ class IntegrationReferenceService:
         self.db.flush()
         return row
 
-    def _anchor_for_link(self, entity_type: str, entity_id: str) -> Optional[str]:
-        """The company_id to store on a linked reference, or None for a shared
-        type (BL-056 D14).
+    def _require_anchor_if_scoped(self, entity_type: str) -> Optional[str]:
+        """The company_id to read/write for `entity_type`, or None for a
+        shared type (BL-056 D14, strict).
 
-        The constructor's own anchor wins when given. Without one, a scoped
-        type falls back to the ENTITY's own stored company - the row being
-        linked already belongs to a definite company, so there is nothing to
-        guess (unlike `resolve()`, which has no row to read a company off and
-        must refuse instead - see its own docstring).
+        A scoped type with no anchor at construction raises `ValueError` -
+        never a global fallback (`resolve()`) and never inferred from the
+        entity's own row (`link()`). Every real caller (the six ingest/read/
+        deletion constructors) always has an anchor; this only fires for a
+        caller with none of its own to give.
         """
         if not _is_company_scoped(entity_type):
             return None
-        if self.company_id is not None:
-            return self.company_id
-        table = _require_supported(entity_type)
-        row = self.db.execute(
-            text(f"SELECT company_id FROM {table} WHERE id = :entity_id"),
-            {"entity_id": str(entity_id)},
-        ).first()
-        found = row[0] if row else None
-        if found is None:
+        if self.company_id is None:
             raise ValueError(
-                f"cannot link a company-scoped {entity_type} reference without an anchor "
-                f"company_id, and {entity_id!r} has none of its own"
+                f"company-scoped entity_type {entity_type!r} requires an anchor company_id"
             )
-        return str(found)
+        return self.company_id
 
     def unlink(self, *, entity_type: str, entity_id: str) -> int:
         """Drop the mapping for a record. Call when deleting the record itself."""
@@ -265,25 +255,23 @@ class IntegrationReferenceService:
         since been deleted, so ingest treats it as new rather than updating a
         row that is gone.
 
-        BL-056 (D14): a scoped ``entity_type`` resolves only within THIS
-        instance's anchor company - a ref linked under a different company is
-        reported exactly like one that was never linked at all. An unanchored
-        call on a scoped type (no ``company_id`` given at construction) is not
-        narrowed by company at all - the pre-BL-056 global lookup - since
-        without an anchor there is no company to narrow BY; every real caller
-        (the six ingest/read/deletion services) always has one, so this path
-        is exercised only by callers with no anchor of their own to give.
+        BL-056 (D14, strict): a scoped ``entity_type`` resolves only within
+        THIS instance's anchor company - a ref linked under a different
+        company is reported exactly like one that was never linked at all.
+        A scoped call with no anchor raises ``ValueError`` rather than
+        guessing which company to search; every real caller (the six ingest/
+        read/deletion services) always has one.
         """
         _require_supported(entity_type)
+        anchor = self._require_anchor_if_scoped(entity_type)
 
         query = self.db.query(IntegrationReference).filter(
             IntegrationReference.source_system == source_system,
             IntegrationReference.entity_type == entity_type,
             IntegrationReference.source_ref == source_ref,
         )
-        if _is_company_scoped(entity_type):
-            if self.company_id is not None:
-                query = query.filter(IntegrationReference.company_id == self.company_id)
+        if anchor is not None:
+            query = query.filter(IntegrationReference.company_id == anchor)
         else:
             query = query.filter(IntegrationReference.company_id.is_(None))
         row = query.first()
