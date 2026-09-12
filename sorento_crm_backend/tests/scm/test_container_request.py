@@ -688,11 +688,15 @@ def test_build_incoming_packing_list_ignores_shipments_that_have_arrived(scm_app
 
 
 def test_build_nets_incoming_pl_only_for_the_part_not_yet_on_an_spo(scm_app):
-    # R6/AC-D1 (purchasing consolidation, 6 Sep): netting the FULL incoming_pl would
-    # double-subtract a container that already has its SPO. Shipment X's line (qty 50)
-    # already has 20 of itself turned into the SPO allocation counted in incoming_spo, so
-    # only the remaining 30 nets against the ask - not the wrong answer netting the whole
-    # 50 would give (100 - 10 - 20 - 50 = 20).
+    # R6/AC-D1 (purchasing consolidation, 6 Sep), superseded on the CELL by AC-N2 (12 Sep):
+    # netting the FULL incoming_pl would double-subtract a container that already has its
+    # SPO. Shipment X's line (qty 50) already has 20 of itself turned into the SPO allocation
+    # counted in incoming_spo, so only the remaining 30 nets against the ask - not the wrong
+    # answer netting the whole 50 would give (100 - 10 - 20 - 50 = 20). AC-N2 (12 Sep 2026)
+    # widens the fix from the netting formula alone to the CELL itself: `incoming_pl` is now
+    # `incoming_pl_unallocated` everywhere it is shown, because Total supply (on hand + SPO +
+    # incoming PL) added the same 20 units in twice - once as the SPO, once again as the
+    # packing list it came off - even though the suggestion below was already right.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -740,7 +744,7 @@ def test_build_nets_incoming_pl_only_for_the_part_not_yet_on_an_spo(scm_app):
     row = _row(r.json()["rows"], "A", w)
     assert row["on_hand"] == 10
     assert row["incoming_spo"] == 20
-    assert row["incoming_pl"] == 50  # the whole unreceived quantity, unchanged meaning
+    assert row["incoming_pl"] == 30  # AC-N2: the unallocated part, not the whole 50
     assert row["incoming_pl_unallocated"] == 30  # 50 shipped - 20 allocated - 0 received
     assert row["suggested_qty"] == 40  # 100 - 10 - 20 - 30, not 20
 

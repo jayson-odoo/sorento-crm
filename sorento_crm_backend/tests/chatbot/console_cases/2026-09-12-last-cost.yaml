@@ -1,0 +1,135 @@
+# Console cases for "last purchase cost" per product per location, gated per contact
+# (`feat/chatbot-last-purchase-cost`).
+#
+# Plan `documentation/plans/chatbot/PLAN-chatbot-last-purchase-cost.md`; UAC
+# `chatbot-last-purchase-cost-acceptance-criteria.md` AC-31 / AC-32 (plus AC-15 and AC-30
+# on the live route/tool). Run with `scripts/chatbot_console_check.py` against a lane
+# backend before the PR and once against production after the deploy.
+#
+# EVERY CASE CARRIES A POSITIVE `reply_contains`, per
+# `documentation/agents/chatbot-verification.md`: a case built from `branch_kind` plus
+# negatives passes on the generic error reply. Silence fails on its own, and what is
+# graded is everything the turn would SAY.
+#
+# ---------------------------------------------------------------------------------------
+# RUN IT TWICE. The parser vocabulary this lane adds (`check_po_cost` / `purchase_cost`)
+# ships as an UNLABELLED prompt version (migration `513_chatbot_parser_last_cost.py`), so
+# the tenant's live parser does not know the phrasing until the owner moves the
+# `production` label. Every case below is `# NEW VOCABULARY`: it reads "last purchase
+# cost for M218" as a plain product-details ask under today's labelled prompt (it falls
+# through to `crm_master_products_list`), and only reaches `purchase_cost` /
+# `crm_procurement_po_last_cost_list` once the new version is pinned or promoted.
+#
+#   # what the tenant gets TODAY (the labelled prompt) - every case below MISSES
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-12-last-cost.yaml --base-url http://127.0.0.1:8046
+#
+#   # what it gets AFTER the label moves (nothing is promoted; dry-run only) - the id is
+#   # whichever of migration 513's two `publish()` return values (`full` / `slim`) matches
+#   # the BODY the tenant's `production` label currently sits on; measured live 12 Sep
+#   # 2026 against the shared dev copy, production sat on the SLIM body (v9, 36,729 chars,
+#   # within ~1.2k of the slim-plus-addendum length) so the slim id below is what promotion
+#   # would apply. Re-derive with the query in `--prompt-version`'s own docstring in
+#   # `scripts/chatbot_console_check.py` before trusting the id on another database.
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-12-last-cost.yaml --base-url http://127.0.0.1:8046 \
+#       --prompt-version <ai_prompt_versions.id 513 published for the body this tenant's label sits on>
+# ---------------------------------------------------------------------------------------
+#
+# THE CODES ARE REAL, measured against the local prod copy `sorento_ai_automation`,
+# 12 Sep 2026: M218 (3 companies resolve on this code; the Sorento/Mocha M218 pair and the
+# M2189 sibling all answer under one ask, per the entity resolver's own behaviour, not
+# this lane's) carries a PO-2026/09-0013 line at warehouse BRW-SMC, qty 19, unit_cost CNY
+# 110.00, discount 1254.00 (66.00 per unit), line_total 836.00 (44.00 per unit).
+# SRTWC8517 is an 8-member family (SRTWC8517-SH-UF, -150, -150-NEW, -200, -200-NEW, -NEW,
+# -P, -P-NEW).
+#
+# THE GRANT: `purchase_orders.cost` is off by default for every contact (D6). The console
+# contact below (respond_io id 437264483, RespondContact.id 80560c8f-6358-4115-8b2c-
+# e139ef31e48e "Jayson") held no row for the key at measurement time. This file cannot
+# flip the grant itself and the script runs a whole file under ONE grant state, so THE
+# DENIED CASE (AC-32a) MUST RUN AS ITS OWN INVOCATION, before the key is granted - run it
+# alone (`--say` or a one-case copy of this file), THEN grant `purchase_orders.cost`
+# (Contacts > Access > Field reveals, or a direct `contact_field_reveals` write) and run
+# AC-32b / AC-32c / AC-30 together as this file, THEN revert the grant (delete the row -
+# it never existed before) so a repeat starts from the same default-hidden state. Verified
+# 12 Sep 2026 in exactly this order against the shared dev copy.
+contact: "437264483"
+
+cases:
+  # ======================================================================================
+  # AC-31 - the tool answer itself, direct route + MCP render (measured, not a console
+  # case; recorded here as the reference the two chatbot cases below reproduce):
+  #   GET /api/v1/procurement/purchase-orders/last-cost?product_ids=<M218> ->
+  #   PO Number: PO-2026/09-0013, Cost / unit: CNY 110.00, Discount / unit: CNY 66.00,
+  #   Cost after discount / unit: CNY 44.00, Warehouse: BRW-SMC (verified via the MCP tool
+  #   `crm_procurement_po_last_cost_list` with `view=render`, matching field order and
+  #   `restricted_fields` for `unit_cost` / `discount_per_unit` / `unit_cost_after_discount`
+  #   all mapping to `purchase_orders.cost`).
+  # ======================================================================================
+
+  # AC-32a / AC-16 - default (no grant): access_denied, no MCP call, trace carries
+  # `{"domain": "purchase_cost", "skipped": "not_granted", "needs":
+  # "purchase_orders.cost"}`. Reused canned template, but the SUBJECT is the plain-
+  # language FEATURE name ("purchase cost"), never the parser's `suggested_agent`
+  # (`lanes/canned.py::field_grant_denied_text`, captain's ruling on review B1: a
+  # field-reveal refusal is not an agent refusal) - exact string "Sorry, you are not
+  # allowed to access purchase cost", verified live 12 Sep 2026 after the B1 fix landed.
+  - name: AC-32a - default contact asking for M218's last purchase cost is denied  # NEW VOCABULARY
+    text: "last purchase cost for M218"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["Sorry, you are not allowed to access purchase cost"]
+      reply_not_contains: ["Cost / unit", "CNY 110.00", "CNY 44.00"]
+      no_uuid: true
+
+  # AC-32b / AC-17 - granted: the AC-31 answer, per-unit money labelled and derived, no
+  # UUID. SETUP: grant `purchase_orders.cost` on RespondContact 80560c8f-6358-4115-8b2c-
+  # e139ef31e48e before running this case.
+  - name: AC-32b - granted contact gets the last purchase cost answer  # NEW VOCABULARY
+    text: "last purchase cost for M218"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains:
+        - "PO Number:* PO-2026/09-0013"
+        - "Cost / unit:* CNY 110.00"
+        - "Discount / unit:* CNY 66.00"
+        - "Cost after discount / unit:* CNY 44.00"
+        - "Warehouse:* BRW-SMC"
+      no_uuid: true
+
+  # AC-32c / AC-11 - family, all members: one row per (product, warehouse) pair across
+  # every SRTWC8517 variant, never capped to one product. Measured 12 Sep 2026: 8 family
+  # members, 13 rows (some members carry more than one warehouse's last line). Still under
+  # the granted contact from the setup above.
+  - name: AC-32c - family ask returns one row per member per location  # NEW VOCABULARY
+    text: "last purchase cost for SRTWC8517"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains:
+        - "SRTWC8517-SH-UF-150-NEW"
+        - "SRTWC8517-SH-UF-200-NEW"
+        - "SRTWC8517-SH-UF-P-NEW"
+        - "Cost / unit"
+      no_uuid: true
+
+  # ======================================================================================
+  # AC-30 - last-in family pin (D5): the SPO "last in" tool this lane's shape copies also
+  # answers every family member, never capped to one. No grant needed (last-in gates on
+  # `purchase_orders.placed`, already held by this contact) and no new prompt vocabulary
+  # (`check_spo` / "last in" already ships on the labelled prompt).
+  # ======================================================================================
+  - name: AC-30 - last in for a family names every member
+    text: "last in for SRTWC8517"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains:
+        - "SRTWC8517-SH-UF-150-NEW"
+        - "SRTWC8517-SH-UF-200-NEW"
+        - "SRTWC8517-SH-UF-P-NEW"
+        - "GR Quantity"
+      no_uuid: true

@@ -218,6 +218,40 @@ def test_unscoped_call_is_a_plain_cap_not_one_row_per_product(db):
     assert [r["spo_number"] for r in rows] == ["P2-NEWEST", "P3-2ND-NEWEST"]
 
 
+def test_ac30_last_in_family_one_row_per_member(db):
+    """AC-30 (chatbot-last-purchase-cost), D5 pin: a THREE-member family with
+    `top_n=1` returns one row PER MEMBER (three rows, never a single row for the whole
+    family); `top_n=2` returns up to two per member, never two overall. Same rule
+    `test_one_row_per_product_grouped_by_product_code` already pins for two products -
+    this is the three-member shape the plan calls out by name. May already be GREEN on
+    `origin/main`; if so it stands as the regression pin, and the fix (if any) belongs in
+    `spo_last_receipt_service`, never in the lane."""
+    a = product(db, company_id=DEFAULT_COMPANY_ID, code="FAM-A")
+    b = product(db, company_id=DEFAULT_COMPANY_ID, code="FAM-B")
+    c = product(db, company_id=DEFAULT_COMPANY_ID, code="FAM-C")
+    for i, p in enumerate((a, b, c)):
+        _allocation(
+            db, product_id=p.id, expected_date=date(2026, 6, 1 + i),
+            spo_number=f"{p.product_code}-OLD",
+        )
+        _allocation(
+            db, product_id=p.id, expected_date=date(2026, 6, 20 + i),
+            spo_number=f"{p.product_code}-NEW",
+        )
+    db.commit()
+
+    rows1 = last_receipt_rows(db, product_ids=[a.id, b.id, c.id], top_n=1)
+    assert len(rows1) == 3
+    assert {r["spo_number"] for r in rows1} == {"FAM-A-NEW", "FAM-B-NEW", "FAM-C-NEW"}
+
+    rows2 = last_receipt_rows(db, product_ids=[a.id, b.id, c.id], top_n=2)
+    assert len(rows2) == 6
+    from collections import Counter
+
+    counts = Counter(r["product_code"] for r in rows2)
+    assert set(counts.values()) == {2}, "top_n must cap PER MEMBER, never overall"
+
+
 def test_warehouse_filter_before_per_product_pick(db):
     """AC-7."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")

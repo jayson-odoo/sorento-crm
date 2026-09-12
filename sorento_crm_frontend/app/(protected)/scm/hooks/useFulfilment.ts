@@ -32,6 +32,7 @@ import {
   type LoadingPlanCreate,
   type LoadingPlanLineEdit,
   type LoadingPlanListParams,
+  type LoadingPlanWindow,
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
@@ -147,8 +148,8 @@ export function useCreateLoadingPlan() {
 export function useUpdateLoadingPlanCutOff(planId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (planHorizonDate: string | null) =>
-      updateLoadingPlanCutOff(planId as string, planHorizonDate),
+    mutationFn: (window: LoadingPlanWindow) =>
+      updateLoadingPlanCutOff(planId as string, window),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });
       void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });

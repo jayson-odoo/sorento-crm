@@ -1500,6 +1500,12 @@ class LoadingPlan(Base, CompanyScopedMixin):
     #: "Sales order cut-off". NULL means every open order counts, the same words and the same
     #: rule the reorder run uses.
     plan_horizon_date = Column(Date, nullable=True)
+    # "Sales orders needed FROM" (AC-N7, PLAN-scm-loading-plan-lines-feedback-12sep.md): the
+    # start-side twin, the same column and the same reading `scm.reorder_run.plan_horizon_start`
+    # already gives the reorder engine. NULL (the default) plans every open SO line regardless
+    # of when it was needed. Demand carrying no date at all is always counted, the same reading
+    # the end date already gives it.
+    plan_horizon_start = Column(Date, nullable=True)
     #: `stock_list` | `proforma` | `none` - which document the plan was started from.
     document_kind = Column(String(20), nullable=False, server_default=text("'none'"))
     #: The retained sheet itself, so the record can offer "View uploaded list". Not an FK:
