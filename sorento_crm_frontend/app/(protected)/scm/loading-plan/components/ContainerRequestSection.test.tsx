@@ -1097,3 +1097,201 @@ describe('holdingSortValue - what "Packed" sorts by', () => {
       .toBeLessThan(0);
   });
 });
+
+// AC-N1 (PLAN-scm-loading-plan-lines-feedback-12sep.md): the Product cell's subtitle used to
+// repeat `product_name` unconditionally, which duplicates the title for most of this
+// supplier's rows (product_name === item_code). Same fix as the order-inquiry worklist
+// (`orderInquiryWorklistColumns.tsx:316`).
+describe('ContainerRequestSection - the Product cell subtitle (AC-N1)', () => {
+  it('shows the code once when the name equals the code', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ item_code: 'SRTWHBWP', product_name: 'SRTWHBWP' })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getAllByText('SRTWHBWP')).toHaveLength(1);
+  });
+
+  it('shows both the code and the name when they differ', () => {
+    renderSection(); // the default row: item_code 'ITEM-1', product_name 'Widget'
+
+    expect(screen.getByText('ITEM-1')).toBeInTheDocument();
+    expect(screen.getByText('Widget')).toBeInTheDocument();
+  });
+
+  it('a set row keeps "Figures from <driver code>", even when the set code equals the driver code', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({
+          row_key: 'set:s-1',
+          row_kind: 'set',
+          product_id: 'p-driver',
+          product_set_id: 's-1',
+          set_code: 'CWC605-RL',
+          item_code: 'CWC605-RL',
+          product_name: 'CWC605-RL',
+          driver_product_id: 'p-driver',
+          driver_item_code: 'CWCX605-RL',
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByText('CWCX605-RL')).toBeInTheDocument();
+  });
+});
+
+// AC-N3: a client-side search box beside the Table/Schedule toggle.
+describe('ContainerRequestSection - search (AC-N3)', () => {
+  it('has a "Search product" box that filters the ranked rows, leaving the stat cards alone', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({ product_id: 'p1', item_code: 'ABC123', open_so_need: 10 }),
+        row({ product_id: 'p2', item_code: 'XYZ999', open_so_need: 20 }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    fireEvent.change(screen.getByPlaceholderText('Search product'), {
+      target: { value: 'abc' },
+    });
+
+    expect(screen.getByText('ABC123')).toBeInTheDocument();
+    expect(screen.queryByText('XYZ999')).not.toBeInTheDocument();
+    // Stat cards read the unfiltered rows (10 + 20 = 30), not the search's narrowed set.
+    const cards = screen.getByTestId('container-request-stat-cards');
+    expect(within(cards).getByTestId('stat-need')).toHaveTextContent('30');
+  });
+
+  it('filters the folded rows too, and clearing the box restores every row', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({ product_id: 'p1', item_code: 'ABC123' }),
+        row({
+          product_id: 'p2',
+          item_code: 'XYZ999',
+          has_demand: false,
+          rank: null,
+          open_so_need: 0,
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: /1 products held with no open demand/i }));
+    expect(screen.getByText('XYZ999')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search product'), {
+      target: { value: 'abc' },
+    });
+    expect(screen.getByText('ABC123')).toBeInTheDocument();
+    expect(screen.queryByText('XYZ999')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search product'), { target: { value: '' } });
+    expect(screen.getByText('ABC123')).toBeInTheDocument();
+    expect(screen.getByText('XYZ999')).toBeInTheDocument();
+  });
+
+  it('shows "No product matches" when nothing matches, in the table body', () => {
+    renderSection();
+
+    fireEvent.change(screen.getByPlaceholderText('Search product'), {
+      target: { value: 'zzz-nothing-matches' },
+    });
+
+    expect(screen.getByText('No product matches')).toBeInTheDocument();
+  });
+
+  it('filters the Schedule view to the searched product too, and clearing restores it', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({ product_id: 'p1', item_code: 'ABC123' }),
+        row({ product_id: 'p2', item_code: 'XYZ999' }),
+      ],
+      sources: EMPTY_SOURCES,
+      lines: [
+        {
+          product_id: 'p1',
+          item_code: 'ABC123',
+          so_number: 'SO-1',
+          customer_label: 'Acme Sdn Bhd',
+          project_title: null,
+          agent_label: null,
+          unit_price: null,
+          demand_class: 'retail',
+          order_date: '2026-05-01',
+          required_date: null,
+          qty: 5,
+        },
+        {
+          product_id: 'p2',
+          item_code: 'XYZ999',
+          so_number: 'SO-2',
+          customer_label: 'Beta Trading',
+          project_title: null,
+          agent_label: null,
+          unit_price: null,
+          demand_class: 'retail',
+          order_date: '2026-05-01',
+          required_date: null,
+          qty: 8,
+        },
+      ],
+    };
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Schedule$/ }));
+    expect(
+      within(screen.getByTestId('container-request-schedule-matrix')).getByText('ABC123'),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('container-request-schedule-matrix')).getByText('XYZ999'),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search product'), { target: { value: 'abc' } });
+
+    const matrixAfterSearch = screen.getByTestId('container-request-schedule-matrix');
+    expect(within(matrixAfterSearch).getByText('ABC123')).toBeInTheDocument();
+    expect(within(matrixAfterSearch).queryByText('XYZ999')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search product'), { target: { value: '' } });
+
+    const matrixAfterClear = screen.getByTestId('container-request-schedule-matrix');
+    expect(within(matrixAfterClear).getByText('ABC123')).toBeInTheDocument();
+    expect(within(matrixAfterClear).getByText('XYZ999')).toBeInTheDocument();
+  });
+});
+
+// AC-N5: every column header is sortable by clicking it.
+describe('ContainerRequestSection - sortable columns (AC-N5)', () => {
+  it('clicking the "Need" header reorders the rows by open_so_need', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      // Default (unsorted) order follows the array: HIGH first, LOW second - the opposite
+      // of ascending Need, so a click on the header is what has to move them.
+      rows: [
+        row({ product_id: 'p1', item_code: 'HIGH', open_so_need: 50, rank: 1 }),
+        row({ product_id: 'p2', item_code: 'LOW', open_so_need: 5, rank: 2 }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    const codesBefore = screen.getAllByText(/^(LOW|HIGH)$/).map((el) => el.textContent);
+    expect(codesBefore).toEqual(['HIGH', 'LOW']);
+
+    fireEvent.click(screen.getByText('Need'));
+
+    const codesAfter = screen.getAllByText(/^(LOW|HIGH)$/).map((el) => el.textContent);
+    expect(codesAfter).toEqual(['LOW', 'HIGH']);
+  });
+});

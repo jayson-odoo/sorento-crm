@@ -164,7 +164,7 @@ describe('LoadingPlansGrid', () => {
     for (const header of [
       'Started',
       'Supplier',
-      'SO cut-off',
+      'Sales orders needed',
       'Document',
       'To request',
       'Sent',
