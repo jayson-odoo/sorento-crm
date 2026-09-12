@@ -2164,7 +2164,16 @@ class TestH22H23DymOfferDomainCleared:
         resolved = {}
         session_block = {
             "session_vars": {
-                "variables": {"dym_offer": {"domain": "inventory", "picked": ["SRT-SAME-DOMAIN"]}}
+                "variables": {
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": [],
+                        "expects": "pick",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {"domain": "inventory", "picked": ["SRT-SAME-DOMAIN"]},
+                    }
+                }
             }
         }
         validator_result = {"answers": [], "response": "no rows"}

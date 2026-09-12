@@ -5,7 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useChatThread } from '../hooks/useChatHistory';
-import { useChatbotTurns } from '../hooks/useChatbotTurns';
+import { useChatbotTurns, useShadowChatbotTurns } from '../hooks/useChatbotTurns';
 import { ChatTranscript } from './ChatTranscript';
 import type { ChatMessageRow } from '../types/chatHistory.types';
 
@@ -16,6 +16,9 @@ interface ChatThreadDrawerProps {
 
 export function ChatThreadDrawer({ row, onOpenChange }: ChatThreadDrawerProps) {
   const [failedOnly, setFailedOnly] = useState(false);
+  // AC-1029. Off by default: the shadow window is something the owner opens during a
+  // promotion watch, and it costs a second page of turns.
+  const [shadowOn, setShadowOn] = useState(false);
   const { data, isLoading } = useChatThread(row?.contact_id ?? null, row?.id);
 
   const messages = useMemo(() => data?.data ?? [], [data]);
@@ -31,6 +34,15 @@ export function ChatThreadDrawer({ row, onOpenChange }: ChatThreadDrawerProps) {
     () => [...byMessageId.values()].filter((t) => t.status === 'failed').length,
     [byMessageId],
   );
+
+  const {
+    driftByMessage,
+    shadowByMessage,
+    summaryLine,
+    isLoading: shadowLoading,
+    isError: shadowFailed,
+    isSuccess: shadowLoaded,
+  } = useShadowChatbotTurns(row?.contact_id ?? null, byMessageId, shadowOn);
 
   return (
     <Sheet open={Boolean(row)} onOpenChange={onOpenChange}>
@@ -63,6 +75,15 @@ export function ChatThreadDrawer({ row, onOpenChange }: ChatThreadDrawerProps) {
                 </Badge>
               )}
             </Button>
+            <Button
+              size="sm"
+              variant={shadowOn ? 'primary' : 'outline'}
+              onClick={() => setShadowOn((v) => !v)}
+              aria-pressed={shadowOn}
+              title="Compare each turn with the parser version running in the shadow"
+            >
+              Shadow
+            </Button>
             {turnsFailed && (
               <span className="text-xs text-destructive">
                 Turn traces could not be loaded.
@@ -72,6 +93,25 @@ export function ChatThreadDrawer({ row, onOpenChange }: ChatThreadDrawerProps) {
               <span className="text-xs text-muted-foreground">Loading turns…</span>
             )}
           </div>
+          {/* AC-1030. One line, and only while the filter is on: what the window holds
+              and how often the two parsers agreed. Each state is said in words - a
+              parity of "0%" and "nothing to compare" are opposite findings. */}
+          {shadowOn && (
+            <div className="text-xs text-muted-foreground" data-testid="shadow-summary">
+              {shadowFailed
+                ? (
+                    <span className="text-destructive">
+                      Shadow turns could not be loaded.
+                    </span>
+                  )
+                : shadowLoading
+                  ? 'Loading the shadow window…'
+                  : (summaryLine ??
+                    (shadowLoaded
+                      ? 'No shadow turns in this conversation. Set a parser shadow version in Settings > Chatbot.'
+                      : ''))}
+            </div>
+          )}
         </SheetHeader>
 
         <div className="flex-1 min-h-0">
@@ -82,6 +122,9 @@ export function ChatThreadDrawer({ row, onOpenChange }: ChatThreadDrawerProps) {
             turnsByMessageId={byMessageId}
             failedTurnsOnly={failedOnly}
             retryUnavailableReason={retryUnavailableReason}
+            shadowOn={shadowOn}
+            driftByMessageId={driftByMessage}
+            shadowTurnsByMessageId={shadowByMessage}
           />
         </div>
       </SheetContent>

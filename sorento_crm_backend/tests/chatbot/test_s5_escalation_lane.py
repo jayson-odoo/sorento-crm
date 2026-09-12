@@ -110,6 +110,7 @@ import pytest
 
 from app.services.chatbot.contracts import SUGGESTED_TEAMS
 from tests.chatbot import _corpus
+from app.services.chatbot import trace as trace_mod
 
 # --------------------------------------------------------------------------- #
 # Shared builders
@@ -244,10 +245,19 @@ def _rank_case(case_id: str):
     """`(ctx_kwargs, expected)` for one rung of the LIVE ladder (no `gate` rank - see the
     module docstring; `resolved_entity` was never live and is dropped)."""
     if case_id == "picked_member":
+        # D8/S3d step 4: the roster the pick resolves against is the OPEN QUESTION's own
+        # frozen options now, not a bare `last_result_set` mirror.
         prev = {
-            "last_result_set": [
-                {"uuid": "member-9", "company_id": "c-sorento", "company_name": "Sorento", "brand_code": "sorento"}
-            ]
+            "open_question": {
+                "kind": "member_offer",
+                "options": [
+                    {"uuid": "member-9", "company_id": "c-sorento", "company_name": "Sorento", "brand_code": "sorento"}
+                ],
+                "expects": "yes_no",
+                "asked_at_turn": 1,
+                "asked_at": None,
+                "payload": {},
+            }
         }
         escalation = {"is_escalation_confirmation": True, "preferred_assignee_id": "member-9", "company_pick": None}
         ctx_kwargs = dict(prev_variables=prev, escalation=escalation, routing={"suggested_team": "customer_service"})
@@ -398,8 +408,14 @@ def test_clarify_company_ask_always_in_reply() -> None:
             # never reaches the `rp.length > 1` arm that produces `multi_company_unpicked`
             # (matches `_rank_case("multi_company_unpicked")` above).
             "routing": {"suggested_team": "customer_service"},
-            "selection_context": "member_offer",
-            "last_result_set": [{"uuid": "m1"}],
+            "open_question": {
+                "kind": "member_offer",
+                "options": [{"uuid": "m1"}],
+                "expects": "yes_no",
+                "asked_at_turn": 1,
+                "asked_at": None,
+                "payload": {},
+            },
             "routing_roster_plan": [
                 {"company_id": "c-mocha", "company_name": "Mocha"},
                 {"company_id": "c-sorento", "company_name": "Sorento"},
@@ -754,8 +770,14 @@ def test_pending_marker_written_for_company_clarify_and_none_for_assignment() ->
             # live's `sameTeam` gate never fires and the ladder cannot reach
             # `multi_company_unpicked`.
             "routing": {"suggested_team": "customer_service"},
-            "selection_context": "member_offer",
-            "last_result_set": [{"uuid": "m1"}],
+            "open_question": {
+                "kind": "member_offer",
+                "options": [{"uuid": "m1"}],
+                "expects": "yes_no",
+                "asked_at_turn": 1,
+                "asked_at": None,
+                "payload": {},
+            },
             "routing_roster_plan": [
                 {"company_id": "c-mocha", "company_name": "Mocha"},
                 {"company_id": "c-sorento", "company_name": "Sorento"},
@@ -962,9 +984,19 @@ def test_out_of_scope_finishes_in_turn(session_factory, system_settings_row, mon
     # is where the lane's reply/actions are composed; `remembered` is the tail's session
     # write, one stage further. There is no `sent` stage - D9, the CRM never sends.
     assert row.stage == "remembered"
-    stages = [r["stage"] for r in row.trace]
-    assert stages == ["received", "understood", "access", "routed", "looked_up", "replied", "remembered"]
-    assert all(r["status"] == "ok" for r in row.trace)
+    stages = [r["stage"] for r in trace_mod.stage_records(row.trace)]
+    # L1-S3: `answered` sits between `understood` and `access` on every turn.
+    assert stages == [
+        "received",
+        "understood",
+        "answered",
+        "access",
+        "routed",
+        "looked_up",
+        "replied",
+        "remembered",
+    ]
+    assert all(r["status"] == "ok" for r in trace_mod.stage_records(row.trace))
 
     # The session write itself: same contact row (no new insert), but the stored
     # session_vars actually changed - the tail wrote SOMETHING (routing axes and/or the
@@ -1659,8 +1691,14 @@ class TestPersonMentionEscalationRoutesByStaffLookup:
                 {"company_id": "c-a", "company_name": "A"},
                 {"company_id": "c-b", "company_name": "B"},
             ],
-            "selection_context": "member_offer",
-            "last_result_set": [{"uuid": "member-1"}, {"uuid": "member-2"}],
+            "open_question": {
+                "kind": "member_offer",
+                "options": [{"uuid": "member-1"}, {"uuid": "member-2"}],
+                "expects": "yes_no",
+                "asked_at_turn": 1,
+                "asked_at": None,
+                "payload": {},
+            },
         }
         ctx = _ctx(
             routing={"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
@@ -1719,7 +1757,14 @@ class TestOwnerRulingD1LaneTeamMismatch:
             routing={"suggested_team": "marketing_promotion", "suggested_agent": "general_enquiries"},
             prev_variables={
                 "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
-                "pending": {"kind": "escalation_offer", "team": "warehouse", "domain": "inventory"},
+                "open_question": {
+                    "kind": "team_pick",
+                    "options": [],
+                    "expects": "yes_no",
+                    "asked_at_turn": 1,
+                    "asked_at": None,
+                    "payload": {"team": "warehouse", "domain": "inventory"},
+                },
             },
             text="escalate to marketing",
         )
@@ -1759,7 +1804,14 @@ class TestOwnerRulingD1LaneTeamMismatch:
             escalation={"is_escalation_confirmation": False, "team_unresolved": True},
             prev_variables={
                 "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
-                "pending": {"kind": "escalation_offer", "team": "warehouse", "domain": "inventory"},
+                "open_question": {
+                    "kind": "team_pick",
+                    "options": [],
+                    "expects": "yes_no",
+                    "asked_at_turn": 1,
+                    "asked_at": None,
+                    "payload": {"team": "warehouse", "domain": "inventory"},
+                },
             },
             text="can someone else help me",
         )
@@ -1873,10 +1925,13 @@ class TestEveryClarifyIsSomethingTheCustomerReceives:
             escalation={"is_escalation_confirmation": False, "company_pick": None},
             prev_variables={
                 "routing": {"suggested_team": "purchasing"},
-                "pending": {
-                    "kind": "escalation_offer",
-                    "team": "purchasing",
-                    "domain": "inventory",
+                "open_question": {
+                    "kind": "team_pick",
+                    "options": [],
+                    "expects": "yes_no",
+                    "asked_at_turn": 1,
+                    "asked_at": None,
+                    "payload": {"team": "purchasing", "domain": "inventory"},
                 },
             },
         )

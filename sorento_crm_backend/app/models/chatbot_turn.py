@@ -108,6 +108,14 @@ class ChatbotTurn(Base):
     # called us with is_test and kept its own reply.
     shadow_of = Column(String(128), nullable=True)
 
+    # Which console or clone RUN this test turn belongs to (`Envelope.test_run_id`), and
+    # null on every live delivery. Growth r1 D11 needs it to count a contact's turns: a
+    # dry run must read the same counter a live turn would (AC-206 wants the two session
+    # patches byte-equal) while a MULTI-turn console run still has to advance, and those
+    # two are only reconcilable if the engine can tell one console run's own turns from
+    # every other test turn ever recorded against that contact.
+    test_run_id = Column(String(128), nullable=True)
+
     # Set when an operator presses Retry (S2b) and the envelope has been re-posted to the
     # n8n inject webhook. The row STAYS `failed` - it is a record of what happened, and
     # the retry is a new turn, not an edit of this one. Two things read it: the second

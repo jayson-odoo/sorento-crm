@@ -166,6 +166,10 @@ class SystemSettingUpdate(BaseModel):
     # above - they must appear HERE and in the GET dict, because both are manual.
     chatbot_business_lane_enabled: Optional[bool] = None
     chatbot_ordering_enabled: Optional[bool] = None
+    # AC-1027 / AC-1028. The parser version the shadow turn runs, or null for off. Here
+    # AND in the GET dict below, because both builders are hand-written and a column on
+    # only one of them never reaches the screen.
+    chatbot_parser_shadow_version: Optional[str] = None
 
 
 class ChatbotLane(BaseModel):
@@ -382,6 +386,7 @@ async def get_settings(
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
+                "chatbot_parser_shadow_version": getattr(settings, "chatbot_parser_shadow_version", None) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -629,6 +634,20 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                     + "."
                 ),
             )
+
+    # AC-1027, and the same rule as the lane vocabulary above: a shadow version that names
+    # nothing is refused HERE, naming it, rather than saved and then turned into a row of
+    # `failed` shadow parses nobody is watching. The window is the evidence a new parser is
+    # promoted on, so a typo in it is the one failure that quietly produces no evidence at
+    # all. An empty string is the OFF switch and is always allowed.
+    shadow_version = update_data.get("chatbot_parser_shadow_version")
+    if isinstance(shadow_version, str) and shadow_version.strip():
+        from app.modules.chatbot.lane_vocabulary import resolve_shadow_version
+
+        try:
+            resolve_shadow_version(db, shadow_version)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     # The chatbot columns are NOT NULL with a default, so an explicit `null` in the body
     # means "reset to the default" - not a null write. Without this the loop below sends

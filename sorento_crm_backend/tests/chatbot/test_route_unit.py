@@ -130,11 +130,18 @@ class TestItemShape:
 class TestTierRePick:
     def _tier_ctx(self, text: str, **overrides):
         variables = {
-            "tier_menu": [
-                {"idx": 1, "label": "Office", "value": "office"},
-                {"idx": 2, "label": "Dealer", "value": "dealer"},
-                {"idx": 3, "label": "End user", "value": "end_user"},
-            ]
+            "open_question": {
+                "kind": "tier_pick",
+                "options": [
+                    {"idx": 1, "label": "Office", "value": "office"},
+                    {"idx": 2, "label": "Dealer", "value": "dealer"},
+                    {"idx": 3, "label": "End user", "value": "end_user"},
+                ],
+                "expects": "pick",
+                "asked_at_turn": 1,
+                "asked_at": None,
+                "payload": {},
+            }
         }
         variables.update(overrides)
         return _ctx(
@@ -162,7 +169,19 @@ class TestTierRePick:
 
     def test_a_live_member_roster_outranks_the_tier_intercept(self) -> None:
         """A CS-member pick can fire a real assignment; the tier menu must not steal it."""
-        branch, stamp = decide(self._tier_ctx("2", selection_context="member_offer"))
+        branch, stamp = decide(
+            self._tier_ctx(
+                "2",
+                open_question={
+                    "kind": "member_offer",
+                    "options": [],
+                    "expects": "yes_no",
+                    "asked_at_turn": 1,
+                    "asked_at": None,
+                    "payload": {},
+                },
+            )
+        )
         assert branch == "low_signal"
         assert stamp == {}
 
@@ -188,11 +207,18 @@ class TestOutOfRangeMemberPickReprompsInsteadOfLowSignal:
             custom_fields=[],
             text="9",
             variables={
-                "selection_context": "member_offer",
-                "last_result_set": [
-                    {"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 7)
-                ],
-                # Deliberately NO routing_roster_plan: this is a single-company CS-member
+                "open_question": {
+                    "kind": "member_offer",
+                    "options": [
+                        {"idx": i, "label": f"Member {i}", "uuid": f"u{i}"}
+                        for i in range(1, 7)
+                    ],
+                    "expects": "yes_no",
+                    "asked_at_turn": 1,
+                    "asked_at": None,
+                    "payload": {},
+                },
+                # Deliberately no `payload.companies`: this is a single-company CS-member
                 # roster, not a multi-company unpicked continuation.
             },
         )

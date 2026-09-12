@@ -63,7 +63,7 @@ from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes.escalation import run
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
-from tests.chatbot.test_r3_pending_end_to_end import _stub_parser
+from tests.chatbot._shared_turn_helpers import _stub_parser
 from tests.chatbot.test_s5_escalation_lane import _ctx, _item, _services
 
 

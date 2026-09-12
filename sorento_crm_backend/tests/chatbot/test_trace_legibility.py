@@ -20,6 +20,7 @@ from sqlalchemy import text
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
+from app.services.chatbot import trace as trace_mod
 from app.services.chatbot.contracts import BRANCH_KINDS
 from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures used by name
     CONTACT_ID,
@@ -32,20 +33,23 @@ from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures use
 
 
 def _assert_trace_is_legible(trace: list[dict[str, Any]]) -> None:
-    """Every STAGE RECORD in the persisted array is a sentence.
+    """Every STAGE RECORD in the persisted array is a sentence (AC-007, D11).
 
     `chatbot.turns.trace` carries two kinds of entry since growth r1 A9. A stage record
     (`TurnTrace.record`) has a `stage` and no `kind`, and is what this AC is about: an
     operator reads it. An EVENT (`TurnTrace.add` - a tool call, a cross-domain probe, the
-    field reveals) has a flat `kind` and is deliberately technical detail: raw args and a
-    raw MCP envelope, which `trace_detail.py` renders in its own sections and which no
-    honest `summary` could be written for. Demanding prose of one would only ever produce
-    a fake sentence, so the filter is the `kind` key itself.
+    field reveals, and the dialogue decisions `decay` / `focus` / `open_question`) has a
+    flat `kind` and is deliberately technical detail: raw args and a raw MCP envelope,
+    which `trace_detail.py` renders in its own sections and which no honest `summary`
+    could be written for. Demanding prose of one would only ever produce a fake sentence,
+    so the filter is the `kind` key itself, via `trace.stage_records` - the one place that
+    tells the two apart.
 
     The stage list is still asserted non-empty, so "skip everything" is not a way to pass.
     """
-    records = [entry for entry in trace if entry.get("kind") is None]
-    assert records, "no trace records were written at all"
+    assert trace, "no trace records were written at all"
+    records = trace_mod.stage_records(trace)
+    assert records, "no STAGE records were written at all"
     for record in records:
         assert "raw" in record, record
         summary, why = record["summary"], record["why"]
@@ -130,8 +134,14 @@ class TestTraceLegibilityAcrossBranchKinds:
         _set_session_vars(
             session_factory,
             {
-                "selection_context": "member_offer",
-                "routing_roster_plan": [{"id": "a"}, {"id": "b"}],
+                "open_question": {
+                    "kind": "member_offer",
+                    "options": [],
+                    "expects": "yes_no",
+                    "asked_at_turn": 1,
+                    "asked_at": None,
+                    "payload": {"companies": [{"id": "a"}, {"id": "b"}]},
+                },
             },
         )
         stub_parser(

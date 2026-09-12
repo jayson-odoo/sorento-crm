@@ -13,7 +13,7 @@ whole contract, and say so in the reason.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,60 @@ class Divergence:
     strip_paths: tuple[tuple[str, ...], ...] = ()
 
 
+# The two session keys the PORT writes and no capture can carry, stripped from both sides
+# of every `compile-current-state` comparison. Declared once because two entries need the
+# same list: the blanket H13/H14 one below, and each of the thirteen per-fixture entries
+# above it - a per-fixture entry wins the `find` lookup, so it has to carry the strip
+# itself or the fixture is compared on a key it could not have.
+#
+# `pending` is the R3 marker (AC-202). `focus` is growth r1 slice B3 (what the
+# conversation is about, per axis, each axis ageing on its own) and `open_question` is
+# slice B4 (the ONE thing the bot is waiting for, with its options frozen). The JS has no
+# equivalent of any of the three, so no capture can show one, and requiring one would be
+# requiring the corpus to have been recorded after the code that writes it. Everything
+# else in the session patch is still compared byte for byte - `entities`, `domain_hint`,
+# `selection_context`, `last_result_set`, `dym_offer` and `pending` included - which is
+# the point: `open_question` is DERIVED from those, so any drift between them would show
+# up as one of them moving.
+# L1-S3 (AC-1001, AC-1033, owner decision D8): the WHOLE `variables` object, because the
+# node stopped persisting a turn's diagnostics. What it writes is the five keys the
+# conversation IS - focus, open question, ideation, access levels, contains_flyer - and the
+# 34 keys every capture carries described ONE TURN, which a turn that has been answered has
+# nothing left to say about. No capture predates that decision and none ever can.
+#
+# FIELD-SCOPED, and the field is the only one that moved: `user_response`, `quick_reply` and
+# every other byte of the item are still compared, so what the CUSTOMER is shown is graded
+# exactly as before. The five keys themselves are asserted by
+# `tests/chatbot/test_session_shape.py` and the world grader's
+# `map_expected_variables_to_five_keys`.
+_PORT_ONLY_SESSION_KEYS: tuple[tuple[str, ...], ...] = (
+    ("reply", "session_patch", "variables"),  # the shipping seal
+    ("variables",),  # a pre-RS-3 capture, unwrapped by the runner
+)
+
+
+# The keys `output_exchange` EMITS that no capture can contain, because n8n's body has no
+# arm that writes them. Declared once because two entries need the same list: the blanket
+# owner-ruling-K entry below, and every per-fixture entry that wins the `find` lookup ahead
+# of it - a per-fixture entry is used WHOLE, so it has to carry this strip itself.
+_ADDED_DIAGNOSTIC_KEYS: tuple[tuple[str, ...], ...] = (
+    ("output", "member_offer_filter_modification"),
+    ("output", "bare_entity_retyped"),
+    ("output", "entities_dropped_on_topic_change"),
+    # Console pass 4, item 3 (AC-823): the diagnostic the filter-modification arm stamps
+    # when it puts the offer's own scope back. n8n has no such arm.
+    ("output", "member_offer_scope_reused"),
+    # Console pass 4, item 4 / issue #708 (AC-824): stamped when a numbered pick over a
+    # `suggest_offer` roster is merged through `apply_dym_pick` instead of replacing the
+    # scope. n8n has no such arm either.
+    ("output", "suggest_offer_pick_merged"),
+    # Console pass 5, item B2 (H80/AC-829): stamped by
+    # `resolve_gate.resolve_bare_reply_under_member_offer` when a bare reply under an open
+    # member_offer resolved against the RESOLVER and replaced a half of the carried pair.
+    ("output", "bare_member_offer_entity_resolved"),
+)
+
+
 # The five owner-ruling-K captures whose re-prompt turn named no domain and no entities,
 # so the SUBJECT carry (AC-816 rule 1, 6 Sep 2026) moves them on those two fields as well
 # as on the three the whole group moves on. Measured, one capture at a time: the other
@@ -44,6 +98,120 @@ _SUBJECT_CARRY_MOVES = frozenset(
     }
 )
 
+
+
+# L1-S3d step 4 (D8, AC-1001): the captures whose `previous_conversation_state` is the
+# 34-key shape, replayed against a node that no longer reads it.
+#
+# The engine persists FIVE keys, so what it hands `output_exchange` as
+# `previous_conversation_state` is `{focus, open_question, ideation, access_levels,
+# contains_flyer}`. Every rule that used to resolve a pick off `selection_context`,
+# `last_result_set`, `dym_offer`, `dym_last_result_set`, `pending`, `dym_candidates`,
+# `picker_last_result_set` or `tier_menu` reads the OPEN QUESTION instead - one record of
+# what the bot asked, with the rows the customer saw frozen onto it. A capture predates
+# that key by construction, so on these fixtures the picker is simply not there and the
+# pick does not apply.
+#
+# MEASURED, not assumed, and this is why it is an allowance rather than a defect: the same
+# reads are already inert in PRODUCTION. They have been reading a five-key dict since the
+# session shape changed, so deleting them changes no customer-visible behaviour on any
+# live turn - it only stops these captures grading a path the engine cannot reach. The
+# blast radius was measured by blanking the eight keys out of `previous_conversation_state`
+# inside `post_process` and replaying the whole corpus: 38 of `output_exchange`'s graded
+# parametrisations move (29 distinct fixtures), and 17 of `suggest-follow-up`'s.
+#
+# FIELD-SCOPED to what the pick decides - the turn's scope (`entities`), the positional
+# bookkeeping beside it, and the escalation a member pick confirms. Everything else in the
+# emission is still compared byte for byte: `message_type`, `domain_hint`, `intent_hint`,
+# `routing`, `access_levels`, `date_filter_*`, `query_brands`, `match_mode`,
+# `reference_positions` and the rest, so a turn's CLASSIFICATION and its ROUTING are
+# graded on these fixtures exactly as before. The behaviour that stops being graded here
+# is graded instead by `tests/chatbot/test_open_question.py`, `test_focus_worlds.py` and
+# the world corpus, which speak the five-key shape.
+_STEP4_PICK_PATHS: tuple[tuple[str, ...], ...] = (
+    ("output", "entities"),
+    ("output", "escalation"),
+    ("output", "positions_resolved"),
+    ("output", "positions_out_of_range"),
+    ("output", "member_pick_context"),
+    ("output", "suggest_pick_context"),
+    ("output", "_pending_pick"),
+    ("output", "domain_inherited_compatible"),
+    ("output", "domain_inherited_for_suggest"),
+    ("output", "dym_pick_applied"),
+    ("output", "dym_offer_pick_code"),
+    ("output", "dym_pick_domain_forced"),
+    ("output", "dym_superseded_dropped"),
+    ("output", "dym_replace_unmatched"),
+    ("output", "select_all_expanded"),
+    ("output", "incoming_hint_retyped_to_product"),
+    ("output", "entities_dropped_on_topic_change"),
+)
+
+_STEP4_HAZARD = "L1-S3 step 4 (D8, AC-1001)"
+_STEP4_REASON = (
+    "the engine persists five keys, so the captured previous state carries keys it can "
+    "no longer hand the node, and the reads were deleted. The pick rules resolve against "
+    "the open question now; a capture predates it, so no picker is open and the pick does "
+    "not apply. Field-scoped to what a pick decides - the turn's scope, the positional "
+    "bookkeeping and the escalation a member pick confirms - so the classification, the "
+    "routing and every other byte of the emission stay graded. Measured: the same reads "
+    "are already inert in production, which is why this costs coverage and not behaviour."
+)
+
+# Twenty-four of the twenty-nine. The other five - `parser-15118060`, `parser-15136058`,
+# `parser-15143320`, `parser-15143474` (owner ruling B) and `parser-15121180`
+# (PLAN-broaden-domain-switch) - already had an entry of their own, and `find` uses the
+# FIRST match WHOLE, so `_STEP4_PICK_PATHS` is appended to those entries instead of listed
+# twice here. One fixture, one entry, saying everything true of it.
+_STEP4_OUTPUT_EXCHANGE: tuple[str, ...] = (
+    "b56-t4-parser",
+    "exec-13484619",
+    "exec-13488927",
+    "parser-15024720",
+    "parser-15114106",
+    "parser-15119212",
+    "parser-15119542",
+    "parser-15121134",
+    "parser-15121349",
+    "parser-15123316",
+    "parser-15123878",
+    "parser-15125372",
+    "parser-15129616",
+    "parser-15137523",
+    "parser-15137788",
+    "parser-15143883",
+    "parser-15151918",
+    "parser-15154295",
+    "parser-15157067",
+    "parser-15157165",
+    "parser-15158411",
+    "parser-15158778",
+    "rs09-t2-parser",
+    "rs09-t3-parser",
+)
+
+# `suggest-follow-up` is the SAME cause one node later: its whole gate was
+# `selection_context == "suggest_offer"`, which is a `product_pick` / `customer_pick` now.
+_STEP4_SUGGEST_FOLLOW_UP: tuple[str, ...] = (
+    "parser-15026562",
+    "parser-15110268",
+    "parser-15115511",
+    "parser-15118060",
+    "parser-15125289",
+    "parser-15125372",
+    "parser-15126468",
+    "parser-15127533",
+    "parser-15130007",
+    "parser-15130401",
+    "parser-15136058",
+    "parser-15137523",
+    "parser-15139161",
+    "parser-15143320",
+    "parser-15143883",
+    "parser-15157067",
+    "parser-15161626",
+)
 
 # Every entry here must name a hazard id or an owner decision from the plan, and be
 # traceable to an AC. S1 shipped with none; S2 adds two - AC-202 authorises the `pending`
@@ -99,11 +267,10 @@ DIVERGENCES: list[Divergence] = [
             strip_paths=(
                 ("reply", "session_patch", "variables", "selection_context"),
                 ("reply", "session_patch", "variables", "last_result_set"),
-                ("reply", "session_patch", "variables", "pending"),
                 ("variables", "selection_context"),
                 ("variables", "last_result_set"),
-                ("variables", "pending"),
             )
+            + _PORT_ONLY_SESSION_KEYS
             # THE SUBJECT CARRY (prod exec 15445325, same ruling, 6 Sep 2026). A carried
             # offer now takes the domain and the entities it was made ABOUT with it, so
             # the five captures where the re-prompt turn named neither also move on those
@@ -140,17 +307,22 @@ DIVERGENCES: list[Divergence] = [
     Divergence(
         node="compile-current-state",
         fixture=None,
-        hazard="H13/H14 (R3)",
+        hazard="H13/H14 (R3), growth r1 slice B3 (AC-951), L1-S3 (AC-1001 / AC-1033, D8)",
         reason=(
-            "the port writes the `pending` marker the JS had no equivalent of, so the "
-            "next turn can ask 'is an escalation offer open?' of state instead of of the "
-            "bot's own previous words (D11). Field-scoped: every other byte of the "
-            "session patch is still compared, and AC-203's own test asserts the marker."
+            "the port writes three session keys the JS had no equivalent of. `pending` is "
+            "the R3 marker, so the next turn can ask 'is an escalation offer open?' of "
+            "state instead of of the bot's own previous words (D11). `focus` is what the "
+            "conversation is about, per axis, each axis ageing on its own turn counter "
+            "(growth r1 slice B, owner decision D6/D11), and `open_question` is the ONE "
+            "thing the bot is waiting for, with the rows the customer was shown frozen "
+            "onto it (D7) - no capture predates the code that writes any of the three, "
+            "and none ever can. Field-scoped: every other byte of the "
+            "session patch is still compared, `entities` and `domain_hint` included, "
+            "which is what proves slice B3 moved the carry rules without changing them. "
+            "AC-203's own test asserts the marker and "
+            "tests/chatbot/test_focus_rules.py asserts the focus."
         ),
-        strip_paths=(
-            ("reply", "session_patch", "variables", "pending"),  # the shipping seal
-            ("variables", "pending"),  # a pre-RS-3 capture, unwrapped by the runner
-        ),
+        strip_paths=_PORT_ONLY_SESSION_KEYS,
     ),
     # ------------------------------------------------------------------ #
     # S6c.
@@ -423,7 +595,11 @@ DIVERGENCES: list[Divergence] = [
                 ("output", "entities_dropped_on_topic_change"),
             ),
         )
-        for name in ("parser-15124806", "parser-15151771")
+        # `parser-15124806` moved to the combined PR #735 entry below: after the D10
+        # retype generalisation it ALSO disagrees on `incoming_hint_retyped_to_product`,
+        # and `find()` returns the first (node, fixture) match, so one fixture cannot be
+        # covered by two entries.
+        for name in ("parser-15151771",)
     ),
     # OWNER RULING B, console pass 3 (6 Sep 2026): a did-you-mean pick stamps
     # `entity_op: "replace"` where the JS stamped `"replace_combine"`. The four
@@ -436,10 +612,13 @@ DIVERGENCES: list[Divergence] = [
     # agreeing on the turn the ruling is about, where the pick's candidate type
     # differs from the source token's hint and `replace_combine` puts the replaced
     # token back. Field-scoped to the op and its diagnostic; the entities, the
-    # domain, the dates and everything else still grade byte for byte. Pinned by
-    # test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer
-    # and the real two-turn chain in
-    # test_r3_pending_end_to_end.py::TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode.
+    # domain, the dates and everything else still grade byte for byte. Was pinned by
+    # test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer and
+    # the real two-turn chain in
+    # tests/chatbot/_shared_turn_helpers.py::TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode
+    # (retired / moved uncollected, AC-1033) - this Divergence itself stays: the
+    # capture/port disagreement it registers is unaffected by where the pinning test
+    # lives, and grep in review is what the retirement note asks for.
     *(
         Divergence(
             node="output_exchange",
@@ -447,13 +626,17 @@ DIVERGENCES: list[Divergence] = [
             hazard="owner ruling B (console pass 3, 6 Sep 2026)",
             reason=(
                 "a did-you-mean pick names its op `replace`, not `replace_combine` - the "
-                "picks ARE the scope. Field-scoped to the op; the entity list this "
-                "capture records is byte-equal either way."
+                "picks ARE the scope. Field-scoped to the op. These four are ALSO L1-S3d "
+                "step 4 captures, so they carry its strip as well: one fixture gets one "
+                "entry (`find` returns the first match and uses it whole), so the entry "
+                "has to say everything true of the fixture."
             ),
             strip_paths=(
                 ("output", "entity_op"),
                 ("output", "entity_op_applied"),
-            ),
+            )
+            + _STEP4_PICK_PATHS
+            + _ADDED_DIAGNOSTIC_KEYS,
         )
         for name in (
             "parser-15118060",
@@ -578,23 +761,110 @@ DIVERGENCES: list[Divergence] = [
     # `product` before the resolver has to referee the parser's own guess - n8n's live
     # body has no such arm, so it left the model's `inbound_shipment` hint standing. This
     # capture ("MWC7625-SH") is the one graded corpus member the retype actually fires
-    # on. Field-scoped to the entity list and the retype's own diagnostic; the domain,
-    # the intent and everything else on the capture still grades byte for byte. Pinned by
+    # on, until PR #735 (`9a49921c9`, 8 Sep 2026) moved the retype at
+    # `output_exchange.py:2298-2342` earlier in the pipeline - reachable on every
+    # `sub-semantic-parser` capture whose raw entity is product-shaped under `incoming`,
+    # not only the one turn D10 was written about. Generalised here (rather than a
+    # `fixture=None` blanket, which the module docstring reserves for a hazard that
+    # changes the WHOLE node's contract - most `output_exchange` fixtures never touch
+    # this arm at all) to the 42 `sub-semantic-parser/parser-*` captures the corpus run
+    # after that PR shows diverging on exactly this pair of fields and no other. Field-
+    # scoped to the entity list and the retype's own diagnostic; the domain, the intent
+    # and everything else on each capture still grades byte for byte. Pinned by
     # `tests/chatbot/test_growth_r1_review_fixes.py::TestD10AnIncomingAskTypesTheCodeAsAProduct`.
-    Divergence(
-        node="output_exchange",
-        fixture="exec-13488887",
-        hazard="owner ruling D10 (8 Sep 2026, AC-816-adjacent)",
-        reason=(
-            "the capture records the model's own `inbound_shipment` hint for a "
-            "product-shaped code under `incoming`; the port retypes it to `product` "
-            "before resolution. Field-scoped to the entity list and "
-            "`incoming_hint_retyped_to_product`."
-        ),
-        strip_paths=(
-            ("output", "entities"),
-            ("output", "incoming_hint_retyped_to_product"),
-        ),
+    *(
+        Divergence(
+            node="output_exchange",
+            fixture=fixture,
+            hazard="owner ruling D10 (8 Sep 2026, AC-816-adjacent) / PR #735",
+            reason=(
+                "the capture records the model's own `inbound_shipment` or `order` hint "
+                "for a product-shaped code under `incoming`; the port retypes it to "
+                "`product` before resolution. Field-scoped to the entity list and "
+                "`incoming_hint_retyped_to_product`."
+            ),
+            strip_paths=(
+                ("output", "entities"),
+                ("output", "incoming_hint_retyped_to_product"),
+            ),
+        )
+        for fixture in (
+            "exec-13488887",
+            "parser-15025509",
+            "parser-15025803",
+            "parser-15026111",
+            "parser-15026562",
+            "parser-15028916",
+            "parser-15102530",
+            "parser-15103048",
+            "parser-15111624",
+            "parser-15114041",
+            # parser-15114945, parser-15117784, parser-15124806 and parser-15138882 move
+            # to the combined entry below: each ALSO disagrees on `_pending_pick` and/or
+            # `entities_dropped_on_topic_change`, and one fixture cannot be covered by
+            # two entries (`find()` returns the first match).
+            "parser-15115511",
+            "parser-15116428",
+            "parser-15121307",
+            "parser-15122026",
+            "parser-15123783",
+            "parser-15123848",
+            "parser-15126382",
+            "parser-15126468",
+            "parser-15128367",
+            "parser-15128565",
+            "parser-15130540",
+            "parser-15134735",
+            "parser-15137401",
+            "parser-15137439",
+            "parser-15137729",
+            "parser-15138906",
+            "parser-15140593",
+            "parser-15142899",
+            "parser-15143028",
+            "parser-15143518",
+            "parser-15143756",
+            "parser-15145783",
+            "parser-15149502",
+            "parser-15151011",
+            "parser-15153567",
+            "parser-15155432",
+            "parser-15155494",
+            "parser-15160950",
+            "parser-15161626",
+        )
+    ),
+    # Same PR #735 retype as the block above, on four captures where it lands beside an
+    # ALSO-carried entity from a topic change (K rule 2's `entities_dropped_on_topic_change`
+    # / `_pending_pick`, `output_exchange.py:3308`): `parser-15124806` already carried the
+    # topic-change diagnostic (its own K-rule-2 entry, above) and now also carries the
+    # retype's; `parser-15114945`, `parser-15117784` and `parser-15138882` are new captures
+    # from the same 4-5 Sep run that exhibit both at once. Measured: stripping all four
+    # fields leaves each of the four byte-equal to its capture.
+    *(
+        Divergence(
+            node="output_exchange",
+            fixture=fixture,
+            hazard="owner ruling D10 / K rule 2 (AC-816) / PR #735",
+            reason=(
+                "the capture carries both the pre-existing topic-change diagnostics "
+                "(`entities`, `entities_dropped_on_topic_change`, `_pending_pick`) and "
+                "the PR #735 incoming-to-product retype (`incoming_hint_retyped_to_"
+                "product`) at once."
+            ),
+            strip_paths=(
+                ("output", "entities"),
+                ("output", "incoming_hint_retyped_to_product"),
+                ("output", "entities_dropped_on_topic_change"),
+                ("output", "_pending_pick"),
+            ),
+        )
+        for fixture in (
+            "parser-15114945",
+            "parser-15117784",
+            "parser-15124806",
+            "parser-15138882",
+        )
     ),
     # PLAN-broaden-domain-switch (exec 15121180, 9 Sep 2026): "ANY INCOMING" after a stock
     # turn on SRTWT04A came back domain_hint incoming / intent_hint check_incoming /
@@ -621,7 +891,8 @@ DIVERGENCES: list[Divergence] = [
             "pair beside broaden_axis restored to the PRIOR domain (inventory) and cleared "
             "the carried product. The port now reads it as a domain switch, not a wander, "
             "and reuses the carried entity. Field-scoped to the fields the switch rule "
-            "moves."
+            "moves. It is ALSO an L1-S3d step 4 capture, so it carries that strip too: "
+            "one fixture gets one entry, and the entry has to say everything true of it."
         ),
         strip_paths=(
             ("output", "domain_hint"),
@@ -634,7 +905,27 @@ DIVERGENCES: list[Divergence] = [
             ("output", "broaden_axis_domain_restored"),
             ("output", "domain_switch_over_broaden"),
             ("output", "routing"),
-        ),
+        )
+        + _STEP4_PICK_PATHS
+        + _ADDED_DIAGNOSTIC_KEYS,
+    ),
+    # L1-S3d step 4: the 29 + 17 captures whose pick the five-key session cannot reach.
+    # AHEAD of the blanket entry below, which `find` would otherwise answer with - and
+    # therefore carrying `_ADDED_DIAGNOSTIC_KEYS` itself, since a per-fixture entry is used
+    # whole. The reason is on `_STEP4_REASON`, said once for all 46.
+    *(
+        Divergence(
+            node=node,
+            fixture=name,
+            hazard=_STEP4_HAZARD,
+            reason=_STEP4_REASON,
+            strip_paths=_STEP4_PICK_PATHS + _ADDED_DIAGNOSTIC_KEYS,
+        )
+        for node, names in (
+            ("output_exchange", _STEP4_OUTPUT_EXCHANGE),
+            ("suggest-follow-up", _STEP4_SUGGEST_FOLLOW_UP),
+        )
+        for name in names
     ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this
@@ -658,25 +949,7 @@ DIVERGENCES: list[Divergence] = [
             "class - a key no capture can contain - and a capture that reached one would "
             "otherwise fail on a diagnostic rather than on behaviour."
         ),
-        strip_paths=(
-            ("output", "member_offer_filter_modification"),
-            ("output", "bare_entity_retyped"),
-            ("output", "entities_dropped_on_topic_change"),
-            # Console pass 4, item 3 (AC-823): the same class again - the diagnostic the
-            # filter-modification arm stamps when it puts the offer's own scope back. n8n
-            # has no such arm, so no capture can carry the key.
-            ("output", "member_offer_scope_reused"),
-            # Console pass 4, item 4 / issue #708 (AC-824): stamped when a numbered pick
-            # over a `suggest_offer` roster is merged through `apply_dym_pick` instead of
-            # replacing the scope. n8n has no such arm either.
-            ("output", "suggest_offer_pick_merged"),
-            # Console pass 5, item B2 (H80/AC-829): stamped by
-            # `resolve_gate.resolve_bare_reply_under_member_offer` when a bare reply under
-            # an open member_offer resolved against the RESOLVER and replaced a half of
-            # the carried pair. Same class as the five above - a key no capture can
-            # contain, because `sub-resolve-and-gate` has no equivalent arm at all.
-            ("output", "bare_member_offer_entity_resolved"),
-        ),
+        strip_paths=_ADDED_DIAGNOSTIC_KEYS,
     ),
     # A7 (chatbot-growth-r1, AC-921/AC-922): `crossdomain_render`'s `_xdBlock` gained three
     # diagnostic keys - `nothing_codes`, `nothing_note`, `nothing_missing` - so
@@ -810,6 +1083,176 @@ DIVERGENCES: list[Divergence] = [
         strip_paths=(("_xd", "requested"),),
     ),
 ]
+
+
+
+# --------------------------------------------------------------------------- #
+# L1-S3 fix round (D8, AC-1032): the six legacy keys `output_exchange` stopped
+# reading off `previous_conversation_state`.
+# --------------------------------------------------------------------------- #
+#
+# The engine hands this node the FIVE-KEY session, so `entities`, `domain_hint`,
+# `intent_hint`, `date_filter_start`, `date_filter_end` and `date_mode` are values the
+# captured previous state carries and the node can no longer read. Every rule that used to
+# reach for them reads `focus` instead - `focus_entities`, `focus_domain`, `focus_value`,
+# the three readers in `head/output_exchange.py` - which is the axis-wise record of what
+# the conversation is about (D11) and the only one the session still holds. `intent_hint`
+# is not carried at all: it is derived from this turn's own parse (D14).
+#
+# A capture predates `focus` by construction, so on these fixtures the carries find nothing
+# and the turn keeps only what its own message named. MEASURED, and it is why this is an
+# allowance and not a defect: the reads are already inert in PRODUCTION - they have been
+# looking at a five-key dict since the session shape changed - so deleting them moves no
+# customer-visible behaviour on any live turn. The blast radius was measured by blanking
+# the six keys out of `previous_conversation_state` inside `post_process` and replaying the
+# whole corpus.
+#
+# FIELD-SCOPED to what a carry decides: the turn's SCOPE (`entities` and the flags the
+# executor stamps beside it) and the domain and date window it inherits. FOUR more fields
+# move on a handful of fixtures each rather than on all 44 - `message_type`, `routing`,
+# `requested_attributes`, `date_filter_gated` - and are stripped only there
+# (`_FIXROUND_FIELD_MOVES`), so the other forty keep them graded. Everything else in the
+# emission is still compared byte for byte - `access_levels`, `query_brands`, `match_mode`,
+# `reference_positions`, `escalation`, `is_affirmative`, `order_status`, `user_goal` and
+# the rest - so what the parse UNDERSTOOD about the customer's own words is graded on these
+# fixtures exactly as before. The carries themselves are graded by `tests/chatbot/test_focus_rules.py`,
+# `test_focus_worlds.py` and the world corpus, which speak the five-key shape.
+_FIXROUND_CARRY_PATHS: tuple[tuple[str, ...], ...] = (
+    ("output", "entities"),
+    ("output", "entity_op"),
+    ("output", "entity_op_applied"),
+    ("output", "entity_op_corrected"),
+    ("output", "entities_filtered"),
+    ("output", "entities_emptied_by_filter"),
+    ("output", "broaden_dropped"),
+    ("output", "scope_exclusive_applied"),
+    ("output", "domain_hint"),
+    ("output", "intent_hint"),
+    ("output", "domain_inherited_for_position"),
+    ("output", "date_filter_start"),
+    ("output", "date_filter_end"),
+    ("output", "date_mode"),
+    ("output", "_query_brands_carried"),
+)
+
+# FOUR FIELDS THAT MOVE ON A HANDFUL OF FIXTURES, not on all 44, so the other forty keep
+# them graded. Measured one field at a time against the corpus; same shape as
+# `_SUBJECT_CARRY_MOVES` above, and the same reason - a blanket strip for a field three
+# captures disagree on would blind forty that agree.
+_FIXROUND_FIELD_MOVES: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
+    (("output", "message_type"), frozenset({"b56-t4-parser", "parser-15123878", "parser-15129616"})),
+    (("output", "routing"), frozenset({"parser-15157165"})),
+    (("output", "requested_attributes"), frozenset({"parser-15143883"})),
+    (("output", "date_filter_gated"), frozenset({"b56-t4-parser"})),
+)
+
+
+def _fixround_paths(name: str) -> tuple[tuple[str, ...], ...]:
+    """`_FIXROUND_CARRY_PATHS` plus whichever of the four narrow fields this fixture moves."""
+    return _FIXROUND_CARRY_PATHS + tuple(
+        path for path, names in _FIXROUND_FIELD_MOVES if name in names
+    )
+
+_FIXROUND_HAZARD = "L1-S3 fix round (D8, AC-1032)"
+_FIXROUND_REASON = (
+    "the engine hands the node five keys, so the captured previous state carries values "
+    "the node can no longer read - `entities`, `domain_hint`, `intent_hint` and the date "
+    "window. The carries read `focus` now, which no capture can have. Field-scoped to what "
+    "a carry decides: the turn's scope, and the domain and window it inherits. Four further "
+    "fields are stripped ONLY on the handful of fixtures measured to move on them "
+    "(`_FIXROUND_FIELD_MOVES`); every other byte of the emission, and everything the parse "
+    "understood about the customer's own words, stays graded."
+)
+
+_FIXROUND_OUTPUT_EXCHANGE: tuple[str, ...] = (
+    "b56-t4-parser",
+    # The last four moved when `reuse_domain_entityless` stopped carrying `intent_hint`
+    # off the previous state. It is the same removal as the six above, one module across:
+    # the rule lives in `dialogue/focus.py` and read the legacy key from inside the entity
+    # executor. `intent_hint` is derived per turn (D14) and is not a session key at all.
+    "exec-13488927",
+    "parser-15114106",
+    "rs09-t2-parser",
+    "rs09-t3-parser",
+    "parser-15025626",
+    "parser-15030893",
+    "parser-15036672",
+    "parser-15074293",
+    "parser-15074683",
+    "parser-15102165",
+    "parser-15109813",
+    "parser-15111167",
+    "parser-15114945",
+    "parser-15115377",
+    "parser-15116349",
+    "parser-15116385",
+    "parser-15116421",
+    "parser-15116905",
+    "parser-15117445",
+    "parser-15118011",
+    "parser-15118060",
+    "parser-15118611",
+    "parser-15118916",
+    "parser-15123783",
+    "parser-15123848",
+    "parser-15123878",
+    "parser-15124433",
+    "parser-15128968",
+    "parser-15129616",
+    "parser-15129819",
+    "parser-15130185",
+    "parser-15130269",
+    "parser-15130311",
+    "parser-15135865",
+    "parser-15137523",
+    "parser-15138906",
+    "parser-15142072",
+    "parser-15143883",
+    "parser-15146879",
+    "parser-15151810",
+    "parser-15152029",
+    "parser-15152089",
+    "parser-15152139",
+    "parser-15157067",
+    "parser-15157165",
+    "parser-15158411",
+    "parser-15164413",
+)
+
+
+# A fixture that ALREADY has an entry - for owner ruling B, D1, D10, the broaden switch or
+# L1-S3 step 4 - must carry this strip on THAT entry: `find` returns the first match and
+# uses it whole, so a second entry for the same fixture would never be reached. Everything
+# else gets one of its own, spliced in AHEAD of the blanket `fixture=None` entry for the
+# same reason.
+DIVERGENCES = [
+    replace(entry, strip_paths=entry.strip_paths + _fixround_paths(entry.fixture))
+    if entry.node == "output_exchange"
+    and entry.fixture is not None
+    and entry.fixture in _FIXROUND_OUTPUT_EXCHANGE
+    else entry
+    for entry in DIVERGENCES
+]
+
+_FIXROUND_NEW = [
+    Divergence(
+        node="output_exchange",
+        fixture=name,
+        hazard=_FIXROUND_HAZARD,
+        reason=_FIXROUND_REASON,
+        strip_paths=_fixround_paths(name) + _ADDED_DIAGNOSTIC_KEYS,
+    )
+    for name in _FIXROUND_OUTPUT_EXCHANGE
+    if not any(
+        entry.node == "output_exchange" and entry.fixture == name for entry in DIVERGENCES
+    )
+]
+_FIXROUND_BLANKET_AT = next(
+    index
+    for index, entry in enumerate(DIVERGENCES)
+    if entry.node == "output_exchange" and entry.fixture is None
+)
+DIVERGENCES[_FIXROUND_BLANKET_AT:_FIXROUND_BLANKET_AT] = _FIXROUND_NEW
 
 
 # World-level allowances live in `tests/chatbot/worlds.py`, not here, and there are

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator, Mapping
 
+from sqlalchemy import func as sa_func, or_, true as sa_true, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,10 @@ from app.config import settings
 from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import dispatch, jsc, trace as trace_mod
+from app.services.chatbot import shadow
+from app.services.chatbot.dialogue import clearing as clearing_mod
+from app.services.chatbot.dialogue import focus as focus_rules
+from app.services.chatbot.dialogue import open_question as open_question_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     SELF_CLOSING_BRANCH_KINDS,
@@ -48,6 +53,7 @@ from app.services.error_handler import AppException
 from app.services.chatbot.head import parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
+from app.services.chatbot.head import output_exchange as output_exchange_mod
 from app.services.chatbot.head.output_exchange import (
     ParserOutputError,
     post_process,
@@ -403,15 +409,146 @@ def _drop_unknown_carried_domain(variables: Any) -> None:
 
 
 def _pending_kind(variables: dict[str, Any]) -> str | None:
-    """R3: the persisted marker, read where the JS matched a frozen reply string."""
-    pending = variables.get("pending")
-    kind = jsc.get(pending, "kind")
+    """WHAT THE BOT IS WAITING FOR, for the one prompt line that names it.
+
+    R3 read the `pending` marker here, where the JS had matched a frozen reply string.
+    The marker is gone (AC-1019) and the open question is the one record of the same
+    fact, so this reads its kind - which is also what the v3 `Open question:` hint block
+    carries, in more detail. The line stays because a v1 / v2 prompt is never sent that
+    block: without it, a contact on the older prompt would lose the only signal the model
+    gets that its next message is an answer to something.
+    """
+    kind = jsc.get(variables.get("open_question"), "kind")
     return str(kind) if kind else None
 
 
 # --------------------------------------------------------------------------- #
 # Reads (session-bound, short)
 # --------------------------------------------------------------------------- #
+
+# A SHADOW ROW IS NOT A TURN OF THE CONVERSATION. It is a second parse of a message the
+# live turn already answered, written so the two prompts can be compared (`shadow.py`), and
+# it carries the same contact and the same `created_at` window as the row it shadows. Every
+# read that walks a contact's history therefore has to exclude it, or the shadow doubles the
+# turn counter and - measured - a `done` shadow row wins the newest-first order below and
+# blanks the v1 prompt's `Previous response:` line with its own parse.
+_NOT_SHADOW = or_(ChatbotTurn.ingress.is_(None), ChatbotTurn.ingress != "shadow")
+
+
+def _turn_no(db: Session, *, contact_respond_id: str, row: ChatbotTurn) -> int:
+    """WHICH turn of this conversation this is - the counter focus decay ages in (D11).
+
+    Derived from the turn ROWS rather than stored on the session, and the choice is worth
+    stating because both were available. A session key would have to be written by
+    `compile_state` on every lane, would appear in every world's expected variables (so
+    every capture in the corpus would diverge on it), and would be wrong the moment a lane
+    answered without writing a session. The rows are already the record of "how many
+    messages has this contact sent", they are written before any stage runs, and reading
+    them writes nothing - which is what a dry run needs (AC-982).
+
+    **Counted STRICTLY BEFORE this row, never as a plain total.** Two messages from one
+    dealer arriving together are both inserted before either reaches this line - the row
+    goes in before the ordering ticket is taken - so a `COUNT(*)` gave them the same
+    number and the second turn aged nothing. The order is `(started_at, id)`, a row
+    comparison, because `created_at` is `now()` and every row written inside one
+    transaction shares it (the Postgres-now lesson); `started_at` is stamped per row from
+    the Python clock in `_insert_turn`, and the id breaks a tie that is still possible at
+    microsecond resolution. `coalesce` covers a row written before `started_at` was set.
+
+    **Attempt 1 only, and never this message's own earlier attempt.** A retry is the SAME
+    turn run again (`_insert_turn` writes attempt N+1 for the same message), so it has to
+    read the number its ORIGINAL read - it is re-running one customer message, not moving
+    the conversation on. Two filters do that, and both are needed: `attempt == 1` stops a
+    retry row ageing every turn after it, and excluding this row's own `message_id` stops
+    the original ageing the retry (measured: original 1, retry 2, so the retried turn read
+    a memory the original never saw).
+
+    The message-id exclusion is written as "null, or a different id" rather than `!=`,
+    because `NULL != 'x'` is NULL in SQL and a preceding CONSOLE turn - which legitimately
+    has no respond message behind it - would have dropped out of the count.
+
+    **Live rows, plus this console run's own.** A dry run must read the counter a LIVE turn
+    would read, or AC-206's byte equality fails the moment a contact has any history at
+    all; and a multi-turn console run still has to advance, or its second turn reads the
+    memory its first turn read and the preview is a lie. `test_run_id` is what tells one
+    console run's turns from every other test turn ever recorded against that contact.
+    Reading live rows writes nothing and ages nothing, so H57 holds: the dry run still
+    cannot touch the live conversation.
+
+    The current turn's own row exists by now, so the first turn of a contact is turn 1.
+    """
+    anchor = sa_func.coalesce(ChatbotTurn.started_at, ChatbotTurn.created_at)
+    mine = (row.started_at or row.created_at, str(row.id))
+    world = ChatbotTurn.is_test.is_(False)
+    if row.test_run_id:
+        world = or_(world, ChatbotTurn.test_run_id == row.test_run_id)
+    not_this_message = (
+        or_(ChatbotTurn.message_id.is_(None), ChatbotTurn.message_id != row.message_id)
+        if row.message_id is not None
+        else sa_true()
+    )
+    return 1 + int(
+        db.query(sa_func.count(ChatbotTurn.id))
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.attempt == 1,
+            not_this_message,
+            world,
+            _NOT_SHADOW,
+            tuple_(anchor, ChatbotTurn.id) < tuple_(*mine),
+        )
+        .scalar()
+        or 0
+    )
+
+
+def _previous_response(
+    db: Session, *, contact_respond_id: str, row: ChatbotTurn
+) -> tuple[str | None, str | None]:
+    """WHAT THE BOT SAID LAST, for the v1 prompt's `Previous response:` line.
+
+    The JS read `variables.response` - a compressed, parser-facing copy of the reply that
+    the tail wrote back into the session every turn. The five-key session does not carry
+    one (AC-1001), so that line has been EMPTY on every turn since L1-S3, and the promoted
+    v1 prompt's carry instructions are written against it. The turn ROWS already hold what
+    was said, so this reads the record instead of re-introducing the mirror: `turns` is
+    written once per turn and cannot disagree with itself.
+
+    `reply.text` is what the customer was actually sent; `item.user_response` is the same
+    string on a row written before the reply seal existed. NEVER the customer's own words
+    and never a transcript - one previous bot reply, which is what the prompt asks for.
+
+    Scoped exactly like `_turn_no`: strictly BEFORE this row in the same order, `attempt
+    == 1` so a retry does not read its own original's successor, and the same world (live
+    rows, plus this console run's own) so a dry run reads what a live turn would read
+    without touching the live conversation. Returns `(text, turn id)` so the trace can say
+    which row answered.
+    """
+    anchor = sa_func.coalesce(ChatbotTurn.started_at, ChatbotTurn.created_at)
+    mine = (row.started_at or row.created_at, str(row.id))
+    world = ChatbotTurn.is_test.is_(False)
+    if row.test_run_id:
+        world = or_(world, ChatbotTurn.test_run_id == row.test_run_id)
+    previous = (
+        db.query(ChatbotTurn.id, ChatbotTurn.response)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.status == "done",
+            ChatbotTurn.attempt == 1,
+            world,
+            _NOT_SHADOW,
+            tuple_(anchor, ChatbotTurn.id) < tuple_(*mine),
+        )
+        .order_by(anchor.desc(), ChatbotTurn.id.desc())
+        .first()
+    )
+    if previous is None:
+        return None, None
+    response = previous.response if isinstance(previous.response, dict) else {}
+    text = jsc.get(jsc.get(response, "reply"), "text")
+    if not jsc.truthy(text):
+        text = jsc.get(jsc.get(response, "item"), "user_response")
+    return (jsc.js_string(text) if jsc.truthy(text) else None), str(previous.id)
 
 
 def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | None) -> dict:
@@ -558,6 +695,10 @@ def _insert_turn(
         attempt=(retrying.attempt + 1) if retrying is not None else 1,
         trace=[],
         shadow_of=getattr(envelope, "shadow_of", None),
+        # D11's counter needs to tell one console run's own turns from every other test
+        # turn recorded against this contact. Null on a live delivery, which belongs to no
+        # run.
+        test_run_id=getattr(envelope, "test_run_id", None),
         started_at=_now(),
     )
     db.add(row)
@@ -783,6 +924,9 @@ def run_turn(
     ordered = False
     ticket: int | None = None
     redis = None
+    # Bound BEFORE the try, because the `finally` reads it: a turn that never got a row -
+    # a duplicate, or a failed insert - has nothing for the shadow parse to name.
+    turn_id = ""
     try:
         with _session(session_factory) as db:
             switches = _read_switches(db)
@@ -964,6 +1108,32 @@ def run_turn(
                     exc_info=True,
                 )
 
+        # AC-1027. THE SHADOW PARSE STARTS HERE, at the very end of the turn: after the
+        # answer and its send action are composed, and AFTER THE ORDERING TICKET IS
+        # RELEASED. It used to fire immediately after the row insert, which put a second
+        # parser call - and, with the worker off or redis down, a SYNCHRONOUS one - in
+        # front of the customer's reply.
+        #
+        # And it has to come after `mark_done` above, not before: with ordering on and no
+        # worker, a dealer's SECOND message would otherwise wait out the first message's
+        # shadow LLM call before its own turn could start. The observation must not be able
+        # to delay the next reply any more than it may delay this one.
+        #
+        # In the same `finally` as the ticket release, for a related reason: a turn that
+        # failed is still a turn the new prompt should have been asked about, and the
+        # observation must not be the thing that is skipped when something goes wrong.
+        # Fire-and-forget, and it cannot fail this turn - `shadow.fire` catches
+        # everything, including its own enqueue and its own inline run.
+        if turn_id:
+            shadow.fire(
+                envelope,
+                session_factory=session_factory,
+                shadow_version=switches.chatbot_parser_shadow_version,
+                contact_respond_id=contact_respond_id,
+                live_message_id=message_id,
+                offloaded=bool(getattr(settings, "chatbot_turn_on_worker", False)),
+            )
+
 
 def _ordering_redis() -> Any:
     """The connection the ordering keys live on: the one the queues already use.
@@ -1096,6 +1266,109 @@ def _worker_failed(
     return _failed_result(turn_id, "queued", message, [], envelope.dry_run)
 
 
+# What an answered question ROUTES to (D5, AC-1015). The handler says what happened; this
+# says which lane runs next, and it is a translation rather than a decision: `escalate` is
+# the customer accepting an offer, `declined` is them refusing it, a resolved pick puts the
+# turn back in the business lane with its new scope, and an unresolved answer (a bare "yes"
+# on a two-team offer) re-asks with the same buttons.
+_LANE_BY_OUTCOME = {
+    "escalate": "escalation",
+    "declined": "declined",
+    "resolved": "business",
+    "reask": "reask",
+}
+
+
+def _resolve_open_question(
+    variables: dict[str, Any],
+    *,
+    parser_raw: Any,
+    emits_v3: bool,
+    referenced_result_set: Any,
+    turn_no: int,
+) -> dict[str, Any]:
+    """Did this message answer the question the bot was waiting for? (AC-1014 to AC-1020)
+
+    Pure, and it runs BEFORE the post-processor so the pick can be applied as this turn's
+    scope rather than written over the top of it. Returns the question that was open, the
+    normalised answer, the trace entry and the LANE the outcome names - the caller records
+    the stage and the post-processor applies the outcome to the emission.
+    """
+    # ONE reader, one key. A session written before the five-key shape was converted by
+    # migration `517_chatbot_session_5key` on deploy (DoD gate 2), so there is no legacy
+    # shape left to derive from and no branch here that could quietly outlive it.
+    question = variables.get("open_question")
+    question = question if isinstance(question, dict) and question.get("kind") else None
+    signals = output_exchange_mod.v3_signals(parser_raw, emits_v3=emits_v3)
+    answer = signals["answers_open_question"]
+    if question is not None and not answer.get("resolved"):
+        # THE v1 PATH, through the SAME resolver (L1-S3d step 1). A prompt-v1 emission has
+        # no `answers_open_question`; a numbered reply arrives as `reference_positions`.
+        # With a question open, those positions ARE the answer to it - that is what "only
+        # one question is ever open" buys (D6, AC-1014): the numbers cannot collide, so the
+        # roster a position resolves against is never in doubt.
+        #
+        # `reference_target` is deliberately NOT the discriminator, and the file says why a
+        # few hundred lines down: it is the model's DEFAULT and comes back on an ordinary
+        # roster pick too, so the legacy code keyed on which roster happened to be in state
+        # instead. An open question is the honest discriminator and it needs no table.
+        positions = [
+            int(p)
+            for p in jsc.array(jsc.get(parser_raw, "reference_positions"))
+            if isinstance(p, (int, float)) and int(p) >= 1
+        ]
+        if positions:
+            answer = {**answer, "resolved": True, "picks": positions}
+    out: dict[str, Any] = {
+        "question": question,
+        "answer": answer,
+        "outcome": None,
+        "entry": None,
+        "lane": None,
+        "options": None,
+    }
+    if question is None or not answer.get("resolved"):
+        return out
+
+    # AC-1016: a QUOTED reply resolves against THAT message's frozen options, not the alive
+    # question's. The rows the customer is looking at are the ones they quoted.
+    quoted_rows = jsc.array(referenced_result_set)
+    options = quoted_rows if len(quoted_rows) > 0 else question.get("options")
+    outcome = open_question_mod.resolve(
+        question["kind"], answer, options, question.get("payload")
+    )
+    out["outcome"] = outcome
+    out["options"] = options
+    out["lane"] = _lane_for_outcome(outcome)
+    out["entry"] = {
+        "before": {
+            "kind": question["kind"],
+            "expects": question.get("expects"),
+            "options": len(options or []),
+            "quoted": len(quoted_rows) > 0,
+        },
+        "answer": answer,
+        "after": {
+            "escalate": outcome.escalate,
+            "declined": outcome.declined,
+            "lane": out["lane"],
+        },
+        "handler": outcome.handler,
+        "outcome": outcome.outcome,
+    }
+    return out
+
+
+def _lane_for_outcome(outcome: Any) -> str | None:
+    if getattr(outcome, "escalate", False):
+        return _LANE_BY_OUTCOME["escalate"]
+    if getattr(outcome, "declined", False):
+        return _LANE_BY_OUTCOME["declined"]
+    if getattr(outcome, "resolved", False):
+        return _LANE_BY_OUTCOME["resolved"]
+    return None
+
+
 def _run_stages(  # noqa: PLR0915
     envelope: Envelope,
     *,
@@ -1172,10 +1445,38 @@ def _run_stages(  # noqa: PLR0915
             jsc.get(session_block, "session_vars"), "referenced_result_set"
         )
         latest_user_message = build_latest_user_message(envelope, session_block)
+        # -- what the bot remembered, and what the parser will be told about it -- #
+        # NOTHING AGES HERE ANY MORE (D9). The three ways a slot is cleared are all things
+        # that HAPPEN - a same-axis entity, a topic reset, a closed conversation - and the
+        # first two are in the parse, which has not been made yet at this stage;
+        # `dialogue/clearing.py` applies them where the parse exists. The third is applied
+        # by `sla_service` at the moment the conversation closes, so a contact whose
+        # conversation has ended arrives here with the state already clear.
+        #
+        # `turn_no` is read on this same session; the row for THIS turn already exists, so
+        # a contact's first turn is turn 1. `_turn_no` counts strictly before it, so it
+        # needs the row's own place in the order rather than a plain total.
+        turn_row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
+        turn_no = _turn_no(db, contact_respond_id=contact_respond_id, row=turn_row)
+        alive_focus = variables.get("focus")
+        alive_focus = alive_focus if isinstance(alive_focus, dict) else {}
+        alive_question = variables.get("open_question")
+        alive_question = alive_question if isinstance(alive_question, dict) else None
+        focus_hints_block = clearing_mod.focus_hints(alive_focus)
+        open_question_hint_block = clearing_mod.open_question_hint(alive_question)
         parser_config = parser.resolve_config(
             db,
             current_date=_current_date_directive(),
             override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
+        )
+        # WHAT THE BOT SAID LAST, and only for the prompt that asks for it. v1's carry
+        # instructions are written against a `Previous response:` line; v3 is told the
+        # alive state structurally instead and AC-1023 bans previous reply text from it
+        # outright, so a v3 turn does not pay for the query either.
+        previous_response, previous_response_turn_id = (
+            (None, None)
+            if parser_config.emits_v3
+            else _previous_response(db, contact_respond_id=contact_respond_id, row=turn_row)
         )
 
     turn_trace.record(
@@ -1190,6 +1491,15 @@ def _run_stages(  # noqa: PLR0915
             # ALWAYS present, empty list included: a reader must never have to tell
             # "no harness keys" from "this build does not report them".
             "harness_keys_ignored": harness_ignored,
+            # Which turn of this conversation this is, and what the bot was still holding
+            # when it started. Always present, empty list included: "nothing was alive" and
+            # "this build does not report it" must not read the same on the trace screen.
+            "turn_no": turn_no,
+            "focus_slots_alive": sorted(alive_focus),
+            # WHICH ROW the prompt's previous-response line came from, so an operator can
+            # read the turn it quoted. "none" on a v3 turn (it is never sent one) and on
+            # the first turn of a conversation.
+            "previous_response": previous_response_turn_id or "none",
         },
         raw={"session_vars": session_block},
     )
@@ -1201,11 +1511,31 @@ def _run_stages(  # noqa: PLR0915
         "contact_id": contact_respond_id,
         "previous_conversation_state": variables,
         "referenced_result_set": referenced_result_set,
+        # D11's counter, so the focus rules can date the slots they set. It is an INPUT
+        # to the post-processor and never part of its output, which is what keeps the
+        # 1,875 captured emissions byte-comparable.
+        "turn_no": turn_no,
+        # Which parser CONTRACT this emission was made under. The three growth-r1 signals
+        # are read only when the prompt that produced them asked for them; under v1 and v2
+        # the model was never told what `topic_reset` means, so a value it invented to
+        # satisfy a schema must not clear a customer's scope.
+        "parser_emits_v3": parser_config.emits_v3,
     }
     user_block = parser.build_user_block(
-        previous_response=variables.get("response"),
+        # OFF THE TURN ROWS, never off session state (L1-S3d). `variables.response` was a
+        # compressed copy of the reply that the tail wrote back every turn; it is not one
+        # of the five keys and nothing writes it, so this line was empty on every turn.
+        previous_response=previous_response,
         latest_user_message=latest_user_message,
         pending_kind=_pending_kind(variables),
+        # D6: the parser receives STRUCTURED HINTS about what is still alive, never the
+        # raw previous state and never transcript prose. Gated on the PROMPT VERSION, not
+        # merely on there being hints to send: v1 and v2 have no instruction that mentions
+        # either block, so a contact who already has focus state must not change how the
+        # promoted prompt parses (`test_parser_user_block_parity.py`).
+        emits_v3=parser_config.emits_v3,
+        focus_hints=focus_hints_block,
+        open_question_hint=open_question_hint_block,
     )
     # G6: a dry run may supply the emission instead of paying for it. The mock goes
     # through the SAME `post_process` + `suggest_follow_up` the real parse takes, so a
@@ -1222,6 +1552,23 @@ def _run_stages(  # noqa: PLR0915
             parser_raw = parser.parse(parser_config, user_block)
         # Empty on a bypassed parse: no call, no spend to record.
         parser_usage = getattr(parser_raw, "usage", {}) or {}
+        # -- the ANSWER, decided here and APPLIED inside the post-processor ------- #
+        # The decision needs nothing from post-processing: the persisted question, this
+        # message's `answers_open_question` and the rows a quoted reply names are all in
+        # hand. It is taken BEFORE the call because a pick IS this turn's scope, and the
+        # rules that read the scope - the entity executor, the domain blocklist, the
+        # bare-entity retype - all run inside that call. Deciding after it and writing the
+        # pick into the emission afterwards is what put `MWC7625-SH` into the resolver as a
+        # `product` instead of an `inbound_shipment` (capture exec-13488887, measured over
+        # the graded corpus: 45 captures moved on `entities` alone).
+        answered = _resolve_open_question(
+            variables,
+            parser_raw=parser_raw,
+            emits_v3=parser_config.emits_v3,
+            referenced_result_set=referenced_result_set,
+            turn_no=turn_no,
+        )
+        parent_input["_answered"] = answered
         parse_block = post_process({"output": parser_raw}, {}, parent_input)
         parse_block = suggest_follow_up(parse_block, parent_input)
     except (parser.ParserError, ParserOutputError) as exc:
@@ -1260,6 +1607,26 @@ def _run_stages(  # noqa: PLR0915
         return _failed_result(turn_id, "understood", message, actions, dry_run)
 
     qf = parse_block.get("output") or {}
+    # -- the focus rules' result, read back off the out-parameter (slice B3) ------ #
+    # `_post_process` cannot put it on the emission: `parse.output` IS the graded wire
+    # shape. It hands it back on `parent_input` instead, and the engine carries it on the
+    # PARSE BLOCK, beside `_parser_raw`, which is how `ctx.parse` already carries a value
+    # the emission does not (`tail/compile_state._picker_carry` reads that one).
+    # POPPED ONCE, and this is the only place that pops it. The post-processor sets the
+    # out-parameter on exactly one call per turn, so a second `pop` below would read None,
+    # write `{}` over the focus this line just stamped, and every turn that never re-ran
+    # the rules would persist a focus with no products and no domains (measured 13 Sep
+    # 2026: a plain business turn came back with both slots null).
+    dialogue_out = parent_input.pop("_dialogue_out", None) or {}
+    parse_block["_focus"] = dialogue_out.get("focus") or {}
+    # The tail needs the counter to date the question it arms this turn, and it only has
+    # `ctx`. Same channel as `_focus`, for the same reason.
+    parse_block["_turn_no"] = turn_no
+    for entry in dialogue_out.get("trace") or []:
+        turn_trace.add("focus", entry)
+    if dialogue_out.get("open_question"):
+        turn_trace.add("open_question", dialogue_out["open_question"])
+
     turn_trace.record(
         "understood",
         summary=(
@@ -1285,6 +1652,61 @@ def _run_stages(  # noqa: PLR0915
             "parser_bypassed": parser_bypassed,
         },
         raw={"parser_raw": parse_block.get("_parser_raw"), "derived": qf},
+    )
+
+    # -- answered (L1-S3, AC-1014, AC-1015, AC-1018, AC-1020) ---------------- #
+    # The DECISION was taken before the post-processor (see above) and applied inside it.
+    # What happens here is the RECORD and the routing consequence: a yes to an escalate
+    # offer is an escalation, a pick is a business query with new scope, and an operator
+    # reads which it was on the timeline.
+    stage[0] = "answered"
+    open_question_before = answered["question"]
+    answered_entry = answered["entry"]
+    lane_override = answered["lane"]
+    cleared_question: list[dict[str, Any]] = []
+
+    if answered_entry is not None:
+        turn_trace.add("open_question", answered_entry)
+    elif open_question_before is not None:
+        # AC-1020: a message that carries an ask of its own and does NOT answer the
+        # question clears it, with a trace line, and is handled as a new ask. A casual or
+        # low-signal message leaves it open however many of them arrive.
+        variables, cleared_question = clearing_mod.apply(
+            variables, qf, trace=turn_trace
+        )
+        if cleared_question:
+            open_question_before = None
+
+    # The focus is ALREADY on the parse block, stamped where the out-parameter was read.
+    # What this stage adds is the answer: which question was open when the turn started,
+    # what answering it decided, and the lane the outcome names.
+    parse_block["_open_question_before"] = open_question_before
+    parse_block["_answered"] = answered_entry
+    parse_block["_lane_override"] = lane_override
+
+    turn_trace.record(
+        "answered",
+        summary=(
+            f"Answered the open {jsc.js_string((open_question_before or {}).get('kind'))} question."
+            if answered_entry is not None and open_question_before
+            else (
+                "The customer asked something else, so the open question was cleared."
+                if cleared_question
+                else "Nothing was waiting on an answer."
+            )
+        ),
+        why=(
+            "A question the bot asked is answered by the next message or cleared by it; it "
+            "is never answered silently."
+        ),
+        facts={
+            "open_question": (open_question_before or {}).get("kind"),
+            "resolved": answered_entry is not None,
+            "handler": (answered_entry or {}).get("handler"),
+            "lane": lane_override,
+            "cleared": [line["slot"] for line in cleared_question],
+        },
+        raw={"answer": answered["answer"]},
     )
 
     # -- access + routed ---------------------------------------------------- #
@@ -2599,6 +3021,10 @@ class _TurnSwitches:
     # ladder in by hand, so nothing saw it. This is the "a new DB column must reach every
     # manual builder" lesson one builder further along than the two it usually names.
     chatbot_crossdomain_ladder: Any = None
+    # AC-1027. Which parser version runs in the shadow, `<prompt key>@<version>`, or None
+    # for off. Read on the SAME row as everything above so a turn cannot answer under one
+    # snapshot and be shadowed under another.
+    chatbot_parser_shadow_version: Any = None
 
 
 def _read_switches(db: Session) -> _TurnSwitches:
@@ -2617,6 +3043,7 @@ def _read_switches(db: Session) -> _TurnSwitches:
         ),
         chatbot_ordering_enabled=bool(getattr(row, "chatbot_ordering_enabled", False)),
         chatbot_crossdomain_ladder=getattr(row, "chatbot_crossdomain_ladder", None),
+        chatbot_parser_shadow_version=getattr(row, "chatbot_parser_shadow_version", None),
     )
 
 
@@ -2933,6 +3360,52 @@ def _label_attachments(files: list, rows: list[tuple[Any, list[str]]]) -> list:
     return labelled
 
 
+def _arm_cross_domain_offer(
+    sealed: Mapping[str, Any],
+    offer: Mapping[str, Any],
+    *,
+    ctx: Mapping[str, Any],
+    domain: Any,
+) -> None:
+    """The cross-domain escalate offer, recorded as the ONE open question (AC-1015).
+
+    `crossdomain_compose` appends "Would you like me to escalate to X team?" AFTER the tail
+    compiled the state, so the question it opens is the only one no lane and no compiler
+    arms. Without it the next turn's "yes" resolves nothing: `_resolve_open_question` finds
+    no question, the turn falls through as a bare affirmative, and the customer who said
+    yes is answered by silence.
+
+    Armed HERE because this is where the turn number is - `compile_state` stamps it on the
+    parse block and `crossdomain_compose` never sees it. Same shape every other lane's
+    question has, built by the one constructor: a `team_pick` offering ONE team, `expects:
+    yes_no` (D5), options frozen so a "1" means the team the customer read.
+
+    THE CLOCK DOES NOT RESTART: an offer re-made on a later turn keeps the turn it was
+    first asked on, which is what `same_question` is for.
+    """
+    team = jsc.get(offer, "team")
+    if not jsc.truthy(team):
+        return
+    patch = sealed.get("session_patch") if isinstance(sealed, Mapping) else None
+    variables = patch.get("variables") if isinstance(patch, dict) else None
+    if not isinstance(variables, dict):
+        return
+    parse = jsc.get(ctx, "parse")
+    turn_no = int(jsc.js_number(jsc.get(parse, "_turn_no")) or 0)
+    question = open_question_mod.ask(
+        "team_pick",
+        options=[{"idx": 1, "team": team, "label": team}],
+        turn_no=turn_no,
+        expects="yes_no",
+        domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+        payload={"team": team, "domain": domain},
+    )
+    previous = jsc.get(parse, "_open_question_before") or variables.get("open_question")
+    if open_question_mod.same_question(question, previous) and isinstance(previous, dict):
+        question["asked_at_turn"] = int(previous.get("asked_at_turn", question["asked_at_turn"]))
+    variables["open_question"] = question
+
+
 def run_tail(
     db: Session,
     *,
@@ -3016,12 +3489,19 @@ def run_tail(
         gate=values["gate"],
         execution_id=turn_id,
     )
+    xd_offer: dict[str, Any] = {}
     composed = compose_mod.crossdomain_compose(
         compiled.item,
         result=values["result"],
         answered=compiled.answered_domain is not None,
+        # THE ROWS THIS TURN ANSWERED WITH, off the object that carries them. The item's
+        # `variables` is five keys and has held no `last_result_set` since L1-S3, so the
+        # answered branch was reading an absent key and folding nothing in.
+        result_set=compiled.result_set,
+        offer_out=xd_offer,
     )
     sealed = composed.get("reply") or {}
+    _arm_cross_domain_offer(sealed, xd_offer, ctx=ctx, domain=compiled.answered_domain)
     # A lane may have composed quick replies of its own before the tail ran: the
     # escalation clarifies name the teams so the answer is a tap, and the tail composes no
     # `quick_reply` on that arm. Seeded HERE rather than at the send seal so the persisted
@@ -3043,12 +3523,12 @@ def run_tail(
 
     turn_trace.record(
         "replied",
-        summary=trace_mod.replied_summary(sealed, branch_kind),
+        summary=trace_mod.replied_summary(sealed, branch_kind, result_set=compiled.result_set),
         why="The reply is composed from what the lane built, never from the customer's words.",
         facts={
             "lane": branch_kind,
             "quick_replies": bool(sealed.get("quick_replies")),
-            "rows_offered": len(variables.get("last_result_set") or []),
+            "rows_offered": len(compiled.result_set or []),
             "cross_domain_block": composed is not compiled.item,
         },
         raw={"reply": sealed},
@@ -3105,8 +3585,11 @@ def run_tail(
         "text": sealed.get("text"),
         "quick_replies": sealed.get("quick_replies"),
         # What `sub-sendmsg` and `send-attachments` reach for by name today, handed
-        # back as fields so their expressions become one read each (AC-207).
-        "result_set": variables.get("last_result_set"),
+        # back as fields so their expressions become one read each (AC-207). Off the SEAL
+        # only: the rows are THIS TURN's output, and the five-key memory does not carry
+        # them (L1-S3). The patch fallback went with the legacy key it read (step 4) -
+        # there is no build left whose patch has one.
+        "result_set": compiled.result_set,
         "attachments_src": _attachments_src(values["answer"]),
     }
     return reply, session_patch
@@ -3124,8 +3607,9 @@ def _send_actions(
       comma-joined string, or null when the turn offered none. Coercing it to a list
       would hand `sub-sendmsg` a type its `quick_reply` input has never been given, and
       the sender is the half of this that did NOT move into the CRM.
-    * `result_set` is `variables.last_result_set`, which is what the send node passes on
-      so a numbered reply's rows travel with the message that numbered them.
+    * `result_set` is THIS TURN's rows (`CompiledState.result_set`), which is what the
+      send node passes on so a numbered reply's rows travel with the message that
+      numbered them. Not a session key: the five-key memory does not carry a roster.
     * `send_attachments` is a SECOND action and only when there is something to send.
       It carries the whole `reply` because `sub-send-attachments` reads more than one
       field off it, and it comes AFTER the message for the same reason n8n wires it that

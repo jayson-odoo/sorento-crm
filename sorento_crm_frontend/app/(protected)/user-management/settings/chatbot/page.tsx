@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { RiErrorWarningFill } from '@remixicon/react';
 import { LoaderCircleIcon, XIcon } from 'lucide-react';
 
@@ -20,11 +20,27 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 
 import { useChatbotLanes, useChatbotSettings, useSaveChatbotSettings } from './hooks/useChatbotSettings';
+import { useParserPromptVersions } from './hooks/useParserPromptVersions';
 import type { ChatbotSettings } from './services/chatbotSettingsService';
+
+/** "v18 - full - production": version, lineage, label when any. Never a UUID, the same
+ *  label the chatbot console shows for the same list. */
+function promptVersionLabel(version: { version: number; label: string | null; base: string }): string {
+  return [`v${version.version}`, version.base, version.label].filter(Boolean).join(' \u00b7 ');
+}
+
+/** What the SETTING stores: the prompt key and the version number, which is what the
+ *  backend resolves and what an operator can read back. Never the version's uuid. */
+const PARSER_PROMPT_KEY = 'chatbot_semantic_parser';
+
+function shadowVersionValue(version: { version: number }): string {
+  return `${PARSER_PROMPT_KEY}@${version.version}`;
+}
 
 /**
  * Settings -> Chatbot (AC-809, AC-810).
@@ -37,6 +53,7 @@ import type { ChatbotSettings } from './services/chatbotSettingsService';
 export default function ChatbotSettingsPage() {
   const lanesQuery = useChatbotLanes();
   const settingsQuery = useChatbotSettings();
+  const promptVersionsQuery = useParserPromptVersions();
   const save = useSaveChatbotSettings();
 
   const [draft, setDraft] = useState<ChatbotSettings | null>(null);
@@ -46,6 +63,15 @@ export default function ChatbotSettingsPage() {
   useEffect(() => {
     if (settingsQuery.data && draft === null) setDraft(settingsQuery.data);
   }, [settingsQuery.data, draft]);
+
+  const promptVersionOptions = useMemo<SearchableSelectOption[]>(
+    () =>
+      (promptVersionsQuery.data ?? []).map((version) => ({
+        value: shadowVersionValue(version),
+        label: promptVersionLabel(version),
+      })),
+    [promptVersionsQuery.data],
+  );
 
   // The failed load is checked FIRST. A load that fails leaves `draft` null, so a
   // loading check that also covered `!draft` would win every time and the operator
@@ -168,6 +194,35 @@ export default function ChatbotSettingsPage() {
                 else set('chatbot_ordering_enabled', false);
               }}
             />
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <Label htmlFor="chatbot-parser-shadow" className="font-normal">
+              Parser shadow version
+            </Label>
+            <div className="w-full sm:w-80">
+              {promptVersionsQuery.isLoading ? (
+                <Skeleton className="h-9 w-full" />
+              ) : promptVersionsQuery.isError ? (
+                // The rest of the page still saves; only this one field cannot be picked,
+                // so the failure is said here rather than taking the screen down.
+                <p className="text-sm text-destructive">
+                  Prompt versions could not be loaded. Reload the page to try again.
+                </p>
+              ) : promptVersionOptions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No parser prompt versions are published.
+                </p>
+              ) : (
+                <SearchableSelect
+                  id="chatbot-parser-shadow"
+                  value={draft.chatbot_parser_shadow_version ?? ''}
+                  onChange={(value) => set('chatbot_parser_shadow_version', value || null)}
+                  options={promptVersionOptions}
+                  clearable
+                  placeholder="Off"
+                />
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>

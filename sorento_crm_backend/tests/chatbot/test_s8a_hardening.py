@@ -42,6 +42,7 @@ from app.services.chatbot.head.output_exchange import ParserOutputError, post_pr
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
 from app.services.respond_workspace_service import RespondWorkspaceService
 from app.services.user_service import UserPermissionService
+from app.services.chatbot import trace as trace_mod
 from tests._pg_fixture import blank_session
 from tests.chatbot import _corpus
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
@@ -432,7 +433,7 @@ class TestPromptOverridesAC807:
             "override_version_id - it must be dropped before the parser is asked"
         )
         trace = _turn_row(session_factory, result.turn_id).trace
-        understood = next(r for r in trace if r["stage"] == "understood")
+        understood = next(r for r in trace_mod.stage_records(trace) if r["stage"] == "understood")
         assert understood["facts"]["prompt_version"] == 1, (
             "the trace's prompt_version fact must be the production label's version "
             f"(1), not the override (999): {understood['facts']}"
@@ -584,12 +585,22 @@ class TestPostProcessEmissionValidation:
         )
 
         from app.services.chatbot.head.output_exchange import output_exchange
+        from tests.chatbot import divergences
 
         parent_input = target.first("When Executed by Another Workflow")
         actual = _corpus.json_round_trip(
             [{"json": output_exchange(item.get("json") or {}, parent_input)} for item in target.input]
         )
         expected = _corpus.json_round_trip(target.expected)
+        # a9dbe9d9d (coordinator ruling 1) registered this fixture's `output_exchange`
+        # divergence - the same field-scoped strip `test_replay.py::_replay` applies for
+        # every OTHER graded fixture, applied here too rather than bypassed, so this test
+        # still proves the exemption end to end on real output outside the registered
+        # fields.
+        registered = divergences.find("output_exchange", target.name.split("/")[-1])
+        if registered is not None and registered.strip_paths:
+            actual = divergences.strip(actual, registered.strip_paths)
+            expected = divergences.strip(expected, registered.strip_paths)
         assert actual == expected
 
 

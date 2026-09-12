@@ -127,6 +127,12 @@ def offer_hold_clarify_text(
     return lead + canned.render("offer_hold_no_companies")
 
 
+def _offer_payload(prev_variables: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The open question's payload, or `{}`. One reader, so the two lists cannot disagree."""
+    payload = jsc.get(jsc.get(prev_variables, "open_question"), "payload")
+    return payload if isinstance(payload, Mapping) else {}
+
+
 def fragments_for(
     branch_kind: str,
     item: Mapping[str, Any],
@@ -156,9 +162,13 @@ def fragments_for(
     if branch_kind == "offer_hold":
         fragments["offer_hold"] = {
             "clarify_company": True,
+            # THE POOL RIDES THE OFFER (L1-S3d). Both were session keys of their own and
+            # neither survived the five-key shape, so the re-prompt named no companies at
+            # all. `open_question.payload` is where the offer froze them, which is also
+            # the one record that says an offer is open here.
             "clarify_text": offer_hold_clarify_text(
-                routing_roster_plan=prev_variables.get("routing_roster_plan"),
-                routing_companies=prev_variables.get("routing_companies"),
+                routing_roster_plan=jsc.get(_offer_payload(prev_variables), "roster_plan"),
+                routing_companies=jsc.get(_offer_payload(prev_variables), "companies"),
                 copy=copy,
             ),
         }

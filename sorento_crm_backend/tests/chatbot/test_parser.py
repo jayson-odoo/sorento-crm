@@ -11,8 +11,12 @@ import json
 import pytest
 
 from app.services.ai_prompt_registry import PROMPT_KEYS, render
+from app.services.chatbot.head import output_exchange as output_exchange_mod
 from app.services.chatbot.head import parser as parser_mod
-from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+from app.services.chatbot_parser_prompt import (
+    SEMANTIC_PARSER_PROMPT,
+    SEMANTIC_PARSER_PROMPT_V3,
+)
 from tests._pg_fixture import pg_session
 
 
@@ -54,11 +58,31 @@ class TestStrictSchema:
         schema = parser_mod.PARSE_OUTPUT_JSON_SCHEMA
         assert set(schema["required"]) == set(schema["properties"])
 
-    def test_it_declares_the_keys_the_prompt_declares(self) -> None:
-        """The schema and the prompt's OUTPUT block must not drift apart."""
+    def test_it_declares_the_keys_the_NEWEST_prompt_declares(self) -> None:
+        """The schema and the newest prompt's OUTPUT block must not drift apart.
+
+        S2 flip: v3 no longer shares v1's wire shape at all (D3: `asks` replaces
+        `domain_hint` / `intent_hint` / `entities` / `reference_positions` /
+        `reference_target` / `scope_intent` / `broaden_axis`), so the newest prompt's
+        own agreement is with `PARSE_OUTPUT_JSON_SCHEMA_V3`, not the v1 schema.
+        """
+        block = SEMANTIC_PARSER_PROMPT_V3.split("== OUTPUT (exactly these keys")[1]
+        for key in parser_mod.PARSE_OUTPUT_JSON_SCHEMA_V3["properties"]:
+            assert f'"{key}"' in block, f"{key} is in the v3 schema but not in prompt v3"
+
+    def test_no_key_the_live_prompt_asks_for_was_dropped(self) -> None:
+        """The other half, and the one that matters on deploy: v3 REMOVED instructions,
+        never keys. `output_exchange` derives ~69 keys from this emission, so a key
+        quietly dropped from the schema is a lane that stops working with no error."""
         block = SEMANTIC_PARSER_PROMPT.split("== OUTPUT (exactly these keys")[1]
-        for key in parser_mod.PARSE_OUTPUT_JSON_SCHEMA["properties"]:
-            assert f'"{key}"' in block, f"{key} is in the schema but not in the prompt"
+        declared = {
+            key
+            for key in parser_mod.PARSE_OUTPUT_JSON_SCHEMA["properties"]
+            if f'"{key}"' in block
+        }
+        assert declared == set(parser_mod.PARSE_OUTPUT_JSON_SCHEMA["properties"]) - set(
+            output_exchange_mod.V3_EMISSION_KEYS
+        )
 
 
 class _FakeProvider:

@@ -21,6 +21,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import TURN_STAGES, Envelope
 from app.services.chatbot.head import parser as parser_mod
+from app.services.chatbot import trace as trace_mod
 
 CONTACT_ID = "ZZT-contact-900000009"
 
@@ -109,14 +110,28 @@ def seeded(session_factory):
 def stub_parser(monkeypatch):
     """Stub the provider call, the way `test_ideation_turn` stubs the ideate extractor."""
 
-    def _install(output: dict[str, Any] | None = None, *, error: Exception | None = None, on_call=None):
+    def _install(
+        output: dict[str, Any] | None = None,
+        *,
+        error: Exception | None = None,
+        on_call=None,
+        emits_v3: bool = False,
+    ):
+        """`emits_v3` picks the parser CONTRACT this stubbed turn runs under.
+
+        False by default, which is the promoted one: v1's 26-key schema, no `Focus:` line
+        in the user block, and the three growth-r1 signals read as inert. A test about the
+        dialogue rules asks for True and says so.
+        """
+
         def fake_resolve_config(db, *, current_date, override_version_id=None):
             return parser_mod.ParserConfig(
                 system_prompt="stub",
-                prompt_version=1,
+                prompt_version=3 if emits_v3 else 1,
                 provider="openai",
                 model="gpt-test",
                 api_key="sk-test",
+                emits_v3=emits_v3,
             )
 
         def fake_parse(config, user_block):
@@ -197,8 +212,19 @@ class TestHappyPath:
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        trace = _turn_row(session_factory, result.turn_id).trace
-        assert [r["stage"] for r in trace] == ["received", "understood", "access", "routed"]
+        # STAGE records only: the same array also carries the structured decisions
+        # `TurnTrace.add` writes (`decay`, `focus`, ...), which are not timeline rows.
+        trace = trace_mod.stage_records(_turn_row(session_factory, result.turn_id).trace)
+        # L1-S3: `answered` sits between `understood` and `access` - AC-1013's "did this
+        # message answer the open question" decision, recorded on every turn including
+        # "nothing was open".
+        assert [r["stage"] for r in trace] == [
+            "received",
+            "understood",
+            "answered",
+            "access",
+            "routed",
+        ]
         for record in trace:
             assert record["summary"] and record["why"]
             assert "{" not in record["summary"], record["summary"]
@@ -212,11 +238,12 @@ class TestHappyPath:
         stub_parser()
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-        trace = _turn_row(session_factory, result.turn_id).trace
+        trace = trace_mod.stage_records(_turn_row(session_factory, result.turn_id).trace)
         assert all(r["stage"] in TURN_STAGES for r in trace)
-        # The four the HEAD owns. `looked_up` onwards arrive with the lanes and the tail;
-        # a stage that did not run is omitted, never recorded empty (AC-252).
-        assert [r["stage"] for r in trace] == list(TURN_STAGES[:4])
+        # The five the HEAD owns (L1-S3 adds `answered`). `looked_up` onwards arrive with
+        # the lanes and the tail; a stage that did not run is omitted, never recorded empty
+        # (AC-252).
+        assert [r["stage"] for r in trace] == list(TURN_STAGES[:5])
 
 
 class TestParserFailure:
@@ -507,29 +534,15 @@ class TestSessionDiscipline:
 
 
 class TestPendingMarkerRead:
-    def test_the_parser_is_told_what_the_bot_is_waiting_for(
-        self, session_factory, seeded, stub_parser, stub_access
-    ):
-        """R3: the ONE prompt-input change S1 makes (D16 slimming is S1b)."""
-        db = session_factory()
-        db.execute(
-            text(
-                "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
-                "WHERE respond_io_id = :c"
-            ),
-            {
-                "c": CONTACT_ID,
-                "sv": json.dumps({"variables": {"pending": {"kind": "escalation_offer"}}}),
-            },
-        )
-        db.commit()
-
-        blocks: list[str] = []
-        stub_parser(on_call=blocks.append)
-        stub_access()
-        engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert "Pending: the assistant is waiting for a escalation_offer reply." in blocks[0]
+    # `test_the_parser_is_told_what_the_bot_is_waiting_for` RETIRED (S3d step 4,
+    # AC-1019): it seeded `session_vars.variables.pending` directly onto the contact row
+    # and expected the "Pending:" prompt line to read it. The engine reads `open_question`
+    # only now - the marker is gone, not merely renamed, so there is no legacy input left
+    # to seed through this end-to-end path. The lower-level unit half of this same claim
+    # (the "Pending:" line now names the open question's KIND) is
+    # `test_parser_user_block_parity.py`, ported directly against `build_user_block`; the
+    # end-to-end half (a real escalation offer produces the line) is
+    # `test_s5_escalation_lane.py`'s own suite.
 
     def test_nothing_is_added_when_nothing_is_pending(
         self, session_factory, seeded, stub_parser, stub_access

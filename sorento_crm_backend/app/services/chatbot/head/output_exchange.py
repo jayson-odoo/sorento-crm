@@ -30,6 +30,10 @@ import re
 from typing import Any
 
 from app.services.chatbot import jsc, topic
+from app.services.chatbot.dialogue import focus as focus_rules
+from app.services.chatbot.dialogue import intake
+from app.services.chatbot.dialogue import open_question as open_question_mod
+from app.services.chatbot.head import parser as parser_keys
 from app.services.chatbot.contracts import (
     BARE_ENTITY_TYPE_BY_DOMAIN,
     DEFAULT_SUGGESTED_TEAM,
@@ -70,11 +74,54 @@ _CERTIFICATE_RE = re.compile(r"cert|certificate", re.IGNORECASE)
 _VALID_BRANDS = ("sorento", "cabana", "mocha")
 
 
+# Which ACCESS AGENT each domain's turn is checked against. A separate axis from the team:
+# the team is who a turn escalates TO (`DOMAIN_SPEC[d].escalation_team`, one table, read
+# below), and the agent is which access grant the contact must hold to be answered at all.
+# Four domains name one of their own and everything else shares `general_enquiries`, which
+# is why this is four rows and a default rather than a column on `DOMAIN_SPEC`.
+# Which ACCESS AGENT each ROUTED domain is checked against, and the list of routed domains
+# in one place. A domain absent from this map routes to nothing at all - `portal_link`,
+# `resource_attachment`, `goods_receive` and `spo_allocation` fall through to the null pair
+# exactly as the live body does, and `check_access` keys on `suggested_agent`, so inventing
+# one for them would check a grant no turn has ever needed.
+_AGENT_BY_DOMAIN: dict[str, str] = {
+    "master_products": "general_enquiries",
+    "product_attachment": "general_enquiries",
+    "promotion": "general_enquiries",
+    "inventory": "general_enquiries",
+    "purchase_order": "general_enquiries",
+    # PLAN-chatbot-last-purchase-cost (#844, merged from main): a purchase-COST question
+    # is a purchasing question, the same team and agent `purchase_order` already routes
+    # to - a supplier order and its cost are the same team's record. The TEAM comes from
+    # `DOMAIN_SPEC["purchase_cost"].escalation_team`; this is its agent.
+    "purchase_cost": "general_enquiries",
+    "incoming": "incoming_stock_enquiries",
+    "forms": "marketing_form",
+    "order": "order_enquiries",
+    # An idea is captured, never escalated, so `ideate` has no team - but it HAS its own
+    # agent, and this is the single source of truth for it: check-access keys on
+    # `suggested_agent` and the no-access message renders from the same field.
+    "ideate": "ideation",
+}
+_DEFAULT_AGENT = "general_enquiries"
+
+
 def derive_routing(out: dict) -> dict:
-    domain = out.get("domain_hint")
+    """Who answers this turn, off ONE table plus the one split a table cannot hold.
+
+    `DOMAIN_SPEC[d].escalation_team` is the team, for every domain, and the per-domain `if`
+    chain that used to restate it is gone (AC-1032): a second copy of a per-domain fact is
+    the thing that drifts, and this one had already drifted from the catalogue once.
+
+    THE CERTIFICATE SPLIT STAYS, because it is not a per-domain fact at all: inside
+    `product_attachment` a CERTIFICATE goes to purchasing_certification and a photo or a
+    drawing goes to marketing_product, and which one it is depends on what the customer
+    asked for in THIS message - the attachment_type entity's own words, or a certificate
+    word in `user_goal` when the model typed the intent but not the entity.
+    """
+    domain = jsc.js_string(out.get("domain_hint") or "")
     ents = jsc.array(out.get("entities"))
 
-    # attachment_type discriminator (the cert-vs-photo split within product_attachment)
     attach_types = [
         jsc.lower_or_empty(e.get("canonical_code") if jsc.truthy(e.get("canonical_code")) else e.get("raw"))
         for e in ents
@@ -87,66 +134,17 @@ def derive_routing(out: dict) -> dict:
         out.get("intent_hint") == "check_product_attachment"
         and bool(_CERTIFICATE_RE.search(jsc.lower_or_empty(out.get("user_goal")) or ""))
     )
+    if domain == "product_attachment" and is_cert:
+        return {
+            "suggested_team": "purchasing_certification",
+            "suggested_agent": _DEFAULT_AGENT,
+        }
 
-    # brand for promotion routing (entity wins, else access level). D9: prefer the
-    # DERIVED query_brands - it is the union of the brand entity and the brand half of a
-    # compound stated level, so it survives the tier-token normalisation that made the
-    # access-level fallback below dead.
-    brand_ent = jsc.find(ents, lambda e: jsc.lower_or_empty(jsc.get(e, "hint")) == "brand")
-    access = [jsc.js_string(a).lower() for a in jsc.array(out.get("access_levels"))]
-    query_brands = out.get("query_brands")
-    brand = query_brands[0] if jsc.is_array(query_brands) and len(query_brands) else None
-    if not jsc.truthy(brand):
-        brand = jsc.lower_or_empty(jsc.get(brand_ent, "raw")) if brand_ent is not None else None
-    if not jsc.truthy(brand):
-        if any("mocha" in a for a in access):
-            brand = "mocha"
-        elif any("cabana" in a for a in access):
-            brand = "cabana"
-        elif any("sorento" in a for a in access):
-            brand = "sorento"
-    # D3 fix: clamp to the valid promotion-brand enum; garbled/unknown -> None.
-    _b2 = re.sub(r"[^a-z]", "", jsc.js_string(brand if jsc.truthy(brand) else ""))
-    brand = next((v for v in _VALID_BRANDS if v in _b2), None)
-
-    if domain == "master_products":
-        return {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
-    if domain == "incoming":
-        return {"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"}
-    if domain == "product_attachment":
-        return (
-            {"suggested_team": "purchasing_certification", "suggested_agent": "general_enquiries"}
-            if is_cert
-            else {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}
-        )
-    # NO `resource_attachment` case. The live body falls through to the null pair for it;
-    # the marketing_product row that pairs it with product_attachment's non-cert arm is part
-    # of the UNPROMOTED B-TEAM-1' lane change and is not what production runs today.
-    if domain == "forms":
-        return {"suggested_team": "marketing_form", "suggested_agent": "marketing_form"}
-    if domain == "inventory":
-        return {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"}
-    if domain == "order":
-        return {"suggested_team": "customer_service", "suggested_agent": "order_enquiries"}
-    # ONE promotion team for every brand (CRM migration 371 collapsed the legacy
-    # marketing_promotion_<brand> rows into base + brand_code). The brand travels
-    # separately (query_brands / brand entity), never in the team name.
-    if domain == "promotion":
-        return {"suggested_team": "marketing_promotion", "suggested_agent": "general_enquiries"}
-    # Growth r1 A5 (AC-907) / PLAN-chatbot-last-purchase-cost.md (review N4, collapsed
-    # from two identical branches). A PO question and a purchase-cost question are both
-    # PURCHASING questions, the same team `master_products` and `incoming` already route
-    # to - a supplier order (or its cost) is what that team placed. Replay-safe by
-    # construction: both domains are inventions of their own plans, so no captured turn
-    # can carry either and no fixture's routing can move.
-    if domain in ("purchase_order", "purchase_cost"):
-        return {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
-    # ideate: no CS team (an idea is captured, never escalated) but its OWN access agent.
-    # This is the SINGLE source of truth for the ideate agent: check-access keys on
-    # suggested_agent and the no-access message renders from the SAME field.
-    if domain == "ideate":
-        return {"suggested_team": None, "suggested_agent": "ideation"}
-    return {"suggested_team": None, "suggested_agent": None}
+    spec = DOMAIN_SPEC.get(domain)
+    agent = _AGENT_BY_DOMAIN.get(domain)
+    if spec is None or agent is None:
+        return {"suggested_team": None, "suggested_agent": None}
+    return {"suggested_team": spec.escalation_team, "suggested_agent": agent}
 
 
 # --------------------------------------------------------------------------- #
@@ -243,8 +241,8 @@ DOMAIN_SUBJECT_AXIS: dict[str, str] = {
     "portal_link": "doc",
 }
 
-# Domain -> the entity HINT naming that domain's own subject. Read by the AXIS BROADEN
-# restore and by the reference-positions block; hoisted so there is one copy.
+# Domain -> the entity HINT naming that domain's own subject. Read by the
+# reference-positions block; hoisted so there is one copy.
 DOMAIN_SUBJECT_HINT: dict[str, str] = {
     "product_attachment": "product",
     "master_products": "product",
@@ -370,8 +368,7 @@ DOMAIN_BLOCKED_HINTS: dict[str, list[str]] = {
 # PLAN-broaden-domain-switch (owner ruling, 8 Sep 2026): the domains a "wander" actually
 # lands on. A wander names a KIND of thing ("all products"), never an ACTIVITY - nobody
 # reaches `incoming`, `order`, `promotion`, `inventory`, `goods_receive`, `purchase_order`
-# or `forms` by naming a kind of thing. Read by the AXIS BROADEN block below to decide
-# whether a coherent (domain, intent) pair beside `broaden_axis` is a genuine switch.
+# or `forms` by naming a kind of thing.
 CATALOGUE_DOMAINS = frozenset({"master_products", "product_attachment", "resource_attachment"})
 
 # OWNER RULING K, rule 3 (2026-09-06): which entity types are a FILTER on a carried
@@ -651,28 +648,23 @@ _FENCE_MARK_RE = re.compile(r"```json?|```")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
-def _switch_word_domain(message: Any) -> str | None:
-    """The ONE domain whose switch word appears among THIS message's content tokens
-    (`_TOKEN_RE` minus `SWITCH_FILLER`, the #6 consumer's own tokenisation, over the
-    sanctioned `DOMAIN_SWITCH_WORDS` table and nothing else). None when no token is a
-    switch word, and None when the tokens name more than one domain - "stock and delivery
-    for hanlim" is ambiguous here and is left to the model.
-
-    Unlike #6 this does NOT require every content token to be a switch word: it is one
-    structural signal read beside a current-message entity (owner turn 2d903c96,
-    8 Sep 2026: "delivery to hanlim" is a delivery word plus a customer name), never a
-    classifier of the text on its own.
-    """
-    msg = _split_reply_to(message).lower()
-    domains = {
-        DOMAIN_SWITCH_WORDS[t]
-        for t in _TOKEN_RE.findall(msg)
-        if t not in SWITCH_FILLER and t in DOMAIN_SWITCH_WORDS
-    }
-    return next(iter(domains)) if len(domains) == 1 else None
 # U+2010..U+2015, U+2212, U+FE58, U+FE63, U+FF0D - the copy-paste dashes Excel / Word /
 # Sheets / PDF emit instead of ASCII '-' (observed live, exec 12053189).
-_DASHES = re.compile("[‐-―−﹘﹣－]")
+_DASHES = re.compile("[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]")
+
+
+def _domain_named_this_message(o: Any, parser_raw: Any) -> str | None:
+    """The domain THIS message named, off the parse. None when it named none.
+
+    Two contracts, one answer: v3 lists what the message asks about in `asks[]`, and v1
+    puts the model's own reading in `domain_hint` - read from the RAW snapshot, so a domain
+    a carry supplied later cannot be mistaken for one the customer said.
+    """
+    domains = o.get("domains") if isinstance(o, dict) else None
+    if isinstance(domains, list) and domains:
+        return jsc.js_string(domains[0])
+    raw_domain = jsc.get(parser_raw, "domain_hint") if isinstance(parser_raw, dict) else None
+    return jsc.js_string(raw_domain) if jsc.truthy(raw_domain) else None
 
 
 def _split_reply_to(message: Any) -> str:
@@ -741,30 +733,141 @@ def _ce_keys_of(e: Any) -> list[str]:
     return out or [_ce_key(e)]
 
 
+def open_question_of(state: Any) -> Any:
+    """The question the previous turn left open, or None (L1-S3d step 4).
+
+    One reader, so every rule below asks the session the same way. `kind` is the test
+    rather than mere presence: `decay` writes the key explicitly as `None` when a question
+    ages out, and a shape without a kind is not a question anybody can answer.
+    """
+    question = jsc.get(state, "open_question")
+    return question if isinstance(question, dict) and jsc.truthy(question.get("kind")) else None
+
+
+def picker_rows(state: Any) -> list:
+    """The NUMBERED rows the customer is looking at, frozen when they were shown.
+
+    A `product_pick` / `customer_pick` is the picker the legacy pair
+    `selection_context: disambiguation|suggest_offer` + `dym_last_result_set` described,
+    and the rows travel on the question because the moment they were printed is the only
+    moment the numbering and the rows are known to belong together. Empty for every other
+    kind: a team, a company or a tier question numbers its own options and a stock roster
+    is an ANSWER, not a picker.
+    """
+    question = open_question_of(state)
+    if jsc.get(question, "kind") in PICKER_KINDS:
+        return jsc.array(jsc.get(question, "options"))
+    return []
+
+
+PICKER_KINDS = ("product_pick", "customer_pick")
+
+# The four focus slots that hold an ENTITY, in the order a carried scope is rebuilt from
+# them. `domains`, `date_window`, `attributes`, `tier` and `brands` are the other five and
+# none of them is a thing the conversation is ABOUT - they are constraints on it.
+_FOCUS_ENTITY_SLOTS = ("products", "customer", "transporter", "warehouse")
+
+
+def focus_value(state: Any, name: str) -> Any:
+    """One focus slot's value off the PREVIOUS session, or None.
+
+    Every read in this file that used to reach for a legacy key off
+    `previous_conversation_state` - `entities`, `domain_hint`, `intent_hint`, the date
+    window - comes through here now. The session is five keys (AC-1001) and `focus` is the
+    one that says what the conversation is about, per axis, each ageing on its own counter
+    (D11); the 34-key bag those reads were written against was rebuilt from a single turn's
+    parse and has not existed since L1-S3.
+    """
+    slot = jsc.get(jsc.get(state, "focus"), name)
+    return slot.get("value") if isinstance(slot, dict) else None
+
+
+def focus_entities(state: Any) -> list:
+    """WHAT THE CONVERSATION IS ABOUT, as the entity list the carries speak in.
+
+    The four entity slots read back in a fixed order, so a list rebuilt from the focus is
+    the same list every time. Read in place of `previous_conversation_state.entities`.
+    """
+    out: list = []
+    for name in _FOCUS_ENTITY_SLOTS:
+        value = focus_value(state, name)
+        rows = value if isinstance(value, list) else ([value] if jsc.truthy(value) else [])
+        out.extend(e for e in rows if jsc.truthy(e))
+    return out
+
+
+def focus_domain(state: Any) -> Any:
+    """The FIRST alive domain, which is what a single-domain carry used to read.
+
+    Lane 2 fans a turn out over several; this file predates that and every reader here
+    wants one, so the first is what it gets - the order the dealer named them in (D3).
+    """
+    domains = focus_value(state, "domains")
+    rows = [d for d in jsc.array(domains) if jsc.truthy(d)]
+    return rows[0] if rows else None
+
+
+def picker_candidates(state: Any) -> list:
+    """The picker's rows in the CANDIDATE shape the three pick rules read.
+
+    Same rows, same order, same `idx`; `code` is the row's canonical code, which a frozen
+    row calls `product` (and `value` where the row had no code of its own, e.g. a uuid
+    keyed match whose `value` is the label). ONE translation, here, instead of a
+    `product or value or code` chain at each reader - which is how the two halves of the
+    old module came to read two different shapes of the same list.
+    """
+    out = []
+    for row in picker_rows(state):
+        if not isinstance(row, dict):
+            continue
+        code = row.get("product") or row.get("code") or row.get("value")
+        out.append({**row, "code": code})
+    return out
+
+
+def picker_offer(state: Any) -> dict | None:
+    """The picker's own IDENTITY and domain, or None when no picker is open.
+
+    `apply_dym_pick` stamps `id` onto the picked entity as `dym_slot`, which is a stable
+    handle back to the offer once the first pick has overwritten `raw` and destroyed the
+    `for_raw` linkage. The miss lane freezes both onto the question it asks
+    (`lanes/business/miss_suggest._attach_question`), so the offer record that used to be
+    a session key of its own is read off the question that replaced it.
+    """
+    question = open_question_of(state)
+    if jsc.get(question, "kind") not in PICKER_KINDS:
+        return None
+    payload = jsc.get(question, "payload")
+    payload = payload if isinstance(payload, dict) else {}
+    return {"id": payload.get("offer_id"), "domain": payload.get("domain")}
+
+
 def offer_is_open(state: Any) -> bool:
     """R3 / AC-106: is an escalation offer open? BOTH forms, during the migration window.
 
     The JS decided this by matching the frozen phrase "would you like me to escalate"
     against the previous reply - H13's frozen string contract, and D11's own counter
-    example (understanding text is the parser's job). S2 writes `pending.kind =
-    escalation_offer` instead; S8 deletes the regex. Until then a session written by n8n
-    carries only the string and a session written by the CRM carries the marker, so the
-    reader accepts either and neither deployment order strands a customer mid-offer.
+    example (understanding text is the parser's job). The OPEN QUESTION answers it now
+    (L1-S3d step 4); the regex below is the last of H13 and goes with `state.response`,
+    which the five-key session no longer carries either.
     """
-    # BOTH offer kinds. A `member_offer` is an escalation offer with a roster attached -
-    # its reply carries the same frozen phrase - so a reader that only knew the general
-    # kind would go blind on every member-offer turn the day S8 deletes the regex below.
+    # BOTH offer kinds, and only those two. A `member_offer` is an escalation offer with a
+    # roster attached - its reply carries the same frozen phrase - so a reader that knew
+    # only the plain kind would go blind on every member-offer turn.
     #
-    # KIND IS NOT ENOUGH: a member offer has a lifetime (AC-816 rule 1), and this is the
-    # seam the lifetime exists for - "is an offer open?" is what turns a bare "yes" into
-    # `is_escalation_confirmation` twenty lines down. The tail stops writing the marker
-    # once the clock runs out, so an expired offer normally arrives as no marker at all;
-    # the explicit test is here anyway because this function is the one that decides, and
-    # a reader that trusted the kind alone would be one refactor away from the defect.
-    pending = jsc.get(state, "pending")
-    if jsc.get(pending, "kind") in ("escalation_offer", "member_offer"):
-        ttl = jsc.get(pending, "ttl")
-        return True if ttl is None else jsc.js_number(ttl) > 0
+    # `expects: yes_no` is what tells the plain escalate offer from a team CLARIFY, which
+    # is the same `team_pick` kind after D5's fold. A clarify asks "which team", not
+    # "shall I escalate": a "yes" to it means nothing and must never assign anybody, and
+    # this function is what turns a bare "yes" into `is_escalation_confirmation` twenty
+    # lines down.
+    #
+    # NO LIFETIME (D9, AC-1019). The member offer's TTL went with every other counter: the
+    # question is cleared when it is answered, replaced, or asked past, and those are
+    # things that happened rather than a number nobody can see.
+    question = open_question_of(state)
+    kind = jsc.get(question, "kind")
+    if kind == "member_offer" or (kind == "team_pick" and jsc.get(question, "expects") == "yes_no"):
+        return True
     response = jsc.get(state, "response")
     return bool(
         _OFFERED_ESCALATION_RE.search(jsc.js_string(response if jsc.truthy(response) else ""))
@@ -788,80 +891,11 @@ def _is_catalogue_team(team: Any) -> bool:
     return jsc.nullish_str(team).strip().lower() in SUGGESTED_TEAMS
 
 
-def _team_clarify_pick(state: Any, o: Any, llm_team_n: Any, parent_input: Any) -> Any:
-    """The team an OPEN `team_clarify` was just answered with, or None (owner rule R-b).
-
-    `None` when no clarify is open, or when this turn does not answer it - and "does not
-    answer it" has to stay reachable, or every turn after an unanswered ask would be
-    dragged back into the escalation lane.
-
-    Two sources, in order, and BOTH are structured reads (D11):
-
-    1. **The parser's own team for this turn.** An ask is a question; the answer to it is a
-       team word, and reading a team word out of a message is the parser's job. The ONLY
-       thing this rule overrides is the `message_type` gate below, which discards that team
-       when the parser also stamped `casual` - and a bare "marketing product" is precisely
-       what it stamps `casual`.
-    2. **An exact match against the quick replies WE persisted for that ask.** OUR OWN
-       strings, compared with `strip()` + `casefold()` EQUALITY, never a substring or a
-       regex, and never against anything the customer authored. It is the tap: the customer
-       pressed a button whose text this codebase composed, and the parser is free to come
-       back null for it (it did emit the team on the captured turn, but a tap is not a
-       sentence and nothing guarantees the next one parses). Inventoried under D11 in the
-       plan beside `escalation._catalogue_teams`, which is the same class of read.
-
-    A `pending` marker with no options is still a valid open clarify - a session written
-    before this shipped, or by n8n, which has no marker at all - so source 1 stands alone
-    there rather than the whole rule going dark.
-
-    **Lifetime: ONE turn, enforced in `_offer_carry` by an explicit exclusion.** The first
-    cut of this claimed the life was one turn for free, because `_offer_carry` needs a
-    non-empty `last_result_set` and "a clarify has no roster". That was WRONG and the
-    review of #713 measured it: the clarify arm carries the PREVIOUS turn's roster forward
-    (`compile_state` ~:2075) before it stamps the marker, so production dump 0d7d5a23
-    arrives `team_clarify` with fifteen rows behind it, `topic.changed` returns False on a
-    null domain, and the label was carried forever - retyping every later team-naming turn
-    into an escalation and masking any real offer made afterwards. `_offer_carry` now
-    excludes the kind outright, which is what "one question, answered next turn or not at
-    all" actually requires. The member offer's 3-turn ttl is still not copied: a roster
-    stays on the customer's screen, a question does not.
-
-    `offer_is_open` is deliberately not taught this kind either: it answers "is an
-    escalation OFFER open", which is what turns a bare "yes" into an acceptance, and a
-    team clarify is not a yes/no question - a "yes" to it means nothing and must not
-    assign anybody.
-    """
-    pending = jsc.get(state, "pending")
-    if jsc.get(pending, "kind") != "team_clarify" and (
-        jsc.get(state, "selection_context") != "team_clarify"
-    ):
-        return None
-    # A turn that brings its OWN business question is not an answer to "which team",
-    # however many team words it happens to carry (review of #713, B1's sibling). "Which
-    # promotions is marketing running" names a team and asks a question; source 1 alone
-    # would retype it `request_for_help` and escalate the turn the customer wanted
-    # answered. Both signals are the parser's own and neither reads the message: a
-    # `business_query`, or a domain hint, means there is a question here to answer.
-    own_question = jsc.js_string(jsc.get(o, "message_type")) == "business_query" or jsc.truthy(
-        jsc.norm(jsc.get(o, "domain_hint"))
-    )
-    if jsc.truthy(llm_team_n) and not own_question:
-        return llm_team_n
-    reply = _split_reply_to(
-        jsc.get(parent_input, "latest_user_message")
-        if jsc.truthy(jsc.get(parent_input, "latest_user_message"))
-        else jsc.get(parent_input, "user_message")
-    ).strip().casefold()
-    if not reply:
-        return None
-    for option in jsc.array(jsc.get(pending, "options")):
-        team = jsc.norm(jsc.get(option, "team"))
-        label = jsc.nullish_str(jsc.get(option, "label")).strip().casefold()
-        if not jsc.truthy(team):
-            continue
-        if reply == label or reply == team.casefold():
-            return team
-    return None
+# `_team_clarify_pick` is DELETED (AC-1032). It read the previous session's `pending`
+# marker and compared the customer's reply against the team strings the ask had offered -
+# a second resolver, reading state nothing writes any more. `dialogue/open_question.resolve`
+# answers a `team_pick` against its own frozen options, once, in the engine's `answered`
+# stage.
 
 
 def _offered_team(state: Any, prior_routing: Any) -> Any:
@@ -872,8 +906,8 @@ def _offered_team(state: Any, prior_routing: Any) -> Any:
     sentence and no marker, and there the previous turn's routing is the same fact by
     another route - the offer's copy is composed FROM that routing.
     """
-    pending = jsc.get(state, "pending")
-    team = jsc.get(pending, "team") if jsc.truthy(pending) else None
+    question = open_question_of(state)
+    team = jsc.get(jsc.get(question, "payload"), "team") if question is not None else None
     if not jsc.truthy(team):
         team = jsc.get(prior_routing, "suggested_team")
     return jsc.norm(team)
@@ -920,6 +954,12 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:
 # Imported rather than restated: one list of required keys, in the file that declares the
 # schema the provider is held to.
 #
+# `_required_emission_keys` reads the V1 schema's keys, which is the whole reason the
+# three growth-r1 keys need no exemption of their own: they are declared by the v3 schema
+# only (`parser.PARSE_OUTPUT_JSON_SCHEMA_V3`), so a v1 or v2 emission - which is every one
+# of the 1,875 captures, and production until the owner moves the label - is complete
+# without them. `v3_signals` supplies their defaults to the readers.
+V3_EMISSION_KEYS = parser_keys.V3_EMISSION_KEYS
 # Growth r1 (AC-909 / AC-910) joins `group_by` and `top_n` to the exemption for the SAME
 # reason, one step further along: they are declared in the schema so the provider is HELD
 # to emitting them, but no prompt version before `490_chatbot_parser_growth_r1` asks for
@@ -930,17 +970,129 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:
 # here WRITES either key, so an absent one cannot raise and never lands in the emission
 # (which is what keeps every captured `output_exchange` fixture byte-equal).
 _EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis", "group_by", "top_n"})
+
+# What a pre-v3 emission means, said explicitly rather than left as an absent key. "No
+# question was answered, nothing was referred back to, and the topic did not reset" is the
+# correct reading of a v1/v2 turn, and it is also the SAFE one: all three rules that read
+# these keys then do nothing at all.
+NO_OPEN_QUESTION_ANSWER: dict[str, Any] = {
+    "resolved": False,
+    "picks": [],
+    "yes_no": None,
+    "free_text": None,
+}
+
+
+def v3_signals(o: Any, *, emits_v3: bool = True) -> dict[str, Any]:
+    """The three prompt-v3 keys, defaulted when this parse was not made under v3.
+
+    **`emits_v3` is the gate, and it is not the same question as "is the key present".**
+    Strict structured output makes every declared property required, so a v1 prompt run
+    against a v3 schema emits all three - invented, because no instruction in it says what
+    they mean. Reading a value the model had to make up would let a promoted v1 deployment
+    clear a customer's scope on `topic_reset`. So the reader asks which CONTRACT the
+    emission was made under, and returns the inert defaults for anything else.
+
+    THE DEFAULTING HAPPENS HERE AND NOT ON `o`, and the difference is the corpus. Writing
+    the defaults into the emission would add three keys to `output_exchange`'s own output
+    on every one of the 1,875 captured replays and to `parse.output` on every world, so
+    every capture would diverge and every world would skip as "the parser post-processor
+    disagrees with the body that produced this capture" - which is the gate, not a
+    formality. An accessor gives every reader the same three values with no capture moving
+    a byte, and a v3 emission passes through it unchanged.
+
+    Values are NORMALISED, not merely fetched: `resolved` and the two flags are real
+    booleans, `picks` is a list of positive 1-based integers, `yes_no` is `"yes"`, `"no"`
+    or None. A model's `"true"`, `-1` or `"Yes please"` is operator-facing nonsense that
+    must not reach a handler.
+    """
+    if not emits_v3:
+        return {
+            "answers_open_question": dict(NO_OPEN_QUESTION_ANSWER),
+            "anaphora": False,
+            "topic_reset": False,
+        }
+    answer = jsc.get(o, "answers_open_question")
+    answer = answer if isinstance(answer, dict) else {}
+    yes_no = jsc.nullish_str(answer.get("yes_no")).strip().lower()
+    picks = [
+        int(p)
+        for p in (jsc.js_number(x) for x in jsc.array(answer.get("picks")))
+        if jsc.is_integer(p) and p >= 1
+    ]
+    return {
+        "answers_open_question": {
+            "resolved": answer.get("resolved") is True,
+            "picks": picks,
+            "yes_no": yes_no if yes_no in ("yes", "no") else None,
+            "free_text": answer.get("free_text") if isinstance(answer.get("free_text"), str) else None,
+        },
+        "anaphora": jsc.get(o, "anaphora") is True,
+        "topic_reset": jsc.get(o, "topic_reset") is True,
+    }
+def intent_for(domain: Any) -> str | None:
+    """The intent word for a domain, DERIVED and never stored (AC-1026, D14).
+
+    Every domain in `DOMAIN_SPEC` declares exactly one intent (measured 13:13), so
+    `intent_hint` never carried anything `domain_hint` did not. The lanes that still speak
+    the word get it from here, per turn; nothing persists it, and no state, contract or
+    trace key is named after it.
+    """
+    spec = DOMAIN_SPEC.get(jsc.js_string(domain)) if jsc.truthy(domain) else None
+    intents = getattr(spec, "intents", None) or ()
+    return intents[0] if intents else None
+
+
+def _apply_asks(o: dict) -> None:
+    """Flatten a v3 emission into the flat shape every rule and lane below already reads.
+
+    AC-1021. `asks` is the truth about what the dealer said; `domain_hint` and a flat
+    `entities` list are what 1,600 lines of post-processing and every lane are written
+    against. Rather than rewrite both at once, the emission is flattened HERE, once, before
+    anything reads it - so the difference between the two parser versions stops at this
+    line instead of running through the rest of the turn.
+
+    The seven keys v3 dropped are filled with their INERT values, not guessed at: the body
+    hard-reads `reference_positions` and tests the other three for truthiness, and a v3
+    emission genuinely says nothing about any of them. `domains` and `ask_binding` are
+    stamped beside them for the rules that want the list rather than its head.
+    """
+    flat = intake.flatten(o)
+    domains = flat["domains"]
+    o["asks"] = o.get("asks") or []
+    o["domains"] = domains
+    o["ask_binding"] = flat["binding"]
+    o["entities"] = flat["entities"]
+    o["domain_hint"] = domains[0] if domains else None
+    o["intent_hint"] = intent_for(domains[0]) if domains else None
+    o.setdefault("scope_intent", None)
+    o.setdefault("broaden_axis", None)
+    o.setdefault("reference_positions", [])
+    o.setdefault("reference_target", None)
+
+
 _EMISSION_ARRAY_KEYS = ("entities", "access_levels", "requested_attributes", "reference_positions")
+# v3 dropped `entities` and `reference_positions` and put `asks` in their place, so the
+# container check follows the contract the emission was made under (D10).
+_EMISSION_ARRAY_KEYS_V3 = ("asks", "access_levels", "requested_attributes")
 _EMISSION_OBJECT_KEYS = ("routing", "escalation")
 
 
-def _required_emission_keys() -> frozenset[str]:
-    from app.services.chatbot.head.parser import DECLARED_KEYS
+def _required_emission_keys(*, emits_v3: bool = False) -> frozenset[str]:
+    """The keys the emission must carry, for the CONTRACT it was made under.
 
-    return DECLARED_KEYS - _EXEMPT_FROM_REQUIRED
+    Two answers, because there are two contracts. v1 owes its 28 keys minus the three
+    exemptions; v3 owes `asks` and the three signals and owes NONE of the seven keys it
+    dropped. Asking the v1 question of a v3 emission would demand `domain_hint` of a prompt
+    that no longer mentions it - and asking the v3 question of a v1 emission would demand
+    `asks` of the PROMOTED prompt, so every live turn would fail at `understood` before the
+    owner had promoted anything (D10).
+    """
+    declared = parser_keys.DECLARED_KEYS_V3 if emits_v3 else parser_keys.DECLARED_KEYS
+    return declared - _EXEMPT_FROM_REQUIRED
 
 
-def _assert_emission(o: dict) -> None:
+def _assert_emission(o: dict, *, emits_v3: bool = False) -> None:
     """Refuse an emission that cannot be post-processed, naming what is wrong.
 
     Up front, before any of the 1,600 lines below touch it, because the alternative is
@@ -950,12 +1102,12 @@ def _assert_emission(o: dict) -> None:
     Checking here also means the message names EVERY missing key at once, so a mock or a
     prompt regression is fixed in one pass instead of one key per run.
     """
-    missing = sorted(key for key in _required_emission_keys() if key not in o)
+    missing = sorted(key for key in _required_emission_keys(emits_v3=emits_v3) if key not in o)
     if missing:
         raise ParserOutputError(
             "parser emission missing " + ", ".join(repr(key) for key in missing)
         )
-    for key in _EMISSION_ARRAY_KEYS:
+    for key in (_EMISSION_ARRAY_KEYS_V3 if emits_v3 else _EMISSION_ARRAY_KEYS):
         if not isinstance(o.get(key), list):
             raise ParserOutputError(
                 f"parser emission key {key!r} must be an array, got "
@@ -996,6 +1148,53 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:
         ) from exc
 
 
+def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
+    """The handler's outcome, written into the emission the rest of the turn reads.
+
+    ONE place, so the seven handlers stay pure and only this function knows the `qf`
+    vocabulary. Nothing here is reached until prompt v3 is promoted (see the call site).
+    """
+    if not outcome.resolved:
+        return
+    products = outcome.focus.get("products")
+    customer = outcome.focus.get("customer")
+    entities = [*(products or []), *([customer] if customer else [])]
+    if entities:
+        # "replace", not "replace_combine": the picks ARE the scope (owner ruling B,
+        # console pass 3). `outcome.keep` has already folded in the siblings issue #708
+        # says must survive, so asking the executor to combine again could only put the
+        # replaced token back.
+        o["entities"] = entities
+        o["entity_op"] = "replace"
+        o["scope_exclusive"] = False
+        o["message_type"] = "business_query"
+        # CONSUMED. The positions were an answer to OUR question, so they must not also
+        # mint entities off whatever roster happens to be in `last_result_set`.
+        o["reference_positions"] = []
+        o["reference_target"] = None
+        domain = jsc.get(question.get("payload"), "domain")
+        if not jsc.truthy(o.get("domain_hint")) and jsc.truthy(domain):
+            o["domain_hint"] = domain
+    if outcome.tiers:
+        o["access_levels"] = list(outcome.tiers)
+        o["domain_hint"] = "promotion"
+        o["message_type"] = "business_query"
+        o["reference_positions"] = []
+        o["reference_target"] = None
+    if outcome.escalate:
+        o["message_type"] = "request_for_help"
+        escalation = o.get("escalation") if isinstance(o.get("escalation"), dict) else {}
+        o["escalation"] = {**escalation, "is_escalation_confirmation": True}
+        if outcome.routing:
+            routing = o.get("routing") if isinstance(o.get("routing"), dict) else {}
+            o["routing"] = {**routing, **{k: v for k, v in outcome.routing.items() if v}}
+    if outcome.declined:
+        o["is_affirmative"] = False
+        escalation = o.get("escalation") if isinstance(o.get("escalation"), dict) else {}
+        o["escalation"] = {**escalation, "is_escalation_confirmation": False}
+    o["open_question_answered"] = outcome.handler
+
+
 def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     """The body. `output` is `{output: <the LLM object>}`; returns it with `_parser_raw`.
 
@@ -1012,7 +1211,10 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         raise ParserOutputError("parser did not emit a JSON object")
 
     o: dict[str, Any] = output["output"]
-    _assert_emission(o)
+    emits_v3 = parent_input.get("parser_emits_v3") is True
+    _assert_emission(o, emits_v3=emits_v3)
+    if emits_v3:
+        _apply_asks(o)
 
     # -- state-transition monitor: snapshot the RAW LLM object BEFORE any post-processing.
     # Everything below mutates `o`; this is the only point where the pre-code shape exists.
@@ -1035,8 +1237,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # "Carried" is derived from PROVENANCE, never from `current_message`: applyDymPick
     # re-maps EVERY prior entity to `current_message: true` before the executor runs. The
     # uncorrupted this-turn signal is the frozen snapshot.
-    prev_state_entities = jsc.array(jsc.get(parent_input.get("previous_conversation_state"), "entities"))
-    ce_prior_keys_any = {k for e in prev_state_entities for k in _ce_keys_of(e)}
+    #
+    # The PRIOR half is gone with the legacy session (L1-S3 fix round): the previous turn's
+    # `entities` list is not a session key any more, and what the conversation is about is
+    # `focus` - which `dialogue/focus.py` owns and which this function is handed as an
+    # out-parameter rather than reading back. An entity the LLM did not name this turn is
+    # still recognised as carried by the snapshot test below.
+    ce_prior_keys_any: set[str] = set()
     ce_llm_keys_any = {
         k for e in jsc.array(jsc.get(parser_raw_snapshot, "entities")) for k in _ce_keys_of(e)
     }
@@ -1086,9 +1293,18 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # not a new turn to be classified. Two structured signals, no text classification:
     # the marker says an ask is open, and the parser's own team (or the customer's tap on a
     # reply WE composed) says which team answers it. See `_team_clarify_pick`.
-    team_clarify_pick = _team_clarify_pick(
-        parent_input.get("previous_conversation_state"), o, llm_team_n, parent_input
-    )
+    # THE TEAM THE CUSTOMER TAPPED, off the resolver rather than re-read here (AC-1013).
+    # `_team_clarify_pick` used to answer this by reading the previous session's `pending`
+    # marker and comparing the reply against the strings the ask offered. The ask is a
+    # `team_pick` now, its options frozen when the question was asked, and the engine's
+    # `answered` stage resolves against them before this function runs - so the answer is
+    # already decided and this only has to read it. One resolver, one answer.
+    answered_outcome = (parent_input.get("_answered") or {}).get("outcome")
+    team_clarify_pick = None
+    if answered_outcome is not None and getattr(answered_outcome, "escalate", False):
+        team_clarify_pick = (getattr(answered_outcome, "routing", {}) or {}).get(
+            "suggested_team"
+        )
     if team_clarify_pick is not None:
         llm_team_n = team_clarify_pick
         req_help = True
@@ -1113,7 +1329,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 
     # reuse means "no new value this turn" - but if the parser emitted current entities it
     # contradicts itself. Promote to additive replace_combine so the new value survives.
-    prior_ents0 = prev_state_entities
+    prior_ents0 = focus_entities(parent_input.get("previous_conversation_state"))
     if (
         o.get("entity_op") == "reuse"
         and jsc.is_array(o.get("entities"))
@@ -1245,14 +1461,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["entity_op"] = "replace"
         o["scope_exclusive"] = False  # IGNORE the LLM's scope_exclusive=true
         o["message_type"] = "business_query"
-        # carry the prior date window if THIS turn named none
-        if not (jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))):
-            if jsc.truthy(pv.get("date_filter_start")):
-                o["date_filter_start"] = pv["date_filter_start"]
-            if jsc.truthy(pv.get("date_filter_end")):
-                o["date_filter_end"] = pv["date_filter_end"]
-            if jsc.truthy(pv.get("date_mode")):
-                o["date_mode"] = pv["date_mode"]
+        # THE PRIOR DATE WINDOW is carried by `focus.date_window`, not from here: a pick
+        # does not change when the customer was asking about, and the axis that remembers
+        # it ages on its own counter (D11). The session keys this used to read are gone.
         o["dym_pick_applied"] = True
         o["dym_offer_pick_code"] = hit.get("code")
         # #5 domain-carry: a CONFIRMED, UNAMBIGUOUS pick STAYS in the offer's domain.
@@ -1263,20 +1474,20 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         via_numbered = use_slot is False
         if (is_bare_code or via_numbered) and isinstance(offer, dict) and jsc.truthy(offer.get("domain")):
             o["domain_hint"] = offer["domain"]
-            o["intent_hint"] = pv.get("intent_hint") if pv.get("intent_hint") is not None else None
+            # The OFFER's domain decides the turn; the intent the previous turn happened to
+            # carry is not a fact about this one, and D14 stopped persisting it anyway.
+            o["intent_hint"] = None
             o["dym_pick_domain_forced"] = offer["domain"]
         return final
 
     def try_dym_pick() -> None:
         prev = parent_input.get("previous_conversation_state") or {}
-        # Source candidates from the offer object; fall back to the legacy flat array
-        # during the spine/parser promotion window.
-        offer = prev.get("dym_offer") if isinstance(prev.get("dym_offer"), dict) else None
-        cands = (
-            offer["candidates"]
-            if offer is not None and jsc.is_array(offer.get("candidates"))
-            else jsc.array(prev.get("dym_candidates"))
-        )
+        # THE OFFER IS THE QUESTION (L1-S3d step 4). `dym_offer` and its flat mirror
+        # `dym_candidates` were two session keys saying what the picker's rows were; the
+        # rows are frozen onto the question by the lane that printed them, so there is one
+        # record and it is the one the customer read.
+        offer = picker_offer(prev)
+        cands = picker_candidates(prev)
         if not len(cands):
             return
 
@@ -1311,7 +1522,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         hit = jsc.find(cands, code_matches)
         if hit is None:
             return
-        o["entities"] = apply_dym_pick(hit, offer, prev.get("entities"), True)
+        o["entities"] = apply_dym_pick(hit, offer, focus_entities(prev), True)
 
     try_dym_pick()
 
@@ -1326,24 +1537,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # `domain_hint` the carry has just rewritten - would let a bare continuation drop the
     # very scope it is continuing.
 
-    # -- #6: deterministic domain-SWITCH word signal (this-turn-only) -------------------- #
-    # A bare/dominant domain word in the CURRENT message must SWITCH domain, not let the
-    # continuity carry reuse the prior one (repro exec 10826285: "promo" after a stock
-    # turn -> stock again). Whole-word, case-insensitive.
+    # The `#6` domain-SWITCH word override is DELETED (AC-1032). A bare domain word is an
+    # ASK now - parser v3 emits it as `asks[{domain}]` and `dialogue/focus.domains_from_asks`
+    # REPLACES the domain list with it (D7) - so a second reader that re-derived the same
+    # switch from the raw message, after the fact, could only ever disagree with the first.
+    # `switch_domain` survives as the name the focus rules still take, always None from
+    # here: nothing in this function decides a domain switch any more.
     switch_domain: str | None = None
-    if not explicit:
-        sw_msg = _split_reply_to(parent_input.get("latest_user_message")).lower()
-        sw_toks = [t for t in _TOKEN_RE.findall(sw_msg) if t not in SWITCH_FILLER]
-        # defense-in-depth: a current-message entity means this is a real query
-        sw_has_cur_ent = any(
-            jsc.truthy(e) and jsc.get(e, "current_message") is True
-            for e in jsc.array(o.get("entities"))
-        )
-        if len(sw_toks) >= 1 and not sw_has_cur_ent:
-            sw_doms = [DOMAIN_SWITCH_WORDS.get(t) for t in sw_toks]
-            # EVERY remaining content token must be a switch word of the SAME domain.
-            if all(d is not None for d in sw_doms) and len(set(sw_doms)) == 1:
-                switch_domain = sw_doms[0]
 
     ce_unknown_hints: set[str] = set()
 
@@ -1376,9 +1576,11 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         if " ".join(kept) not in DW_PHRASES:
             return False
         pv = parent_input.get("previous_conversation_state") or {}
-        if not (jsc.is_array(pv.get("entities")) and len(pv["entities"])):
+        if not focus_entities(pv):
             return False  # (2) nothing to widen onto
-        if not (jsc.truthy(pv.get("date_filter_start")) or jsc.truthy(pv.get("date_filter_end"))):
+        window = focus_value(pv, "date_window")
+        window = window if isinstance(window, dict) else {}
+        if not (jsc.truthy(window.get("start")) or jsc.truthy(window.get("end"))):
             return False  # (3) no window to drop
         return True
 
@@ -1397,92 +1599,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["escalation"] = {"is_escalation_confirmation": False}
         o["date_widen_applied"] = True
 
-    prev_state_domain = jsc.get(parent_input.get("previous_conversation_state"), "domain_hint") or None
-
-    # -- AXIS BROADEN: naming a KIND of thing widens one filter, not the subject --------- #
-    # exec 13624889: after "srt59-cr for mastile klang" in the order domain, "all products"
-    # came back master_products / entity_op clear - it jumped to the catalogue AND dropped
-    # the customer. Restore the domain BEFORE the executor.
-    ba = jsc.lower_or_empty(o.get("broaden_axis"))
-    prev_dom0 = prev_state_domain
-    wandered_dom0 = o.get("domain_hint") if jsc.truthy(o.get("domain_hint")) else None
-
-    # PLAN-broaden-domain-switch (exec 15121180, 9 Sep 2026): "Any incoming" after a stock
-    # turn came back domain_hint incoming / intent_hint check_incoming / broaden_axis all /
-    # scope_intent broaden - a COHERENT (incoming, check_incoming) pair, not the "all
-    # products" wander this block exists for. The prompt defines a widen as "KEEP
-    # domain_hint", so a coherent pair naming a DIFFERENT, non-catalogue domain is
-    # self-contradictory: a wander lands on a CATALOGUE_DOMAINS entry (a KIND of thing);
-    # nobody reaches an activity domain that way, so this is a deliberate switch and the
-    # restore below must not undo it.
-    #
-    # Review, blocker B2 (9 Sep 2026): narrowed to `ba == "all"` only. `date` and an
-    # entity-hint axis are NOT wander-only shapes the way "all" is - the prompt's own
-    # widen instruction says KEEP domain_hint for both, so a DIFFERING domain there is a
-    # known MODEL violation of its own instruction, which the restore below exists to
-    # correct, not a deliberate switch. Firing on those axes measured three regressions:
-    # a `date` widen ("not just August") stuck in the wandered domain instead of
-    # restoring; a `date` widen's `broaden_axis: None` skipped the reuse arm's `all_time`
-    # wipe, silently restoring the OLD window instead of clearing it; and an entity-hint
-    # widen's `broaden_axis: None` left the final drop pass (`ba_final`, ~line 3270) with
-    # nothing to drop. Only `"all"` has no KEEP clause in the prompt and only `"all"` has
-    # a real capture (exec 15121180) - `date` and entity-hint axes stay on the restore
-    # path unconditionally.
-    switch_spec = DOMAIN_SPEC.get(wandered_dom0) if isinstance(wandered_dom0, str) else None
-    switched = bool(
-        ba == "all"
-        and jsc.truthy(prev_dom0)
-        and wandered_dom0 != prev_dom0
-        and switch_spec is not None
-        and o.get("intent_hint") in switch_spec.intents
-        and wandered_dom0 not in CATALOGUE_DOMAINS
-    )
-    if switched:
-        o["domain_switch_over_broaden"] = prev_dom0  # diagnostic
-        o["broaden_axis"] = None
-        o["scope_intent"] = None
-        has_current_ent = any(
-            jsc.truthy(e) and jsc.get(e, "current_message") is True
-            for e in jsc.array(o.get("entities"))
-        )
-        blocked_for_new = set(DOMAIN_BLOCKED_HINTS.get(wandered_dom0, []))
-        if (
-            not has_current_ent
-            and prev_state_entities
-            and all(
-                jsc.lower_or_empty(jsc.get(e, "hint")) not in blocked_for_new
-                for e in prev_state_entities
-            )
-        ):
-            o["entity_op"] = "reuse"
-        # else leave entity_op exactly as the model emitted it.
-    elif ba and jsc.truthy(prev_dom0):
-        o["domain_hint"] = prev_dom0
-        prev_intent = jsc.get(parent_input.get("previous_conversation_state"), "intent_hint")
-        o["intent_hint"] = (
-            prev_intent
-            if jsc.truthy(prev_intent)
-            else (o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None)
-        )
-        o["broaden_axis_domain_restored"] = True
-
-        # exec 13728314: "all products" on an order in progress came back entity_op
-        # "clear" + broaden_axis "all" + scope_intent the STRING "null" - the model misread
-        # ONE axis being widened as a request for the whole catalogue. A genuine
-        # broaden-everything turn must still clear; only a MISREAD "all" is rescued.
-        scope_intent = jsc.nullish_str(o.get("scope_intent")).lower()
-        if ba == "all" and scope_intent != "broaden":
-            if o.get("entity_op") == "clear":
-                o["entity_op"] = "reuse"
-                o["broaden_axis_clear_rescued"] = True
-            # The domain the model wandered TO names the axis it actually meant.
-            wandered_hint = DOMAIN_SUBJECT_HINT.get(wandered_dom0) if wandered_dom0 else None
-            if jsc.truthy(wandered_hint):
-                o["broaden_axis"] = wandered_hint
-                o["broaden_axis_resolved_from_domain"] = wandered_dom0
-            # an unmapped wandered domain leaves broaden_axis as "all" - fail open.
+    prev_state_domain = focus_domain(parent_input.get("previous_conversation_state"))
 
     # -- ENTITY OPERATION EXECUTOR (op + axis-aware replace/combine) --------------------- #
+    # Set by the `reuse` arm below and read by the focus rules at the `#6` position, which
+    # is where the trace line for it is written.
+    entityless_domain_reused = False
     if not jsc.truthy(o.get("is_menu_label")):
         domain = o.get("domain_hint")
 
@@ -1493,73 +1615,36 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         all_ents = jsc.array(o.get("entities"))
         # split on the flag the PARSER set - do NOT override it
         current = [e for e in all_ents if jsc.get(e, "current_message") is True]
-        prior = [{**e, "current_message": False} for e in prev_state_entities]
+        prior = [
+            {**e, "current_message": False}
+            for e in focus_entities(parent_input.get("previous_conversation_state"))
+        ]
 
         if op == "clear":
             final_entities: list = []
         elif op == "reuse":
-            final_entities = prior
-            has_current_date = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(
-                o.get("date_filter_end")
-            )
-            pcs = parent_input.get("previous_conversation_state")
-            # broaden_axis "date" = the user explicitly asked to drop the window. Such a
-            # turn names no date, so the carry below would silently restore the PREVIOUS
-            # window and answer the opposite of what was asked.
+            # ENTITIES, plus ONE call out. The date window, `requested_attributes` and
+            # `is_active` used to be carried right here and are gone - they are decisions
+            # about what the conversation is still about, and they belong to
+            # `dialogue/focus.py` now (AC-950), which runs them at the `#6` position below.
             #
-            # Owner console pass 5, item B1 (7 Sep 2026, H79/AC-828): `broaden_axis == "date"`
-            # is the PARSER's read of the turn's SHAPE, not proof the turn named no date -
-            # captures e4381b0d / 98526b81 ("last month") set `broaden_axis: "date"` AND a
-            # concrete `date_filter_start` / `date_filter_end` in the SAME parser output
-            # (`user_goal: "trying to specify the date range as last month"`). Wiping the
-            # window unconditionally on `all_time` answered "all dates" to a turn that had
-            # just given one. `has_current_date` (computed above) is exactly the signal
-            # that already distinguishes the two shapes; the wipe now only fires when the
-            # turn ALSO supplied no date of its own.
-            all_time = jsc.lower_or_empty(o.get("broaden_axis")) == "date"
-            if all_time and not has_current_date:
-                o["date_filter_start"] = None
-                o["date_filter_end"] = None
-                o["date_mode"] = None
-            elif not has_current_date:
-                if jsc.truthy(jsc.get(pcs, "date_filter_start")):
-                    o["date_filter_start"] = jsc.get(pcs, "date_filter_start")
-                if jsc.truthy(jsc.get(pcs, "date_filter_end")):
-                    o["date_filter_end"] = jsc.get(pcs, "date_filter_end")
-                if jsc.truthy(jsc.get(pcs, "date_mode")):
-                    o["date_mode"] = jsc.get(pcs, "date_mode")
-
-            # requested_attributes: the PERSPECTIVE of the question is an axis the pick
-            # turn did not name - carry it like the date window (exec 13951947).
-            cur_attrs = [a for a in jsc.array(o.get("requested_attributes")) if jsc.truthy(a)]
-            prev_attrs = [
-                a for a in jsc.array(jsc.get(pcs, "requested_attributes")) if jsc.truthy(a)
-            ]
-            if len(cur_attrs) == 0 and len(prev_attrs) > 0:
-                o["requested_attributes"] = prev_attrs
-
-            # is_active: only carry if THIS turn left it null (no status word)
-            cur_active = norm(o.get("is_active"))
-            if (
-                cur_active is None
-                and jsc.has(pcs, "is_active")
-                and norm(jsc.get(pcs, "is_active")) is not None
-            ):
-                o["is_active"] = jsc.get(pcs, "is_active")
-            # domain continuity for entity-less reuse (e.g. "and the price?")
-            if o.get("message_type") != "casual" and o.get("message_type") != "request_for_help":
-                if not explicit and not switch_domain:  # a domain switch beats the carry
-                    o["domain_hint"] = (
-                        jsc.get(pcs, "domain_hint")
-                        if jsc.truthy(jsc.get(pcs, "domain_hint"))
-                        else (o.get("domain_hint") if jsc.truthy(o.get("domain_hint")) else None)
-                    )
-                    o["intent_hint"] = (
-                        jsc.get(pcs, "intent_hint")
-                        if jsc.truthy(jsc.get(pcs, "intent_hint"))
-                        else (o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None)
-                    )
-                    o["domain_reused_entityless"] = True
+            # The entity-less domain continuity is the one that cannot wait for that
+            # position, and the reason is downstream: the positional-pick block fires only
+            # while `domain_hint` is still falsy, so carrying the domain after it takes the
+            # stamp off `domain_reused_entityless` and puts it on `domain_inherited_for_
+            # position` (measured: 5 captures moved on exactly those two keys). So the
+            # DECISION lives in the dialogue module and the CALL stays here.
+            final_entities = prior
+            entityless_domain_reused = focus_rules.reuse_domain_entityless(
+                o,
+                prev=parent_input.get("previous_conversation_state") or {},
+                explicit=explicit,
+                switch_domain=switch_domain,
+                topic_reset=v3_signals(
+                    parser_raw_snapshot,
+                    emits_v3=parent_input.get("parser_emits_v3") is True,
+                )["topic_reset"],
+            )
         else:  # 'modify' | 'replace' | 'replace_combine' | anything else
             current_axes = {axis_of(e) for e in current}
             exclusive = o.get("scope_exclusive") is True
@@ -1594,10 +1679,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["date_filter_start"] = None
         o["date_filter_end"] = None
         o["date_mode"] = None
-        dw_pv = parent_input.get("previous_conversation_state") or {}
-        if jsc.truthy(dw_pv.get("domain_hint")):
-            o["domain_hint"] = dw_pv["domain_hint"]
-            o["intent_hint"] = dw_pv.get("intent_hint") if jsc.truthy(dw_pv.get("intent_hint")) else None
+        dw_domain = focus_domain(parent_input.get("previous_conversation_state"))
+        if jsc.truthy(dw_domain):
+            o["domain_hint"] = dw_domain
+            # The INTENT is derived from this turn's own parse (D14): it is not a session
+            # key, so there is nothing carried to re-pin and a stale one would be a guess.
+            o["intent_hint"] = None
 
     prev_state = parent_input.get("previous_conversation_state") or {}
 
@@ -1614,11 +1701,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     def tier_offer_pick() -> None:
         if jsc.truthy(o.get("is_menu_label")):
             return
-        if jsc.nullish_str(prev_state.get("selection_context") or "") != "tier_offer":
+        tier_question = open_question_of(prev_state)
+        if jsc.get(tier_question, "kind") != "tier_pick":
             return
         roster = [
             r
-            for r in jsc.array(prev_state.get("last_result_set"))
+            for r in jsc.array(jsc.get(tier_question, "options"))
             if jsc.truthy(r)
             and jsc.lower_or_empty(
                 r.get("tier") if r.get("tier") is not None else r.get("value")
@@ -1655,22 +1743,24 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             return  # no pick signal -> a new query / casual abandons the ask
         o["access_levels"] = [t for t in TIER_ORDER if t in chosen]
         # (c) carry the ORIGINAL scope to the answer turn - S5-shaped, own flag
-        prev_ents = jsc.array(prev_state.get("entities"))
+        prev_ents = focus_entities(prev_state)
         if prev_ents:
             o["entities"] = [{**x, "current_message": False} for x in prev_ents]
             o["entity_op"] = "reuse"
         if not (jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))):
-            if jsc.truthy(prev_state.get("date_filter_start")):
-                o["date_filter_start"] = prev_state["date_filter_start"]
-            if jsc.truthy(prev_state.get("date_filter_end")):
-                o["date_filter_end"] = prev_state["date_filter_end"]
-            if jsc.truthy(prev_state.get("date_mode")):
-                o["date_mode"] = prev_state["date_mode"]
+            window = focus_value(prev_state, "date_window")
+            window = window if isinstance(window, dict) else {}
+            if jsc.truthy(window.get("start")):
+                o["date_filter_start"] = window["start"]
+            if jsc.truthy(window.get("end")):
+                o["date_filter_end"] = window["end"]
+            if jsc.truthy(window.get("mode")):
+                o["date_mode"] = window["mode"]
         o["_tier_pick_scope_reused"] = True
         o["domain_hint"] = "promotion"
-        o["intent_hint"] = (
-            prev_state.get("intent_hint") if jsc.truthy(prev_state.get("intent_hint")) else "check_promotion"
-        )
+        # A tier pick is always a promotion question, so the intent is known rather than
+        # carried: `intent_hint` is derived per turn (D14) and is not a session key.
+        o["intent_hint"] = "check_promotion"
         o["message_type"] = "business_query"
         o["scope_intent"] = None
         # consumed: the positions were TIER picks - they must not mint entities off the
@@ -1691,20 +1781,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         *jsc.array(o.get("access_levels")),
     ]
     o["query_brands"] = _stated_brands(o.get("entities"), raw_levels, msg_t)
-    # F7: the brand is part of the QUERY SCOPE, so it must travel with the scope. Two
-    # conditions, both required, so the carry can never widen or silently narrow.
-    if not len(o["query_brands"]):
-        prev_brands = [
-            b for b in jsc.array(prev_state.get("query_brands")) if jsc.nullish_str(b).lower() in BRANDS
-        ]
-        ents = jsc.array(o.get("entities"))
-        reusing_scope = o.get("entity_op") == "reuse" or (
-            len(ents) > 0
-            and not any(jsc.truthy(e) and jsc.get(e, "current_message") is True for e in ents)
-        )
-        if prev_brands and reusing_scope:
-            o["query_brands"] = [b for b in BRANDS if b in prev_brands]
-            o["_query_brands_carried"] = True
+    # F7's CARRY is gone from here (AC-950): the brand is part of the query scope, so it
+    # travels with the scope, and the scope is `dialogue/focus.py`'s `brands` slot now.
+    # `_query_brands_carried` is still the diagnostic it stamps.
 
     tier_set = set(_stated_tiers(msg_t, o.get("entities")))
     for a in raw_levels:
@@ -1716,31 +1795,17 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         if p:
             tier_set.add(p["tier"])
     o["access_levels"] = [t for t in TIER_ORDER if t in tier_set]
-    # F4(b): carry the PICKED TIER across a continuation of the SAME question. Same
-    # predicate as the brand carry; kept separate because the two axes can legitimately
-    # disagree (new brand, same tier).
-    if not len(o["access_levels"]):
-        prev_tiers = [
-            t
-            for t in (jsc.nullish_str(x).strip().lower() for x in jsc.array(prev_state.get("access_levels")))
-            if t in TIER_ORDER
-        ]
-        ents2 = jsc.array(o.get("entities"))
-        reusing2 = o.get("entity_op") == "reuse" or (
-            len(ents2) > 0
-            and not any(jsc.truthy(e) and jsc.get(e, "current_message") is True for e in ents2)
-        )
-        if prev_tiers and reusing2:
-            o["access_levels"] = [t for t in TIER_ORDER if t in prev_tiers]
-            o["_tier_carried"] = True
+    # F4(b)'s CARRY is gone from here too (AC-950), for the same reason and into the same
+    # module's `tier` slot. The two axes stay separate rules there because they can
+    # legitimately disagree (new brand, same tier).
 
     # -- "ALL / SEMUA" on a numbered menu -> expand to EVERY offered position ------------ #
-    sel_ctx0 = jsc.nullish_str(prev_state.get("selection_context") or "")
     # A quote-reply delivers the replied-to menu in referenced_result_set - prefer it over
-    # the immediate last_result_set, and treat its presence as a pick-context.
+    # the open question's own rows, and treat its presence as a pick-context.
     ref_set = jsc.array(parent_input.get("referenced_result_set"))
-    lrs_all = ref_set if len(ref_set) > 0 else jsc.array(prev_state.get("last_result_set"))
-    pick_ctx = len(ref_set) > 0 or sel_ctx0 in ("disambiguation", "suggest_offer")
+    open_rows = jsc.array(jsc.get(open_question_of(prev_state), "options"))
+    lrs_all = ref_set if len(ref_set) > 0 else open_rows
+    pick_ctx = len(ref_set) > 0 or jsc.get(open_question_of(prev_state), "kind") in PICKER_KINDS
     msg_all_src = parent_input.get("latest_user_message")
     if msg_all_src is None:
         msg_all_src = parent_input.get("user_message")
@@ -1750,14 +1815,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     is_all0 = bool(_ALL_EXACT_RE.match(msg_all))
     no_pos = not jsc.is_array(o.get("reference_positions")) or len(o["reference_positions"]) == 0
     # #4: "all" over an ACTIVE did-you-mean offer selects EVERY suggestion. STRUCTURAL gate
-    # (a non-empty dym_last_result_set persisted on the partial-miss turn), no marker regex.
-    dym_active = jsc.is_array(prev_state.get("dym_last_result_set")) and len(
-        prev_state["dym_last_result_set"]
-    ) > 0
-    if is_all0 and no_pos and dym_active:
+    # (an open picker with rows on it), no marker regex.
+    dym_rows = picker_rows(prev_state)
+    if is_all0 and no_pos and len(dym_rows) > 0:
         o["reference_positions"] = [
             n
-            for n in (jsc.js_number(jsc.get(r, "idx")) for r in prev_state["dym_last_result_set"])
+            for n in (jsc.js_number(jsc.get(r, "idx")) for r in dym_rows)
             if jsc.is_integer(n)
         ]
         o["reference_target"] = "dym"  # dymNumberedMultiSelect catches this forced route
@@ -1772,26 +1835,21 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["entity_op"] = "reuse"
         o["message_type"] = "business_query"
         if not jsc.truthy(o.get("domain_hint")):
-            o["domain_hint"] = prev_state.get("domain_hint")
-        if not jsc.truthy(o.get("intent_hint")):
-            o["intent_hint"] = prev_state.get("intent_hint")
+            o["domain_hint"] = focus_domain(prev_state)
         o["select_all_expanded"] = True
 
     if (
         not jsc.truthy(o.get("domain_hint"))
-        and jsc.truthy(prev_state.get("domain_hint"))
+        and jsc.truthy(focus_domain(prev_state))
         and len(o["reference_positions"]) > 0
     ):
-        o["domain_hint"] = prev_state.get("domain_hint")
-        o["intent_hint"] = (
-            o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else prev_state.get("intent_hint")
-        )
+        o["domain_hint"] = focus_domain(prev_state)
         o["message_type"] = "business_query"
         o["domain_inherited_for_position"] = True
 
     # pick under a menu business_query, even if the LLM carried a domain_hint
     if (
-        prev_state.get("selection_context") == "disambiguation"
+        jsc.get(open_question_of(prev_state), "kind") in PICKER_KINDS
         and jsc.is_array(o.get("reference_positions"))
         and len(o["reference_positions"]) > 0
         and o.get("message_type") == "casual"
@@ -1811,12 +1869,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         positions = jsc.array(o.get("reference_positions"))
         if len(positions) == 0:
             return
-        dym_set = jsc.array(prev_state.get("dym_last_result_set"))
+        dym_set = picker_rows(prev_state)
         if len(dym_set) == 0:
             return  # no dym set -> untouched byIdx (backbone guard)
-        offer = prev_state.get("dym_offer") if isinstance(prev_state.get("dym_offer"), dict) else None
+        offer = picker_offer(prev_state)
         by_idx = jsc.JsMap([(jsc.js_number(jsc.get(r, "idx")), r) for r in dym_set])
-        base = jsc.array(prev_state.get("entities"))  # retains the resolved stock entity
+        base = focus_entities(prev_state)  # retains the resolved stock entity
         applied = False
         for p in positions:
             row = by_idx.get(jsc.js_number(p))
@@ -1847,7 +1905,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         last_set = (
             parent_input["referenced_result_set"]
             if jsc.is_array(parent_input.get("referenced_result_set"))
-            else jsc.array(prev_state.get("last_result_set"))
+            else jsc.array(jsc.get(open_question_of(prev_state), "options"))
         )
         by_idx = jsc.JsMap([(jsc.get(r, "idx"), r) for r in last_set])
 
@@ -1919,8 +1977,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         #
         # `apply_dym_pick` stays keyed on the roster it is given (no widening of the dym
         # block's guard, and no second merge implementation): what this does is HAND it the
-        # other roster. The linkage it needs is already persisted - `dym_offer.candidates`
-        # carries `for_raw` / `for_hint` / `for_canonical` per candidate on exactly these
+        # other roster. The linkage it needs rides the question - each frozen row carries
+        # `for_raw` / `for_hint` / `for_canonical` beside its own code on exactly these
         # turns - so the pick replaces the token it was offered FOR, in place, and every
         # other prior entity survives. A picked row with no candidate record is left to the
         # replacement above rather than guessed at: without the linkage there is nothing
@@ -1935,22 +1993,18 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         # also what keeps the corpus byte-equal: capture `parser-15157067` is this exact
         # shape with a prior `SRTWT165-FT` against a `for_raw` of `SRTWT165FT` (the
         # separator differs), so nothing ties and nothing changes.
-        sug_offer = (
-            prev_state.get("dym_offer")
-            if prev_state.get("selection_context") == "suggest_offer"
-            and isinstance(prev_state.get("dym_offer"), dict)
-            else None
-        )
-        if resolved and sug_offer is not None:
+        sug_offer = picker_offer(prev_state)
+        sug_cands = picker_candidates(prev_state)
+        if resolved and sug_offer is not None and sug_cands:
             def _code_key(value: Any) -> str:
                 return jsc.nullish_str(value).strip().lower()
 
             by_code = {}
-            for cand in jsc.array(sug_offer.get("candidates")):
+            for cand in sug_cands:
                 key = _code_key(jsc.get(cand, "code"))
                 if key and key not in by_code:
                     by_code[key] = cand
-            base = jsc.array(prev_state.get("entities"))
+            base = focus_entities(prev_state)
             picked_cands = [
                 c
                 for c in (
@@ -2034,7 +2088,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             for e in jsc.array(o.get("entities"))
         )
         if not current_has_attach_type:
-            prior_ents = jsc.array(prev_state.get("entities"))
+            prior_ents = focus_entities(prev_state)
             for at in [
                 e for e in prior_ents if jsc.lower_or_empty(jsc.get(e, "hint")) == "attachment_type"
             ]:
@@ -2058,7 +2112,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         and jsc.has(e, "ordinal")  # `e.ordinal !== undefined` - presence, not non-null
         for e in o["entities"]
     ):
-        cp_prior = jsc.array(prev_state.get("entities"))
+        cp_prior = focus_entities(prev_state)
 
         def cp_key(e: Any) -> str:
             code = jsc.get(e, "canonical_code") if jsc.truthy(jsc.get(e, "canonical_code")) else jsc.get(e, "raw")
@@ -2101,7 +2155,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         ]
         if (
             _bf_ents
-            and jsc.get(_bf_prev, "selection_context") == "member_offer"
+            and jsc.get(open_question_of(_bf_prev), "kind") == "member_offer"
             and offer_is_open(_bf_prev)
             and o.get("is_affirmative") is None
             and not jsc.array(o.get("reference_positions"))
@@ -2115,73 +2169,59 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             # was added.
             o["bare_entity_under_offer"] = True
 
-    # -- domain continuity for entity-bearing continuations (bare "Y" code) -------------- #
-    # Key on the EFFECTIVE domain signal, NOT domain_hint===null. Must run BEFORE
-    # blocklist-apply so the correct domain drives the filter.
-    if o.get("message_type") != "casual" and o.get("message_type") != "request_for_help":
-        if not explicit and not switch_domain:
-            prev_dom = jsc.get(parent_input.get("previous_conversation_state"), "domain_hint") or None
-            cur_ents = [
-                e
-                for e in jsc.array(o.get("entities"))
-                if jsc.truthy(e) and jsc.get(e, "current_message") is True
-            ]
-            if jsc.truthy(prev_dom) and len(cur_ents) > 0:
-                # OWNER RULING K, rule 4: a BARE entity turn is typed by the carried
-                # domain, not by the model's guess at the token's shape. Narrow on
-                # purpose - ONE current entity, the model named neither a domain nor an
-                # intent, and the message is nothing but that entity - because those are
-                # the turns that carry no type evidence of their own. Anything wider is a
-                # real query and keeps the hint-based check below.
-                bare_type = BARE_ENTITY_TYPE_BY_DOMAIN.get(jsc.js_string(prev_dom))
-                bare_entity_turn = (
-                    bare_type is not None
-                    and len(cur_ents) == 1
-                    # A PICK IS NEVER BARE. An entity carrying an `ordinal` was produced
-                    # by a positional reply against a numbered list, so the customer named
-                    # a ROW, not an entity, and the row already knows what type it is
-                    # (capture parser-15129616: "17" against a list of orders).
-                    and not any(jsc.get(e, "ordinal") is not None for e in cur_ents)
-                    and not jsc.truthy(jsc.get(parser_raw_snapshot, "domain_hint"))
-                    and not jsc.truthy(jsc.get(parser_raw_snapshot, "intent_hint"))
-                    and _message_is_only_these_entities(
-                        parent_input.get("latest_user_message"), cur_ents
-                    )
-                )
-                blocked_for_prev = set(DOMAIN_BLOCKED_HINTS.get(prev_dom, []))
-                compatible = bare_entity_turn or all(
-                    jsc.lower_or_empty(jsc.get(e, "hint")) not in blocked_for_prev for e in cur_ents
-                )
-                if compatible:
-                    o["domain_hint"] = prev_dom  # OVERRIDE guessed domain
-                    prev_intent = jsc.get(parent_input.get("previous_conversation_state"), "intent_hint")
-                    o["intent_hint"] = (
-                        prev_intent
-                        if jsc.truthy(prev_intent)
-                        else (o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None)
-                    )
-                    o["domain_inherited_compatible"] = True
-                    if bare_entity_turn:
-                        # RETYPE, in place: `cur_ents` holds the same dicts `o.entities`
-                        # does, so the blocklist below, the axis map and the resolver all
-                        # see the domain's own type rather than the guessed one. Stamped
-                        # only when the type actually MOVED - a diagnostic that fires on
-                        # every turn it agrees with says nothing about the ones it changed.
-                        retyped = False
-                        for e in cur_ents:
-                            if jsc.lower_or_empty(jsc.get(e, "hint")) != bare_type:
-                                e["hint"] = bare_type
-                                retyped = True
-                        if retyped:
-                            o["bare_entity_retyped"] = bare_type  # diagnostic
-                else:
-                    o["domain_inherit_blocked"] = prev_dom  # topic switch, kept current
+    # -- the ANSWER, DECIDED by the engine and APPLIED here ------------------------------- #
+    # The decision is the engine's (`_resolve_open_question`, before this call): it reads
+    # the persisted `open_question` slot rather than a mirror of the legacy keys, and its
+    # outcome names the LANE, which is a routing decision and not a post-processor's.
+    #
+    # The APPLICATION is here, at the position the answered block has always occupied -
+    # immediately before the focus rules, after every other writer of `o["entities"]`. A
+    # pick IS this turn's scope, and everything that reads the scope runs below: the entity
+    # executor, the domain blocklist, the bare-entity retype. Applying it after this
+    # function instead sent `MWC7625-SH` to the resolver typed `product` where the incoming
+    # domain types it `inbound_shipment` (capture exec-13488887; 45 graded captures moved on
+    # `entities` alone). Measured, and reverted to here.
+    turn_signals = v3_signals(
+        parser_raw_snapshot, emits_v3=parent_input.get("parser_emits_v3") is True
+    )
+    answered = parent_input.get("_answered") or {}
+    open_question = answered.get("question")
+    if answered.get("outcome") is not None and open_question:
+        apply_open_question_outcome(o, open_question, answered["outcome"])
 
-    # #6: a bare/dominant domain-switch word overrides the continuity carry.
-    if switch_domain:
-        o["domain_hint"] = switch_domain
-        o["domain_switched_by_keyword"] = switch_domain
-        o["intent_hint"] = None  # downstream re-derives from the new domain
+    # -- THE FOCUS RULES (AC-1005) -------------------------------------------------------- #
+    # ONE call, in the position the blocks it replaced occupied: after every writer of
+    # `o["entities"]` (the did-you-mean pick, the numbered multi-select, the positional
+    # resolve, the tier pick and the answered step above) and BEFORE the B2' reconciliation
+    # and the domain blocklist, both of which read `domain_hint` and must read the FINAL
+    # one. The ordering is what the corpus grades, and moving it out of this function was
+    # measurably wrong for the promoted v1 path.
+    focus_turn = focus_rules.Turn(
+        o=o,
+        prev=prev_state,
+        turn_no=int(jsc.js_number(parent_input.get("turn_no")) or 1)
+        if parent_input.get("turn_no") is not None
+        else 1,
+        explicit=bool(explicit),
+        switch_domain=switch_domain,
+        is_carried=ce_is_carried,
+        date_widened=bool(date_widen),
+        signals=turn_signals,
+        parser_raw=parser_raw_snapshot if isinstance(parser_raw_snapshot, dict) else {},
+        latest_user_message=parent_input.get("latest_user_message"),
+        has_picker=open_question is not None,
+        entityless_domain_reused=entityless_domain_reused,
+        # A pick is the customer choosing from rows we showed them, so the slot it sets is
+        # sourced `pick` rather than `current_message`.
+        answered_by_pick=answered.get("entry") is not None,
+    )
+    focus_out = focus_rules.apply(
+        focus_rules.from_session(prev_state, turn_no=focus_turn.turn_no), focus_turn
+    )
+    # An OUT-PARAMETER, deliberately not a key on the emission: `output.output` IS the
+    # graded wire shape, 271 captured fixtures compare it byte for byte, and one added key
+    # would diverge all of them. `parent_input` is the caller's own per-turn dict.
+    parent_input["_dialogue_out"] = {"focus": focus_out.focus, "trace": focus_out.entries}
 
     # -- B2' POST-MERGE ENTITY RECONCILIATION -------------------------------------------- #
     # Placed AFTER every entity-set writer and after the domain carries, so `domain_hint`
@@ -2320,7 +2360,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # `ALLOWED["incoming"]` already carries both `product` and `inbound_shipment`, so the
     # resolver searches both types regardless of which hint survives.
     _incoming_pending_kind = jsc.get(
-        jsc.get(parent_input.get("previous_conversation_state"), "pending"), "kind"
+        open_question_of(parent_input.get("previous_conversation_state")), "kind"
     )
     if (
         jsc.truthy(o.get("entities"))
@@ -2392,53 +2432,22 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                         jsc.js_string(jsc.get(e, "raw")) for e in kept
                     ]
 
-    # -- OWNER RULING K, rule 2: CARRIED ENTITIES DIE ON A TOPIC CHANGE ------------------- #
-    # The entity-op executor keeps every prior entity whose axis this turn did not name,
-    # which is right within one subject and wrong across two: a customer named on an order
-    # turn kept scoping the promotion question that followed it, because nothing had ever
-    # asked whether the subject was still the same one (H66).
-    #
-    # Placed AFTER the blocklist rather than inside the executor, deliberately. The
-    # blocklist already removes a carried entity whose HINT cannot belong to the new
-    # domain, and pre-empting it would only move that same removal one step earlier while
-    # rewriting the diagnostics that describe it (measured: 13 captures changed nothing
-    # but those diagnostics). What is left for this pass is exactly what the blocklist
-    # cannot see: an entity whose hint is perfectly legal in the new domain and which
-    # nevertheless belongs to the old subject. The domain is also FINAL here - after the
-    # continuity carry and the #6 switch - so no reader has to know whether it was the
-    # model's guess or the carried one.
-    #
-    # THREE conditions, and each one is load-bearing:
-    #
-    # * `explicit` - a DECISIVE intent plus a domain, so this is the customer's own domain
-    #   and not the model's guess at a bare token's shape. A guessed domain reads as a
-    #   change on exactly the turns that are not one (the naked code after a customer
-    #   pick, fork exec 13687305) and dropping the pick there answered for a customer
-    #   nobody had mentioned.
-    # * a this-turn entity - the new question brings its own scope. A turn that names no
-    #   entity has the carry as its ONLY scope ("stock?" after a promo for a product), and
-    #   clearing it turns a continuation into "which product?".
-    # * `topic.changed` - the SAME definition the tail's offer carry uses. A turn that
-    #   names no domain, or the same one, is a continuation.
-    #
-    # `new_offer` is False here because the head cannot see one: offers are built in the
-    # tail, and the tail applies that half of the rule itself.
-    if not jsc.truthy(o.get("is_menu_label")) and jsc.is_array(o.get("entities")):
-        tc_current = [e for e in o["entities"] if jsc.truthy(e) and not ce_is_carried(e)]
-        if (
-            explicit
-            and len(tc_current) > 0
-            and topic.changed(prev_state_domain, o.get("domain_hint"))
-        ):
-            tc_dropped = [
-                f"{jsc.get(e, 'hint')}:{jsc.get(e, 'raw')}"
-                for e in o["entities"]
-                if jsc.truthy(e) and ce_is_carried(e)
-            ]
-            if tc_dropped:
-                o["entities"] = tc_current
-                o["entities_dropped_on_topic_change"] = tc_dropped  # diagnostic
-
+    # -- OWNER RULING K, rule 2: the DROP, decided by `dialogue/focus.reset_on_topic` ---- #
+    # The decision was taken at the `#6` position with every other focus rule; the WRITE
+    # lands here, where the deleted block always landed it. The placement is load-bearing
+    # and stays argued the way it always was: the blocklist above already removes a carried
+    # entity whose HINT cannot belong to the new domain, and pre-empting it moves that same
+    # removal one step earlier while rewriting the diagnostics that describe it - measured
+    # on 7 Sep 2026, 16 captured fixtures changed `entities_filtered` and `broaden_dropped`
+    # and nothing else when the drop ran early. What is left for this pass is exactly what
+    # the blocklist cannot see: an entity whose hint is legal in the new domain and which
+    # nevertheless belongs to the old subject.
+    # The DROP the reset decides. `reset_on_topic` runs with the rest of the rules in the
+    # engine now, so the decision is taken from the same inputs, here, where the write has
+    # always landed - after the blocklist, which already removes a carried entity whose
+    # HINT cannot belong to the new domain.
+    if focus_out.drop_carried_entities and not jsc.truthy(o.get("is_menu_label")):
+        focus_rules.drop_carried_entities_on_topic_change(o, is_carried=ce_is_carried)
     prior_routing = jsc.get(parent_input.get("previous_conversation_state"), "routing")
     if prior_routing is None:
         prior_routing = {}
@@ -2515,11 +2524,14 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # WIDENED (owner turn 2d903c96, 8 Sep 2026, "delivery to hanlim"): the model emitted
     # `request_for_help` with intent AND domain null, so the decisive-intent half was
     # never true and the lane went `out_of_scope`. The second half is just as structural:
-    # a switch word of ONE domain among this message's content tokens (`_switch_word_domain`,
-    # over the sanctioned `DOMAIN_SWITCH_WORDS` table only) beside an entity named THIS
-    # turn. Still both halves - a switch word alone ("can someone help me with my order")
-    # names nothing and stays a help request; an entity alone is a picker answer.
-    switch_word_domain_now = _switch_word_domain(parent_input.get("latest_user_message"))
+    # this message NAMES A DOMAIN OF ITS OWN beside an entity named this turn. Still both
+    # halves - a domain word alone ("can someone help me with my order") names nothing and
+    # stays a help request; an entity alone is a picker answer.
+    #
+    # The signal is the PARSE, not a re-reading of the customer's words: v3 says it in
+    # `asks[].domain` and v1 says it in the RAW `domain_hint`, before any carry could have
+    # supplied one.
+    switch_word_domain_now = _domain_named_this_message(o, parser_raw_snapshot)
     entity_named_now = jsc.is_array(o.get("entities")) and any(
         jsc.get(e, "current_message") is True for e in o["entities"]
     )
@@ -2623,13 +2635,11 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # `reference_target === 'dym'` is NOT the signal - it is the model's DEFAULT and comes
     # back on an ordinary promo-roster pick too. The real discriminator is whether a dym
     # offer was actually PENDING in the previous state.
-    prev_dym = (
-        jsc.is_array(prev5.get("dym_last_result_set")) and len(prev5["dym_last_result_set"]) > 0
-    ) or bool(prev5.get("dym_offer") is not None and isinstance(prev5.get("dym_offer"), dict))
+    prev_dym = picker_offer(prev5) is not None
     dym_pick = prev_dym or o.get("dym_pick_applied") is True
     # F10: do NOT drop promotion-hinted entities here - Q25 allows a list scoped BY A
     # PROMOTION NAME, and filtering those out left the scope empty.
-    prev_scope = [] if (quoted or dym_pick) else jsc.array(prev5.get("entities"))
+    prev_scope = [] if (quoted or dym_pick) else focus_entities(prev5)
     if o.get("domain_hint") == "promotion" and picking and len(prev_scope) > 0:
         o["entities"] = [{**x, "current_message": False} for x in prev_scope]
         o["entity_op"] = "reuse"
@@ -2640,7 +2650,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         roster = (
             jsc.array(parent_input.get("referenced_result_set"))
             if quoted
-            else jsc.array(prev5.get("last_result_set"))
+            else jsc.array(jsc.get(open_question_of(prev5), "options"))
         )
         if len(roster):
             labels = []
@@ -2657,7 +2667,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         and no_scope
         and not quoted
         and not dym_pick
-        and jsc.is_array(prev5.get("entities"))
+        and bool(focus_entities(prev5))
         and len(prev5["entities"]) > 0
     ):
         o["entities"] = [{**x, "current_message": False} for x in prev5["entities"]]
@@ -2847,9 +2857,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         return {"any": pick if pick is not None else llm_pick()}
 
     # -- CS member-pick override (final say) ---------------------------------------------- #
-    sel_ctx = jsc.get(parent_input.get("previous_conversation_state"), "selection_context")
-    if sel_ctx == "member_offer" and o.get("dym_pick_applied") is not True:
-        last_set = jsc.array(jsc.get(parent_input.get("previous_conversation_state"), "last_result_set"))
+    _mp_question = open_question_of(parent_input.get("previous_conversation_state"))
+    if jsc.get(_mp_question, "kind") == "member_offer" and o.get("dym_pick_applied") is not True:
+        last_set = jsc.array(jsc.get(_mp_question, "options"))
         max_idx = len(last_set)
 
         def extract(msg: Any, llm: Any) -> list:
@@ -3191,7 +3201,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # rosters all came back empty). "Open" = the FROZEN phrase is in the persisted previous
     # response - deliberately NOT the persisted roster plan, which the spine carries
     # forward across same-team turns and would re-open a closed offer.
-    if sel_ctx != "member_offer" and o.get("dym_pick_applied") is not True:
+    if jsc.get(_mp_question, "kind") != "member_offer" and o.get("dym_pick_applied") is not True:
         st_o = parent_input.get("previous_conversation_state") or {}
         open_o = offer_is_open(st_o)
         if open_o and not jsc.truthy(o.get("domain_hint")):
@@ -3226,12 +3236,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # RESOLVED pick (provenance flags), or a CONTINUATION (a non-tier roster is pending AND
     # this turn named no new scope). The second half is what keeps D4 alive - "promo for
     # CBS212-WH" with a roster pending IS a new query and MUST re-ask.
-    pp_prev_ctx = jsc.nullish_str(prev_state.get("selection_context") or "")
-    pp_roster_pending = pp_prev_ctx in ("suggest_offer", "member_offer", "disambiguation") or (
-        pp_prev_ctx != "tier_offer"
-        and jsc.is_array(prev_state.get("last_result_set"))
-        and len(prev_state["last_result_set"]) > 0
-    )
+    # A NON-TIER QUESTION IS OPEN. The legacy pair said this twice - a roster label, and
+    # "some roster is in state" - and the second half counted the ANSWER's own rows as a
+    # pending roster, which is why it had to exclude `tier_offer` by name. One question,
+    # one test: anything open that is not the tier ask.
+    pp_prev_kind = jsc.nullish_str(jsc.get(open_question_of(prev_state), "kind") or "")
+    pp_roster_pending = bool(pp_prev_kind) and pp_prev_kind != "tier_pick"
     pp_named_new_scope = any(
         jsc.truthy(e) and jsc.get(e, "current_message") is True for e in jsc.array(o.get("entities"))
     )
@@ -3255,7 +3265,10 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # says the turn accepts a correction (dym_pick_applied), and the offer records which
     # token each candidate was for.
     dym_applied = o.get("dym_pick_applied") is True
-    dym_cands = jsc.get(prev_state.get("dym_offer"), "candidates")
+    # The rows the customer was shown ARE the candidate record: each carries the token it
+    # was offered for (`for_raw`) beside its own code, which is the whole of what this
+    # rule ever read `dym_offer.candidates` for.
+    dym_cands = picker_candidates(prev_state)
     if dym_applied and jsc.is_array(dym_cands) and len(dym_cands) and jsc.is_array(o.get("entities")):
         def sn(v: Any) -> str:
             return re.sub(r"[^a-z0-9]+", "", jsc.nullish_str(v).strip().lower())
@@ -3285,20 +3298,6 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["entities"] = [e for e in o["entities"] if sn(jsc.get(e, "raw")) not in superseded]
             o["dym_superseded_dropped"] = before - len(o["entities"])
 
-    # -- AXIS BROADEN, FINAL PASS: the widened filter must not come back -------------------- #
-    # This drop used to sit right after the executor; a LATER writer re-attached the product
-    # anyway (~47 sites assign entities/domain_hint), so it runs immediately before the
-    # return, where `entities` is final by definition. Drop by HINT, not by axis: live's
-    # maps lump customer/product/order into ONE order_scope, so an axis-equality drop would
-    # take the customer out with the product.
-    ba_final = jsc.lower_or_empty(o.get("broaden_axis"))
-    if ba_final and ba_final != "all" and ba_final != "date" and jsc.is_array(o.get("entities")):
-        before = len(o["entities"])
-        o["entities"] = [
-            e for e in o["entities"] if jsc.lower_or_empty(jsc.get(e, "hint")) != ba_final
-        ]
-        o["broaden_axis_dropped"] = before - len(o["entities"])
-
     output["_parser_raw"] = parser_raw_snapshot
     return output
 
@@ -3306,17 +3305,24 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 def suggest_follow_up(item: dict, parent_input: dict) -> dict:
     """Port of `suggest-follow-up.js`. Runs AFTER output_exchange, on the same item.
 
-    When the PREVIOUS turn was a `suggest_offer`: a tapped code / typed position re-queries
-    in the RETAINED domain (never a CS assign); a plain "yes" escalates; "no" declines and
-    stops. Inert on every other turn - byte-identical output when selection_context differs.
+    When the PREVIOUS turn left a PICKER open: a tapped code / typed position re-queries in
+    the RETAINED domain (never a CS assign); a plain "yes" escalates; "no" declines and
+    stops. Inert on every other turn - byte-identical output when no picker is open.
+
+    The gate was `selection_context == "suggest_offer"` and the retained domain came off
+    `prev_state.domain_hint`; both are gone with the five-key session (L1-S3d step 4). A
+    `product_pick` / `customer_pick` IS the picker that label named, and the domain it was
+    asked in is stamped on the question by the lane that asked it.
     """
     output = item
     parent_input = parent_input or {}
     prev_state = parent_input.get("previous_conversation_state") or {}
+    question = open_question_of(prev_state)
+    prior_domain = jsc.get(jsc.get(question, "payload"), "domain")
     if (
         jsc.truthy(output)
         and jsc.truthy(jsc.get(output, "output"))
-        and prev_state.get("selection_context") == "suggest_offer"
+        and jsc.get(question, "kind") in PICKER_KINDS
     ):
         o = output["output"]
         has_entity_pick = jsc.is_array(o.get("entities")) and any(
@@ -3326,11 +3332,8 @@ def suggest_follow_up(item: dict, parent_input: dict) -> dict:
         if has_entity_pick or has_pos_pick:
             # a bare code (button tap) or a position was given -> keep the prior domain when
             # the reply carried no decisive domain term, then let normal processing re-query.
-            if not jsc.truthy(o.get("domain_hint")) and jsc.truthy(prev_state.get("domain_hint")):
-                o["domain_hint"] = prev_state["domain_hint"]
-                o["intent_hint"] = (
-                    o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else prev_state.get("intent_hint")
-                )
+            if not jsc.truthy(o.get("domain_hint")) and jsc.truthy(prior_domain):
+                o["domain_hint"] = prior_domain
                 o["domain_inherited_for_suggest"] = True
             if jsc.truthy(o.get("domain_hint")):
                 o["message_type"] = "business_query"

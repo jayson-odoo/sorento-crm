@@ -36,6 +36,7 @@ from app.services.chatbot.head import parser as parser_mod
 # with the auth chain.
 from tests.chatbot.test_chat_turn_endpoint import api_key, client  # noqa: F401 - fixtures
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
+from app.services.chatbot import trace as trace_mod
 
 _COMPLETE_URL = "/api/v1/external/chat/turn/{turn_id}/complete"
 
@@ -127,7 +128,17 @@ class TestTheTailWritesTheSession:
         done = engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
 
         stored = _session_of(session_factory)
-        assert stored["variables"]["domain_hint"] == "master_products", "the tail overwrote it"
+        # D8/AC-1001: the five keys, not the legacy `domain_hint` / `response` shape
+        # `PRIOR_SESSION` seeded - proves the tail OVERWROTE it (a structurally different
+        # dict), whole-patch write, one contact row.
+        assert set(stored["variables"]) == {
+            "focus",
+            "open_question",
+            "ideation",
+            "access_levels",
+            "contains_flyer",
+        }
+        assert stored["variables"] != PRIOR_SESSION["variables"], "the tail overwrote it"
         # The stored value is the WHOLE patch, not just `variables`: `save-session-vars`
         # PUT `JSON.stringify($json.reply.session_patch)`, so a variables-only write would
         # change what every existing reader of that column sees.
@@ -144,19 +155,20 @@ class TestTheTailWritesTheSession:
         )
         assert set(done.reply) == {"text", "quick_replies", "result_set", "attachments_src"}
         assert done.reply["attachments_src"] == [{"url": "s3://x"}]
-        assert done.reply["result_set"] == _session_of(session_factory)["variables"]["last_result_set"]
+        open_question = _session_of(session_factory)["variables"].get("open_question") or {}
+        assert done.reply["result_set"] == (open_question.get("options") or [])
 
     def test_the_turn_closes_done_with_the_head_s_trace_continued(self, seeded, stub_parser, session_factory):
         head = _head(session_factory, is_test=False)
-        before = len(_turn_row(session_factory, head.turn_id).trace)
+        before = len(trace_mod.stage_records(_turn_row(session_factory, head.turn_id).trace))
         engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
         row = _turn_row(session_factory, head.turn_id)
         assert row.status == "done"
         assert row.stage == "remembered"
-        stages = [record["stage"] for record in row.trace]
+        stages = [record["stage"] for record in trace_mod.stage_records(row.trace)]
         assert len(stages) == before + 2, "the tail APPENDS, it does not start a second timeline"
         assert stages[-2:] == ["replied", "remembered"]
-        for record in row.trace[-2:]:
+        for record in trace_mod.stage_records(row.trace)[-2:]:
             assert record["summary"] and record["why"]
             assert "{" not in record["summary"], "the trace renders words, not JSON (D11)"
 
@@ -179,7 +191,14 @@ class TestDryRunWritesNothing:
 
         assert _session_of(session_factory) == PRIOR_SESSION, "a dry run wrote the session"
         assert done.session_patch is not None
-        assert done.session_patch["variables"]["domain_hint"] == "master_products"
+        # D8/AC-1001: the would-be write is still the five-key shape, never the legacy one.
+        assert set(done.session_patch["variables"]) == {
+            "focus",
+            "open_question",
+            "ideation",
+            "access_levels",
+            "contains_flyer",
+        }
         assert _integration_logs(session_factory, "respond_contacts.session_vars") == 0
 
     def test_a_live_turn_does_not_return_the_patch(self, seeded, stub_parser, session_factory):
@@ -211,6 +230,38 @@ class TestDryRunWritesNothing:
         assert dry_done.session_patch is not None
         assert dry_done.session_patch["variables"] == live_patch["variables"]
         assert dry_done.session_patch.get("user_response") == live_patch.get("user_response")
+
+    def test_the_dialogue_state_is_byte_equal_too(self, seeded, stub_parser, session_factory):
+        """Growth r1: `focus` and `open_question` are IN that patch, and `focus` carries
+        `set_at_turn`.
+
+        A counter that read the console preview's own history would give the dry run turn 1
+        where the live turn read 41, and every slot in the two patches would differ on a
+        number no customer will ever see. `engine._turn_no` counts LIVE rows plus this
+        console run's own, which is what keeps this equal without letting a preview age a
+        real conversation.
+        """
+        dry_head = _head(session_factory, is_test=True)
+        dry_done = engine_mod.complete_turn(
+            dry_head.turn_id, _fragments(), session_factory=session_factory
+        )
+
+        from tests.chatbot.test_engine import _envelope as _build_envelope
+
+        live_envelope = _build_envelope(is_test=False)
+        live_envelope.message["message"]["messageId"] = "ZZT-msg-live-dialogue"
+        live_head = engine_mod.run_turn(live_envelope, session_factory=session_factory)
+        engine_mod.complete_turn(
+            live_head.turn_id, _fragments(), session_factory=session_factory
+        )
+
+        dry_vars = dry_done.session_patch["variables"]
+        live_vars = _session_of(session_factory)["variables"]
+        assert dry_vars["focus"] == live_vars["focus"]
+        assert dry_vars["open_question"] == live_vars["open_question"]
+        assert json.dumps(dry_vars["focus"], sort_keys=True) == json.dumps(
+            live_vars["focus"], sort_keys=True
+        )
 
 
 class TestGuards:

@@ -402,6 +402,69 @@ today, then fall back to the alive `open_question`.
 `open_question` written by `compile_state` (read by nothing new). Removing the mirrors is a
 follow-up once the corpus is re-derived.
 
+### Deviations from this plan, as built (Slice B, lane `feat/chatbot-growth-dialogue`)
+
+SUPERSEDED 12 Sep 2026 by `PLAN-chatbot-focus-multi-domain.md`, which deletes the
+mirrors (its D8) and the TTL (its D9). Kept as the record of what Slice B built.
+
+Five, each numbered so the list can be checked off in review. Every one is also recorded
+against the acceptance criterion it moves, in `chatbot-growth-r1-acceptance-criteria.md`.
+
+**DEVIATION 1 (slice B4): the direction of the mirror is INVERTED.** The
+plan above asked for `pending` / `dym_offer` / `selection_context` / `picker_*` to be
+derived FROM `open_question`. They are not: `open_question` is derived from THEM, by
+`dialogue/open_question.from_state`, for this release.
+
+The reason is in the code the original direction would have to rewrite. The did-you-mean
+lifecycle in `tail/compile_state.py` is a faithful port whose eight-rule order is graded
+against captures; `topic.py` says in as many words that "rewriting it to call this function
+would be a behaviour change smuggled in as a tidy-up"; and thirteen registered divergences
+already pin it. Making `open_question` authoritative means porting that lifecycle, plus
+`_offer_carry` and `_picker_carry`, onto a single TTL - a real behaviour change, on the
+one lane that already changes reply semantics, with no corpus that can grade the result
+until it is re-derived.
+
+What slice B4 ships instead is every part that the ACs actually name: the typed slot, the
+seven kinds, the frozen options, ONE resolver with one handler per kind, the quoted-reply
+precedence, issue #708's `payload.keep`, and the trace entry. AC-951's stated purpose -
+"so every existing world grades" - is met either way. Inverting the mirror, and deleting
+`_offer_carry`, the eight-rule ladder and `pending.derive` with it, is the follow-up, and
+its precondition is the re-derived corpus this plan already names.
+
+**DEVIATION 2: the `answered` step is a trace ENTRY, not a ninth stage.** `TURN_STAGES` is a closed
+vocabulary of eight that the timeline renders, `chatbot.turns.stage` stores and 1,875
+fixtures carry. This plan's own slice-D shape lists `open_question: {before, answer, after,
+handler, outcome}` among the ENTRIES, so the entry is what shipped; the step itself runs in
+`head/output_exchange` immediately before the focus rules, because a pick IS this turn's
+scope and the focus rules must see it as such.
+
+**DEVIATION 3: `FocusSlot` has no `set_at`.** This plan describes it as "kept for the trace only", and
+persisting a wall clock would break AC-206 (a dry run's `session_patch` is byte-equal to
+what a live run persists). The trace carries it: every `focus` and `decay` entry is stamped
+`at` by `trace.TurnTrace.add`.
+
+**DEVIATION 4: `is_active` gets no focus slot.** The nine axes above do not include it, and it is not one
+of them: "discontinued" is a property of the records being asked about rather than of what
+the conversation is about. `reuse_alive` carries it from the previous state, exactly as the
+deleted executor arm did. The trigger for giving it a slot is a measured turn where it
+should have decayed on its own and did not.
+
+**DEVIATION 5, a BEHAVIOUR reversal the owner accepted (review, 7 Sep 2026).**
+AC-944's second clause reads: "'2' again after the pick, with no open question alive, is
+treated as a new message, not a pick". It is not, and the reason is owner ruling K rule 1,
+which this plan's predecessor shipped a month earlier: an offer roster the customer can
+still SEE survives the answer, so "1", then "2", then "3" all resolve against the same
+list. A pick does not consume the roster; the TTL does. So a second "2" against a list
+still on screen is still a pick, and only once the question has aged out (or a new roster
+has replaced it) does it become a new message.
+
+The two rules cannot both hold, and the ruling is the later and more specific one - it was
+made from a production transcript where the second pick had nothing to resolve against.
+The clause is therefore read as "once the question is no longer alive", which is exactly
+what `owner-pick-then-next-pick` and the decay worlds grade. The owner accepted this in the
+7 Sep review.
+
+
 ### Slice C - Field reveal per contact
 
 One mechanism for D3 and D4. Presenters mark a field `restricted=<key>` in

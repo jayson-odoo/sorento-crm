@@ -2,7 +2,7 @@
 
 Plain JSON store keyed by `respond_io_id` (Respond.io contact id, not internal UUID).
 - GET  /{respond_io_id}  -> returns the stored session_vars dict
-- PUT  /{respond_io_id}  -> body is an arbitrary JSON object, overwrites session_vars
+- PUT  /{respond_io_id}  -> body is `{"variables": {five keys}}`, overwrites session_vars
 """
 import json
 import logging
@@ -97,8 +97,13 @@ def overwrite_conversation_state(
     _http_exc_to_reraise: HTTPException | None = None
 
     try:
+        # AC-1034: `{"variables": {five keys}}`, the shape the column holds and the shape
+        # the GET returns, so a GET body PUTs back unchanged. `exclude_unset` is
+        # deliberately not used: a PUT is a wholesale overwrite, so a key the caller
+        # omitted is a key they are clearing, and writing the omission as an absent key
+        # would leave the old value in place on the next read.
         state = overwrite_for_contact(
-            db, respond_io_id=respond_io_id, state=payload.root
+            db, respond_io_id=respond_io_id, state=payload.model_dump()
         )
         response_payload = ConversationStateResponse(
             respond_io_id=respond_io_id, session_vars=state

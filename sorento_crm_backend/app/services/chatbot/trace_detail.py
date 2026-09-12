@@ -199,15 +199,16 @@ def _reveals(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _decay(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """What the bot forgot this turn, and why. TWO fields (AC-1003, AC-1035, D9).
+
+    The key keeps the name `decay` - the drawer's panel and `trace_detail`'s nine keys are
+    written against it - but nothing decays any more: a slot is cleared by a same-axis
+    entity, a topic reset or the conversation closing, and each of those is something that
+    HAPPENED. `value`, `set_at_turn`, `age_turns` and `age_minutes` went with the counter;
+    an age on a line that no age decided would be a number an operator could only misread.
+    """
     return [
-        {
-            "slot": e.get("slot"),
-            "value": e.get("value"),
-            "set_at_turn": e.get("set_at_turn"),
-            "age_turns": e.get("age_turns"),
-            "age_minutes": e.get("age_minutes"),
-            "reason": e.get("reason"),
-        }
+        {"slot": e.get("slot"), "reason": e.get("reason")}
         for e in _kind_records(records, "decay")
     ]
 

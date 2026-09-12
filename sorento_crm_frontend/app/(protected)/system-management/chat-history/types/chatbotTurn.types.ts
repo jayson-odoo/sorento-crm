@@ -6,10 +6,13 @@
  * the 1,535 captured fixtures the engine is graded against.
  */
 
-/** The eight stages a turn can record, in the order the timeline renders them. */
+/** The nine stages a turn can record, in the order the timeline renders them. */
 export const TURN_STAGES = [
   'received',
   'understood',
+  // L1-S3: did this message answer the question the bot was waiting for? Its outcome
+  // decides the lane, so it is a row on the timeline and not a footnote.
+  'answered',
   'access',
   'routed',
   'looked_up',
@@ -81,7 +84,14 @@ export type TurnTraceKind =
  * stage record with `stageRecords()` / `isStageRecord()` before reading `stage`.
  */
 export interface TurnTraceRecord {
-  /** Absent on a stage record. Present, and one of seven values, on everything else. */
+  /**
+   * Absent on a stage record, present on everything else in the array that is NOT a step
+   * the turn ran. `note` is something that happened TO the turn (an operator asking for a
+   * retry); the rest are structured DECISIONS the engine took inside a stage - `decay`,
+   * `focus`, `open_question`, `tool`, `crossdomain`, `reveals` - written by
+   * `trace.TurnTrace.add`. None has a start, a duration or a status of its own, so none is
+   * a timeline row.
+   */
   kind?: TurnTraceKind;
   stage?: TurnStage;
   status?: TraceStatus;
@@ -119,6 +129,15 @@ export interface TurnResponseBody {
   actions?: Record<string, unknown>[] | null;
 }
 
+/**
+ * How the turn arrived. `shadow` (L1-S4, AC-1027) is the odd one: it is not a delivery at
+ * all but a SECOND parse of a live turn, run under the version named by
+ * `system_settings.chatbot_parser_shadow_version`. A shadow row sends nothing, writes no
+ * session and escalates nothing; it exists to be compared with the live row it names in
+ * `shadow_of`.
+ */
+export type TurnIngress = 'webhook' | 'poller' | 'retry' | 'console' | 'shadow';
+
 export interface ChatbotTurn {
   id: string;
   contact_respond_id: string;
@@ -135,7 +154,7 @@ export interface ChatbotTurn {
   // be there. Requiring them would only force every caller that legitimately does not
   // have one - a test factory, a narrower projection, a response from before the column
   // existed - to invent a value, which is how a type stops describing reality.
-  ingress?: 'webhook' | 'poller' | 'retry' | 'console';
+  ingress?: TurnIngress;
   error?: string | null;
   created_at: string;
   started_at?: string | null;
@@ -144,6 +163,59 @@ export interface ChatbotTurn {
   retry_requested_at?: string | null;
   trace: TurnTraceRecord[];
   response: TurnResponseBody | null;
+  /**
+   * AC-1027. On a shadow row, the `message_id` of the LIVE turn it parsed again. Null on
+   * every live row, which is what pairs the two sides for the drift comparison.
+   */
+  shadow_of?: string | null;
+  /**
+   * AC-1029. The domains this turn's parse asked about, flattened from `asks[]` and kept
+   * in the order the dealer said them. Null on a turn parsed before v3 - which is NOT the
+   * same as `[]` ("this parse named no domain"), so the drift comparison treats an
+   * unknown side as no drift rather than as a difference.
+   */
+  domains?: string[] | null;
+  /**
+   * AC-1029, the CROSS-CONTACT grid only. A shadow row asked for without a
+   * `contact_respond_id` has to carry its own context, because the screen showing it has
+   * no conversation open to read it from: who said it, what they said, and the live
+   * answer to compare against. Absent on every row of a per-contact request.
+   */
+  contact_display?: string | null;
+  message?: string | null;
+  live?: ShadowTurnLiveSide | null;
+}
+
+/**
+ * The live side of one shadow row, as the endpoint's own join already has it.
+ *
+ * `id` is the LIVE turn, so opening the row opens the turn the customer actually got,
+ * with the shadow parse beside it rather than in place of it.
+ */
+export interface ShadowTurnLiveSide {
+  id: string;
+  branch_kind: BranchKind | null;
+  domains?: string[] | null;
+}
+
+/**
+ * AC-1030. How the shadow window is going over the filtered range, computed by the
+ * endpoint over the shadow rows joined to their live rows - not in the browser, which
+ * only ever holds one page.
+ *
+ * Parities are fractions (0 to 1). Null on a range with no shadow row to compare, which
+ * the line says in words rather than printing "0%".
+ */
+export interface ShadowTurnSummary {
+  count: number;
+  branch_parity: number | null;
+  asks_parity: number | null;
+  /**
+   * Whether `count` is the whole range or the endpoint's scan cap. A capped number read as
+   * a complete one is the difference between "the new parser agreed on 96% of the window"
+   * and "of the newest 5,000 turns in it".
+   */
+  truncated?: boolean;
 }
 
 export interface ChatbotTurnListResponse {
@@ -157,6 +229,8 @@ export interface ChatbotTurnListResponse {
    */
   retry_available?: boolean;
   retry_unavailable_reason?: string | null;
+  /** AC-1030. Present only when the request filtered on `ingress=shadow`. */
+  summary?: ShadowTurnSummary | null;
 }
 
 export interface ChatbotTurnFilters {
@@ -164,6 +238,11 @@ export interface ChatbotTurnFilters {
   from?: string;
   to?: string;
   status?: TurnStatus;
+  /**
+   * AC-1029. Narrows to one arrival kind. `shadow` is what the console's Shadow filter
+   * sends, and it is the only value that also brings back `summary`.
+   */
+  ingress?: TurnIngress;
   /** Page size. The endpoint defaults to 50 and caps at 200. */
   limit?: number;
   /** The previous page's opaque `next_cursor`. */

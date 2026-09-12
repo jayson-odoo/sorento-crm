@@ -36,6 +36,7 @@ from typing import Any
 import pytest
 
 from app.services.chatbot.lanes import escalation as escalation_mod
+from app.services.chatbot import trace as trace_mod
 
 
 # --------------------------------------------------------------------------- #
@@ -352,10 +353,10 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
 
     * the ASK reaches the customer - `clarify_text` becomes the turn's reply, replacing
       the out-of-scope acknowledgement that the human-intervention arm sends;
-    * the prior offer state SURVIVES - `selection_context` and `last_result_set` are
-      re-persisted, because the next turn resolves the customer's "2" or "Sorento Trading"
-      against exactly that pool. Clearing them here would leave the customer answering a
-      question the bot has forgotten it asked.
+    * the prior offer state SURVIVES - the `open_question` slot is re-persisted, because
+      the next turn resolves the customer's "2" or "Sorento Trading" against exactly that
+      pool. Clearing it here would leave the customer answering a question the bot has
+      forgotten it asked.
     """
     from sqlalchemy import text as sql_text
 
@@ -363,14 +364,24 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     from app.models.user import SystemSetting
     from app.services.chatbot import engine as engine_mod
     from app.services.chatbot.contracts import Envelope
+    from app.services.chatbot.dialogue.open_question import ask as open_question_ask
     from app.services.chatbot.head import parser as parser_mod
 
     contact_id = "ZZT-esc-clarify-1"
+    # D8/S3d step 4: no `selection_context` / `last_result_set` / `routing_roster_plan` /
+    # `response` marker - the SAME prior offer, frozen through `open_question.ask` the way
+    # a real lane would have armed it, in the five-key shape the engine reads now.
     prior_variables = {
-        "selection_context": "member_offer",
-        "last_result_set": PRIOR_RESULT_SET,
-        "routing_roster_plan": PRIOR_ROSTER_PLAN,
-        "response": "Which company should take this?",
+        "focus": {},
+        "open_question": open_question_ask(
+            "member_offer",
+            options=PRIOR_RESULT_SET,
+            turn_no=1,
+            payload={"team": "customer_service"},
+        ),
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
     }
 
     db = session_factory()
@@ -502,32 +513,27 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
         {"c": contact_id},
     ).scalar()
     variables = stored["variables"]
-    assert variables["selection_context"] == "member_offer"
-    assert variables["last_result_set"] == PRIOR_RESULT_SET
-    assert variables["routing_roster_plan"] == PRIOR_ROSTER_PLAN
-    # `variables.response` deliberately keeps the PREVIOUS turn's text. Faithful, not
-    # tidied: `compile_state`'s clarify block only overwrites it when the fragment carries
-    # `routing_companies` (the escalation sub's OWN this-turn gate ask, B-HB-2) or
-    # `clarify_team`, and this lane's `escalation_context` emits neither. What the customer
-    # is SENT is `user_response`, asserted as `result.reply` above; `response` is the
-    # "what was last offered" state the migration-window offer-open read still uses, and
-    # the offer here is still the one the previous turn made.
-    assert variables["response"] == "Which company should take this?"
-    # The clarify arm's OWN `company_clarify` marker is a TURN-ROW fact, not a session
-    # one, and it is asserted on `row.response` above. What `compile_state` writes into
-    # `variables.pending` comes from `pending_marker.derive`, and since S3 an open member
-    # offer is one of the two kinds it emits - the roster this turn re-persisted is still
-    # on the customer's screen, so the marker says so. The next turn still resolves a
-    # number against `selection_context` + `last_result_set`, which the assertions above
-    # are what protect.
-    # `ttl` 3: the clarify arm RE-PERSISTS the roster, which is the bot asking again, so
-    # the offer's clock starts over rather than continuing to run down (AC-816 rule 1).
-    assert variables.get("pending") == {
-        "kind": "member_offer",
-        "team": "customer_service",
-        "domain": None,
-        "ttl": 3,
-    }
+    # D8/AC-1019: no `selection_context` / `last_result_set` / `routing_roster_plan` /
+    # `response` / `pending` mirrors, and `member_offer`'s TTL of 3 is gone with the rest
+    # (D9, no counter survives an open question - it is cleared only by an answer, a
+    # newer question, or a new ask). The re-offer is one `open_question` slot, `kind
+    # member_offer`, `yes_no` - a plain accept/decline, never a numbered pick, so (same
+    # as `test_s3_canned_and_ideate.py::TestOfferHold`) `options` stays empty; the two
+    # company names the customer reads ride the COMPOSED TEXT (`clarify_text` above),
+    # never a persisted roster. Team still rides the payload.
+    open_question = variables.get("open_question") or {}
+    assert open_question.get("kind") == "member_offer"
+    assert open_question.get("expects") == "yes_no"
+    assert open_question.get("options") == []
+    assert open_question.get("payload", {}).get("team") == "customer_service"
+    for legacy_key in (
+        "selection_context",
+        "last_result_set",
+        "routing_roster_plan",
+        "response",
+        "pending",
+    ):
+        assert legacy_key not in variables, legacy_key
 
 
 def test_a_clarifys_quick_replies_reach_the_persisted_reply(
@@ -682,7 +688,7 @@ def test_a_clarifys_quick_replies_reach_the_persisted_reply(
         f"{persisted!r} vs {sends[0]!r}"
     )
     assert persisted["text"] == sends[0]["text"]
-    replied = next(r for r in row.trace if r["stage"] == "replied")
+    replied = next(r for r in trace_mod.stage_records(row.trace) if r["stage"] == "replied")
     assert replied["facts"]["quick_replies"] is True, (
         f"the trace says this turn offered nothing to tap: {replied['facts']!r}"
     )

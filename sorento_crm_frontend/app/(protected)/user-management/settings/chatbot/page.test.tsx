@@ -57,11 +57,18 @@ if (!window.matchMedia) {
 const mockLanesQuery = vi.fn();
 const mockSettingsQuery = vi.fn();
 const mockMutation = vi.fn();
+const mockPromptVersionsQuery = vi.fn();
 
 vi.mock('./hooks/useChatbotSettings', () => ({
   useChatbotLanes: () => mockLanesQuery(),
   useChatbotSettings: () => mockSettingsQuery(),
   useSaveChatbotSettings: () => mockMutation(),
+}));
+
+// AC-1028: mocked separately from `useChatbotSettings` - see that hook's own docstring -
+// it reads the prompt registry, not the settings row.
+vi.mock('./hooks/useParserPromptVersions', () => ({
+  useParserPromptVersions: () => mockPromptVersionsQuery(),
 }));
 
 vi.mock('@/lib/toast', () => ({
@@ -104,6 +111,7 @@ function settings(overrides: Partial<ChatbotSettings> = {}): ChatbotSettings {
     chatbot_business_lane_enabled: false,
     chatbot_ordering_enabled: false,
     chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'],
+    chatbot_parser_shadow_version: null,
     ...overrides,
   };
 }
@@ -119,13 +127,24 @@ function renderPage() {
 
 const saveButton = () => screen.getByRole('button', { name: /save/i });
 
+const PROMPT_VERSIONS = [
+  { version: 18, label: 'production', base: 'full' },
+  { version: 19, label: null, base: 'full' },
+];
+
 beforeEach(() => {
   mockLanesQuery.mockReset();
   mockSettingsQuery.mockReset();
   mockMutation.mockReset();
+  mockPromptVersionsQuery.mockReset();
   mockLanesQuery.mockReturnValue({ data: lanes(), isLoading: false, isError: false });
   mockSettingsQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
   mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+  mockPromptVersionsQuery.mockReturnValue({
+    data: PROMPT_VERSIONS,
+    isLoading: false,
+    isError: false,
+  });
 });
 
 afterEach(() => cleanup());
@@ -266,6 +285,7 @@ describe('ChatbotSettingsPage - Save payload (AC-809, AC-810)', () => {
       chatbot_business_lane_enabled: false,
       chatbot_ordering_enabled: false,
       chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'],
+      chatbot_parser_shadow_version: null,
     });
     expect(payload.chatbot_completed_lanes).toHaveLength(2);
   });
@@ -344,5 +364,49 @@ describe('ChatbotSettingsPage - loading and error states', () => {
 
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+  });
+});
+
+describe('ChatbotSettingsPage - Parser shadow version (AC-1028)', () => {
+  it('renders the current shadow version, from the prompt-versions service', () => {
+    mockSettingsQuery.mockReturnValue({
+      data: settings({ chatbot_parser_shadow_version: 'chatbot_semantic_parser@18' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    const select = screen.getByRole('combobox', { name: /parser shadow version/i });
+    expect(select).toHaveTextContent('v18');
+    expect(select).toHaveTextContent('production');
+  });
+
+  it('shows the placeholder when no shadow version is set', () => {
+    renderPage();
+
+    const select = screen.getByRole('combobox', { name: /parser shadow version/i });
+    expect(select).toHaveTextContent(/off/i);
+  });
+
+  it('is clearable, and clearing then saving persists null', () => {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({
+      data: settings({ chatbot_parser_shadow_version: 'chatbot_semantic_parser@18' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    // The clear affordance handles `pointerdown` (it pre-empts the trigger's own open
+    // click), not `click` - see `SearchableSelect`'s own handler.
+    const clear = screen.getByRole('button', { name: /clear selection/i });
+    fireEvent.pointerDown(clear);
+    fireEvent.click(saveButton());
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ chatbot_parser_shadow_version: null }),
+      expect.anything(),
+    );
   });
 });

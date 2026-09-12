@@ -546,6 +546,10 @@ def body_difference(
     the parser inherits it, so reporting a session-key difference on such a turn would
     name the symptom instead of the cause.
     """
+    # The session keys the PORT writes and no capture can carry. Same list, same reason as
+    # `divergences._PORT_ONLY_SESSION_KEYS`, which is the node-level half of this: `pending`
+    # is the R3 marker and `focus` is growth r1 slice B3's dialogue state. Everything else
+    # in the patch is still graded, `entities` and `domain_hint` included.
     if world.missing_inputs:
         return (
             "the capture does not carry "
@@ -636,4 +640,891 @@ def body_difference(
             "on a turn that built an offer of its own, which is the defect the shipping "
             "body fixes and `tests/chatbot/test_tail_units.py` pins"
         )
-    return None
+    return _focus_carry_reason(world, actual_variables)
+
+
+# The axes `dialogue/focus.py::reuse_alive` keeps alive across a turn that did not name
+# them. The legacy bag had no equivalent of any of them: `compile_current_state` builds
+# `variables` FROM SCRATCH out of THIS TURN's parse ("the output object, built FROM
+# SCRATCH"), so a capture records what the customer said on that one turn and can say
+# nothing at all about what was still alive from the turn before.
+_CARRYING_AXES: frozenset[str] = frozenset(
+    {"products", "customer", "transporter", "warehouse", "domains", "date_window",
+     "attributes", "tier", "brands"}
+)
+
+
+def _focus_carry_reason(world: World, actual_variables: dict[str, Any]) -> str | None:
+    """The ONE thing a capture structurally cannot record: a CARRIED focus axis.
+
+    Growth r1 slice B3 / L1-S3 (AC-943, AC-1008, AC-1026, D6/D11): `focus` ages per axis
+    and carries what is still alive, where the 34-key bag was rebuilt from the turn's own
+    parse. So a world whose engine focus is the mapped one PLUS a carried axis is not a
+    disagreement - it is the capture having nowhere to put the answer.
+
+    DELIBERATELY NARROW, and this is what makes it a skip rather than an excuse:
+
+    * only EXTRA slots are forgiven, and only slots `reuse_alive` actually carries. A world
+      where the engine DROPS a slot the capture recorded still FAILS - which is how the
+      missing `focus.brands` writer was found in the first place;
+    * `open_question`, `ideation`, `access_levels` and `contains_flyer` must already agree,
+      so a question the engine armed wrongly is still a failure;
+    * the one value-level allowance is a BRAND WORD: the capture kept it on the product
+      axis (its parser hinted "Mocha" as a product AND listed it in `query_brands`) and the
+      engine keeps a brand on the brand axis only, so the mapped products may exceed the
+      engine's by exactly the brands both sides agree on.
+    """
+    mapped, reason = map_expected_variables_to_five_keys(world.expected_variables)
+    if reason is not None or mapped is None:
+        return None
+    expected = project_variables_for_comparison(mapped)
+    got = project_variables_for_comparison(actual_variables or {})
+    if any(got.get(k) != expected.get(k) for k in ("open_question", "ideation", "access_levels", "contains_flyer")):
+        return None
+
+    got_focus = got.get("focus") or {}
+    expected_focus = expected.get("focus") or {}
+    carried = sorted(set(got_focus) - set(expected_focus))
+    if not set(carried) <= _CARRYING_AXES:
+        return None
+
+    brands = {str(b).strip().lower() for b in (got_focus.get("brands") or set())}
+    brand_word = False
+    for name, value in expected_focus.items():
+        if got_focus.get(name) == value:
+            continue
+        if name != "products" or not isinstance(value, set):
+            return None
+        surplus = {str(v).strip().lower() for v in value - (got_focus.get("products") or set())}
+        if not surplus or not surplus <= brands:
+            return None
+        brand_word = True
+
+    if not carried and not brand_word:
+        return None
+
+    why = []
+    if carried:
+        why.append(
+            "the engine's focus is the mapped one plus "
+            + ", ".join(f"`{name}`" for name in carried)
+        )
+    if brand_word:
+        why.append(
+            "a BRAND WORD the capture's parser hinted as a product AND listed in "
+            "`query_brands` is on the brand axis only here"
+        )
+    return (
+        "captured before growth r1 slice B3: the 34-key bag was rebuilt from THIS turn's "
+        "parse, so it cannot record a focus axis carried from an earlier turn - "
+        + "; ".join(why)
+        + " (AC-943 / AC-1008 / AC-1026, D6/D11). Every other key already agrees and a "
+        "slot the engine DROPPED would still fail here. The rules themselves are pinned "
+        "by tests/chatbot/test_focus_rules.py and the focus worlds"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# AC-1033: the grader mapping, legacy -> five keys
+# --------------------------------------------------------------------------- #
+#
+# Every captured world predates `focus` / `open_question` existing at all, so
+# `expected_variables` is the 34(+3)-key legacy shape - the same shape `_graded_variables`
+# used to exclude wholesale (`_PORT_ONLY_KEYS`). AC-1033 wants the world grader to instead
+# TRANSLATE that legacy shape into the five keys lane 1 persists, so a captured world can
+# still be graded against what the CRM actually writes now, one function, in ONE place.
+#
+# `pending.kind` -> `open_question.kind`, per the fold D5 already performed on the LIVE
+# contract (`escalate_yes_no` folds into `team_pick`); every other pending kind keeps its
+# own name because `OPEN_QUESTION_KINDS` already uses it.
+_PENDING_KIND_TO_OPEN_QUESTION_KIND: dict[str, str] = {
+    "escalation_offer": "team_pick",
+    "team_clarify": "team_pick",
+    "company_clarify": "company_pick",
+    "tier_ask": "tier_pick",
+    "member_offer": "member_offer",
+}
+
+# `selection_context` -> `open_question.kind`, measured against the corpus (coordinator,
+# 13 Sep 2026): a capture's `selection_context` says WHICH question was open far more
+# reliably than "a roster happens to be present" does - `last_result_set` with NO
+# context is the answer's OWN rows (a plain stock/order list), never a roster, so `None`
+# here means no open question at all regardless of what `last_result_set` holds.
+# `disambiguation` covers both a customer roster and a product one; the corpus's own
+# rows say which (`_rows_are_customers`).
+_SELECTION_CONTEXT_TO_KIND: dict[str, str] = {
+    "member_offer": "member_offer",
+    "tier_offer": "tier_pick",
+}
+
+
+def map_expected_variables_to_five_keys(
+    expected: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """`(mapped, None)` or `(None, reason)` - never a silent skip (AC-1033).
+
+    `mapped` is the five-key shape (`focus`, `open_question`, `ideation`, `access_levels`,
+    `contains_flyer`) built out of the legacy capture:
+
+    * `focus` is `dialogue.focus.from_session(expected, turn_no=0)` - the SAME projection
+      the engine itself runs over a session that predates the five keys, not a second,
+      hand-rolled translation. It splits the legacy `entities` list by hint onto
+      `products` / `customer` / `transporter` / `warehouse` (a legacy capture dumped every
+      entity into one list regardless of type; the port keeps them apart), reads
+      `domain_hint` into a ONE-entry `domains` list (D3/D11 is what lets a dealer name two
+      now), `date_filter_start` / `date_filter_end` / `date_mode` into `date_window`,
+      `requested_attributes` into `attributes`, `query_brands` into `brands`, and
+      `access_levels` into `tier` (the legacy field doing double duty: the SAME list is
+      also copied verbatim onto the five-key `access_levels` below, since a capture never
+      told the two apart);
+    * `open_question.kind` follows `selection_context` FIRST, `pending.kind` second -
+      `selection_context` says which question a turn actually left open, so it is the
+      more reliable signal than "a roster happens to be present" (measured against the
+      corpus, coordinator, 13 Sep 2026):
+        - `None`, with no `pending` either -> NO open question at all. A capture can
+          carry `last_result_set` with no `selection_context` at all - that is the
+          ANSWER's own rows (a plain stock or order list), never a roster;
+        - `member_offer` -> `member_offer`; `tier_offer` -> `tier_pick`;
+        - `disambiguation` -> `customer_pick` when the roster's own rows are customers
+          (`open_question._rows_are_customers`), `product_pick` otherwise;
+        - no `selection_context` but a `pending.kind` of `escalation_offer` or
+          `team_clarify` -> `team_pick`; `company_clarify` -> `company_pick`; `tier_ask`
+          -> `tier_pick` (`_PENDING_KIND_TO_OPEN_QUESTION_KIND`).
+    * `last_result_set` / `dym_last_result_set` (whichever is non-empty, the dym roster
+      winning when both are - it is the one the customer was actually shown) ->
+      `open_question.options`, only when a kind above says a question is actually open;
+    * `pending.team` -> `open_question.payload.team`;
+    * everything else (`intent_hint`, `routing`, `escalation`, `response`, `match_mode`,
+      `requested_attributes`, `picker_*`, `routing_*`, ...) is DROPPED - it is either gone
+      from the state entirely (D14's `intent_hint`) or was never part of `focus` /
+      `open_question` to begin with.
+
+    Every `FocusSlot` is stamped `set_at_turn=0`, `source="reuse"`, and NOT graded on
+    `set_at_turn`: a captured world has no real turn number to date the slot to, so the
+    zero is a placeholder the caller must not compare, never a claim about when the slot
+    was actually set.
+
+    Unmappable, by name, rather than silently dropped: a `selection_context` this mapping
+    does not recognise, or (with no `selection_context`) a `pending.kind` it does not
+    recognise, returns a reason instead of guessing.
+    """
+    pending = expected.get("pending")
+    pending = pending if isinstance(pending, dict) else None
+    selection_context = expected.get("selection_context")
+
+    # The legacy `entities` / `domain_hint` / `date_filter_*` / `requested_attributes` /
+    # `access_levels` / `query_brands` keys are projected through the SAME function the
+    # engine itself uses to read a session that predates the five-key shape
+    # (`dialogue/focus.from_session`) - not re-derived here by hand. It is what splits a
+    # legacy `entities` list by hint onto `products` / `customer` / `transporter` /
+    # `warehouse` instead of dumping every entity into `products` regardless of type, and
+    # it is the one place that translation is allowed to live (its own docstring: "the
+    # tester's world grader depends on that class of translation").
+    from app.services.chatbot.dialogue.focus import from_session as _focus_from_session
+
+    focus = _focus_from_session(expected, turn_no=0)
+
+    dym_roster = expected.get("dym_last_result_set")
+    plain_roster = expected.get("last_result_set")
+    roster = dym_roster if dym_roster else plain_roster
+    roster = roster if isinstance(roster, list) else []
+
+    kind: str | None = None
+    if selection_context is None:
+        kind = None
+    elif selection_context == "disambiguation":
+        from app.services.chatbot.dialogue.open_question import _rows_are_customers
+
+        kind = "customer_pick" if _rows_are_customers(roster) else "product_pick"
+    elif selection_context in _SELECTION_CONTEXT_TO_KIND:
+        kind = _SELECTION_CONTEXT_TO_KIND[selection_context]
+    else:
+        return None, (
+            f"selection_context {selection_context!r} has no open_question equivalent in "
+            "_SELECTION_CONTEXT_TO_KIND"
+        )
+
+    if kind is None and pending is not None:
+        if pending.get("kind") not in _PENDING_KIND_TO_OPEN_QUESTION_KIND:
+            return None, (
+                f"pending.kind {pending.get('kind')!r} has no open_question equivalent in "
+                "_PENDING_KIND_TO_OPEN_QUESTION_KIND"
+            )
+        kind = _PENDING_KIND_TO_OPEN_QUESTION_KIND[pending["kind"]]
+
+    # THE ESCALATE OFFER, off the only place a capture could record it. `pending` is the
+    # R3 marker the PORT introduced (AC-202) and n8n never wrote one, so a capture whose
+    # turn ended "Would you like me to escalate to warehouse team?" carries the offer in
+    # its frozen REPLY and nowhere else - which is exactly what `offer_is_open`'s H13
+    # regex was for, and why the same regex is the honest translation here. Without it
+    # every escalate-offer world graded the engine's `team_pick` against a mapped `None`
+    # and failed on a key the legacy shape had no room for.
+    #
+    # ONE option, the team the offer named: that is `_ask_for_turn`'s own shape for the
+    # plain offer (D5), and `routing.suggested_team` is the same value it composes the
+    # sentence from.
+    offered_team = None
+    if kind is None:
+        from app.services.chatbot.head.output_exchange import _OFFERED_ESCALATION_RE
+
+        response = expected.get("response")
+        if isinstance(response, str) and _OFFERED_ESCALATION_RE.search(response):
+            offered_team = (expected.get("routing") or {}).get("suggested_team")
+            if offered_team:
+                kind = "team_pick"
+
+    open_question: dict[str, Any] | None = None
+    if kind is not None:
+        payload: dict[str, Any] = {}
+        if pending is not None and pending.get("team"):
+            payload["team"] = pending["team"]
+        if offered_team is not None:
+            roster = [{"idx": 1, "team": offered_team, "label": offered_team}]
+            payload["team"] = offered_team
+        open_question = {
+            "kind": kind,
+            "options": roster,
+            "expects": "pick" if roster else "yes_no",
+            "asked_at_turn": 0,
+            "asked_at": None,
+            "payload": payload,
+        }
+
+    mapped = {
+        "focus": focus,
+        "open_question": open_question,
+        "ideation": expected.get("ideation"),
+        "access_levels": expected.get("access_levels") or [],
+        "contains_flyer": bool(expected.get("contains_flyer")),
+    }
+    return mapped, None
+
+
+def _entity_code(entity: Any) -> str:
+    """The one identifying string an entity dict carries - `canonical_code` where the
+    resolver filled one in, the raw token otherwise. Same pair `dialogue/intake.py`'s
+    `_identity` compares on, upper-cased so a capture's lower-case raw and the engine's
+    upper-cased canonical code are the same value, not a false difference."""
+    if not isinstance(entity, dict):
+        return ""
+    code = entity.get("canonical_code") or entity.get("raw") or entity.get("code") or ""
+    return str(code).strip().upper()
+
+
+def _entity_codes(entities: Any) -> set[str]:
+    """A code set off a `products`-shaped LIST slot or a `customer`/`transporter`/
+    `warehouse`-shaped SINGLE entity dict - `dialogue/focus.py::from_session`'s `put`
+    stores the single-value axes as one dict, not a one-item list, so both shapes have
+    to be accepted or every real `customer` slot projects to an empty set."""
+    if isinstance(entities, dict):
+        entities = [entities]
+    if not isinstance(entities, list):
+        return set()
+    return {_entity_code(e) for e in entities if isinstance(e, dict) and _entity_code(e)}
+
+
+def project_variables_for_comparison(variables: dict[str, Any]) -> dict[str, Any]:
+    """AC-1033 (revised 13 Sep 2026): grade what the engine WROTE, not its own bookkeeping.
+
+    Applied identically to BOTH sides of the comparison - the mapped legacy expectation
+    and the real `session_vars` a turn persisted - so the grader stops failing worlds on
+    fields neither side can agree on and was never asking a real question about:
+    `set_at_turn` / `set_at` / `source` (a captured world has no real turn number to date
+    a slot to, AC-1033's own mapping docstring already says so), `asked_at` /
+    `asked_at_turn` on `open_question`, an option's `team` / `domain` / `uuid` / `idx`, a
+    `payload` beyond `keep`, and every entity field but its own code
+    (`confident` / `hint` / `raw` / `current_message` included).
+
+    Per focus slot, only `value` survives, and three slots get a further, VALUE-level
+    projection because their raw shape still carries positional or type noise the kind of
+    fact this grades does not care about: `products` / `customer` / `transporter` /
+    `warehouse` (entity lists) project to a CODE SET, `brands` to a set, `date_window` to
+    exactly `{start, end, mode}`. `tier` (and every other slot: `domains`, `attributes`)
+    keeps its value as-is - a list of names IS the fact, in the order the customer named
+    them or not, and nothing about it is bookkeeping.
+
+    `open_question` projects to `kind`, `expects` - RE-DERIVED from
+    `dialogue.open_question.KIND_SPEC` by `kind` rather than compared as stored, which is
+    what makes a `member_offer` grade as `yes_no` whether or not a roster happens to ride
+    beside it - and the options' `code` / `label` pairs, in order (the order a `product_
+    pick` numbers by). `payload.keep`, when present, projects to its own code set (issue
+    #708's siblings, frozen as entities per `open_question.py::_product_pick`).
+    """
+    from app.services.chatbot.dialogue.open_question import KIND_SPEC
+
+    focus = variables.get("focus") or {}
+    projected_focus: dict[str, Any] = {}
+    if isinstance(focus, dict):
+        for slot_name, slot in focus.items():
+            if not isinstance(slot, dict):
+                continue
+            value = slot.get("value")
+            if slot_name in ("products", "customer", "transporter", "warehouse"):
+                value = _entity_codes(value)
+            elif slot_name == "brands":
+                value = set(value) if isinstance(value, list) else value
+            elif slot_name == "date_window" and isinstance(value, dict):
+                value = {
+                    "start": value.get("start"),
+                    "end": value.get("end"),
+                    "mode": value.get("mode"),
+                }
+            projected_focus[slot_name] = value
+
+    open_question = variables.get("open_question")
+    projected_open_question: dict[str, Any] | None = None
+    if isinstance(open_question, dict):
+        kind = open_question.get("kind")
+        options = open_question.get("options")
+        projected_open_question = {
+            "kind": kind,
+            "expects": (KIND_SPEC.get(kind) or {}).get("expects"),
+            "options": [
+                {"code": o.get("code"), "label": o.get("label")}
+                for o in (options if isinstance(options, list) else [])
+                if isinstance(o, dict)
+            ],
+        }
+        keep = (open_question.get("payload") or {}).get("keep")
+        if keep:
+            projected_open_question["keep"] = _entity_codes(keep)
+
+    return {
+        "focus": projected_focus,
+        "open_question": projected_open_question,
+        "ideation": variables.get("ideation"),
+        "access_levels": variables.get("access_levels") or [],
+        "contains_flyer": bool(variables.get("contains_flyer")),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# The OWNER worlds (growth r1 slice B5, AC-940 to AC-948)
+# --------------------------------------------------------------------------- #
+#
+# Derived worlds grade the PORT: a real execution replayed, byte for byte. These grade the
+# RULES, and they have to be authored rather than derived for one reason - every capture in
+# the corpus predates the code they are about. There is no recorded turn where a focus slot
+# aged out, because nothing aged before slice B1; none where the parser said `topic_reset`,
+# because no promoted prompt emits it; none where a pick resolved against frozen options,
+# because the options were not frozen.
+#
+# **Same chaining property as `MultiTurnWorld`, which is the whole point** (see this module's
+# docstring): turn N+1 reads the session turn N wrote, through `run_turn` and
+# `complete_turn`, so a lifecycle rule the code gets wrong changes the answer two turns
+# later. The session read and write, the turn rows, the decay pass, the parse
+# post-processing, the six focus rules, the open-question resolver and the state compiler
+# all run for real against a blank Postgres schema.
+#
+# **What is stubbed, and why.** The PARSER (the emission is authored, exactly as a derived
+# world feeds `_parser_raw`), the ACCESS check, and the LANE that renders a roster - `arm`
+# writes what that lane would have persisted. The last one is the only addition to the
+# derived worlds' stub list, and it is there because rendering a real picker needs a
+# resolver, an MCP call and a product catalogue, none of which says anything about whether
+# "2" resolves to the second row.
+#
+# **These worlds assert DIALOGUE FACTS, never reply prose.** Which product is in scope,
+# which domain, whether the question was answered, what decayed. The words a customer reads
+# are the owner console pass's job (AC-991), and asserting them here would pin copy that
+# the console pass exists to change.
+
+
+@dataclass(frozen=True)
+class OwnerTurn:
+    """One authored turn: what the customer said, what the parser made of it, what must
+    then be true."""
+
+    message: str
+    # Overrides on `tests.chatbot.test_engine._parser_output()`. A v3 emission sets
+    # `answers_open_question`, `anaphora` or `topic_reset`; a v1-shaped one leaves them out.
+    emission: dict[str, Any] = field(default_factory=dict)
+    expect: dict[str, Any] = field(default_factory=dict)
+    # The roster the PREVIOUS reply showed, as the lane would have persisted it. Written
+    # into the session before this turn runs.
+    arm: dict[str, Any] | None = None
+    # A quoted reply: the rows the quoted message carried (AC-947).
+    quoted_rows: list[dict[str, Any]] | None = None
+
+
+@dataclass(frozen=True)
+class OwnerWorld:
+    world_id: str
+    acs: tuple[str, ...]
+    why: str
+    turns: tuple[OwnerTurn, ...]
+    # Which LANE this world lets run for real, through the seam fakes the s6a and s5 tests
+    # already use. `None` composes with the `not_supported` fragments, which is right for a
+    # world about memory and scope; `"business"` runs the real resolve+gate and the exit
+    # contract; `"escalation"` runs `route.decide` into the real arm and stubs the lane
+    # itself at the function boundary, so the world grades that the answer REACHED it.
+    lane: str | None = None
+    # Which parser CONTRACT this conversation runs under. False is the PROMOTED one (v1):
+    # 26 keys, no `Focus:` line, the three growth-r1 signals inert. A world about a pick,
+    # an anaphora or a topic reset needs v3 and says so, which also documents which of
+    # these cases only start working when the owner moves the label (AC-952).
+    emits_v3: bool = False
+
+
+def _product(code: str, **over: Any) -> dict[str, Any]:
+    return {
+        "raw": code,
+        "hint": "product",
+        "canonical_code": code,
+        "current_message": True,
+        "confident": True,
+        **over,
+    }
+
+
+def _customer(name: str) -> dict[str, Any]:
+    return {
+        "raw": name,
+        "hint": "customer",
+        "canonical_code": name,
+        "current_message": True,
+        "confident": True,
+    }
+
+
+def _roster(*codes: str) -> list[dict[str, Any]]:
+    return [
+        {"idx": i, "label": code, "code": code, "uuid": f"uuid-{code}", "entity_type": "product"}
+        for i, code in enumerate(codes, start=1)
+    ]
+
+
+def _answers(**kw: Any) -> dict[str, Any]:
+    return {"resolved": False, "picks": [], "yes_no": None, "free_text": None, **kw}
+
+
+def _armed(kind: str, **kw: Any) -> dict[str, Any]:
+    """An `arm=` seed in the FIVE-KEY shape, built by the engine's own constructor.
+
+    An owner world seeds the state its turn starts from. Those seeds were written in the
+    legacy shape - `selection_context` + `last_result_set`, or the `pending` marker - and
+    L1-S3d step 4 deleted every read of them, so a seed in that shape now arms nothing at
+    all. `open_question.ask` is what a real lane leaves behind, so it is what a seed says.
+    The world's MESSAGES and its `expect` are untouched: this is the same fact, written the
+    way the engine writes it.
+    """
+    from app.services.chatbot.dialogue.open_question import ask
+
+    return {"open_question": ask(kind, turn_no=1, **kw)}
+
+
+def _escalate_offer(team: str) -> dict[str, Any]:
+    """The one-team escalate offer: a `team_pick` answered yes or no (D5)."""
+    return _armed(
+        "team_pick",
+        options=[{"idx": 1, "team": team, "label": team}],
+        expects="yes_no",
+        payload={"team": team},
+    )
+
+
+OWNER_WORLDS: tuple[OwnerWorld, ...] = (
+    OwnerWorld(
+        world_id="owner-pick-then-next-pick",
+        lane="business",
+        emits_v3=True,
+        acs=("AC-944",),
+        why=(
+            "A picker of three products is offered. '2' resolves to the SECOND FROZEN "
+            "option. The 7 Sep deviation 5 (a second pick against the same list still "
+            "resolving, on owner ruling K rule 1's authority) is SUPERSEDED by the 12 Sep "
+            "UAC: AC-1014 says a pick resolves the entity and CLOSES the question - "
+            "'2' again with no open question alive is a new message, not a second pick, "
+            "which is what turn 3 now grades. `test_focus_worlds.py::"
+            "focus-picker-two-resolves-then-two-again-is-a-new-message` already asserts "
+            "the same rule directly; this world keeps it end to end through a real "
+            "three-turn chain."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTKS8091 got stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTKS8091")],
+                    "asks": [{"domain": "inventory", "entities": [_product("SRTKS8091")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={"focus_products": ["SRTKS8091"], "focus_domains": ["inventory"]},
+            ),
+            OwnerTurn(
+                message="2",
+                arm=_armed(
+                    "product_pick",
+                    options=_roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                ),
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "product_pick",
+                    "focus_products": ["SRTKS8091-B"],
+                    "qf": {"entity_op": "replace"},
+                    "branch_kind": "business_query",
+                    "lane_ran": True,
+                    "exit_kind_declared": True,
+                },
+            ),
+            OwnerTurn(
+                message="1",
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[1]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={"answered": None, "focus_products": ["SRTKS8091-B"]},
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-escalate-declined-after-a-result",
+        emits_v3=True,
+        lane="escalation",
+        acs=("AC-945",),
+        why=(
+            "An escalation offer, then 'no'. The declined copy is the lane's; what this "
+            "grades is that the answer REACHES the escalation handler as a decline and "
+            "never as a new query."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTWC8517 stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTWC8517")],
+                    "asks": [{"domain": "inventory", "entities": [_product("SRTWC8517")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={"focus_products": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="no",
+                arm=_escalate_offer("warehouse"),
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "is_affirmative": False,
+                    "answers_open_question": _answers(resolved=True, yes_no="no"),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "team_pick",
+                    "branch_kind": "escalation_declined",
+                    "lane_ran": False,
+                    "qf": {"is_affirmative": False},
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-escalate-yes-runs-the-escalation-lane",
+        acs=("AC-945",),
+        emits_v3=True,
+        lane="escalation",
+        why=(
+            "The other half of AC-945, and the one that hands a conversation to a person: "
+            "an offer, then 'yes'. The handler has to reach `route.decide` as an "
+            "escalation CONFIRMATION and the turn has to land on the `out_of_scope` arm "
+            "with the lane actually called - a decline that merely failed to route would "
+            "pass a test that only looked at the parse."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTWC8517 stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTWC8517")],
+                    "asks": [{"domain": "inventory", "entities": [_product("SRTWC8517")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={"focus_products": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="yes please",
+                arm=_escalate_offer("warehouse"),
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "is_affirmative": True,
+                    "answers_open_question": _answers(resolved=True, yes_no="yes"),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "team_pick",
+                    "branch_kind": "out_of_scope",
+                    "lane_ran": True,
+                    "qf": {"message_type": "request_for_help"},
+                },
+            ),
+        ),
+    ),
+    # `owner-escalate-offer-left-unanswered-then-decays` retired here (D9, owner 12 Sep
+    # 2026): no counter, no TTL, anywhere. An open question is cleared only by
+    # `dialogue/clearing.py`'s rule - answered, replaced by a newer question, or the
+    # conversation-closed marker - never by age. Its "answered silently by a later
+    # unrelated message" property is what `owner-escalate-declined-after-a-result` and
+    # `tests/chatbot/test_open_question_clearing.py` cover instead.
+    OwnerWorld(
+        world_id="owner-filter-change-after-a-do-result",
+        acs=("AC-946",),
+        why=(
+            "'for customer ABC instead' replaces the customer slot and leaves the "
+            "products; 'last month' then replaces ONLY the date window. One axis per "
+            "turn, which is `replace_same_axis` and `date_restated_only` together."
+        ),
+        turns=(
+            OwnerTurn(
+                message="DO for SRTWC8517",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "order",
+                    "intent_hint": "check_order",
+                    "entities": [_product("SRTWC8517")],
+                },
+                expect={"focus_products": ["SRTWC8517"], "focus_domains": ["order"]},
+            ),
+            OwnerTurn(
+                message="for customer ABC instead",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "order",
+                    "intent_hint": "check_order",
+                    "entities": [_customer("ABC")],
+                },
+                expect={
+                    "focus_customer": "ABC",
+                    "focus_products": ["SRTWC8517"],
+                    "focus_domains": ["order"],
+                },
+            ),
+            OwnerTurn(
+                message="last month",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "order",
+                    "intent_hint": "check_order",
+                    "entities": [],
+                    "entity_op": "reuse",
+                    "date_filter_start": "2026-08-01",
+                    "date_filter_end": "2026-08-31",
+                },
+                expect={
+                    "focus_customer": "ABC",
+                    "focus_date_window": {
+                        "start": "2026-08-01",
+                        "end": "2026-08-31",
+                        "mode": None,
+                    },
+                    "qf": {"date_filter_start": "2026-08-01"},
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-what-about-y-after-a-stock-answer",
+        acs=("AC-942",),
+        emits_v3=True,
+        why=(
+            "'incoming?' after a stock answer keeps the products and switches the domain; "
+            "'what about Y' after that replaces the product and KEEPS incoming. The two "
+            "halves are `domains_from_asks` and `replace_same_axis`, and the second is "
+            "what proves the switch did not also become sticky. Runs under v3 (D3): the "
+            "domain comes from `asks[]`, not a switch word read out of the raw message."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTWC8517 stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTWC8517")],
+                    "asks": [{"domain": "inventory", "entities": [_product("SRTWC8517")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={"focus_products": ["SRTWC8517"], "focus_domains": ["inventory"]},
+            ),
+            OwnerTurn(
+                message="incoming?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "entity_op": "reuse",
+                    "asks": [{"domain": "incoming", "entities": []}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "focus_products": ["SRTWC8517"],
+                    "focus_domains": ["incoming"],
+                    "qf": {"domain_hint": "incoming"},
+                },
+            ),
+            OwnerTurn(
+                message="SRTKS6091",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [_product("SRTKS6091")],
+                    "asks": [{"domain": None, "entities": [_product("SRTKS6091")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "focus_products": ["SRTKS6091"],
+                    "focus_domains": ["incoming"],
+                    "qf": {"domain_hint": "incoming"},
+                },
+            ),
+        ),
+    ),
+    # `owner-product-decays-under-continuation-turns` and
+    # `owner-anaphora-past-the-ttl-asks-which-product` retired here (D9, owner 12 Sep
+    # 2026): no counter, no TTL, anywhere. A product asked at turn N and never replaced
+    # carries at turn N+10 and beyond - `dialogue/clearing.py`'s three causes (a
+    # same-axis replace, a topic reset, the conversation-closed marker) are the only way
+    # a focus slot dies, and none of them fire on the mere passage of turns. AC-1006's
+    # "a product asked at turn N and never replaced still carries at turn N+10" is the
+    # positive statement of what these two worlds used to test as ageing.
+    OwnerWorld(
+        world_id="owner-partial-miss-pick-resolves-the-dym-roster",
+        lane="business",
+        acs=("AC-944", "AC-948"),
+        emits_v3=True,
+        why=(
+            "The partial miss: one code resolved and the other got a did-you-mean, so TWO "
+            "numbered lists are live at once. The rows the customer is LOOKING at are the "
+            "suggestions (`dym_last_result_set`); `last_result_set` holds the stock lines "
+            "for the code that resolved. '2' has to mean the second SUGGESTION, and the "
+            "sibling that already resolved has to survive the pick (issue #708)."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTKS6091 and SRTKS8091 got stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTKS6091"), _product("SRTKS8091")],
+                    "asks": [
+                        {
+                            "domain": "inventory",
+                            "entities": [_product("SRTKS6091"), _product("SRTKS8091")],
+                        }
+                    ],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={"focus_products": ["SRTKS6091", "SRTKS8091"]},
+            ),
+            OwnerTurn(
+                message="2",
+                # The rows the reply actually NUMBERED are the question's options - never
+                # the answer's own stock lines for the code that resolved, which would
+                # make "2" a stock line. `payload.keep` is the sibling that already
+                # resolved (issue #708), frozen as an entity by the miss lane.
+                arm=_armed(
+                    "product_pick",
+                    options=[
+                        {**row, "for_raw": "SRTKS8091", "for_canonical": "SRTKS8091"}
+                        for row in _roster("SRTKS8091-A", "SRTKS8091-B")
+                    ],
+                    payload={"keep": [_product("SRTKS6091")]},
+                ),
+                emission={
+                    "message_type": "casual",
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "product_pick",
+                    # The second SUGGESTION, and the sibling that already resolved.
+                    "qf_entity_codes": ["SRTKS8091-B", "SRTKS6091"],
+                    "focus_products": ["SRTKS8091-B", "SRTKS6091"],
+                    "branch_kind": "business_query",
+                    "lane_ran": True,
+                    "exit_kind_declared": True,
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-quoted-reply-pick",
+        emits_v3=True,
+        acs=("AC-947",),
+        why=(
+            "A quoted reply to an OLDER picker resolves against THAT message's frozen "
+            "options, not against the roster the latest turn left open. The rows the "
+            "customer is looking at are the ones they quoted."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTKS8091 got stock?",
+                emission={
+                    "message_type": "business_query",
+                    "asks": [{"domain": "inventory", "entities": [_product("SRTKS8091")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={"focus_products": ["SRTKS8091"]},
+            ),
+            OwnerTurn(
+                message="2",
+                arm=_armed("product_pick", options=_roster("NEW-1", "NEW-2", "NEW-3")),
+                quoted_rows=_roster("OLD-1", "OLD-2", "OLD-3"),
+                emission={
+                    "message_type": "casual",
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={"answered": "product_pick", "focus_products": ["OLD-2"]},
+            ),
+        ),
+    ),
+)
