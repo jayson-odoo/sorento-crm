@@ -99,6 +99,7 @@ from app.services.scm.outstanding_diff import (
     CLOSED,
     DATE_AND_QTY_CHANGED,
     DATE_MOVED,
+    PRODUCT_CHANGED,
     QTY_CHANGED,
     Diff,
     states_settled,
@@ -180,12 +181,18 @@ def suggest(kind: str, held: Optional[dict], facts: dict) -> Tuple[str, str]:
         sorted({r.get("location") for r in reserve if r.get("location")})
     )
 
-    if kind == "closed":
+    if kind == "cancelled":
         return (
             "retire",
             "The line is closed in the book; the reserve and the remaining Buy are "
             "released, and an already-actioned inquiry row is kept with a note rather "
             "than retired.",
+        )
+    if kind == "product_changed":
+        return (
+            "replan",
+            "Product changed on this line; the held components are released for the old "
+            "product and the new product is sourced as a new line.",
         )
     if kind == "advanced":
         plural = "" if abs(days_moved) == 1 else "s"
@@ -289,9 +296,11 @@ def _is_null_anchored_date_move(c) -> bool:
 
 def _map_kind(c) -> str:
     if c.kind == CLOSED:
-        return "closed"
+        return "cancelled"
     if c.kind == ADDED:
         return "added"
+    if c.kind == PRODUCT_CHANGED:
+        return "product_changed"
     if c.kind == QTY_CHANGED:
         return "qty_up" if c.qty_delta > 0 else "qty_down"
     days = c.days_moved or 0
@@ -312,9 +321,12 @@ def _from_to(c) -> Tuple[dict, dict]:
         else None,
         "qty": qty_text(_dec(before.qty)) if before else None,
         "status": "open" if before else None,
+        # The OLD product, on a `product_changed` row only - `None` everywhere else, same
+        # as the fields above (Slice A rule 5, "carrying the old and the new product").
+        "item_code": before.item_code if before else None,
     }
     if c.kind == CLOSED:
-        to_ = {"required_date": None, "qty": None, "status": "closed"}
+        to_ = {"required_date": None, "qty": None, "status": "closed", "item_code": None}
     else:
         to_ = {
             "required_date": after.required_date.isoformat()
@@ -322,6 +334,7 @@ def _from_to(c) -> Tuple[dict, dict]:
             else None,
             "qty": qty_text(_dec(after.qty)) if after else None,
             "status": "open" if after else None,
+            "item_code": after.item_code if after else None,
         }
     return from_, to_
 
@@ -487,6 +500,14 @@ def build_batch(
         )
         frozen = supply.frozen_lines_of(active_decision)
         so_number = _so_number(order)
+        # Only asked when the group actually carries an `added` change - the order-level
+        # half of the gate a new line needs (rule 5: "an ADDED change... is raised when the
+        # ORDER has at least one held or inquiry line"), and most groups have none.
+        order_has_held_or_inquiry = (
+            _order_has_held_or_inquiry(db, pso_id, frozen)
+            if any(e["change"].kind == ADDED for e in group)
+            else False
+        )
         for e in group:
             row = _build_row(
                 db,
@@ -502,6 +523,7 @@ def build_batch(
                 board_cache,
                 so_number,
                 moved_transfers,
+                order_has_held_or_inquiry,
             )
             if row is None:
                 # AC-G1/AC-G4: the line is neither held nor inquired, so it stays off the
@@ -569,6 +591,33 @@ def pending_batch_id_by_sales_order(
 
 def _so_number(order: ProjectSalesOrder) -> str:
     return order.autocount_doc_no or order.provisional_ref or str(order.id)
+
+
+def _order_has_held_or_inquiry(
+    db: Session, pso_id: str, frozen: Dict[str, dict]
+) -> bool:
+    """Whether ANY line on this order is held by its active decision or carries a
+    non-cancelled Order Inquiry row.
+
+    A new line (`added`) has no mirror line of its own yet, so the per-line held-or-inquiry
+    gate `_build_row` asks every other kind can never pass it - it is asked of the ORDER
+    instead (Slice A rule 5): a line added to an order nobody has decided anything on is
+    silent, exactly like any other change to an undecided order, but a line added to an
+    order that already carries a commitment is exactly the kind of exception the gate exists
+    to surface.
+    """
+    if frozen:
+        return True
+    return (
+        db.query(OrderInquiryRow.id)
+        .join(ProjectSalesOrderLine, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
+        .filter(
+            ProjectSalesOrderLine.project_sales_order_id == pso_id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .first()
+        is not None
+    )
 
 
 def _hot_selling_evidence(
@@ -984,6 +1033,7 @@ def _build_row(
     board_cache: Dict[Tuple[str, Optional[str]], dict],
     so_number: str,
     moved_transfers: Optional[Dict[str, str]] = None,
+    order_has_held_or_inquiry: bool = False,
 ) -> Optional[PlanningChangeRow]:
     c = entry["change"]
     project_line: Optional[ProjectSalesOrderLine] = entry["project_line"]
@@ -1012,7 +1062,13 @@ def _build_row(
         # nobody has decided on invalidates nothing a person committed to, so it raises no
         # row. Checked before any of the expensive work below (`_proposal_for` walks the
         # fulfilment board's ladder) since most changed lines take this exit.
-        return None
+        #
+        # `added` is the one exception (`PLAN-scm-change-management-one-engine.md` Slice A
+        # rule 5): a new line has no mirror line to hold or inquire about YET, so the gate
+        # is asked of the ORDER instead - an order with a held or inquired line already
+        # carries a commitment the new line changes the shape of.
+        if not (c.kind == ADDED and order_has_held_or_inquiry):
+            return None
 
     facts = {
         "dealer_hot_selling": {
@@ -1041,7 +1097,7 @@ def _build_row(
     moved = (moved_transfers or {}).get(str(entry["core_line_id"]))
     if moved:
         facts["moved_transfer"] = (
-            f"{moved}, line cancelled" if kind == "closed" else moved
+            f"{moved}, line cancelled" if kind == "cancelled" else moved
         )
 
     suggested, why = suggest(kind, held, facts)

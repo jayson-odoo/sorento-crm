@@ -291,7 +291,14 @@ class SalesOrderLineInput(BaseModel):
     #: being read as "delete this one, insert a new one".
     id: Optional[str] = None
     sku: str
-    qty_ordered: float = Field(..., gt=0)
+    #: `ge=0`, not `gt=0` - a held line settling to 0 on a manual edit is new vocabulary
+    #: this schema must accept (`documentation/plans/scm/PLAN-scm-change-management-one-
+    #: engine.md`, Slice A rule 5, "qty-to-zero as cancelled"): the service reads it as a
+    #: removal (`SalesOrderService._upsert_lines`/`_propagate_planning_change`), the same
+    #: as the line being dropped from the payload entirely, never as a `qty_down`. Shared
+    #: by `SalesOrderFormData` (create): nothing there enforces a positive opening qty
+    #: either, and no test asks for one.
+    qty_ordered: float = Field(..., ge=0)
     #: Optional[str], read via `model_fields_set` (not `is not None`) in `_upsert_lines` -
     #: an omitted key leaves the line's stored override alone (falling back to the
     #: product's base UOM on read), while an explicit `null`/`""` clears the override.
