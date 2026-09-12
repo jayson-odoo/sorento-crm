@@ -289,6 +289,76 @@ class TestAC18OutputStructurerDropsMoneyFieldsWithoutGrant:
         }, keys
 
 
+class TestAC18bOutputStructurerSupplierIndependentGrant:
+    """Owner ruling, 12 Sep 2026 ("we should show supplier also"): `supplier` is gated on
+    its OWN key `purchase_orders.supplier`, independent of `purchase_orders.cost` - a
+    contact granted only the cost key still never sees the supplier name, and a contact
+    granted only the supplier key still never sees the money fields."""
+
+    _RESTRICTED = {
+        "unit_cost": "purchase_orders.cost",
+        "discount_per_unit": "purchase_orders.cost",
+        "unit_cost_after_discount": "purchase_orders.cost",
+        "supplier": "purchase_orders.supplier",
+    }
+
+    def _result(self) -> dict[str, Any]:
+        return {
+            "items": [
+                {
+                    "fields": [
+                        {"key": "po_number", "label": "PO Number", "value": "PO-1"},
+                        {"key": "unit_cost", "label": "Cost / unit", "value": "CNY 110.00"},
+                        {
+                            "key": "discount_per_unit",
+                            "label": "Discount / unit",
+                            "value": "CNY 66.00",
+                        },
+                        {
+                            "key": "unit_cost_after_discount",
+                            "label": "Cost after discount / unit",
+                            "value": "CNY 44.00",
+                        },
+                        {"key": "supplier", "label": "Supplier", "value": "Acme Supplies"},
+                    ]
+                }
+            ],
+            "has_result": True,
+            "intro": "intro",
+            "restricted_fields": self._RESTRICTED,
+        }
+
+    def test_ac18b_cost_grant_alone_drops_supplier(self) -> None:
+        out = fetch.output_structurer(
+            self._result(), {"access": {"attributes": ["purchase_orders.cost"]}}
+        )
+        keys = {f["key"] for f in out["answers"][0]["fields"]}
+        assert keys == {
+            "po_number",
+            "unit_cost",
+            "discount_per_unit",
+            "unit_cost_after_discount",
+        }, keys
+
+    def test_ac18b_both_grants_keeps_all_four_money_and_name_fields(self) -> None:
+        out = fetch.output_structurer(
+            self._result(),
+            {
+                "access": {
+                    "attributes": ["purchase_orders.cost", "purchase_orders.supplier"]
+                }
+            },
+        )
+        keys = {f["key"] for f in out["answers"][0]["fields"]}
+        assert keys == {
+            "po_number",
+            "unit_cost",
+            "discount_per_unit",
+            "unit_cost_after_discount",
+            "supplier",
+        }, keys
+
+
 # --------------------------------------------------------------------------- #
 # AC-25: the parser prompt addendum, pinned as literal text - no LLM call.
 # --------------------------------------------------------------------------- #

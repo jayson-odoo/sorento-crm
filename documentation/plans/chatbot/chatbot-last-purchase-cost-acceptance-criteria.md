@@ -24,11 +24,18 @@ Plan: `PLAN-chatbot-last-purchase-cost.md`.
   answers `discount_per_unit == 33.33` (100/3, half up) and
   `unit_cost_after_discount == 76.67` (230/3, half up); the route returns the same two
   decimal place floats, never a raw division result such as 33.333333333333336.
-- AC-7 Discount absent. discount 0 or NULL answers `discount_per_unit is None` and
-  `unit_cost_after_discount == unit_cost`.
+- AC-7 Discount always shown. Owner ruling from live verification, 12 Sep 2026,
+  verbatim: "we should always show discount even though it is null or 0". discount 0 or
+  NULL answers `discount_per_unit == 0.0` (a NUMBER, never None); `unit_cost_after_discount
+  == unit_cost` is unchanged.
 - AC-8 No line_total. `line_total` NULL answers `unit_cost_after_discount == unit_cost`
-  and `discount_per_unit is None`.
+  and `discount_per_unit == 0.0` (never None, same ruling as AC-7) when the line's own
+  discount is NULL too.
 - AC-9 Currency. `row["currency"]` is the line's `currency`.
+- AC-9b Supplier. Second owner ruling, same round: "we should show supplier also".
+  `row["supplier"]` is `suppliers.supplier_name` reached through
+  `purchase_orders.supplier_id` (an outer join): a PO with a supplier answers the name; a
+  PO with `supplier_id` NULL answers `row["supplier"] is None`.
 - AC-10 Warehouse filter narrows before the pick. `warehouse_ids=[W2]` on AC-1's data
   returns only the W2 row.
 - AC-11 Family, all members. Three products named in `product_ids` with `top_n=1` return
@@ -57,6 +64,9 @@ Plan: `PLAN-chatbot-last-purchase-cost.md`.
 - AC-18 Belt and braces. `output_structurer` with a granted set lacking
   `purchase_orders.cost` drops `unit_cost`, `discount_per_unit` and
   `unit_cost_after_discount` from the envelope; with it, keeps them.
+- AC-18b Supplier gated independently. `output_structurer` with a granted set holding
+  ONLY `purchase_orders.cost` drops `supplier` and keeps the three money fields; with
+  both `purchase_orders.cost` and `purchase_orders.supplier` granted, keeps all four.
 - AC-19 Catalogue pin. `FIELD_REVEAL_KEYS` equals the union of every
   `ToolSpec.restricted_fields` pair (existing test stays green with the new pair).
 
@@ -64,14 +74,22 @@ Plan: `PLAN-chatbot-last-purchase-cost.md`.
 
 - AC-20 Order. For a row carrying every field, `_po_last_cost` renders EXACTLY, in this
   order: `PO Number`, `Product Code`, `PO Quantity`, `PO Date`, `Cost / unit`,
-  `Discount / unit`, `Cost after discount / unit`, `Warehouse`. Asserted as an exact list.
-- AC-21 If any. A row with `discount_per_unit` None renders no `Discount / unit` line; a
-  row with `warehouse` None renders no `Warehouse` line; nothing renders with an empty
-  value.
+  `Discount / unit`, `Cost after discount / unit`, `Warehouse`, `Supplier` (second owner
+  ruling, 12 Sep 2026, "we should show supplier also" - `Supplier` is LAST). Asserted as
+  an exact list.
+- AC-21 If any, discount excepted. Owner ruling from live verification, 12 Sep 2026:
+  "we should always show discount even though it is null or 0" - `Discount / unit`
+  ALWAYS renders, `CNY 0.00` when the line carries none; it is no longer "if any". A row
+  with `warehouse` None renders no `Warehouse` line; a row with `supplier` None renders
+  no `Supplier` line - each is its own independent "if any". Nothing renders with an
+  empty value.
 - AC-22 Money format. `Cost / unit` renders `CNY 110.00`; `Discount / unit` renders
-  `CNY 66.00`; `Cost after discount / unit` renders `CNY 44.00`.
+  `CNY 66.00` (or `CNY 0.00` when the line carries no discount); `Cost after discount /
+  unit` renders `CNY 44.00`.
 - AC-23 Restricted keys. The envelope's `restricted_fields` maps `unit_cost`,
-  `discount_per_unit` and `unit_cost_after_discount` to `purchase_orders.cost`.
+  `discount_per_unit` and `unit_cost_after_discount` to `purchase_orders.cost`, and
+  `supplier` to `purchase_orders.supplier` (the SAME key `crm_procurement_po_placed_list`
+  already uses for its own `supplier` field).
 - AC-24 Catalogue description names the row order, says the three money figures are per
   unit and derived from the line amount, and says the answer is restricted to a contact
   holding `purchase_orders.cost`.

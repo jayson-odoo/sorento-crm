@@ -24,7 +24,7 @@ from app.main import app  # noqa: E402
 
 from app.dependencies import get_current_user_or_api_key, get_db
 from app.models.base import set_company_scope
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 
@@ -48,6 +48,7 @@ def _po(
     status="active",
     po_number=None,
     currency="CNY",
+    supplier_id=None,
     company_id=DEFAULT_COMPANY_ID,
 ):
     row = PurchaseOrder(
@@ -56,6 +57,19 @@ def _po(
         issue_date=issue_date,
         status=status,
         currency=currency,
+        supplier_id=supplier_id,
+        company_id=company_id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _supplier(db, *, name="ZZT Acme Supplies", company_id=DEFAULT_COMPANY_ID):
+    row = Supplier(
+        id=str(uuid.uuid4()),
+        supplier_code=unique_code("SUP")[:50],
+        supplier_name=name,
         company_id=company_id,
     )
     db.add(row)
@@ -254,9 +268,11 @@ def test_ac6b_money_rounds_to_two_decimals(client, db):
     assert body["unit_cost_after_discount"] == 76.67
 
 
-def test_ac7_zero_or_null_discount_absent(db):
-    """discount 0 or NULL answers discount_per_unit is None and
-    unit_cost_after_discount == unit_cost, on both branches."""
+def test_ac7_zero_or_null_discount_is_zero_not_none(db):
+    """Owner ruling from live verification, 12 Sep 2026, verbatim: "we should always show
+    discount even though it is null or 0". discount 0 or NULL answers
+    `discount_per_unit == 0.0` (a NUMBER, never None); `unit_cost_after_discount ==
+    unit_cost` is unchanged, on both branches."""
     last_cost_rows = _import_last_cost_rows()
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
     w_zero = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="W-ZERO")
@@ -271,15 +287,16 @@ def test_ac7_zero_or_null_discount_absent(db):
     db.commit()
 
     by_wh = {r["warehouse"]: r for r in last_cost_rows(db, product_ids=[prod.id])}
-    assert by_wh[None]["discount_per_unit"] is None
+    assert by_wh[None]["discount_per_unit"] == 0.0
     assert by_wh[None]["unit_cost_after_discount"] == by_wh[None]["unit_cost"]
-    assert by_wh["W-ZERO"]["discount_per_unit"] is None
+    assert by_wh["W-ZERO"]["discount_per_unit"] == 0.0
     assert by_wh["W-ZERO"]["unit_cost_after_discount"] == by_wh["W-ZERO"]["unit_cost"]
 
 
 def test_ac8_no_line_total_falls_back_to_unit_cost(db):
     """`line_total` NULL answers unit_cost_after_discount == unit_cost and
-    discount_per_unit is None."""
+    discount_per_unit == 0.0 (owner ruling, 12 Sep 2026: discount always shown, a
+    NUMBER, never None) when the line's own discount is NULL too."""
     last_cost_rows = _import_last_cost_rows()
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
 
@@ -289,7 +306,7 @@ def test_ac8_no_line_total_falls_back_to_unit_cost(db):
 
     rows = last_cost_rows(db, product_ids=[prod.id])
     assert rows[0]["unit_cost_after_discount"] == 7.0
-    assert rows[0]["discount_per_unit"] is None
+    assert rows[0]["discount_per_unit"] == 0.0
 
 
 def test_ac9_currency_is_the_lines(db):
@@ -303,6 +320,29 @@ def test_ac9_currency_is_the_lines(db):
 
     rows = last_cost_rows(db, product_ids=[prod.id])
     assert rows[0]["currency"] == "USD"
+
+
+def test_ac9b_supplier_name_via_the_pos_own_supplier_id(db):
+    """Owner ruling from live verification, 12 Sep 2026: "we should show supplier
+    also". `row["supplier"]` is `suppliers.supplier_name` reached through
+    `purchase_orders.supplier_id` (an outer join): a PO with a supplier answers the
+    name; a PO with `supplier_id` NULL answers `row["supplier"] is None`."""
+    last_cost_rows = _import_last_cost_rows()
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    supplier = _supplier(db, name="ZZT Acme Supplies")
+    w_with_supplier = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="W-SUP")
+
+    po_with_supplier = _po(
+        db, issue_date=date(2026, 8, 1), po_number="PO-WITH-SUPPLIER", supplier_id=supplier.id,
+    )
+    _line(db, po=po_with_supplier, product_id=prod.id, warehouse_id=w_with_supplier.id, unit_cost=5)
+    po_no_supplier = _po(db, issue_date=date(2026, 8, 2), po_number="PO-NO-SUPPLIER")
+    _line(db, po=po_no_supplier, product_id=prod.id, unit_cost=6)
+    db.commit()
+
+    by_wh = {r["warehouse"]: r for r in last_cost_rows(db, product_ids=[prod.id])}
+    assert by_wh["W-SUP"]["supplier"] == "ZZT Acme Supplies"
+    assert by_wh[None]["supplier"] is None
 
 
 def test_ac10_warehouse_ids_narrows_before_pick(db):
