@@ -1,6 +1,6 @@
 # PLAN: managing a sales-order change after planning, one engine
 
-**Status:** Slice A built, Slice B in progress. Same lane/scm-change-a-diff-parity, ONE PR
+**Status:** Slices A and B built; Slice C Phase 1 in progress. Same lane/scm-change-a-diff-parity, ONE PR
 (#855) for all slices per the owner, 13 Sep 2026. Grilled with the owner across four rounds
 on 12 and 13
 September 2026; the agreed page is versioned at
@@ -235,3 +235,86 @@ reasoning travels with the code:
 4. Slice B is also the first place a step-3 `supply_borrow` composition reaches `confirm()`
    through the planning-change apply path at all (a test the tester added alongside the AC-B4
    fix) - earlier borrow coverage only exercised step-2 `order_borrow` through this seam.
+
+
+## Slice C contract (captain, 13 September 2026, issue #858)
+
+The shapes the tester's red tests and the backend both build against. Written during Phase 1
+(frontend against the fixture) so the board, the tests and the engine share ONE text.
+
+### A. The row shape
+
+`PlanningChangeRow` (BE model + `app/schemas/planning_change.py` + FE
+`_shared/types/planningChange.types.ts`) gains a `suggestion` (BE column `suggestion_json`,
+JSONB) and loses `suggested` / `why`:
+
+```
+suggestion = {
+  "components": [
+    {
+      "action":    "keep" | "reduce" | "release" | "reallocate"   # on a HELD component
+                 | "use_own" | "borrow" | "spo" | "buy",          # for NEW quantity
+      "source":    "reserve" | "borrow" | "spo" | "buy" | "po" | "pool_share" | null,
+      "qty_was":   string | null,
+      "qty_now":   string,
+      "location":  string | null,     # BRW-IB
+      "document":  string | null,     # PO-A, SPO-77
+      "target":    string | null,     # "dealer pool", "SO420103 ORDER 50", "pool"
+      "item_code": string | null,     # product_changed: the NEW product
+      "label":     string             # the sentence the board prints VERBATIM
+    }
+  ],
+  "late_days":     number | null,     # the unit is kept but lands N days late (S12)
+  "shortfall_qty": string | null      # nothing covers this much in time (S11)
+}
+```
+
+`label` is composed SERVER-side and printed verbatim - "Keep 134", "Release 134, free at
+BRW-IB", "Buy 134 for 20 Nov", "Reduce Buy 100 to 0", "Keep PO-A 100 of 134", "Reallocate
+PO-A 34 to SO420103 ORDER 50", "Buy 234 (was 134)", "Keep 134, late by 12 days", "Short 34 by
+20 Aug". Only the engine knows which rung covered what, against which document, for whose
+order, so a second composition in TypeScript could only drift from it. Held components come
+FIRST, in held order, then the new sourcing.
+
+`composition` (`composition_json`) is PRE-FILLED at build from the re-run proposal, so Confirm
+posts it unchanged and Amend edits it through the existing `BoardAmendDialog` / PUT
+`rows/{row_id}`. `decision` is `null` | `confirm` | `amend` only. `proposal` stays (the re-run
+itself, what the amend dialog opens on). `suggested` and `why` are removed from the FE type
+and the API schema, and the backend stops writing them.
+
+### B. Frontend behaviour (Phase 1, against the fixture)
+
+`BoardChangeTable` renders Was / Now (qty, date, decision) as it does today, then ONE line per
+`suggestion.components[].label`, then "Late by N days" when `late_days` is set and "Short N"
+when `shortfall_qty` is set. A `cancelled` row still reads `Cancelled` in the Now column; a
+`product_changed` row prints "Product changed, was <old item_code>" above its suggestion and
+carries the new product's sourcing lines.
+
+The words replan / retire / accept, and `keep` as a DECISION value, never render; the existing
+tests that guard that keep their intent (their fixtures were rewritten, not their assertions'
+purpose) - Keep / Reduce / Release / Reallocate DO render now, because they are the
+suggestion's own words rather than the name of a reaction. Confirm is the existing pre-marked
+`confirmMany` path and Amend the existing amend flow: no new control, no "accept" anywhere.
+In `boardChangeAnnotations.ts`, `BoardChangeSide.decision` for the Now side reads the row's
+pre-filled `composition` first, then the `proposal`, then the hold - never `suggested`;
+`preMarkedKeys` is unchanged in intent.
+
+### C. The fixture
+
+`_shared/__mocks__/planningChanges.ts`: `pcb-1` and `pcb-0` rewritten to the new shape, `pcb-1`
+carrying ONE ROW PER SCENARIO S1 to S12 with the exact suggestion lines the grill page gives
+(S2: "Reduce Buy 100 to 0", "Keep PO-A 100 of 134", "Reallocate PO-A 34 to SO420103 ORDER 50";
+S3, S4, S9, S10, S12 likewise), `decision` null / confirm / amend only.
+
+### D. Backend (Phase 2)
+
+1. `compose_suggestion(kind, held, proposal, facts)` replaces `suggest()`: it DIFFS the re-run
+   against the hold rather than picking a verb off a rule table, and returns the shape in A.
+2. `RESERVE_WINDOW_DAYS` and the within-window fact are retired from
+   `planning_change_service.py` - the ladder's own step 0 decides whether a line that far out
+   may hold stock (rule 2), and a second window constant in the change service could only
+   disagree with it.
+3. `apply` dispatches on `decision` + `composition`, and on `kind == cancelled`; no other kind
+   carries a branch of its own any more.
+4. Migration `515` adds `suggestion_json` and maps existing `decision` values:
+   `accept` / `keep` -> `confirm`, `board` -> `null`.
