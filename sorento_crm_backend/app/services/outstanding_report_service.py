@@ -66,6 +66,7 @@ def outstanding_report(
     product_code: str,
     scope: str = "both",
     customer_query: Optional[str] = None,
+    customer_ids: Optional[list[str]] = None,
     warehouse_codes: Optional[list[str]] = None,
     order_date_from: DateLike = None,
     order_date_to: DateLike = None,
@@ -75,6 +76,7 @@ def outstanding_report(
         raise handle_not_found("Product", product_code)
 
     warehouse_ids = resolve_warehouse_ids(db, warehouse_codes)
+    customer_ids = [str(c).strip() for c in (customer_ids or []) if str(c).strip()] or None
 
     result: dict = {
         "product_code": product.product_code,
@@ -95,13 +97,13 @@ def outstanding_report(
     if scope in ("so", "both"):
         _fill_so(
             db, product, result,
-            customer_query=customer_query, warehouse_ids=warehouse_ids,
+            customer_query=customer_query, customer_ids=customer_ids, warehouse_ids=warehouse_ids,
             order_date_from=order_date_from, order_date_to=order_date_to,
         )
     if scope in ("do", "both"):
         _fill_do(
             db, product, result,
-            customer_query=customer_query, warehouse_ids=warehouse_ids,
+            customer_query=customer_query, customer_ids=customer_ids, warehouse_ids=warehouse_ids,
             order_date_from=order_date_from, order_date_to=order_date_to,
         )
     return result
@@ -113,6 +115,7 @@ def _fill_so(
     result: dict,
     *,
     customer_query: Optional[str],
+    customer_ids: Optional[list],
     warehouse_ids: Optional[list],
     order_date_from: DateLike,
     order_date_to: DateLike,
@@ -144,6 +147,8 @@ def _fill_so(
     )
     if customer_query:
         q = q.filter(Customer.customer_name.ilike(f"%{customer_query}%"))
+    if customer_ids is not None:
+        q = q.filter(SalesOrder.customer_id.in_(customer_ids))
     if warehouse_ids is not None:
         q = q.filter(SalesOrderLine.warehouse_id.in_(warehouse_ids))
     if order_date_from is not None:
@@ -242,6 +247,7 @@ def _fill_do(
     result: dict,
     *,
     customer_query: Optional[str],
+    customer_ids: Optional[list],
     warehouse_ids: Optional[list],
     order_date_from: DateLike,
     order_date_to: DateLike,
@@ -275,6 +281,8 @@ def _fill_do(
     )
     if customer_query:
         q = q.filter(Customer.customer_name.ilike(f"%{customer_query}%"))
+    if customer_ids is not None:
+        q = q.filter(Order.customer_id.in_(customer_ids))
     if warehouse_ids is not None:
         q = q.filter(OrderLine.warehouse_id.in_(warehouse_ids))
     if order_date_from is not None:

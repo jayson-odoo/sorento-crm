@@ -1397,6 +1397,13 @@ async def get_outstanding_report(
         None,
         description="Partial match on customers.customer_name (ILIKE) ONLY - never debtor/customer code (D7).",
     ),
+    customer_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical customer UUIDs (csv/JSON/repeated) - the chatbot's resolved "
+            "customer entity (AC-1113b). Intersects with customer_query when both are given."
+        ),
+    ),
     warehouse_codes: Optional[list[str]] = Query(
         None,
         description=(
@@ -1414,6 +1421,15 @@ async def get_outstanding_report(
         ),
     ),
     order_date_to: Optional[str] = Query(None, description="Same flexible formats as order_date_from."),
+    detail: Optional[str] = Query(
+        None,
+        description=(
+            "so | do - MCP-layer directive only (S4 point 5, AC-1114b): when set, "
+            "view=render swaps the two-block report for the numbered detail list of that "
+            "scope. This route's own computation is unchanged by it - the value is only "
+            "echoed onto the response body so the MCP presenter can read it."
+        ),
+    ),
     current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
     db: Session = Depends(get_db),
 ):
@@ -1445,6 +1461,7 @@ async def get_outstanding_report(
         product_code=product_code,
         scope=scope,
         customer_query=customer_query,
+        customer_ids=_normalize_entities(customer_ids),
         warehouse_codes=_normalize_entities(warehouse_codes),
         order_date_from=_parse_flex_date(order_date_from),
         order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
@@ -1455,4 +1472,6 @@ async def get_outstanding_report(
         body.pop("so", None)
     if data.get("do") is None:
         body.pop("do", None)
+    if detail in ("so", "do"):
+        body["detail"] = detail
     return JSONResponse(content=body)
