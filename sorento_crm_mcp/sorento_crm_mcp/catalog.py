@@ -1108,13 +1108,15 @@ CATALOG: tuple[ToolSpec, ...] = (
             "never picked.\n\n"
             "Each row reads in this order: PO Number, Product Code, PO Quantity, "
             "PO Date, Cost / unit, Discount / unit, Cost after discount / unit, "
-            "Warehouse. The three money figures are PER UNIT, DERIVED by the backend "
-            "from the LINE's own discount / line_total amounts (never a unit figure the "
-            "source data carries directly): Discount / unit is present ONLY when the "
-            "line carries a positive discount, Cost after discount / unit falls back to "
-            "the plain Cost / unit when the line has no line_total, and Warehouse is "
-            "present ONLY when the line names one - a line bought with no warehouse "
-            "stated answers with no Warehouse field.\n\n"
+            "Warehouse, Supplier. The three money figures are PER UNIT, DERIVED by the "
+            "backend from the LINE's own discount / line_total amounts (never a unit "
+            "figure the source data carries directly): Discount / unit is ALWAYS "
+            "present, 0.00 when the line carries no discount, Cost after discount / "
+            "unit falls back to the plain Cost / unit when the line has no line_total, "
+            "Warehouse is present ONLY when the line names one, and Supplier is "
+            "present ONLY when the purchase order names one - a line bought with no "
+            "warehouse stated, or a PO with no supplier, answers with that one field "
+            "absent.\n\n"
             "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON "
             "/ repeated), both optional; `warehouse_ids` narrows BEFORE the pick. "
             "`top_n` (default 1) = lines per (product, warehouse) when `product_ids` is "
@@ -1122,10 +1124,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`top_n` lines for EACH member at EACH of its locations, not `top_n` rows "
             "overall; with no product named, `top_n` is a plain cap over every line, "
             "newest first, across every product.\n\n"
-            "RESTRICTED: the whole answer (unit_cost, discount_per_unit and "
-            "unit_cost_after_discount) is gated on the contact holding "
-            "purchase_orders.cost - a dealer without that grant never sees a cost "
-            "figure.\n\n"
+            "RESTRICTED: unit_cost, discount_per_unit and unit_cost_after_discount are "
+            "gated on the contact holding purchase_orders.cost; Supplier is gated on "
+            "purchase_orders.supplier, independent of the cost grant - a dealer without "
+            "the matching grant never sees that one field.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -1138,7 +1140,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "crm_procurement_spo_allocations_last_receipt_list",
         ),
         escalation_team="procurement",
-        restricted_fields=(("purchase_orders.cost", "Last purchase cost"),),
+        restricted_fields=(
+            ("purchase_orders.cost", "Last purchase cost"),
+            ("purchase_orders.supplier", "PO supplier"),
+        ),
     ),
     # --- project sales (read-only; AC-K1 / AC-K2) ---
     ToolSpec(

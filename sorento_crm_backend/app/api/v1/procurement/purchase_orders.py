@@ -52,8 +52,10 @@ def get_purchase_orders_last_cost(
     Cancelled lines and cancelled POs are excluded; a line with no `unit_cost` never
     answers. `Cost / unit`, `Discount / unit` and `Cost after discount / unit` are all
     PER UNIT, derived from the line's own `discount` / `line_total` amounts - see
-    `po_last_cost_service` for the measured shape. `warehouse_ids` narrows before the
-    pick.
+    `po_last_cost_service` for the measured shape. `discount_per_unit` is ALWAYS a
+    number, `0.0` when the line carries none (owner ruling, live verification, 12 Sep
+    2026). `supplier` is the PO's own `suppliers.supplier_name`, None when it has none.
+    `warehouse_ids` narrows before the pick.
     """
     try:
         rows = last_cost_rows(

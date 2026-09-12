@@ -25,6 +25,12 @@ Second ruling, same day, against the four calls put to the owner:
 > lines, for family resolve, resolve all, last-in also should be all family, shouldn't have
 > cap at top_n
 
+Third ruling, from live verification the same day, verbatim:
+
+> we should always show discount even though it is null or 0
+
+> we should show supplier also
+
 ## What exists today (measured, local prod copy `sorento_ai_automation`, 12 Sep 2026)
 
 - `purchase_order_lines` carries the whole money line from AutoCount: `unit_cost`
@@ -79,10 +85,19 @@ Second ruling, same day, against the four calls put to the owner:
 ## Decisions
 
 - D1 Per-unit money, labelled as such. `Cost / unit` = `unit_cost`. `Discount / unit` =
-  `discount / qty_ordered`, shown only when `discount > 0`. `Cost after discount / unit` =
-  `line_total / qty_ordered` when `line_total` is present, else `unit_cost` (the 2,245
-  history lines state no discount and no total, so the after-discount figure IS the unit
-  cost there). Two decimals, prefixed by the line's currency: `CNY 44.00`.
+  `discount / qty_ordered`, ALWAYS shown (revised by the third owner ruling, live
+  verification, 12 Sep 2026: "we should always show discount even though it is null or
+  0"), `0.00` when `discount` is NULL or zero rather than absent. `Cost after discount /
+  unit` = `line_total / qty_ordered` when `line_total` is present, else `unit_cost` (the
+  2,245 history lines state no discount and no total, so the after-discount figure IS the
+  unit cost there). Two decimals, prefixed by the line's currency: `CNY 44.00`.
+- D8 Supplier shown, per the third owner ruling ("we should show supplier also"):
+  `purchase_orders.supplier_id` resolved to `suppliers.supplier_name`, outer joined so a
+  PO with none still answers. Rendered LAST, after Warehouse, "if any" (absent when the
+  PO carries no supplier). Gated on its OWN field-reveal key, `purchase_orders.supplier`
+  (the SAME key `crm_procurement_po_placed_list` already declares), independent of the
+  `purchase_orders.cost` grant D6 covers - a contact can hold one grant without the
+  other.
 - D2 Location = `warehouse_id`, NULL is its own bucket. The window partitions on
   `(product_id, warehouse_id)`; Postgres groups NULLs together in `PARTITION BY`, so a
   product bought with no warehouse stated answers one row with no `Warehouse` field. The
@@ -127,8 +142,10 @@ Backend (`sorento_crm_backend/`):
    PurchaseOrder, ...)` on the subquery. Unscoped branch: same ordering, `.limit(top_n)`.
    Row keys: `po_number`, `product_id`, `product_code`, `product_name`, `po_quantity`
    (`qty_ordered`, plain number), `po_date` (`issue_date` ISO), `currency`, `unit_cost`,
-   `discount_per_unit` (None unless `discount > 0`), `unit_cost_after_discount`,
-   `warehouse` (`warehouse_code` or None). Money values as `float` rounded to 2 dp.
+   `discount_per_unit` (ALWAYS a number, `0.0` when `discount` is NULL or zero - D1),
+   `unit_cost_after_discount`, `warehouse` (`warehouse_code` or None), `supplier`
+   (`suppliers.supplier_name` via `purchase_orders.supplier_id`, or None - D8). Money
+   values as `float` rounded to 2 dp, half up.
 2. `app/api/v1/procurement/purchase_orders.py`: `GET /last-cost` registered BEFORE any
    `/{po_id}` route (same reason `/placed` and `/last-receipt` are), params `product_ids`,
    `warehouse_ids` (via `parse_uuid_list`), `top_n` (1..50), `Depends(
@@ -177,18 +194,23 @@ MCP (`sorento_crm_mcp/sorento_crm_mcp/`):
     "warehouse_ids", "top_n", "contact_id", "space_id")`, `domain="purchase_cost"`,
     `related_tools=("crm_procurement_po_placed_list",
     "crm_procurement_spo_allocations_last_receipt_list")`, `escalation_team="procurement"`,
-    `restricted_fields=(("purchase_orders.cost", "Last purchase cost"),)`. Description
-    states the row order, the per-unit derivation, the "if any" fields, D5, and that the
-    whole answer is RESTRICTED to a contact holding `purchase_orders.cost`.
+    `restricted_fields=(("purchase_orders.cost", "Last purchase cost"), ("purchase_orders.
+    supplier", "PO supplier"))`. Description states the row order, the per-unit
+    derivation, which fields are "if any", D5, and that unit_cost / discount_per_unit /
+    unit_cost_after_discount are RESTRICTED to `purchase_orders.cost` while Supplier is
+    RESTRICTED to `purchase_orders.supplier`.
 13. `presenters.py`: `_po_last_cost(rows, b)` rendering, in this exact order:
 
         PO Number, Product Code, PO Quantity, PO Date, Cost / unit,
-        Discount / unit (if any), Cost after discount / unit, Warehouse (if any)
+        Discount / unit, Cost after discount / unit, Warehouse (if any),
+        Supplier (if any)
 
-    Money as `f"{currency} {value:.2f}"`. Then `b.restrict("unit_cost",
-    "purchase_orders.cost")`, `b.restrict("discount_per_unit", ...)`,
-    `b.restrict("unit_cost_after_discount", ...)`. Intro line: "Here is the last purchase
-    cost per product and location." Register in the presenter map and the intro map.
+    Discount / unit is now ALWAYS rendered (D1, third owner ruling) - `0.0` is a FILLED
+    value, so it never drops. Money as `f"{currency} {value:.2f}"`. Then `b.restrict(
+    "unit_cost", "purchase_orders.cost")`, `b.restrict("discount_per_unit", ...)`,
+    `b.restrict("unit_cost_after_discount", ...)`, `b.restrict("supplier",
+    "purchase_orders.supplier")`. Intro line: "Here is the last purchase cost per product
+    and location." Register in the presenter map and the intro map.
 
 Last-in family (D5, no code change expected):
 
@@ -205,9 +227,10 @@ above). No new table, no new column.
 - `tests/test_po_last_cost.py` (service + route): one row per `(product, warehouse)`;
   NULL warehouse is its own row with `warehouse is None`; cancelled line and cancelled PO
   excluded; `unit_cost IS NULL` excluded; ordering by `issue_date` then `created_at`;
-  `discount_per_unit` None when discount is 0 or NULL, `66.0` for the M218 shape (qty 19,
-  discount 1254); `unit_cost_after_discount` = `line_total/qty` (44.0), and = `unit_cost`
-  when `line_total` is NULL; `warehouse_ids` narrows before the pick; family of 3 with
+  `discount_per_unit` `0.0` (never None) when discount is 0 or NULL, `66.0` for the M218
+  shape (qty 19, discount 1254); `unit_cost_after_discount` = `line_total/qty` (44.0), and
+  = `unit_cost` when `line_total` is NULL; `supplier` via `purchase_orders.supplier_id`,
+  None when the PO has none; `warehouse_ids` narrows before the pick; family of 3 with
   `top_n=1` -> 3 rows; unscoped `top_n=2` -> exactly 2 rows; company scope: a line owned
   by another company on the same product never answers under a scoped session; route
   envelope shape and `top_n` bounds.

@@ -520,20 +520,29 @@ def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
 
 def _po_last_cost(rows: list[dict], b: _Builder) -> None:
     """Owner ruling 12 Sep 2026 (`PLAN-chatbot-last-purchase-cost.md`), against the
-    rendered answer, AC-20..AC-24. A row reads, in this order:
+    rendered answer, AC-20..AC-24, amended by a THIRD ruling from live verification the
+    same day, verbatim: "we should always show discount even though it is null or 0"
+    and "we should show supplier also". A row reads, in this order:
 
         PO Number, Product Code, PO Quantity, PO Date, Cost / unit,
-        Discount / unit (if any), Cost after discount / unit, Warehouse (if any)
+        Discount / unit, Cost after discount / unit, Warehouse (if any),
+        Supplier (if any)
 
     The three money figures are PER UNIT, derived by the backend from the line's own
     `discount` / `line_total` amounts (a LINE figure on `purchase_order_lines`, never a
-    unit one) - `Discount / unit` is "if any": absent unless the line actually carries
-    a positive discount. Money renders `f"{currency} {value:.2f}"` using the LINE's own
-    currency, never a hardcoded MYR.
+    unit one). `Discount / unit` is now ALWAYS rendered - the backend's
+    `discount_per_unit` is always a number, `0.0` when the line carries none, and `0.0`
+    is a FILLED value (`_filled` only excludes None and empty string), so `_line_money`
+    below renders `CNY 0.00` rather than dropping it. Money renders
+    `f"{currency} {value:.2f}"` using the LINE's own currency, never a hardcoded MYR.
+    Only `Warehouse` and `Supplier` stay "if any": a line bought with no warehouse
+    stated, or a PO with no supplier, answers with that one field absent.
 
-    RESTRICTED to a contact holding `purchase_orders.cost`: the whole answer is a cost
-    figure, so all three money fields are marked here - belt and braces alongside the
-    whole-domain gate the chatbot lane applies before this tool is ever called.
+    RESTRICTED: the three money fields to a contact holding `purchase_orders.cost` (the
+    whole-domain gate the chatbot lane applies before this tool is ever called is belt
+    and braces alongside this); `Supplier` to a contact holding
+    `purchase_orders.supplier` - the SAME key `_purchase_orders_placed` already uses for
+    its own `supplier` field, independent of the cost grant.
     """
     for r in rows:
         currency = str(r.get("currency") or "").strip()
@@ -561,11 +570,13 @@ def _po_last_cost(rows: list[dict], b: _Builder) -> None:
                     _line_money(r.get("unit_cost_after_discount")),
                 ),
                 ("warehouse", "Warehouse", r.get("warehouse")),
+                ("supplier", "Supplier", r.get("supplier")),
             ],
         )
     b.restrict("unit_cost", "purchase_orders.cost")
     b.restrict("discount_per_unit", "purchase_orders.cost")
     b.restrict("unit_cost_after_discount", "purchase_orders.cost")
+    b.restrict("supplier", "purchase_orders.supplier")
 
 
 def _orders_by_product(rows: list[dict], b: _Builder) -> None:

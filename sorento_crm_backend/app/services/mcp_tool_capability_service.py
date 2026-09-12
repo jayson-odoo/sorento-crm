@@ -1245,10 +1245,11 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="The last purchase cost per product per location - 'what did we pay', 'last cost'.",
         description=(
             "The last PO line per (product, warehouse) and its cost: po_number, "
-            "product_code, po_quantity, po_date, unit_cost, discount_per_unit (only "
-            "when the line carries a positive discount), unit_cost_after_discount, and "
-            "warehouse (only when the line names one). Cancelled lines and cancelled "
-            "POs are excluded. top_n defaults to 1; 'last 3 purchase cost' is top_n=3."
+            "product_code, po_quantity, po_date, unit_cost, discount_per_unit (always "
+            "present, zero when the line carries none), unit_cost_after_discount, "
+            "warehouse (only when the line names one), and supplier (only when the "
+            "purchase order names one). Cancelled lines and cancelled POs are "
+            "excluded. top_n defaults to 1; 'last 3 purchase cost' is top_n=3."
         ),
         typical_user_questions=(
             "What did we last pay for SRTWC8517?",
