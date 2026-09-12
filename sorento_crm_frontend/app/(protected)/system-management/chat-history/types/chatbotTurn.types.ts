@@ -172,6 +172,27 @@ export interface ChatbotTurn {
    * unknown side as no drift rather than as a difference.
    */
   domains?: string[] | null;
+  /**
+   * AC-1029, the CROSS-CONTACT grid only. A shadow row asked for without a
+   * `contact_respond_id` has to carry its own context, because the screen showing it has
+   * no conversation open to read it from: who said it, what they said, and the live
+   * answer to compare against. Absent on every row of a per-contact request.
+   */
+  contact_display?: string | null;
+  message?: string | null;
+  live?: ShadowTurnLiveSide | null;
+}
+
+/**
+ * The live side of one shadow row, as the endpoint's own join already has it.
+ *
+ * `id` is the LIVE turn, so opening the row opens the turn the customer actually got,
+ * with the shadow parse beside it rather than in place of it.
+ */
+export interface ShadowTurnLiveSide {
+  id: string;
+  branch_kind: BranchKind | null;
+  domains?: string[] | null;
 }
 
 /**

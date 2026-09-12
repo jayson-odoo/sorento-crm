@@ -79,6 +79,22 @@
  * and it carries no reply: `response` is null, nothing was sent, no session was written
  * and no escalation was raised. Its parse rides `trace` like any other turn's.
  *
+ * `ingress=shadow` is ALSO valid with NO `contact_respond_id`: the owner watches a
+ * promotion across every contact at once, not one conversation at a time. A row of such a
+ * request carries its own context, because the screen showing it has no conversation open
+ * to read it from:
+ *
+ *   "contact_display": "Ah Seng Hardware" | null    the contact's name, else the phone.
+ *                                                   NEVER an id - the grid shows it.
+ *   "message": "SRTWT2634 stock and eta" | null     what the customer said.
+ *   "live": { "id": "<live turn uuid>",             the live side of the comparison, off
+ *             "branch_kind": "business_query",      the join the summary already needs.
+ *             "domains": ["inventory"] } | null     `id` is the LIVE turn, so opening a
+ *                                                   row opens what the customer got.
+ *
+ * Those three are absent on a per-contact request, where the conversation already
+ * supplies them.
+ *
  * With `ingress=shadow` the response gains a summary over the WHOLE filtered range, not
  * over the page:
  *
@@ -193,6 +209,12 @@ export async function getFailedChatbotContacts(
 
 /** One turn's row plus its normalised `trace_detail` (Slice D, AC-970). */
 export async function getChatbotTurn(turnId: string): Promise<ChatbotTurnDetail> {
+  // PHASE 1 MOCK: the cross-contact grid's rows are a fixture, so their ids answer from
+  // the fixture too - otherwise opening one would 404 and the drawer's two parse columns
+  // could never be seen. Goes with the rest of the mock.
+  if (turnId.startsWith('live-mock-') || turnId.startsWith('shadow-mock-')) {
+    return mockTurnDetail(turnId);
+  }
   const response = await apiFetch(`/api/v1/system/chatbot/turns/${turnId}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load turn detail'));
   return response.json();
@@ -232,9 +254,19 @@ export function indexTurnsByMessageId(turns: ChatbotTurn[]): Map<string, Chatbot
 // it goes past, and the shadow rows are derived from it.
 //
 // The three states the screen owes, and how to reach each one:
+//
+// per-contact (the conversation drawer):
 //   success - a contact with turns; every 3rd row drifts on branch, every 5th on domains
 //   empty   - a contact whose turns have not been loaded, or who has none
 //   error   - a contact whose respond id ends in 9 (a stand-in for the endpoint failing)
+//
+// cross-contact (the chat-history grid), which has no live turns to shadow because that
+// page lists MESSAGES, so it gets a fixture instead:
+//   success - the default range
+//   empty   - a range that starts in the future
+//   error   - an inverted range (`from` after `to`)
+// Both levers are reachable from the two date inputs the page already has, so every state
+// can be seen in a browser without editing code.
 const mockLiveTurns = new Map<string, ChatbotTurn[]>();
 
 function rememberLiveTurns(contactId: string | undefined, items: ChatbotTurn[]): void {
@@ -243,7 +275,121 @@ function rememberLiveTurns(contactId: string | undefined, items: ChatbotTurn[]):
 
 const MOCK_BRANCH_DRIFT: BranchKind = 'clarify_menu';
 
+const MOCK_CROSS_CONTACT_ROWS: {
+  contact: string;
+  message: string;
+  live: BranchKind;
+  liveDomains: string[];
+  shadow: BranchKind;
+  shadowDomains: string[];
+}[] = [
+  {
+    contact: 'Ah Seng Hardware',
+    message: 'SRTWT2634 stock and eta',
+    live: 'business_query',
+    liveDomains: ['inventory'],
+    shadow: 'business_query',
+    shadowDomains: ['inventory', 'incoming'],
+  },
+  {
+    contact: 'Ah Seng Hardware',
+    message: 'PO?',
+    live: 'business_query',
+    liveDomains: ['inventory'],
+    shadow: 'business_query',
+    shadowDomains: ['purchase_order'],
+  },
+  {
+    contact: 'Hanlim Trading',
+    message: 'delivery to hanlim',
+    live: 'clarify_menu',
+    liveDomains: [],
+    shadow: 'business_query',
+    shadowDomains: ['order'],
+  },
+  {
+    contact: 'Hanlim Trading',
+    message: 'thanks bro',
+    live: 'out_of_scope',
+    liveDomains: [],
+    shadow: 'out_of_scope',
+    shadowDomains: [],
+  },
+  {
+    contact: 'Mocha Bathroom Gallery',
+    message: 'promo for CWCX7605',
+    live: 'check_promotion',
+    liveDomains: ['promotion'],
+    shadow: 'check_promotion',
+    shadowDomains: ['promotion'],
+  },
+  {
+    contact: 'Mocha Bathroom Gallery',
+    message: '1',
+    live: 'business_query',
+    liveDomains: ['inventory'],
+    shadow: 'low_signal',
+    shadowDomains: ['inventory'],
+  },
+  {
+    contact: 'Sim Trading (Klang)',
+    message: 'last in for SRTWC8517',
+    live: 'business_query',
+    liveDomains: ['spo_allocation'],
+    shadow: 'business_query',
+    shadowDomains: ['spo_allocation'],
+  },
+];
+
+function mockCrossContactShadowTurns(
+  filters: ChatbotTurnFilters,
+): Promise<ChatbotTurnListResponse> {
+  const from = filters.from ? new Date(filters.from) : null;
+  const to = filters.to ? new Date(filters.to) : null;
+  if (from && to && from > to) {
+    return Promise.reject(new Error('Shadow turns could not be loaded'));
+  }
+  const empty = Boolean(from && from.getTime() > Date.now());
+  const rows = empty ? [] : MOCK_CROSS_CONTACT_ROWS;
+  const items: ChatbotTurn[] = rows.map((row, index) => ({
+    id: `shadow-mock-${index}`,
+    contact_respond_id: `9000000${index}`,
+    message_id: `wamid.mock-${index}`,
+    status: 'done',
+    stage: 'sent',
+    branch_kind: row.shadow,
+    attempt: 1,
+    is_test: false,
+    ingress: 'shadow',
+    created_at: new Date(Date.now() - (index + 1) * 900_000).toISOString(),
+    finished_at: new Date(Date.now() - (index + 1) * 900_000).toISOString(),
+    trace: [],
+    response: null,
+    shadow_of: `wamid.mock-${index}`,
+    domains: row.shadowDomains,
+    contact_display: row.contact,
+    message: row.message,
+    live: { id: `live-mock-${index}`, branch_kind: row.live, domains: row.liveDomains },
+  }));
+  const drifted = items.filter((item) => item.live?.branch_kind !== item.branch_kind).length;
+  const asksDrifted = items.filter(
+    (item) => (item.live?.domains ?? []).join(',') !== (item.domains ?? []).join(','),
+  ).length;
+  return Promise.resolve({
+    items,
+    next_cursor: null,
+    summary: items.length
+      ? {
+          count: items.length,
+          branch_parity: (items.length - drifted) / items.length,
+          asks_parity: (items.length - asksDrifted) / items.length,
+        }
+      : null,
+  });
+}
+
 function mockShadowTurns(filters: ChatbotTurnFilters): Promise<ChatbotTurnListResponse> {
+  if (!filters.contact_respond_id) return mockCrossContactShadowTurns(filters);
   const contactId = filters.contact_respond_id ?? '';
   if (contactId.endsWith('9')) {
     return Promise.reject(new Error('Shadow turns could not be loaded'));
@@ -278,5 +424,44 @@ function mockShadowTurns(filters: ChatbotTurnFilters): Promise<ChatbotTurnListRe
           asks_parity: (paired - asksDrifted) / paired,
         }
       : null,
+  });
+}
+
+function mockTurnDetail(turnId: string): Promise<ChatbotTurnDetail> {
+  const isShadow = turnId.startsWith('shadow-mock-');
+  const index = Number(turnId.replace(/^(live|shadow)-mock-/, '')) || 0;
+  const row = MOCK_CROSS_CONTACT_ROWS[index] ?? MOCK_CROSS_CONTACT_ROWS[0];
+  const domains = isShadow ? row.shadowDomains : row.liveDomains;
+  return Promise.resolve({
+    id: turnId,
+    contact_respond_id: `9000000${index}`,
+    message_id: `wamid.mock-${index}`,
+    status: 'done',
+    stage: 'sent',
+    branch_kind: isShadow ? row.shadow : row.live,
+    attempt: 1,
+    is_test: false,
+    ingress: isShadow ? 'shadow' : 'webhook',
+    created_at: new Date().toISOString(),
+    finished_at: new Date().toISOString(),
+    trace: [],
+    response: null,
+    domains,
+    trace_detail: {
+      stages: [],
+      parse: {
+        raw: { message_type: 'business_query', asks: domains.map((domain) => ({ domain, entities: [] })) },
+        post_processed: { branch_kind: isShadow ? row.shadow : row.live, domains },
+        prompt_version: isShadow ? 'v19' : 'v18',
+        model: 'gpt-4.1-mini',
+      },
+      decay: [],
+      open_question: null,
+      focus: [],
+      tool: null,
+      crossdomain: [],
+      reveals: { restricted_fields_seen: [], granted: [], dropped: [] },
+      session: { before: {}, after: {}, diff: [] },
+    },
   });
 }

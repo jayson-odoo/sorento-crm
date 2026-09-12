@@ -85,6 +85,41 @@ export function useShadowChatbotTurns(
 }
 
 /**
+ * AC-1029 / AC-1030. Every shadow turn in a RANGE, across every contact.
+ *
+ * The drawer's version answers "did this conversation drift"; this one answers the
+ * question the owner actually has during a promotion watch - "is the new parser safe
+ * yet" - which no single conversation can. No `contact_respond_id`, and the live side of
+ * each comparison rides the row (`live`), because the grid has no conversation open to
+ * read it from.
+ */
+export function useShadowTurnList(
+  filters: { from?: string; to?: string; limit?: number },
+  enabled: boolean,
+) {
+  const query = useQuery({
+    queryKey: [...CHATBOT_TURNS_KEY, 'shadow-list', filters.from ?? null, filters.to ?? null],
+    queryFn: () =>
+      getChatbotTurns({
+        from: filters.from,
+        to: filters.to,
+        ingress: 'shadow',
+        // 200 is the endpoint's maximum page and one page is the answer here: the summary
+        // line already describes the WHOLE range, so paging the rows would only page the
+        // examples, and the owner reads the examples to explain the number.
+        limit: filters.limit ?? 200,
+      }),
+    enabled,
+    staleTime: 15_000,
+  });
+
+  const items = useMemo(() => query.data?.items ?? [], [query.data]);
+  const summaryLine = shadowSummaryLine(query.data?.summary);
+
+  return { ...query, items, summaryLine };
+}
+
+/**
  * AC-255. Which contacts have a failed turn in the range, for the LIST's own filter.
  *
  * `enabled` on purpose: the query only runs when the filter is on. Fetching it on every

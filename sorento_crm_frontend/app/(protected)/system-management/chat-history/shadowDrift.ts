@@ -11,7 +11,7 @@
  * thing a reviewer argues with, and it should be readable without a render tree around it.
  */
 import type { StateTrace } from './types/chatHistory.types';
-import type { ChatbotTurn, ShadowTurnSummary } from './types/chatbotTurn.types';
+import type { ChatbotTurn, ShadowTurnLiveSide, ShadowTurnSummary } from './types/chatbotTurn.types';
 
 /** The axes a shadow parse can differ on. Ordered, so the badge reads the same every time. */
 export const DRIFT_AXES = ['branch', 'domains'] as const;
@@ -31,7 +31,10 @@ function sameDomains(live: string[], shadow: string[]): boolean {
  * routing and `domains` is null on a parse that predates v3; counting either as drift
  * would fill the window with rows that say nothing about the new prompt.
  */
-export function driftAxes(live: ChatbotTurn | undefined, shadow: ChatbotTurn): DriftAxis[] {
+export function driftAxes(
+  live: ChatbotTurn | ShadowTurnLiveSide | null | undefined,
+  shadow: ChatbotTurn,
+): DriftAxis[] {
   if (!live) return [];
   const axes: DriftAxis[] = [];
   if (live.branch_kind != null && shadow.branch_kind != null && live.branch_kind !== shadow.branch_kind) {
@@ -41,6 +44,16 @@ export function driftAxes(live: ChatbotTurn | undefined, shadow: ChatbotTurn): D
     axes.push('domains');
   }
   return axes;
+}
+
+/**
+ * The same rule for a CROSS-CONTACT row, where the live side rides the shadow row itself
+ * (`live`) instead of coming from a map of the conversation's own turns. One rule, two
+ * callers: a grid that judged drift differently from the drawer would be worse than no
+ * grid.
+ */
+export function rowDrift(shadow: ChatbotTurn): DriftAxis[] {
+  return driftAxes(shadow.live, shadow);
 }
 
 /** The drifted axes per live `message_id`, for every shadow row that has a live row. */
