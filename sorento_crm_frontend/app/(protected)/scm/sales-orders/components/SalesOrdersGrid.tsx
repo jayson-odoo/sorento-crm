@@ -688,7 +688,6 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
           );
         },
         size: 180,
-        enableSorting: false,
         meta: { headerTitle: 'Order inquiries' },
       },
       {

@@ -29,6 +29,7 @@ from app.models.product import Product, UnitOfMeasure
 from app.models.project_so import (
     SO_STATUS_ADOPTED,
     AllocationClaim,
+    OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -62,6 +63,11 @@ _DO_NUMBER_MAX_TRIES = 50
 # not read as a planner's decision. Duplicated here rather than imported (that name is
 # private to that module) - `outstanding_import_service` does the same.
 _QTY_EPSILON = 0.0005
+
+# For the `order_inquiries` sort key in `list()`: the CORE `Table` objects, not the ORM
+# classes - see the comment beside their use for why.
+_ORDER_INQUIRIES_SORT_TABLE = OrderInquiry.__table__
+_ORDER_INQUIRIES_SORT_PSO = ProjectSalesOrder.__table__.alias("order_inquiries_sort_pso")
 
 
 #: Where a sales order came from, as one word a buyer can filter on. `inquiry` is separate
@@ -1210,6 +1216,34 @@ class SalesOrderService:
             "delivery_date_from": (
                 select(func.min(SalesOrderLine.required_date))
                 .where(SalesOrderLine.sales_order_id == SalesOrder.id)
+                .correlate(SalesOrder)
+                .scalar_subquery()
+            ),
+            # "Who has purchasing been told about, and who has not" - the question the
+            # column is scanned for. Counts the SAME `projects.order_inquiries` rows
+            # `with_order_inquiries` prints below, so the header's order and the cell
+            # cannot come apart. Built off the CORE `Table` objects (`.__table__`), not
+            # the ORM classes: `projects.sales_orders` (`ProjectSalesOrder`) shares its
+            # bare table NAME with the core `sales_orders` this correlates against, and
+            # going through the ORM class here hits two different failures in turn - an
+            # unaliased join makes SQLAlchemy silently re-alias the correlated reference
+            # to something the query never declares (`UndefinedTable: sales_orders_1`),
+            # and aliasing the ORM class then confuses the company-scope listener's
+            # loader-criteria rewrite (`app/services/company_scope.py`) into stamping the
+            # scope predicate onto the UNALIASED occurrence instead. A plain `Table`
+            # reference carries neither problem, and needs no scope predicate of its own:
+            # the join only ever reaches a `ProjectSalesOrder` row whose `so_id` IS the
+            # already-scoped outer `SalesOrder.id`, so it cannot cross a company line.
+            "order_inquiries": (
+                select(func.count(_ORDER_INQUIRIES_SORT_TABLE.c.id))
+                .select_from(
+                    _ORDER_INQUIRIES_SORT_TABLE.join(
+                        _ORDER_INQUIRIES_SORT_PSO,
+                        _ORDER_INQUIRIES_SORT_PSO.c.id
+                        == _ORDER_INQUIRIES_SORT_TABLE.c.project_sales_order_id,
+                    )
+                )
+                .where(_ORDER_INQUIRIES_SORT_PSO.c.so_id == SalesOrder.id)
                 .correlate(SalesOrder)
                 .scalar_subquery()
             ),
