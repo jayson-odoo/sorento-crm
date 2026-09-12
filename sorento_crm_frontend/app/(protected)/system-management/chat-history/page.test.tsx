@@ -59,13 +59,45 @@ vi.mock('@/components/common/container', () => ({
   Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
+const mockTurnDetailDrawer = vi.fn();
+vi.mock('./components/TurnDetailDrawer', () => ({
+  TurnDetailDrawer: (props: { turnId: string | null; shadowTurnId: string | null }) => {
+    mockTurnDetailDrawer(props);
+    return null;
+  },
+}));
+
 import ChatHistoryPage from './page';
 
 afterEach(() => {
   cleanup();
   mockGetChatMessages.mockReset();
   mockGetChatbotTurns.mockReset();
+  mockTurnDetailDrawer.mockReset();
 });
+
+function shadowRow(i: number, over: Record<string, unknown> = {}) {
+  return {
+    id: `shadow-${i}`,
+    contact_respond_id: `c${i}`,
+    message_id: null,
+    status: 'done',
+    stage: null,
+    branch_kind: 'business_query',
+    attempt: 1,
+    is_test: false,
+    created_at: '2026-09-13T00:00:00Z',
+    finished_at: '2026-09-13T00:00:01Z',
+    trace: [],
+    response: null,
+    shadow_of: `live-${i}`,
+    domains: ['inventory'],
+    contact_display: `Contact ${i}`,
+    message: 'stock check',
+    live: { id: `live-${i}`, branch_kind: 'business_query', domains: ['inventory'] },
+    ...over,
+  };
+}
 
 function renderPage() {
   mockGetChatMessages.mockResolvedValue({ items: [], next_cursor: null, pagination: { total: 0 } });
@@ -139,5 +171,72 @@ describe('ChatHistoryPage - Shadow toggle', () => {
     // empty-state sentence rather than a "0 shadow turns" line (shadowDrift.test.ts pins
     // the null-on-zero rule directly; this is the page reading it correctly).
     expect(screen.getByTestId('shadow-summary')).toHaveTextContent(/no shadow turns/i);
+  });
+
+  it('shows "Newest 200 shown" when the shadow window is capped at 200 rows', async () => {
+    mockGetChatbotTurns.mockResolvedValue({
+      items: Array.from({ length: 200 }, (_, i) => shadowRow(i)),
+      next_cursor: 'cursor-past-200',
+      summary: { count: 250, branch_parity: 0.9, asks_parity: 0.8 },
+    });
+    renderPage();
+
+    fireEvent.click(shadowToggle());
+
+    await waitFor(() => expect(screen.getByTestId('shadow-truncated')).toBeInTheDocument());
+    expect(screen.getByTestId('shadow-truncated')).toHaveTextContent(/newest 200 shown/i);
+  });
+
+  it('does NOT show the truncation notice at 199 rows (no next_cursor)', async () => {
+    mockGetChatbotTurns.mockResolvedValue({
+      items: Array.from({ length: 199 }, (_, i) => shadowRow(i)),
+      next_cursor: null,
+      summary: { count: 199, branch_parity: 0.9, asks_parity: 0.8 },
+    });
+    renderPage();
+
+    fireEvent.click(shadowToggle());
+
+    await waitFor(() =>
+      expect(screen.getByTestId('shadow-summary')).toHaveTextContent('199 shadow turns'),
+    );
+    expect(screen.queryByTestId('shadow-truncated')).toBeNull();
+  });
+
+  it('a shadow row with no live turn shows the "no live turn" badge and is not clickable', async () => {
+    mockGetChatbotTurns.mockResolvedValue({
+      items: [shadowRow(1, { live: null })],
+      next_cursor: null,
+      summary: { count: 1, branch_parity: null, asks_parity: null },
+    });
+    renderPage();
+
+    fireEvent.click(shadowToggle());
+
+    await waitFor(() => expect(screen.getByText(/no live turn/i)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText(/no live turn/i).closest('tr')!);
+
+    // No onRowClick handler is ever attached to a row `isRowClickable` refuses
+    // (`data-grid-table.tsx`'s own `opensOnClick` gate), so the drawer never opens -
+    // neither prop the drawer reads becomes non-null.
+    const lastCall = mockTurnDetailDrawer.mock.calls.at(-1)?.[0];
+    expect(lastCall?.turnId ?? null).toBeNull();
+    expect(lastCall?.shadowTurnId ?? null).toBeNull();
+  });
+
+  it('the summary line reads "first 5000" when the response says the window itself was truncated', async () => {
+    mockGetChatbotTurns.mockResolvedValue({
+      items: [shadowRow(1)],
+      next_cursor: null,
+      summary: { count: 5000, branch_parity: 0.7, asks_parity: 0.6, truncated: true },
+    });
+    renderPage();
+
+    fireEvent.click(shadowToggle());
+
+    await waitFor(() =>
+      expect(screen.getByTestId('shadow-summary')).toHaveTextContent(/first 5000/i),
+    );
   });
 });
