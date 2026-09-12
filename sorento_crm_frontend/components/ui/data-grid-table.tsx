@@ -823,6 +823,12 @@ function DataGridTableBodyRow<TData>({
   // `useReturnedRowId`) and cleared on the reader's first pointer OR key
   // interaction with the page, so it highlights "until the next pointer or key
   // event" rather than for the life of the URL.
+  // A row `isRowClickable` refuses opens nothing, so it must not offer to: no pointer, no
+  // press cue and no handler. Absent predicate means every row, which is every list that
+  // has used `onRowClick` until now.
+  const opensOnClick = Boolean(
+    props.onRowClick && (props.isRowClickable?.(row.original) ?? true),
+  );
   const restoreId = href ? rowRestoreId(table, row, rawHref) : undefined;
   const isReturned = Boolean(restoreId && returnedFromId && restoreId === returnedFromId);
   const scrollRef = React.useRef<HTMLTableRowElement | null>(null);
@@ -850,12 +856,12 @@ function DataGridTableBodyRow<TData>({
       // M5-07: the row Back restores, until the reader's next pointer event.
       'data-[returned=true]:bg-primary/5',
       extraClassName,
-      (href || props.onRowClick) && 'cursor-pointer',
+      (href || opensOnClick) && 'cursor-pointer',
       // The press cue belongs to the rows that take a press. It is not on the
       // skeleton row (nothing to open yet), and not on a stripped grid, where
       // the odd row already paints itself bg-muted/90 - darker than the /60 the
       // press would set, so the press would read as a lift, not a push.
-      (href || props.onRowClick) && !props.tableLayout?.stripped && 'active:bg-muted/60',
+      (href || opensOnClick) && !props.tableLayout?.stripped && 'active:bg-muted/60',
       !props.tableLayout?.stripped &&
         props.tableLayout?.rowBorder &&
         'border-b border-border [&:not(:last-child)>td]:border-b',
@@ -874,7 +880,7 @@ function DataGridTableBodyRow<TData>({
     );
   }
 
-  if (props.onRowClick) {
+  if (opensOnClick) {
     // A lightbox, not a URL: there is no second tab to open it in.
     return (
       <tr

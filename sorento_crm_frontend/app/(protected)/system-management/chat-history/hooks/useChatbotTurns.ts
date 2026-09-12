@@ -115,8 +115,14 @@ export function useShadowTurnList(
 
   const items = useMemo(() => query.data?.items ?? [], [query.data]);
   const summaryLine = shadowSummaryLine(query.data?.summary);
+  // WHETHER THE RANGE HAS MORE THAN THIS PAGE. The endpoint returns a cursor when it does,
+  // and the grid shows one page by design - so without saying so, a window of 4,000 turns
+  // and a window of 200 look identical and the reader would read the 200 examples as the
+  // whole range. The SUMMARY is still over everything; it is the examples that are capped.
+  const truncated = Boolean(query.data?.next_cursor);
+  const limit = filters.limit ?? 200;
 
-  return { ...query, items, summaryLine };
+  return { ...query, items, summaryLine, truncated, limit };
 }
 
 /**

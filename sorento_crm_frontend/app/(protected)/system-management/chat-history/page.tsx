@@ -141,6 +141,8 @@ export default function ChatHistoryPage() {
     summaryLine: shadowSummary,
     isLoading: shadowLoading,
     isError: shadowFailed,
+    truncated: shadowTruncated,
+    limit: shadowLimit,
   } = useShadowTurnList({ from: range.date_from, to: range.date_to }, shadowOn);
 
   const { data, isLoading, isPlaceholderData } = useQuery({
@@ -336,6 +338,21 @@ export default function ChatHistoryPage() {
         header: ({ column }) => <DataGridColumnHeader title="Drift" column={column} />,
         cell: ({ row }) => {
           const axes = rowDrift(row.original);
+          if (!row.original.live?.id) {
+            // No live turn to compare with, and none to open either. `driftAxes` already
+            // returns [] here, so "agrees" would be a claim about a comparison that never
+            // happened.
+            return (
+              <Badge
+                variant="secondary"
+                appearance="light"
+                size="sm"
+                title="The live turn this shadow was taken of is no longer stored, so there is nothing to compare it with or open."
+              >
+                no live turn
+              </Badge>
+            );
+          }
           return axes.length > 0 ? (
             <Badge variant="warning" appearance="light" size="sm">
               {axes.join(', ')}
@@ -540,8 +557,18 @@ export default function ChatHistoryPage() {
             ) : shadowLoading ? (
               'Loading the shadow window…'
             ) : (
-              (shadowSummary ??
-                'No shadow turns in this range. Set a parser shadow version in Settings > Chatbot.')
+              <>
+                {shadowSummary ??
+                  'No shadow turns in this range. Set a parser shadow version in Settings > Chatbot.'}
+                {/* The parities above are over the WHOLE range; these rows are one page of
+                    it. Said out loud, because a capped list and a complete one look the
+                    same and the reader is using the rows to explain the number. */}
+                {shadowTruncated && (
+                  <span className="ms-2" data-testid="shadow-truncated">
+                    Newest {shadowLimit} shown; narrow the date range to see the rest.
+                  </span>
+                )}
+              </>
             )}
           </div>
         )}
@@ -561,7 +588,12 @@ export default function ChatHistoryPage() {
             table={shadowTable}
             recordCount={shadowRows.length}
             isLoading={shadowLoading}
+            // A shadow row opens the LIVE turn beside it, so a row whose live turn has
+            // been deleted has nothing to open. It stays in the list - its drift badge is
+            // still evidence - and says so in the Drift cell instead of taking a press
+            // that would do nothing.
             onRowClick={(row: ChatbotTurn) => setShadowTurn(row)}
+            isRowClickable={(row: ChatbotTurn) => Boolean(row.live?.id)}
             standardToolbar={false}
             tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
             emptyMessage={
