@@ -1,7 +1,8 @@
 # PLAN: "last purchase cost" answer, per product per location, gated per contact
 
-Status: planned (12 Sep 2026), not started
-Branch: `feat/chatbot-last-purchase-cost` (to be cut from `origin/main`)
+Status: implemented, in review (12 Sep 2026)
+Branch: `feat/chatbot-last-purchase-cost`, worktree
+`.claude/worktrees/chatbot-last-purchase-cost`
 UAC: `chatbot-last-purchase-cost-acceptance-criteria.md`
 Siblings: `PLAN-chatbot-warehouse-entity-and-last-in.md` (the "last in" tool this copies the
 shape of), `PLAN-chatbot-growth-r1.md` Slice C (the per-contact field-reveal mechanism this
@@ -100,10 +101,15 @@ Second ruling, same day, against the four calls put to the owner:
   default hidden. Enforced twice: (a) the presenter marks the three money fields
   `restricted` so a stripped answer can never carry a cost; (b) the lane refuses the WHOLE
   domain without the grant, because a PO row without its cost is a different answer from
-  the one asked. The refusal reuses the existing `access_denied` canned copy
-  (`lanes/canned.py::access_denied_text`, team `purchasing`) so no new wording is invented.
-  The MCP server itself stays unfiltered (in-app assistant and n8n operators are internal),
-  same as every other restricted field.
+  the one asked. The refusal reuses the existing registered `access_denied` template
+  (`CHATBOT_REPLY_ACCESS_DENIED` = "Sorry, you are not allowed to access {{team}}") but with
+  the SUBJECT set to the feature, never the parser's `suggested_agent`: the reply text is
+  EXACTLY `Sorry, you are not allowed to access purchase cost`. `lanes/canned.py::
+  access_denied_text` (the head-level per-agent denial) is untouched; the gate calls the new
+  `lanes/canned.py::field_grant_denied_text(copy, "purchase cost")` instead, so no new
+  wording is invented and the two refusals stay independent. The MCP server itself stays
+  unfiltered (in-app assistant and n8n operators are internal), same as every other
+  restricted field.
 - D7 No migration for the grant: `contact_field_reveals` already exists; the key is a
   literal in `FIELD_REVEAL_KEYS`. The only migration is the parser prompt publish.
 
@@ -222,7 +228,26 @@ above). No new table, no new column.
 
 ## Rollout
 
+0. HARD PRECONDITION, before the label move (review S2/S3): confirm on prod that
+   `system_settings.chatbot_completed_lanes` contains `business_query` AND
+   `chatbot_business_lane_enabled` is true. A turn the CRM does not complete itself
+   DELEGATES to n8n, which has no field-reveal drop of its own - moving the parser
+   label with either switch off would let an ungranted contact reach the tool's raw
+   answer through the n8n path, bypassing the whole-domain gate entirely. `python -m
+   app.scripts.seed_mcp_tool_capabilities` is safe to run any time after deploy: the
+   `_EMBEDDING_SKIP_TOOLS` entry (SF1) removes the tool from the RAG pool and from
+   `ai_assistant_configs.enabled_tools` on the same pass, it does not add it anywhere.
 1. Deploy. The prompt version is unlabelled, so no customer turn changes.
 2. Owner grants `purchase_orders.cost` on the test contact (Contacts > Access > Field
    reveals), moves the `production` label to the new parser version, runs the console case.
 3. Rollback = move the label back and untick the key. No deploy.
+
+Owner calls, not changed (review S2/S3):
+
+(a) `GET /purchase-orders/last-cost` keeps its siblings' posture -
+`get_current_user_or_api_key`, no RBAC permission slug - because the chatbot's
+act-as principal may not hold `scm.purchase_orders.view`; a permission slug here
+would 403 the very caller this tool exists for.
+(b) The grant is issued under the `user_management.contacts.edit` permission, same as
+the existing `purchase_orders.supplier` field-reveal key - Contacts > Access is one
+screen with one edit permission, not a per-key permission matrix.
