@@ -295,8 +295,18 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 # differently without it (the 9 `live-spine-sorento-consume-main` and 3 `clone-spine-RS` /
 # `sub-resolve-and-gate-rs` turns that name a customer); the trigger to revisit is n8n
 # emitting a key by this name of its own.
+# `gate_debug.incompatible_only` (PR #735, `9a49921c9`, 8 Sep 2026): `gate.py:1471` now
+# stamps it UNCONDITIONALLY on every gate run, so any capture taken before that commit is
+# missing it the same way the two keys above are missing `specific_options` /
+# `tier_pick_domain`. Same mechanism, same reason: a blanket `Divergence` would stop
+# grading the whole node instead of the one key. Measured against the corpus after the
+# 4-5 Sep capture run: 13 `disallowed-entity-gate` fixtures (`sub-resolve-and-gate-rs` and
+# `live-spine-sorento-consume-main`) and the 2 `resolve-exit-not-found` whole-sub replays
+# that carry the gate's item onward for those same two captures predate it; nothing else
+# in the corpus is masked by this entry today, and the trigger to revisit is a capture
+# that carries the key already disagreeing with the port.
 CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
-    "disallowed-entity-gate": ("specific_options", "display_name"),
+    "disallowed-entity-gate": ("specific_options", "display_name", "incompatible_only"),
     "tier-gate": ("tier_pick_domain",),
     # S8a, AC-808: the ten entries that used to sit in `STALE_FIXTURES` are graded here
     # instead of skipped. Both groups are the same class as the two keys above - a key
@@ -331,9 +341,25 @@ CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
     "annotate-customer-picker": ("specific_options", "display_name"),
     "resolve-exit-continue": ("specific_options", "tier_pick_domain", "display_name"),
     "resolve-exit-access-ask": ("specific_options", "tier_pick_domain", "display_name"),
-    "resolve-exit-not-found": ("specific_options", "tier_pick_domain", "display_name"),
+    "resolve-exit-not-found": (
+        "specific_options",
+        "tier_pick_domain",
+        "display_name",
+        "incompatible_only",
+    ),
     "resolve-exit-offer": ("specific_options", "tier_pick_domain", "display_name"),
-    "sub-resolve-and-gate": ("specific_options", "tier_pick_domain", "display_name"),
+    # `test_full_corpus_whole_sub_replay`'s synthetic node: `_compare` keys off
+    # `fixture.node`, which for that parametrization is "sub-resolve-and-gate" even when
+    # the fixture id is prefixed with the exit arm's own name
+    # (`resolve-exit-not-found/sub-resolve-and-gate-rs/rg-...`), so this entry - not
+    # `resolve-exit-not-found`'s - is the one that actually strips `incompatible_only`
+    # for those two whole-sub replays.
+    "sub-resolve-and-gate": (
+        "specific_options",
+        "tier_pick_domain",
+        "display_name",
+        "incompatible_only",
+    ),
 }
 
 
