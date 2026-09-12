@@ -146,6 +146,24 @@ _CHANGED_WITH_LINKS_PENDING_KEY = "oi_changed_with_links_pending"
 #: `_notify_purchasing` / `register_order_inquiry_post_commit_dispatch`.
 _PURCHASING_NOTIFY_PENDING_KEY = "oi_purchasing_notify_pending"
 
+
+def _transaction_chain(session) -> List[Any]:
+    """The transaction a queued item was written under, and every one above it.
+
+    A batch apply gives EACH ORDER its own savepoint, and one order's rollback must not
+    take a sibling's already-earned notification with it (review round, C2: popping the
+    whole queue on `after_soft_rollback` discarded order 1's because order 2 failed). The
+    chain is what makes "was this item written inside the thing that just rolled back?"
+    answerable: an item is discarded only when the rolled-back transaction IS one of its
+    own ancestors. Identity, not `id()` - a dead object's id can be reused.
+    """
+    current = session.get_nested_transaction() or session.get_transaction()
+    chain: List[Any] = []
+    while current is not None:
+        chain.append(current)
+        current = getattr(current, "parent", None)
+    return chain
+
 #: How many purchase orders `relink_to_matching_lines` walks per pass. A purchase-history
 #: upload names thousands of documents in one call, and one `IN` list that long is a bad
 #: plan and, on some drivers, a refused statement.
@@ -1807,6 +1825,9 @@ class ProjectOrderInquiryService:
             return
         self.db.info.setdefault(_PURCHASING_NOTIFY_PENDING_KEY, []).append(
             {
+                #: Which savepoint this was earned under (C2), so a sibling order's
+                #: rollback cannot discard it.
+                "tx_chain": _transaction_chain(self.db),
                 "user_ids": [str(user_id) for user_id in user_ids],
                 "title": f"Order inquiry {reference}",
                 "body": (
@@ -6186,7 +6207,22 @@ def register_order_inquiry_post_commit_dispatch() -> None:
     @event.listens_for(Session, "after_soft_rollback")
     def _discard_pending_changed_with_links(session, previous_transaction):  # noqa: ANN001
         session.info.pop(_CHANGED_WITH_LINKS_PENDING_KEY, None)
-        # A write that never landed has nothing to tell purchasing about either.
-        session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
+        # A write that never landed has nothing to tell purchasing about either - but ONLY
+        # that write. This fires on a nested rollback too, and a batch apply gives each
+        # order its own savepoint, so popping the whole queue let a failing order discard a
+        # sibling's notification (C2, review round). An item goes only when the transaction
+        # that just rolled back is one of its own ancestors.
+        pending = session.info.get(_PURCHASING_NOTIFY_PENDING_KEY)
+        if not pending:
+            return
+        kept = [
+            item
+            for item in pending
+            if not any(tx is previous_transaction for tx in item.get("tx_chain") or ())
+        ]
+        if kept:
+            session.info[_PURCHASING_NOTIFY_PENDING_KEY] = kept
+        else:
+            session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
 
     _POST_COMMIT_DISPATCH_REGISTERED = True

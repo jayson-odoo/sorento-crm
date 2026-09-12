@@ -104,6 +104,10 @@ from app.services.scm.outstanding_diff import (
     Diff,
     states_settled,
 )
+#: Rule 2 retired this service's OWN use of the window for the size of a move - the ladder's
+#: step 0 decides whether a line that far out may hold stock. It survives for one thing the
+#: ladder cannot see (rule 7, S10): how long a DOCUMENT this line already holds would have to
+#: sit before the line needs it. One constant, read from where it is defined.
 from app.services.project_so_delta_service import RESERVE_WINDOW_DAYS
 
 logger = logging.getLogger(__name__)
@@ -154,6 +158,16 @@ _CLASSES = ("reserve", "borrow", "spo", "buy")
 #: How a class names itself inside a "Reduce X 100 to 0" sentence. `Buy` is capitalised
 #: because it is the name of the Order Inquiry row a reader is looking at, not a noun.
 _CLASS_WORD = {"reserve": "reserve", "borrow": "borrow", "spo": "SPO", "buy": "Buy"}
+
+
+def _qty_of(qty: Decimal, item_code: Optional[str] = None) -> str:
+    """`134`, or `134 B2155-NL-WHITE` on a row that is about two products.
+
+    Only a `product_changed` row passes an item code (C5, review round): everywhere else
+    the row header already names the one product every component is about, and repeating
+    it in eight sentences is noise.
+    """
+    return f"{qty_text(qty)} {item_code}" if item_code else qty_text(qty)
 
 
 def _day(value: Any) -> str:
@@ -303,6 +317,7 @@ def _sourcing_components(
     out: List[dict] = []
     for qty, source in _split_over_sources(proposed["qty"], proposed["sources"]):
         location = source.get("location")
+        said = _qty_of(qty, item_code)
         if klass == "reserve":
             # The pool-share rung is the ONE step allowed to cover part of a unit, and only
             # inside the immediate window (rule 1), so it is named as itself rather than
@@ -310,15 +325,14 @@ def _sourcing_components(
             if source.get("rung") == "pool":
                 out.append(_component(
                     "use_own", "pool_share", qty,
-                    f"Pool share {qty_text(qty)} at {location}" if location
-                    else f"Pool share {qty_text(qty)}",
+                    f"Pool share {said} at {location}" if location
+                    else f"Pool share {said}",
                     location=location, item_code=item_code,
                 ))
             else:
                 out.append(_component(
                     "use_own", "reserve", qty,
-                    f"Use own {qty_text(qty)} at {location}" if location
-                    else f"Use own {qty_text(qty)}",
+                    f"Use own {said} at {location}" if location else f"Use own {said}",
                     location=location, item_code=item_code,
                 ))
         elif klass == "borrow":
@@ -326,13 +340,13 @@ def _sourcing_components(
             whose = donor or location
             out.append(_component(
                 "borrow", "borrow", qty,
-                f"Borrow {qty_text(qty)} from {whose}, order-back raised" if whose
-                else f"Borrow {qty_text(qty)}, order-back raised",
+                f"Borrow {said} from {whose}, order-back raised" if whose
+                else f"Borrow {said}, order-back raised",
                 location=location, target=donor, item_code=item_code,
             ))
         elif klass == "spo":
             document = source.get("supply_document")
-            label = f"SPO {qty_text(qty)} on {document}" if document else f"SPO {qty_text(qty)}"
+            label = f"SPO {said} on {document}" if document else f"SPO {said}"
             if new_date:
                 label = f"{label} for {_day(new_date)}"
             out.append(_component(
@@ -341,11 +355,13 @@ def _sourcing_components(
         else:
             # Rule 8: inside the immediate window a purchase cannot land in time, so the
             # remainder is SAID to be short rather than promised as a Buy nobody can keep.
-            label = (
-                f"Short {qty_text(qty)} by {_day(new_date)}"
-                if shortfall
-                else f"Buy {qty_text(qty)} for {_day(new_date)}"
-            )
+            # It names the Buy it came off, because that row is what a reader is holding.
+            if shortfall:
+                label = f"Short {said} by {_day(new_date)}"
+                if qty_was is not None:
+                    label = f"{label} (was Buy {qty_text(qty_was)})"
+            else:
+                label = f"Buy {said} for {_day(new_date)}"
             out.append(_component(
                 "buy", "buy", qty, label, qty_was=qty_was, item_code=item_code,
             ))
@@ -371,24 +387,24 @@ def _release_components(
     document = placed.get("document")
     out: List[dict] = []
     for qty, location in held_by["reserve"]:
+        said = _qty_of(qty, item_code)
         out.append(_component(
             "release", "reserve", qty,
-            f"Release {qty_text(qty)} to dealer pool" if dealer
-            else (f"Release {qty_text(qty)}, free at {location}" if location
-                  else f"Release {qty_text(qty)}"),
+            f"Release {said} to dealer pool" if dealer
+            else (f"Release {said}, free at {location}" if location else f"Release {said}"),
             location=location, target="dealer pool" if dealer else None,
             item_code=item_code,
         ))
     for qty, location in held_by["borrow"]:
         out.append(_component(
             "release", "borrow", qty,
-            f"Release borrow {qty_text(qty)}, the order-back is cancelled",
+            f"Release borrow {_qty_of(qty, item_code)}, the order-back is cancelled",
             location=location, item_code=item_code,
         ))
     for qty, _location in held_by["spo"]:
         out.append(_component(
             "reallocate", "spo", qty,
-            f"Reallocate SPO {qty_text(qty)} to {target}",
+            f"Reallocate SPO {_qty_of(qty, item_code)} to {target}",
             target=target, item_code=item_code,
         ))
     for qty, _location in held_by["buy"]:
@@ -397,14 +413,15 @@ def _release_components(
         if unplaced > _ZERO:
             out.append(_component(
                 "reduce", "buy", _ZERO,
-                f"Reduce Buy {qty_text(unplaced)} to 0",
+                f"Reduce Buy {_qty_of(unplaced, item_code)} to 0",
                 qty_was=unplaced, item_code=item_code,
             ))
         if on_document > _ZERO:
+            said = _qty_of(on_document, item_code)
             out.append(_component(
                 "reallocate", "po", on_document,
-                f"Reallocate {document} {qty_text(on_document)} to {target}" if document
-                else f"Reallocate {qty_text(on_document)} to {target}",
+                f"Reallocate {document} {said} to {target}" if document
+                else f"Reallocate {said} to {target}",
                 document=document, target=target, item_code=item_code,
             ))
     return out
@@ -453,7 +470,6 @@ def compose_suggestion(
     facts = facts or {}
     held_by = _held_classes(held)
     proposed = _proposed_classes(proposal)
-    new_date = facts.get("new_date")
     late_days: Optional[int] = None
     shortfall_qty: Optional[str] = None
 
@@ -491,12 +507,14 @@ def compose_suggestion(
     placed_qty = _dec(placed.get("qty"))
     document = placed.get("document")
     target = facts.get("reallocate_to") or "pool"
-    dealer = bool((facts.get("dealer_hot_selling") or {}).get("value"))
     # Rule 8: a purchase cannot land inside the immediate window, so whatever the ladder
     # leaves as a Buy for a line due that soon is a SHORTFALL, stated as one.
     immediate = bool(facts.get("immediate"))
 
     components: List[dict] = []
+    #: Said after everything else, whatever order it was found in: a shortfall is what is
+    #: left over once every rung that could cover part of the unit has had its say (C4).
+    deferred: List[dict] = []
     sourced: set = set()
     for klass in _CLASSES:
         held_total = sum((qty for qty, _ in held_by[klass]), _ZERO)
@@ -510,11 +528,30 @@ def compose_suggestion(
             unplaced = held_total - on_document
             if immediate and wanted > _ZERO:
                 # The remainder stays a Buy and the board says how short the line is,
-                # rather than promising a date nobody can keep.
+                # rather than promising a date nobody can keep. LAST in the suggestion
+                # (review round, C4): it is what is left after everything that could cover
+                # part of the unit has been named.
                 shortfall_qty = qty_text(wanted)
-                components.extend(_sourcing_components(
+                deferred.extend(_sourcing_components(
                     klass, proposed[klass], facts, shortfall=True, qty_was=held_total,
                 ))
+                continue
+            if on_document > _ZERO and _document_outstays_the_window(facts):
+                # Rule 7: the line has moved so far out that the document it holds would
+                # sit more than a window before anyone wants it. Reallocated WHOLE, and the
+                # line is bought again for its own date.
+                if unplaced > _ZERO:
+                    components.append(_component(
+                        "reduce", "buy", _ZERO,
+                        f"Reduce Buy {qty_text(unplaced)} to 0", qty_was=unplaced,
+                    ))
+                components.append(_component(
+                    "reallocate", "po", on_document,
+                    f"Reallocate {document} {qty_text(on_document)} to {target}" if document
+                    else f"Reallocate {qty_text(on_document)} to {target}",
+                    document=document, target=target,
+                ))
+                components.extend(_sourcing_components(klass, proposed[klass], facts))
                 continue
             if wanted > held_total:
                 # Rule 4: a top-up JOINS the held Buy, on the same inquiry row.
@@ -537,14 +574,14 @@ def compose_suggestion(
             cut_placed = cut - cut_unplaced
             kept_placed = on_document - cut_placed
             if kept_placed > _ZERO:
+                # `late_days` is the fact; the board prints "Late by N days" from it, so the
+                # sentence does not say it a second time (review round, C6).
                 late_days = _late_days(facts, kept_placed)
                 label = (
                     f"Keep {document} {qty_text(kept_placed)} of {qty_text(on_document)}"
                     if cut_placed > _ZERO and document
                     else f"Keep {qty_text(kept_placed)}"
                 )
-                if late_days:
-                    label = f"{label}, late by {_days_word(late_days)}"
                 components.append(_component(
                     "keep", "po", kept_placed, label,
                     qty_was=on_document if cut_placed > _ZERO else None,
@@ -593,15 +630,40 @@ def compose_suggestion(
         shortfall = klass == "buy" and immediate
         if shortfall:
             shortfall_qty = qty_text(proposed[klass]["qty"])
-        components.extend(_sourcing_components(
-            klass, proposed[klass], facts, shortfall=shortfall,
-        ))
+            deferred.extend(_sourcing_components(
+                klass, proposed[klass], facts, shortfall=True,
+            ))
+            continue
+        components.extend(_sourcing_components(klass, proposed[klass], facts))
 
     return {
-        "components": components,
+        "components": components + deferred,
         "late_days": late_days,
         "shortfall_qty": shortfall_qty,
     }
+
+
+def _document_outstays_the_window(facts: dict) -> bool:
+    """Would the document this line already holds sit unwanted for longer than the window?
+
+    Rule 7 / S10, and the owner's own ruling on the grill page's open 4.2: "never hold stock
+    for a far date". A purchase order landing in October against a line that has moved to
+    March is five months of stock held for one order while everyone else waits - so the
+    document is REALLOCATED to whoever needs it (rule 6) and the line is bought again nearer
+    its own date. Keeping it is available as an Amend, never as the suggestion.
+
+    The measure is the reserve window itself (`RESERVE_WINDOW_DAYS`, the one constant, read
+    from where it is defined): a document arriving more than a window before the line needs
+    it is being held for a far date, which is exactly what step 0 refuses to do with stock.
+    """
+    placed = facts.get("placed") or {}
+    arrival = _as_date(placed.get("arrival_date"))
+    new_date = _as_date(facts.get("new_date"))
+    if arrival is None or new_date is None:
+        return False
+    from datetime import timedelta
+
+    return arrival + timedelta(days=RESERVE_WINDOW_DAYS) < new_date
 
 
 def _late_days(facts: dict, kept_qty: Decimal) -> Optional[int]:
@@ -1252,8 +1314,9 @@ def _reallocation_target(
         .first()
     )
     label = (so_number[0] or so_number[1]) if so_number else None
-    verb = "ORDER BACK" if best.verb == IV_ORDER_BACK else "ORDER"
-    return f"{label} {verb} {qty_text(unlinked)}" if label else "pool"
+    # Always "ORDER": the candidate filter above takes only ORDER / RESERVE_AND_ORDER rows,
+    # because an ORDER BACK is a debt owed to a donor, not demand waiting for a document.
+    return f"{label} ORDER {qty_text(unlinked)}" if label else "pool"
 
 
 def _is_immediate(new_date: Optional[date]) -> bool:
@@ -1322,10 +1385,9 @@ def _placed_offset_note(qty: Decimal, po_number: Optional[str]) -> str:
 def _trim_sources_for_offset(
     sources: List[dict], kind: str, take: Decimal
 ) -> Tuple[List[dict], List[Tuple[Optional[str], Decimal]]]:
-    """Removes `take` from `sources`' own entries of `kind`, LARGEST-first - the same
-    convention `_confirm_payload_reduce` already trims Reserve/Borrow components by - so
-    the sources list keeps agreeing with whatever `_apply_placed_offset` just moved off
-    the matching aggregate. Returns the trimmed list and, in the order trimmed, each
+    """Removes `take` from `sources`' own entries of `kind`, LARGEST-first, so the sources
+    list keeps agreeing with whatever `_apply_placed_offset` just moved off the matching
+    aggregate. Returns the trimmed list and, in the order trimmed, each
     cut's `(location, qty)` for `_annotate_trail_for_offset` to match against the trail.
     """
     if take <= _ZERO:
@@ -1520,6 +1582,69 @@ def _moved_transfers(db: Session, core_line_ids: Sequence[str]) -> Dict[str, str
     return {line_id: ", ".join(parts) for line_id, parts in out.items()}
 
 
+def compose_row_state(
+    db: Session,
+    *,
+    kind: str,
+    held: Optional[dict],
+    facts: dict,
+    from_json: dict,
+    to_json: dict,
+    item_code: Optional[str],
+    product_id: Optional[str],
+    project_line_id: Optional[str],
+    core_line_id: Optional[str],
+    so_number: str,
+    board_cache: Dict[Tuple[str, Optional[str]], dict],
+) -> Tuple[Optional[dict], dict, Optional[dict]]:
+    """What a row says about its own change, from the state of the world right now: the
+    re-run, the suggestion that diffs it against the hold, and the composition Apply posts.
+
+    `facts` is COMPLETED IN PLACE with the three the diff needs that are not on the line
+    itself - where freed quantity would go, and (already set by the caller) what is on a
+    document and whether the date is inside the immediate window.
+
+    One function because two callers need exactly this and must not drift: `_build_row`
+    when a change is raised, and `scripts/recompute_planning_change_proposals.py` when a
+    PENDING row raised before this slice has to be brought up to it.
+    """
+    if _dec((facts.get("placed") or {}).get("qty")) > _ZERO or _dec(
+        (held or {}).get("timely_spo_qty")
+    ) > _ZERO:
+        # Only asked when something could actually be freed - it ranks every waiting row
+        # for the product, and most changed lines free nothing.
+        facts["reallocate_to"] = _reallocation_target(
+            db,
+            project_line_id,
+            product_id,
+            bool((facts.get("dealer_hot_selling") or {}).get("value")),
+        )
+    if kind == "product_changed":
+        facts["item_code_was"] = from_json.get("item_code")
+        facts["item_code_now"] = to_json.get("item_code") or item_code
+
+    # THE RE-RUN, for every kind on a line that still exists (rule 3): the suggestion is
+    # the diff of it against the hold, so a row without it has nothing to diff. Skipped for
+    # `cancelled` alone - the line is gone, so there is nothing to walk the ladder for.
+    proposal = None
+    if kind != "cancelled" and core_line_id:
+        proposal = _json_safe(
+            _proposal_for(db, board_cache, so_number, str(core_line_id), project_line_id)
+        )
+        if proposal:
+            buy_actioned = facts.get("buy_actioned") or {}
+            proposal = _apply_placed_offset(
+                proposal, _dec(buy_actioned.get("qty")), buy_actioned.get("po_number")
+            )
+
+    suggestion = compose_suggestion(kind, held, proposal, facts)
+    # PRE-FILLED (Slice C contract A): Confirm posts this unchanged and Amend edits it, so
+    # the composition a row shows is the one it will actually post. `set_row_decision`
+    # still validates it against the line's open quantity when the decision is taken.
+    composition = composition_from_proposal(proposal) or None
+    return proposal, suggestion, composition
+
+
 def _build_row(
     db: Session,
     batch: PlanningChangeBatch,
@@ -1589,16 +1714,6 @@ def _build_row(
         "old_date": old_date.isoformat() if old_date else None,
         "immediate": _is_immediate(new_date),
     }
-    if _dec(placed.get("qty")) > _ZERO or _dec((held or {}).get("timely_spo_qty")) > _ZERO:
-        # Only asked when something could actually be freed - it ranks every waiting row
-        # for the product, and most changed lines free nothing.
-        facts["reallocate_to"] = _reallocation_target(
-            db, project_line_id, product_id, dealer_hot_selling
-        )
-    if kind == "product_changed":
-        facts["item_code_was"] = from_json.get("item_code")
-        facts["item_code_now"] = to_json.get("item_code") or c.item_code
-
     # AC-P3-9: stock that has already physically moved for this line. On `facts_json`
     # rather than a column of its own - it is a fact the row states, exactly like the
     # others here, and it needs no migration to say it. `row_out` lifts it to the wire,
@@ -1609,24 +1724,20 @@ def _build_row(
             f"{moved}, line cancelled" if kind == "cancelled" else moved
         )
 
-    # THE RE-RUN, for every kind on a line that still exists (rule 3): the suggestion is
-    # the diff of it against the hold, so a row without it has nothing to diff. Skipped for
-    # `cancelled` alone - the line is gone, so there is nothing to walk the ladder for.
-    proposal = None
-    if kind != "cancelled":
-        proposal = _json_safe(
-            _proposal_for(db, board_cache, so_number, entry["core_line_id"], project_line_id)
-        )
-        if proposal:
-            proposal = _apply_placed_offset(
-                proposal, _dec(buy_actioned.get("qty")), buy_actioned.get("po_number")
-            )
-
-    suggestion = compose_suggestion(kind, held, proposal, facts)
-    # PRE-FILLED (Slice C contract A): Confirm posts this unchanged and Amend edits it, so
-    # the composition a row shows is the one it will actually post. `set_row_decision`
-    # still validates it against the line's open quantity when the decision is taken.
-    composition = composition_from_proposal(proposal) or None
+    proposal, suggestion, composition = compose_row_state(
+        db,
+        kind=kind,
+        held=held,
+        facts=facts,
+        from_json=from_json,
+        to_json=to_json,
+        item_code=c.item_code,
+        product_id=product_id,
+        project_line_id=project_line_id,
+        core_line_id=entry["core_line_id"],
+        so_number=so_number,
+        board_cache=board_cache,
+    )
 
     board_link = _board_link(so_number, c.item_code, new_date or old_date)
 
@@ -2264,55 +2375,6 @@ def set_row_decision(
 # ============================================================================
 
 
-def _confirm_payload(project_line_id: str, frozen_entry: dict) -> dict:
-    """One covered line's FROZEN composition, in the shape a `ConfirmLine` is built from.
-
-    No caller in the apply path since Slice C - a row is applied from the composition CS
-    confirmed, never from a verb Apply re-decided off the snapshot - but kept as the one
-    place that reads a frozen entry back into confirm shape;
-    `tests/scm/test_ladder_v7_supply_borrow_fixes.py` pins its donor-field handling.
-    """
-    components = frozen_entry.get("components") or []
-    reserve = [
-        {"warehouse_id": c.get("source_warehouse_id"), "qty": _dec(c.get("qty"))}
-        for c in components
-        if c.get("kind") == RESERVE and c.get("source_warehouse_id")
-    ]
-    borrow = [
-        {
-            "source": c.get("source") or ALLOC_SOURCE_OTHER_LOCATION,
-            "warehouse_id": c.get("source_warehouse_id"),
-            "donor_project_id": c.get("donor_project_id"),
-            "qty": _dec(c.get("qty")),
-            "reason": c.get("cs_reason") or "",
-            # LADDER v7.1 STEP 3 (S4): the DOCUMENT this borrow comes off, carried verbatim.
-            # A keep or a reduce re-posts the frozen composition, and without these three a
-            # step-3 borrow was re-confirmed as an ordinary free-stock borrow: its placement
-            # link came down, the quantity was re-checked against on-hand capacity at a bin
-            # holding a container that has not landed, and the phantom hold that survived
-            # held nothing at all.
-            "supply_key": c.get("supply_key"),
-            "supply_document": c.get("supply_document"),
-            "arrival_date": c.get("arrival_date"),
-        }
-        for c in components
-        if c.get("kind") == BORROW and c.get("source_warehouse_id")
-    ]
-    buy_qty = sum((_dec(c.get("qty")) for c in components if c.get("kind") == BUY), _ZERO)
-    timely_qty = sum(
-        (_dec(c.get("qty")) for c in components if c.get("kind") == TIMELY_SPO), _ZERO
-    )
-    return {
-        "project_line_id": project_line_id,
-        "timely_spo_qty": timely_qty,
-        "reserve": reserve,
-        "borrow": borrow,
-        "buy_qty": buy_qty,
-        "buy_reason": frozen_entry.get("buy_reason"),
-        "amend_reason": frozen_entry.get("amend_reason"),
-    }
-
-
 def _released_reserve(held: Optional[dict]) -> dict:
     """What AC-R06's `released` result names: the location(s) and quantity a `release` row
     gave up. Read off the row's own frozen `held_json` (what it said at build time), never a
@@ -2411,8 +2473,8 @@ def _apply_placed_redirect(
     for the composed Reserve - an amendment may have removed or resized that Reserve by
     hand, and this function has no way to tell that apart from one the planner meant.
 
-    Redirects WHOLE rows only, largest-first (`_confirm_payload_reduce`'s own
-    convention), up to the budget `_apply_placed_offset` computed. A row bigger than what
+    Redirects WHOLE rows only, largest-first, up to the budget `_apply_placed_offset`
+    computed. A row bigger than what
     is left of the budget is left alone rather than split - the genuine leftover, if the
     budget cannot be exactly matched by whole rows, still nets to a `CANCEL_BALANCE`
     exception at `refresh_for_decision`, which is the honest answer for placed quantity
@@ -3310,7 +3372,7 @@ def apply(
             reason = "This sales order no longer exists."
             for r in order_rows:
                 if (
-                    r.decision in ("accept", "confirm", "amend")
+                    r.decision in ("confirm", "amend")
                     and r.applied_state == PLANNING_CHANGE_STATE_PENDING
                 ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
@@ -3331,7 +3393,7 @@ def apply(
             logger.exception("planning change apply failed for order %s", so_number)
             for r in order_rows:
                 if (
-                    r.decision in ("accept", "confirm", "amend")
+                    r.decision in ("confirm", "amend")
                     and r.applied_state == PLANNING_CHANGE_STATE_PENDING
                 ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
