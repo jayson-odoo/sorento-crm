@@ -323,7 +323,7 @@ def _from_to(c) -> Tuple[dict, dict]:
         "status": "open" if before else None,
         # The OLD product, on a `product_changed` row only - `None` everywhere else, same
         # as the fields above (Slice A rule 5, "carrying the old and the new product").
-        "item_code": before.item_code if before else None,
+        "item_code": before.item_code if (before and c.kind == PRODUCT_CHANGED) else None,
     }
     if c.kind == CLOSED:
         to_ = {"required_date": None, "qty": None, "status": "closed", "item_code": None}
@@ -334,7 +334,7 @@ def _from_to(c) -> Tuple[dict, dict]:
             else None,
             "qty": qty_text(_dec(after.qty)) if after else None,
             "status": "open" if after else None,
-            "item_code": after.item_code if after else None,
+            "item_code": after.item_code if (after and c.kind == PRODUCT_CHANGED) else None,
         }
     return from_, to_
 
