@@ -2364,6 +2364,21 @@ def _fmt_date(value: Any) -> str:
     return f"{match.group(3)}/{match.group(2)}/{match.group(1)}" if match else jsc.nullish_str(value)
 
 
+def _outstanding_report_text(item: Any) -> str:
+    """The rendered outstanding-report reply on a MISS, or "" for every other answer.
+
+    `fetch.output_structurer`'s `crm_outstanding_report` branch stamps
+    `outstanding_report` on the same item the miss lane is handed (through `validator`
+    and `build_result`, both of which pass the body through), and `response` is the text
+    `sorento_crm_mcp.presenters._outstanding_report` rendered. One marker, one tool - a
+    miss from anything else never matches here.
+    """
+    body = item if isinstance(item, dict) else {}
+    if body.get("outstanding_report") is not True:
+        return ""
+    return jsc.js_string(body.get("response") or "").strip()
+
+
 def not_found_error_message(
     item: dict[str, Any] | None,
     *,
@@ -3038,6 +3053,23 @@ def not_found_error_message(
                         f"Could not find{active_inactive} {subject}{date_range}{access}. "
                         f"Would you like me to escalate to {team} team?"
                     )
+            elif _outstanding_report_text(item):
+                # AC-1107 / S4 point 6, and the owner's approved miss mock: an outstanding
+                # report that came back empty ALREADY says what was searched and what was
+                # not there, in the words the owner signed off on - its own header plus
+                # `*Sales order outstanding*` / `No open sales order.` and the DO pair.
+                # The generic breakdown above would print `Customer / Product / Dates` and
+                # "Here's what you want" over the top of that and drop both block lines,
+                # which is a different answer to the question that was asked. Only the
+                # frozen escalate question is appended, unchanged, so the offer and the
+                # team picker behind it work exactly as they do on every other miss.
+                # THIS TOOL ONLY: no other miss reaches here, because no other answer
+                # carries `outstanding_report`.
+                escalate_message = (
+                    f"{_outstanding_report_text(item)}\n\n"
+                    f"Would you like me to escalate to {team} team?"
+                )
+                found_summary = _outstanding_report_text(item)
             else:
                 # status-filter-aware: a SPECIFIC order resolved (the DO exists) but the
                 # delivered / outstanding filter returned nothing, so the order is not a miss,

@@ -1100,6 +1100,38 @@ class TestTotalMissEscalates:
             f"a miss offers no detail list: {stored.get('pending')!r}"
         )
 
+    def test_total_miss_keeps_the_report_block_lines_then_offers_escalation(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """AC-1107 in full (owner's approved miss mock on the lavish page): the reply is
+        the REPORT's own header and block lines, then the escalate offer - not the
+        generic miss lane's `Customer / Product / Dates` header and "Here's what you
+        want" bullets, which say nothing about sales orders or delivery orders and drop
+        the two lines the owner signed off on."""
+        _seed_contact(session_factory, variables={})
+        result, _captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="outstanding_both"),
+            text_body="SRTWT7445 outstanding both",
+            msg_id="ZZT-outstanding-miss-2",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_MISS,
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "*Sales order outstanding*\nNo open sales order." in reply, reply
+        assert "*Delivery order pending*\nNo pending delivery order." in reply, reply
+        offer_at = reply.index("Would you like me to escalate")
+        assert reply.index("No open sales order.") < offer_at, reply
+        assert reply.index("No pending delivery order.") < offer_at, reply
+        assert reply.startswith(f"Product: {PRODUCT_CODE}"), (
+            f"the report's own header opens the miss, not the generic one: {reply!r}"
+        )
+        assert "Here's what you want:" not in reply, (
+            f"the generic miss bullets must not print over the report's own lines: {reply!r}"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # AC-1138 - the detail pick re-runs the SAME tool with detail=so|do
