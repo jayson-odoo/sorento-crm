@@ -1049,6 +1049,15 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # scope question AGAIN, so the customer could not leave the question except by
     # answering it. A pick (a number, or a scope word) is what an ANSWER looks like, and
     # only an answer keeps the pending alive.
+    # Console run 4, finding 7: this function is called TWICE (see the docstring), and
+    # between the two calls the generic "reference_positions -> entities" step rewrites
+    # the turn's entities to the picked ROW LABEL ("Sales order list", hinted order).
+    # The second pass then read that as a turn bringing its own question, dropped the
+    # pending it had just consumed, and left the lane with no product at all - so "1"
+    # answered with the plain order list. A pending this turn has ALREADY consumed stays
+    # consumed: the second pass re-asserts the same answer instead of re-deciding it.
+    already_applied = jsc.truthy(o.get("outstanding_answer_applied"))
+
     named_entities = jsc.array(o.get("entities"))
     names_product = any(
         jsc.js_string(jsc.get(e, "hint") or "") == "product" for e in named_entities
@@ -1061,7 +1070,13 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # open looked like an answer and inherited the old product, customer and location. A
     # turn that names a PRODUCT is a new ask, whatever else it says - the product is the
     # subject of this report, and there can only be one.
-    if names_product or (own_question and (kind == "outstanding_detail" or picked is None)):
+    #
+    # The new-ask decision is made ONCE, on the first pass: by the second the fields it
+    # reads are this function's OWN output (the domain it stamped, the picked row's
+    # label written over the entities), so re-deciding could only ever undo the answer.
+    if not already_applied and (
+        names_product or (own_question and (kind == "outstanding_detail" or picked is None))
+    ):
         # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask is
         # DROPPED here, and every later reader of `prev_pending` this turn has to see that
         # - the scope-ask signal below and the `outstanding_filters` carry in
@@ -1071,6 +1086,7 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
         o["outstanding_pending_dropped"] = True
         return
 
+    o["outstanding_answer_applied"] = True
     o["domain_hint"] = "order"
     o["message_type"] = "business_query"
     o["intent_hint"] = "check_order"

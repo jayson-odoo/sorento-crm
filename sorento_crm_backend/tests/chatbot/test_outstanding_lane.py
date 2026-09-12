@@ -1555,6 +1555,80 @@ class TestDetailPickRerunsToolWithDetail:
             f"the reply must be the numbered SO detail list (AC-1106): {reply!r}"
         )
 
+    def test_the_live_pick_shape_reruns_the_report_not_the_order_list(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Finding 7 (console run 4), with the LIVE parser output as its contract - read
+        off `chatbot.turns.trace` for the real "1" turn on the prod copy:
+
+            parser raw: message_type casual, entities [], reference_positions [1]
+            received:   pending outstanding_detail, last_result_set the two offer rows
+
+        which is what the two tests above already feed. They pass because their FAKE
+        resolver resolves every token to the product, so the gate always saw one. Through
+        the REAL resolver the turn goes the way production did: the generic
+        "reference_positions -> entities" step (`output_exchange.py`) rewrites the turn's
+        entities to the picked ROW LABEL ("Sales order list", hinted order), the carried
+        product entity is gone, the final `_apply_outstanding_pending` pass then reads
+        those entities as a NEW ask and drops the pending - so the lane has no product,
+        falls through the report override and answers with the plain order list, exactly
+        as the console run read."""
+        from tests._mc_lookup_seed import product as seed_product
+
+        db = session_factory()
+        seed_product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT7445")
+        db.commit()
+        _seed_contact(
+            session_factory,
+            variables={
+                "message_type": "business_query",
+                "domain_hint": "order",
+                "entities": [],
+                "selection_context": "outstanding_detail",
+                "last_result_set": [
+                    {"idx": 1, "label": "Sales order list", "value": "so"},
+                    {"idx": 2, "label": "Delivery order list", "value": "do"},
+                ],
+                "outstanding_filters": {
+                    "product_code": "ZZT7445",
+                    "date_filter_start": "2026-01-01",
+                    "date_filter_end": "2026-12-31",
+                    "customer_ids": [],
+                    "warehouse_codes": [],
+                    "location_token": None,
+                },
+                "pending": {"kind": "outstanding_detail"},
+            },
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-live-pick-1",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+            real_resolver=True,
+        )
+        assert captured, "the detail pick must re-run a tool"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (
+            f"'1' against an open detail offer re-runs the REPORT, never the plain order "
+            f"list: {name} {args}"
+        )
+        assert args.get("detail") == "so", f"'1' must ask for the SO detail: {args}"
+        assert args.get("product_code") == "ZZT7445", (
+            f"the carried product must survive the positional pick: {args}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "*SO Number:*" in reply, f"the reply must be the numbered SO list: {reply!r}"
+        assert "Couldn't find" not in reply, (
+            f"the picked ROW LABEL is not an entity to look up: {reply!r}"
+        )
+
     def test_a_new_product_code_drops_the_pending(self, session_factory, monkeypatch) -> None:
         _seed_open_outstanding_detail(session_factory)
         other_uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
