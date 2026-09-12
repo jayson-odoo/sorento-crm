@@ -1127,6 +1127,12 @@ class DocumentIngestService(MasterRefResolver):
                     qty=float(row.qty_ordered or 0),
                     required_date=row.required_date,
                     row_ref=str(row.id),
+                    # Same identity `SalesOrderService._propagate_planning_change` sets
+                    # (Slice A review round, R-S1): a product swap on the SAME line, if
+                    # the ingest sync writes IN PLACE, pairs by `line_id` into one
+                    # `product_changed` row instead of a `closed` plus an unrelated
+                    # `added`.
+                    line_id=str(row.id),
                 )
             )
 
@@ -1153,6 +1159,7 @@ class DocumentIngestService(MasterRefResolver):
                     qty=float(row.qty_ordered or 0),
                     required_date=row.required_date,
                     row_ref=str(row.id),
+                    line_id=str(row.id),
                 )
             )
 
