@@ -1456,13 +1456,34 @@ async def get_outstanding_report(
             code="invalid_scope",
         )
 
+    # S3 (security review, 13 Sep 2026): `customer_ids` is a UUID param like every
+    # other `<entity>_ids` in this file (`_resolved_customer_ids = parse_uuid_list(...)`
+    # a few routes up) - `_normalize_entities` is for opaque strings (warehouse codes),
+    # and accepted a non-UUID value silently here where `outstanding_report_service`
+    # would then filter on it and just find nothing, rather than 400 on the caller's
+    # own malformed input. Both lists are capped at 50 - an unbounded IN (...) from an
+    # external caller is an easy way to make this route's own two base queries slow.
+    resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+    resolved_warehouse_codes = _normalize_entities(warehouse_codes)
+    for values, name in (
+        (resolved_customer_ids, "customer_ids"),
+        (resolved_warehouse_codes, "warehouse_codes"),
+    ):
+        if values is not None and len(values) > 50:
+            raise AppException(
+                422,
+                f"Too many values for '{name}' (max 50)",
+                detail=f"got {len(values)}",
+                code="too_many_values",
+            )
+
     data = outstanding_report(
         db,
         product_code=product_code,
         scope=scope,
         customer_query=customer_query,
-        customer_ids=_normalize_entities(customer_ids),
-        warehouse_codes=_normalize_entities(warehouse_codes),
+        customer_ids=resolved_customer_ids,
+        warehouse_codes=resolved_warehouse_codes,
         order_date_from=_parse_flex_date(order_date_from),
         order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
     )

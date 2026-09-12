@@ -27,7 +27,9 @@ from fastapi.testclient import TestClient
 from app.main import app  # noqa: E402
 
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+from app.models.access import RespondContact
 from app.models.base import set_company_scope
+from app.models.company import RespondContactCompany
 from app.models.integration import Integration, IntegrationApiKey
 from app.models.order import Order, OrderLine, OrderStatus, SalesOrder, SalesOrderLine
 from app.models.user import (
@@ -41,7 +43,7 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 from app.services.integration_key_service import IntegrationKeyService
 
-from tests._mc_lookup_seed import customer, order, order_line, product, warehouse
+from tests._mc_lookup_seed import customer, order, order_line, product, seed_mocha, warehouse
 from tests._pg_fixture import blank_session, unique_code
 
 BASE = "/api/v1/order-management/outstanding-report"
@@ -587,3 +589,119 @@ def test_product_code_exact_no_siblings(client, db):
     body = resp.json()
     assert body["so"]["ordered_qty"] == 10
     assert body["product_code"] == "ZZT-SRTWT7445"
+
+
+# --------------------------------------------------------------------------- B1 (security review, 13 Sep 2026)
+
+
+def test_report_is_company_scoped_for_api_key_contact(db, monkeypatch):
+    """B1 BLOCKER: the `client` fixture above overrides `apply_company_scope` with a
+    single hard-coded company, so no other test in this file exercises the REAL
+    resolver. Without `contact_id`/`space_id` reaching `crm_outstanding_report`'s
+    query_params (the catalog fix this test pins), an X-API-Key call scopes to
+    `None` (every company) and a Sorento contact's report would sum in Mocha's SO
+    lines too - this test seeds the SAME product code live in both companies and
+    asserts only the contact's own company's figures come back.
+
+    `apply_company_scope` is NOT overridden here (that is the whole point): the
+    route's own dependency runs for real, off the request's own `X-API-Key` +
+    `contact_id` + `space_id`. Two different checks read the same key for two
+    different reasons - `_api_key_valid` (company-scope resolution) compares it
+    literally against `settings.external_api_key`, while `resolve_integration_
+    principal` (route permission) looks it up by hash in `integration_api_keys` -
+    so the ONE issued key is used for both, and `settings.external_api_key` is
+    pinned to it, mirroring `tests/test_mcp_scope_resolver.py`'s own note on why
+    that pin is necessary in a test process that never sets the env var.
+    """
+    from app.config import settings
+
+    mocha = seed_mocha(db)
+    code = unique_code("SKU")
+
+    prod_a = product(db, company_id=DEFAULT_COMPANY_ID, code=code)
+    prod_b = product(db, company_id=mocha.id, code=code)
+
+    _so_line(db, product_id=prod_a.id, ordered=10, delivered=3)  # Sorento: outstanding 7
+    so_b = SalesOrder(
+        id=str(uuid.uuid4()), so_number=unique_code("SO"), status="open", company_id=mocha.id,
+    )
+    db.add(so_b)
+    db.flush()
+    db.add(
+        SalesOrderLine(
+            id=str(uuid.uuid4()), sales_order_id=so_b.id, product_id=prod_b.id,
+            qty_ordered=500, qty_delivered=0, line_status="open", company_id=mocha.id,
+        )
+    )
+
+    contact = RespondContact(id=str(uuid.uuid4()), phone_number=f"+6{unique_code('PH')[:10]}")
+    db.add(contact)
+    db.flush()
+    db.add(
+        RespondContactCompany(
+            id=str(uuid.uuid4()), respond_contact_id=contact.id, company_id=DEFAULT_COMPANY_ID,
+        )
+    )
+
+    superadmin = _seed_superadmin(db)
+    integration = Integration(
+        id=str(uuid.uuid4()), name="zzt-scope-key", type="automation",
+        act_as_user_id=superadmin["id"], is_active=True,
+    )
+    db.add(integration)
+    db.flush()
+    plaintext_key = IntegrationKeyService(db).issue_key(integration)
+    db.commit()
+    monkeypatch.setattr(settings, "external_api_key", plaintext_key)
+
+    def _override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _override_db
+    try:
+        client = TestClient(app)
+        resp = client.get(
+            BASE,
+            params={"product_code": code, "scope": "so", "contact_id": contact.id, "space_id": "zzt-space"},
+            headers={"X-API-Key": plaintext_key},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["so"]["ordered_qty"] == 10, (
+            f"a Sorento-only contact must never see Mocha's SO lines: {body}"
+        )
+        assert body["so"]["outstanding_qty"] == 7
+    finally:
+        app.dependency_overrides.clear()
+
+
+# --------------------------------------------------------------------------- S3 (security review, 13 Sep 2026)
+
+
+def test_customer_ids_rejects_a_non_uuid_value(client, db):
+    """S3: `customer_ids` is a UUID param like every other `<entity>_ids` filter on
+    this route file - a non-UUID value is a 400, the same `parse_uuid_list` gives
+    `order_ids`/`transporter_ids` elsewhere, never a silent no-match."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "customer_ids": "not-a-uuid"})
+    assert resp.status_code == 400, resp.text
+
+
+def test_customer_ids_over_fifty_is_422(client, db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    db.commit()
+
+    too_many = ",".join(str(uuid.uuid4()) for _ in range(51))
+    resp = client.get(BASE, params={"product_code": prod.product_code, "customer_ids": too_many})
+    assert resp.status_code == 422, resp.text
+
+
+def test_warehouse_codes_over_fifty_is_422(client, db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    db.commit()
+
+    too_many = ",".join(f"ZZT-WH-{i}" for i in range(51))
+    resp = client.get(BASE, params={"product_code": prod.product_code, "warehouse_codes": too_many})
+    assert resp.status_code == 422, resp.text

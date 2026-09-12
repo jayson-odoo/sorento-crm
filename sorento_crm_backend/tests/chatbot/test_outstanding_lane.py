@@ -67,6 +67,7 @@ from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
 )
+from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output, seeded  # noqa: F401
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401
@@ -173,14 +174,49 @@ def _session_of(session_factory) -> dict:
     return json.loads(raw) if isinstance(raw, str) else (raw or {})
 
 
+#: `_run_turn` monkeypatches `engine_mod.default_space_id` to this literal, and
+#: `_contact_company_scope` resolves the company scope from `(contact_respond_id,
+#: default_space_id(db))` - `resolve_contact_id`'s Respond.io-id branch JOINS
+#: `respond_workspaces` on `space_id` when one is given, so the seeded workspace
+#: below must carry this SAME value or the join (and so the scope) finds nothing.
+_SPACE_ID = "364817"
+
+
 def _seed_contact(session_factory, *, variables: dict[str, Any]) -> None:
     db = session_factory()
     db.execute(
         text(
-            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
-            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            "INSERT INTO respond_workspaces (id, space_id, name, api_key_ciphertext) "
+            "VALUES (gen_random_uuid(), :sid, 'ZZT outstanding-report workspace', 'ZZT-cipher') "
+            "ON CONFLICT DO NOTHING"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": variables})},
+        {"sid": _SPACE_ID},
+    )
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id) "
+            "VALUES ("
+            "  gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb),"
+            "  (SELECT id FROM respond_workspaces WHERE space_id = :sid LIMIT 1)"
+            ")"
+        ),
+        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": variables}), "sid": _SPACE_ID},
+    )
+    # S1 (security review, 13 Sep 2026): bound to Sorento so a REAL company-scoped
+    # DB read this contact's turn makes (`crm_outstanding_report`'s warehouse
+    # lookup, AC-1133's pipeline half - `resolve_warehouse_token` reads on the
+    # engine's own per-contact-scoped session, same as every other owned read the
+    # turn makes) sees the SAME company `TestLocationTokenPipeline`'s own seeded
+    # warehouses land in. A contact with no `respond_contact_companies` row
+    # legitimately resolves to zero owned rows everywhere (AC-F3, fail-closed) -
+    # every OTHER test in this file never exercises a real DB read on this
+    # contact's session at all, so this insert is a no-op for them.
+    db.execute(
+        text(
+            "INSERT INTO respond_contact_companies (id, respond_contact_id, company_id) "
+            "SELECT gen_random_uuid(), id, :company_id FROM respond_contacts WHERE respond_io_id = :cid"
+        ),
+        {"cid": CONTACT_ID, "company_id": DEFAULT_COMPANY_ID},
     )
     db.commit()
 
@@ -851,4 +887,142 @@ class TestDetailPickRerunsToolWithDetail:
         stored = _session_of(session_factory)["variables"]
         assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
             f"a new product code must drop the outstanding_detail pending, not answer it: {stored.get('pending')!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# S2 (security review, 13 Sep 2026) - the legacy so_outstanding bucket, gated
+# --------------------------------------------------------------------------- #
+
+
+class TestNoSoKeyCustomerOnlySoAskFallsToDoBucket:
+    """A customer-only ask ("outstanding SO for Dealer A", no product) never reaches
+    the outstanding-report override above (it requires a resolved product) and picks
+    the LEGACY `crm_order_management_orders_list?order_status=so_outstanding` bucket
+    instead - the SAME per-SO outstanding quantities D13 gates on `crm_outstanding_
+    report`. Without `sales_orders.outstanding`, the lane must redirect to
+    `order_status=outstanding` (the DO bucket), never call the SO bucket, strip
+    `include_pipeline`, and prefix the reply."""
+
+    def test_no_so_key_customer_only_so_ask_falls_to_do_bucket(self, session_factory, monkeypatch) -> None:
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status="so_outstanding",
+                requested_attributes=["quantity"],
+                entities=[
+                    {
+                        "raw": CUSTOMER_NAME, "hint": "customer", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="outstanding SO for Dealer A",
+            msg_id="ZZT-so-bucket-gate-1",
+            attributes=[],
+            matches={CUSTOMER_NAME: {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}},
+            mcp_response={
+                "items": [{"title": "DO1", "fields": [{"key": "do_number", "label": "DO Number", "value": "DO1"}]}],
+                "has_result": True,
+                "intro": "Here are the results.",
+            },
+        )
+        assert captured, "the DO bucket must still be fetched, never nothing"
+        name, args = captured[0]
+        assert name == "crm_order_management_orders_list", name
+        assert args.get("order_status") == "outstanding", (
+            f"without the grant, so_outstanding must redirect to the DO bucket: {args}"
+        )
+        assert "include_pipeline" not in args, (
+            f"include_pipeline (carries so_outstanding_qty) must be stripped: {args}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Sales order figures are not enabled for your account." in reply, reply
+
+    def test_with_the_grant_the_so_bucket_runs_unredirected(self, session_factory, monkeypatch) -> None:
+        """The grant is the ONLY thing the gate reads - same ask, held key, no redirect."""
+        _seed_contact(session_factory, variables={})
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status="so_outstanding",
+                entities=[
+                    {
+                        "raw": CUSTOMER_NAME, "hint": "customer", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="outstanding SO for Dealer A",
+            msg_id="ZZT-so-bucket-gate-2",
+            attributes=["sales_orders.outstanding"],
+            matches={CUSTOMER_NAME: {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}},
+            mcp_response={"data": [], "has_result": False},
+        )
+        assert captured, "the SO bucket must still be fetched"
+        name, args = captured[0]
+        assert name == "crm_order_management_orders_list", name
+        assert args.get("order_status") == "so_outstanding", (
+            f"with the grant, so_outstanding must reach the tool unredirected: {args}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# N4 (security review, 13 Sep 2026) - outstanding_filters does not outlive its turn
+# --------------------------------------------------------------------------- #
+
+
+class TestOutstandingFiltersDoNotOutliveTheAnsweringTurn:
+    def test_a_later_unrelated_turn_clears_outstanding_filters(self, session_factory, monkeypatch) -> None:
+        """`outstanding_filters` used to fall back to `prev.outstanding_filters`
+        unconditionally whenever this turn armed no NEW outstanding ask - so a scope
+        or detail ask that MISSED (no `outstanding_ask` re-armed) left the customer's
+        resolved product/customer/location sitting in session state forever, since
+        nothing ever wrote over or cleared it again. `pending` for
+        `outstanding_scope`/`outstanding_detail` is already one-turn-life
+        (`compile_state._offer_carry`'s own exclusion); `outstanding_filters` must
+        share that lifetime - carried only across the ONE turn that answers an open
+        ask, gone on any turn after."""
+        _seed_contact(
+            session_factory,
+            variables={
+                "outstanding_filters": {
+                    "product_code": PRODUCT_CODE, "date_filter_start": None, "date_filter_end": None,
+                    "customer_ids": [], "warehouse_codes": [],
+                },
+                # The answering turn already ran and moved on - no open outstanding
+                # ask survives it, same as after any other one-turn pending.
+                "pending": None,
+                "selection_context": None,
+            },
+        )
+        other_uuid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status=None,
+                entities=[
+                    {
+                        "raw": "SRTWC999", "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="stock for SRTWC999",
+            msg_id="ZZT-outstanding-filters-clear-1",
+            matches={"SRTWC999": {"uuid": other_uuid, "entity_type": "product", "canonical_code": "SRTWC999"}},
+            mcp_response={
+                "items": [{"title": "SRTWC999", "fields": [{"key": "product_code", "label": "Product", "value": "SRTWC999"}]}],
+                "has_result": True,
+                "intro": "Here are the results.",
+            },
+        )
+        stored = _session_of(session_factory)["variables"]
+        assert "outstanding_filters" not in stored, (
+            f"outstanding_filters must not survive past the one turn that answers "
+            f"an open scope/detail ask: {stored}"
         )

@@ -568,6 +568,13 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="orders",
         related_tools=("crm_order_management_orders_by_product_list", "crm_outstanding_report"),
         escalation_team="sales",
+        # S2 (security review, 13 Sep 2026): `order_status=so_outstanding`'s
+        # `outstanding_qty` and `include_pipeline`'s `so_outstanding_qty` are the SAME
+        # per-contact figure `crm_outstanding_report`'s SO block gates on D13. Declared
+        # here for the Contacts > Access > Field reveals card; the actual gate is the
+        # chatbot lane's own redirect (`lanes/business/__init__.py::run_fetch`) plus
+        # `_orders_so_outstanding`'s `b.restrict` in the presenter.
+        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
     ),
     ToolSpec(
         "crm_order_management_orders_by_product_list",
@@ -606,6 +613,9 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product", "crm_outstanding_report"),
         escalation_team="sales",
+        # S2 (security review, 13 Sep 2026): same gate as the sibling
+        # `crm_order_management_orders_list` above - see its own comment.
+        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
     ),
     ToolSpec(
         "crm_outstanding_report",
@@ -637,13 +647,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "the numbered detail list for that scope instead of the two-block report (`view=render`); "
             "the report's own computation is unchanged by it.\n\n"
             "Use crm_order_management_orders_list / crm_order_management_orders_by_product_list instead "
-            "for a plain row list or a delivered/actual-delivery-date question."
+            "for a plain row list or a delivered/actual-delivery-date question.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/order-management/outstanding-report",
         (),
         (
             "product_code", "scope", "customer_query", "customer_ids", "warehouse_codes",
             "order_date_from", "order_date_to", "detail",
+            "contact_id", "space_id",
         ),
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"),

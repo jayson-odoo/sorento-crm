@@ -420,6 +420,14 @@ ORDER_STATUS_TO_SCOPE: dict[str, str] = {
     "outstanding_both": "both",
 }
 
+# D13, S2 (security review, 13 Sep 2026): the one sentence a contact without
+# `sales_orders.outstanding` sees in front of EITHER SO-gated answer -
+# `crm_outstanding_report`'s own redirect to the DO block (`_outstanding_report_
+# output` below) and the legacy `so_outstanding` bucket's redirect to `outstanding`
+# (`lanes/business/__init__.py::run_fetch`). One literal, not two, so the two
+# refusals can never drift apart in wording.
+SO_NOT_ENABLED_MESSAGE = "Sales order figures are not enabled for your account."
+
 ORDER_TOOLS: frozenset[str] = frozenset(
     {"crm_order_management_orders_list", "crm_order_management_orders_by_product_list"}
 )
@@ -619,7 +627,15 @@ def entity_ids_transformer(
         # ToolSpec (`catalog.py`: orders_list and orders_by_product_list), which is what
         # keeps the MCP from stripping it - pinned by
         # `test_growth_fix_opt_in_envelope_fields.py`.
-        out["include_pipeline"] = True
+        #
+        # S2 (security review, 13 Sep 2026): NOT requested when `so_bucket_refused`
+        # is set - the pipeline summary carries `so_outstanding_qty`, the SAME figure
+        # the redirect below exists to withhold, and asking for it here would hand it
+        # straight back on a plain quantity ask over the DO bucket the redirect
+        # switched to. `include_summary` above stays: a bare DO quantity is not
+        # gated.
+        if not jsc.truthy(jsc.get(semantic_input, "so_bucket_refused")):
+            out["include_pipeline"] = True
 
     # A1/A2 (chatbot-growth-r1), opt-in from THIS caller (fix, 7 Sep 2026): these two
     # used to be defaulted ON in `sorento_crm_mcp/server.py`'s
@@ -1446,7 +1462,7 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         semantic_input = _safe_json(semantic_input) or {}
     semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
     so_refused = bool(jsc.truthy(semantic_input.get("outstanding_so_refused")))
-    refusal = "Sales order figures are not enabled for your account." if so_refused else None
+    refusal = SO_NOT_ENABLED_MESSAGE if so_refused else None
 
     if isinstance(result, str):
         text = result
@@ -1524,6 +1540,16 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if jsc.js_string(ctx.get("tool") or "") == "crm_outstanding_report":
         return _outstanding_report_output(result, ctx)
     e = _extract_envelope(result)
+
+    # S2 (security review, 13 Sep 2026): `run_fetch` redirected a customer-only
+    # `so_outstanding` ask (no product, so the outstanding-report override above
+    # never runs) to `outstanding` (the DO bucket) because the contact lacks
+    # `sales_orders.outstanding`. Prefixed onto the reply here, not there - this
+    # generic envelope is the only place this tool's own text gets composed.
+    ctx_semantic_input = ctx.get("semantic_input") if isinstance(ctx.get("semantic_input"), dict) else {}
+    so_bucket_refusal = (
+        SO_NOT_ENABLED_MESSAGE if jsc.truthy(ctx_semantic_input.get("so_bucket_refused")) else None
+    )
 
     # -- restricted-field drop (A2/A5/A6, general rule) ---------------------- #
     # A presenter marks a field or summary item RESTRICTED by putting its key in
@@ -1950,8 +1976,12 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if ts:
         msg += f"_Data last updated: {ts}_"
 
+    final_response = msg.strip()
+    if so_bucket_refusal:
+        final_response = f"{so_bucket_refusal}\n\n{final_response}"
+
     out: dict[str, Any] = {
-        "response": msg.strip(),
+        "response": final_response,
         "response_intro": e.get("intro"),
         # GROUPED: the flat `items` order and the NUMBERED order the customer just read
         # are two different orders, and `answers` is what a positional pick ("2") resolves

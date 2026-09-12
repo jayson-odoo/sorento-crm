@@ -33,6 +33,21 @@ from app.services.order_service import (
 
 DateLike = Optional[datetime]
 
+# N1 (security review, 13 Sep 2026): `order_service.py` has no equivalent helper
+# (grepped) - `product_code_resolution.py::_escape_like` is the established
+# pattern this mirrors, kept local rather than imported since that one is
+# module-private. Without it, a `customer_query` of e.g. `%` matches every
+# customer instead of none, and `_` matches any single character.
+_LIKE_ESCAPE = "\\"
+
+
+def _escape_like(value: str) -> str:
+    return (
+        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+
 
 def _dec(v: Any) -> Decimal:
     if v is None:
@@ -146,7 +161,11 @@ def _fill_so(
         )
     )
     if customer_query:
-        q = q.filter(Customer.customer_name.ilike(f"%{customer_query}%"))
+        q = q.filter(
+            Customer.customer_name.ilike(
+                f"%{_escape_like(customer_query)}%", escape=_LIKE_ESCAPE
+            )
+        )
     if customer_ids is not None:
         q = q.filter(SalesOrder.customer_id.in_(customer_ids))
     if warehouse_ids is not None:
@@ -280,7 +299,11 @@ def _fill_do(
         .filter(Order.deleted_at.is_(None), OrderLine.product_id == product.id)
     )
     if customer_query:
-        q = q.filter(Customer.customer_name.ilike(f"%{customer_query}%"))
+        q = q.filter(
+            Customer.customer_name.ilike(
+                f"%{_escape_like(customer_query)}%", escape=_LIKE_ESCAPE
+            )
+        )
     if customer_ids is not None:
         q = q.filter(Order.customer_id.in_(customer_ids))
     if warehouse_ids is not None:

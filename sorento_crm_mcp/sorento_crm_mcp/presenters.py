@@ -417,7 +417,14 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
 
 def _orders_so_outstanding(rows: list[dict], b: _Builder) -> None:
     """A3 (AC-905): `order_status=so_outstanding` - open SO lines, a DIFFERENT
-    row shape from `_orders_list` (SO number, not order number; no lines[])."""
+    row shape from `_orders_list` (SO number, not order number; no lines[]).
+
+    `outstanding_qty` is RESTRICTED (S2, security review, 13 Sep 2026) - the SAME
+    per-contact figure `crm_outstanding_report`'s SO block gates on
+    `sales_orders.outstanding` (D13); defence in depth alongside the chatbot lane's
+    own redirect (`lanes/business/__init__.py::run_fetch`), which is what stops
+    this bucket being CALLED at all without the grant. The MCP itself stays
+    unfiltered - the actual gate is `output_structurer`, not here."""
     for r in rows:
         b.item(
             r.get("so_number"),
@@ -435,6 +442,7 @@ def _orders_so_outstanding(rows: list[dict], b: _Builder) -> None:
                 ),
             ],
         )
+    b.restrict("outstanding_qty", "sales_orders.outstanding")
 
 
 def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:

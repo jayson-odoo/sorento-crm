@@ -61,6 +61,30 @@ def test_catalog_exposes_customer_ids_on_outstanding_report():
     )
 
 
+def test_outstanding_report_tool_exposes_contact_scope_params():
+    """B1 BLOCKER (security review, 13 Sep 2026): every sibling order tool ends its
+    `query_params` with `("contact_id", "space_id")` (see
+    `crm_order_management_orders_list` and `_by_product_list`) so
+    `company_scope_resolver._resolve_api_key_scope` can read them off the request and
+    scope the read to the contact's own company. `crm_outstanding_report` shipped
+    without the pair - FastMCP silently drops an argument that is not in the tool's
+    own signature, so the chatbot's own `out["contact_id"]`/`out["space_id"]`
+    (`fetch.py`'s `entity_ids_transformer`, set unconditionally for every tool) never
+    reached the HTTP call, and an X-API-Key request with no contact params scopes to
+    EVERY company (AC-F1) - a cross-company SO/DO disclosure on the one tool whose
+    whole subject is a figure D13 already gates per contact."""
+    spec = next(s for s in CATALOG if s.name == "crm_outstanding_report")
+    for param in ("contact_id", "space_id"):
+        assert param in spec.query_params, (
+            f"crm_outstanding_report must expose {param} so the company-scope "
+            f"resolver sees it: {spec.query_params}"
+        )
+    assert "COMPANY SCOPE" in spec.description, (
+        "the tool description must carry the standard COMPANY SCOPE sentence, same "
+        "as the two sibling order tools"
+    )
+
+
 # --------------------------------------------------------------------- AC-1114b
 
 

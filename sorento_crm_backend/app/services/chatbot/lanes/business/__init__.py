@@ -547,6 +547,21 @@ def run_fetch(
             so_refused = order_status_raw != "outstanding"
         semantic_input["outstanding_scope"] = scope
         semantic_input["outstanding_so_refused"] = so_refused
+    elif tool_name in fetch_mod.ORDER_TOOLS and order_status_raw == "so_outstanding":
+        # S2 (security review, 13 Sep 2026): a customer-only ask ("outstanding SO
+        # for BUIMACO", no product) picks the LEGACY bucket over the plain
+        # order-list tool - the branch above never runs (it requires
+        # `has_product`) - and that bucket serves the same per-SO outstanding
+        # quantities D13 gates on `crm_outstanding_report`. Closed the same way:
+        # without the grant, redirect to `outstanding` (the DO bucket) rather
+        # than call the SO bucket at all, and prefix the reply
+        # (`output_structurer`'s generic path reads `so_bucket_refused`).
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _OUTSTANDING_SO_GRANT not in granted:
+            semantic_input["order_status"] = "outstanding"
+            semantic_input["so_bucket_refused"] = True
 
     trigger = {
         "tool": tool_name,

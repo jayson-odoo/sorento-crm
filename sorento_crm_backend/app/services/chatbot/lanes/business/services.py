@@ -408,42 +408,35 @@ def resolve_warehouse_token(db: Session, token: str) -> list[str]:
     Reads the `warehouses` table, never a hard-coded list - the risk section measured
     codes with `/` and no `-` at all (`SPARE/P`), which this simply never matches.
 
-    Runs under `company_scope(db, None)` (S4c), deliberately widened past the
-    chatbot's own per-contact scope (`app/services/chatbot/engine.py`'s
-    `_scoped_factory`): `warehouses` is `CompanyScopedMixin`, but what this function
-    returns is a FILTER VALUE (code strings), never a row read back to the customer -
-    the SAME "reference lookup, not an owned read" reasoning `company_scope(db, None)`
-    already carries at `country_service.delete_country`'s supplier count. The codes
-    only narrow `crm_outstanding_report`'s own query, which is a SEPARATE HTTP/MCP call
-    under its OWN (correctly enforced) auth scope; a code that happens to belong to
-    another company can only ever match zero rows there; it cannot widen what
-    `outstanding_report_service.py` returns to it. Scoping this lookup to the
-    contact's own company instead would fail-closed to zero warehouses for the (common,
-    legitimate) case of an X-API-Key contact with no `respond_contact_companies` row -
-    exactly what the field-reveal gate (D13) is already for.
+    Runs on `db` under the ENGINE's own per-contact scope
+    (`app/services/chatbot/engine.py`'s `_scoped_factory`), same as every other
+    company-scoped read this turn makes (the product/customer resolution the generic
+    resolver runs on the SAME session). `warehouses` is `CompanyScopedMixin` like
+    `products`; there is no narrower argument for widening THIS read past the
+    contact's own company than there would be for widening the product lookup, and a
+    contact with no `respond_contact_companies` row already gets zero rows there too -
+    a genuinely UNMAPPED contact fails closed everywhere in the turn, not selectively.
     """
     from sqlalchemy import func
 
-    from app.models.base import company_scope
     from app.models.inventory import Warehouse
 
     word = (token or "").strip()
     if not word:
         return []
-    with company_scope(db, None):
-        exact = (
-            db.query(Warehouse.warehouse_code)
-            .filter(func.lower(Warehouse.warehouse_code) == word.lower())
-            .first()
-        )
-        if exact:
-            return [exact[0]]
-        suffix = word.lower()
-        return [
-            code
-            for (code,) in db.query(Warehouse.warehouse_code).all()
-            if "-" in code and code.rsplit("-", 1)[-1].lower() == suffix
-        ]
+    exact = (
+        db.query(Warehouse.warehouse_code)
+        .filter(func.lower(Warehouse.warehouse_code) == word.lower())
+        .first()
+    )
+    if exact:
+        return [exact[0]]
+    suffix = word.lower()
+    return [
+        code
+        for (code,) in db.query(Warehouse.warehouse_code).all()
+        if "-" in code and code.rsplit("-", 1)[-1].lower() == suffix
+    ]
 
 
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:

@@ -807,10 +807,26 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # or the detail offer) and carried forward otherwise - same "omit when there is
     # nothing to say" rule `tier_menu` just used above, so a world captured before
     # this key existed never sees it appear.
+    #
+    # N4 (security review, 13 Sep 2026): the PREVIOUS unconditional fallback to
+    # `prev.outstanding_filters` carried it FOREVER once a scope/detail ask armed and
+    # then missed (no `outstanding_ask` re-armed on a miss, so nothing ever
+    # overwrote or cleared it) - a customer's resolved product/customer/location
+    # sat in session state indefinitely, well past the one turn it exists to
+    # answer. `pending.kind` for `outstanding_scope`/`outstanding_detail` is
+    # ALREADY one-turn-life by construction (`_offer_carry`'s own exclusion a few
+    # hundred lines down never carries either kind past the answering turn), so
+    # carrying `outstanding_filters` gated on that SAME marker still being open
+    # from last turn is the identical "one answering turn, then gone" lifetime -
+    # a new ask, a topic reset, or simply the turn after the answer all read
+    # `prev_pending`'s kind as something else (or nothing) and clear it.
+    prev_pending_kind = jsc.get(jsc.get(prev, "pending"), "kind")
     outstanding_filters_value = (
         jsc.get(outstanding_ask, "filters")
         if jsc.truthy(outstanding_ask)
         else jsc.get(prev, "outstanding_filters")
+        if prev_pending_kind in ("outstanding_scope", "outstanding_detail")
+        else None
     )
     if outstanding_filters_value:
         variables["outstanding_filters"] = outstanding_filters_value
