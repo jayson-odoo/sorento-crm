@@ -4499,3 +4499,160 @@ class TestOpenOfferCanBeLeft:
             f"a refinement re-runs the report, not a detail pick: {captured2[0][1]}"
         )
         _reply2_unused = reply2
+
+
+# --------------------------------------------------------------------------- #
+# Owner round 9b (13 Sep 2026, live): with the SRTWT7443 single-scope detail
+# offer open, `delivery status for hanlim` RE-RAN the SRTWT7443 outstanding
+# report with `Customer: all` and re-offered - the hanlim customer named in the
+# very same message never reached the report at all. "I kind of can't escape
+# this loop." Trace: `message_type: "business_query"`, `domain_hint: "order"`,
+# `intent_hint: "check_order"`, `requested_attributes: ["delivery"]`,
+# `order_status: null`, one customer entity, `entity_op: "replace_combine"`, no
+# `reference_positions`. Compare the two REAL refinements this lane already
+# has: `only BRW` and `i want to see this month only` both parsed
+# `message_type: "casual"`, `domain_hint: null`.
+#
+# R24 (owner ruling, 13 Sep 2026, CORRECTS R15's refinement test): a turn the
+# parser classifies as a business question of ITS OWN (`message_type:
+# "business_query"` with a NON-NULL `domain_hint`) is a NEW ASK under an open
+# `outstanding_detail` offer or `outstanding_scope` question, WHATEVER its
+# entities' axes - `_outstanding_keeps_subject`'s axis test (R15) fired here
+# because "customer" differs from the stored subject's "product" axis, and
+# called a plain delivery enquiry a refinement of the OLD product's report. The
+# pending is dropped (`outstanding_pending_dropped`), its filters go with it,
+# and the turn runs its own path - here, a plain delivery enquiry for hanlim,
+# `crm_order_management_orders_list`, no product carried, no `so_outstanding`
+# stamped. A refinement stays the CASUAL-shaped turn (`message_type: "casual"`,
+# `domain_hint: null`) that keeps the subject, exactly as R15 already defines
+# it otherwise. Picks are unchanged. AC-1170 (a correction to AC-1157's own
+# refinement definition).
+# --------------------------------------------------------------------------- #
+
+
+def _r24_business_query_qf() -> dict[str, Any]:
+    """The trace's own parser output, verbatim: a business question of its own
+    (`domain_hint: "order"`), never a refinement's casual shape."""
+    return _parser_output(
+        message_type="business_query", domain_hint="order", intent_hint="check_order",
+        requested_attributes=["delivery"], order_status=None,
+        entities=[
+            {
+                "raw": "hanlim", "hint": "customer", "canonical_code": None,
+                "current_message": True, "confident": True,
+            },
+        ],
+        entity_op="replace_combine", reference_positions=[],
+    )
+
+
+class TestABusinessQueryUnderAnOpenOfferIsANewAsk:
+    """Guards named rather than duplicated, per the brief - all three already pin the
+    shape R24 must leave unaffected, and all three are green today:
+
+    * `TestDateNarrowingUnderAnOpenOffer::
+      test_a_location_only_turn_under_the_detail_offer_narrows_by_location` - "only
+      BRW" is `message_type: "business_query"` too, but `domain_hint: None`, so R24's
+      new-ask test (which requires a NON-NULL `domain_hint`) does not fire and the
+      turn stays a refinement.
+    * `TestDateNarrowingUnderAnOpenOffer::
+      test_a_date_only_turn_under_the_scope_question_reasks_with_the_new_window` -
+      "i want to see this month only" is `message_type: "casual"`, `domain_hint:
+      None`; unaffected for the same reason.
+    * `TestCustomerOnlyOutstandingAskReachesTheReport::
+      test_bare_outstanding_customer_only_arms_the_scope_question` - a genuinely NEW
+      outstanding ask ("outstanding report for hanlim", `business_query` +
+      `domain_hint: "order"` + `order_status: "outstanding"`, no open offer at all)
+      still arms the scope question for hanlim with no carried product/location -
+      the S4/R13 new-ask-arming path R24 does not touch.
+    """
+
+    def test_delivery_status_for_a_customer_under_a_product_offer_is_a_new_ask(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_detail(
+            session_factory, rows=[{"idx": 1, "label": "Sales order list", "value": "so"}],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_r24_business_query_qf(),
+            text_body="delivery status for hanlim",
+            msg_id="ZZT-outstanding-r24-detail-1",
+            attributes=["sales_orders.outstanding"],
+            matches={
+                "hanlim": {
+                    "uuid": CUSTOMER_ONLY_UUID, "entity_type": "customer",
+                    "canonical_code": CUSTOMER_ONLY_NAME,
+                },
+            },
+        )
+        assert captured, "the new ask must still be answered, not dropped on the floor"
+        name, args = captured[0]
+        assert name == "crm_order_management_orders_list", (
+            f"a plain delivery enquiry must run the plain order lane, never the "
+            f"OLD product's outstanding report: {name}"
+        )
+        assert args.get("customer_ids") == [CUSTOMER_ONLY_UUID], (
+            f"the customer named THIS turn must reach the tool: {args}"
+        )
+        assert args.get("product_code") != PRODUCT_CODE, (
+            f"the offer's OLD product must not be carried into an unrelated new ask: {args}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Sales order outstanding" not in reply, reply
+        assert "Reply 1 for" not in reply, reply
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
+            f"the old offer must be dropped, not answered by an unrelated turn: "
+            f"{stored.get('pending')!r}"
+        )
+        assert "outstanding_filters" not in stored, (
+            f"the old offer's filter set dies with it: {stored.get('outstanding_filters')!r}"
+        )
+
+    def test_a_business_query_under_the_scope_question_is_a_new_ask(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_scope(
+            session_factory,
+            filters={
+                "product_code": PRODUCT_CODE,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [],
+                "warehouse_codes": [],
+                "location_token": None,
+            },
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_r24_business_query_qf(),
+            text_body="delivery status for hanlim",
+            msg_id="ZZT-outstanding-r24-scope-1",
+            attributes=["sales_orders.outstanding"],
+            matches={
+                "hanlim": {
+                    "uuid": CUSTOMER_ONLY_UUID, "entity_type": "customer",
+                    "canonical_code": CUSTOMER_ONLY_NAME,
+                },
+            },
+        )
+        assert captured, "the new ask must still be answered"
+        name, args = captured[0]
+        assert name != "crm_outstanding_report", (
+            f"a plain delivery enquiry must not be answered as the OLD product's "
+            f"outstanding report: {name}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" not in reply, (
+            f"the old scope question must be dropped, not re-asked: {reply!r}"
+        )
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") != "outstanding_scope", (
+            stored.get("pending")
+        )
+        assert "outstanding_filters" not in stored, (
+            f"the old question's filter set dies with it: {stored.get('outstanding_filters')!r}"
+        )

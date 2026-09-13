@@ -603,6 +603,28 @@ resolution and the filter set in the console trace.
   `-do.txt`) each carry exactly ONE row and so exercise no multi-row ordering at all -
   confirmed unaffected (`sorento_crm_mcp/tests/test_presenters_outstanding.py`, 44
   passed, unmodified), consistent with R10's "the presenter prints in the order given."
+- **AC-1170 [BE]** NEW (R24, owner round 9b, 13 Sep 2026, live trace, CORRECTS
+  AC-1157/R15's own refinement definition: with the SRTWT7443 single-scope detail
+  offer open, "delivery status for hanlim" RE-RAN the SRTWT7443 outstanding report
+  with `Customer: all` and re-offered - the hanlim customer named in the very same
+  message never reached the report. "I kind of can't escape this loop."). R15's
+  refinement test (`_outstanding_keeps_subject`) is AXIS-ONLY: an entity on an axis
+  other than the stored subject's is a refinement, whatever kind of turn named it -
+  which is what called a plain delivery enquiry (a customer entity under a
+  product-subject offer) a refinement of the OLD product's report. A turn the
+  parser classifies as a business question of its OWN (`message_type:
+  "business_query"` with a NON-NULL `domain_hint`) is a NEW ASK under an open
+  `outstanding_detail` offer or `outstanding_scope` question, whatever its
+  entities' axes: the pending is dropped (`outstanding_pending_dropped`), its
+  filters go with it, and the turn runs its own path. A refinement stays the
+  CASUAL-shaped turn (`message_type: "casual"`, `domain_hint: null`) that keeps the
+  subject, exactly as R15 defines it otherwise; picks are unchanged. Evidence:
+  pytest, `tests/chatbot/test_outstanding_lane.py::
+  TestABusinessQueryUnderAnOpenOfferIsANewAsk` - `test_delivery_status_for_a_
+  customer_under_a_product_offer_is_a_new_ask`, `test_a_business_query_under_the_
+  scope_question_is_a_new_ask`; three named (unmodified) existing tests guard the
+  two real refinements (`only BRW`, `i want to see this month only` - both
+  `domain_hint: null`) and the S4/R13 new-ask-arming path stay unaffected.
 
 ## Out of scope (backlog)
 
