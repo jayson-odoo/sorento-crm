@@ -1418,15 +1418,29 @@ def _offered_team(ctx: dict[str, Any]) -> Any:
 
 
 def _previous_team(ctx: dict[str, Any], team: Any) -> Any:
-    """The team the PREVIOUS turn was routed to, normalised, or None.
+    """The team the PREVIOUS turn was routed to, normalised, or None. Three sources, in order.
 
-    The previous turn's own `routing.suggested_team` off the session when it is there;
-    otherwise the team THIS turn inherited, which is the same fact by another route - the
-    head's routing chain falls back to the previous turn's routing whenever this turn
-    names no domain of its own, and an escalation turn names none.
+    1. `prev.routing.suggested_team`. Authoritative where it exists - a session n8n's own
+       spine wrote, and the shape several fixtures use - and absent on every session the CRM
+       writes, because `routing` is not one of the five keys.
+    2. THE DOMAIN THE CONVERSATION CARRIED, re-derived (`_carried_team`). This is the live
+       source, and the reason it has to be here is the owner console pass: the first version
+       of this function claimed the team THIS turn inherited was "the same fact by another
+       route", which is false on a five-key session - with no persisted routing to inherit,
+       the head's chain ends at its HARD DEFAULT (`customer_service`), so a photo turn
+       followed by "escalate to marketing" narrowed against `customer_service`, found it
+       outside the family and asked a question the conversation had already answered
+       (AC-1114, journey step 4). The domain IS persisted (`focus.domains`) and the team is a
+       function of it.
+    3. The team this turn inherited, for a caller that hands the lane a ctx with no session
+       at all - the injected-ctx convention the unit fixtures use. Not a production path: on
+       a real turn with nothing in the focus this is the hard default, and a hard default
+       narrows no family (it is in none of them), so it asks, which is correct.
     """
     prev_routing = jsc.get(_prev_variables(ctx), "routing")
     value = jsc.get(prev_routing, "suggested_team") if jsc.truthy(prev_routing) else None
+    if not jsc.truthy(value):
+        value = _carried_team(ctx)
     if not jsc.truthy(value):
         value = team
     return jsc.nullish_str(value).strip().lower() or None
