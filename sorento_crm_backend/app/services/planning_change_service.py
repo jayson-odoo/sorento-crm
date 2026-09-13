@@ -1065,29 +1065,26 @@ def build_batch(
                 continue
             kept_orders.add(pso_id)
             older = pending_lines.get(str(row.project_line_id)) if row.project_line_id else None
-            if open_batch_id and older is None:
-                # R1: a line the order's open batch has not seen yet joins it (same batch
-                # id returned) rather than raising a second batch for the order to review.
+            if open_batch_id:
+                # R1 (captain's ruling, review round): one open batch per order, always -
+                # a line the open batch has not seen yet simply joins it, and a later
+                # change to a line it ALREADY has a pending row for is not a second
+                # opinion beside the first, it replaces it in place (superseded, reason
+                # stated) with the replacement landing in the SAME open batch, not a
+                # fresh one. Nothing about R1 sends a same-line replacement anywhere else.
+                if older is not None:
+                    older.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
+                    older.applied_reason = "Replaced by a later change"
+                    # S2 (R1 review round): "Was" reads what the ACTIVE DECISION was
+                    # taken against, not this edit's own before value - `older.from_json`
+                    # already carries that forward correctly, whether `older` itself is
+                    # the original held state or an earlier replacement that already
+                    # chained it through.
+                    row.from_json = older.from_json
                 row.batch_id = open_batch_id
                 kept_rows_by_existing_batch[open_batch_id].append(row)
                 orders_appended.add(pso_id)
                 continue
-            if older is not None:
-                # R1's other half: a later change to a line the open batch ALREADY has a
-                # pending row for is not a second opinion beside the first, it replaces
-                # it - superseded in place, reason stated, and the FRESH row below carries
-                # the line forward into a new batch (the open batch's own row for this
-                # line is no longer pending, so `pending_batch_id_by_sales_order` reads
-                # only the new one for the order - still exactly one candidate, restored
-                # by the fold step below if this order also has OTHER pending rows
-                # elsewhere).
-                older.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
-                older.applied_reason = "Replaced by a later change"
-                # S2 (R1 review round): "Was" reads what the ACTIVE DECISION was taken
-                # against, not this edit's own before value - `older.from_json` already
-                # carries that forward correctly, whether `older` itself is the original
-                # held state or an earlier replacement that already chained it through.
-                row.from_json = older.from_json
             kept_rows.append(row)
 
     if not kept_rows and not kept_rows_by_existing_batch:
@@ -1125,15 +1122,19 @@ def build_batch(
         result_batch = result_batch or existing
 
     # Fold (R1 review round, "a line has at most one live pending row across every open
-    # batch"): whichever batch THIS call designates as an order's PRIMARY one - the
-    # existing open batch it appended into, or else the fresh one a supersede (or a
-    # brand-new order) used - has to be the order's ONLY one left with pending rows once
-    # this call is done, or `pending_batch_id_by_sales_order` can miss a line entirely
-    # (two open batches, one candidate returned - the exact shape that reached SO400884).
-    # Every OTHER unapplied batch of the order still carrying a pending row has it moved
-    # into the primary, or superseded if the primary already covers that same line - never
-    # left behind in a batch nobody is looking at any more. Flushed first so the fold's own
-    # reads see every row this call itself just wrote or superseded.
+    # batch"): a SAFETY NET, not the mechanism - a same-line replacement above already
+    # lands in the order's one open batch, so this call's own writes never raise a second
+    # one. What this catches is a stray batch this call did NOT write to still carrying a
+    # pending row for the order (a hand-seeded row, or leftover from before this rule
+    # existed): whichever batch the call designates PRIMARY (the existing open batch it
+    # appended into, or the fresh one a brand-new order used) has to be the order's ONLY
+    # one left with pending rows once this call is done, or `pending_batch_id_by_sales_
+    # order` can miss a line entirely (two open batches, one candidate returned - the
+    # exact shape that reached SO400884). Every OTHER unapplied batch of the order still
+    # carrying a pending row has it moved into the primary, or superseded if the primary
+    # already covers that same line - never left behind in a batch nobody is looking at
+    # any more. Flushed first so the fold's own reads see every row this call itself just
+    # wrote or superseded.
     db.flush()
     folded_batch_ids: set = set()
 
