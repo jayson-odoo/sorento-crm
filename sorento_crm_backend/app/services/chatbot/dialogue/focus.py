@@ -394,11 +394,24 @@ def resets_topic(
         return False
     if signals.get("topic_reset") is True:
         return True
+    # OWNER RULING K RULE 2, and it is what makes a topic change work under the PROMOTED
+    # prompt. `topic_reset` is a v3 key and `v3_signals` returns False for it under v1 by
+    # design - a v1 model was never told what it means - so this arm is the ONLY one a
+    # promoted deployment has. It read `prev.domain_hint`, the legacy session key, which
+    # the five-key session does not carry: so it compared `None` against this turn's
+    # domain, `topic.changed` answered False, and under v1 a customer who changed the
+    # subject kept the old one's entities narrowing the new question (H66, the defect the
+    # rule was written for, back on every v1 turn).
+    #
+    # The ALIVE domain is `focus.domains`, which is the same value `_reuse_domain` and
+    # `reuse_domain_entityless` read, so the three rules cannot disagree about what the
+    # conversation was about a moment ago.
+    alive = [d for d in jsc.array(value_of(from_session(prev, turn_no=0), "domains")) if jsc.truthy(d)]
     this_turn = [e for e in entities if jsc.truthy(e) and not is_carried(e)]
     return bool(
         explicit
         and len(this_turn) > 0
-        and topic.changed(jsc.get(prev, "domain_hint") or None, o.get("domain_hint"))
+        and topic.changed(alive[0] if alive else None, o.get("domain_hint"))
     )
 
 

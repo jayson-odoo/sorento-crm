@@ -1262,12 +1262,17 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # re-maps EVERY prior entity to `current_message: true` before the executor runs. The
     # uncorrupted this-turn signal is the frozen snapshot.
     #
-    # The PRIOR half is gone with the legacy session (L1-S3 fix round): the previous turn's
-    # `entities` list is not a session key any more, and what the conversation is about is
-    # `focus` - which `dialogue/focus.py` owns and which this function is handed as an
-    # out-parameter rather than reading back. An entity the LLM did not name this turn is
-    # still recognised as carried by the snapshot test below.
-    ce_prior_keys_any: set[str] = set()
+    # The PRIOR half is `focus` now, not the legacy `entities` list (L1-S3 fix round). It
+    # was briefly EMPTY here, which made `ce_is_carried` answer False for everything: its
+    # first conjunct is "was this in the previous state", so an empty set is not a
+    # conservative default, it is the whole test switched off. Owner ruling K rule 2 then
+    # read a reused entity as this turn's own and cleared the subject on a continuation
+    # (`owner-what-about-y-after-a-stock-answer` turn 2, "incoming?").
+    ce_prior_keys_any = {
+        k
+        for e in focus_entities(parent_input.get("previous_conversation_state"))
+        for k in _ce_keys_of(e)
+    }
     ce_llm_keys_any = {
         k for e in jsc.array(jsc.get(parser_raw_snapshot, "entities")) for k in _ce_keys_of(e)
     }
@@ -2254,6 +2259,16 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         apply_open_question_outcome(
             o, open_question, answered["outcome"], named_team_help=named_team_help
         )
+        # AN ANSWER IS NOT A CARRY, and `ce_is_carried` is provenance-based: an entity that
+        # was in the previous focus and is not in the LLM's own emission reads as carried,
+        # which is exactly what the pick and its #708 siblings look like. They are this
+        # turn's SCOPE - the customer chose them from rows we showed them - so they are
+        # recorded here, the same way `try_dym_pick` records its own pick, rather than
+        # inferred later. Without this the sibling issue #708 exists to save was dropped
+        # again one rule further on.
+        for entity in jsc.array(o.get("entities")):
+            if jsc.truthy(entity):
+                ce_dym_picked_keys.add(_ce_key(entity))
 
     # -- THE FOCUS RULES (AC-1005) -------------------------------------------------------- #
     # ONE call, in the position the blocks it replaced occupied: after every writer of
