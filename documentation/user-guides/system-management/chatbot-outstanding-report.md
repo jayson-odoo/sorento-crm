@@ -22,6 +22,8 @@ The bot always names which one it is answering. It never prints the bare word "o
 * **A location word.** A word ending in a warehouse suffix (e.g. "IB") matches every warehouse code ending in that suffix (e.g. `-IB`: `BRW-IB`, `MWH-IB`). An exact warehouse code (e.g. "BRW") matches only that code.
 * **A date or a year.** Filters sales orders and delivery orders to that order-date window. **No date means all dates** - the report prints `Order date: all`.
 
+**Ambiguous customer name.** When a customer name matches more than one company, the bot shows you all the matches and asks "Which customer do you mean?" with a numbered list. Reply with the number for one company, or "all" to include every matching company in the report. The outstanding ask then continues with the header showing the customer(s) you picked. This picker has no delivery-order hint on an outstanding ask.
+
 ## The scope question
 
 If the message does not name a scope word ("sales order", "delivery order", or "both"), and the contact is allowed to see sales order figures, the bot asks one question before running anything. The question is prefaced by the same four header lines that appear on the report:
@@ -123,6 +125,10 @@ Reply "2" for the delivery order list - one row per outstanding delivery order, 
 Reply "3" (or "both lists") to see both lists in one reply, sales order list first, then delivery order list.
 
 Every matching row is sent; long lists are chunked into several WhatsApp messages the way any long chatbot reply is, not shortened. This offer stays open across picks and casual turns - you can pick option "1", then pick option "2" on the next message, without asking the question again.
+
+## Leaving the question
+
+While the scope question or detail offer is on screen, you can close it and move on. Reply "no" or "stop" and the bot answers "Okay, noted." with no offer to pick. You can also ask about something else entirely - the new question closes the offer and the bot answers your new ask. If you send an unclear or unrelated reply ("hi", "hmm"), the bot repeats the offer once to give you a chance to clarify. A second unclear reply closes the offer and the bot treats it as a greeting or low-signal message. Any numbered answer to the offer, or any new question, closes the offer and moves forward.
 
 ## A miss
 
