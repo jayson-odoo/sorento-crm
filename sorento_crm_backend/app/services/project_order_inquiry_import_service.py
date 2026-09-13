@@ -865,14 +865,25 @@ class _Raiser:
     inquiry header, and the mirror line for each core line.
     """
 
-    def __init__(self, db: Session, actor: Optional[str], now: datetime):
+    def __init__(
+        self,
+        db: Session,
+        actor: Optional[str],
+        now: datetime,
+        lines_by_order: Dict[str, List[str]],
+    ):
         from app.services.project_so_adoption_service import ProjectSOAdoptionService
 
         self.db = db
         self.actor = actor
         self.now = now
+        #: The core lines THIS upload matched, per sales order. What the adoption mirrors
+        #: beyond the still-owed ones, and nothing more (review finding 4).
+        self.lines_by_order = lines_by_order
         self.adoption = ProjectSOAdoptionService(db)
         self._records: Dict[str, Optional[dict]] = {}
+        #: Planning records this upload created, for the result (AC-S1-22).
+        self.adopted = 0
 
     def record_for(self, order: SalesOrder) -> Optional[dict]:
         """The planning record, its header and its mirror map. Adopted once per order."""
@@ -882,7 +893,9 @@ class _Raiser:
         from app.services.error_handler import AppException
 
         try:
-            adopted = self.adoption.adopt_for_migration(str(order.id), self.actor)
+            adopted = self.adoption.adopt_for_migration(
+                str(order.id), self.actor, core_line_ids=self.lines_by_order.get(key, []),
+            )
         except AppException as refusal:
             logger.info(
                 "Order inquiry sheet: %s could not be adopted (%s)",
@@ -890,6 +903,8 @@ class _Raiser:
             )
             self._records[key] = None
             return None
+        if not adopted.get("already_adopted"):
+            self.adopted += 1
         pso_id = str(adopted["project_sales_order_id"])
         self._records[key] = {
             "pso_id": pso_id,
@@ -995,6 +1010,21 @@ class _Raiser:
         return entry
 
 
+def _matched_lines_by_order(plan: _Plan) -> Dict[str, List[str]]:
+    """The core lines this upload will raise a row against, per sales order id."""
+    held: Dict[str, List[str]] = {}
+    for match in plan.matches:
+        if not match.raisable:
+            continue
+        order = plan.orders.get(match.row.so_number)
+        if order is None:
+            continue
+        ids = held.setdefault(str(order.id), [])
+        if str(match.core_line.id) not in ids:
+            ids.append(str(match.core_line.id))
+    return held
+
+
 def _close_history(rows: Sequence[Any], actor: Optional[str], now: datetime) -> None:
     """A row against a line that is no longer owed is HISTORY, so it is actioned (AC-S1-29).
 
@@ -1057,7 +1087,7 @@ def apply(
 
     now = _now()
     _stamp_orders(plan)
-    raiser = _Raiser(db, actor, now)
+    raiser = _Raiser(db, actor, now, _matched_lines_by_order(plan))
     service = None
     linked: List[Any] = []
     history: List[Any] = []

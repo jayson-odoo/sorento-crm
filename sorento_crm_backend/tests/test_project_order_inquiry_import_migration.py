@@ -661,7 +661,7 @@ def test_prefers_line_with_same_required_date():
 
         assert result["rows_raised"] == 1, result
         assert str(w.one_row().so_line_id) == str(w.mirror_of(november).id)
-        assert w.mirror_of(october) is not None, "every core line is mirrored"
+        assert w.mirror_of(october) is not None, "a still-owed line is mirrored"
 
     with world() as w:
         order = w.order()
@@ -676,7 +676,10 @@ def test_prefers_line_with_same_required_date():
 
         assert result["rows_raised"] == 1, result
         assert str(w.one_row().so_line_id) == str(w.mirror_of(open_line).id)
-        assert w.mirror_of(closed) is not None
+        # AC-S1-26 as amended (review finding 4, 14 Sep): a CLOSED line the sheet did not
+        # name is not mirrored - an unasked-for mirror line moves the planning record's own
+        # reconciliation figures.
+        assert w.mirror_of(closed) is None
 
 
 def test_verb_from_date_cell():
@@ -1205,8 +1208,10 @@ def test_closed_delivered_order_migrates():
         )
         assert {str(m.core_sales_order_line_id) for m in mirrors} == {
             str(delivered.id),
-            str(other.id),
-        }, "a closed line was not mirrored, so the sheet had nothing to address"
+        }, "the line the sheet NAMED is mirrored, and only it (AC-S1-26 as amended)"
+        assert str(other.id) not in {
+            str(m.core_sales_order_line_id) for m in mirrors
+        }, "a delivered line nobody named stays unmirrored"
         mirrored = next(
             m for m in mirrors if str(m.core_sales_order_line_id) == str(delivered.id)
         )
@@ -1260,6 +1265,43 @@ def test_adopt_for_migration_mirrors_every_line_and_keeps_one_refusal():
             ProjectSOAdoptionService(w.db).adopt_for_migration(str(retail.id), w.actor)
 
         assert refused.value.detail["code"] == "sales_order_not_project_class"
+
+
+def test_an_existing_record_gains_only_the_lines_the_sheet_names():
+    """AC-S1-26, second half (review finding 4, 14 Sep).
+
+    A planning record the BOARD already owns is somebody's working sheet, and
+    `_authored_line_totals` sums its mirror `qty` with no status filter - so a mirror line
+    nobody asked for moves that record's reconciliation figures. The upload therefore adds
+    the line it NAMED and nothing else: not the order's other delivered line, not every
+    closed line it happens to carry.
+    """
+    with world() as w:
+        order = w.order()
+        open_line = w.line(order, qty_ordered="50")
+        named = w.product_row()
+        delivered = w.line(
+            order, product=named, qty_ordered="10", qty_delivered="10",
+            line_status="closed",
+        )
+        unnamed = w.line(
+            order, product=w.product_row(), qty_ordered="7", qty_delivered="7",
+            line_status="closed",
+        )
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        assert w.mirror_of(open_line) is not None, "the board mirrored the owed line"
+        assert w.mirror_of(delivered) is None
+
+        data = sheet([
+            (order.so_number, named.product_code, 10, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+        result = w.apply(data)
+
+        assert result["rows_raised"] == 1, result
+        assert w.mirror_of(delivered) is not None, "the named line has nothing to address"
+        assert str(w.one_row().so_line_id) == str(w.mirror_of(delivered).id)
+        assert w.mirror_of(unnamed) is None, "a delivered line nobody named is not mirrored"
 
 
 def test_closed_received_po_line_links():
