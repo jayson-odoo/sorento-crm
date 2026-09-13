@@ -1322,23 +1322,26 @@ def _resolve_open_question(
         # under the v1 comment above: the block runs whenever `answers_open_question` did not
         # resolve the turn, which is every v1 emission and every v3 one that carried no answer.
         #
-        # BOUNDED TO A TURN THAT SAID NOTHING ELSE, and that bound is not belt and braces - it
-        # is what stops a coincidence being read as an answer. Under the older prompt bodies
-        # `routing.suggested_team` was DERIVED FROM THE DOMAIN, so a plain stock question
-        # emitted `warehouse`; with a one-team warehouse offer open (the cross-domain escalate
-        # offer, `_arm_cross_domain_offer`), the slug would equal the option and the next
-        # ordinary question would have been read as accepting the offer. Measured: world
+        # BOUNDED TO A TURN THAT NAMES NO DOMAIN OF ITS OWN, and that bound is not belt and
+        # braces - it is what stops a coincidence being read as an answer. Under the older
+        # prompt bodies `routing.suggested_team` was DERIVED FROM THE DOMAIN, so a plain stock
+        # question emitted `warehouse`; with a one-team warehouse offer open (the cross-domain
+        # escalate offer, `_arm_cross_domain_offer`), the slug would equal the option and the
+        # next ordinary question would have been read as accepting the offer. Measured: world
         # 900000006's three stock turns, each `business_query` / `inventory` / one product
         # entity, carrying `warehouse` - the chain stopped grading the moment the rung fired on
-        # turn 2. An ANSWER to "which team" carries no domain and no entity of its own (the
-        # console's "mrktg product": `casual`, domain null, entities []), so that is the test.
-        names_business_content = jsc.truthy(jsc.get(parser_raw, "domain_hint")) or any(
-            jsc.get(entity, "current_message") is True
-            for entity in jsc.array(jsc.get(parser_raw, "entities"))
-        )
+        # turn 2.
+        #
+        # The DOMAIN is the whole of the test, and an entity is deliberately NOT part of it
+        # (review S11, measured both ways): a domain is what a turn of its own business has,
+        # and every shape that misfires carries one. Gating on entities as well only lost
+        # answers - "marketing product srtwb8004" answering "which marketing team?" is a team
+        # answer that happens to name a product, and it ended at `low_signal` with the hard
+        # default, the same failure this rung exists to close, one entity away. A carried
+        # entity never mattered either way.
         team_pick_idx = (
             None
-            if names_business_content
+            if jsc.truthy(jsc.get(parser_raw, "domain_hint"))
             else open_question_mod.team_slug_pick(
                 question, jsc.get(jsc.get(parser_raw, "routing"), "suggested_team")
             )
