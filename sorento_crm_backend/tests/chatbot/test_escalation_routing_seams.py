@@ -484,3 +484,114 @@ def test_n4_the_resolvers_session_is_the_same_object_production_session_yielded(
         "the resolver must receive the SAME session object production_session yielded, "
         "not a fresh SessionLocal() - a future swap must fail this identity check"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Security review round 3, S5: the resolver body must be a narrow product-token
+# lookup, never the business lane's full-message-understanding body verbatim.
+# --------------------------------------------------------------------------- #
+
+
+def test_s5_round3_the_resolver_body_is_a_narrow_product_lookup_not_the_customers_message(
+    session_factory, monkeypatch
+) -> None:
+    """Security review round 3, item S5. `escalation_services._resolve_and_gate` builds
+    its request with `lanes/business/resolve_gate.resolve_entity_body(ctx)` UNMODIFIED -
+    the BUSINESS lane's own body builder, whose defaults are `spec_fallback: True` and
+    `understand_phrase: True` (further AI processing over `query`), and whose `query` is
+    `ctx.text.message.message.text` - the customer's FULL raw message. An escalation turn
+    only ever wants "does this ONE code exist"; sending the whole message through
+    spec-fallback and phrase-understanding is unnecessary AI spend on customer-controlled
+    text and a wider processing surface than the lookup needs. RED until the escalation
+    seam builds its own narrow body: `spec_fallback: False`, `understand_phrase: False`,
+    `query` limited to the product token(s) this turn named."""
+    from app.services.chatbot.lanes import escalation_services
+    from app.services.chatbot.lanes.business import services as business_services_mod
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+    db = session_factory()
+    captured: dict = {}
+
+    def fake_production_services(passed_db, *, space_id=None):
+        def spying_resolve_entity(body):
+            captured["body"] = body
+            return {"resolutions": []}
+
+        return ResolveGateServices(
+            access_types=lambda **_: [], resolve_entity=spying_resolve_entity, probe=lambda **_: {}
+        )
+
+    monkeypatch.setattr(business_services_mod, "production_services", fake_production_services)
+
+    # Calling the seam directly - not the full `run()` - keeps this test about the BODY
+    # shape only; `next_assignee` needs real seeded SLAPolicy/Team rows this file's other
+    # tests do not carry, and that seeding is not what S5 is pinning.
+    services = escalation_services.build(db)
+    ctx = _ctx(
+        routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "warehouse", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWB8004")],
+        text="ESCALATE TO MARKETING FOR SRTWB8004, PLEASE HELP URGENTLY I NEED SOMEONE NOW",
+    )
+    item = _item(team="warehouse")
+
+    services.resolve_and_gate(ctx, item)
+
+    assert "body" in captured, "the resolver seam was never invoked"
+    body = captured["body"]
+    assert body.get("spec_fallback") is False, (
+        f"an escalation code lookup must not fall back to spec search: {body!r}"
+    )
+    assert body.get("understand_phrase") is False, (
+        f"an escalation code lookup must not run phrase understanding over the message: {body!r}"
+    )
+    query = body.get("query") or ""
+    assert "URGENTLY" not in query.upper() and "PLEASE HELP" not in query.upper(), (
+        f"the query must be the product token(s), never the customer's own message: {query!r}"
+    )
+    assert "SRTWB8004" in query.replace("-", "").upper() or "SRTWB8004" in [
+        t.upper() for t in (body.get("tokens") or [])
+    ], (
+        f"the product token itself must still be searchable: {body!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Security review round 3, S3: the dry-run preview names the LANDED team's own
+# pair, never the inherited one, and reaches no seam.
+# --------------------------------------------------------------------------- #
+
+
+def test_s3_round3_dry_run_preview_names_the_landed_team_and_agent_never_the_inherited_pair() -> None:
+    """Security review round 3, item S3. `run(..., dry_run=True)`'s preview branch calls
+    `_preview_routing`, which decides the landed team through `_person_routing` same as a
+    live turn - but the customer-facing preview text (`ROUTED_TO_PIC_REPLY.format(team=
+    ...)`) and the comment it would send must still reflect the LANDED pair (AC-1129's own
+    rule), not the inherited `purchasing` / `general_enquiries` this fixture starts from,
+    and no seam may be reached at all (H37)."""
+    ctx = _ctx(
+        routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing_form", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+    )
+    item = _item(team="purchasing")
+    services = _services()
+
+    result = run(ctx, item, services=services, dry_run=True)
+
+    services.resolve_and_gate.assert_not_called()
+    services.next_assignee.assert_not_called()
+    services.sla_create.assert_not_called()
+
+    second_send = result["actions"][-1]
+    assert second_send["kind"] == "send_message"
+    assert "marketing form" in second_send["text"].lower(), (
+        f"the preview's customer-facing text must name the LANDED team, not the inherited "
+        f"purchasing: {second_send['text']!r}"
+    )
+    comment = next((a for a in result["actions"] if a["kind"] == "add_comment"), None)
+    if comment is not None:
+        assert comment["text"].startswith("Team: marketing_form\n"), (
+            f"the preview comment must name the landed team too: {comment['text']!r}"
+        )

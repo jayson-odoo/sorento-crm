@@ -254,3 +254,222 @@ def test_ac1104_the_confirmation_flag_still_confirms_over_an_open_one_team_offer
         "an open one-team offer must still let the parser's confirmation flag stand: "
         f"{qf['escalation']!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Security review round 3, S2: suggest_follow_up's decline arm must not retype a
+# named-team help request either.
+# --------------------------------------------------------------------------- #
+
+
+def test_s2_round3_a_declined_picker_offer_still_keeps_a_named_team_help_request() -> None:
+    """Security review round 3, item S2. `suggest_follow_up`'s `has_entity_pick /
+    has_pos_pick` arm already guards against retyping a named-team help request
+    (`_named_team_help`, `output_exchange.py` ~1417/~3417), but its SIBLING arm - a bare
+    "no" over an open picker (`is_affirmative is False`) - does not: it unconditionally
+    sets `message_type = "casual"` and clears the entities. A help request that ALSO
+    names a team ("no, escalate to marketing") must stay `request_for_help` (D1) rather
+    than being read as a plain decline of the picker."""
+    previous_state = {
+        "pending": None,
+        "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+        "open_question": {
+            "kind": "product_pick",
+            "options": [
+                {"idx": 1, "uuid": "u1", "code": "SRTWCY8840", "label": "SRTWCY8840", "entity_type": "product"},
+                {"idx": 2, "uuid": "u2", "code": "SRTWCY8840-SH", "label": "SRTWCY8840-SH", "entity_type": "product"},
+            ],
+            "expects": "pick",
+            "asked_at_turn": 1,
+            "asked_at": None,
+            "payload": {"domain": "inventory"},
+        },
+    }
+    parser_raw = _full_emission(
+        message_type="request_for_help",
+        is_affirmative=False,
+        entities=[],
+        routing={"suggested_team": "marketing", "suggested_agent": None},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="trying to escalate to marketing, not pick a product",
+    )
+
+    qf = _post_process(parser_raw, previous_state, message="no, escalate to marketing")
+
+    assert qf["message_type"] == "request_for_help", (
+        "a help request naming a team must survive a decline over an open picker, not be "
+        f"retyped casual: {qf!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Security review round 3, B2: a help request naming a team must not be retyped
+# into a business-query pick just because it ALSO answers a stale open picker.
+# --------------------------------------------------------------------------- #
+
+_OPEN_PRODUCT_PICK = {
+    "kind": "product_pick",
+    "options": [
+        {"idx": 1, "uuid": "u1", "code": "SRTWCY8840", "label": "SRTWCY8840", "entity_type": "product"},
+        {"idx": 2, "uuid": "u2", "code": "SRTWCY8840-SH", "label": "SRTWCY8840-SH", "entity_type": "product"},
+    ],
+    "expects": "pick",
+    "asked_at_turn": 1,
+    "asked_at": None,
+    "payload": {"domain": "inventory"},
+}
+
+
+def _run_with_answered_pick(parser_raw: dict, *, emits_v3: bool) -> dict:
+    """`engine.run_turn`'s own three-line sequence for a picked-answer turn
+    (`_resolve_open_question` then `post_process` then `suggest_follow_up`), reproduced
+    directly rather than through the full engine so this file's fixtures stay in one
+    place. Not a new helper on `_post_process` itself - that helper's existing callers
+    (AC-1101/AC-1103/AC-1104) never need `_answered` and stay untouched."""
+    from app.services.chatbot.engine import _resolve_open_question
+
+    variables = {"open_question": dict(_OPEN_PRODUCT_PICK)}
+    answered = _resolve_open_question(
+        variables, parser_raw=parser_raw, emits_v3=emits_v3, referenced_result_set=None, turn_no=2
+    )
+    parent_input = {
+        "latest_user_message": "",
+        "contact_id": "ZZT-esc-head-1",
+        "previous_conversation_state": variables,
+        "parser_emits_v3": emits_v3,
+        "_answered": answered,
+        "turn_no": 2,
+    }
+    parse_block = post_process({"output": dict(parser_raw)}, {}, parent_input)
+    parse_block = suggest_follow_up(parse_block, parent_input)
+    return parse_block["output"]
+
+
+def test_b2_a_named_team_help_request_that_also_answers_a_v3_pick_stays_a_help_request() -> None:
+    """Security review round 3, item B2, v3 case: the parser emits a `request_for_help`
+    naming team `marketing` AND, under prompt v3, resolves the open `product_pick`
+    itself (`answers_open_question.picks: [2]`, matching the code `SRTWCY8840-SH` it also
+    named as an entity). `apply_open_question_outcome` (`output_exchange.py` ~1170)
+    overwrites `message_type` to `business_query` unconditionally whenever the outcome
+    resolves a product, with no read of `named_team_help` - the escalation the parser
+    correctly named is lost the same way AC-1101's suggest-pick arm lost it."""
+    parser_raw = _full_emission(
+        message_type="request_for_help",
+        entities=[
+            {"raw": "SRTWCY8840-SH", "hint": "product", "confident": True, "canonical_code": "SRTWCY8840-SH", "current_message": True}
+        ],
+        routing={"suggested_team": "marketing", "suggested_agent": None},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="trying to escalate to marketing about SRTWCY8840-SH",
+    )
+    parser_raw["answers_open_question"] = {"resolved": True, "picks": [2], "yes_no": None, "free_text": None}
+    # The three other v3-only keys `_assert_emission` requires once `emits_v3` is True.
+    # `asks: []` takes `dialogue.intake.flatten`'s v1 fallback path, which reads THIS
+    # emission's own flat `entities` / `domain_hint` unchanged rather than re-deriving
+    # them from a v3 `asks` list this fixture does not build.
+    parser_raw["asks"] = []
+    parser_raw["anaphora"] = False
+    parser_raw["topic_reset"] = False
+
+    qf = _run_with_answered_pick(parser_raw, emits_v3=True)
+
+    assert qf["message_type"] == "request_for_help", (
+        f"a named-team help request must survive answering an open picker: {qf!r}"
+    )
+    branch, _tier = decide(_decide_ctx(qf))
+    assert branch == "out_of_scope", (
+        f"it must reach the escalation lane, not the business lane: {branch!r}"
+    )
+
+
+def test_b2_a_named_team_help_request_that_also_answers_a_positional_pick_stays_a_help_request() -> None:
+    """Security review round 3, item B2, v1/positional case: the SAME shape, resolved
+    through `reference_positions` (the v1 path `_resolve_open_question` falls back to
+    when the emission carries no `answers_open_question` at all)."""
+    parser_raw = _full_emission(
+        message_type="request_for_help",
+        entities=[],
+        reference_positions=[2],
+        routing={"suggested_team": "marketing", "suggested_agent": None},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="trying to escalate to marketing, position 2",
+    )
+
+    qf = _run_with_answered_pick(parser_raw, emits_v3=False)
+
+    assert qf["message_type"] == "request_for_help", (
+        f"a named-team help request must survive a positional pick too: {qf!r}"
+    )
+    branch, _tier = decide(_decide_ctx(qf))
+    assert branch == "out_of_scope", branch
+
+
+# --------------------------------------------------------------------------- #
+# Security review round 3, N7: the head half of AC-1125's resume. Only
+# lane-level tests (`test_escalation_routing_brand.py`) covered this before, and
+# they hand-build `_answered` rather than running the real head chain.
+# --------------------------------------------------------------------------- #
+
+_DEFERRED_PRODUCT_PICK = {
+    "kind": "product_pick",
+    "options": [
+        {"idx": 1, "uuid": "u1", "code": "SRTWC6030-SH-BL", "label": "SRTWC6030-SH-BL", "entity_type": "product"},
+    ],
+    "expects": "pick",
+    "asked_at_turn": 1,
+    "asked_at": None,
+    # D6/AC-1125: the escalation lane armed this did-you-mean with the team word the
+    # customer typed on the DEFERRED turn - "marketing_product", an exact catalogue word.
+    "payload": {"then": {"escalate": {"team_word": "marketing_product"}}},
+}
+
+
+def test_n7_a_resumed_deferred_escalation_pick_stays_on_the_escalation_lane() -> None:
+    """Security review round 3, item N7 (AC-1125, head half). `open_question._product_pick`
+    already sets `outcome.escalate = True` for a pick against a `then.escalate` payload,
+    and `apply_open_question_outcome`'s own `if outcome.escalate:` branch (run AFTER its
+    entities branch) correctly restamps `message_type = request_for_help`. But the SAME
+    turn also still has an open `product_pick` in `PICKER_KINDS`, so `suggest_follow_up`
+    runs its OWN `has_entity_pick` guard afterwards - and its `_named_team_help` check
+    reads THIS turn's raw parser team word, which is null (the customer just typed "1";
+    the team word is the DEFERRED one, on the question's payload, not retyped). RED
+    today: `suggest_follow_up` retypes the resumed turn `business_query` a second time,
+    undoing what `apply_open_question_outcome` had just set."""
+    from app.services.chatbot.engine import _resolve_open_question
+
+    variables = {"open_question": dict(_DEFERRED_PRODUCT_PICK)}
+    parser_raw = _full_emission(
+        message_type="casual",
+        entities=[],
+        reference_positions=[1],
+        routing={"suggested_team": None, "suggested_agent": None},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="picking option 1",
+    )
+    answered = _resolve_open_question(
+        variables, parser_raw=parser_raw, emits_v3=False, referenced_result_set=None, turn_no=2
+    )
+    assert answered["outcome"] is not None and answered["outcome"].escalate is True, (
+        "the pick itself must resume the deferred escalation - if this fails, the defect "
+        f"is upstream of what N7 targets: {answered!r}"
+    )
+
+    parent_input = {
+        "latest_user_message": "1",
+        "contact_id": "ZZT-esc-head-1",
+        "previous_conversation_state": variables,
+        "parser_emits_v3": False,
+        "_answered": answered,
+        "turn_no": 2,
+    }
+    parse_block = post_process({"output": dict(parser_raw)}, {}, parent_input)
+    parse_block = suggest_follow_up(parse_block, parent_input)
+    qf = parse_block["output"]
+
+    assert qf["message_type"] == "request_for_help", (
+        f"a resumed deferred escalation must survive suggest_follow_up too: {qf!r}"
+    )
+    branch, _tier = decide(_decide_ctx(qf))
+    assert branch == "out_of_scope", (
+        f"it must reach the escalation lane, not the business lane: {branch!r}"
+    )
