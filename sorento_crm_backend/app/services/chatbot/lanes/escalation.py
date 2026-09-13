@@ -622,6 +622,7 @@ def _human_intervention(
         landed,
         services,
         assignee=assignee,
+        product_line=_product_line(ctx, product),
     )
     return {**result, "actions": actions, "pending": None}
 
@@ -753,6 +754,12 @@ def _product_pick_ask(
     offered = _offered_team(ctx)
     if offered:
         escalate["offer_team"] = offered
+    # The code the customer actually typed, so the PIC comment on the turn this resumes can
+    # name it beside the code they picked (AC-1130). After the pick the entity IS the picked
+    # row, so this is the only place that string still exists.
+    typed = _typed_product_code(ctx)
+    if jsc.truthy(typed):
+        escalate["typed_code"] = jsc.js_string(typed)
     question = oq.ask(
         "product_pick",
         options=options,
@@ -792,15 +799,24 @@ def _typed_product_code(ctx: dict[str, Any]) -> Any:
 def _deferred_team_word(ctx: dict[str, Any]) -> Any:
     """The team word a deferred escalation remembered, on the turn its pick resumes it.
 
-    Two structured signals, no new session key (D5, D11):
+    Two structured signals, no new session key (D5, D11): the question THIS message answered
+    (`_deferred_escalation`, gated on the engine's own `_answered` record so a stale picker
+    left open by another lane cannot hand a team word to an unrelated escalation), and that
+    question's own payload, frozen when the rows were printed.
+    """
+    escalate = _deferred_escalation(ctx)
+    if escalate is None:
+        return None
+    word = jsc.get(escalate, "team_word")
+    return word if jsc.truthy(word) else None
 
-    * `ctx.parse._answered` - the engine's own record of the question THIS message answered
-      (`handler: product_pick`, `after.escalate: true`, written in the `answered` stage).
-      Without it a stale picker left open by another lane would keep handing a team word to
-      every later escalation turn;
-    * the question's own payload (`then.escalate.team_word`), frozen when the rows were
-      printed, read off the session as it was READ - which is where the answered question
-      still is.
+
+def _deferred_escalation(ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """The `then.escalate` payload of the question THIS message answered, or None.
+
+    One reader for the two facts the deferral remembers - the team word and the code the
+    customer typed - so the gate on "did this turn really answer that question" is written
+    once (`ctx.parse._answered`, the engine's own record from the `answered` stage).
     """
     answered = jsc.get(jsc.get(ctx, "parse"), "_answered")
     if not isinstance(answered, dict):
@@ -811,10 +827,31 @@ def _deferred_team_word(ctx: dict[str, Any]) -> Any:
         return None
     question = jsc.get(_prev_variables(ctx), "open_question")
     escalate = jsc.get(jsc.get(jsc.get(question, "payload"), "then"), "escalate")
-    if not isinstance(escalate, dict):
-        return None
-    word = jsc.get(escalate, "team_word")
-    return word if jsc.truthy(word) else None
+    return escalate if isinstance(escalate, dict) else None
+
+
+def _product_line(ctx: dict[str, Any], product: Any) -> str:
+    """`Product: <what the customer typed>`, plus the code they picked (AC-1130).
+
+    The PIC reads this comment to pick the case up, and the two codes answer two different
+    questions: what the customer wrote is what they will say again on the phone, and what
+    the picker resolved it to is the row the CRM holds. Empty string on a turn that named no
+    product, which is what keeps the comment byte-identical to the ported n8n body there.
+    """
+    deferred = _deferred_escalation(ctx)
+    typed = jsc.get(deferred, "typed_code") if deferred is not None else None
+    if not jsc.truthy(typed):
+        typed = _typed_product_code(ctx)
+    picked = jsc.get(product, "code") if product is not None else None
+    if not jsc.truthy(picked):
+        picked = _typed_product_code(ctx)
+    typed_text = jsc.js_string(typed) if jsc.truthy(typed) else ""
+    picked_text = jsc.js_string(picked) if jsc.truthy(picked) else ""
+    if not typed_text and not picked_text:
+        return ""
+    if picked_text and picked_text.strip().lower() != typed_text.strip().lower():
+        return f"Product: {typed_text or picked_text} (picked {picked_text})\n"
+    return f"Product: {typed_text or picked_text}\n"
 
 
 def _agent_for_team(team: Any) -> Any:
@@ -1320,6 +1357,7 @@ def _assign(
     services: Any,
     *,
     assignee: Any = None,
+    product_line: str = "",
 ) -> list[dict[str, Any]]:
     """Draw an assignee, start the SLA clock, and build the four actions in live's order.
 
@@ -1350,6 +1388,7 @@ def _assign(
         include_assign=jsc.get(assignee, "is_already_assigned") is not True,
         dry_run=False,
         preview=False,
+        product_line=product_line,
     )
 
 
@@ -1362,6 +1401,7 @@ def _assignment_actions(
     include_assign: bool,
     dry_run: bool,
     preview: bool,
+    product_line: str = "",
 ) -> list[dict[str, Any]]:
     """The four actions, in the order the live graph performs them.
 
@@ -1387,7 +1427,7 @@ def _assignment_actions(
         actions.append(action)
     comment: dict[str, Any] = {
         "kind": "add_comment",
-        "text": _comment_text(ctx, team, sla),
+        "text": _comment_text(ctx, team, sla, product_line=product_line),
         # The RESPOND user id, not the CRM one, and exactly one of them: the executor maps
         # this to `sub-add-comment-respond`'s `user_id`, which is what respond.io needs to
         # turn a comment into a mention. `assign_conversation` above carries the same id.
@@ -1558,7 +1598,9 @@ def _input_message(ctx: dict[str, Any]) -> str:
     return text
 
 
-def _comment_text(ctx: dict[str, Any], team: Any, sla: Any) -> str:
+def _comment_text(
+    ctx: dict[str, Any], team: Any, sla: Any, *, product_line: str = ""
+) -> str:
     """`Call 'sub-add-comment-respond'`'s `comment`, byte for byte.
 
     Verified against the live node expression by substituting its six `{{ }}` blocks and
@@ -1582,6 +1624,10 @@ def _comment_text(ctx: dict[str, Any], team: Any, sla: Any) -> str:
     )
     return (
         f"Team: {jsc.js_string(team)}\n"
+        # AC-1130, and the ONE addition to the ported body: the code the customer named.
+        # Empty on a turn that named no product, so the comment every other escalation turn
+        # writes is byte-identical to the n8n one it replaced.
+        f"{product_line}"
         f"⏰ SLA Alert: This contact is routed to you at {_malaysia(jsc.get(sla, 'initiated_at'))}.\n"
         f"You have until {_malaysia(jsc.get(sla, 'due_at'))} to respond.\n"
         f"You have until {_malaysia(jsc.get(sla, 'due_at_resolution'))} to resolve.\n"
