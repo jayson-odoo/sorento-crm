@@ -103,10 +103,16 @@ def portal_create_price_tag_request(
 ):
     """Create a new price tag request as a draft."""
     _assert_visible(db, token.contact_id)
+    company_id = _resolve_company(db, token)
+    if payload.promotion_id is not None:
+        with company_scope(db, frozenset({company_id})):
+            PriceTagRequestService.validate_promotion_access(
+                db, token.contact_id, payload.promotion_id
+            )
     req = PriceTagRequestService.create_request(
         db,
         contact_id=token.contact_id,
-        company_id=_resolve_company(db, token),
+        company_id=company_id,
         data=payload.model_dump(),
     )
     db.commit()
@@ -289,13 +295,25 @@ def portal_update_price_tag_request(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Update a draft price tag request."""
+    """Update a draft. R3-1 REVERSES D-P6/S8: a submitted request is
+    read-only exactly like the other portal kinds - changes go through the
+    revision engine (``PortalRevisionService.revise``) instead, gated by
+    System Settings > Portal Revisions. Back to ``_require_draft``: 409
+    ``NOT_DRAFT`` for every non-draft status, ``new`` / ``changes_requested``
+    included. The post-submit validators, override carry-over and audit row
+    S8 added here now live in ``portal_revision_service._apply_price_tag_lines``,
+    part of the revise transaction."""
     request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
-    _require_draft(req, "Only draft requests can be updated.")
+    _require_draft(req, "Only a draft can be edited.")
 
     update_data = payload.model_dump(exclude_unset=True)
+    if "promotion_id" in update_data:
+        with company_scope(db, frozenset({req.company_id})):
+            PriceTagRequestService.validate_promotion_access(
+                db, req.contact_id, update_data["promotion_id"]
+            )
     # `lines` is a relationship, not a column: given, it REPLACES the draft's
     # lines; omitted, it leaves them alone. Re-saving a draft posts the whole
     # table, which is why the form no longer creates a second request each time.
@@ -571,7 +589,20 @@ def portal_lookup_promotions(
 
 
 def _require_own_request(db: Session, token: PortalToken, request_id: str):
-    """The contact's own request, or a 404. Another contact's is not theirs to see."""
+    """The contact's own request, or a 404. Another contact's is not theirs to see.
+
+    Gap B (security review of S10): also gates on form visibility, like every
+    other price_tag_request route (``_assert_visible``) - this helper is what
+    the generic revision routes in portal.py dispatch ownership to
+    (``_require_revisable_ownership`` / ``_revision_submission_detail``), and
+    those never carried an equivalent check of their own, so a contact whose
+    grant was revoked could still list/revise/save-draft their own old
+    request. Gap E: validates the id is a UUID first, same as every other
+    caller here does before reaching ``get_request``, so a malformed id 404s
+    instead of a driver 500.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
     req = PriceTagRequestService.get_request(db, request_id)
     if not req or req.contact_id != token.contact_id:
         raise AppException(
@@ -580,6 +611,43 @@ def _require_own_request(db: Session, token: PortalToken, request_id: str):
             code="NOT_FOUND",
         )
     return req
+
+
+def price_tag_neighbours(db: Session, token: PortalToken, request_id: str) -> dict:
+    """Prev/next over the contact's OWN price tag requests, newest first -
+    same ordering ``PriceTagRequestService.list_requests`` uses (review round
+    3). Called from the generic ``/submissions/{kind}/{id}/neighbours`` route
+    in portal.py, dispatched the same way ownership/detail already are for
+    this kind (``_require_revisable_ownership`` / ``_revision_submission_detail``).
+    """
+    from app.models.price_tag import PriceTagRequest
+
+    # ownership + visibility + uuid validation; raises on miss
+    req = _require_own_request(db, token, request_id)
+    ids = [
+        str(r[0])
+        for r in db.query(PriceTagRequest.id)
+        .filter(PriceTagRequest.contact_id == token.contact_id)
+        .order_by(PriceTagRequest.created_at.desc())
+        .all()
+    ]
+    try:
+        idx = ids.index(str(req.id))
+    except ValueError:
+        # Unreachable in practice - _require_own_request above already
+        # confirmed ownership - but fail closed rather than raise unhandled.
+        raise AppException(
+            status_code=404,
+            message="Price tag request not found.",
+            code="NOT_FOUND",
+        )
+    total = len(ids)
+    return {
+        "prev_id": ids[idx - 1] if idx > 0 else None,
+        "next_id": ids[idx + 1] if idx + 1 < total else None,
+        "position": idx + 1,
+        "total": total,
+    }
 
 
 def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
@@ -594,6 +662,35 @@ def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
         raise AppException(status_code=409, message=message, code=code)
 
 
+def _require_editable(req, db: Session) -> None:
+    """R3-1: the attachment gate (upload/delete). A draft is always editable;
+    a submitted request is editable while the revision policy currently
+    allows a revision for it - the same check ``revise``/``save_draft`` make
+    (``PortalRevisionService.policy_for``), never a coincidental status check
+    or the existence of a revision DRAFT row. Review round 3: keying this off
+    ``get_draft`` 409'd every attachment added mid-revision, since
+    ``PriceTagRequestForm`` composes a revision inline (reason + sections)
+    and never writes a ``PortalRevisionDraft`` row for it - that row is only
+    ever written by Save (as opposed to Send) on a revision draft.
+
+    Gap C (security review of S10) still holds with this shape: the policy is
+    re-checked against the request's CURRENT status on every call, so a
+    request that has moved on to ``ready``/``void`` since a revision was
+    last open refuses attachments outright, same as before.
+    """
+    if req.portal_draft_at is not None:
+        return
+    from app.services.portal_revision_service import PortalRevisionService
+
+    if PortalRevisionService(db).policy_for("price_tag_request", req.id).allowed:
+        return
+    raise AppException(
+        status_code=409,
+        message="This request can no longer be edited.",
+        code="NOT_EDITABLE",
+    )
+
+
 def _detail_body(db: Session, req) -> dict:
     """The request with its lines AND its PO attachments resolved.
 
@@ -602,10 +699,21 @@ def _detail_body(db: Session, req) -> dict:
     ``entity_attachment_service.list_attachments_for_entity`` - real rows once
     the PO dropzone has uploaded any, an empty list otherwise. The portal form
     reads the key unconditionally, so it always has to be present.
+
+    R3-1/AC-R7: ``revision`` (the policy block: allowed, remaining, blocked
+    reason) and ``revision_draft`` (the in-progress revise composer, if any)
+    ride along too, like the legacy kinds' detail bodies do - one call, no
+    extra round trip.
     """
-    return PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
+    from app.services.portal_revision_service import PortalRevisionService
+
+    body = PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
         mode="json"
     )
+    revision_service = PortalRevisionService(db)
+    body["revision"] = revision_service.policy_for("price_tag_request", req.id).as_dict()
+    body["revision_draft"] = revision_service.get_draft("price_tag_request", req.id)
+    return body
 
 
 def _resolve_company(db: Session, token: PortalToken) -> str:

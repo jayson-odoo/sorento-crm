@@ -1,14 +1,18 @@
 /**
- * Header price mode + line remarks (D5, D6, AC-S2-1..4).
+ * Header price mode + line remarks (D5, D6; PLAN-portal-price-tag-journey-r8
+ * D-P2/AC-P8 for the price-mode half).
  *
  * A header-level "Price" segmented control (List price / Selling price)
- * replaces the old per-line "Promo price" switch: Selling is disabled with no
- * promotion picked, enables once one is, and reverts to List when the
- * promotion is cleared while Selling is active. Each line carries a free-text
- * Remarks input. `price_mode` and each line's `remarks` are asserted on the
- * payload the form posts, mirroring the existing `PriceTagRequestForm.lines
- * .test.tsx` / `.validation.test.tsx` mock shape (`../lib/price-tag-request
- * -service` mocked, `SearchableSelect` stubbed to a native `<select>`).
+ * replaces the old per-line "Promo price" switch. r8 owner ruling (D-P2)
+ * retires r7's "Selling disabled until a promotion is picked" rule: Selling
+ * is NEVER disabled, its optional Promotion picker lives INSIDE the Price
+ * section (shown only in Selling mode), and clearing the promotion no longer
+ * flips the mode back to List - only an explicit switch back to List clears
+ * it. Each line still carries a free-text Remarks input. `price_mode` and
+ * each line's `remarks` are asserted on the payload the form posts,
+ * mirroring the existing `PriceTagRequestForm.lines.test.tsx` /
+ * `.validation.test.tsx` mock shape (`../lib/price-tag-request-service`
+ * mocked, `SearchableSelect` stubbed to a native `<select>`).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -138,11 +142,13 @@ beforeEach(() => {
   asMock(createRequest).mockResolvedValue({ id: 'req-1' });
 });
 
+// Need by is optional since D-P2b (AC-P8b) and is no longer part of what
+// Submit needs: Customer + one line + a price mode (which the form always
+// carries, defaulting to List) is the whole requirement (AC-P10). Picking
+// the customer auto-opens Sales Order & Lines (AC-P3), which is where the
+// Item picker and Add line button live.
 async function fillMinimalRequiredFields() {
   await selectOption('Customer', 'ZZTD01');
-  fireEvent.change(screen.getByLabelText(/Need by/), {
-    target: { value: '2026-09-30' },
-  });
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', 'product:prod-uuid-1');
 }
@@ -156,7 +162,7 @@ async function lastCreatePayload() {
   return asMock(createRequest).mock.calls.at(-1)?.[0];
 }
 
-describe('PriceTagRequestForm - price mode (D5, AC-S2-1)', () => {
+describe('PriceTagRequestForm - price mode (D5, D-P2/AC-P8)', () => {
   it('defaults to List price on a new request', async () => {
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
@@ -167,58 +173,87 @@ describe('PriceTagRequestForm - price mode (D5, AC-S2-1)', () => {
     expect(payload.price_mode).toBe('list');
   });
 
-  it('Selling price is disabled until a promotion is picked (AC-S2-2)', async () => {
-    // role="radio" (review fix - the Price control is a radiogroup, not two
-    // plain buttons) and aria-disabled rather than the native `disabled`
-    // attribute (a natively disabled element fires no hover/focus events, so
-    // the tooltip explaining why never opened).
+  it('Selling price is never disabled, and picking it reveals the optional Promotion picker inside Price (D-P2, AC-P8)', async () => {
+    // role="radio" (the Price control is a radiogroup, not two plain
+    // buttons). r8 owner ruling drops the r7 "disabled until a promotion is
+    // picked" rule entirely - mode first, promotion second - so there is no
+    // `aria-disabled` state to assert here at all, and the Promotion field
+    // does not exist in the DOM until Selling is chosen.
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
+    // Price is collapsed until a line lands (AC-P7); opened by hand here so
+    // the mode control is on screen with nothing else filled in.
+    fireEvent.click(screen.getByRole('button', { name: /^Price/ }));
 
-    expect(
-      screen.getByRole('radio', { name: 'Selling price' }),
-    ).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('radio', { name: 'Selling price' })).not.toHaveAttribute(
+      'aria-disabled',
+    );
+    expect(screen.queryByLabelText('Promotion')).toBeNull();
 
-    await selectOption('Promotion', 'promo-1');
+    fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
 
-    expect(
-      screen.getByRole('radio', { name: 'Selling price' }),
-    ).not.toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('radio', { name: 'Selling price' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(await screen.findByLabelText('Promotion')).toBeInTheDocument();
+    expect(screen.getByText('Promotion (optional)')).toBeInTheDocument();
   });
 
   it('choosing Selling price with a promotion posts price_mode selling', async () => {
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
-    await selectOption('Promotion', 'promo-1');
+    // Selling first: the Promotion field only renders once Selling is chosen
+    // (D-P2 - the picker moved inside the Price section).
     fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
+    await selectOption('Promotion', 'promo-1');
 
     submit();
 
     const payload = await lastCreatePayload();
     expect(payload.price_mode).toBe('selling');
+    expect(payload.promotion_id).toBe('promo-1');
   });
 
-  it('clearing the promotion while Selling is chosen flips the control back to List price (AC-S2-2)', async () => {
+  it('clearing the promotion while Selling is chosen keeps price_mode selling (D-P2 owner ruling: the r7 revert-to-List rule is dropped)', async () => {
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
-    await selectOption('Promotion', 'promo-1');
     fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
+    await selectOption('Promotion', 'promo-1');
 
     // Clear the promotion: the mocked select's own empty option.
     fireEvent.change(screen.getByLabelText('Promotion'), {
       target: { value: '' },
     });
 
-    await waitFor(() =>
-      expect(
-        screen.getByRole('radio', { name: 'Selling price' }),
-      ).toHaveAttribute('aria-disabled', 'true'),
-    );
+    // Selling stays selected - AC-B5/AC-P8: Selling with no promotion is a
+    // valid end state and submits fine.
+    expect(
+      screen.getByRole('radio', { name: 'Selling price' }),
+    ).toHaveAttribute('aria-checked', 'true');
+
+    submit();
+
+    const payload = await lastCreatePayload();
+    expect(payload.price_mode).toBe('selling');
+    expect(payload.promotion_id).toBeNull();
+  });
+
+  it('switching back to List hides and clears the promotion (D-P2, AC-P8)', async () => {
+    render(<PriceTagRequestForm />);
+    await fillMinimalRequiredFields();
+    fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
+    await selectOption('Promotion', 'promo-1');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'List price' }));
+
+    expect(screen.queryByLabelText('Promotion')).toBeNull();
 
     submit();
 
     const payload = await lastCreatePayload();
     expect(payload.price_mode).toBe('list');
+    expect(payload.promotion_id).toBeNull();
   });
 
   it('has no per-line "Promo price" switch anywhere on the form (AC-S2-3)', async () => {

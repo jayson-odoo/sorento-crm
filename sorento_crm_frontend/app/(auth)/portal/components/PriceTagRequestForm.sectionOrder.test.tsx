@@ -1,16 +1,17 @@
 /**
- * PLAN-price-tag-feedback-r2 S2, AC-S2-1: the read-only view renders the SAME
- * sections in the SAME order as the edit form - Customer, Promotion, Price,
- * Need by, Notes, Lines, Sales Order (r7 renamed Debtor -> Customer, Needed
- * by -> Need by, Purchase Order -> Sales Order, and added the Price field -
- * PLAN-price-tag-r7-request-ux D1/D4/D5).
+ * PLAN-portal-price-tag-journey-r8, D-P1/AC-P11: the read-only view renders
+ * the same FOUR SECTIONS, in the same order, as the edit form - Customer;
+ * Sales Order & Lines; Price; Additional Information - all open, headers
+ * still able to toggle.
  *
- * The other read-only suites assert individual sections' content; this one
- * asserts nothing about content and everything about ORDER, reading the
- * rendered `Label` (`data-slot="label"`) and `CardTitle`
- * (`data-slot="card-title"`) text nodes in DOCUMENT order - the same order a
- * screen reader or a human scanning top-to-bottom encounters them in, not the
- * order they appear in the source.
+ * r7's flat seven-field order (Customer, Promotion, Price, Need by, Notes,
+ * Lines, Sales Order) is retired: r8 groups those same fields under the four
+ * section cards above (D-P1), so this test now asserts the SECTION order via
+ * each `FormSection` header's accessible name (the collapsible trigger
+ * button), plus the field order WITHIN that structure via the rendered
+ * `Label` (`data-slot="label"`) text nodes in document order - the same
+ * order a screen reader or a human scanning top-to-bottom encounters them
+ * in, not the order they appear in the source.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -61,8 +62,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('read-only view section order (AC-S2-1)', () => {
-  it('renders Customer, Promotion, Price, Need by, Notes, Lines, Sales Order in that order', async () => {
+describe('read-only view section order (AC-P11)', () => {
+  it('renders the four sections Customer, Sales Order & Lines, Price, Additional Information in that order', async () => {
     asMock(getRequest).mockResolvedValue({
       id: 'req-1',
       doc_number: 'PT-202609-0001',
@@ -104,23 +105,33 @@ describe('read-only view section order (AC-S2-1)', () => {
 
     await screen.findByText('PT-202609-0001');
 
-    const nodes = Array.from(
-      container.querySelectorAll('[data-slot="label"], [data-slot="card-title"]'),
-    );
-    const texts = nodes.map((n) => n.textContent?.trim() ?? '');
+    // The four section headers (`FormSection`'s collapsible trigger button),
+    // in document order - the section-level half of AC-P11.
+    const sectionTitles = Array.from(
+      container.querySelectorAll('[data-slot="collapsible-trigger"]'),
+    ).map((n) => n.textContent?.trim() ?? '');
+    expect(sectionTitles).toEqual([
+      'Customer',
+      'Sales Order & Lines',
+      'Price',
+      'Additional Information',
+    ]);
 
-    // `Lines` renders as `Lines (1)`; normalized to the bare word so the whole
-    // sequence can be compared as one list against the AC's order.
+    // Within that structure, the field order is unchanged from r7 (`Label`
+    // text nodes, `data-slot="label"`) - just regrouped under the sections
+    // above rather than laid out flat.
+    const nodes = Array.from(container.querySelectorAll('[data-slot="label"]'));
+    const texts = nodes.map((n) => n.textContent?.trim() ?? '');
+    // `Lines` renders as `Lines (1)`; normalized to the bare word.
     const normalized = texts.map((t) => (t.startsWith('Lines') ? 'Lines' : t));
 
     expect(normalized).toEqual([
       'Customer',
-      'Promotion',
+      'Sales Order',
+      'Lines',
       'Price',
       'Need by',
       'Notes',
-      'Lines',
-      'Sales Order',
     ]);
   });
 });

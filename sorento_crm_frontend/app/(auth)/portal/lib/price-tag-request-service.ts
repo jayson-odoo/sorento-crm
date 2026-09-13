@@ -11,6 +11,8 @@ import {
   portalFetch,
   unwrap,
   type PortalAttachment,
+  type PortalRevisionDraft,
+  type PortalRevisionPolicy,
   type PortalSubmissionSummary,
 } from './portal-client';
 
@@ -63,6 +65,10 @@ export interface PriceTagRequestSummary {
   created_at: string;
   /** Set while the request is a draft the salesperson has not submitted. */
   portal_draft_at?: string | null;
+  /** R3-1: the same revision fields the legacy kinds' own summaries carry. */
+  revision_no?: number;
+  last_revised_at?: string | null;
+  has_revision_draft?: boolean;
 }
 
 export interface PriceTagRequestDetail extends PriceTagRequestSummary {
@@ -80,6 +86,19 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
    *  read-only header's gear reads to enable/disable Download PDF without a
    *  second round trip. */
   has_completed_export?: boolean;
+  /**
+   * D-P6/AC-B6: true while a post-submit edit is allowed (status `new` or
+   * `changes_requested`, not a draft - a draft is already editable via
+   * `portal_draft_at`). The FE Edit button reads this, never the status
+   * list directly. Sent by the server since S8.
+   */
+  is_editable?: boolean;
+  /** AC-R7 round 3: the policy block (allowed, remaining, blocked reason) -
+   *  same as the legacy kinds' detail bodies, read straight off the
+   *  re-fetched request instead of a second `useRevisionPolicy` GET. */
+  revision?: PortalRevisionPolicy | null;
+  /** The in-progress revise composer, if any - rides along the same way. */
+  revision_draft?: PortalRevisionDraft | null;
 }
 
 export interface DebtorOption {
@@ -318,6 +337,13 @@ export async function listRequestsAsSummaries(
       created_at: r.created_at,
       customer_name: r.debtor_name,
       needed_by_date: r.needed_by_date,
+      // AC-R7: the same revision fields the legacy kinds' own summaries carry
+      // (D45's landing card reads these for the "Rev N" / "Revising" badges) -
+      // the list payload already carries all three, this just stopped
+      // dropping them.
+      revision_no: r.revision_no,
+      last_revised_at: r.last_revised_at,
+      has_revision_draft: r.has_revision_draft,
     };
   });
 }
@@ -327,6 +353,8 @@ export async function getRequest(id: string): Promise<PriceTagRequestDetail | nu
     `${BASE}/${encodeURIComponent(id)}`,
   );
   if (res.status === 404) return null;
+  // D-P6/S8: `is_editable` is the server's own field now (AC-B6) - true for a
+  // draft, or a submitted request at New / Changes requested. No FE mock left.
   return unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
 }
 

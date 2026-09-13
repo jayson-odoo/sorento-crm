@@ -286,7 +286,8 @@ class TestSubmitRefusals:
         assert res.status_code == 422, res.text
         body = res.json()
         assert body["code"] == "SUBMIT_INCOMPLETE"
-        assert body["detail"] == "debtor_name,needed_by_date,lines"
+        # needed_by_date is optional (D-P2b) - dropped from what "complete" requires.
+        assert body["detail"] == "debtor_name,lines"
 
     def test_submit_refuses_an_ala_carte_bathroom_furniture_line_by_row(self, client):
         c, db, _ = client
@@ -395,8 +396,13 @@ class TestPriceModeAndRemarks:
         assert res.json()["price_mode"] == "list"
 
     def test_create_accepts_price_mode_selling(self, client):
-        c, db, _ = client
+        c, db, contact_id = client
         product_id = _seed_product(db)
+        # A create-time promotion_id must belong to the contact's audience
+        # (the audience check the portal routes now enforce on write, not
+        # just on the lookup) - grant the code the default access_levels
+        # (["dealer","end_user"]) already carry.
+        _grant_promotion_audience_code(db, contact_id)
         promotion_id = _seed_promotion(db)
 
         res = c.post(
@@ -426,8 +432,10 @@ class TestPriceModeAndRemarks:
         assert res.status_code == 422, res.text
 
     def test_update_accepts_price_mode(self, client):
-        c, db, _ = client
+        c, db, contact_id = client
         product_id = _seed_product(db)
+        # An update-time promotion_id is audience-gated the same way create is.
+        _grant_promotion_audience_code(db, contact_id)
         promotion_id = _seed_promotion(db)
         created = c.post(
             _BASE,
@@ -536,7 +544,12 @@ class TestPriceModeAndRemarks:
         assert "remarks" in body
         assert body["remarks"] is None
 
-    def test_submit_with_selling_and_no_promotion_is_refused(self, client):
+    def test_submit_with_selling_and_no_promotion_succeeds(self, client):
+        """D-P2 owner ruling: the r7 PRICE_MODE_NEEDS_PROMOTION submit guard
+        is retired - Selling with no promotion is a valid end state, and
+        every line still comes back with show_promo_price=True (D5's
+        header-derives-every-line rule does not depend on a promotion
+        actually being attached)."""
         c, db, _ = client
         product_id = _seed_product(db)
         created = c.post(
@@ -549,18 +562,28 @@ class TestPriceModeAndRemarks:
             },
         ).json()
         assert created["price_mode"] == "selling"
+        assert created["promotion_id"] is None
 
         res = c.post(f"{_BASE}/{created['id']}/submit")
 
-        assert res.status_code == 422, res.text
-        assert res.json()["code"] == "PRICE_MODE_NEEDS_PROMOTION"
+        assert res.status_code == 200, res.text
+        from app.models.price_tag import PriceTagRequestLine
+
+        rows = (
+            db.query(PriceTagRequestLine)
+            .filter(PriceTagRequestLine.request_id == created["id"])
+            .all()
+        )
+        assert len(rows) == 1
+        assert all(row.show_promo_price is True for row in rows)
 
     def test_submit_with_selling_and_a_promotion_succeeds_and_shows_promo_price_on_every_line(
         self, client
     ):
-        c, db, _ = client
+        c, db, contact_id = client
         first = _seed_product(db)
         second = _seed_product(db)
+        _grant_promotion_audience_code(db, contact_id)
         promotion_id = _seed_promotion(db)
         created = c.post(
             _BASE,
@@ -605,9 +628,10 @@ class TestPriceModeAndRemarks:
     def test_switching_the_header_back_to_list_sets_every_lines_show_promo_price_false(
         self, client
     ):
-        c, db, _ = client
+        c, db, contact_id = client
         first = _seed_product(db)
         second = _seed_product(db)
+        _grant_promotion_audience_code(db, contact_id)
         promotion_id = _seed_promotion(db)
         created = c.post(
             _BASE,
@@ -701,15 +725,15 @@ class TestTheGenericPortalDoesNotServeThisKind:
         assert res.status_code == 400, res.text
         assert "price_tag_request" in res.text
 
-    def test_the_generic_neighbours_route_refuses_the_kind(self, client):
-        c, _db, _contact_id = client
-
-        res = c.get(
-            f"/api/v1/public/portal/submissions/price_tag_request/{uuid.uuid4()}/neighbours"
-        )
-
-        assert res.status_code == 400, res.text
-        assert "Unsupported submission type" in res.text
+    # Review round 3: the neighbours route now DOES serve price_tag_request
+    # (its own dedicated dispatch, not the generic SUPPORTED_TYPES machinery
+    # this class is otherwise about) - the refusal this test pinned is
+    # retired. Coverage moved to
+    # test_portal_price_tag_revise.py::TestNeighboursRouteForPriceTagRequest
+    # (`test_neighbours_for_the_owner` - 200 with prev/next/position/total;
+    # `test_neighbours_other_contact_404` - 404 for a foreign token), which
+    # already exercises both the happy path and the ownership gate, so
+    # nothing here duplicates it.
 
     def test_the_kind_is_still_grantable_on_an_access_type(self):
         """The grant schema asks the OTHER question and must still say yes."""

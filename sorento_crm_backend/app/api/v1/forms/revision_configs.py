@@ -27,7 +27,7 @@ from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.models.portal import PortalRevisionConfig
 from app.services.error_handler import handle_validation_error
 from app.services.portal_revision_service import PortalRevisionService
-from app.services.portal_service import SUPPORTED_TYPES
+from app.services.portal_service import GRANTABLE_PORTAL_FORM_TYPES
 
 router = APIRouter()
 
@@ -90,10 +90,10 @@ def _disabled_placeholder(source_entity_type: str) -> dict:
 
 def _check_type(source_entity_type: str) -> str:
     kind = (source_entity_type or "").strip().lower()
-    if kind not in SUPPORTED_TYPES:
+    if kind not in GRANTABLE_PORTAL_FORM_TYPES:
         raise handle_validation_error(
             f"Unsupported submission type: {source_entity_type!r}. "
-            f"Allowed: {', '.join(SUPPORTED_TYPES)}."
+            f"Allowed: {', '.join(GRANTABLE_PORTAL_FORM_TYPES)}."
         )
     return kind
 
@@ -121,12 +121,12 @@ async def list_portal_revision_configs(
     }
     items = [
         _serialize(rows[kind]) if kind in rows else _disabled_placeholder(kind)
-        for kind in SUPPORTED_TYPES
+        for kind in GRANTABLE_PORTAL_FORM_TYPES
     ]
     # A type that is no longer a portal submission type still shows, so a stale row
     # is visible (and editable back to disabled) rather than silently orphaned.
     items.extend(
-        _serialize(row) for kind, row in rows.items() if kind not in SUPPORTED_TYPES
+        _serialize(row) for kind, row in rows.items() if kind not in GRANTABLE_PORTAL_FORM_TYPES
     )
     return {"items": items}
 
