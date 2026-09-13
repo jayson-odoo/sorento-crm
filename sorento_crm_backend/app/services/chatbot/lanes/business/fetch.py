@@ -1489,6 +1489,13 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
             uid = e.get("uuid")
             if uid and uid not in customer_ids:
                 customer_ids.append(uid)
+    if not customer_ids:
+        # R13: a CUSTOMER-subject answering turn resolved no entity this turn - the ids
+        # rode in on the carried filter set, and they have to ride back out on it too, or
+        # the offer this hit arms loses the only subject it has.
+        customer_ids = [
+            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+        ]
     return {
         "product_code": product_code,
         "date_filter_start": semantic_input.get("date_filter_start"),

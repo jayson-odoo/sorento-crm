@@ -224,8 +224,19 @@ def run_until_exit(
     # (via the ENGINE's normal `_exit_kind == "continue"` path) is where the flag is
     # actually read and the SAME question gets re-armed.
     parse_output_peek = ((ctx.get("parse") or {}).get("output")) or {}
-    if isinstance(parse_output_peek.get("outstanding_reask_filters"), dict) or isinstance(
-        parse_output_peek.get("outstanding_detail_reask"), dict
+    # R13 (live failure, 13 Sep 2026): an ANSWERING turn whose subject is a CUSTOMER has
+    # no entity in its parse at all - the message is a position, and the customer ids came
+    # off the stored filters already resolved. resolve+gate would find nothing to put in
+    # scope and exit with the order lane's "I need at least one filter", which is what the
+    # owner read. Same short-circuit the re-ask arms use, for the same reason: there is
+    # nothing here to resolve.
+    carried_customer_answer = bool(
+        jsc.array(parse_output_peek.get("outstanding_carried_customer_ids"))
+    ) and not jsc.array(parse_output_peek.get("entities"))
+    if (
+        isinstance(parse_output_peek.get("outstanding_reask_filters"), dict)
+        or isinstance(parse_output_peek.get("outstanding_detail_reask"), dict)
+        or carried_customer_answer
     ):
         return {
             "delegate": DELEGATE,
@@ -553,9 +564,15 @@ def run_fetch(
         if isinstance(entities, list)
         else False
     )
+    # R13: on an ANSWERING turn the subject is whatever the stored filters carry - the
+    # product code, the customer ids, or both - and neither needs resolving again: they
+    # were resolved on the turn that asked.
+    carried_subject = bool(jsc.truthy(parse_output.get("outstanding_carried_product_code"))) or bool(
+        jsc.array(parse_output.get("outstanding_carried_customer_ids"))
+    )
     if (
         domain == "order"
-        and (has_product or has_customer)
+        and (has_product or has_customer or carried_subject)
         and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
     ):
         tool_name = "crm_outstanding_report"

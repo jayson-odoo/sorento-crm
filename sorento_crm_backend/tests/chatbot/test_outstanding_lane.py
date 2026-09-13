@@ -2464,6 +2464,135 @@ class TestParserPromptTeachesOpenQuestionAnswers:
 CUSTOMER_ONLY_UUID = "cccccccc-1111-cccc-1111-cccccccc1111"
 CUSTOMER_ONLY_NAME = "Hanlim Trading"
 
+#: What the ROUTE returns for a CUSTOMER-subject ask (R13): no product echo, and the
+#: By product group in place of By customer.
+CUSTOMER_SUBJECT_HIT = {
+    **REPORT_HIT,
+    "product_code": None,
+    "customer_name": CUSTOMER_ONLY_NAME,
+    "so_by_product": [{"product_code": PRODUCT_CODE, "ordered_qty": 10, "outstanding_qty": 7}],
+    "do_by_product": [{"product_code": PRODUCT_CODE, "do_qty": 7, "pending_qty": 7}],
+}
+del CUSTOMER_SUBJECT_HIT["so_by_customer"]
+del CUSTOMER_SUBJECT_HIT["do_by_customer"]
+
+
+class TestAnswerTurnTakesItsSubjectFromTheStoredFilters:
+    """Live on the restarted stack, 13 Sep 2026: "outstanding report for hanlim" armed
+    the scope question correctly, and "3" then ended with "That would search every
+    delivery order we have - I need at least one filter to narrow it down" and no tool
+    call at all.
+
+    The answering turn's parse is JUST a position - no entities, nothing to resolve - so
+    the restored filters are the only subject there is. With `product_code: None` and six
+    carried `customer_ids` nothing treated the customer as a subject, the resolve+gate
+    step found no entity to put in scope, and the turn fell to the order lane's
+    empty-filter refusal. Both tests below feed exactly that shape: an empty parse plus a
+    position, with a CUSTOMER-ONLY filter set."""
+
+    def _seed_customer_only_scope(self, session_factory) -> None:
+        _seed_contact(
+            session_factory,
+            variables={
+                "message_type": "business_query",
+                "domain_hint": "order",
+                "entities": [],
+                "selection_context": "outstanding_scope",
+                "last_result_set": [
+                    {"idx": 1, "label": "Sales orders", "value": "so"},
+                    {"idx": 2, "label": "Delivery orders", "value": "do"},
+                    {"idx": 3, "label": "Both", "value": "both"},
+                ],
+                "outstanding_filters": {
+                    "product_code": None,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [CUSTOMER_ONLY_UUID],
+                    "warehouse_codes": [],
+                    "location_token": None,
+                },
+                "pending": {"kind": "outstanding_scope"},
+            },
+        )
+
+    def test_scope_answer_with_customer_only_filters_runs_the_report(
+        self, session_factory, monkeypatch
+    ) -> None:
+        self._seed_customer_only_scope(session_factory)
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[3],
+            ),
+            text_body="3",
+            msg_id="ZZT-outstanding-answer-customer-only-1",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=CUSTOMER_SUBJECT_HIT,
+        )
+        assert captured, (
+            "the answering turn must run the report on the carried customer - it ended "
+            "with the order lane's empty-filter refusal and no tool call at all"
+        )
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (name, args)
+        assert args.get("customer_ids") == [CUSTOMER_ONLY_UUID], args
+        assert args.get("scope") == "both", args
+        assert not args.get("product_code"), (
+            f"no product was ever named, so none may be invented: {args}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert reply.startswith("Product: all\n"), reply
+        assert "*_By product_*" in reply, reply
+
+    def test_detail_pick_after_a_customer_subject_report_reruns_with_the_customer(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """The same on the detail offer: "2" after a customer-subject report must re-run
+        with the carried customer, never fall through for want of a product."""
+        _seed_contact(
+            session_factory,
+            variables={
+                "message_type": "business_query",
+                "domain_hint": "order",
+                "entities": [],
+                "selection_context": "outstanding_detail",
+                "last_result_set": [
+                    {"idx": 1, "label": "Sales order list", "value": "so"},
+                    {"idx": 2, "label": "Delivery order list", "value": "do"},
+                    {"idx": 3, "label": "Both lists", "value": "both"},
+                ],
+                "outstanding_filters": {
+                    "product_code": None,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [CUSTOMER_ONLY_UUID],
+                    "warehouse_codes": [],
+                    "location_token": None,
+                },
+                "pending": {"kind": "outstanding_detail"},
+            },
+        )
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[2],
+            ),
+            text_body="2",
+            msg_id="ZZT-outstanding-answer-customer-only-2",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=CUSTOMER_SUBJECT_HIT,
+        )
+        assert captured, "the detail pick must re-run the report on the carried customer"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (name, args)
+        assert args.get("customer_ids") == [CUSTOMER_ONLY_UUID], args
+        assert args.get("detail") == "do", args
+        assert not args.get("product_code"), args
+
 
 class TestCustomerOnlyOutstandingAskReachesTheReport:
     def test_bare_outstanding_customer_only_arms_the_scope_question(
