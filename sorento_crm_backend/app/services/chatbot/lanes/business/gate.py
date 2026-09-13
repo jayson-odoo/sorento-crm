@@ -175,6 +175,49 @@ def _flatten_by_entity_type(by_entity_type: Any) -> list[Any]:
     return out
 
 
+def _warehouse_only_uuids(parser: Any, resolver: Any) -> set[str]:
+    """R18: the resolved uuids that ONLY a WAREHOUSE-hinted token matched.
+
+    The parser says what each word IS; the resolver says what each word FOUND. A uuid
+    that only a warehouse word found is not evidence about any other kind of thing,
+    whatever type the resolver stamped on it - "BRW" finding a customer called "STOCK
+    TRANSFER - BRW TO SORENTO" is the resolver doing a text search, not the customer
+    naming a company.
+
+    Fails OPEN in both directions: a uuid the customer word found as well is absent from
+    this set (the customer word is what put it on the list), and so is one reached
+    through `intersection` / `by_entity_type`, which carry no token to attribute a match
+    to at all.
+    """
+    warehouse_tokens = {
+        jsc.js_string(jsc.get(e, "raw") or "").strip().casefold()
+        for e in jsc.array(jsc.get(parser, "entities"))
+        if jsc.lower_or_empty(jsc.get(e, "hint")) == "warehouse"
+    }
+    warehouse_tokens.discard("")
+    if not warehouse_tokens:
+        return set()
+
+    def _uuid(m: Any) -> str:
+        return jsc.js_string(jsc.get(m, "uuid") or "") if jsc.truthy(m) else ""
+
+    from_warehouse: set[str] = set()
+    from_elsewhere: set[str] = set()
+    for resolution in jsc.array(jsc.get(resolver, "resolutions")):
+        token = jsc.js_string(jsc.get(resolution, "token") or "").strip().casefold()
+        bucket = from_warehouse if token in warehouse_tokens else from_elsewhere
+        for m in jsc.array(jsc.get(resolution, "matches")):
+            if _uuid(m):
+                bucket.add(_uuid(m))
+    for m in [
+        *jsc.array(jsc.get(resolver, "intersection")),
+        *_flatten_by_entity_type(jsc.get(resolver, "by_entity_type")),
+    ]:
+        if _uuid(m):
+            from_elsewhere.add(_uuid(m))
+    return from_warehouse - from_elsewhere
+
+
 def _cust_name(match: Any) -> str:
     """`_custName` - the legal name with the ACCOUNT suffix stripped, nothing else."""
     display = jsc.get(match, "display") or {}
@@ -715,6 +758,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     cust_probe_entities: list[dict[str, Any]] | None = None
     cust_families: dict[str, list[str]] | None = None
 
+    # R18 (owner round 5, 13 Sep 2026): the uuids only a WAREHOUSE word found. Computed
+    # once, read twice below - by the ambiguous-customer picker (which must not list
+    # them) and by the scope drop after it (which must not SEARCH them either, or a
+    # report the customer asked for one company silently covers two).
+    warehouse_only = _warehouse_only_uuids(parser, resolver)
+
     # ── AMBIGUOUS CUSTOMER -> ASK WHICH COMPANY ─────────────────────────────
     # A fuzzy customer token can resolve to several UNRELATED companies (exec 13207261:
     # "4 smart" -> 15 accounts across 6 companies, answered with 16 orders from three of
@@ -732,12 +781,23 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 and len(parser["reference_positions"]) > 0
             )
         )
+        # R18 (owner round 5, 13 Sep 2026): a WAREHOUSE word is never a customer
+        # candidate. Live, "outstanding dealer quantity for hanlim" carried a stale
+        # `hint: "warehouse"` token ("BRW") beside the customer word; the resolver
+        # answered that token with customer rows too (`customers.customer_name ilike
+        # 'STOCK TRANSFER%BRW%'` is a real family on the prod copy), and this loop, which
+        # keys ONLY on the resolved `entity_type`, turned one real family into seven lines
+        # of "Which customer do you mean?". The parser already said what the word IS, so
+        # the uuids that ONLY a warehouse-hinted token matched are dropped here - a uuid
+        # the customer word matched as well is untouched, because then the customer word
+        # is what put it on the list.
         bases: dict[str, Any] = {}
         for m in flat:
             if (
                 not jsc.truthy(m)
                 or not jsc.truthy(jsc.get(m, "uuid"))
                 or jsc.js_string(jsc.get(m, "entity_type")).lower() != "customer"
+                or jsc.js_string(jsc.get(m, "uuid")) in warehouse_only
             ):
                 continue
             b = _cust_base(m)
@@ -1051,6 +1111,43 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 kept = [c for c in compatible_entities if _keep(c)]
                 if len(kept) > 0:
                     compatible_entities = kept
+
+        # ── R18: A WAREHOUSE WORD IS NOT A CUSTOMER, IN SCOPE EITHER ────────
+        # The picker above stopped LISTING them; this stops the turn SEARCHING them. A
+        # customer row that only the warehouse word found is not a company the customer
+        # named, so a report or an order list scoped by it answers a wider question than
+        # the one asked. Never empties the scope: with nothing else left, the fail-open
+        # rule is to keep what resolved and let the rest of the gate judge it.
+        if warehouse_only:
+            kept_cust = [
+                c
+                for c in compatible_entities
+                if jsc.js_string(jsc.get(c, "entity_type")).lower() != "customer"
+                or jsc.js_string(jsc.get(c, "uuid")) not in warehouse_only
+            ]
+            if kept_cust:
+                compatible_entities = kept_cust
+
+        # ── A RE-SEATED PIN IS IN SCOPE ─────────────────────────────────────
+        # R16 (owner round 5, 13 Sep 2026): `gate_passed` was decided further up, on the
+        # RESOLVER's rows alone, and the re-seat above runs after it. A turn whose only
+        # subject is the pick - "1" against a customer picker - therefore failed the
+        # "requires a scoping entity" test with the picked customer sitting in
+        # `compatible_entities`, and the customer read "I need at least one filter" over
+        # a choice they had just made. The pin IS the scope, by this block's own rule
+        # ("A PICK IS AUTHORITATIVE"), so the verdict is re-taken on what is actually in
+        # scope. Narrow on purpose: only where the resolver returned NOTHING at all, so
+        # every other reason a gate fails is untouched.
+        if (
+            not gate_passed
+            and len(entities) == 0
+            and len(compatible_entities) > 0
+            and not jsc.truthy(gate_clarification)
+        ):
+            gate_passed = True
+            gate_reason = (
+                f"'{domain}' scoped by a pinned pick; the resolver re-resolved nothing"
+            )
 
     # ── document-class precision (container-status S1) ──────────────────────
     # "container status list" returns Packing List (word:list), Stock_List (word:list) AND

@@ -1082,6 +1082,41 @@ def _outstanding_keeps_subject(o: dict, filters: Any) -> bool:
     return True
 
 
+def _outstanding_scope_ask_candidate(o: dict, prev_pending: Any) -> bool:
+    """S4 point 3 (AC-1130): does this turn look like a BARE outstanding ask with a
+    subject, the shape that arms the scope question instead of fetching?
+
+    A PURELY SYNTACTIC signal - no grant knowledge here, that check lives in
+    `lanes/business/__init__.py::run_fetch`, the only place `ctx.access` is already
+    read. A direct `run_fetch` call (that module's own tests) never sets this, so it
+    just fetches, which is what `TestToolPick` pins.
+
+    Read TWICE, at the two points `_apply_outstanding_pending` is applied, and for the
+    same reason (R16, owner round 5, 13 Sep 2026): on a turn that PICKED a customer off
+    a roster, neither the order status nor the entity exists yet at the first point -
+    the status arrives with the reuse carry and the entity with the positional pick,
+    both of them further down this function. The first pass therefore read an empty
+    entity list and no status, the flag was never stamped, and the turn that resumed an
+    outstanding ask fell through to the plain order list (the owner's own trace). The
+    late read only ever ADDS the flag; nothing unsets it.
+    """
+    stale_outstanding_ask_open = jsc.get(prev_pending, "kind") in (
+        "outstanding_scope",
+        "outstanding_detail",
+    ) and not jsc.truthy(o.get("outstanding_pending_dropped"))
+    return (
+        not stale_outstanding_ask_open
+        and jsc.js_string(o.get("order_status") or "").strip() == "outstanding"
+        and jsc.js_string(o.get("domain_hint") or "") == "order"
+        # R13: a SUBJECT, which is a product or a customer - the report takes either, so
+        # the question that precedes it is asked for either.
+        and any(
+            jsc.js_string(jsc.get(e, "hint") or "") in ("product", "customer")
+            for e in jsc.array(o.get("entities"))
+        )
+    )
+
+
 def _outstanding_scope_pick(prev_state: Any, o: Any) -> str | None:
     """AC-1132/AC-1138: which option this turn answered an OPEN `outstanding_scope` or
     `outstanding_detail` ask with, or None (out of range / not answered) - the SAME
@@ -1175,11 +1210,12 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             and _outstanding_keeps_subject(o, filters)
         ):
             o["outstanding_refined"] = True
-            # The turn's OWN entities, frozen here: the executor between the two passes
-            # rewrites `o["entities"]` (it merges the carried ones back in), so the
-            # second pass has to restore what the customer named from a copy, not from
-            # a list that has moved on. A location WORD is the one entity the report
-            # resolves itself (D5), off exactly this list.
+            # The turn's OWN entities, frozen here and kept OFF `o["entities"]` (R17):
+            # this is the offer-scoped copy the location resolver in `run_fetch` reads
+            # (D5 - a location word is the one entity this report resolves itself), and
+            # keeping it here is what stops an unresolved warehouse word outliving the
+            # offer in the persisted session entities. Frozen rather than re-read
+            # because the executor between the two passes rewrites `o["entities"]`.
             o["outstanding_refinement_entities"] = [
                 dict(e) for e in named_entities if isinstance(e, dict)
             ]
@@ -1208,29 +1244,27 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # entity that survives is the SUBJECT of the question being answered; a turn that
     # named a product of its own is a NEW ask and returned above, never here.
     #
-    # A REFINEMENT turn, unlike an answer, DID name filters of its own - a location word
-    # is an entity the report still has to resolve (D5) - so those are restored in front
-    # of the carried subject, from the frozen copy the first pass took.
-    o["entities"] = [
-        *(
-            [dict(e) for e in jsc.array(o.get("outstanding_refinement_entities")) if jsc.truthy(e)]
-            if refining
-            else []
-        ),
-        *(
-            [
-                {
-                    "raw": product_code,
-                    "hint": "product",
-                    "canonical_code": product_code,
-                    "current_message": True,
-                    "confident": True,
-                }
-            ]
-            if product_code
-            else []
-        ),
-    ]
+    # R17 (owner round 5, 13 Sep 2026) puts a REFINEMENT on the same footing: the filter
+    # it named belongs to the OFFER, not to the conversation. Its own entities travel on
+    # `outstanding_refinement_entities` (offer-scoped, read by `run_fetch`'s location
+    # resolver) and never enter this list, because this list is what the session
+    # persists: R15 left an UNRESOLVED `{"raw": "BRW", "hint": "warehouse"}` behind, the
+    # next unrelated ask merged it back in on its own axis, and the resolver searched the
+    # warehouse word as a customer token - one real family became seven in the picker
+    # (live trace, contact 437264483). The offer dies, its location dies with it.
+    o["entities"] = (
+        [
+            {
+                "raw": product_code,
+                "hint": "product",
+                "canonical_code": product_code,
+                "current_message": True,
+                "confident": True,
+            }
+        ]
+        if product_code
+        else []
+    )
     # N2: the carried window is a DEFAULT, not an override. It used to be assigned
     # unconditionally, so a pick that narrowed the window ("2, but only 2026") was
     # answered over the previous question's dates.
@@ -1441,25 +1475,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     prev_state = parent_input.get("previous_conversation_state")
     prev_pending = jsc.get(prev_state, "pending") if prev_state is not None else None
     _apply_outstanding_pending(o, prev_state=prev_state, prev_pending=prev_pending)
-    stale_outstanding_ask_open = jsc.get(prev_pending, "kind") in (
-        "outstanding_scope",
-        "outstanding_detail",
-    ) and not jsc.truthy(o.get("outstanding_pending_dropped"))
-    if (
-        not stale_outstanding_ask_open
-        and jsc.js_string(o.get("order_status") or "").strip() == "outstanding"
-        and jsc.js_string(o.get("domain_hint") or "") == "order"
-        # R13: a SUBJECT, which is a product or a customer - the report takes either, so
-        # the question that precedes it is asked for either.
-        and any(
-            jsc.js_string(jsc.get(e, "hint") or "") in ("product", "customer")
-            for e in jsc.array(o.get("entities"))
-        )
-    ):
-        # A PURELY SYNTACTIC signal - no grant knowledge here, that check lives in
-        # `lanes/business/__init__.py::run_fetch`, the only place `ctx.access` is
-        # already read. A direct `run_fetch` call (that module's own tests) never
-        # sets this, so it just fetches - which is what `TestToolPick` pins.
+    if _outstanding_scope_ask_candidate(o, prev_pending):
         o["outstanding_scope_ask_candidate"] = True
 
     # reuse means "no new value this turn" - but if the parser emitted current entities it
@@ -1878,6 +1894,19 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                     o["date_filter_end"] = jsc.get(pcs, "date_filter_end")
                 if jsc.truthy(jsc.get(pcs, "date_mode")):
                     o["date_mode"] = jsc.get(pcs, "date_mode")
+
+            # order_status: the DELIVERY STATUS the question was asked about is an axis
+            # of exactly the same kind, and it is carried for exactly the same reason
+            # (R16, owner round 5, 13 Sep 2026). An outstanding ask that hit the gate's
+            # ambiguous-customer picker is answered by a bare "1", which names no status
+            # word at all: without this carry the resumed turn was a plain order list,
+            # and the customer got the legacy per-product summary back instead of the
+            # outstanding question they were in the middle of (live trace, contact
+            # 437264483). `compile_state` persists it on the asking turn for this read.
+            if not jsc.truthy(o.get("order_status")) and jsc.truthy(
+                jsc.get(pcs, "order_status")
+            ):
+                o["order_status"] = jsc.get(pcs, "order_status")
 
             # requested_attributes: the PERSPECTIVE of the question is an axis the pick
             # turn did not name - carry it like the date window (exec 13951947).
@@ -3656,6 +3685,11 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # `entities` to this turn's OWN (empty) list when the pick was out of range.
     # Re-applied here, where it is final by definition.
     _apply_outstanding_pending(o, prev_state=prev_state, prev_pending=prev_pending)
+    # R16: and the scope-ask signal with it, for the same reason - see that helper's own
+    # docstring. A pick turn's status (the reuse carry) and its entity (the positional
+    # pick) both arrive between the early read and here.
+    if _outstanding_scope_ask_candidate(o, prev_pending):
+        o["outstanding_scope_ask_candidate"] = True
 
     output["_parser_raw"] = parser_raw_snapshot
     return output

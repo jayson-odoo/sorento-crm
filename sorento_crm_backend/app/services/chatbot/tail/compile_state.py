@@ -780,6 +780,20 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     if dym_last_result_set:
         variables["dym_last_result_set"] = dym_last_result_set
 
+    # R16 (owner round 5, 13 Sep 2026): the DELIVERY STATUS the question was asked about
+    # ("outstanding", "so_outstanding", ...) is an axis of the query exactly like the date
+    # window and `requested_attributes` in the object above - and the ONE of the three the
+    # session did not keep. A turn that asked an outstanding question and stopped at the
+    # gate's ambiguous-customer picker persisted no trace of it, so the "1" that answered
+    # the picker had no status to carry (`head/output_exchange.py`'s reuse arm reads this
+    # key) and came back as a plain order list. Written only when there IS one - the same
+    # "omit when there is nothing to say" rule `tier_menu` above and `outstanding_filters`
+    # below already use, so a turn that names no status leaves the key absent and the
+    # status dies with the question it belonged to.
+    order_status_value = jsc.get(qf, "order_status")
+    if jsc.truthy(order_status_value):
+        variables["order_status"] = order_status_value
+
     # ---- TIER MENU PERSISTENCE (RS-9 Fix 6) ------------------------------- #
     # `route-turn`'s pre-check needs the OFFERED tier list, in order, to resolve a bare
     # digit on ANY later turn of the promotion thread - not just the one round trip the
@@ -1859,7 +1873,20 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
             for e in jsc.array(jsc.get(qf, "entities"))
         )
 
-    offer_born_this_turn = bool(jsc.truthy(mem) or promo is not None or tier is not None)
+    offer_born_this_turn = bool(
+        jsc.truthy(mem)
+        or promo is not None
+        or tier is not None
+        # R16 (owner round 5, 13 Sep 2026): the outstanding SCOPE QUESTION or DETAIL
+        # OFFER armed this turn is a numbered list on the customer's screen, so H29's
+        # rule above applies to it word for word. Without it, a pick that RESUMED an
+        # outstanding ask ("1" against a customer picker, then "Outstanding for which
+        # document?") had its own question's `selection_context` overwritten by the
+        # carried picker two lines down - the customer read the scope question while
+        # the session was armed against the picker roster, and the "3" that answered it
+        # resolved against the wrong list.
+        or selection_context in ("outstanding_scope", "outstanding_detail")
+    )
     prev_picker = jsc.get(prev, "picker_last_result_set")
     carried = (
         prev_picker

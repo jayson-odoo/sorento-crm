@@ -3156,12 +3156,18 @@ def _seed_open_outstanding_customer_pick(session_factory) -> None:
     test_pass4_item2_last_month_keeps_customer_scope.py::_seed_prior_disambiguation_
     state`'s own convention) rather than a hand-invented shape.
 
-    `pending` here is this file's OWN proposed name for the signal R16 needs and does
-    not exist yet - "the outstanding ask this picker interrupted" - modelled on the
-    SAME `pending` dict the scope/detail offers already use (`kind` + whatever the
-    kind needs), so a coder wiring R16 has one mechanism to extend, not two. This
-    file does not assert anything about `pending` BEFORE the pick (that is this
-    seed's own choice, not a contract); only what R16 says must be true AFTER it.
+    SEED CHANGED BY THE CODER (R16, 13 Sep 2026), per the brief's own allowance, with
+    every assertion below left untouched. The proposed `pending: {"kind":
+    "outstanding_customer_pick", "order_status": "outstanding"}` is not a shape
+    production can produce: `tail/pending.py::derive` returns a marker only for the
+    `outstanding_scope` / `outstanding_detail` / `team_clarify` / `member_offer`
+    contexts and an open escalation offer, so a turn that stops at the gate's
+    ambiguous-customer picker (`selection_context: "disambiguation"`, no offer open)
+    persists `pending: null`. What it DOES persist is the ask's own axes - and R16 adds
+    `order_status` to them, beside the `date_filter_*` / `requested_attributes` the
+    session already kept, which is the key the head's `reuse` carry reads on the pick
+    turn. So the seed carries `order_status: "outstanding"` and `pending: None`: the
+    real state, measured, rather than a hand-invented marker.
     """
     roster = [
         {
@@ -3192,7 +3198,10 @@ def _seed_open_outstanding_customer_pick(session_factory) -> None:
                 "warehouse_codes": [],
                 "location_token": None,
             },
-            "pending": {"kind": "outstanding_customer_pick", "order_status": "outstanding"},
+            # The interrupted ask's own delivery-status axis, persisted by
+            # `tail/compile_state.py` on the turn that asked it (R16).
+            "order_status": "outstanding",
+            "pending": None,
         },
     )
 

@@ -298,22 +298,10 @@ def run_until_exit(
     carried_customer_answer = bool(
         jsc.array(parse_output_peek.get("outstanding_carried_customer_ids"))
     ) and not jsc.array(parse_output_peek.get("entities"))
-    # R15, the same short-circuit for the same reason: a REFINEMENT turn's subject was
-    # resolved by the turn that asked, and the only filter it may name that resolve+gate
-    # would otherwise handle is a location WORD - which this report resolves ITSELF
-    # (`run_fetch`'s `resolve_warehouse_token` loop, D5), off the raw parsed entities,
-    # precisely because the generic resolver never returns a suffix token like "IB".
-    # Anything else it names (a customer under a product report) does need the resolver,
-    # so that turn takes the normal path.
-    outstanding_refinement = jsc.truthy(parse_output_peek.get("outstanding_refined")) and all(
-        jsc.js_string(jsc.get(e, "hint") or "") == "warehouse"
-        for e in jsc.array(parse_output_peek.get("entities"))
-    )
     if (
         isinstance(parse_output_peek.get("outstanding_reask_filters"), dict)
         or isinstance(parse_output_peek.get("outstanding_detail_reask"), dict)
         or carried_customer_answer
-        or outstanding_refinement
     ):
         return {
             "delegate": DELEGATE,
@@ -695,7 +683,15 @@ def run_fetch(
         # any single warehouse's own code, so the generic resolver never returns it).
         # `db` is None outside a real turn (this module's own direct `run_fetch`
         # tests), which is a no-op, same as no location word at all.
-        for e in jsc.array(parse_output.get("entities")):
+        # R17: a REFINEMENT's own filter entities are deliberately NOT in
+        # `parse_output["entities"]` - they belong to the offer, not to the conversation,
+        # so they never enter the list the session persists (`head/output_exchange.py`,
+        # R17's own note). They are read here, from the offer-scoped copy, so the location
+        # word still resolves on the turn that named it.
+        for e in [
+            *jsc.array(parse_output.get("entities")),
+            *jsc.array(parse_output.get("outstanding_refinement_entities")),
+        ]:
             if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "warehouse":
                 continue
             token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()

@@ -721,6 +721,11 @@ class SessionVars(BaseModel):
     # customer/location, carried across the scope-question turn and the detail-offer
     # turn (see `tail/compile_state.py`).
     outstanding_filters: Any = None
+    # R16 (owner round 5, 13 Sep 2026): the delivery status the question was asked about,
+    # written only on a turn that named one and read back by the head's `reuse` carry -
+    # the same axis-of-the-question role `date_filter_start` and `requested_attributes`
+    # above already have (see `tail/compile_state.py`).
+    order_status: Any = None
     pending: Pending | None = None
 
 
