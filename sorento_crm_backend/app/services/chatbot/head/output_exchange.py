@@ -1082,6 +1082,58 @@ def _outstanding_keeps_subject(o: dict, filters: Any) -> bool:
     return True
 
 
+def _select_all_over_a_menu(o: dict, parent_input: dict) -> bool:
+    """Is this turn the word "all" answering an open NUMBERED MENU (a customer picker,
+    a suggest offer, or a quote-reply carrying the menu it answers)?
+
+    ONE predicate, read at TWO points, which is the whole of R21 (owner round 8, 13 Sep
+    2026). The expansion itself - "all" -> every offered position - happens far below,
+    after the entity-operation executor has already run; the executor therefore chose
+    its arm from the parser's RAW read of the word, which is `entity_op: "clear"`
+    ("all" is a widen to the model, and over a menu it is the opposite: a pick of
+    everything). So the CLEAR arm wiped the scope and, more to the point, the reuse
+    arm's carries - the order status, the date window, the requested attributes, the
+    active flag - never ran, while the same picker answered "1" arrives as `reuse`
+    from the start and keeps all of them. Live: `all` over a three-family customer
+    picker ran the plain order list with no dates and no status, where `1` armed the
+    outstanding scope question correctly. "why when i say all for customer picker it
+    didn't work, but when i choose 1 it worked?"
+
+    Read here so the executor can take the same arm a single pick takes; read again at
+    the expansion, so there is no second copy of the rule to drift from.
+
+    Deliberately NOT the did-you-mean arm beside it (`dym_last_result_set`): that one
+    threads the prior entities through `apply_dym_pick` itself and does not go through
+    the executor's arms at all, so it has neither the defect nor the evidence for a
+    change.
+    """
+    if jsc.truthy(o.get("is_menu_label")):
+        return False
+    if jsc.is_array(o.get("reference_positions")) and len(o["reference_positions"]) > 0:
+        return False
+    prev_state = parent_input.get("previous_conversation_state") or {}
+    if jsc.is_array(jsc.get(prev_state, "dym_last_result_set")) and len(
+        prev_state["dym_last_result_set"]
+    ) > 0:
+        return False  # the did-you-mean arm owns this turn
+    ref_set = jsc.array(parent_input.get("referenced_result_set"))
+    roster = ref_set if len(ref_set) > 0 else jsc.array(jsc.get(prev_state, "last_result_set"))
+    if len(roster) == 0:
+        return False
+    if not (
+        len(ref_set) > 0
+        or jsc.nullish_str(jsc.get(prev_state, "selection_context") or "")
+        in ("disambiguation", "suggest_offer")
+    ):
+        return False
+    message = parent_input.get("latest_user_message")
+    if message is None:
+        message = parent_input.get("user_message")
+    if message is None:
+        return False
+    return bool(_ALL_EXACT_RE.match(re.sub(r"[.!\s]+$", "", _split_reply_to(message).strip().lower())))
+
+
 def _outstanding_scope_ask_candidate(o: dict, prev_pending: Any) -> bool:
     """S4 point 3 (AC-1130): does this turn look like a BARE outstanding ask with a
     subject, the shape that arms the scope question instead of fetching?
@@ -1874,6 +1926,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 o["broaden_axis_resolved_from_domain"] = wandered_dom0
             # an unmapped wandered domain leaves broaden_axis as "all" - fail open.
 
+    # R21: a pick over an open menu is a REUSE, whichever shape it arrives in. Stamped
+    # HERE, before the executor chooses its arm, rather than at the expansion below where
+    # it was already being stamped too late to be read - see `_select_all_over_a_menu`.
+    if _select_all_over_a_menu(o, parent_input):
+        o["entity_op"] = "reuse"
+        o["select_all_reuse_applied"] = True
+
     # -- ENTITY OPERATION EXECUTOR (op + axis-aware replace/combine) --------------------- #
     if not jsc.truthy(o.get("is_menu_label")):
         domain = o.get("domain_hint")
@@ -2140,12 +2199,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["_tier_carried"] = True
 
     # -- "ALL / SEMUA" on a numbered menu -> expand to EVERY offered position ------------ #
-    sel_ctx0 = jsc.nullish_str(prev_state.get("selection_context") or "")
     # A quote-reply delivers the replied-to menu in referenced_result_set - prefer it over
-    # the immediate last_result_set, and treat its presence as a pick-context.
+    # the immediate last_result_set, and treat its presence as a pick-context. (The
+    # PICK-CONTEXT test itself moved into `_select_all_over_a_menu` with R21, so that the
+    # executor and this expansion read one predicate; this is the roster it expands over.)
     ref_set = jsc.array(parent_input.get("referenced_result_set"))
     lrs_all = ref_set if len(ref_set) > 0 else jsc.array(prev_state.get("last_result_set"))
-    pick_ctx = len(ref_set) > 0 or sel_ctx0 in ("disambiguation", "suggest_offer")
     msg_all_src = parent_input.get("latest_user_message")
     if msg_all_src is None:
         msg_all_src = parent_input.get("user_message")
@@ -2169,7 +2228,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["scope_intent"] = None  # cancel the LLM's broaden reading
         o["message_type"] = "business_query"
         o["select_all_expanded"] = True
-    elif is_all0 and pick_ctx and len(lrs_all) > 0 and no_pos:
+    elif _select_all_over_a_menu(o, parent_input):
         o["reference_positions"] = [
             n for n in (jsc.js_number(jsc.get(r, "idx")) for r in lrs_all) if jsc.is_integer(n)
         ]

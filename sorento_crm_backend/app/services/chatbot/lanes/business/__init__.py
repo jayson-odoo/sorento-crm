@@ -323,19 +323,35 @@ def run_until_exit(
     # (via the ENGINE's normal `_exit_kind == "continue"` path) is where the flag is
     # actually read and the SAME question gets re-armed.
     parse_output_peek = ((ctx.get("parse") or {}).get("output")) or {}
-    # R13 (live failure, 13 Sep 2026): an ANSWERING turn whose subject is a CUSTOMER has
-    # no entity in its parse at all - the message is a position, and the customer ids came
+    # R13 (live failure, 13 Sep 2026): an ANSWERING turn whose subject was CARRIED has
+    # nothing of its own in its parse - the message is a position, and the subject came
     # off the stored filters already resolved. resolve+gate would find nothing to put in
     # scope and exit with the order lane's "I need at least one filter", which is what the
     # owner read. Same short-circuit the re-ask arms use, for the same reason: there is
     # nothing here to resolve.
-    carried_customer_answer = bool(
+    #
+    # BOTH subjects, not just the customer (R21, owner round 8, 13 Sep 2026): the head
+    # gives an answering turn ONE entity when the stored subject is a product - a
+    # synthetic `{raw: <code>, hint: product}` it mints from the carried code itself - and
+    # that entity is not a token the resolver should look up. D10 already says so in
+    # words: the carried code WINS over any re-resolution, because re-resolving it is how
+    # a family sibling took its place. So a turn carrying a subject and naming nothing
+    # BEYOND it skips resolve+gate whichever kind of subject it is; before R21 the product
+    # half still went through, and a scope answer after an all-pick died at the gate.
+    carried_code = jsc.js_string(parse_output_peek.get("outstanding_carried_product_code") or "")
+    carried_subject = bool(
         jsc.array(parse_output_peek.get("outstanding_carried_customer_ids"))
-    ) and not jsc.array(parse_output_peek.get("entities"))
+    ) or bool(carried_code)
+    names_only_the_carried_subject = all(
+        jsc.js_string(jsc.get(e, "canonical_code") or "") == carried_code and bool(carried_code)
+        for e in jsc.array(parse_output_peek.get("entities"))
+        if jsc.truthy(e)
+    )
+    carried_subject_answer = carried_subject and names_only_the_carried_subject
     if (
         isinstance(parse_output_peek.get("outstanding_reask_filters"), dict)
         or isinstance(parse_output_peek.get("outstanding_detail_reask"), dict)
-        or carried_customer_answer
+        or carried_subject_answer
     ):
         return {
             "delegate": DELEGATE,
