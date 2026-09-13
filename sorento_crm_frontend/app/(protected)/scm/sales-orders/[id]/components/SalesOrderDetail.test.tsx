@@ -1953,3 +1953,171 @@ describe('SalesOrderDetail - removing a line', () => {
     expect(screen.getAllByRole('button', { name: 'Remove line' })).toHaveLength(2);
   });
 });
+
+// --------------------------------------------------------------------------------------- //
+// Red tests for the SO400884 walk defects (captain's R4 ruling, 13 Sep browser round):
+// qty 0 is accepted on an EXISTING line (Cancelled after Save), still refused on a NEW
+// line, header/footer totals exclude a cancelled line, and Add line exists on the edit
+// screen.
+// --------------------------------------------------------------------------------------- //
+
+describe('SalesOrderDetail - R4: qty 0 on an existing line, never on a new one', () => {
+  const TWO_LINES: SalesOrderLine[] = [
+    {
+      id: 'l-a', sku: 'SKU-A', product_name: 'Alpha pan', qty_ordered: 10,
+      qty_delivered: 4, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+      required_date: '2026-08-15', unit_price: '100.00', discount: '15.00',
+      line_total: '985.00',
+    },
+    {
+      id: 'l-b', sku: 'SKU-B', product_name: 'Beta basin', qty_ordered: 2,
+      qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+      required_date: '2026-09-01', unit_price: '10.00', discount: null,
+      line_total: null,
+    },
+  ];
+
+  function renderTwoLines() {
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: TWO_LINES, line_count: 2, open_line_count: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+  }
+
+  const rowFor = (sku: string) =>
+    screen.getByLabelText(`Unit price on ${sku}`).closest('tr') as HTMLElement;
+
+  // R4: "the client validation 'quantity above zero' applies to create and to a new line
+  // only" - today `handleSave` (SalesOrderDetail.tsx ~1241-1242) refuses EVERY line whose
+  // qty_ordered is not > 0, existing lines included, so this is the genuine red: typing 0
+  // on an EXISTING line must save, not raise the banner below.
+  it('accepts qty 0 on an existing line and saves', async () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.change(within(rowFor('SKU-A')).getByDisplayValue('10'), {
+      target: { value: '0' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
+
+    await waitFor(() => expect(updateSalesOrderMutateAsync).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByText('Every line needs a product and a quantity above zero.'),
+    ).not.toBeInTheDocument();
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    expect(body.lines.find((l: { id: string }) => l.id === 'l-a')).toMatchObject({
+      id: 'l-a',
+      qty_ordered: 0,
+    });
+  });
+
+  // Owner to confirm: Add line's own shape (a new row with product / qty / date, the
+  // create modal's row control reused) is not yet ruled on - this test can be dropped once
+  // it is. Written against the CURRENT best guess (a button named "Add line"), so it reds
+  // on the button's absence rather than silently passing on a feature nobody built yet.
+  it('still refuses qty 0 on a new line (owner to confirm the Add line shape)', async () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: /Add line/i }));
+    const newRowQty = screen.getAllByRole('spinbutton').at(-1) as HTMLElement;
+    fireEvent.change(newRowQty, { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Every line needs a product and a quantity above zero.'),
+      ).toBeInTheDocument(),
+    );
+    expect(updateSalesOrderMutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalesOrderDetail - R4: footer totals exclude a cancelled line', () => {
+  // R4: "Header totals (Total, Qty ordered, Outstanding) exclude cancelled lines." The
+  // Lines-tab footer already floors `outstandingTotal` for any non-'open' status
+  // (SalesOrderDetail.tsx `outstandingOf`, ~line 529) - that half is measured GREEN below,
+  // kept as a guard rather than dropped, so a future regression on it is caught here too.
+  // `qtyOrderedTotal` (~592-601) sums every line's qty_ordered with no status check at all,
+  // which is the genuine red: the cancelled line's 72 must not land in the "Qty ordered"
+  // footer.
+  it('excludes a cancelled line from the Qty ordered and Outstanding footer totals', () => {
+    const LINES: SalesOrderLine[] = [
+      {
+        id: 'l-1', sku: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm',
+        qty_ordered: 320, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+        line_status: 'open', required_date: '2026-08-30',
+      },
+      {
+        id: 'l-cancelled', sku: 'BASIN-OLD-99', product_name: 'Retired basin',
+        qty_ordered: 72, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+        line_status: 'cancelled', required_date: '2026-08-01', unit_price: '50.00',
+        discount: null, line_total: '3600.00',
+      },
+    ];
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: LINES, line_count: 2, open_line_count: 1 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    // 320 only - not 392 (320 + the cancelled line's 72).
+    expect(within(foot).getByText('320')).toBeInTheDocument();
+    expect(within(foot).queryByText('392')).not.toBeInTheDocument();
+  });
+
+  it('excludes a cancelled line from the Total (amount) footer', () => {
+    const LINES: SalesOrderLine[] = [
+      {
+        id: 'l-1', sku: 'SKU-A', product_name: 'Alpha pan', qty_ordered: 10,
+        qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+        required_date: '2026-08-15', unit_price: '100.00', discount: null,
+        line_total: '1000.00',
+      },
+      {
+        id: 'l-cancelled', sku: 'BASIN-OLD-99', product_name: 'Retired basin',
+        qty_ordered: 72, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+        line_status: 'cancelled', required_date: '2026-08-01', unit_price: '50.00',
+        discount: null, line_total: '3600.00',
+      },
+    ];
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: LINES, line_count: 2, open_line_count: 1 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    // RM 1,000.00 only - not RM 4,600.00 (1,000 + the cancelled line's stale 3,600).
+    expect(within(foot).getByText('RM 1,000.00')).toBeInTheDocument();
+    expect(within(foot).queryByText('RM 4,600.00')).not.toBeInTheDocument();
+  });
+});
+
+describe('SalesOrderDetail - R4: Add line on the edit screen (owner to confirm)', () => {
+  // Owner to confirm: whether Add line reuses the create modal's own row control, and its
+  // exact field set (product / qty / date). Written against the current best-guess shape
+  // so it reds on "no such control exists yet" rather than passing by accident - drop or
+  // rewrite once the owner rules on the real shape.
+  it('offers Add line in edit mode, appending an editable row', () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    const before = screen.getAllByRole('spinbutton').length;
+    fireEvent.click(screen.getByRole('button', { name: /Add line/i }));
+    const after = screen.getAllByRole('spinbutton').length;
+
+    expect(after).toBeGreaterThan(before);
+  });
+});
