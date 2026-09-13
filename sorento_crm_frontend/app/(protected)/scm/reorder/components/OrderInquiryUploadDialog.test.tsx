@@ -72,22 +72,33 @@ const QUEUED: ImportQueuedResult = {
   id: 'row-1',
 };
 
+/**
+ * The migration-tool shape, AC-S1-22 exactly (`PLAN-scm-oi-sheet-migration.md`). The retired
+ * keys - `instalments`, `lines_matched`, `po_claims`, `unknown_locations`, `not_ordered` and
+ * the rest - are gone, because the sheet no longer creates sales orders or writes locations:
+ * AutoCount owns both, and what the sheet carries is which line is owed and on which PO/SPO.
+ */
 function inquiryPreview(over: Partial<OrderInquiryPreview> = {}): OrderInquiryPreview {
   return {
     ok: true,
     problems: [],
     rows: 105,
-    instalments: 88,
-    rows_restating_an_instalment: 17,
+    rows_raised: 71,
+    rows_already_raised: 17,
+    rows_line_not_found: 12,
+    line_not_found: [
+      { so_number: 'SO414040', item_code: 'C-FH14', qty: 30, reason: 'location_differs' },
+    ],
+    sales_orders_not_found: ['SO414033', 'SO414034'],
+    orders_not_plannable: [
+      { so_number: 'SO414099', code: 'sales_order_not_project_class' },
+    ],
+    links_written: 62,
+    links_partial: 4,
+    links_from_autocount: 41,
+    documents_not_linkable: ['202606-S0024'],
     sheets_read: ['Sheet1'],
     sheets_skipped: [],
-    lines_matched: 71,
-    lines_unmatched: 34,
-    sales_orders_not_found: ['SO414033', 'SO414034'],
-    with_location: 105,
-    unknown_locations: ['BRW-ZZ'],
-    po_claims: 62,
-    not_ordered: 19,
     ...over,
   };
 }
@@ -414,56 +425,129 @@ describe('OrderInquiryUploadDialog - an unreadable file', () => {
 
 // ── 4. the order inquiry sheet ──────────────────────────────────────────────
 
-describe('OrderInquiryUploadDialog - order inquiry', () => {
-  it('shows the rows, the locations and the purchase-order links', async () => {
+describe('OrderInquiryUploadDialog - the migration preview', () => {
+  it('renders six tiles from the preview', async () => {
+    // AC-S2-1. What the operator has to decide before Confirm, and nothing else: how many
+    // rows, how many will be raised, how many are already raised, how many found no line,
+    // and the two document counts. No tile for scheduled deliveries, matched lines, PO
+    // links or not-ordered - the sheet no longer means any of them.
+    renderDialog();
+    await choose('inquiry.xlsx');
+
+    expect(within(tile('Rows')).getByText('105')).toBeInTheDocument();
+    expect(within(tile('Will raise')).getByText('71')).toBeInTheDocument();
+    expect(within(tile('Already raised')).getByText('17')).toBeInTheDocument();
+    expect(within(tile('No SO line')).getByText('12')).toBeInTheDocument();
+    expect(within(tile('Documents found')).getByText('62')).toBeInTheDocument();
+    expect(within(tile('Documents not found')).getByText('1')).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-slot="count-tile"]')).toHaveLength(6);
+    for (const retired of ['Matched', 'PO links', 'Not ordered yet', 'Scheduled deliveries']) {
+      expect(screen.queryByText(retired)).toBeNull();
+    }
+  });
+
+  it('omits an empty chip list', async () => {
+    // AC-S2-2. An empty state is ABSENT, never an empty box: a heading over nothing reads
+    // as a list that failed to load.
+    previewOrderInquiry.mockResolvedValue(
+      inquiryPreview({ documents_not_linkable: [], sales_orders_not_found: [] }),
+    );
     renderDialog();
     await choose('inquiry.xlsx');
 
     expect(await screen.findByText('Rows')).toBeInTheDocument();
-    expect(within(tile('Matched')).getByText('71')).toBeInTheDocument();
-    expect(within(tile('PO links')).getByText('62')).toBeInTheDocument();
-    // `ORDER` in the remark column means nothing has been placed yet. It is a state, not a
-    // parse failure, so it is counted on its own rather than reported as a problem.
-    expect(within(tile('Not ordered yet')).getByText('19')).toBeInTheDocument();
+    expect(screen.queryByText(/Documents we could not link/)).toBeNull();
+    expect(screen.queryByText(/Sales orders not in the CRM/)).toBeNull();
+    // The list that DOES have entries is still there, so this asserts absence and not a
+    // panel that failed to render at all.
+    expect(screen.getByText(/Rows with no matching line/)).toBeInTheDocument();
   });
 
-  it('names the sales orders whose locations could not be written', async () => {
-    // A location can only be written onto a line that exists. That limit is real, so the
-    // orders are NAMED - re-uploading after the SO book lands applies them, and somebody
-    // has to be able to see which.
+  it('names the sales orders the CRM does not hold, and the documents it could not link', async () => {
+    // AC-S2-2. Named rather than only counted: the number says there is a problem, the list
+    // is what somebody acts on.
     renderDialog();
     await choose('inquiry.xlsx');
 
     expect(await screen.findByText('SO414033')).toBeInTheDocument();
-    expect(screen.getByText(/Upload this sheet again once those orders land/i)).toBeInTheDocument();
+    expect(screen.getByText('SO414034')).toBeInTheDocument();
+    expect(screen.getByText('202606-S0024')).toBeInTheDocument();
+  });
+
+  it('formats line_not_found entries with the reason in words', async () => {
+    // AC-S2-3. `SO · item · qty · reason`, and the reason in words - the chip is read by a
+    // person, so the code itself never reaches the screen.
+    previewOrderInquiry.mockResolvedValue(
+      inquiryPreview({
+        rows_line_not_found: 3,
+        line_not_found: [
+          { so_number: 'SO414040', item_code: 'C-FH14', qty: 30, reason: 'location_differs' },
+          { so_number: 'SO414041', item_code: 'M310-CR', qty: 8, reason: 'no_line_for_item' },
+          {
+            so_number: 'SO414042',
+            item_code: 'MSK11C',
+            qty: 67,
+            reason: 'qty_exceeds_ordered',
+          },
+        ],
+      }),
+    );
+    renderDialog();
+    await choose('inquiry.xlsx');
+
+    expect(
+      await screen.findByText('SO414040 · C-FH14 · 30 · location differs'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('SO414041 · M310-CR · 8 · no open line for this item'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('SO414042 · MSK11C · 67 · quantity exceeds outstanding'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/location_differs/)).toBeNull();
   });
 
   it('heads the list with the real total, not the length of the capped sample', async () => {
-    // The backend caps every named list at 200. Heading the section with the length of what
-    // it happens to be showing turned 15,787 missing sales orders into "(200)" on the real
-    // file - a number that reads like a small, closed problem.
+    // AC-S2-3. The backend caps the named list at 200 and the chip list shows 20. Heading
+    // the section with the length of what it happens to be showing turned 15,787 rows with
+    // no line into "(20)", which reads like a small, closed problem.
     previewOrderInquiry.mockResolvedValue(
       inquiryPreview({
         rows: 15797,
-        lines_matched: 10,
-        lines_unmatched: 15787,
-        sales_orders_not_found: Array.from({ length: 200 }, (_, i) => `SO90${i}`),
+        rows_raised: 10,
+        rows_line_not_found: 15787,
+        line_not_found: Array.from({ length: 25 }, (_, i) => ({
+          so_number: `SO90${i}`,
+          item_code: 'C-FH14',
+          qty: 1,
+          reason: 'no_line_for_item' as const,
+        })),
       }),
     );
     renderDialog();
     await choose('book.xlsx');
 
     expect(
-      await screen.findByText(/Sales orders we have not received yet \(15,787\)/),
+      await screen.findByText(/Rows with no matching line \(15,787\)/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/\(200\)/)).toBeNull();
+    expect(screen.getByText('+15,767 more')).toBeInTheDocument();
   });
 
-  it('names a location code it does not recognise', async () => {
+  it('confirm disabled when nothing would be raised', async () => {
+    // AC-S2-4. A sheet whose every line is already raised is a re-upload that would write
+    // nothing, so Confirm is not offered - and it IS offered the moment one row would land.
+    previewOrderInquiry.mockResolvedValue(
+      inquiryPreview({ rows_raised: 0, rows_already_raised: 105 }),
+    );
     renderDialog();
-    await choose('inquiry.xlsx');
+    await choose('again.xlsx');
 
-    expect(await screen.findByText('BRW-ZZ')).toBeInTheDocument();
+    await waitFor(() => expect(confirmButton()).toBeDisabled());
+
+    previewOrderInquiry.mockResolvedValue(inquiryPreview({ rows_raised: 1 }));
+    await choose('fresh.xlsx');
+
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
   });
 
   it('leaves the link resolution to the job, which is where it now happens', async () => {
@@ -482,46 +566,16 @@ describe('OrderInquiryUploadDialog - order inquiry', () => {
   });
 });
 
-describe('OrderInquiryUploadDialog - one delivery, stated on many sheets', () => {
-  it('shows the row count AND the number of scheduled deliveries', async () => {
-    // The customer's book carries a month tab, a roll-up tab covering that month and dated
-    // working snapshots, so 15,797 rows describe 8,272 deliveries. Showing only the smaller
-    // figure reads as rows lost; showing only the larger one is the bug we just fixed.
+describe('OrderInquiryUploadDialog - how many sheets were read', () => {
+  it('says how many tabs it read, and how many it skipped', async () => {
+    // A workbook of monthly tabs where one silently fails to parse looks exactly like a
+    // quiet month, so the skipped count stays on screen beside the tiles.
+    previewOrderInquiry.mockResolvedValue(
+      inquiryPreview({ sheets_read: ['JAN 26', 'FEB 26'], sheets_skipped: ['SUMMARY'] }),
+    );
     renderDialog();
-    await choose('inquiry.xlsx');
+    await choose('book.xlsx');
 
-    const rows = (await screen.findByText('Rows')).closest(
-      '[data-slot="count-tile"]',
-    ) as HTMLElement;
-    expect(within(rows).getByText('105')).toBeInTheDocument();
-    const deliveries = screen
-      .getByText('Scheduled deliveries')
-      .closest('[data-slot="count-tile"]') as HTMLElement;
-    expect(within(deliveries).getByText('88')).toBeInTheDocument();
-  });
-
-  it('says how many rows restated a delivery another sheet already lists', async () => {
-    renderDialog();
-    await choose('inquiry.xlsx');
-
-    expect(
-      await screen.findByText(/17 rows restate a delivery another sheet already lists/),
-    ).toBeInTheDocument();
-  });
-
-  it('reports a withdrawal on the JOB, not here - but never silently', async () => {
-    /**
-     * Deleting demand silently is the one thing an import must never do, and it still does
-     * not: every withdrawn instalment is recorded as its own per-row outcome
-     * (`line_withdrawn`) on the job. What changed is where it is read, because the deletion
-     * happens on the worker.
-     */
-    renderDialog();
-    await choose('inquiry.xlsx');
-    await waitFor(() => expect(confirmButton()).toBeEnabled());
-    fireEvent.click(confirmButton());
-
-    await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());
-    expect(screen.queryByText(/no longer lists/)).toBeNull();
+    expect(await screen.findByText(/2 sheets read, 1 skipped/)).toBeInTheDocument();
   });
 });

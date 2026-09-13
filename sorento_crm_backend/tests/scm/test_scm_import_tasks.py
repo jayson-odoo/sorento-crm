@@ -470,6 +470,36 @@ def test_the_inquiry_sheet_records_an_outcome_for_every_row(scm_app, monkeypatch
     assert oc.PRODUCT_NOT_FOUND in codes_seen, "a code we do not hold is never invented"
 
 
+def test_the_inquiry_job_reports_the_migration_result_keys(scm_app, monkeypatch):
+    """AC-S1-22 at the JOB, where the operator actually reads it.
+
+    The importer's own key set is asserted in
+    `tests/test_project_order_inquiry_import_migration.py`; this pins that what the job
+    stores under `result["upload"]` is that same set, so no job page can print a counter the
+    importer no longer means (`lines_created`, `instalments`, `po_claims`, ...). The job
+    envelope adds `links` (the claim resolve the task runs after apply), which is not part
+    of the importer's answer, so the assertion is directional rather than an equality.
+    """
+    from tests.test_project_order_inquiry_import_migration import (
+        RESULT_KEYS,
+        RETIRED_KEYS,
+    )
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    _seed_products(db, INQUIRY_ITEMS)
+
+    _c, job_id = _queue_and_run(
+        app, db, monkeypatch, "/api/v1/scm/order-inquiry/apply",
+        {"file": ("order_inquiry.xlsx", ORDER_INQUIRY.read_bytes(), _XLSX)},
+    )
+
+    upload = _job(db, job_id).result["upload"]
+
+    assert RESULT_KEYS <= set(upload), sorted(RESULT_KEYS - set(upload))
+    assert not (RETIRED_KEYS & set(upload)), sorted(RETIRED_KEYS & set(upload))
+
+
 def test_a_row_restating_an_instalment_is_counted_not_lost(scm_app, monkeypatch):
     """A book of 15,797 rows describes 8,272 deliveries, and the difference is restatement.
 
