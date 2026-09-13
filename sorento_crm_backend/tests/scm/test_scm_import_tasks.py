@@ -450,10 +450,9 @@ def test_the_inquiry_job_reports_the_migration_result_keys(scm_app, monkeypatch)
 
     The importer's own key set is asserted in
     `tests/test_project_order_inquiry_import_migration.py`; this pins that what the job
-    stores under `result["upload"]` is that same set, so no job page can print a counter the
-    importer no longer means (`lines_created`, `instalments`, `po_claims`, ...). The job
-    envelope adds `links` (the claim resolve the task runs after apply), which is not part
-    of the importer's answer, so the assertion is directional rather than an equality.
+    stores under `result["upload"]` is that same set EXACTLY, so no job page can print a
+    counter the importer no longer means (`lines_created`, `instalments`, `po_claims`, ...)
+    and nothing the task wraps around the answer can quietly add one either.
     """
     from tests.test_project_order_inquiry_import_migration import (
         RESULT_KEYS,
@@ -471,5 +470,5 @@ def test_the_inquiry_job_reports_the_migration_result_keys(scm_app, monkeypatch)
 
     upload = _job(db, job_id).result["upload"]
 
-    assert RESULT_KEYS <= set(upload), sorted(RESULT_KEYS - set(upload))
+    assert set(upload) == RESULT_KEYS, sorted(set(upload) ^ RESULT_KEYS)
     assert not (RETIRED_KEYS & set(upload)), sorted(RETIRED_KEYS & set(upload))

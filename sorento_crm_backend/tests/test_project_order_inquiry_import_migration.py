@@ -75,10 +75,14 @@ D_NOV = date(2026, 11, 1)
 
 #: Exactly what `apply` and `preview` answer with (AC-S1-22). `ok` and `problems` sit
 #: beside the criterion's own list because the reader's verdict travels on the same dict
-#: (AC-S1-25) and the frontend type carries both (AC-S2-5).
+#: (AC-S1-25) and the frontend type carries both (AC-S2-5). `orders_adopted` and
+#: `orders_stamped` joined them on 14 Sep (security review SF2): what the upload does to
+#: the book's neighbours is said before Confirm, not discovered afterwards.
 RESULT_KEYS = {
     "ok",
     "problems",
+    "orders_adopted",
+    "orders_stamped",
     "rows",
     "rows_raised",
     "rows_already_raised",

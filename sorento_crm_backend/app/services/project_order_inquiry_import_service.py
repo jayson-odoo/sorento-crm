@@ -166,6 +166,12 @@ class _Plan:
     orders: Dict[str, SalesOrder] = field(default_factory=dict)
     orders_not_found: List[str] = field(default_factory=list)
     orders_not_plannable: List[dict] = field(default_factory=list)
+    #: The sales orders this upload will actually work on: not refused, and carrying at
+    #: least one row it can raise. The header stamps reach these and nothing else
+    #: (AC-S1-39), and the adoptions are counted over them (AC-S1-22).
+    orders_in_play: List[str] = field(default_factory=list)
+    #: Of those, the ones with no planning record yet - what `orders_adopted` will be.
+    orders_to_adopt: int = 0
 
 
 @dataclass
@@ -413,7 +419,34 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
         if found is not None:
             match.core_line, match.line_location = found[0], found[2] or None
             match.already_raised = str(found[0].id) in raised_already
+
+    plan.orders_in_play = sorted({
+        match.row.so_number for match in plan.matches if match.raisable
+    })
+    plan.orders_to_adopt = _unadopted(
+        db, [plan.orders[number] for number in plan.orders_in_play]
+    )
     return plan
+
+
+def _unadopted(db: Session, orders: Sequence[SalesOrder]) -> int:
+    """How many of these sales orders have no planning record yet (AC-S1-22).
+
+    Counted rather than inferred from the write, so `preview` can report the same number
+    without adopting anything: a screen that says nothing about adoption lets an operator
+    press Confirm on 400 new planning records without knowing it (security review SF2).
+    """
+    if not orders:
+        return 0
+    from app.models.project_so import ProjectSalesOrder
+
+    held = {
+        str(so_id)
+        for (so_id,) in db.query(ProjectSalesOrder.so_id).filter(
+            ProjectSalesOrder.so_id.in_([str(order.id) for order in orders])
+        )
+    }
+    return sum(1 for order in orders if str(order.id) not in held)
 
 
 # --------------------------------------------------------------------------- #
@@ -699,8 +732,10 @@ def _result(
     not_linkable: Sequence[str],
     *,
     rows_raised: int,
+    orders_adopted: int = 0,
+    orders_stamped: int = 0,
 ) -> dict:
-    """The fifteen keys, and nothing else (AC-S1-22).
+    """The seventeen keys, and nothing else (AC-S1-22).
 
     The retired counters are GONE rather than zeroed: a screen that can print
     `lines_created` is a screen that can tell somebody this sheet wrote the book.
@@ -722,6 +757,11 @@ def _result(
     return {
         "ok": plan.parsed.ok,
         "problems": list(plan.parsed.problems),
+        # What this upload does to the BOOK's neighbours, said before Confirm rather than
+        # discovered afterwards (security review SF2): how many planning records it opens,
+        # and how many sales-order headers it stamps.
+        "orders_adopted": orders_adopted,
+        "orders_stamped": orders_stamped,
         "rows": len(plan.parsed.rows),
         "rows_raised": rows_raised,
         "rows_already_raised": sum(1 for m in plan.matches if m.already_raised),
@@ -755,6 +795,8 @@ def preview(db: Session, file_data: bytes) -> dict:
     return _result(
         plan, links, not_linkable,
         rows_raised=sum(1 for match in plan.matches if match.raisable),
+        orders_adopted=plan.orders_to_adopt,
+        orders_stamped=len(plan.orders_in_play),
     )
 
 
@@ -821,8 +863,8 @@ def _link_actor(actor: Optional[str]) -> Optional[str]:
     return str(configured) if configured else None
 
 
-def _stamp_orders(plan: _Plan) -> None:
-    """The two header stamps the sheet has always applied to an order it does NOT own.
+def _stamp_orders(plan: _Plan) -> int:
+    """The two header stamps, on the orders this upload actually works on (AC-S1-39).
 
     Rule 1 of `PLAN-so-project-label.md` (AC-S1-37): the project half of the inquiry's own
     cell, under `apply_project_label`'s existing precedence gate - a customer-only cell
@@ -833,6 +875,11 @@ def _stamp_orders(plan: _Plan) -> None:
     dropping off a later sheet is one person tidying a working file, not CS withdrawing the
     demand.
 
+    **Only an order that is not refused and has a raisable row** (security review SF1,
+    14 Sep). Stamping every number the sheet merely MENTIONS let a file of 400 retail or
+    mistyped sales orders relabel 400 headers it could do nothing else with, which is a
+    write nobody asked for and no other part of the result would have reported.
+
     This is the only write this importer makes to `sales_orders`, and it is an UPDATE to a
     header the CRM already holds. Nothing is created (AC-S1-19).
     """
@@ -841,13 +888,17 @@ def _stamp_orders(plan: _Plan) -> None:
         project = (getattr(match.row, "project", "") or "").strip()
         if project and match.row.so_number not in labels:
             labels[match.row.so_number] = project
-    for number, order in plan.orders.items():
+    stamped = 0
+    for number in plan.orders_in_play:
+        order = plan.orders[number]
         if order.demand_origin != SOURCE_SYSTEM:
             order.demand_origin = SOURCE_SYSTEM
         cell = labels.get(number)
         label = label_from_inquiry_cell(cell) if cell else None
         if label:
             apply_project_label(order, label, "inquiry")
+        stamped += 1
+    return stamped
 
 
 def _note_for(row, file_name: Optional[str]) -> str:
@@ -1086,7 +1137,7 @@ def apply(
         ]
 
     now = _now()
-    _stamp_orders(plan)
+    stamped = _stamp_orders(plan)
     raiser = _Raiser(db, actor, now, _matched_lines_by_order(plan))
     service = None
     linked: List[Any] = []
@@ -1164,4 +1215,5 @@ def apply(
 
     _close_history(history, actor, now)
     db.flush()
-    return _result(plan, links, not_linkable, rows_raised=raised)
+    return _result(plan, links, not_linkable, rows_raised=raised,
+                   orders_adopted=raiser.adopted, orders_stamped=stamped)
