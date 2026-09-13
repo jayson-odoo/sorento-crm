@@ -61,6 +61,7 @@ from app.services.chatbot.head.output_exchange import (
 )
 from app.services.chatbot.head.route import decide
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
+from app.services.chatbot.lanes.escalation import PREVIEW_BRAND_NOTE
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.usage import record_parser_usage
@@ -1319,6 +1320,30 @@ def _resolve_open_question(
         ]
         if positions:
             answer = {**answer, "resolved": True, "picks": positions}
+        elif jsc.get(question, "expects") == "yes_no" and isinstance(
+            jsc.get(parser_raw, "is_affirmative"), bool
+        ):
+            # THE OTHER HALF OF THE v1 PATH, and without it a yes was not an answer at all.
+            # Owner console pass, 13 Sep 2026, journey step 5: "photo for SRTWB8004" left a
+            # one-team `team_pick` open (`expects: yes_no`, `options[0].team:
+            # marketing_product`), the customer said "yes", and the conversation was assigned
+            # to CUSTOMER SERVICE - the hard default - because nothing here resolved the
+            # answer. `answers_open_question` is a prompt-v3 key and the promoted prompt is
+            # v1, so `signals` says `resolved: False`; the numbered fallback above does not
+            # fire on a bare yes; and the legacy reader that used to catch it
+            # (`_team_clarify_pick`, keyed on `pending.kind` / `selection_context`) went with
+            # the five-key session. So `_team_pick`'s yes arm - which returns exactly the
+            # offered team - was unreachable under the prompt production runs.
+            #
+            # `is_affirmative` is the PARSER's own boolean, not a reading of the customer's
+            # words (D11), and it is the same signal the post-processor's own offer arms
+            # already trust for a bare yes. A question that expects yes or no is answered by
+            # it; positions still win, because a numbered reply to a one-team offer is a pick.
+            answer = {
+                **answer,
+                "resolved": True,
+                "yes_no": "yes" if jsc.get(parser_raw, "is_affirmative") is True else "no",
+            }
     out: dict[str, Any] = {
         "question": question,
         "answer": answer,
@@ -1682,7 +1707,12 @@ def _run_stages(  # noqa: PLR0915
     # what answering it decided, and the lane the outcome names.
     parse_block["_open_question_before"] = open_question_before
     parse_block["_answered"] = answered_entry
-    parse_block["_lane_override"] = lane_override
+    # `_lane_override` IS NOT WRITTEN. It was the lane an outcome names
+    # (`_lane_for_outcome`), put on the parse block for a reader that never arrived: nothing
+    # in the backend, the console or the frontend reads it - the routing consequence travels
+    # as `message_type` / `escalation` through `route.decide`, and the value itself is on the
+    # trace below (`facts.lane`), which is where an operator reads it. `lane_override` is
+    # still computed for exactly that line.
 
     turn_trace.record(
         "answered",
@@ -2739,13 +2769,20 @@ def _run_escalation_arm(
     turn_trace.record(
         "looked_up",
         summary=(
-            "Asked which company should take it."
+            "Offered the codes it could find."
+            if arm == "product_pick"
+            else "Asked which company should take it."
             if arm == "clarify"
             else "Handed the conversation to a person."
         ),
         why=(
-            "More than one company was offered and nobody picked one, so assigning would "
-            "have round-robined a pool the customer never chose."
+            # D6: the product is resolved before the team, because the brand the team's
+            # roster is narrowed by comes off the product.
+            "The code the customer named does not exist, and the brand that picks the "
+            "person comes off the product - so the rows go out before anyone is assigned."
+            if arm == "product_pick"
+            else "More than one company was offered and nobody picked one, so assigning "
+            "would have round-robined a pool the customer never chose."
             if arm == "clarify"
             else "The turn asked for a human, so the lane assigns one and starts the SLA clock."
         ),
@@ -2754,6 +2791,14 @@ def _run_escalation_arm(
             "arm": arm,
             "actions": [a.get("kind") for a in lane_actions],
             "dry_run": dry_run,
+            # WHAT THIS PREVIEW CANNOT KNOW, on the record the console renders its technical
+            # details from (AC-1145). Present only on a dry run that assigned: a live turn's
+            # brand is resolved, and an arm that asked something assigned nobody to preview.
+            **(
+                {"preview_note": PREVIEW_BRAND_NOTE}
+                if dry_run and arm == "human-intervention"
+                else {}
+            ),
         },
         raw={"clarify": clarify, "pending": pending},
     )

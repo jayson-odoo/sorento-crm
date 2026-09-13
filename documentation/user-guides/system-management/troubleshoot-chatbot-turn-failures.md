@@ -61,6 +61,14 @@ fired and why - click the small **Open full trace** icon beside the Turn line; i
 titled **Turn #&lt;id&gt;** with a section for each step, including **Focus** and **Open question**
 (see below).
 
+**For an escalation turn**, the **Looked up** step's technical details name the team the
+escalation actually landed on, the brand it resolved for the person picked (when one was found),
+and the kind of question it asked, if any - `product_pick` for a "did you mean" pick,
+`team_pick` for which team. On a **test** turn (see "Testing safely" below) the brand is never
+resolved at all, so the details carry a note saying so instead of a brand code, and a "did you
+mean" list cannot be previewed on a test turn either, because resolving the product is the very
+step a test turn skips.
+
 ## When a turn shows Failed
 
 A failed turn's step shows the reason in one sentence, in place of the usual summary. Common
@@ -135,7 +143,8 @@ That question stays open until the dealer answers it, a newer question replaces 
 asks something new instead. A numbered list of options never repeats a number within the same
 message, so a reply like "2" always resolves to the same option the dealer was just shown. If the
 bot offers to escalate and more than one team could take it, a plain "yes" does not pick one for
-you - the bot asks which team, with a button per team.
+you - the bot asks which team, with a button per team (see "How an escalation to a team is
+routed" below for the fuller ladder).
 
 Where to see this at work: the **Decay** panel in a turn's full trace (see "Reading the expanded
 trace" above) names which slot was cleared this turn and why; the **Focus** panel lists what
@@ -143,6 +152,37 @@ focus rule fired and what it changed; the **Open question** panel shows what was
 dealer's reply was read, and what happened next. Each panel shows a plain sentence (e.g. "No focus
 rule fired this turn.") when nothing happened on that turn - that is normal, not a gap in the
 record.
+
+## How an escalation to a team is routed
+
+A dealer reaches a person on staff by typing something like "escalate to marketing" or "escalate
+to warehouse". A few rules decide who actually receives it:
+
+* **"Escalate to &lt;team&gt;" is always treated as an escalation.** It does not matter what the
+  bot was waiting for at that moment - even a numbered pick list the bot had just offered is set
+  aside, and the message is read as a request to reach a person.
+* **A team word that covers more than one team asks which one, unless the conversation already
+  points at one.** "Marketing" covers three teams (Product, Promotion, Form), so the bot asks
+  which one with a numbered button for each - unless an offer already open names one of the
+  three, or the question the dealer had just been asked was already about one of them (a product
+  photo or drawing points at Marketing Product, a promotion points at Marketing Promotion, a form
+  points at Marketing Form). When something already points at one, the bot routes straight there
+  and does not ask.
+* **Naming a product in the same message picks the person who handles that product's brand.** A
+  Mocha-branded product code reaches the Mocha-tagged member of the team, not whoever is next in
+  line generally. When no product is named this turn, the product from the dealer's previous
+  message carries over only if that earlier message was already on the team the escalation lands
+  on; otherwise the escalation draws from the whole team, with no brand preference.
+* **An unknown product code gets a "did you mean" list first.** If the code the dealer typed does
+  not exist, the bot offers a short numbered list of close matches before doing anything else with
+  the escalation. Once the dealer picks one, the escalation carries on from there (which team, then
+  who on that team). If the dealer answers something else instead, the escalation is dropped
+  rather than resumed later.
+* **The note left on the conversation for the person who receives it names both codes**: the code
+  the dealer originally typed, and, when a "did you mean" pick was involved, the code the dealer
+  actually chose.
+* **Typing "MARKETING &lt;code&gt;" without the word "escalate" is still a product question**, not
+  an escalation, and is answered as one.
 
 ## Watching a new parser version before you trust it (the shadow window)
 

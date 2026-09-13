@@ -10,7 +10,7 @@ is what lets the 66-fixture replay run as JSON in, JSON out.
 | `get-round-robin-assignee` (httpRequest) | `next_assignee` | `POST /api/v1/external/next-assignee`'s own handler |
 | (the same node, previewed) | `preview_assignee` | the same handler with `preview: true` |
 | `conversation-sla-tracking-create` (httpRequest) | `sla_create` | `ConversationSLATrackingService.create_tracking` |
-| (B-HB-1, not live) | `resolve_and_gate` | S6a's `business.run_until_exit` |
+| `Call 'sub-resolve-and-gate'` | `resolve_and_gate` | the business lane's own resolver |
 | (the member roster) | `team_members` | `app.api.v1.external.team_members` |
 | (new, 6 Sep 2026) | `staff_lookup` | `users` x `team_members` x `agent_teams`, read here |
 
@@ -20,10 +20,14 @@ the owner adds `out_of_scope` to `system_settings.chatbot_completed_lanes` - wit
 CRM services stubbed at their own boundary, because a seam nothing ever executes is where
 a typo waits for production.
 
-`team_members` is declared and NOT wired. It is not spare machinery: `test_no_hard_default_
-team` (xfail `strict=True`) names it as the roster read the B-TEAM-1' promotion needs, and
-the field is what its stub duck-types against. Like `resolve_and_gate` it raises rather
-than half-working, so promoting the build without wiring it is a loud failure.
+`team_members` is declared and NOT wired, and it is the only one left that way. The team
+ladder this lane runs (`escalation._person_routing`) asks over the CATALOGUE, which is a
+constant, never over a fetched roster - so there is nothing for it to read. It raises
+rather than half-working, so a future arm that does need a roster fails loudly instead of
+silently asking over the wrong list.
+
+`resolve_and_gate` IS wired as of PLAN-chatbot-escalation-routing (H26 closed): the
+escalation lane resolves the product THIS turn named so the assignment can name its brand.
 """
 from __future__ import annotations
 
@@ -38,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class EscalationServices:
-    """One bundle, four callables. `resolve_and_gate` is never called on the live graph."""
+    """One bundle, six callables. `team_members` is the only one not wired (see above)."""
 
     resolve_and_gate: Any
     next_assignee: Any
@@ -186,6 +190,194 @@ def _staff_lookup(db: Any):
     return call
 
 
+# `lanes/business/miss_suggest._dym_plan`'s own `d1s = d1s[:5]` - the number of TOKEN blocks
+# a did-you-mean offer prints. Its per-token cap is `_cap3`, imported where it is used.
+MISS_TOKEN_BLOCK_CAP = 5
+
+
+def _product_tokens(ctx: Any, body: dict[str, Any]) -> list[str]:
+    """The tokens THIS MESSAGE's product entities were sent to the resolver as.
+
+    Taken from the REQUEST, not re-derived: `resolve_entity_body` maps `ctx.parse.output.
+    entities` positionally onto `tokens` (and onto `allowed_entity_types`), and a product
+    token is folded on the way (`mfg6651-gm` is sent as `mfg6651gm`), so zipping the two is
+    the only way the filter can be byte-identical to what was asked about.
+
+    Why it has to exist at all: the body sends EVERY entity, the carried ones
+    (`current_message: false`) and the category beside the code included. Without the filter
+    a carried product or a category spec that resolves exact makes `resolved` non-empty, so
+    the turn skips the did-you-mean the typed code needed and routes on a brand belonging to
+    something the customer did not name this turn.
+    """
+    entities = (ctx or {}).get("parse", {}) if isinstance(ctx, dict) else {}
+    entities = (entities or {}).get("output", {}) if isinstance(entities, dict) else {}
+    rows = (entities or {}).get("entities") if isinstance(entities, dict) else None
+    rows = rows if isinstance(rows, list) else []
+    tokens = body.get("tokens") or []
+    wanted: list[str] = []
+    for entity, token in zip(rows, tokens):
+        if not isinstance(entity, dict):
+            continue
+        if str(entity.get("hint") or "").lower() != "product":
+            continue
+        if entity.get("current_message") is not True:
+            continue
+        key = str(token or "").strip().lower()
+        # Ordered and de-duplicated: the filter only needs membership, but the lane's own
+        # `query` is built from this list and should read in the order the customer typed.
+        if key and key not in wanted:
+            wanted.append(key)
+    return wanted
+
+
+def _product_rows(
+    payload: Any, wanted_tokens: list[str] | set[str] | None = None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """`(resolved, did_you_mean)` out of one resolver payload. Pure.
+
+    The resolver answers per TOKEN with `matches` and `alternatives`, each row carrying
+    `uuid`, `canonical_code`, `company_id`, `company_name`, `match_tier` and `display`
+    (`app/services/entity_resolver.py`'s `as_dict`). The escalation lane wants one fact off
+    it - the brand of the product the customer named - so the split is two rules:
+
+    * `resolved` - PRODUCT rows at the `exact` tier. That is the same test the business
+      lane's did-you-mean planner uses to decide a token resolved (`miss_suggest._is_exact`),
+      so the two lanes cannot disagree about whether a code is known.
+    * `did_you_mean` - every other product row, matches and alternatives alike, in the order
+      the resolver ranked them (variants first, then by similarity). These are the rows the
+      customer is offered when the code they typed does not exist.
+
+    Product rows only, and only for the TOKENS THIS TURN'S PRODUCT ENTITIES WERE SENT AS
+    (`wanted_tokens`, from `_product_tokens`). Two filters, two different mistakes they stop:
+    an escalation turn commonly names a category beside the code ("BIDET SEAT COVER FOR
+    SRTWC60630-SH") and a category has no brand to route by; and the body sends the CARRIED
+    entities too, so a carried product that still resolves would answer for a code the
+    customer did not type this turn - `resolved` non-empty, no did-you-mean for the code that
+    missed, and the wrong brand on the assignment.
+
+    The two degenerate values are different on purpose. `None` means NO FILTER, which is what a
+    direct caller with no ctx gets (the cap still applies). An EMPTY LIST means "this turn named
+    no product token", so every resolution is filtered out and both sides come back empty -
+    which is the honest answer: the lane then carries no brand and arms no ask, exactly as a
+    turn that named no product at all does (`escalation._resolve_product` does not even reach
+    the seam on that turn, so the empty list is only seen by a caller that asked about nothing).
+
+    De-duplicated by uuid on the resolved side and by code on the offer side, which is what
+    the customer can tell apart on screen.
+
+    **The OFFER side carries the business lane's own caps**, because AC-1124 says these are
+    "the business lane's did-you-mean rows" and a numbered list nobody can read is not an
+    offer. `lanes/business/miss_suggest.dym_rows_per_token` is three candidates per token and
+    `_dym_plan`'s `d1s = d1s[:5]` is five token blocks, so the resolver's 15 matches per
+    token over several tokens (75 rows on a five-token message) become at most 15 numbered
+    lines, in the resolver's own ranking. The per-token cap is IMPORTED rather than
+    re-spelled so the number cannot drift from the lane it is copied from; the block cap is a
+    constant here beside it, with its source named, because `_dym_plan` holds it as a literal
+    inside a 500-line planner this lane does not run.
+
+    The RESOLVED side is not capped: it decides the brand, and "exactly one row" is the
+    test the lane makes on it (`escalation._resolve_product`), so dropping a row there would
+    change a routing decision rather than shorten a list.
+    """
+    from app.services.chatbot.lanes.business.miss_suggest import dym_rows_per_token
+
+    resolved: dict[str, dict[str, Any]] = {}
+    offers: dict[str, dict[str, Any]] = {}
+    blocks: list[list[dict[str, Any]]] = []
+    for resolution in (payload or {}).get("resolutions") or []:
+        if not isinstance(resolution, dict):
+            continue
+        if wanted_tokens is not None:
+            token = str(resolution.get("token") or "").strip().lower()
+            if token not in wanted_tokens:
+                continue
+        rows = [
+            row
+            for key in ("matches", "alternatives")
+            for row in (resolution.get(key) or [])
+            if isinstance(row, dict)
+        ]
+        block: list[dict[str, Any]] = []
+        for row in rows:
+            if str(row.get("entity_type") or "").lower() != "product":
+                continue
+            code = row.get("canonical_code")
+            if str(row.get("match_tier") or "").lower() == "exact":
+                uuid = str(row.get("uuid") or code or "")
+                if uuid and uuid not in resolved:
+                    resolved[uuid] = row
+            elif code and str(code) not in offers:
+                # Recorded in `offers` as it is seen so the de-dupe is across TOKENS, the
+                # way `_token_candidates`' uuid-keyed dedupe is, not per block.
+                offers[str(code)] = row
+                block.append(row)
+        if block:
+            blocks.append(dym_rows_per_token(block))
+    did_you_mean = [row for block in blocks[:MISS_TOKEN_BLOCK_CAP] for row in block]
+    return list(resolved.values()), did_you_mean
+
+
+def _resolve_and_gate(db: Any):
+    def call(ctx: Any, _item: Any = None) -> dict[str, Any]:
+        """The turn's product, resolved by the BUSINESS LANE's resolver (H26).
+
+        One round trip, the same body the business lane sends
+        (`resolve_gate.resolve_entity_body`), through the same seam
+        (`business.services.production_services(db).resolve_entity`) - which is the route
+        function behind `POST /api/v1/system/references/resolve`, so the spec-search
+        fallback and the brand stamp are the ones every other lane gets rather than a second
+        resolver that drifts. The session is the lane's own, and it carries the contact's
+        company scope (H56), which is the scope AC-1142 names.
+
+        **The body this lane sends is NOT the business lane's body.** Three keys are
+        overridden, because this lane reads exactly one field off the answer
+        (`display.brand.brand_code`) and pays for everything else:
+
+        * `understand_phrase: False` and `spec_fallback: False` - both put the customer's
+          message in front of a model (phrase understanding, then a spec search) to find
+          something a CODE would not match. An escalation turn's message is "ESCALATE TO
+          MARKETING FOR <code>", so what that would understand is the verb and the team word,
+          and any row it invented from them would then choose a brand, and through the brand a
+          person. Codes only, and a code that matches nothing becomes the did-you-mean offer.
+        * `query` - the product tokens, not the message. Same reason, plus it is the value the
+          resolver scores and logs.
+
+        `sub-resolve-and-gate`'s gate is deliberately NOT run over the answer. The gate's
+        job is to decide which entity types a DOMAIN serves and to build the roster axes for
+        an offer; an escalation turn has no domain of its own and is not offering a roster,
+        and the one fact this lane needs is on the resolver rows already. Running the gate
+        would add a probe (an MCP call) that nothing here reads.
+
+        **The read runs in a SAVEPOINT, and that is what makes AC-1142 true.** This is the
+        lane's own unit of work - the same session `next_assignee` draws the round robin on
+        and `sla_create` writes the SLA row to. A database error inside the resolver leaves
+        the enclosing transaction ABORTED, so catching it upstream
+        (`escalation._resolve_product`) was not enough: the next statement on that session
+        raises `PendingRollbackError` and the turn closes `failed` with nobody assigned,
+        which is the opposite of "degrades to no brand". `begin_nested` rolls back to this
+        point and re-raises, so the caller still degrades and the assignment still happens.
+        """
+        from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
+        from app.services.chatbot.lanes.business.services import production_services
+
+        body = resolve_entity_body(ctx)
+        wanted = _product_tokens(ctx, body)
+        body = {
+            **body,
+            "query": " ".join(wanted),
+            "spec_fallback": False,
+            "understand_phrase": False,
+        }
+        with db.begin_nested():
+            payload = production_services(db).resolve_entity(body)
+        resolved, did_you_mean = _product_rows(
+            payload if isinstance(payload, dict) else {}, wanted
+        )
+        return {"resolved": resolved, "did_you_mean": did_you_mean}
+
+    return call
+
+
 def _not_live(name: str):
     def call(*_args: Any, **_kwargs: Any) -> Any:
         raise NotImplementedError(
@@ -245,7 +437,7 @@ def build(db: Any) -> EscalationServices:
     session now belongs to `production_session()`, whose `with` block is the unit of work.
     """
     return EscalationServices(
-        resolve_and_gate=_not_live("resolve_and_gate"),
+        resolve_and_gate=_resolve_and_gate(db),
         next_assignee=_next_assignee(db),
         preview_assignee=_preview_assignee(db),
         sla_create=_sla_create(db),

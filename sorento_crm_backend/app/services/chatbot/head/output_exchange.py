@@ -1148,11 +1148,23 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:
         ) from exc
 
 
-def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
+def apply_open_question_outcome(
+    o: dict, question: dict, outcome: Any, *, named_team_help: bool = False
+) -> None:
     """The handler's outcome, written into the emission the rest of the turn reads.
 
     ONE place, so the seven handlers stay pure and only this function knows the `qf`
     vocabulary. Nothing here is reached until prompt v3 is promoted (see the call site).
+
+    `named_team_help` is D1's boolean, passed in from `_post_process` rather than re-derived
+    (it is the SAME turn and the same two signals, and two derivations of one fact is how
+    they come to disagree). The two arms below are the thirteenth and fourteenth writers of
+    `message_type = "business_query"` on this turn: `engine._resolve_open_question` runs
+    whatever the parser typed the message, so "ESCALATE TO MARKETING SRTWCY8840-SH" over an
+    open picker resolves as a pick AND asks for a person - and without the guard the pick
+    retyped it `business_query` and the escalation was lost exactly as the suggest-pick arm
+    lost it on 11 Sep. The PICK still applies: the product the customer named becomes this
+    turn's scope, which is what the escalation lane resolves the brand from.
     """
     if not outcome.resolved:
         return
@@ -1167,7 +1179,8 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
         o["entities"] = entities
         o["entity_op"] = "replace"
         o["scope_exclusive"] = False
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         # CONSUMED. The positions were an answer to OUR question, so they must not also
         # mint entities off whatever roster happens to be in `last_result_set`.
         o["reference_positions"] = []
@@ -1178,16 +1191,27 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
     if outcome.tiers:
         o["access_levels"] = list(outcome.tiers)
         o["domain_hint"] = "promotion"
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         o["reference_positions"] = []
         o["reference_target"] = None
     if outcome.escalate:
         o["message_type"] = "request_for_help"
         escalation = o.get("escalation") if isinstance(o.get("escalation"), dict) else {}
         o["escalation"] = {**escalation, "is_escalation_confirmation": True}
-        if outcome.routing:
-            routing = o.get("routing") if isinstance(o.get("routing"), dict) else {}
-            o["routing"] = {**routing, **{k: v for k, v in outcome.routing.items() if v}}
+        # `outcome.routing` IS NOT MERGED INTO THE EMISSION, and that is not an omission.
+        # The routing chain several hundred lines below reassigns `o["routing"]` wholesale
+        # from its own two nullish ladders, so anything written here was overwritten before
+        # any reader saw it - measured: no read of `o["routing"]` between this call site and
+        # that reassignment. What the merge did do was park whatever a handler had put on
+        # `outcome.routing` in the graded routing block on the way past, including the
+        # deferred escalation's remembered team word and the code the CUSTOMER typed.
+        #
+        # The two things that genuinely have to reach a reader travel by their own route:
+        # a `team_pick` answer's team is read off `outcome.routing` directly at the hoist
+        # (`team_clarify_pick`, which is why the handlers still write it), and the deferred
+        # escalation is read off the QUESTION's payload by the lane
+        # (`escalation._deferred_escalation`).
     if outcome.declined:
         o["is_affirmative"] = False
         escalation = o.get("escalation") if isinstance(o.get("escalation"), dict) else {}
@@ -1317,6 +1341,37 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         # lane. `llm_msg_type_raw` is deliberately NOT touched: the retarget intent above
         # is documented as immune to every downstream mutation, and this is one.
         o["message_type"] = "request_for_help"
+    # (a3) OWNER RULE D1 (lavish grill, 13 Sep 2026): A HELP REQUEST THAT NAMES A TEAM IS
+    # AN ESCALATION, FULL STOP, whatever list the bot was waiting for. Measured on
+    # origin/main, 11 Sep 12:55: "ESCALTE TO MARKETING BIDET SEAT COVER FOR SRTWC60630-SH"
+    # arrived `request_for_help` with the team word `marketing`, a suggest offer was still
+    # open from the previous turn, and `suggest_follow_up`'s pick arm retyped it
+    # `business_query` - so the escalation the parser had read correctly was lost and the
+    # customer got ten bidet taps.
+    #
+    # ONE boolean, checked at each of the twelve arms below that assign
+    # `message_type = "business_query"`. The arms themselves are untouched: every other
+    # effect they have (a pick's entities becoming this turn's scope, an inherited domain)
+    # is still right - a named product on an escalation turn is exactly what the lane
+    # resolves the brand from - and only the RETYPE is skipped. The 8 Sep ruling (retypes
+    # for a help request with NO team) is untouched, which is what `llm_team_n` being part
+    # of the test says.
+    named_team_help = req_help and bool(llm_team_n)
+    # (a4) OWNER RULE D7: the parser's `is_escalation_confirmation` answers a question WE
+    # asked, so it means nothing when nothing was asked. Measured on the 11 Sep 12:56 turn
+    # ("ESCALATE TO MARKETING", `pending: null`): the model stamped the flag `true` with
+    # no offer open, `lanes/escalation._person_routing` read it BEFORE the team word,
+    # returned None, and the turn was assigned to the carried `purchasing` team with a
+    # comment saying so. `offer_is_open` is the same reader the arms below use, so the two
+    # ends of the turn cannot disagree about whether an offer was open.
+    #
+    # Placed HERE, above every other writer of `o["escalation"]`, so it clamps the
+    # PARSER's value only: `apply_open_question_outcome` runs several hundred lines down
+    # and sets the flag for a question that really was answered, which must stand.
+    if not offer_is_open(parent_input.get("previous_conversation_state")):
+        esc_raw = o.get("escalation")
+        if isinstance(esc_raw, dict) and esc_raw.get("is_escalation_confirmation") is True:
+            o["escalation"] = {**esc_raw, "is_escalation_confirmation": False}
     # (b) The LLM occasionally emits the LITERAL STRING "null" for a hint. That is truthy,
     #     so it mis-fires the domain->business_query clobber. Coerce to real null here.
     o["domain_hint"] = norm(o.get("domain_hint"))
@@ -1367,7 +1422,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     user_msg = jsc.js_string(user_msg_raw).strip().lower()
     menu_hit = MENU_LABELS.get(user_msg)
     if menu_hit:
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         o["intent_hint"] = menu_hit["intent_hint"]
         o["domain_hint"] = menu_hit["domain_hint"]
         o["portal"] = menu_hit["portal"]
@@ -1465,7 +1521,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         # them" over a did-you-mean offer must answer for the offered codes and nothing else.
         o["entity_op"] = "replace"
         o["scope_exclusive"] = False  # IGNORE the LLM's scope_exclusive=true
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         # THE PRIOR DATE WINDOW is carried by `focus.date_window`, not from here: a pick
         # does not change when the customer was asking about, and the axis that remembers
         # it ages on its own counter (D11). The session keys this used to read are gone.
@@ -1592,7 +1649,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     date_widen = compute_date_widen()
     if date_widen:
         o["entity_op"] = "reuse"
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         # ONE axis widened, not an entity broaden - the broaden-blocklist must not strip
         # the carried scope.
         o["scope_intent"] = None
@@ -1766,7 +1824,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         # A tier pick is always a promotion question, so the intent is known rather than
         # carried: `intent_hint` is derived per turn (D14) and is not a session key.
         o["intent_hint"] = "check_promotion"
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         o["scope_intent"] = None
         # consumed: the positions were TIER picks - they must not mint entities off the
         # roster nor re-trigger the S5 promo scope-reuse below.
@@ -1830,7 +1889,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         ]
         o["reference_target"] = "dym"  # dymNumberedMultiSelect catches this forced route
         o["scope_intent"] = None  # cancel the LLM's broaden reading
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         o["select_all_expanded"] = True
     elif is_all0 and pick_ctx and len(lrs_all) > 0 and no_pos:
         o["reference_positions"] = [
@@ -1838,7 +1898,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         ]
         o["scope_intent"] = None  # NOT a broaden
         o["entity_op"] = "reuse"
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         if not jsc.truthy(o.get("domain_hint")):
             o["domain_hint"] = focus_domain(prev_state)
         o["select_all_expanded"] = True
@@ -1849,7 +1910,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         and len(o["reference_positions"]) > 0
     ):
         o["domain_hint"] = focus_domain(prev_state)
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         o["domain_inherited_for_position"] = True
 
     # pick under a menu business_query, even if the LLM carried a domain_hint
@@ -1858,6 +1920,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         and jsc.is_array(o.get("reference_positions"))
         and len(o["reference_positions"]) > 0
         and o.get("message_type") == "casual"
+        and not named_team_help  # D1
     ):
         o["message_type"] = "business_query"
 
@@ -2166,7 +2229,8 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             and not jsc.array(o.get("reference_positions"))
             and not jsc.js_number(o.get("positions_resolved")) > 0
         ):
-            o["message_type"] = "business_query"
+            if not named_team_help:  # D1
+                o["message_type"] = "business_query"
             # Diagnostic, and safe to add: MEASURED over the whole corpus on 6 Sep 2026,
             # `bare_entity_under_offer` appears in 0 of the 3258 full-corpus fixture
             # files and 0 of the 240 vendored ones, so no capture is graded differently
@@ -2192,7 +2256,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     answered = parent_input.get("_answered") or {}
     open_question = answered.get("question")
     if answered.get("outcome") is not None and open_question:
-        apply_open_question_outcome(o, open_question, answered["outcome"])
+        apply_open_question_outcome(
+            o, open_question, answered["outcome"], named_team_help=named_team_help
+        )
         # AN ANSWER IS NOT A CARRY, and `ce_is_carried` is provenance-based: an entity that
         # was in the previous focus and is not in the LLM's own emission reads as carried,
         # which is exactly what the pick and its #708 siblings look like. They are this
@@ -2578,7 +2644,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # a help request that DOES carry a switch word and a name is this shape by
     # construction and is the prompt's to classify (owner ruling, 8 Sep 2026). Turn
     # 17d38019 (no entity emitted at all) is not catchable structurally either.
-    if req_help and llm_team_n is None and entity_named_now and switch_word_domain_now is not None:
+    if (
+        req_help
+        and llm_team_n is None
+        and not named_team_help  # D1 (implied by `llm_team_n is None`; said, not assumed)
+        and entity_named_now
+        and switch_word_domain_now is not None
+    ):
         o["message_type"] = "business_query"
         req_help = False
         if not jsc.truthy(o.get("domain_hint")) and switch_word_domain_now is not None:
@@ -2697,6 +2769,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         jsc.truthy(o.get("domain_hint"))
         and o.get("message_type") != "casual"
         and o.get("message_type") != "request_for_help"
+        and not named_team_help  # D1
     ):
         o["message_type"] = "business_query"
 
@@ -3126,10 +3199,21 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 # ("nah just sorento") -> company pick.
                 o["escalation"] = {"is_escalation_confirmation": True, "company_pick": co_pick_any}
                 o["entities"] = []
-            elif o.get("is_affirmative") is False:
+            elif o.get("is_affirmative") is False and not named_team_help:
                 # plain decline. Emit a DETERMINISTIC marker the spine's
                 # is-escalation-declined keys on, so the reply is a FIXED
                 # "Escalation declined." and NEVER the clarification LLM.
+                #
+                # D1's guard, the THIRD copy of the same rule (the others are the
+                # switch-word arm above and `suggest_follow_up`'s decline arm), and this is
+                # the one AC-1101 names explicitly as "member offer": a help request that
+                # names a team is an escalation whatever was open. Tier 1 above does not
+                # save it, because `retarget_team` only fires for an EXACT catalogue team -
+                # a family word like `marketing` is exactly what falls through to here, and
+                # "no, escalate to marketing" over a member roster was answered
+                # "Escalation declined." The roster is what the customer declined; the
+                # escalation is what they asked for instead, and the lane's own ladder is
+                # what narrows the family.
                 o["escalation"] = {
                     "is_escalation_confirmation": False,
                     "escalation_declined": True,
@@ -3317,6 +3401,28 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     return output
 
 
+def _named_team_help(item: Any) -> bool:
+    """D1, read off the parse block: does THIS turn ask for help and name a team?
+
+    `_post_process` computes the same boolean from its own hoisted signals and gates its
+    eleven retype arms on it; this is the twelfth arm's copy, in the function that runs
+    after it. It is derived rather than carried on the item because the item IS the graded
+    wire shape (`tests/chatbot/test_replay.py`'s `output_exchange` runner compares the
+    whole block), so a flag added to it would have to be stripped from every capture.
+
+    The frozen pre-derivation snapshot is the source, for the same reason the escalation
+    lane narrows that and not the derived routing (AC-815): by the time this runs, the
+    routing chain has replaced a family word like `marketing` with the team the chain
+    could act on. With no snapshot (a direct caller, a hand-built item) the live emission
+    stands in.
+    """
+    raw = jsc.get(item, "_parser_raw")
+    source = raw if isinstance(raw, dict) else (jsc.get(item, "output") or {})
+    return jsc.js_string(jsc.get(source, "message_type")) == "request_for_help" and bool(
+        jsc.norm(jsc.get(jsc.get(source, "routing"), "suggested_team"))
+    )
+
+
 def suggest_follow_up(item: dict, parent_input: dict) -> dict:
     """Port of `suggest-follow-up.js`. Runs AFTER output_exchange, on the same item.
 
@@ -3340,6 +3446,7 @@ def suggest_follow_up(item: dict, parent_input: dict) -> dict:
         and jsc.get(question, "kind") in PICKER_KINDS
     ):
         o = output["output"]
+        named_team_help = _named_team_help(output)
         has_entity_pick = jsc.is_array(o.get("entities")) and any(
             jsc.get(e, "current_message") is True for e in o["entities"]
         )
@@ -3350,13 +3457,19 @@ def suggest_follow_up(item: dict, parent_input: dict) -> dict:
             if not jsc.truthy(o.get("domain_hint")) and jsc.truthy(prior_domain):
                 o["domain_hint"] = prior_domain
                 o["domain_inherited_for_suggest"] = True
-            if jsc.truthy(o.get("domain_hint")):
+            if jsc.truthy(o.get("domain_hint")) and not named_team_help:  # D1
                 o["message_type"] = "business_query"
         elif o.get("is_affirmative") is True:
             # plain "yes" on a suggest_offer = escalate, ALWAYS (never a pick)
             o["escalation"] = {"is_escalation_confirmation": True}
             o["entities"] = []
-        elif o.get("is_affirmative") is False:
+        elif o.get("is_affirmative") is False and not named_team_help:
+            # D1 again, the other direction: "no, escalate to marketing" over an open picker
+            # arrives `is_affirmative: false` and a team word, and the undecorated arm read
+            # only the first half - it answered "Escalation declined." to a message that
+            # asked for a named team. A help request that names a team is an escalation
+            # whatever the customer declined in the same breath; what they said no to was the
+            # picker, and the escalation is what they said instead.
             o["escalation"] = {"is_escalation_confirmation": False, "escalation_declined": True}
             o["message_type"] = "casual"
             o["entities"] = []

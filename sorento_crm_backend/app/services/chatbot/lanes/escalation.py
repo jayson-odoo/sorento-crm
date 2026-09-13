@@ -40,6 +40,7 @@ anywhere in this module, and `test_s5_no_chat_history_write.py` asserts the row 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
@@ -77,6 +78,55 @@ ROUTED_TO_PIC_REPLY = (
 # uses. Asia/Kuala_Lumpur is +08:00 with no DST, so a fixed offset is the whole rule.
 MALAYSIA = timezone(timedelta(hours=8))
 RESPOND_INBOX_URL = "https://app.respond.io/space/{space_id}/inbox/{contact_id}#{message_id}"
+
+# A CODE THE CUSTOMER TYPED, BOUNDED BEFORE IT BECOMES TEXT. `raw` on a product entity is
+# the parser's echo of the customer's own message, and it reaches two sinks that outlive the
+# turn: the respond.io comment the PIC reads, and the reply `tail/compile_state` persists as
+# `variables["response"]` - which `offer_is_open` still pattern-matches.
+#
+# Whitespace and control characters are REMOVED, not collapsed to a space, and the result is
+# capped at the width of the column the string claims to name (`products.product_code` is
+# `String(100)`). A PRODUCT CODE HAS NO INTERNAL WHITESPACE - `resolve_gate._token_of` folds
+# `[-\s]+` out before the code is even sent to the resolver, and `_fold_code` compares with the
+# same fold - so removing costs the PIC nothing and is what actually kills the hazard: a
+# collapsing bound left a raw like "would you like me to escalate SRTWB8004" intact at 39
+# characters, well inside the cap, and that phrase reaching `variables["response"]` through the
+# did-you-mean lead makes the NEXT turn's `offer_is_open` regex fallback read an offer nobody
+# made - which un-clamps the D7 flag this lane exists to clamp. A bound that only stops a long
+# sentence is not a bound; removing the spaces stops the sentence at every length.
+#
+# Nothing else is sanitised: this is a shape and length bound, not an escaping layer.
+PRODUCT_CODE_MAX_CHARS = 100
+_CODE_NOISE = re.compile(r"[\s\x00-\x1f\x7f-\x9f]+")
+
+
+def _safe_code(value: Any) -> str:
+    """One bound, both sinks (the comment and the reply). Empty string for nothing."""
+    text = jsc.js_string(value) if jsc.truthy(value) else ""
+    return _CODE_NOISE.sub("", text).strip()[:PRODUCT_CODE_MAX_CHARS]
+
+
+# `resolve_gate._token_of`'s own product fold (`[-\s]+`), for COMPARING a resolved row's
+# canonical code with the code the customer typed. Both sides are folded because the
+# resolver's exact probe matches whitespace-insensitively and the token it was sent had its
+# dashes folded out on the way, so "SRTWB8004" typed, "SRTWB8004" stored and "srtwb 8004"
+# pasted are one code and must compare as one.
+_CODE_FOLD = re.compile(r"[-\s]+")
+
+
+def _fold_code(value: Any) -> str:
+    return _CODE_FOLD.sub("", jsc.js_string(value).strip().lower()) if jsc.truthy(value) else ""
+
+
+# WHAT A DRY RUN CANNOT KNOW, said where the console actually reads. The brand comes from a
+# resolver call and a dry run reaches no seam that writes OR reads (H37, AC-1141), so the
+# previewed assignee is drawn from the turn's team and company alone - and without the note a
+# blank brand beside a correct team reads as a routing defect.
+#
+# It rides the TRACE, on the `looked_up` record's facts (`engine.py`), not the actions. On the
+# actions it had no reader at all: the executor executes `kind` and its own fields, and the
+# trace record carries only the action KINDS, so nothing rendered it. One string, one reader.
+PREVIEW_BRAND_NOTE = "brand resolved on live turns only"
 
 # `get-round-robin-assignee`'s body has these two frozen, as literals in the JSON.
 NEXT_ASSIGNEE_POLICY_CODE = "NORMAL"
@@ -172,7 +222,9 @@ def _company_keys(company: Any) -> set[str]:
     return keys
 
 
-def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
+def escalation_context(
+    item: dict[str, Any], *, ctx: dict[str, Any], team: Any = None
+) -> dict[str, Any]:
     """The brand / company axes this escalation routes on. Pure.
 
     A five-rung ladder, in the live body's order:
@@ -190,11 +242,33 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
     Both axes are always what the `get-cs-members` call USED, never re-derived from this
     turn's `query_brands`: re-deriving would narrow the assignee pool to one the customer
     was never shown.
+
+    **Rungs 2 and 3 read keys a five-key session cannot hold.** `routing`, `routing_brand`,
+    `routing_companies`, `routing_company` and `routing_roster_plan` stopped being persisted
+    when the session became five keys (`contracts.SESSION_VAR_KEYS`, and `SessionVars(extra=
+    "forbid")` rejects a sixth), so on a real turn `company_pick`, `sameTeam` and
+    `multi_company_unpicked` cannot fire. They are KEPT, not deleted, for two reasons: the
+    company-clarify arm is reached through `routing_source == "multi_company_unpicked"` and
+    is pinned end to end (`test_escalation_context_ladder`, `test_clarify_company_ask_always
+    _in_reply`, `test_s5_escalation_seams.py`), and a session written by n8n's own spine
+    still carries those keys while both halves of the migration are live. What D3's carry
+    actually runs on today is the FOCUS, in the lane: `_carried_brand` reads
+    `focus.products` and `_carried_team` re-derives the previous turn's team from
+    `focus.domains`, because that is what a real session holds.
     """
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     prev = _prev_variables(ctx)
 
-    team = jsc.get(jsc.get(output, "routing"), "suggested_team") or None
+    # `team` is the turn's INHERITED team by default, and the LANDED team when the caller
+    # names one (D3, owner ruling 13 Sep 2026). The same-team rung below is the carry rule,
+    # and the team it has to be judged against is the one this escalation actually lands
+    # on: an escalation almost always changes team, so comparing against the inherited
+    # value carried the previous thread's brand onto a different team's assignment (the
+    # 21 Aug turn: a customer-service order thread's axes on a marketing_product routing).
+    # `_human_intervention` re-runs this function once the ladder has decided, which is
+    # why the override is a parameter rather than a second copy of the ladder.
+    if team is None:
+        team = jsc.get(jsc.get(output, "routing"), "suggested_team") or None
     prev_routing = jsc.get(prev, "routing")
     same_team = bool(
         jsc.truthy(prev_routing)
@@ -563,8 +637,17 @@ def _human_intervention(
     """Assign the conversation, or ask which team - one place, both seam sources.
 
     The person / team decision needs a seam, so it happens HERE rather than in `run()`,
-    where the production bundle does not exist yet.
+    where the production bundle does not exist yet. So does the product resolve, and the
+    ORDER of the two is owner ruling D6: the product first. An unknown code with a family
+    word gets the did-you-mean rows before the question about which team, because the
+    brand the team is narrowed by comes off the product.
+
+    Nothing here runs on a dry run: `run()` returns from its own preview branch above, so
+    no seam is reached at all (H37, AC-1141) - not this one, not the round robin.
     """
+    product = _resolve_product(ctx, context_item, services)
+    if product is not None and product["ask"] is not None:
+        return product["ask"]
     routed = _person_routing(ctx, context_item, team, services)
     if routed is not None and routed["kind"] == "clarify":
         # The tail keys on `clarify_text` (`compile_state`'s clarify arm), the same field
@@ -591,17 +674,490 @@ def _human_intervention(
                 "options": routed.get("option_pairs") or [],
             },
         }
-    if routed is not None and routed["kind"] == "assign":
-        actions = _assign(
-            ctx,
-            context_item,
-            routed["team"],
-            services,
-            assignee=routed["assignee"],
-        )
-        return {**result, "actions": actions, "pending": None}
-    actions = _assign(ctx, context_item, team, services)
+    # THE LANDED TEAM, which is what the body, the comment and the customer copy all name
+    # (AC-1129). `routed is None` means the ladder had nothing to correct, so the team the
+    # routing chain resolved stands.
+    landed = routed["team"] if (routed is not None and routed["kind"] == "assign") else team
+    assignee = routed["assignee"] if routed is not None else None
+    # D3, and it runs ONLY when this turn named no product of its own: the conversation's
+    # current product carries, but only from a turn that was already on the team this
+    # escalation lands on.
+    carried = _carried_brand(ctx, context_item, services, landed) if product is None else None
+    actions = _assign(
+        ctx,
+        _landed_item(
+            context_item, ctx=ctx, team=team, landed=landed, product=product, carried=carried
+        ),
+        landed,
+        services,
+        assignee=assignee,
+        product_line=_product_line(ctx, product),
+    )
     return {**result, "actions": actions, "pending": None}
+
+
+def _this_turn_products(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """The product entities THIS MESSAGE named, in parser order.
+
+    `current_message` is the discriminator, not mere presence: the emission carries the
+    conversation's carried scope too, and resolving that would answer an escalation with
+    the brand of whatever product the thread was about three turns ago. D11-clean - these
+    are the parser's own entities, never a read of the customer's words.
+    """
+    output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    return [
+        e
+        for e in jsc.array(jsc.get(output, "entities"))
+        if jsc.truthy(e)
+        and jsc.lower_or_empty(jsc.get(e, "hint")) == "product"
+        and jsc.get(e, "current_message") is True
+    ]
+
+
+def _carried_products(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """WHAT THE CONVERSATION IS ABOUT, off the session's `focus.products` slot.
+
+    This is the D3 carry's subject, and `focus` is where it lives: the five-key session
+    (`contracts.SESSION_VAR_KEYS`) persists `focus`, `open_question`, `ideation`,
+    `access_levels` and `contains_flyer` and NOTHING else, so the `routing_*` keys the old
+    carry rung read are never in a real turn's session. `dialogue/focus.py` is the one
+    writer of this slot and it already carries the product forward, which is why the carry
+    needs no key of its own.
+    """
+    from app.services.chatbot.head.output_exchange import focus_value
+
+    value = focus_value(_prev_variables(ctx), "products")
+    rows = value if isinstance(value, list) else ([value] if jsc.truthy(value) else [])
+    return [
+        r
+        for r in rows
+        if jsc.truthy(r) and jsc.truthy(jsc.get(r, "canonical_code") or jsc.get(r, "raw"))
+    ]
+
+
+def _carried_team(ctx: dict[str, Any]) -> Any:
+    """The team the PREVIOUS turn was routed to, re-derived from the domain it carried.
+
+    `routing` is not a session key either, so the previous turn's team is not stored - but
+    its DOMAIN is (`focus.domains`), and the team is a function of the domain: one table,
+    `derive_routing`, the same one the head's own chain uses. A photo turn carries
+    `product_attachment`, which is `marketing_product`; a stock turn carries `inventory`,
+    which is `warehouse`. That is journey steps 4 and 6, and it is why one carries a brand
+    and the other does not.
+
+    Entities are deliberately EMPTY in the call: the only thing they decide in that function
+    is the certificate split inside `product_attachment`, which is a fact about the
+    PREVIOUS message's words, not about the domain it left behind.
+    """
+    from app.services.chatbot.head.output_exchange import derive_routing, focus_domain
+
+    domain = focus_domain(_prev_variables(ctx))
+    if not jsc.truthy(domain):
+        return None
+    derived = derive_routing(
+        {"domain_hint": domain, "entities": [], "intent_hint": None, "user_goal": None}
+    )
+    return jsc.nullish_str(jsc.get(derived, "suggested_team")).strip().lower() or None
+
+
+def _carry_ctx(ctx: dict[str, Any], products: list[dict[str, Any]]) -> dict[str, Any]:
+    """`ctx` with the CARRIED products standing in as this turn's entities, for one resolve.
+
+    A shallow copy down to `parse.output`, so the real emission is untouched: the resolve
+    seam answers "what is this code" and the code it must be asked about is the carried one,
+    not the empty entity list an escalation turn arrives with. `current_message` is stamped
+    true because that is how every reader of an entity list says "this is the set to
+    resolve", including the seam's own token filter.
+    """
+    parse = dict(jsc.get(ctx, "parse") or {})
+    output = dict(jsc.get(parse, "output") or {})
+    output["entities"] = [{**p, "current_message": True} for p in products]
+    parse["output"] = output
+    return {**ctx, "parse": parse}
+
+
+def _carried_brand(
+    ctx: dict[str, Any], context_item: dict[str, Any], services: Any, landed: Any
+) -> str | None:
+    """D3: the brand of the product the conversation is about, or None. One extra resolve.
+
+    The rule is the owner's (D3) and the discriminator is the LANDED team: the previous
+    turn's product and brand carry only when that turn was already routed to the team this
+    escalation lands on. A photo turn on marketing_product then "ESCALATE TO MARKETING"
+    carries `mocha` and asks nothing; a stock turn on warehouse then the same message
+    carries nothing, so the whole tier-1 pool is drawn from.
+
+    The BRAND is resolved rather than read from the session, because the session does not
+    hold one: the five keys carry what the conversation is ABOUT (`focus.products`), and the
+    brand is a fact about that product which the resolver owns. One extra call, on this rung
+    only, through the same seam and therefore the same savepoint as the main one.
+    """
+    if jsc.nullish_str(landed).strip().lower() != jsc.nullish_str(_carried_team(ctx)).strip().lower():
+        return None
+    products = _carried_products(ctx)
+    if not products:
+        return None
+    # NO did-you-mean on this rung: the customer did not type this code on this turn, so a
+    # picker about it would answer a question nobody asked. A miss simply carries no brand.
+    resolved = _resolve_product(
+        _carry_ctx(ctx, products), context_item, services, offer_did_you_mean=False
+    )
+    return jsc.get(resolved, "brand_code") if resolved is not None else None
+
+
+def _rows_this_turn_named(ctx: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The resolved rows that are FOR a code this turn actually named. Defence in depth.
+
+    The seam scopes its own answer to the tokens it asked about
+    (`escalation_services._product_tokens`), and this is the same property asserted where the
+    DECISION is made, because the seam is injectable: every test passes its own, n8n's own
+    resolve sub has a different idea of which entities to send, and the consequence of a row
+    that belongs to another code is not a wrong list - it is a brand, and through the brand a
+    person. The measured shape is an escalation turn that carries the PREVIOUS turn's product
+    (`current_message: false`, which #863's focus rules keep on the entity list) and types a
+    NEW code that does not exist: the carried row resolves exact, `resolved` is non-empty, the
+    did-you-mean the typed code needed is never armed and the assignment takes the carried
+    code's brand.
+
+    Matched by folded code, or by the uuid the entity carries (a pick freezes it, so the code
+    is not the only handle). With nothing to match against - a ctx carrying no product - the
+    rows stand: that is a caller with no claim to check, not a reason to drop an answer.
+    """
+    entities = _this_turn_products(ctx)
+    codes = set()
+    uuids = set()
+    for entity in entities:
+        for value in (jsc.get(entity, "canonical_code"), jsc.get(entity, "raw")):
+            folded = _fold_code(value)
+            if folded:
+                codes.add(folded)
+        pinned = jsc.get(entity, "uuid")
+        if jsc.truthy(pinned):
+            uuids.add(jsc.js_string(pinned))
+    if not codes and not uuids:
+        return list(rows)
+    return [
+        row
+        for row in rows
+        if _fold_code(jsc.get(row, "canonical_code")) in codes
+        or jsc.js_string(jsc.get(row, "uuid")) in uuids
+    ]
+
+
+def _brand_of(row: Any) -> str | None:
+    """`display.brand.brand_code`, lowercased - `lanes/business/gate.py`'s own `_bc`.
+
+    The SAME read, deliberately not re-derived: the brand a resolved row carries is what
+    `next_assignee` narrows the tier-1 pool by (brand-tagged members plus untagged ones),
+    and a second spelling of that field is how the two would come to disagree.
+    """
+    brand = jsc.get(jsc.get(row, "display"), "brand")
+    code = (
+        (jsc.get(brand, "brand_code") if isinstance(brand, dict) else brand)
+        if jsc.truthy(brand)
+        else None
+    )
+    return jsc.js_string(code).strip().lower() if jsc.truthy(code) else None
+
+
+def _resolve_product(
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    services: Any,
+    *,
+    offer_did_you_mean: bool = True,
+    dry_run: bool = False,
+) -> dict[str, Any] | None:
+    """The product this turn named, resolved through the business lane's own resolver.
+
+    H26, closed. The lane used to route brand-blind: `resolve_and_gate` was in the seam and
+    never called, so "ESCALATE TO MARKETING FOR SRTWB8004" reached `next_assignee` with
+    `brand_code: null` and round-robined the whole marketing tier 1 - Zhi Yang got Mocha
+    products and Kia Yee got Sorento ones, on a roster where every member is brand-tagged.
+
+    Returns `None` when this turn named no product at all, which is D3's case and carries
+    the previous turn's axes instead (`escalation_context`'s same-team rung). Otherwise:
+
+        {"brand_code": <str | None>, "code": <the picked canonical code | None>,
+         "ask": <the product_pick arm | None>}
+
+    **A resolver failure DEGRADES, it never fails the turn** (AC-1142). The escalation is
+    real whether or not we can name the brand: a caught resolver leaves the brand null,
+    which is exactly the pool the lane drew from before this was wired, and the person
+    still gets the conversation.
+    """
+    if not _this_turn_products(ctx):
+        return None
+    seam = getattr(services, "resolve_and_gate", None) if services is not None else None
+    if seam is None:
+        return None  # a bundle without the seam behaves exactly as it did before
+    try:
+        answer = seam(ctx, context_item)
+    except Exception:  # noqa: BLE001 - a brand nobody could resolve is not a failed turn
+        logger.warning("chatbot: the escalation resolve did not run", exc_info=True)
+        answer = None
+    # The RESOLVED side is scoped to this turn's own codes (`_rows_this_turn_named`); the
+    # did-you-mean side deliberately is not, because a suggestion's whole point is that its
+    # code is NOT the one that was typed.
+    resolved = _rows_this_turn_named(
+        ctx, [r for r in jsc.array(jsc.get(answer, "resolved")) if jsc.truthy(r)]
+    )
+    did_you_mean = [r for r in jsc.array(jsc.get(answer, "did_you_mean")) if jsc.truthy(r)]
+    brands = list(dict.fromkeys(b for b in (_brand_of(r) for r in resolved) if b))
+    code = jsc.get(resolved[0], "canonical_code") if len(resolved) == 1 else None
+    # D6: DID-YOU-MEAN FIRST, then which team. Nothing is assigned on this turn - the rows
+    # go out and the escalation is remembered on the question they are frozen onto.
+    #
+    # NOT when this turn is itself the pick that resumed a deferred escalation: the customer
+    # has already chosen from rows we printed, and offering them again would be a loop with
+    # the same three codes in it.
+    ask = None
+    if offer_did_you_mean and not resolved and did_you_mean and _deferred_team_word(ctx) is None:
+        ask = _product_pick_ask(ctx, context_item, did_you_mean, dry_run=dry_run)
+    return {
+        # One row is the answer. Several rows that agree on a brand still name it - that is
+        # a code twin across companies, and both twins route to the same brand's member.
+        # Several that disagree name none: a guess there picks a person for the wrong brand.
+        "brand_code": brands[0] if len(brands) == 1 else None,
+        "code": code,
+        "ask": ask,
+        "resolved": resolved,
+        "did_you_mean": did_you_mean,
+    }
+
+
+def _product_pick_ask(
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """The did-you-mean rows, armed as the ONE open question, with the escalation deferred.
+
+    The 11 Sep 12:55 turn is the whole of this arm: "ESCALTE TO MARKETING BIDET SEAT COVER
+    FOR SRTWC60630-SH" names a code that does not exist, and assigning it would put a
+    marketing person on a conversation about a product nobody can name - so the rows come
+    first and the team question waits for the pick (D6).
+
+    The escalation rides the question's PAYLOAD (`then.escalate`), which is why no new
+    open-question kind and no new session key are needed (D5): `dialogue/open_question.
+    _product_pick` reads it, says `escalate`, and the next turn re-enters this lane with the
+    product resolved and the team word remembered.
+
+    The rows, the numbered sentence and the quick replies are built from ONE list, the same
+    rule `_clarify_over` follows for teams: a tap can never name a code the ask did not
+    offer.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+
+    options = []
+    for row in rows:
+        code = jsc.get(row, "canonical_code")
+        # A ROW WITH NO CODE IS NOT AN OPTION. `jsc.js_string(None)` is the string "null", so
+        # a codeless row printed as `3. null` and a tap on it resolved to nothing - the same
+        # UUID-leak guard `miss_suggest.human_label` applies for the same reason. Numbered
+        # AFTER the filter, so the printed numbers have no gaps.
+        if not jsc.truthy(code):
+            continue
+        options.append(
+            {
+                "idx": len(options) + 1,
+                "uuid": jsc.get(row, "uuid"),
+                "code": code,
+                "label": jsc.js_string(code),
+                "entity_type": "product",
+            }
+        )
+    escalate: dict[str, Any] = {"team_word": _parser_team(ctx, jsc.get(context_item, "team"))}
+    offered = _offered_team(ctx)
+    if offered:
+        escalate["offer_team"] = offered
+    # The code the customer actually typed, so the PIC comment on the turn this resumes can
+    # name it beside the code they picked (AC-1130). After the pick the entity IS the picked
+    # row, so this is the only place that string still exists.
+    typed = _typed_product_code(ctx)
+    if jsc.truthy(typed):
+        escalate["typed_code"] = jsc.js_string(typed)
+    question = oq.ask(
+        "product_pick",
+        options=options,
+        turn_no=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
+        payload={"then": {"escalate": escalate}},
+    )
+    labels = [jsc.js_string(jsc.get(o, "label")) for o in options]
+    typed = jsc.js_string(_typed_product_code(ctx))
+    listed = "\n".join(f"{jsc.get(o, 'idx')}. {jsc.get(o, 'label')}" for o in options)
+    lead = f"I could not find *{typed}*." if typed else "I could not find that code."
+    text = f"{lead} Did you mean one of these?\n{listed}\nReply with a number."
+    return {
+        "arm": "product_pick",
+        # The tail persists the QUESTION the lane armed, unchanged, because this is the
+        # moment the rows and the numbering are known to belong together
+        # (`tail/compile_state`'s "the lane's own question wins").
+        "clarify": {
+            **context_item,
+            "clarify_product": True,
+            "clarify_text": text,
+            "open_question": question,
+        },
+        # `dry_run` is THREADED, not assumed: every other action this lane builds carries
+        # the turn's own flag, and the executor keys on it to decide whether a message
+        # actually leaves. Today this arm is only reachable live (`run()` returns from its
+        # preview branch before the resolve), which is exactly why hardcoding False here
+        # would be a trap for whoever makes it reachable.
+        "actions": _clarify_actions(text, options=labels, dry_run=dry_run),
+        "pending": question,
+    }
+
+
+def _typed_product_code(ctx: dict[str, Any]) -> Any:
+    """The code the CUSTOMER typed for the product this turn named, BOUNDED (`_safe_code`).
+
+    This is the one customer-authored string this lane puts into durable text, and every
+    reader of it goes through here - the did-you-mean lead, the `typed_code` the deferral
+    remembers, and the PIC comment on the turn that resumes it - so the bound is applied
+    once, where the value is read, rather than at each sink.
+    """
+    products = _this_turn_products(ctx)
+    if not products:
+        return None
+    first = products[0]
+    # `raw` FIRST (AC-1130: "the raw code the customer typed"). `canonical_code` is the
+    # parser's own correction of it - on the 11 Sep turn the customer typed
+    # `SRTWC60630-SH` and a corrected code would hide exactly the typo the PIC needs to see
+    # to recognise the message. The correction is still named on the line: the PICKED code
+    # is the other half of it (`_product_line`).
+    code = _safe_code(jsc.get(first, "raw") or jsc.get(first, "canonical_code"))
+    return code or None
+
+
+def _deferred_team_word(ctx: dict[str, Any]) -> Any:
+    """The team word a deferred escalation remembered, on the turn its pick resumes it.
+
+    Two structured signals, no new session key (D5, D11): the question THIS message answered
+    (`_deferred_escalation`, gated on the engine's own `_answered` record so a stale picker
+    left open by another lane cannot hand a team word to an unrelated escalation), and that
+    question's own payload, frozen when the rows were printed.
+    """
+    escalate = _deferred_escalation(ctx)
+    if escalate is None:
+        return None
+    word = jsc.get(escalate, "team_word")
+    return word if jsc.truthy(word) else None
+
+
+def _deferred_escalation(ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """The `then.escalate` payload of the question THIS message answered, or None.
+
+    One reader for the two facts the deferral remembers - the team word and the code the
+    customer typed - so the gate on "did this turn really answer that question" is written
+    once (`ctx.parse._answered`, the engine's own record from the `answered` stage).
+    """
+    answered = jsc.get(jsc.get(ctx, "parse"), "_answered")
+    if not isinstance(answered, dict):
+        return None
+    if jsc.get(answered, "handler") != "product_pick":
+        return None
+    if jsc.get(jsc.get(answered, "after"), "escalate") is not True:
+        return None
+    question = jsc.get(_prev_variables(ctx), "open_question")
+    escalate = jsc.get(jsc.get(jsc.get(question, "payload"), "then"), "escalate")
+    return escalate if isinstance(escalate, dict) else None
+
+
+def _product_line(ctx: dict[str, Any], product: Any) -> str:
+    """`Product: <what the customer typed>`, plus the code they picked (AC-1130).
+
+    The PIC reads this comment to pick the case up, and the two codes answer two different
+    questions: what the customer wrote is what they will say again on the phone, and what
+    the picker resolved it to is the row the CRM holds. Empty string on a turn that named no
+    product, which is what keeps the comment byte-identical to the ported n8n body there.
+    """
+    deferred = _deferred_escalation(ctx)
+    # Bounded on the way OUT as well as on the way in: this value came back off a stored
+    # session, which an earlier build (or a harness) may have written without the bound.
+    typed = _safe_code(jsc.get(deferred, "typed_code")) if deferred is not None else ""
+    if not jsc.truthy(typed):
+        typed = _typed_product_code(ctx)
+    picked = jsc.get(product, "code") if product is not None else None
+    if not jsc.truthy(picked):
+        picked = _typed_product_code(ctx)
+    typed_text = jsc.js_string(typed) if jsc.truthy(typed) else ""
+    picked_text = _safe_code(picked)
+    if not typed_text and not picked_text:
+        return ""
+    if picked_text and picked_text.strip().lower() != typed_text.strip().lower():
+        return f"Product: {typed_text or picked_text} (picked {picked_text})\n"
+    return f"Product: {typed_text or picked_text}\n"
+
+
+def _agent_for_team(team: Any) -> Any:
+    """The agent the DOMAIN TABLE pairs with this team (AC-1129).
+
+    `derive_routing` reads `DOMAIN_SPEC[domain].escalation_team` and `_AGENT_BY_DOMAIN[
+    domain]` as a pair; this is that pair inverted, so the agent is never a second copy of
+    a per-domain fact. A team several domains route to with DIFFERENT agents (`purchasing`
+    is both `general_enquiries` and `incoming_stock_enquiries`) cannot be answered by the
+    table, and a team no domain routes to at all (`purchasing_certification`, `it_admin`)
+    is not in it - both take the same default the parser's own chain ends in.
+    """
+    from app.services.chatbot.contracts import DOMAIN_SPEC
+    from app.services.chatbot.head.output_exchange import _AGENT_BY_DOMAIN, _DEFAULT_AGENT
+
+    wanted = jsc.nullish_str(team).strip().lower()
+    agents = {
+        _AGENT_BY_DOMAIN[domain]
+        for domain, spec in DOMAIN_SPEC.items()
+        if spec.escalation_team == wanted and _AGENT_BY_DOMAIN.get(domain)
+    }
+    return agents.pop() if len(agents) == 1 else _DEFAULT_AGENT
+
+
+def _landed_item(
+    context_item: dict[str, Any],
+    *,
+    ctx: dict[str, Any],
+    team: Any,
+    landed: Any,
+    product: dict[str, Any] | None,
+    carried: str | None = None,
+) -> dict[str, Any]:
+    """The item the assignment is built from: the LANDED team's axes, never the inherited.
+
+    Two corrections, both measured on the 21 Aug turn (`ESCALATE TO MARKETING FOR
+    SRTWB8004`, previous turn an order thread on customer_service):
+
+    * the brand / company axes are re-derived against the team the ladder LANDED on (D3),
+      so a carried brand only survives when the previous turn was already on that team;
+    * the agent is the landed team's own, not the one inherited beside the old team -
+      `order_enquiries` on a marketing_product assignment names an agent that team does
+      not have.
+
+    The brand the PRODUCT resolved wins over both, because it is this turn's own evidence
+    (plan steps 1 to 3). The COMPANY never is: it is the contact's, resolved by
+    `next_assignee` from the phone number, and a Mocha-brand product living under the
+    Sorento company is why (D7, AC-1122) - 1,264 rows on this install.
+    """
+    item = context_item
+    same = jsc.nullish_str(team).strip().lower() == jsc.nullish_str(landed).strip().lower()
+    if not same:
+        item = escalation_context(item, ctx=ctx, team=landed)
+        item = {**item, "agent_code": _agent_for_team(landed)}
+    if product is not None:
+        item = {
+            **item,
+            "brand_code": product["brand_code"],
+            "routing_source": (
+                "resolved_product" if product["brand_code"] else item.get("routing_source")
+            ),
+        }
+    elif jsc.truthy(carried):
+        # D3's carry, judged against the landed team (`_carried_brand`). Below this turn's
+        # own product and above the legacy axes, which is the precedence the plan's steps
+        # 1 to 3 describe.
+        item = {**item, "brand_code": carried, "routing_source": "carried_product"}
+    return item
 
 
 def _parser_team(ctx: dict[str, Any], team: Any) -> Any:
@@ -764,10 +1320,21 @@ def _person_routing(
     # "talk to a human" straight after it inherits that, which is the pre-#706 chain and
     # live parity (review of #713, blocker B3; both shapes are pinned in
     # `test_pass4_item5_no_team_named_keeps_default_routing.py`).
-    esc = jsc.get(output, "escalation") or {}
-    if jsc.get(esc, "is_escalation_confirmation") is True:
-        return None
+    # THE TEAM WORD IS READ BEFORE THE CONFIRMATION FLAG (D2 point 4, AC-1116). The two
+    # used to be the other way round, and that ordering is the 11 Sep 12:56 defect: the
+    # parser stamped `is_escalation_confirmation: true` on "ESCALATE TO MARKETING" with
+    # nothing pending, this function returned None on the flag alone, and the turn was
+    # assigned to the `purchasing` team it had carried in - with `_catalogue_teams` and
+    # `_clarify_over`, both of which would have answered it correctly, never reached. A
+    # NAMED TEAM BEATS THE FLAG: the customer said where they want this to go, which is
+    # more than a yes to a question says. (S1 also clamps the flag to the turns where an
+    # offer really is open, so the two halves of D7 hold at both ends.)
+    # The word the customer typed THIS turn, else the one a deferred escalation remembered
+    # (D6): a pick on a did-you-mean resumes the escalation it was deferred from, and the
+    # team word it carried is the customer's own - typed one turn earlier, never re-read.
     raw_team = _parser_team(ctx, team)
+    if not jsc.truthy(raw_team):
+        raw_team = _deferred_team_word(ctx)
     if jsc.truthy(raw_team):
         # The parser named SOMETHING. Which catalogue members does that word name?
         matched = _catalogue_teams(raw_team)
@@ -778,15 +1345,118 @@ def _person_routing(
             # unrelated team carried in from an earlier turn. No assignee - a named TEAM
             # is a rotation draw, unlike a named person.
             return {"kind": "assign", "team": matched[0], "assignee": None}
-        return _clarify_over(
-            [{"team": t, "label": _pretty_team(t)} for t in matched]
-            if matched
-            else _team_clarify_pairs([])
-        )
+        if len(matched) > 1:
+            # A FAMILY WORD ("marketing" -> the three `marketing_*` teams). D2: ask only
+            # when nothing in the conversation already points at one member. Two things
+            # can point at one, in this order, and both are persisted state (D11):
+            #
+            #  * the OFFER that is open - "route this to the Marketing Product team?" plus
+            #    "escalate to marketing" is an acceptance of that offer, not a new question
+            #    (AC-1113, journey step 5);
+            #  * the team the PREVIOUS TURN was routed to - a photo turn sat on
+            #    marketing_product, so "escalate to marketing" means that team and asking
+            #    would make the customer repeat what the conversation already said
+            #    (AC-1114, journey step 4).
+            #
+            # An offer or a previous turn on a team OUTSIDE the family narrows nothing
+            # (AC-1115): the ask then stays over the family's own members, never the
+            # offered team and never the whole catalogue.
+            narrowed = _narrow_family(ctx, matched, team)
+            if narrowed is not None:
+                if narrowed == jsc.nullish_str(team).strip().lower():
+                    return None  # already the team the chain resolved
+                return {"kind": "assign", "team": narrowed, "assignee": None}
+            return _clarify_over([{"team": t, "label": _pretty_team(t)} for t in matched])
+        # A word we have no team for at all: the honest list is the whole vocabulary.
+        return _clarify_over(_team_clarify_pairs([]))
+
     from app.services.chatbot.head.output_exchange import offer_is_open
 
+    # H27, and the reason it is here rather than in the parser: this lane must never
+    # assign a conversation to nobody. The head's routing chain hard-defaults
+    # `suggested_team`, so a null team does not arrive through the real pipeline today -
+    # but the lane is also called from the console and from `/complete` with whatever the
+    # row carried, and "assign to `null`" draws from no roster at all.
+    if not jsc.truthy(team):
+        return _clarify_over(_team_clarify_pairs([]))
+    esc = jsc.get(output, "escalation") or {}
+    if jsc.get(esc, "is_escalation_confirmation") is True:
+        return None
     if offer_is_open(_prev_variables(ctx)):
         return _clarify_over(_team_clarify_pairs([]))
+    return None
+
+
+def _offered_team(ctx: dict[str, Any]) -> Any:
+    """The ONE team the open question is about, or None.
+
+    The question's own payload first (`{kind: team_pick, payload: {team: ...}}` is how the
+    escalate offer and the member offer both record it), then its single option when it has
+    exactly one. A question offering several teams names no single team by construction -
+    that IS the ask - so it narrows nothing here. Deliberately NOT
+    `output_exchange._offered_team`, whose fallback to the previous turn's routing would
+    collapse this rung into the next one and make them impossible to tell apart.
+    """
+    question = jsc.get(_prev_variables(ctx), "open_question")
+    if not isinstance(question, dict):
+        return None
+    payload = jsc.get(question, "payload")
+    team = jsc.get(payload, "team")
+    if not jsc.truthy(team):
+        # A DEFERRED escalation remembers the offer that was open when it was deferred, so
+        # the pick that resumes it narrows the family exactly as the original turn would
+        # have (AC-1113 across the deferral).
+        team = jsc.get(jsc.get(jsc.get(payload, "then"), "escalate"), "offer_team")
+    if jsc.truthy(team):
+        return jsc.nullish_str(team).strip().lower()
+    options = jsc.array(jsc.get(question, "options"))
+    if len(options) == 1:
+        one = jsc.get(options[0], "team")
+        if jsc.truthy(one):
+            return jsc.nullish_str(one).strip().lower()
+    return None
+
+
+def _previous_team(ctx: dict[str, Any], team: Any) -> Any:
+    """The team the PREVIOUS turn was routed to, normalised, or None. Three sources, in order.
+
+    1. `prev.routing.suggested_team`. Authoritative where it exists - a session n8n's own
+       spine wrote, and the shape several fixtures use - and absent on every session the CRM
+       writes, because `routing` is not one of the five keys.
+    2. THE DOMAIN THE CONVERSATION CARRIED, re-derived (`_carried_team`). This is the live
+       source, and the reason it has to be here is the owner console pass: the first version
+       of this function claimed the team THIS turn inherited was "the same fact by another
+       route", which is false on a five-key session - with no persisted routing to inherit,
+       the head's chain ends at its HARD DEFAULT (`customer_service`), so a photo turn
+       followed by "escalate to marketing" narrowed against `customer_service`, found it
+       outside the family and asked a question the conversation had already answered
+       (AC-1114, journey step 4). The domain IS persisted (`focus.domains`) and the team is a
+       function of it.
+    3. The team THIS turn's own routing resolved. Reached whenever the focus carries no
+       domain - a new contact, or a conversation with no settled domain yet - and it is a
+       real path, not just the injected-ctx convention the unit fixtures use. What it hands
+       back there is whatever `derive_routing` made of THIS message's own `domain_hint`:
+       `forms` gives `marketing_form`, `promotion` gives `marketing_promotion`, so
+       "escalate to marketing" on a first turn about a form narrows straight to
+       `marketing_form` and asks nothing, which is what D2 wants. With no domain either way
+       the chain's HARD DEFAULT arrives instead, and that is inert rather than wrong: it
+       belongs to no family, so the ladder asks - which is the honest answer when nothing in
+       the conversation points anywhere.
+    """
+    prev_routing = jsc.get(_prev_variables(ctx), "routing")
+    value = jsc.get(prev_routing, "suggested_team") if jsc.truthy(prev_routing) else None
+    if not jsc.truthy(value):
+        value = _carried_team(ctx)
+    if not jsc.truthy(value):
+        value = team
+    return jsc.nullish_str(value).strip().lower() or None
+
+
+def _narrow_family(ctx: dict[str, Any], matched: list[str], team: Any) -> str | None:
+    """The ONE member of a family word the conversation already points at, or None (D2)."""
+    for candidate in (_offered_team(ctx), _previous_team(ctx, team)):
+        if candidate in matched:
+            return candidate
     return None
 
 
@@ -919,14 +1589,24 @@ def _preview_routing(
 
     def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any]:
         routed = _person_routing(ctx, context_item, team, bundle)
-        if routed is not None:
-            # A named person IS the assignee, and a clarify assigns nobody. Either way
-            # there is no rotation to preview.
-            return routed, routed.get("assignee")
+        if routed is not None and routed["kind"] == "clarify":
+            return routed, None  # a clarify assigns nobody, so there is no draw to preview
+        if routed is not None and routed.get("assignee") is not None:
+            return routed, routed["assignee"]  # a named person IS the assignee
         seam = getattr(bundle, "preview_assignee", None)
         if seam is None:
-            return None, None
-        return None, seam({**_next_assignee_body(ctx, context_item), "preview": True})
+            return routed, None
+        # THE LANDED TEAM'S OWN POOL, which is the whole point of previewing the routing: a
+        # named team is the common escalation, and drawing the preview from `context_item`
+        # showed the inherited team's pool (and its agent) beside a customer copy naming the
+        # landed one. The brand is NOT resolved here - a dry run reaches no seam (AC-1141) -
+        # so the body carries none and the TRACE says so (`PREVIEW_BRAND_NOTE`, stamped on
+        # the `looked_up` record's facts by the engine - the console renders facts, and an
+        # action field had no reader).
+        landed = routed["team"] if routed is not None else team
+        item = _landed_item(context_item, ctx=ctx, team=team, landed=landed, product=None)
+        body = {**_next_assignee_body(ctx, item), "team_code": landed, "preview": True}
+        return routed, seam(body)
 
     try:
         if services is not None:
@@ -951,6 +1631,7 @@ def _assign(
     services: Any,
     *,
     assignee: Any = None,
+    product_line: str = "",
 ) -> list[dict[str, Any]]:
     """Draw an assignee, start the SLA clock, and build the four actions in live's order.
 
@@ -963,7 +1644,13 @@ def _assign(
     clock still starts, because the escalation is just as real.
     """
     if assignee is None:
-        assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
+        # The body's team is the LANDED one, named here as well as on the item so the two
+        # cannot drift: `_landed_item` re-derives the axes for it, and a caller that hands
+        # `_assign` a team without going through that helper (the dry-run preview does not
+        # reach here at all) still gets a body that agrees with the customer copy.
+        assignee = services.next_assignee(
+            {**_next_assignee_body(ctx, context_item), "team_code": team}
+        )
     sla = services.sla_create(_sla_body(ctx, context_item, assignee))
     return _assignment_actions(
         ctx,
@@ -975,6 +1662,7 @@ def _assign(
         include_assign=jsc.get(assignee, "is_already_assigned") is not True,
         dry_run=False,
         preview=False,
+        product_line=product_line,
     )
 
 
@@ -987,6 +1675,7 @@ def _assignment_actions(
     include_assign: bool,
     dry_run: bool,
     preview: bool,
+    product_line: str = "",
 ) -> list[dict[str, Any]]:
     """The four actions, in the order the live graph performs them.
 
@@ -1012,7 +1701,7 @@ def _assignment_actions(
         actions.append(action)
     comment: dict[str, Any] = {
         "kind": "add_comment",
-        "text": _comment_text(ctx, team, sla),
+        "text": _comment_text(ctx, team, sla, product_line=product_line),
         # The RESPOND user id, not the CRM one, and exactly one of them: the executor maps
         # this to `sub-add-comment-respond`'s `user_id`, which is what respond.io needs to
         # turn a comment into a mention. `assign_conversation` above carries the same id.
@@ -1077,6 +1766,22 @@ def _send_message(text: str, dry_run: bool) -> dict[str, Any]:
     }
 
 
+def _agent_code(ctx: dict[str, Any], context_item: dict[str, Any]) -> Any:
+    """The agent this assignment is made under: the LANDED team's, else the inherited one.
+
+    One reader, two writers of the same fact - the round-robin body and the SLA row - so the
+    draw and the audit row cannot name different agents. `_landed_item` sets `agent_code`
+    when the ladder moved the turn off the team it inherited; reading
+    `routing.suggested_agent` unconditionally is what put `order_enquiries` on a
+    marketing_product assignment (AC-1129).
+    """
+    landed = jsc.get(context_item, "agent_code")
+    if jsc.truthy(landed):
+        return landed
+    output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    return jsc.get(jsc.get(output, "routing"), "suggested_agent")
+
+
 def _next_assignee_body(ctx: dict[str, Any], context_item: dict[str, Any]) -> dict[str, Any]:
     """`get-round-robin-assignee`'s JSON body, key for key.
 
@@ -1085,7 +1790,7 @@ def _next_assignee_body(ctx: dict[str, Any], context_item: dict[str, Any]) -> di
     """
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     return {
-        "agent_code": jsc.get(jsc.get(output, "routing"), "suggested_agent"),
+        "agent_code": _agent_code(ctx, context_item),
         "team_code": jsc.get(context_item, "team"),
         "contact_phone_number": jsc.get(jsc.get(ctx, "contact"), "phone"),
         "policy_code": NEXT_ASSIGNEE_POLICY_CODE,
@@ -1117,7 +1822,11 @@ def _sla_body(
     return {
         "assigned_to_id": jsc.get(assignee, "assignee_id") or "",
         "contact_phone_number": jsc.get(jsc.get(ctx, "contact"), "phone") or "",
-        "agent_code": jsc.get(jsc.get(output, "routing"), "suggested_agent") or "",
+        # THE SAME agent the draw was made with (AC-1129, review nit N2). This row is the
+        # audit row an operator reads beside the assignment, so naming the inherited
+        # `order_enquiries` here while the draw used marketing_product's own
+        # `general_enquiries` would make the two records of one decision disagree.
+        "agent_code": _agent_code(ctx, context_item) or "",
         "team_set_code": prefer("team_set_code", jsc.get(context_item, "team") or ""),
         "brand_code": prefer("brand_code", jsc.get(context_item, "brand_code") or None),
         "company_id": prefer("company_id", jsc.get(context_item, "company_id") or None),
@@ -1174,7 +1883,9 @@ def _input_message(ctx: dict[str, Any]) -> str:
     return text
 
 
-def _comment_text(ctx: dict[str, Any], team: Any, sla: Any) -> str:
+def _comment_text(
+    ctx: dict[str, Any], team: Any, sla: Any, *, product_line: str = ""
+) -> str:
     """`Call 'sub-add-comment-respond'`'s `comment`, byte for byte.
 
     Verified against the live node expression by substituting its six `{{ }}` blocks and
@@ -1198,6 +1909,10 @@ def _comment_text(ctx: dict[str, Any], team: Any, sla: Any) -> str:
     )
     return (
         f"Team: {jsc.js_string(team)}\n"
+        # AC-1130, and the ONE addition to the ported body: the code the customer named.
+        # Empty on a turn that named no product, so the comment every other escalation turn
+        # writes is byte-identical to the n8n one it replaced.
+        f"{product_line}"
         f"⏰ SLA Alert: This contact is routed to you at {_malaysia(jsc.get(sla, 'initiated_at'))}.\n"
         f"You have until {_malaysia(jsc.get(sla, 'due_at'))} to respond.\n"
         f"You have until {_malaysia(jsc.get(sla, 'due_at_resolution'))} to resolve.\n"

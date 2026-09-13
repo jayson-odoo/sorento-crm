@@ -57,9 +57,28 @@ def _norm(value: Any) -> str:
     return jsc.nullish_str(value).strip().lower()
 
 
+# The per-token UX cap on did-you-mean candidates, `_cap3`'s own 3, named because a SECOND
+# lane now offers the same rows: `lanes/escalation_services._product_rows` caps an escalation
+# turn's offer with it (AC-1124 says those are "the business lane's did-you-mean rows", so the
+# number has to be this one and not a copy of it).
+DYM_ROWS_PER_TOKEN = 3
+
+
+def dym_rows_per_token(value: Any) -> list:
+    """The first `DYM_ROWS_PER_TOKEN` candidates of one token's block, or `[]`.
+
+    The public name for `_cap3`, for the cross-lane caller. Same function, same number: the
+    JS body this is a port of writes `(a) => (Array.isArray(a) ? a.slice(0, 3) : [])` and the
+    port keeps that shape rather than parameterising a literal nobody varies.
+    """
+    return list(value[:DYM_ROWS_PER_TOKEN]) if isinstance(value, list) else []
+
+
 def _cap3(value: Any) -> list:
-    """`(a) => (Array.isArray(a) ? a.slice(0, 3) : [])`."""
-    return list(value[:3]) if isinstance(value, list) else []
+    """`(a) => (Array.isArray(a) ? a.slice(0, 3) : [])`. The ported name, kept at the 28 call
+    sites this file's two planners make; `dym_rows_per_token` is the same function by the name
+    another lane may import."""
+    return dym_rows_per_token(value)
 
 
 def _is_exact(match: Any) -> bool:

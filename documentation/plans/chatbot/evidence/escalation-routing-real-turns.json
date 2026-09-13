@@ -1,0 +1,143 @@
+{
+  "_note": "Real turns from the production console, contact respond_io_id 423755030 (a Sorento-company contact), 11 Sep 2026, prompt version 11. parser_raw is the frozen pre-derivation parser output; previous_state is what the turn loaded. The 21 Aug turn is from the old n8n trace.",
+  "turn_1_11sep_1255": {
+    "user_message": "ESCALTE TO MARKETING BIDET SEAT COVER FOR SRTWC60630-SH",
+    "previous_state_excerpt": {
+      "pending": null,
+      "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+      "entities": [{"raw": "srtwt61012-gm", "hint": "product", "confident": true, "canonical_code": "SRTWT61012-GM", "current_message": true}],
+      "domain_hint": "inventory",
+      "intent_hint": "check_stock",
+      "message_type": "business_query",
+      "routing_brand": "sorento",
+      "routing_brand_source": "resolved",
+      "routing_company": "00000000-0000-0000-0000-000000000001",
+      "selection_context": "suggest_offer",
+      "last_result_set": [
+        {"idx": 1, "uuid": "c877d4aa-6444-4513-87a8-af8212a5f1d8", "label": "SRTWCY8840", "value": "SRTWCY8840", "product": "SRTWCY8840", "entity_type": "product"},
+        {"idx": 2, "uuid": "e189b0ab-f644-41f2-a932-92430b28872a", "label": "SRTWCY8840-SH", "value": "SRTWCY8840-SH", "product": "SRTWCY8840-SH", "entity_type": "product"},
+        {"idx": 3, "uuid": "81e5ae99-d6a0-44d5-88e2-a893db9681f9", "label": "SRTWCY8840-FT", "value": "SRTWCY8840-FT", "product": "SRTWCY8840-FT", "entity_type": "product"}
+      ],
+      "response": "Previous turn (inventory): returned 1 records"
+    },
+    "parser_raw": {
+      "message_type": "request_for_help",
+      "intent_hint": "check_product",
+      "domain_hint": "master_products",
+      "scope_intent": null,
+      "is_affirmative": true,
+      "user_goal": "trying to escalate to marketing and check the product for SRTWC60630-SH",
+      "access_levels": [],
+      "broaden_axis": null,
+      "date_mode": null,
+      "date_filter_start": null,
+      "date_filter_end": null,
+      "match_mode": "and",
+      "demand_qty": null,
+      "entities": [
+        {"raw": "BIDET SEAT COVER", "hint": "category", "confident": true, "canonical_code": null, "current_message": true},
+        {"raw": "SRTWC60630-SH", "hint": "product", "confident": true, "canonical_code": null, "current_message": true}
+      ],
+      "entity_op": "replace_combine",
+      "scope_exclusive": false,
+      "requested_attributes": [],
+      "contains_flyer": false,
+      "reference_positions": [],
+      "reference_target": null,
+      "person_mention": null,
+      "is_active": null,
+      "order_status": null,
+      "correction": false,
+      "group_by": null,
+      "top_n": null,
+      "routing": {"suggested_team": "marketing", "suggested_agent": null},
+      "escalation": {"is_escalation_confirmation": false, "company_pick": null}
+    },
+    "what_happened": "head derived message_type business_query (suggest_pick_context true), routing purchasing/general_enquiries; business lane listed 10 bidet taps matched on category Bidet",
+    "expected_after": "escalation lane; SRTWC60630-SH does not resolve -> product_pick did-you-mean with deferred escalation {team_word: marketing}; no assignment this turn"
+  },
+  "turn_2_11sep_1255": {
+    "user_message": "MARKETING SRTWC6030-SH",
+    "parser_raw": {
+      "message_type": "business_query",
+      "intent_hint": "check_product",
+      "domain_hint": "master_products",
+      "entities": [
+        {"raw": "MARKETING", "hint": "category", "confident": true, "canonical_code": null, "current_message": true},
+        {"raw": "SRTWC6030-SH", "hint": "product", "confident": true, "canonical_code": null, "current_message": true}
+      ],
+      "entity_op": "replace_combine",
+      "reference_target": "result",
+      "routing": {"suggested_team": "marketing", "suggested_agent": null},
+      "escalation": {"is_escalation_confirmation": false, "company_pick": null}
+    },
+    "what_happened": "5 WC variants listed (SRTWC6030-SH-BL, -UF, -MW, -MK, -MG); routing_brand sorento, routing_company Sorento persisted",
+    "expected_after": "unchanged (owner ruling D4)"
+  },
+  "turn_3_11sep_1256": {
+    "user_message": "ESCALATE TO MARKETING",
+    "previous_state_excerpt": {
+      "pending": null,
+      "routing": {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+      "entities": [
+        {"raw": "MARKETING", "hint": "customer", "confident": true, "canonical_code": null, "current_message": true},
+        {"raw": "SRTWC6030-SH", "hint": "product", "confident": true, "canonical_code": null, "current_message": true}
+      ],
+      "domain_hint": "master_products",
+      "intent_hint": "check_product",
+      "message_type": "business_query",
+      "routing_brand": "sorento",
+      "routing_brand_source": "resolved",
+      "routing_company": "00000000-0000-0000-0000-000000000001",
+      "routing_companies": [{"codes": ["SRTWC6030-SH-MW", "SRTWC6030-SH-MG", "SRTWC6030-SH-BL", "SRTWC6030-SH-MK", "SRTWC6030-SH-UF"], "labels": ["SRTWC6030-SH-MW", "SRTWC6030-SH-MG", "SRTWC6030-SH-BL", "SRTWC6030-SH-MK", "SRTWC6030-SH-UF"], "brand_code": "sorento", "company_id": "00000000-0000-0000-0000-000000000001", "company_name": "Sorento"}],
+      "selection_context": null,
+      "response": "Previous turn (master_products): returned 5 records"
+    },
+    "parser_raw": {
+      "message_type": "request_for_help",
+      "intent_hint": null,
+      "domain_hint": null,
+      "is_affirmative": true,
+      "user_goal": "trying to escalate to marketing",
+      "entities": [],
+      "entity_op": "reuse",
+      "routing": {"suggested_team": "marketing", "suggested_agent": null},
+      "escalation": {"is_escalation_confirmation": true, "company_pick": null}
+    },
+    "what_happened": "lane saw is_escalation_confirmation true, returned None from _person_routing, assigned carried team purchasing (actions send_message, add_comment, send_message); customer copy said 'purchasing team'",
+    "expected_after": "flag ignored (no offer open); family word, previous team purchasing not in the family -> team_pick over marketing_product / marketing_promotion / marketing_form"
+  },
+  "turn_4_21aug_n8n": {
+    "user_message": "ESCALATE TO MARKETING FOR SRTWB8004",
+    "previous_state_excerpt": {
+      "routing": {"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+      "entities": [{"raw": "stonix sdn bhd", "hint": "customer", "confident": true, "canonical_code": null, "current_message": true}],
+      "domain_hint": "order",
+      "intent_hint": "check_order",
+      "routing_company": "00000000-0000-0000-0000-000000000001",
+      "routing_brand": null
+    },
+    "parser_raw": {
+      "message_type": "request_for_help",
+      "intent_hint": null,
+      "domain_hint": null,
+      "entities": [{"raw": "SRTWB8004", "hint": "product", "confident": true, "canonical_code": null, "current_message": true}],
+      "entity_op": "replace_combine",
+      "routing": {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+      "escalation": {"is_escalation_confirmation": true}
+    },
+    "what_happened": "routed to marketing_product with brand_code null, company null -> default company, whole-team round robin",
+    "expected_after": "SRTWB8004 resolves (brand SORENTO, Sorento company); body team_code marketing_product, brand_code sorento; with a family word instead of marketing_product it would ask (previous team customer_service is outside the family)"
+  },
+  "roster_facts_prod_copy_13sep": {
+    "sorento_marketing_product_tier1": [
+      {"member": "Tay Zhi Yang", "brand_tags": ["johnson suisse", "infinity", "iborn", "elleci", "wdi", "bravat", "cabana", "tp enterprise", "sorento", "others", "no logo"]},
+      {"member": "Kia Yee", "brand_tags": ["mocha"]},
+      {"member": "Charissa Wang", "brand_tags": []}
+    ],
+    "mocha_marketing_product_tier1": [{"member": "Kia Yee", "brand_tags": []}],
+    "mocha_brand_products_under_sorento_company": 1264,
+    "sample_mocha_brand_code_under_sorento": "MWC7625-SH-S10",
+    "catalogue_teams": ["purchasing", "purchasing_certification", "customer_service", "marketing_product", "marketing_form", "warehouse", "marketing_promotion", "it_admin"]
+  }
+}
