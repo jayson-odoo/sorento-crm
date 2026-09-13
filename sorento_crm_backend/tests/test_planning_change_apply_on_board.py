@@ -1913,3 +1913,108 @@ def test_a_covered_open_line_still_owed_is_not_returned_by_the_non_open_read(api
         "a covered-but-open, still-owed line must not surface as a non-open/cancelled "
         "contribution", contributions,
     )
+
+
+# ---------------------------------------------------------------------------
+# Attempt 6 root cause: an adopted order always names its own project_sales_order_id
+# ---------------------------------------------------------------------------
+
+
+def _adopted_order_with_unmirrored_lines(api, *, with_cancelled_row):
+    """SO419851's own shape, 8 Sep 2026: the order IS adopted (`projects.sales_orders`
+    exists, `so_id` set), but an AutoCount re-ingest closed the mirrored lines and
+    inserted new ones nobody has mirrored - every OPEN core line lacks a
+    `core_sales_order_line_id` match. `with_cancelled_row=True` additionally mirrors ONE
+    line, confirms it as Buy, then cancels it, leaving a pending (unapplied) `cancelled`
+    change row on that one mirrored line - the shape `_cancelled_pending_change_rows`
+    itself reads. `with_cancelled_row=False` is pure unmirrored demand: no mirror line
+    and no change row exist anywhere on the order at all.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    # The re-ingested lines: open, still owed, deliberately given NO project_line mirror.
+    unmirrored_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
+                              required_date=WAS_1)
+    unmirrored_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="7",
+                              required_date=WAS_2)
+    db.commit()
+
+    if not with_cancelled_row:
+        return {
+            "client": client, "world": world, "order": order, "core_so": core_so,
+            "unmirrored_1": unmirrored_1, "unmirrored_2": unmirrored_2,
+        }
+
+    mirrored_core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                               required_date=WAS_3)
+    mirrored_line = _project_line(db, order, line_no=1, product=world.product,
+                                  core_line=mirrored_core)
+    db.commit()
+
+    response = _confirm(client, order.id, [
+        _line_payload(mirrored_line.id, buy_qty="10"),
+    ])
+    assert response.status_code == 200, response.text
+
+    mirrored_core.line_status = "cancelled"
+    mirrored_line.qty = Decimal("0")
+    db.commit()
+
+    change = _change(CLOSED, mirrored_core, so_number=core_so.so_number, old_date=WAS_3,
+                     new_date=None, old_qty="10", new_qty="0")
+    batch = _build(world, [change], core_so, [str(mirrored_core.id)])
+    assert batch is not None
+
+    return {
+        "client": client, "world": world, "order": order, "core_so": core_so,
+        "unmirrored_1": unmirrored_1, "unmirrored_2": unmirrored_2,
+        "mirrored_core": mirrored_core, "mirrored_line": mirrored_line, "batch": batch,
+    }
+
+
+def test_an_adopted_order_names_its_project_sales_order_id_with_a_cancelled_row(api):
+    """R1/R2: the board standing's `project_sales_order_id` must come off the ORDER's
+    own adoption record, not off whichever `_Row` happened to be built first. Today
+    `_standings` (~4821) takes it from `row.project_sales_order_id` via `setdefault`,
+    which `_demand_rows` (~1379) fills per LINE through `_mirror_addressing` - an
+    unmirrored line reads null there. When every demand row for this order is
+    unmirrored (the re-ingest shape) and the only mirrored row is the CANCELLED one
+    built by `_cancelled_pending_change_rows` (~1474-1498, which never sets
+    `project_sales_order_id` on its own `_Row` either), the standing is stuck at null
+    and the FE reads the order as not adopted at all.
+    """
+    fixture = _adopted_order_with_unmirrored_lines(api, with_cancelled_row=True)
+    client = fixture["client"]
+    core_so = fixture["core_so"]
+    order = fixture["order"]
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    orders = response.json()["orders"]
+    assert len(orders) == 1, orders
+    assert orders[0]["project_sales_order_id"] == str(order.id), orders[0]
+
+
+def test_an_adopted_order_names_its_project_sales_order_id_with_no_cancelled_row(api):
+    """Same root cause, no cancelled row at all - pure unmirrored demand. Every line's
+    own `_Row.project_sales_order_id` is null (no mirror to address through), so the
+    standing must still resolve it some other way (through the order's own adoption
+    record, keyed by `so_id`), never leave it null just because no single LINE carried it.
+    """
+    fixture = _adopted_order_with_unmirrored_lines(api, with_cancelled_row=False)
+    client = fixture["client"]
+    core_so = fixture["core_so"]
+    order = fixture["order"]
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    orders = response.json()["orders"]
+    assert len(orders) == 1, orders
+    assert orders[0]["project_sales_order_id"] == str(order.id), orders[0]
