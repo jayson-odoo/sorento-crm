@@ -174,8 +174,13 @@ describe('PortalLanding - view persists (AC-L7, unaffected by R3-2)', () => {
     const trigger = screen.getByRole('combobox');
     fireEvent.click(trigger);
     fireEvent.click(await screen.findByText('Purchase Request'));
+    // The label is split across spans (short "New" below `sm`, full label
+    // at `sm+`) - queried by accessible name, which always carries the
+    // whole label, rather than exact text.
     await waitFor(() =>
-      expect(screen.getByText('New Purchase Request')).toBeInTheDocument(),
+      expect(
+        screen.getByRole('link', { name: /New Purchase Request/ }),
+      ).toBeInTheDocument(),
     );
 
     expect(

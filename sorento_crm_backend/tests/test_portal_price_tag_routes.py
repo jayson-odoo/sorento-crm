@@ -725,15 +725,15 @@ class TestTheGenericPortalDoesNotServeThisKind:
         assert res.status_code == 400, res.text
         assert "price_tag_request" in res.text
 
-    def test_the_generic_neighbours_route_refuses_the_kind(self, client):
-        c, _db, _contact_id = client
-
-        res = c.get(
-            f"/api/v1/public/portal/submissions/price_tag_request/{uuid.uuid4()}/neighbours"
-        )
-
-        assert res.status_code == 400, res.text
-        assert "Unsupported submission type" in res.text
+    # Review round 3: the neighbours route now DOES serve price_tag_request
+    # (its own dedicated dispatch, not the generic SUPPORTED_TYPES machinery
+    # this class is otherwise about) - the refusal this test pinned is
+    # retired. Coverage moved to
+    # test_portal_price_tag_revise.py::TestNeighboursRouteForPriceTagRequest
+    # (`test_neighbours_for_the_owner` - 200 with prev/next/position/total;
+    # `test_neighbours_other_contact_404` - 404 for a foreign token), which
+    # already exercises both the happy path and the ownership gate, so
+    # nothing here duplicates it.
 
     def test_the_kind_is_still_grantable_on_an_access_type(self):
         """The grant schema asks the OTHER question and must still say yes."""

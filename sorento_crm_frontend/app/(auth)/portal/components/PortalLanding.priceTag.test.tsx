@@ -141,8 +141,14 @@ describe('PortalLanding - Price Tag Request in the type dropdown', () => {
     mockContact(['stock_inquiry']);
     render(<PortalLanding slug="darren" />);
 
-    // The New button names the active kind, so it is what proves the fallback.
-    expect(await screen.findByText('New Stock Inquiry')).toBeInTheDocument();
+    // The New button names the active kind, so it is what proves the
+    // fallback. The label is split across spans (short "New" below `sm`,
+    // full label at `sm+`), so it is queried by accessible name (the whole
+    // label, which the button's `aria-label` always carries) rather than
+    // exact text.
+    expect(
+      await screen.findByRole('link', { name: /New Stock Inquiry/ }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('PT-202608-0001')).toBeNull();
   });
 
