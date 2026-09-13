@@ -330,8 +330,8 @@ def _resolve_and_gate(db: Any):
         company scope (H56), which is the scope AC-1142 names.
 
         **The body this lane sends is NOT the business lane's body.** Four keys are
-        overridden, because this lane reads exactly one field off the answer
-        (`display.brand.brand_code`) and pays for everything else:
+        overridden and one is dropped outright, because this lane reads exactly one field
+        off the answer (`display.brand.brand_code`) and pays for everything else:
 
         * `understand_phrase: False` and `spec_fallback: False` - both put the customer's
           message in front of a model (phrase understanding, then a spec search) to find
@@ -357,6 +357,15 @@ def _resolve_and_gate(db: Any):
           (`_product_tokens` already scopes the read that way), which is exactly OR's
           per-token view - so OR is not a workaround, it is the mode this lane's own body
           shape was always asking for.
+        * `entity_pins` - DROPPED, not overridden (N4, reviewer review round 10).
+          `resolve_entity_body` decides whether to attach pins off the mode IT computed
+          (H38, `and` for a real escalation ctx - no pins), before this seam overrides the
+          mode to `or` above; a turn whose PARSER already emitted `match_mode: "or"` would
+          therefore have kept its pins, sending OR-with-pins on some turns and
+          OR-without-pins on others - two shapes for the one body this docstring claims to
+          send. A pin mismatch is a 400 `_resolve_product` degrades on, so it was harmless
+          today, but harmless is not the same as one shape. This lane never wants pins - it
+          asks about ONE code and reads ONE fact per token - so the key is dropped outright.
 
         `sub-resolve-and-gate`'s gate is deliberately NOT run over the answer. The gate's
         job is to decide which entity types a DOMAIN serves and to build the roster axes for
@@ -385,6 +394,15 @@ def _resolve_and_gate(db: Any):
             "understand_phrase": False,
             "match_mode": "or",
         }
+        # N4 (reviewer, review round 10): `entity_pins` is decided by `resolve_entity_body`
+        # off the mode IT computed (H38), not the one this seam overrides to above - a turn
+        # whose parser already emitted `match_mode: "or"` left pins in the body, so the lane
+        # sent OR-with-pins on some turns and OR-without on others, two shapes for the one
+        # body this seam claims to send. This lane never wants pins: it asks about ONE code
+        # and reads ONE fact per token (`_product_tokens`), never a pin-scoped
+        # disambiguation, so the key is dropped outright rather than carried from whichever
+        # mode happened to build it.
+        body.pop("entity_pins", None)
         with db.begin_nested():
             payload = production_services(db).resolve_entity(body)
         resolved, did_you_mean = _product_rows(
