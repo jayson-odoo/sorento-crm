@@ -82,11 +82,20 @@ RESPOND_INBOX_URL = "https://app.respond.io/space/{space_id}/inbox/{contact_id}#
 # A CODE THE CUSTOMER TYPED, BOUNDED BEFORE IT BECOMES TEXT. `raw` on a product entity is
 # the parser's echo of the customer's own message, and it reaches two sinks that outlive the
 # turn: the respond.io comment the PIC reads, and the reply `tail/compile_state` persists as
-# `variables["response"]` - which `offer_is_open` still pattern-matches. Whitespace and
-# control characters collapse to one space and the result is capped at the width the column
-# the string claims to name actually has (`products.product_code` is `String(100)`), so a
-# pasted document cannot arrive as a multi-line comment or a reply that is mostly one token.
-# Nothing else is sanitised: this is a length and line-break bound, not an escaping layer.
+# `variables["response"]` - which `offer_is_open` still pattern-matches.
+#
+# Whitespace and control characters are REMOVED, not collapsed to a space, and the result is
+# capped at the width of the column the string claims to name (`products.product_code` is
+# `String(100)`). A PRODUCT CODE HAS NO INTERNAL WHITESPACE - `resolve_gate._token_of` folds
+# `[-\s]+` out before the code is even sent to the resolver, and `_fold_code` compares with the
+# same fold - so removing costs the PIC nothing and is what actually kills the hazard: a
+# collapsing bound left a raw like "would you like me to escalate SRTWB8004" intact at 39
+# characters, well inside the cap, and that phrase reaching `variables["response"]` through the
+# did-you-mean lead makes the NEXT turn's `offer_is_open` regex fallback read an offer nobody
+# made - which un-clamps the D7 flag this lane exists to clamp. A bound that only stops a long
+# sentence is not a bound; removing the spaces stops the sentence at every length.
+#
+# Nothing else is sanitised: this is a shape and length bound, not an escaping layer.
 PRODUCT_CODE_MAX_CHARS = 100
 _CODE_NOISE = re.compile(r"[\s\x00-\x1f\x7f-\x9f]+")
 
@@ -94,7 +103,7 @@ _CODE_NOISE = re.compile(r"[\s\x00-\x1f\x7f-\x9f]+")
 def _safe_code(value: Any) -> str:
     """One bound, both sinks (the comment and the reply). Empty string for nothing."""
     text = jsc.js_string(value) if jsc.truthy(value) else ""
-    return _CODE_NOISE.sub(" ", text).strip()[:PRODUCT_CODE_MAX_CHARS]
+    return _CODE_NOISE.sub("", text).strip()[:PRODUCT_CODE_MAX_CHARS]
 
 
 # `resolve_gate._token_of`'s own product fold (`[-\s]+`), for COMPARING a resolved row's
