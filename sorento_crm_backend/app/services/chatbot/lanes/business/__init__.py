@@ -246,11 +246,14 @@ def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str
     """R22(a): the customer DECLINED the open outstanding question - one acknowledgement,
     and nothing armed.
 
-    The text is the registry's own `clarify_menu`, rendered exactly as `tail/outcome.py`
-    renders it for the branch of the same name: no new prose, and the one existing line
-    that fits the state the conversation is now in (nothing open, here is what I can
-    help with). The only other decline copy the registry holds is `escalation_declined`
-    ("Escalation declined."), which names an escalation nobody asked for.
+    ONE short line, from the registry's own `offer_declined` key ("Okay, noted."),
+    rendered through the same `copy.render` path every canned reply uses so the owner can
+    edit the wording without a deploy. The first cut used `clarify_menu` - the closest
+    line that existed - and the live check showed why that is wrong: "I see you're trying
+    to decline, Let me understand more. Are you asking about any of these? ..." re-opens a
+    conversation the customer has just closed. `escalation_declined` is the other decline
+    line and names an escalation nobody asked for; `offer_declined` is its sibling for
+    every other offer the bot makes.
 
     Same `structured` shape as the re-offer below, minus the `outstanding_ask` - that
     absence is the whole difference, and it is what stops `tail/compile_state.py` arming
@@ -258,9 +261,7 @@ def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str
     """
     templates = reply_copy.resolve(db) if db is not None else reply_copy.fallback_copy()
     structured: dict[str, Any] = {
-        "response": templates.render(
-            "clarify_menu", user_goal=jsc.js_string(jsc.get(parse_output, "user_goal") or "")
-        ),
+        "response": templates.render("offer_declined"),
         "answers": [],
         "attachments": [],
         "action_links": [],
