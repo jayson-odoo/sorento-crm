@@ -670,6 +670,13 @@ class Pending(BaseModel):
     # OWN string by equality instead of trying to understand it. Absent on a marker written
     # before this shipped, which is why that reader treats absence as "parser answer only".
     options: list[dict[str, Any]] | None = None
+    # `outstanding_scope` / `outstanding_detail` only (R22, owner round 9, 13 Sep 2026):
+    # this question has already been RE-PRINTED once over a reply that answered nothing
+    # (AC-1143(c)). The next such reply closes it instead of printing a third copy. A
+    # boolean, not a countdown: R2 keeps the offer sticky across picks and casual turns,
+    # and a TTL would close it behind a customer who is still reading it. Absent on every
+    # other kind and on a marker written before this shipped, which reads as "not yet".
+    reprinted: bool | None = None
 
 
 class SessionVars(BaseModel):

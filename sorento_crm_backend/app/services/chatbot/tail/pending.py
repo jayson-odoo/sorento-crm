@@ -75,7 +75,21 @@ def derive(
         # kinds, one-turn life like `team_clarify` - `output_exchange.py` resolves
         # against the `outstanding_filters` session variable carried alongside, never
         # against this marker's own body.
-        return {"kind": selection_context}
+        #
+        # ONE exception, R22 (owner round 9, 13 Sep 2026): whether this turn was itself a
+        # RE-PRINT of the same question over a reply that answered nothing. The head
+        # stamps the re-ask it is about to render (`outstanding_detail_reask` /
+        # `outstanding_reask_filters`), and the marker carries that fact to the next turn,
+        # which closes the question rather than printing a third copy of it. It belongs on
+        # the marker and not in `outstanding_filters` beside it because it is a fact about
+        # the QUESTION's life, not about what the question filters on, and because the
+        # marker is the thing whose absence already means "nothing is open".
+        marker: dict[str, Any] = {"kind": selection_context}
+        if jsc.truthy(jsc.get(qf, "outstanding_detail_reask")) or jsc.truthy(
+            jsc.get(qf, "outstanding_reask_filters")
+        ):
+            marker["reprinted"] = True
+        return marker
     if selection_context == "team_clarify":
         # THE THIRD KIND (AC-822, owner rule R-b). The module docstring above says the
         # clarify kinds have a structured reader already and no text read to replace, so

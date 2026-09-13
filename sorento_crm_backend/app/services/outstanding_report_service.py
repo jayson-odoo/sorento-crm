@@ -376,7 +376,18 @@ def _fill_so(
         }
         for v in per_so.values()
     ]
-    so_rows.sort(key=lambda r: (r["order_date"] is None, r["order_date"] or date.min, r["so_number"]))
+    # R23 (owner ruling, 13 Sep 2026): LATEST FIRST. The owner's own SO list came back
+    # 14/12/2022, 01/08/2024, 09/08/2024, 20/08/2024 - "it need to be the recent one not
+    # the old one, since if it is a long list, I want to see the recent one". Date
+    # descending, ties by document number descending (the higher number is the later
+    # document), and a row with NO date sorts LAST rather than first - an undated row is
+    # the least recent thing there is, not the most. Sorted HERE, in the route, per R10:
+    # the presenter prints the order it is given and never re-sorts.
+    so_rows.sort(
+        key=lambda r: (r["order_date"] is None, r["order_date"] or date.min, r["so_number"]),
+        reverse=True,
+    )
+    so_rows.sort(key=lambda r: r["order_date"] is None)
     result["so_rows"] = so_rows
 
 
@@ -563,5 +574,10 @@ def _fill_do(
         }
         for v in per_do.values()
     ]
-    do_rows.sort(key=lambda r: (r["do_date"] is None, r["do_date"] or date.min, r["do_number"]))
+    # R23, the DO half of the same rule - see the SO note above.
+    do_rows.sort(
+        key=lambda r: (r["do_date"] is None, r["do_date"] or date.min, r["do_number"]),
+        reverse=True,
+    )
+    do_rows.sort(key=lambda r: r["do_date"] is None)
     result["do_rows"] = do_rows

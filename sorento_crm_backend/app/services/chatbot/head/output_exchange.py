@@ -1062,13 +1062,23 @@ def _outstanding_keeps_subject(o: dict, filters: Any) -> bool:
       subject, so an entity on the subject's own axis REPLACES it, and that is a new
       ask (`test_a_replacing_product_under_a_product_offer_is_still_a_new_ask`).
 
-    A turn that names another DOMAIN is asking another question whatever its entities
-    say ("stock for SRTWC8517" under an open scope question), so it never refines.
+    R24 (owner round 9b, 13 Sep 2026) narrows this to the shape a refinement actually
+    has: a turn the parser classifies as a BUSINESS QUESTION OF ITS OWN - `message_type:
+    "business_query"` with a NON-NULL `domain_hint` - is a new ask under an open
+    outstanding pending, whatever axes its entities sit on. The axis test alone called
+    "delivery status for hanlim" (a customer entity under a PRODUCT-subject offer, so a
+    different axis) a refinement of the old product's report, re-ran SRTWT7443 with
+    `Customer: all`, and re-offered: "I kind of can't escape this loop." A refinement is
+    the casual-shaped turn that narrows what is already on screen ("i want to see this
+    month only" is `casual` + no domain; "only BRW" is `business_query` with NO domain,
+    which is the parser saying it read a filter, not a question), and this test lives
+    HERE rather than beside the call so there is one definition of what a refinement is.
     """
     if jsc.js_string(o.get("entity_op") or "") not in ("reuse", "replace_combine"):
         return False
-    domain = jsc.js_string(o.get("domain_hint") or "")
-    if domain and domain != "order":
+    if jsc.js_string(o.get("message_type") or "") == "business_query" and jsc.truthy(
+        o.get("domain_hint")
+    ):
         return False
     subject_axes = _outstanding_subject_axes(filters)
     if not subject_axes:
@@ -1132,6 +1142,36 @@ def _select_all_over_a_menu(o: dict, parent_input: dict) -> bool:
     if message is None:
         return False
     return bool(_ALL_EXACT_RE.match(re.sub(r"[.!\s]+$", "", _split_reply_to(message).strip().lower())))
+
+
+def _outstanding_leaves_the_offer(o: dict, prev_pending: Any) -> bool:
+    """R22 (owner round 9, 13 Sep 2026): does this turn LEAVE the open outstanding
+    question rather than answer, refine or replace it?
+
+    Two shapes, and both of them close it:
+
+    * A DECLINE - the parser's own `is_affirmative: false` on a turn that picked
+      nothing, named nothing and refined nothing. "no" and "stop" are exactly that,
+      and until now `is_affirmative` was not read on this path at all, so a decline
+      and an unreadable reply took the identical re-print.
+    * A SECOND consecutive unreadable turn. The first one still re-prints (AC-1143(c):
+      the question is on the customer's screen and a typo should not cost them the
+      answer), and the marker written by that re-print says so, so the next one does
+      not print a third copy of a list nobody asked to see again. One boolean carried
+      on the marker, never a TTL - R2 rules the offer STICKY across picks and casual
+      turns, and a countdown would close it behind the customer's back while they are
+      still reading it. This closes it only after the bot has already said the same
+      thing twice with nothing new coming back.
+    """
+    if jsc.array(o.get("reference_positions")):
+        return False
+    if [e for e in jsc.array(o.get("entities")) if jsc.truthy(e)]:
+        return False
+    if jsc.truthy(o.get("domain_hint")):
+        return False
+    if o.get("is_affirmative") is False:
+        return True
+    return jsc.truthy(jsc.get(prev_pending, "reprinted"))
 
 
 def _outstanding_scope_ask_candidate(o: dict, prev_pending: Any) -> bool:
@@ -1246,6 +1286,14 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # answered with the plain order list. The reading is made ONCE, on the first pass,
     # and STAMPED (`outstanding_answer_applied` / `outstanding_refined`); the second
     # pass re-asserts that same reading and never re-decides it.
+    if jsc.truthy(o.get("outstanding_pending_dropped")):
+        # Decided on the FIRST pass: this turn walked away from the question (a new ask,
+        # a decline, a second unreadable reply). The second pass must not re-read it -
+        # by then the fields it would read are this function's own output, and a decline,
+        # which names nothing at all, would fall through to the re-print arm and re-arm
+        # the very offer the customer had just closed.
+        return
+
     already_read = jsc.truthy(o.get("outstanding_answer_applied")) or jsc.truthy(
         o.get("outstanding_refined")
     )
@@ -1279,6 +1327,28 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             # turn", so a hit's `outstanding_detail` marker silently suppressed the scope
             # question on the NEXT bare-word ask, however many turns later.
             o["outstanding_pending_dropped"] = True
+            return
+        elif picked is None and _outstanding_leaves_the_offer(o, prev_pending):
+            # R22 (owner round 9, 13 Sep 2026): THE WAY OUT. A customer who answers
+            # neither the question nor a refinement of it is not necessarily asking for it
+            # again - "no", "stop", or a second "hi" means they are done with it. Live,
+            # every one of `hi` / `hi` / `no` / `stop` printed the same offer back: "wud i
+            # can't reset now?" Both shapes close it through the SAME door the new ask
+            # above uses, so the filters die with it; they differ only in what the turn is
+            # owed afterwards.
+            o["outstanding_pending_dropped"] = True
+            if o.get("is_affirmative") is False:
+                # A DECLINE was aimed at this question, so it gets an answer to it: the
+                # lane composes one closing reply and arms nothing (`run_fetch`). Kept on
+                # the outstanding arm for that one line, exactly as the re-print it
+                # replaces already is.
+                o["outstanding_offer_declined"] = True
+                o["domain_hint"] = "order"
+                o["message_type"] = "business_query"
+                o["intent_hint"] = "check_order"
+            # The SECOND unreadable turn was not aimed at the question at all, so it takes
+            # its own ordinary path with the offer simply gone - a greeting for "hi",
+            # which is the right reply once nothing is open.
             return
 
     refining = jsc.truthy(o.get("outstanding_refined"))

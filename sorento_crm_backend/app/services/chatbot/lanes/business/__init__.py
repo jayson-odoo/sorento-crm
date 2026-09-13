@@ -24,6 +24,7 @@ from typing import Any
 import logging
 import time
 
+from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
@@ -241,6 +242,49 @@ def _outstanding_scope_ask_from_filters(
     }
 
 
+def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str, Any]:
+    """R22(a): the customer DECLINED the open outstanding question - one acknowledgement,
+    and nothing armed.
+
+    The text is the registry's own `clarify_menu`, rendered exactly as `tail/outcome.py`
+    renders it for the branch of the same name: no new prose, and the one existing line
+    that fits the state the conversation is now in (nothing open, here is what I can
+    help with). The only other decline copy the registry holds is `escalation_declined`
+    ("Escalation declined."), which names an escalation nobody asked for.
+
+    Same `structured` shape as the re-offer below, minus the `outstanding_ask` - that
+    absence is the whole difference, and it is what stops `tail/compile_state.py` arming
+    the question again.
+    """
+    templates = reply_copy.resolve(db) if db is not None else reply_copy.fallback_copy()
+    structured: dict[str, Any] = {
+        "response": templates.render(
+            "clarify_menu", user_goal=jsc.js_string(jsc.get(parse_output, "user_goal") or "")
+        ),
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        # This reply carries no search of its own, so the generic scope header has
+        # nothing to disclose about it (AC-1139's own marker).
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
 def _outstanding_detail_reoffer(filters: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
     """AC-1143(c): an out-of-range number against an OPEN detail offer re-prints that
     offer, fetches nothing, and leaves it open - the same `structured` shape (and so the
@@ -351,6 +395,9 @@ def run_until_exit(
     if (
         isinstance(parse_output_peek.get("outstanding_reask_filters"), dict)
         or isinstance(parse_output_peek.get("outstanding_detail_reask"), dict)
+        # R22(a): a decline names nothing at all, so resolve+gate would exit `not_found`
+        # and answer with the order lane's miss text instead of the acknowledgement.
+        or jsc.truthy(parse_output_peek.get("outstanding_offer_declined"))
         or carried_subject_answer
     ):
         return {
@@ -568,6 +615,10 @@ def run_fetch(
     # resolve) - the same reason the tier-ask arm below short-circuits before any
     # tool pick.
     # ── AC-1143(c): re-print the SAME detail offer, fetch nothing ─────────────
+    # ── R22(a): the customer left the question - acknowledge, arm nothing ────
+    if jsc.truthy(parse_output.get("outstanding_offer_declined")):
+        return _outstanding_offer_closed(parse_output, db)
+
     detail_reask = parse_output.get("outstanding_detail_reask")
     if isinstance(detail_reask, dict):
         reoffer_rows = [r for r in jsc.array(detail_reask.get("rows")) if isinstance(r, dict)]
