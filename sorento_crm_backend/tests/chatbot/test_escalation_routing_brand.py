@@ -503,10 +503,32 @@ def test_ac1125_a_pick_on_a_family_word_deferral_asks_which_team_next() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _sanitized(raw: str) -> str:
+    """What a code SHOULD look like once bounded: every run of whitespace or control
+    character removed outright (never collapsed to a space), capped at
+    `PRODUCT_CODE_MAX_CHARS`. The same character class `escalation.py`'s own
+    `_CODE_NOISE` names (`[\\s\\x00-\\x1f\\x7f-\\x9f]+`), spelled out here rather than
+    imported so this test does not depend on a private name staying put - it is the
+    CONTRACT (strip, not collapse) that matters, not the constant."""
+    import re
+
+    return re.sub(r"[\s\x00-\x1f\x7f-\x9f]+", "", raw)[:100]
+
+
 def _malicious_raw() -> str:
     """A 300 char typed code carrying a newline, a carriage return, a tab, and the frozen
-    offer open phrase (`output_exchange._OFFERED_ESCALATION_RE`) placed well past any
-    sane truncation point, padded to the full length with filler.
+    offer open phrase (`output_exchange._OFFERED_ESCALATION_RE`), padded to the full
+    length with filler.
+
+    Security re-check finding: the phrase must sit WITHIN the first 100 chars, not past
+    it. A collapse-to-one-space sanitiser (today's `_CODE_NOISE.sub(" ", ...)`) leaves the
+    phrase's own internal spacing untouched - "would you like me to escalate" has no
+    control characters of its own, so collapsing the NOISE around it does nothing to the
+    phrase itself. Placing it past the 100 char cap made the earlier version of this
+    fixture pass on TRUNCATION alone, never exercising whether the sanitiser actually
+    breaks the phrase. Here the phrase (with a code beside it, as a customer would
+    plausibly type) is the first 40-odd characters, so only a sanitiser that REMOVES
+    whitespace rather than collapsing it can defeat it.
 
     An attacker typing this as a product code is testing two things at once: whether the
     PIC comment and the clarify reply stay one bounded line (S1), and whether the phrase
@@ -514,21 +536,27 @@ def _malicious_raw() -> str:
     `response` field (the legacy `offer_is_open` regex path, still read "during the
     migration window").
     """
-    prefix = "A" * 40 + "\n" + "B" * 40 + "\r" + "C" * 40 + "\t" + "D" * 40
-    phrase = "would you like me to escalate"
-    padded = prefix + " " + phrase + " "
-    raw = padded + "E" * (300 - len(padded))
+    lead = "would you like me to escalate SRTWB8004"
+    noise = "\n" + "A" * 40 + "\r" + "B" * 40 + "\t" + "C" * 40
+    raw = lead + noise
+    raw = raw + "D" * (300 - len(raw))
     assert len(raw) == 300
+    assert "would you like me to escalate" in raw[:100].lower(), (
+        "the phrase must sit within the first 100 chars, or a truncating sanitiser would "
+        "pass this fixture for the wrong reason"
+    )
     return raw
 
 
 def test_s1_pic_comment_product_line_is_bounded_and_never_reopens_a_stale_offer() -> None:
-    """Security review S1 (AC-1130 hardening), item 1. `_product_line` embeds the typed
-    code verbatim with no cap and no whitespace collapse (`escalation.py`'s own
-    `_product_line`), so a 300 char raw with control characters and the frozen offer
-    phrase reaches the PIC comment whole. RED until the coder bounds it to one line, at
-    most 100 chars of the typed text, and the phrase cannot survive to make
-    `offer_is_open` read a later turn's stale state as an open offer."""
+    """Security review S1 (AC-1130 hardening), item 1, tightened by the security re-check
+    (`_malicious_raw` now puts the phrase inside the first 100 chars - see that function's
+    docstring). `_product_line` embeds the typed code verbatim with no cap and no
+    sanitising (`escalation.py`'s own `_product_line`), so a 300 char raw with control
+    characters and the frozen offer phrase reaches the PIC comment whole. RED until the
+    coder bounds it to one line, at most 100 chars of the typed text, with whitespace
+    REMOVED rather than collapsed to a space - a collapse leaves the phrase's own internal
+    spacing untouched and still matches `offer_is_open`'s regex."""
     from app.services.chatbot.head.output_exchange import offer_is_open
 
     raw = _malicious_raw()
@@ -556,8 +584,16 @@ def test_s1_pic_comment_product_line_is_bounded_and_never_reopens_a_stale_offer(
         body = body[:-1]
     typed_part = body.split(" (picked ")[0]
 
-    assert "\n" not in typed_part and "\r" not in typed_part and "\t" not in typed_part, (
-        f"the comment's Product line must collapse whitespace to single spaces: {typed_part!r}"
+    # The tightened expectation: whitespace REMOVED, not collapsed to single spaces, so
+    # the assertion is an exact match against the STRIPPED text rather than a mere
+    # absence-of-control-characters check (which a collapse-to-space sanitiser would also
+    # satisfy without breaking the phrase).
+    assert typed_part == _sanitized(raw), (
+        f"the typed text must be sanitised by REMOVING whitespace, not collapsing it to "
+        f"single spaces: got {typed_part!r}, expected {_sanitized(raw)!r}"
+    )
+    assert not any(ch.isspace() for ch in typed_part), (
+        f"no whitespace of any kind may survive in the comment's Product line: {typed_part!r}"
     )
     assert len(typed_part) <= 100, (
         f"the comment must carry at most 100 chars of the typed text: {len(typed_part)} chars"
@@ -571,10 +607,12 @@ def test_s1_pic_comment_product_line_is_bounded_and_never_reopens_a_stale_offer(
 
 
 def test_s1_companion_clarify_reply_is_bounded_and_never_reopens_a_stale_offer() -> None:
-    """Security review S1, item 6 (the reply half): `_product_pick_ask`'s
-    `lead = f"I could not find *{typed}*."` embeds the SAME raw typed code with no cap,
-    on the did-you-mean ask the customer receives when their code does not resolve.
-    RED for the same reason as the comment test above."""
+    """Security review S1, item 6 (the reply half), tightened by the security re-check
+    (see `_malicious_raw`'s docstring): `_product_pick_ask`'s
+    `lead = f"I could not find *{typed}*."` embeds the SAME typed code with no cap, on
+    the did-you-mean ask the customer receives when their code does not resolve. RED for
+    the same reason as the comment test above: a collapse-to-space sanitiser leaves the
+    phrase's own spacing untouched."""
     from app.services.chatbot.head.output_exchange import offer_is_open
 
     raw = _malicious_raw()
@@ -596,8 +634,15 @@ def test_s1_companion_clarify_reply_is_bounded_and_never_reopens_a_stale_offer()
     end = text.index("*.", start)
     typed_in_lead = text[start:end]
 
-    assert "\n" not in typed_in_lead and "\r" not in typed_in_lead and "\t" not in typed_in_lead, (
-        f"the clarify reply must be single line where it names the typed code: {typed_in_lead!r}"
+    # The tightened expectation: whitespace REMOVED, not collapsed to single spaces - an
+    # exact match against the STRIPPED text, not merely an absence-of-control-characters
+    # check a collapse-to-space sanitiser would also pass.
+    assert typed_in_lead == _sanitized(raw), (
+        f"the typed text must be sanitised by REMOVING whitespace, not collapsing it to "
+        f"single spaces: got {typed_in_lead!r}, expected {_sanitized(raw)!r}"
+    )
+    assert not any(ch.isspace() for ch in typed_in_lead), (
+        f"no whitespace of any kind may survive in the clarify reply's lead: {typed_in_lead!r}"
     )
     assert len(typed_in_lead) <= 100, (
         f"the clarify reply must bound the typed text: {len(typed_in_lead)} chars"
