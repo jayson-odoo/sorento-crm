@@ -251,11 +251,22 @@ def _resolve_and_gate(db: Any):
         an offer; an escalation turn has no domain of its own and is not offering a roster,
         and the one fact this lane needs is on the resolver rows already. Running the gate
         would add a probe (an MCP call) that nothing here reads.
+
+        **The read runs in a SAVEPOINT, and that is what makes AC-1142 true.** This is the
+        lane's own unit of work - the same session `next_assignee` draws the round robin on
+        and `sla_create` writes the SLA row to. A database error inside the resolver leaves
+        the enclosing transaction ABORTED, so catching it upstream
+        (`escalation._resolve_product`) was not enough: the next statement on that session
+        raises `PendingRollbackError` and the turn closes `failed` with nobody assigned,
+        which is the opposite of "degrades to no brand". `begin_nested` rolls back to this
+        point and re-raises, so the caller still degrades and the assignment still happens.
         """
         from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
         from app.services.chatbot.lanes.business.services import production_services
 
-        payload = production_services(db).resolve_entity(resolve_entity_body(ctx))
+        body = resolve_entity_body(ctx)
+        with db.begin_nested():
+            payload = production_services(db).resolve_entity(body)
         resolved, did_you_mean = _product_rows(payload if isinstance(payload, dict) else {})
         return {"resolved": resolved, "did_you_mean": did_you_mean}
 
