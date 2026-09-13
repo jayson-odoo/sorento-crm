@@ -277,6 +277,16 @@ export interface PlanningChangeRow {
    * moved transfer, which is nearly all of them.
    */
   moved_transfer?: string | null;
+  /**
+   * What Apply actually DID with this row's held composition, once `applied_state` reads
+   * `applied` - the server's own record of where a reallocated or released share landed,
+   * e.g. `Reallocate 202607-S0080 3 to pool`. `null`/absent on a row Apply has not written
+   * yet (`pending`, `failed`, `superseded`): there is nothing to report until it runs.
+   */
+  result?: {
+    executed_reallocations: string[];
+    released_documents: string[];
+  } | null;
   /** Deep link to the cell of this line on the board (AC-R04's "Open on the board"). */
   board_link: string;
 }

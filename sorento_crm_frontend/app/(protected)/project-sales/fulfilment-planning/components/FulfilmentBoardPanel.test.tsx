@@ -1873,6 +1873,67 @@ describe('FulfilmentBoardPanel: Confirm posts against the id adopt itself return
 });
 
 /**
+ * An ADOPTED order whose lines still carry no mirror (`project_line_id: null` on every
+ * contribution - a core-line re-ingest under new ids, or a mirror the adoption itself never
+ * wrote). `confirmLinesFor` -> `lineFor` returns the `'no_mirror'` STRING for each of them,
+ * which `confirmLinesFor` filters out (it only pushes an actual `ConfirmLine`), so `lines`
+ * comes back empty. Nothing is added to `orders` for this SO, and nothing is added to
+ * `skipped` either - that branch only fires when `psoId` itself is falsy, and this order has
+ * one. `orders.length === 0` with `skipped` also empty ends the press with `batchResults`
+ * never set: no toast, no results block, nothing on screen says the press did anything at all.
+ */
+describe('FulfilmentBoardPanel: a Confirm that posts nothing says so', () => {
+  /** One already-adopted order; every contribution has no mirror line to post against. */
+  function boardAdoptedNoMirror() {
+    const built = boardOf([
+      demand({
+        sales_order_id: 'so-419852',
+        so_number: 'SO419852',
+        line_no: 1,
+        item_code: 'WESERP10B',
+      }),
+    ]);
+    return allSaved(
+      withContribution(
+        {
+          ...built,
+          orders: built.orders.map((order) => ({
+            ...order,
+            project_sales_order_id: 'pso-1',
+          })),
+        },
+        () => true,
+        (entry) => ({ ...entry, project_line_id: null }),
+      ),
+    );
+  }
+
+  async function openConfirmDialog() {
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+  }
+
+  it('names SO419852 and says nothing was posted, rather than ending the press with nothing shown', async () => {
+    getPlanningBoard.mockResolvedValue(boardAdoptedNoMirror());
+
+    renderPanel(['SO419852']);
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => {
+      const match = screen.queryAllByText(/SO419852/).find((node) =>
+        /not on the planning record|nothing (was )?posted/i.test(
+          node.textContent ?? '',
+        ),
+      );
+      expect(match).toBeTruthy();
+    });
+    expect(adoptSalesOrder).not.toHaveBeenCalled();
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * Searching the board (the captain: "i need the search here also btw").
  *
  * The board is ONE already-fetched payload, so this filters the product ROWS in the browser: it

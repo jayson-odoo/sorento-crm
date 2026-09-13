@@ -331,6 +331,30 @@ describe('the Was / Now table of a changed line', () => {
     expect(annotation.now.decision).not.toContain('Borrow other location');
   });
 
+  it('says where an APPLIED row\'s held composition actually went, under "Where it went" (AC-P3-9-ish)', () => {
+    const annotation = annotationOf(
+      row({
+        applied_state: 'applied',
+        result: {
+          executed_reallocations: ['Reallocate 202607-S0080 3 to pool'],
+          released_documents: [],
+        },
+      }),
+      'SO381895',
+    );
+    expect(annotation.whereItWent).toEqual([
+      'Reallocate 202607-S0080 3 to pool',
+    ]);
+  });
+
+  it('prints no "Where it went" section on a row Apply has not run yet (result: null)', () => {
+    const annotation = annotationOf(
+      row({ applied_state: 'pending', result: null }),
+      'SO381895',
+    );
+    expect(annotation.whereItWent).toEqual([]);
+  });
+
   it('prints a composed borrow at the location the component itself states (S1)', () => {
     // The engine writes `location` beside `warehouse_id` on a BORROW component too, and a
     // borrow's donor warehouse is precisely the one that appears NOWHERE else on the row -
