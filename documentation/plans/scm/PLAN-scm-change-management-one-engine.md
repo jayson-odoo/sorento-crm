@@ -431,24 +431,22 @@ behind it, already inside a dialog of its own. No backend field was added for an
 
 ### H. SO400884 browser walk rulings (captain, 13 September 2026)
 
-**R1. One open batch per order.** `build_batch` for an order that already has an unapplied
-batch with a PENDING row appends its rows to that batch instead of minting a new one, so
-`pending_batch_id_by_sales_order` always has exactly one candidate; a new row for a line the
-open batch already has a pending row for supersedes the older one in place (`applied_state
-= superseded`, reason "Replaced by a later change") and lands in a FRESH batch instead,
-since the two rows cannot coexist as one pending row. **Not committed yet**: implemented
-against its own two acceptance tests (`tests/scm/test_planning_change_one_open_batch.py
-::test_a_second_save_on_an_order_with_a_pending_batch_appends_to_it` and `::test_a_second_
-change_on_the_same_line_supersedes_the_pending_row`, both pass), but the same append rule
-for a DIFFERENT line regresses a pre-existing green test (`tests/scm/test_planning_change_
-diff_parity.py::test_re_adding_the_same_product_after_a_cancellation_creates_a_new_open_
-line` - a cancel-then-readd across two manual-edit saves expects two separate single-row
-batches) and conflicts with this same file's own `_so400884_shape` fixture (three separate
-`build_batch` calls for three DIFFERENT lines of one order, each read back via `_only_row`,
-which asserts exactly one row per batch - R1's append merges all three into one). Held
-uncommitted pending a scope ruling: `test_a_second_save`'s cross-line append and the other
-two's assumption of separate batches per differing line cannot both hold under one rule as
-currently written.
+**R1. One open batch per order (committed).** `build_batch` for an order that already has
+an unapplied batch with a PENDING row appends its rows to that batch instead of minting a
+new one, so `pending_batch_id_by_sales_order` always has exactly one candidate; a new row
+for a line the open batch already has a pending row for supersedes the older one in place
+(`applied_state = superseded`, reason "Replaced by a later change") and lands in a FRESH
+batch instead, since the two rows cannot coexist as one pending row. Passes its own two
+acceptance tests (`tests/scm/test_planning_change_one_open_batch.py::test_a_second_save_
+on_an_order_with_a_pending_batch_appends_to_it` and `::test_a_second_change_on_the_same_
+line_supersedes_the_pending_row`). The same append rule for a DIFFERENT line regresses a
+pre-existing test built on the old one-batch-per-save assumption (`tests/scm/test_planning_
+change_diff_parity.py::test_re_adding_the_same_product_after_a_cancellation_creates_a_new_
+open_line`) and this same file's own `_so400884_shape` fixture (three separate `build_batch`
+calls for three DIFFERENT lines of one order, read back via `_only_row`, which asserts
+exactly one row per batch) - both are being rewritten to R1 by the tester rather than R1
+being narrowed, per the captain's ruling (13 September 2026): the old assumption, not R1, is
+what was wrong.
 
 **R3. A cancelled line with a pending change row has a home on the board.**
 `FulfilmentBoardService._cancelled_pending_change_rows` reads it separately from
