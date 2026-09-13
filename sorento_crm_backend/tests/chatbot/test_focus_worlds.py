@@ -1112,6 +1112,172 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
             ),
         ),
     ),
+    # ----------------------------------------------------------------- #
+    # S7a (owner regression, lane-introduced at the five-key session): the
+    # "multiple matches" picker (gate.py's require_specific ladder) is never
+    # armed as the open question. See
+    # tests/chatbot/test_sticky_roster_tail.py::TestADisambiguationTurnArmsItsRoster
+    # for the unit-level pins; these two worlds grade what happens once the
+    # roster IS armed: "8" resolves row 8.
+    # ----------------------------------------------------------------- #
+    OwnerWorld(
+        world_id="focus-multiple-matches-picker-then-eight-resolves-row-eight",
+        lane="business",
+        emits_v3=True,
+        acs=("AC-1014",),
+        why=(
+            "S7a: a 'multiple matches' picker over 10 real SRTWC286 rows, armed "
+            "directly on the turn that establishes focus.domains (driving 10 "
+            "products through the real resolve+gate seam is not something this "
+            "harness can seed deterministically) - the gate's OWN composition of "
+            "the roster is pinned at the unit level "
+            "(TestADisambiguationTurnArmsItsRoster); this world grades what "
+            "happens NEXT: '8' resolves row 8 (SRTWC286-SH-NEW-P, the real "
+            "evidence turn's own code) and the incoming lane runs for it, the "
+            "same AC-1018 rerun shape focus-pick-reruns-the-alive-domain uses."
+        ),
+        turns=(
+            OwnerTurn(
+                message="incoming wc286",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "incoming",
+                    "intent_hint": "check_incoming",
+                    "entities": [],
+                    "asks": [{"domain": "incoming", "entities": []}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                arm={
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": [
+                            {
+                                "idx": i,
+                                "label": code,
+                                "code": code,
+                                "uuid": f"uuid-{code}",
+                                "entity_type": "product",
+                            }
+                            for i, code in enumerate(
+                                [
+                                    "SRTWC286-A",
+                                    "SRTWC286-B",
+                                    "SRTWC286-C",
+                                    "SRTWC286-D",
+                                    "SRTWC286-E",
+                                    "SRTWC286-F",
+                                    "SRTWC286-G",
+                                    "SRTWC286-SH-NEW-P",
+                                    "SRTWC286-I",
+                                    "SRTWC286-J",
+                                ],
+                                start=1,
+                            )
+                        ],
+                        "expects": "pick",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {},
+                    },
+                },
+                expect={"focus_domains": ["incoming"]},
+            ),
+            OwnerTurn(
+                message="8",
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[8]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "product_pick",
+                    "focus_products": ["SRTWC286-SH-NEW-P"],
+                    "branch_kind": "business_query",
+                    "lane_ran": True,
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="focus-multiple-matches-picker-then-eight-resolves-row-eight-under-v1",
+        lane="business",
+        emits_v3=False,
+        acs=("AC-1014",),
+        why=(
+            "The v1 shape of the same S7a world: the promoted prompt carries no "
+            "answers_open_question at all, so a numbered reply resolves through "
+            "reference_positions instead - the SAME roster, armed the same way as "
+            "the v3 world above."
+        ),
+        turns=(
+            OwnerTurn(
+                message="incoming wc286",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "incoming",
+                    "intent_hint": "check_incoming",
+                    "entities": [],
+                },
+                arm={
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": [
+                            {
+                                "idx": i,
+                                "label": code,
+                                "code": code,
+                                "uuid": f"uuid-{code}",
+                                "entity_type": "product",
+                            }
+                            for i, code in enumerate(
+                                [
+                                    "SRTWC286-A",
+                                    "SRTWC286-B",
+                                    "SRTWC286-C",
+                                    "SRTWC286-D",
+                                    "SRTWC286-E",
+                                    "SRTWC286-F",
+                                    "SRTWC286-G",
+                                    "SRTWC286-SH-NEW-P",
+                                    "SRTWC286-I",
+                                    "SRTWC286-J",
+                                ],
+                                start=1,
+                            )
+                        ],
+                        "expects": "pick",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {},
+                    },
+                },
+                expect={"focus_domains": ["incoming"]},
+            ),
+            OwnerTurn(
+                message="8",
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "reference_positions": [8],
+                },
+                expect={
+                    "answered": "product_pick",
+                    "focus_products": ["SRTWC286-SH-NEW-P"],
+                    "branch_kind": "business_query",
+                    "lane_ran": True,
+                },
+            ),
+        ),
+    ),
 )
 
 
