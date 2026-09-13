@@ -1318,17 +1318,27 @@ def _resolve_open_question(
             for p in jsc.array(jsc.get(parser_raw, "reference_positions"))
             if isinstance(p, (int, float)) and int(p) >= 1
         ]
-        # DID THE PARSER EXPRESS AN OPINION ABOUT THIS QUESTION? (review S12, and the captain's
-        # widening of it.) `v3_signals` normalises `resolved` to `answer.get("resolved") is
-        # True`, so a v3 emission saying `answers_open_question: {resolved: false}` - the model
-        # having looked at the open question and decided this message does not answer it -
-        # arrives here looking exactly like a v1 emission that carries no such key at all.
-        # Neither inferring rung below may override that explicit no: on the contract where the
-        # parser has an opinion, the opinion wins. The KEY's presence is the test rather than
-        # `emits_v3`, so a v3 prompt that has not implemented it yet is in the same "no opinion"
-        # position v1 is and still gets both rungs. POSITIONS are not gated by it: a number is
-        # not an inference.
-        parser_answered_key = isinstance(jsc.get(parser_raw, "answers_open_question"), dict)
+        # DID THE PARSER EXPRESS AN OPINION ABOUT THIS QUESTION? (review S12, the captain's
+        # widening of it to the yes/no rung, and N18's correction of the test.) `v3_signals`
+        # normalises `resolved` to `answer.get("resolved") is True`, so a v3 emission saying
+        # `answers_open_question: {resolved: false}` - the model having looked at the open
+        # question and decided this message does not answer it - arrives here looking exactly
+        # like a v1 emission that carries no such key at all. Neither inferring rung below may
+        # override that explicit no: on the contract where the parser has an opinion, the
+        # opinion wins.
+        #
+        # BOTH HALVES, because `v3_signals` reads that field only when `emits_v3` - the same
+        # field cannot be authoritative here and ignored there. The key's absence was the test
+        # on its own, and it cost both rungs on a turn configured v1 whose emission happens to
+        # carry the dict anyway (a v1-config replay of a capture, a dry-run mock): the answer
+        # path ignored that key, so the guard must too. A v3 prompt that has not implemented the
+        # key yet is still in the "no opinion" position v1 is, and still gets both rungs.
+        #
+        # POSITIONS are not gated by it: a number is not an inference, it is the v1 contract's
+        # own way of answering a picker.
+        parser_expressed_opinion = emits_v3 and isinstance(
+            jsc.get(parser_raw, "answers_open_question"), dict
+        )
         # Read for BOTH prompt contracts, and that is why it sits in this block rather than
         # under the v1 comment above: the block runs whenever `answers_open_question` did not
         # resolve the turn, which is every v1 emission and every v3 one that carried no answer.
@@ -1352,7 +1362,7 @@ def _resolve_open_question(
         # entity never mattered either way.
         team_pick_idx = (
             None
-            if jsc.truthy(jsc.get(parser_raw, "domain_hint")) or parser_answered_key
+            if jsc.truthy(jsc.get(parser_raw, "domain_hint")) or parser_expressed_opinion
             else open_question_mod.team_slug_pick(
                 question, jsc.get(jsc.get(parser_raw, "routing"), "suggested_team")
             )
@@ -1388,7 +1398,7 @@ def _resolve_open_question(
             # v1 emission with no key has. Inferring a yes over the parser's explicit no is the
             # one thing neither rung may do. The key's ABSENCE is the test, so a v3 prompt that
             # has not implemented it yet still gets the rung.
-            and not parser_answered_key
+            and not parser_expressed_opinion
             and isinstance(jsc.get(parser_raw, "is_affirmative"), bool)
         ):
             # THE OTHER HALF OF THE v1 PATH, and without it a yes was not an answer at all.
