@@ -1,6 +1,6 @@
 # PLAN - Chatbot escalation routing: verb, team and brand from one source each
 
-Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477; review follow-ups S9, N15, S11, S12 and the yes/no guard on top (cf5e10f3d, c79377c63, 09f9b6532). FOUR owner console passes, each finding one defect, each fixed with the tester's real-shape tests merged - the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), the miss lane's combined did-you-mean plus escalate offer (b6e108634), a pick dropping the non-product entity it had kept (bd815fcc8), and a parser-named team not answering the team question (13f91a219). Owner ruling D8 from the same pass is built: the routed-to-PIC copy names the brand for the two marketing teams (52a9c09a8). S1 to S6, three review rounds, the tester's nine rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. All four console root causes are #863's - see "Found on the console pass". Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
+Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477; review follow-ups S9, N15, S11, S12 and the yes/no guard on top (cf5e10f3d, c79377c63, 09f9b6532). FOUR owner console passes, each finding one defect, each fixed with the tester's real-shape tests merged - the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), the miss lane's combined did-you-mean plus escalate offer (b6e108634), a pick dropping the non-product entity it had kept (bd815fcc8), and a parser-named team not answering the team question (13f91a219). Owner ruling D8 from the same pass is built: the routed-to-PIC copy names the brand for the two marketing teams (52a9c09a8). A FIFTH console pass found the brand unpreviewable from a dry run (finding 5); owner ruling D9 is built (S7, ce5b7acd4 + tester's red 096f65e53): a dry run now runs the resolver and the assignee preview exactly like a live turn, gating only `next_assignee` / `sla_create`. S1 to S7, three review rounds, the tester's ten rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. All four console root causes are #863's - see "Found on the console pass". Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
 UAC: `chatbot-escalation-routing-acceptance-criteria.md` (AC-11xx).
 Predecessors: `PLAN-chatbot-focus-multi-domain.md` (lane 1, the dialogue state this lane's open questions live in), `PLAN-chatbot-turn-engine.md` S5 (the escalation lane port, hazards H26 / H27 / H37).
 Issue: #865 (13 Sep 2026).
@@ -41,6 +41,7 @@ CONTACT), brand narrows members (tagged with it plus untagged). Both rules alrea
 | D6 | Unknown product code AND a family word: did-you-mean first, then which team. |
 | D7 | Company is the contact's, never the product's. Brand is the resolved product's. The confirmation flag is read only while an offer is open. |
 | D8 | (console pass, 13 Sep) The routed-to-PIC copy names the resolved brand when the landed team is Marketing Product or Marketing Promotion ("from marketing product team handling Sorento"); other teams and no-brand cases unchanged. The brand DISPLAY is `brands.brand_name`, never the code, read off the same resolved row the next-assignee body takes `brand_code` from; the PIC comment's Team line carries the same fragment. |
+| D9 | (console pass, 13 Sep) A console dry run resolves the product and names the brand exactly like a live turn - the owner tests from the console, the console only ever runs dry, and `resolve_and_gate` / `preview_assignee` are both reads (savepoint-wrapped, no db writes). `dry_run` gates only the two WRITING seams, `next_assignee`'s draw and `sla_create`'s row, never the resolver or the preview draw. `PREVIEW_BRAND_NOTE` is retired outright, not relocated. |
 
 ## Design: three facts, one ladder each, all decided in the escalation lane
 
@@ -221,6 +222,19 @@ rung, c79377c63 and 09f9b6532 - the key's ABSENCE is the test, so a v3 prompt th
 implemented it still gets both rungs, and POSITIONS stay ungated because a number is not an
 inference).
 
+**Finding 5 (D9, console pass, 13 Sep 2026): the routed copy printed no brand on a dry run.**
+`ESCALATE TO MARKETING PRODUCT FOR SRTWB8004` (brand SORENTO on this install) on the console -
+a dry run - showed "...from Marketing Product team." with no ` handling SORENTO` fragment, and
+the trace's `preview_note` said "brand resolved on live turns only". Owner's words: "that's the
+whole point of us testing this" - the console only ever runs dry, so a rule that makes the brand
+unpreviewable makes it unverifiable from the one surface the owner tests it from. Cause: `run()`'s
+dry-run branch returned from its own preview shape without ever calling `_resolve_product`, so
+D6's did-you-mean-first ordering and D8's brand fragment were both live-only in practice. Fixed
+(ce5b7acd4, 096f65e53): `_human_intervention` runs the whole ladder - resolve, person/team
+routing, the D3 carry, the landed item - on a dry run exactly as it does live, since
+`resolve_and_gate` and `preview_assignee` are both reads; `dry_run` now gates only the two
+WRITING seams (`next_assignee`, `sla_create`) at the very end. `PREVIEW_BRAND_NOTE` is retired.
+
 ### Not built, with the reason
 
 - No brand -> team table: member brand tags already do it (36 rows).
@@ -241,6 +255,7 @@ inference).
 | S4 | Not found -> `product_pick` with deferred escalation; pick re-enters the ladder (D6) | T1b, T1c, T1d |
 | S5 | D3 carry against the landed team (lane; compile_state half not needed, see the deviation above) | T9, T9b |
 | S6 | Replay fixtures from the four real turns + the Mocha turn; divergences registered; console check | replay green |
+| S7 | D9: a dry run runs the resolver and the assignee preview like a live turn; `PREVIEW_BRAND_NOTE` retired | AC-1141 (amended), the D9 tests in `test_escalation_routing_seams.py` |
 
 Phase 1 (frontend-first mock) does not apply: no UI changes. The console already shows the
 lane's stages; the PR description says so.

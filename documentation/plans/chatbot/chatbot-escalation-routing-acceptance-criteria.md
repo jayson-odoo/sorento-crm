@@ -101,8 +101,10 @@ she typed and the code she picked.
 
 ## Seams and safety
 
-- AC-1141 A dry run reaches no seam: no resolve call, no next-assignee, no SLA, no send, for
-  every shape above (H37). pytest parametrised over the shapes.
+- AC-1141 A dry run reaches no WRITING seam: no next-assignee, no SLA, no send. It DOES call
+  the resolver and the assignee preview (D9), so the brand, the did-you-mean arm and the
+  " handling <brand>" copy are previewable, for every shape above (H37). pytest parametrised
+  over the shapes.
 - AC-1142 The lane's resolve call uses the production bundle's resolver with the request's
   company scope; a resolver error degrades to "not found" (did-you-mean or brand none), never
   a failed turn. pytest with a raising resolver.
