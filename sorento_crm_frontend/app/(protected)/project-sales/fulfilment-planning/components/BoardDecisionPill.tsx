@@ -73,10 +73,10 @@ export function BoardDecisionPill({
   /** This line's entry in the board's draft, or null while nobody has decided it here. */
   decision: BoardDecision | null;
 }) {
-  // CANCELLED FIRST, before "needs a location" (R3, the 13 September walk). A cancelled
-  // line is read-only, and the board carries it with none of the fields a planned line has -
-  // no location among them - so the location check would otherwise answer for it and tell a
-  // planner to fix something about a line the book has already removed.
+  // CANCELLED FIRST, before "needs a location" (R3, the 13 September walk). The guard below
+  // is for a line whose sales order genuinely states no warehouse, which is something a
+  // planner can go and fix; a cancelled line is read-only, and telling them to fix its
+  // location would be asking them to mend a line the book has already removed.
   if (!contribution.cancelled && contribution.unplannable) {
     return (
       <span

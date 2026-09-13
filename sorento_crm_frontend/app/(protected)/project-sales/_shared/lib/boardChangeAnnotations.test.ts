@@ -331,6 +331,44 @@ describe('the Was / Now table of a changed line', () => {
     expect(annotation.now.decision).not.toContain('Borrow other location');
   });
 
+  it('prints a composed borrow at the location the component itself states (S1)', () => {
+    // The engine writes `location` beside `warehouse_id` on a BORROW component too, and a
+    // borrow's donor warehouse is precisely the one that appears NOWHERE else on the row -
+    // not in what the line held, not in the proposal - so the stated code is the only thing
+    // standing between the reader and "another location".
+    const annotation = annotationOf(
+      row({
+        held: {
+          reserve: [{ location: 'BRW', warehouse_id: 'bb6f3f1e-0a2e-4a1a-9d1e-0c5f5b9f77aa', qty: '2' }],
+          borrow: [],
+          buy_qty: '0',
+          timely_spo_qty: '0',
+          revision_no: 1,
+        },
+        composition: {
+          project_line_id: 'pl-1',
+          timely_spo_qty: '0',
+          reserve: [],
+          borrow: [
+            {
+              source: 'other_location',
+              warehouse_id: '9f2a1c44-6b3d-4f7e-8a55-11c0de77bead',
+              qty: '6',
+              reason: 'ZZT donor has it',
+              location: 'BRW-IB',
+            },
+          ],
+          buy_qty: '0',
+        },
+      }),
+      'SO381895',
+      'BRW',
+    );
+    expect(annotation.now.decision).toContain('BRW-IB');
+    expect(annotation.now.decision).not.toContain('another location');
+    expect(annotation.now.decision).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+  });
+
   it('carries the moved-transfer phrase when the batch flagged one', () => {
     const annotation = annotationOf(
       row({ kind: 'cancelled', moved_transfer: '10 moved BRW -> BRW-IB, line cancelled' }),

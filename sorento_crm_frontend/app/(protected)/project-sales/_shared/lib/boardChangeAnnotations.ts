@@ -277,7 +277,7 @@ function proposedParts(row: PlanningChangeRow): SupplyPart[] {
       parts.push({
         kind: 'borrow',
         qty: borrow.qty,
-        location: locationOf(null, borrow.warehouse_id, codes),
+        location: locationOf(borrow.location, borrow.warehouse_id, codes),
       });
     }
     if (Number(row.composition.timely_spo_qty ?? '0') > 0) {

@@ -548,6 +548,14 @@ export interface ConfirmReserveComponent {
 export interface ConfirmBorrowComponent {
   source: BorrowSource;
   warehouse_id: string;
+  /**
+   * The donor warehouse's CODE, when whoever built this component knew it.
+   *
+   * The same field `ConfirmReserveComponent` carries, and it matters more here: a borrow's
+   * donor is by definition a warehouse this line does not hold at, so it appears nowhere
+   * else on a planning-change row for a reader to resolve the id against.
+   */
+  location?: string | null;
   donor_project_id?: string | null;
   qty: string;
   /** Mandatory: no Borrow is written without one (AC-B09). */
