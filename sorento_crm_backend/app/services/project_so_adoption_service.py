@@ -98,6 +98,14 @@ class ProjectSOAdoptionService:
             .first()
         )
         if existing is not None:
+            # Attempt 6 (13 Sep 2026): an AutoCount re-ingest can close the lines this
+            # record already mirrored and insert new open ones nobody has mirrored yet -
+            # SO419851's own shape. The FE's own retry path for "already adopted" is to
+            # POST adopt again and expect it to be caught up, so this branch re-mirrors
+            # before answering rather than returning the record exactly as it stood the
+            # day it was first adopted.
+            self.mirror_missing_lines(existing)
+            self.db.flush()
             return self._result(existing, core, already_adopted=True)
 
         self._assert_plannable(core)

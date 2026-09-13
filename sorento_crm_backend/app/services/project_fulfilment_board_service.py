@@ -1486,6 +1486,7 @@ class FulfilmentBoardService:
                     line_no=change_row.line_no,
                     item_code=change_row.item_code,
                     product_id=str(core_line.product_id) if core_line.product_id else None,
+                    project_sales_order_id=str(project_line.project_sales_order_id),
                     project_line_id=str(project_line.id),
                     qty=_ZERO,
                     qty_ordered=core_line.qty_ordered,
@@ -4832,9 +4833,10 @@ class FulfilmentBoardService:
                 {
                     "sales_order_id": row.sales_order_id,
                     #: The planning record this order's confirmation posts to
-                    #: (`POST /sales-orders/{pso_id}/confirm`). NULL when nobody has adopted
-                    #: the sales order yet - the screen then says so instead of guessing.
-                    "project_sales_order_id": row.project_sales_order_id,
+                    #: (`POST /sales-orders/{pso_id}/confirm`). Set below, off the ORDER's
+                    #: own adoption record - NULL only when nobody has adopted the sales
+                    #: order at all, never merely because no single line carried a mirror.
+                    "project_sales_order_id": None,
                     "so_number": row.so_number,
                     "customer_name": row.customer_name,
                     "line_count": 0,
@@ -4846,6 +4848,25 @@ class FulfilmentBoardService:
             standing["line_count"] += 1
             if row.unplannable:
                 standing["unplannable_count"] += 1
+        # Attempt 6 (13 Sep 2026): an adopted order whose OPEN lines all lack a mirror
+        # (an AutoCount re-ingest that closed the old mirrored lines and inserted new
+        # ones nobody mirrored yet) used to read `project_sales_order_id` null here,
+        # because it came from `setdefault`'s FIRST `_Row` - one whose own addressing
+        # (`_mirror_addressing`, per LINE) or `_cancelled_pending_change_rows`
+        # construction never carried it either. The order is adopted or it is not,
+        # independent of which of its lines happen to have a mirror today - read straight
+        # off `projects.sales_orders` by `so_id`, the same partial-unique record
+        # `_mirror_addressing` itself is scoped to, so it can never disagree with what a
+        # line-level read would have said when one WAS available.
+        adopted_by_so = dict(
+            self.db.query(ProjectSalesOrder.so_id, ProjectSalesOrder.id)
+            .filter(ProjectSalesOrder.so_id.in_(list(by_order)))
+            .all()
+        ) if by_order else {}
+        for sales_order_id, standing in by_order.items():
+            pso_id = adopted_by_so.get(sales_order_id)
+            if pso_id is not None:
+                standing["project_sales_order_id"] = str(pso_id)
         # AC-B1: the newest pending planning-change batch per order, keyed the same way
         # the SCM Sales Orders list and the fulfilment-planning list are - one query, one
         # rule, so the board never has to be TOLD `?batch=` to draw a change it already
