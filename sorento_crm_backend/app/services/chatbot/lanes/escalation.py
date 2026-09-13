@@ -1432,10 +1432,16 @@ def _previous_team(ctx: dict[str, Any], team: Any) -> Any:
        outside the family and asked a question the conversation had already answered
        (AC-1114, journey step 4). The domain IS persisted (`focus.domains`) and the team is a
        function of it.
-    3. The team this turn inherited, for a caller that hands the lane a ctx with no session
-       at all - the injected-ctx convention the unit fixtures use. Not a production path: on
-       a real turn with nothing in the focus this is the hard default, and a hard default
-       narrows no family (it is in none of them), so it asks, which is correct.
+    3. The team THIS turn's own routing resolved. Reached whenever the focus carries no
+       domain - a new contact, or a conversation with no settled domain yet - and it is a
+       real path, not just the injected-ctx convention the unit fixtures use. What it hands
+       back there is whatever `derive_routing` made of THIS message's own `domain_hint`:
+       `forms` gives `marketing_form`, `promotion` gives `marketing_promotion`, so
+       "escalate to marketing" on a first turn about a form narrows straight to
+       `marketing_form` and asks nothing, which is what D2 wants. With no domain either way
+       the chain's HARD DEFAULT arrives instead, and that is inert rather than wrong: it
+       belongs to no family, so the ladder asks - which is the honest answer when nothing in
+       the conversation points anywhere.
     """
     prev_routing = jsc.get(_prev_variables(ctx), "routing")
     value = jsc.get(prev_routing, "suggested_team") if jsc.truthy(prev_routing) else None
