@@ -234,7 +234,7 @@ describe('AC-B2: the board loads a batch it names itself, no batch= needed', () 
     await screen.findByTestId('fulfilment-board-matrix');
 
     await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
-    expect(await screen.findByTestId('board-change-pcr-381895-1')).toBeInTheDocument();
+    expect(await screen.findByTestId('board-change-icon-pcr-381895-1')).toBeInTheDocument();
   });
 });
 
@@ -263,8 +263,8 @@ describe('AC-B3: two orders, two batches', () => {
     renderPanel(null, ['SO381895', 'SO381896']);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(await screen.findByTestId('board-change-pcr-381895-1')).toBeInTheDocument();
-    expect(await screen.findByTestId('board-change-pcr-381896-1')).toBeInTheDocument();
+    expect(await screen.findByTestId('board-change-icon-pcr-381895-1')).toBeInTheDocument();
+    expect(await screen.findByTestId('board-change-icon-pcr-381896-1')).toBeInTheDocument();
 
     await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledTimes(2));
     expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id);
@@ -294,7 +294,7 @@ describe('AC-B4: the URL batch still wins for a deep link', () => {
     await screen.findByTestId('fulfilment-board-matrix');
 
     await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
-    expect(await screen.findByTestId('board-change-pcr-381895-1')).toBeInTheDocument();
+    expect(await screen.findByTestId('board-change-icon-pcr-381895-1')).toBeInTheDocument();
   });
 });
 
@@ -326,7 +326,7 @@ describe('AC-B6: an applied batch skips only its own order', () => {
 
     renderPanel(null, ['SO381895', 'SO381896']);
     await screen.findByTestId('fulfilment-board-matrix');
-    await screen.findByTestId('board-change-pcr-381896-1');
+    await screen.findByTestId('board-change-icon-pcr-381896-1');
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
@@ -400,7 +400,7 @@ describe('B1: the confirm-all body never lets a body-level batch_id contradict a
 
     renderPanel(null, ['SO381895', 'SO381896']);
     await screen.findByTestId('fulfilment-board-matrix');
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
@@ -461,9 +461,9 @@ describe('S1: a URL-applied batch and a board-pending batch on the same order', 
     // URL batchId names the APPLIED batch - a deep link from the planning-changes list.
     renderPanel(appliedBatchA.id, ['SO381895']);
     await screen.findByTestId('fulfilment-board-matrix');
-    await screen.findAllByTestId('board-change-pcr-381895-1');
+    await screen.findAllByTestId('board-change-icon-pcr-381895-1');
 
-    expect(screen.getAllByTestId('board-change-pcr-381895-1')).toHaveLength(1);
+    expect(screen.getAllByTestId('board-change-icon-pcr-381895-1')).toHaveLength(1);
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
@@ -533,7 +533,7 @@ describe('S1: a URL-applied batch and a board-pending batch on the same order', 
     // list); the board itself names the surviving PENDING, single-line batch.
     renderPanel(appliedWithExtraLine.id, ['SO381895']);
     await screen.findByTestId('fulfilment-board-matrix');
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
 
     // Only the surviving pending batch's one line is pre-marked - the applied batch's
     // extra, deduped-away line must not add a second approved draft to Confirm's count.

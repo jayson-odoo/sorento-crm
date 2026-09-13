@@ -90,7 +90,10 @@ describe('the change lightbox at 375px', () => {
     const dialog = openDialog('pcr-381895-1');
 
     for (const el of Array.from(dialog.querySelectorAll<HTMLElement>('*'))) {
-      expect(el.className).not.toMatch(/\b(w|min-w)-\[\d+px\]/);
+      // `className` is an `SVGAnimatedString` on an SVG element (the Dialog's own close
+      // icon) rather than a plain string, and `.not.toMatch` would throw on it directly.
+      const classes = el.getAttribute('class') ?? '';
+      expect(classes).not.toMatch(/\b(w|min-w)-\[\d+px\]/);
     }
   });
 

@@ -307,7 +307,7 @@ describe('the changed cell shows the hazard icon and lightbox (owner feedback 13
 describe('the pre-marked decision, and Confirm', () => {
   it('arrives with the changed line already decided', async () => {
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
     fireEvent.click(
       await screen.findByRole('button', {
         name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
@@ -344,7 +344,7 @@ describe('the pre-marked decision, and Confirm', () => {
       ],
     });
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
     await waitFor(() =>
       expect(screen.getByTestId('board-confirm')).toHaveTextContent(
         'Confirm (1)',
@@ -385,7 +385,7 @@ describe('the pre-marked decision, and Confirm', () => {
       })),
     });
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
 
     expect(screen.queryByTestId('confirm-blocked')).not.toBeInTheDocument();
     expect(screen.getByTestId('board-confirm')).toBeEnabled();
@@ -398,7 +398,7 @@ describe('the pre-marked decision, and Confirm', () => {
       applied_by_name: 'Cyndi Tee',
     });
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
 
     const blocked = await screen.findByTestId('confirm-blocked');
     expect(blocked).toHaveTextContent('This planning change was applied');

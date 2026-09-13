@@ -103,7 +103,9 @@ describe('FulfilmentBoardListView', () => {
     renderView();
 
     expect(await screen.findByText('SO397450')).toBeInTheDocument();
-    expect(screen.getByText('Line 10')).toBeInTheDocument();
+    // AC-C13 (owner feedback 13 Sep): the line number is folded beside the SO number as
+    // "(Line 10)", its own text node inside the same one-line cell - not a stacked "Line 10".
+    expect(screen.getByText('(Line 10)')).toBeInTheDocument();
     expect(screen.getByText('JEREMY')).toBeInTheDocument();
     expect(screen.getByText('Tuju Residences Sdn Bhd')).toBeInTheDocument();
     expect(screen.getByText('B2155-NL-BLUE')).toBeInTheDocument();
@@ -120,8 +122,8 @@ describe('FulfilmentBoardListView', () => {
 
     expect(await screen.findByText('SO397450')).toBeInTheDocument();
     expect(screen.getByText('SO397451')).toBeInTheDocument();
-    expect(screen.getByText('Line 10')).toBeInTheDocument();
-    expect(screen.getByText('Line 20')).toBeInTheDocument();
+    expect(screen.getByText('(Line 10)')).toBeInTheDocument();
+    expect(screen.getByText('(Line 20)')).toBeInTheDocument();
   });
 
   /** No revision number on the pill (R6): "Confirmed", full stop. */
@@ -702,8 +704,9 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
     fireEvent.click(screen.getByTestId('board-list-expand-all'));
     await screen.findAllByRole('button', { name: 'Save decision' });
 
-    // An edit nobody has saved, on ONE of the two open panels.
-    fireEvent.change(screen.getByPlaceholderText('In your own words'), {
+    // An edit nobody has saved, on ONE of the two open panels - both are open after Expand
+    // all, so the placeholder is no longer unique on the page.
+    fireEvent.change(screen.getAllByPlaceholderText('In your own words')[0], {
       target: { value: 'The group is short' },
     });
 
@@ -712,13 +715,26 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
     expect(await screen.findByRole('alertdialog')).toHaveTextContent(
       'Leave this decision unsaved?',
     );
-    // Asked ONCE - not once per open row - and kept open until answered.
+    // Asked ONCE - not once per open row (Radix hides the background from the accessibility
+    // tree while the modal is open, so what happens behind it is checked before and after,
+    // never while it is up).
     expect(screen.getAllByRole('alertdialog')).toHaveLength(1);
+
+    // Keep editing: the question is answered "no", so BOTH panels stay open, untouched.
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument(),
+    );
     expect(
       screen.getAllByRole('button', { name: 'Save decision' }),
     ).toHaveLength(2);
+    expect(screen.getAllByPlaceholderText('In your own words')[0]).toHaveValue(
+      'The group is short',
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    // Collapse all again, and this time answer Discard.
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
     await waitFor(() =>
       expect(
         screen.queryAllByRole('button', { name: 'Save decision' }),
@@ -746,10 +762,15 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
 
 /**
  * Owner feedback, 13 September 2026 (Slice C board display, AC-C13): a row today is TWO
- * text lines tall - the Sales order cell splits the SO number and "Line N" onto separate
- * `div`s - and the Suggested / Decided cells each carry a `SupplyBar` (this file's own
- * "agrees with the grid about the supply bar" describe block pins its presence, which AC-C13
- * retires). RED: the SO cell renders on two lines and the bar still renders.
+ * text lines tall - the Sales order cell split the SO number and "Line N" onto separate
+ * `div`s - and the Suggested / Decided cells each carried a `SupplyBar` (this file's own,
+ * now-deleted "agrees with the grid about the supply bar" describe block used to pin its
+ * presence). Built: the SO cell is `<span>SO397450</span> <span>(Line 10)</span>` in one
+ * flex row (AC-C13's own "SOxxx (Line 1)" wording, kept as two spans rather than one string
+ * since the SO number alone is still what `getByText('SO397450')` and search match - the
+ * file's other tests rely on the bare number staying its own text node) - so the cell's
+ * whole textContent reads "SO397450 (Line 10)" even though no SINGLE node holds that exact
+ * string, and "Line 10" without its parentheses is nowhere on the page at all.
  */
 describe('FulfilmentBoardListView: thin rows (owner feedback 13 Sep, AC-C13)', () => {
   it('reads the Sales order cell as "<SO> (Line <n>)" on one line', async () => {
@@ -757,9 +778,9 @@ describe('FulfilmentBoardListView: thin rows (owner feedback 13 Sep, AC-C13)', (
       contributions: [contribution({ so_number: 'SO419772', line_no: 1 })],
     });
 
-    expect(await screen.findByText('SO419772 (Line 1)')).toBeInTheDocument();
-    // Not the two-line shape this replaces.
-    expect(screen.queryByText('SO419772')).not.toBeInTheDocument();
+    const soNumber = await screen.findByText('SO419772');
+    expect(soNumber.parentElement?.textContent).toBe('SO419772 (Line 1)');
+    // "Line 1" without its parentheses is not its own text node anywhere on the page.
     expect(screen.queryByText('Line 1')).not.toBeInTheDocument();
   });
 

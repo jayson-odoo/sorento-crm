@@ -30,11 +30,22 @@ function rowOf(id: string): { row: PlanningChangeRow; soNumber: string } {
   throw new Error(`No scenario row ${id} in the pending batch fixture`);
 }
 
-/** Render one scenario row exactly as a board cell does, and read its suggestion lines. */
-function linesOf(id: string, compact = false): string[] {
+/**
+ * Owner feedback, 13 September 2026 (AC-C9/AC-C10): the suggestion no longer sits in the
+ * board cell itself - it is behind the hazard icon's lightbox. Render the row, click its
+ * icon, and read from inside `board-change-dialog`, exactly as a planner would.
+ */
+function openDialog(id: string, compact = false): HTMLElement {
   const { row, soNumber } = rowOf(id);
   render(<BoardChangeTable annotation={annotationOf(row, soNumber)} compact={compact} />);
-  return screen
+  fireEvent.click(screen.getByTestId(`board-change-icon-${row.id}`));
+  return screen.getByTestId('board-change-dialog');
+}
+
+/** Render one scenario row, open its lightbox, and read its suggestion lines. */
+function linesOf(id: string, compact = false): string[] {
+  const dialog = openDialog(id, compact);
+  return within(dialog)
     .getAllByTestId('board-change-suggestion-line')
     .map((line) => line.textContent ?? '');
 }
@@ -70,13 +81,14 @@ describe('the composed suggestion on the board', () => {
   it('S12: a unit nobody can cover in time is kept, and said to be late', () => {
     // Review round C6: lateness is stated ONCE, as the fact/badge - the label itself
     // stays plain ("Keep 134"), never duplicating "late by N days" inside the sentence.
-    const { row, soNumber } = rowOf('pcr-s12');
-    render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
-    const lines = screen.getAllByTestId('board-change-suggestion-line');
+    const dialog = openDialog('pcr-s12');
+    const lines = within(dialog).getAllByTestId('board-change-suggestion-line');
     expect(lines.map((line) => line.textContent)).toEqual(['Keep 134']);
     // `getByTestId` itself throws on more than one match, so this also pins "exactly once".
-    expect(screen.getByTestId('board-change-late-pcr-s12').textContent).toBe('Late by 3 days');
-    expect(screen.queryByTestId('board-change-short-pcr-s12')).toBeNull();
+    expect(within(dialog).getByTestId('board-change-late-pcr-s12').textContent).toBe(
+      'Late by 3 days',
+    );
+    expect(within(dialog).queryByTestId('board-change-short-pcr-s12')).toBeNull();
   });
 
   it('S11: what the pool can cover now is stated, and the rest is shown short', () => {
@@ -87,18 +99,25 @@ describe('the composed suggestion on the board', () => {
       'Pool share 90 at BRW',
       'Short 44 by 22 Aug (was Buy 134)',
     ]);
-    expect(screen.getByTestId('board-change-short-pcr-s11').textContent).toBe('Short 44');
-    expect(screen.queryByTestId('board-change-late-pcr-s11')).toBeNull();
+    // AC-C11: no separate "Short 44" line any more - the suggestion's own label above is
+    // the only place the shortfall is said.
+    expect(screen.queryByTestId('board-change-short-pcr-s11')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('board-change-dialog')).queryByTestId(
+        'board-change-late-pcr-s11',
+      ),
+    ).toBeNull();
   });
 
   it('S7: a product swap is ONE row - the old product named, the new one sourced', () => {
-    const { row, soNumber } = rowOf('pcr-s7');
-    render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
-    expect(screen.getByTestId('board-change-product-pcr-s7').textContent).toBe(
+    const dialog = openDialog('pcr-s7');
+    expect(within(dialog).getByTestId('board-change-product-pcr-s7').textContent).toBe(
       'Product changed, was B2155-NL-BLUE',
     );
     expect(
-      screen.getAllByTestId('board-change-suggestion-line').map((line) => line.textContent),
+      within(dialog)
+        .getAllByTestId('board-change-suggestion-line')
+        .map((line) => line.textContent),
       // Review round C4/C5: which product each half is about is now ALSO in the label
       // itself, not only `item_code` on the component - the released half names the OLD
       // product, the sourced half the NEW one.
@@ -108,13 +127,20 @@ describe('the composed suggestion on the board', () => {
     ]);
   });
 
-  it('S5: a cancelled line reads Cancelled in Now and still says where its hold went', () => {
-    const { row, soNumber } = rowOf('pcr-s5');
-    render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
-    expect(screen.getByTestId('change-now-qty').textContent).toBe('Cancelled');
-    expect(screen.getByTestId('change-now-decision').textContent).toBe('Cancelled');
+  it('S5: a cancelled line reads Cancelled in the Qty line and still says where its hold went', () => {
+    const dialog = openDialog('pcr-s5');
+    // Was the `change-now-qty`/`change-now-decision` table-cell check; the lightbox states
+    // the same fact as one changed-field line instead (`changedFieldsOf`, AC-C10).
+    expect(within(dialog).getByText('Qty 134 → Cancelled')).toBeInTheDocument();
     expect(
-      screen.getAllByTestId('board-change-suggestion-line').map((line) => line.textContent),
+      within(dialog).getByText(
+        'Decision Borrow other location 50 from BRW-IB · Buy 84 → Cancelled',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog)
+        .getAllByTestId('board-change-suggestion-line')
+        .map((line) => line.textContent),
       // Dealer hot-selling wins for the reserve as well as for the placed quantity.
     ).toEqual(['Release 50 to dealer pool', 'Reallocate PO-B 84 to dealer pool']);
   });
@@ -124,21 +150,24 @@ describe('the composed suggestion on the board', () => {
   });
 
   it('S8: one date-and-quantity edit yields one row and one suggestion', () => {
-    const { row, soNumber } = rowOf('pcr-s8');
-    render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
+    const dialog = openDialog('pcr-s8');
     // Both halves of the edit are on the same row: no tie-break picks a winner (AC-C8).
-    expect(screen.getByTestId('change-now-qty').textContent).toBe('100');
+    // Was the `change-now-qty` table-cell check; the lightbox states it as a changed-field
+    // line instead, alongside the date that moved with it (AC-C10).
+    expect(within(dialog).getByText('Qty 134 → 100')).toBeInTheDocument();
+    expect(within(dialog).getByText('Date 4 Sep → 20 Nov')).toBeInTheDocument();
     expect(
-      screen.getAllByTestId('board-change-suggestion-line').map((line) => line.textContent),
+      within(dialog)
+        .getAllByTestId('board-change-suggestion-line')
+        .map((line) => line.textContent),
       // ONE component: "Reduce reserve 134 to 100" already says what the 34 did.
     ).toEqual(['Reduce reserve 134 to 100']);
   });
 
-  it('prints every line at 375px compact, inside the board cell, with none dropped', () => {
-    // The phone width the cell is drawn at (design mandate: usable at 375px). The suggestion
-    // is the row's whole point, so it is never the thing that gets cut to fit.
+  it('prints every line inside the lightbox, with none dropped, whichever icon (compact or not) opened it', () => {
+    // The compact icon is the grid cell's own reading (design mandate: usable at 375px);
+    // the lightbox it opens is never the thing that gets cut to fit the suggestion into.
     expect(linesOf('pcr-s2', true)).toHaveLength(3);
-    expect(screen.getByTestId('board-change-pcr-s2').className).toMatch(/text-\[10px\]/);
   });
 
   it('AC-D6: every rendered suggestion line is words, never a UUID', () => {
@@ -155,9 +184,12 @@ describe('the composed suggestion on the board', () => {
         continue; // a scenario id not present in this fixture build - nothing to check
       }
       const result = render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
-      const lines = result
+      fireEvent.click(result.getByTestId(`board-change-icon-${row.id}`));
+      const dialog = result.getByTestId('board-change-dialog');
+      const lines = within(dialog)
         .queryAllByTestId('board-change-suggestion-line')
         .map((line) => line.textContent ?? '');
+      expect(lines.length).toBeGreaterThan(0); // every scenario S1-S12 composes something
       for (const line of lines) {
         expect(line).not.toMatch(uuidRegex);
       }
@@ -176,9 +208,11 @@ describe('the composed suggestion on the board', () => {
     render(
       <BoardChangeTable annotation={annotationOf({ ...row, suggestion: null }, soNumber)} />,
     );
-    expect(screen.queryByTestId('board-change-suggestion-pcr-s6')).toBeNull();
-    expect(screen.queryByTestId('board-change-late-pcr-s6')).toBeNull();
-    expect(screen.queryByTestId('board-change-short-pcr-s6')).toBeNull();
+    fireEvent.click(screen.getByTestId(`board-change-icon-${row.id}`));
+    const dialog = screen.getByTestId('board-change-dialog');
+    expect(within(dialog).queryByTestId('board-change-suggestion-pcr-s6')).toBeNull();
+    expect(within(dialog).queryByTestId('board-change-late-pcr-s6')).toBeNull();
+    expect(within(dialog).queryByTestId('board-change-short-pcr-s6')).toBeNull();
   });
 });
 
