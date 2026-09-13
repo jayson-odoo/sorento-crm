@@ -764,9 +764,15 @@ def _person_routing(
     # "talk to a human" straight after it inherits that, which is the pre-#706 chain and
     # live parity (review of #713, blocker B3; both shapes are pinned in
     # `test_pass4_item5_no_team_named_keeps_default_routing.py`).
-    esc = jsc.get(output, "escalation") or {}
-    if jsc.get(esc, "is_escalation_confirmation") is True:
-        return None
+    # THE TEAM WORD IS READ BEFORE THE CONFIRMATION FLAG (D2 point 4, AC-1116). The two
+    # used to be the other way round, and that ordering is the 11 Sep 12:56 defect: the
+    # parser stamped `is_escalation_confirmation: true` on "ESCALATE TO MARKETING" with
+    # nothing pending, this function returned None on the flag alone, and the turn was
+    # assigned to the `purchasing` team it had carried in - with `_catalogue_teams` and
+    # `_clarify_over`, both of which would have answered it correctly, never reached. A
+    # NAMED TEAM BEATS THE FLAG: the customer said where they want this to go, which is
+    # more than a yes to a question says. (S1 also clamps the flag to the turns where an
+    # offer really is open, so the two halves of D7 hold at both ends.)
     raw_team = _parser_team(ctx, team)
     if jsc.truthy(raw_team):
         # The parser named SOMETHING. Which catalogue members does that word name?
@@ -778,15 +784,92 @@ def _person_routing(
             # unrelated team carried in from an earlier turn. No assignee - a named TEAM
             # is a rotation draw, unlike a named person.
             return {"kind": "assign", "team": matched[0], "assignee": None}
-        return _clarify_over(
-            [{"team": t, "label": _pretty_team(t)} for t in matched]
-            if matched
-            else _team_clarify_pairs([])
-        )
+        if len(matched) > 1:
+            # A FAMILY WORD ("marketing" -> the three `marketing_*` teams). D2: ask only
+            # when nothing in the conversation already points at one member. Two things
+            # can point at one, in this order, and both are persisted state (D11):
+            #
+            #  * the OFFER that is open - "route this to the Marketing Product team?" plus
+            #    "escalate to marketing" is an acceptance of that offer, not a new question
+            #    (AC-1113, journey step 5);
+            #  * the team the PREVIOUS TURN was routed to - a photo turn sat on
+            #    marketing_product, so "escalate to marketing" means that team and asking
+            #    would make the customer repeat what the conversation already said
+            #    (AC-1114, journey step 4).
+            #
+            # An offer or a previous turn on a team OUTSIDE the family narrows nothing
+            # (AC-1115): the ask then stays over the family's own members, never the
+            # offered team and never the whole catalogue.
+            narrowed = _narrow_family(ctx, matched, team)
+            if narrowed is not None:
+                if narrowed == jsc.nullish_str(team).strip().lower():
+                    return None  # already the team the chain resolved
+                return {"kind": "assign", "team": narrowed, "assignee": None}
+            return _clarify_over([{"team": t, "label": _pretty_team(t)} for t in matched])
+        # A word we have no team for at all: the honest list is the whole vocabulary.
+        return _clarify_over(_team_clarify_pairs([]))
+
     from app.services.chatbot.head.output_exchange import offer_is_open
 
+    # H27, and the reason it is here rather than in the parser: this lane must never
+    # assign a conversation to nobody. The head's routing chain hard-defaults
+    # `suggested_team`, so a null team does not arrive through the real pipeline today -
+    # but the lane is also called from the console and from `/complete` with whatever the
+    # row carried, and "assign to `null`" draws from no roster at all.
+    if not jsc.truthy(team):
+        return _clarify_over(_team_clarify_pairs([]))
+    esc = jsc.get(output, "escalation") or {}
+    if jsc.get(esc, "is_escalation_confirmation") is True:
+        return None
     if offer_is_open(_prev_variables(ctx)):
         return _clarify_over(_team_clarify_pairs([]))
+    return None
+
+
+def _offered_team(ctx: dict[str, Any]) -> Any:
+    """The ONE team the open question is about, or None.
+
+    The question's own payload first (`{kind: team_pick, payload: {team: ...}}` is how the
+    escalate offer and the member offer both record it), then its single option when it has
+    exactly one. A question offering several teams names no single team by construction -
+    that IS the ask - so it narrows nothing here. Deliberately NOT
+    `output_exchange._offered_team`, whose fallback to the previous turn's routing would
+    collapse this rung into the next one and make them impossible to tell apart.
+    """
+    question = jsc.get(_prev_variables(ctx), "open_question")
+    if not isinstance(question, dict):
+        return None
+    team = jsc.get(jsc.get(question, "payload"), "team")
+    if jsc.truthy(team):
+        return jsc.nullish_str(team).strip().lower()
+    options = jsc.array(jsc.get(question, "options"))
+    if len(options) == 1:
+        one = jsc.get(options[0], "team")
+        if jsc.truthy(one):
+            return jsc.nullish_str(one).strip().lower()
+    return None
+
+
+def _previous_team(ctx: dict[str, Any], team: Any) -> Any:
+    """The team the PREVIOUS turn was routed to, normalised, or None.
+
+    The previous turn's own `routing.suggested_team` off the session when it is there;
+    otherwise the team THIS turn inherited, which is the same fact by another route - the
+    head's routing chain falls back to the previous turn's routing whenever this turn
+    names no domain of its own, and an escalation turn names none.
+    """
+    prev_routing = jsc.get(_prev_variables(ctx), "routing")
+    value = jsc.get(prev_routing, "suggested_team") if jsc.truthy(prev_routing) else None
+    if not jsc.truthy(value):
+        value = team
+    return jsc.nullish_str(value).strip().lower() or None
+
+
+def _narrow_family(ctx: dict[str, Any], matched: list[str], team: Any) -> str | None:
+    """The ONE member of a family word the conversation already points at, or None (D2)."""
+    for candidate in (_offered_team(ctx), _previous_team(ctx, team)):
+        if candidate in matched:
+            return candidate
     return None
 
 
