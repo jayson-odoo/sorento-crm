@@ -68,3 +68,85 @@ Screenshot: `s7-i.png`.
 ## Console / network
 
 No browser console errors or uncaught exceptions observed across the run.
+
+## S7c re-run at 98903432d
+
+Branch `feat/chatbot-focus` at 98903432d (S7c built - the AND-mode `entity_pins`
+narrowing fix). agent-browser session `focus-s7c`. Same stack (FE :3081, BE :8081),
+contact Jayson, prompt version v15. Run: 2026-09-13.
+
+### Summary
+
+| Step | Result |
+|---|---|
+| Chain G re-run: 10-row picker, sequential picks 10/9/8, casual turn, then 4 (also a prefix code) | PASS |
+
+### Chain G re-run - the prefix-code pin fix confirmed
+
+| Step | Message | Reply (first line) | Result | Version |
+|---|---|---|---|---|
+| 1 | incoming wc286 | incoming search needs to be more specific. Multiple matches found. Please choose: | PASS (same 10-row roster: row 8 SRTWC286-SH-NEW-P, row 9 SRTWC286-SH-NEW-200, row 10 SRTWC286-SH-NEW) | v15 |
+| 2 | 10 | I have attached the file(s) below. | PASS - see verbatim reply below | v15 |
+| 3 | 9 | I have attached the file(s) below. | PASS (SRTWC286-SH-NEW-200 only) | v15 |
+| 4 | 8 | I have attached the file(s) below. | PASS (SRTWC286-SH-NEW-P only) | v15 |
+| 5 | thanks | You're welcome! Happy to help. | PASS (casual, low_signal) | v15 |
+| 6 | 4 | No incoming stock (ETA) found for SRTWC286-SH. | PASS (SRTWC286-SH only) - see note below | v15 |
+
+Step 2 reply, copied verbatim (the exact defect from the prior S7 run - "10" answered with
+SRTWC286-SH-NEW-200 instead of its own code - is fixed):
+
+```
+10
+
+I have attached the file(s) below.
+
+1. *Product Code:* SRTWC286-SH-NEW
+*Container:* WHSU7382874
+*Loading:* 2026-08-28
+*ETC:* 2026-08-29
+*ETD:* 2026-08-31
+*ETA:* 2026-09-08
+*ETA Delay:* 2026-09-08
+*Liner:* WHL
+*China Forwarder:* J&H
+*Malaysia Forwarder:* MPM
+*Consignee:* Sorento
+*Free Days Available:* 14
+*Incoming Quantity:* 209
+(PENDING ALLOCATION)
+
+2. *Product Code:* SRTWC286-SH-NEW
+*Container:* WHSU7390118
+*Loading:* 2026-08-28
+*ETC:* 2026-08-29
+*ETD:* 2026-08-31
+*ETA:* 2026-09-08
+*ETA Delay:* 2026-09-08
+*Liner:* WHL
+*China Forwarder:* J&H
+*Malaysia Forwarder:* MPM
+*Consignee:* Sorento
+*Free Days Available:* 14
+*Incoming Quantity:* 105
+(PENDING ALLOCATION)
+```
+
+Checked programmatically (full-page text search): none of "SRTWC286-SH-NEW-150",
+"SRTWC286-SH-NEW-P", "SRTWC286-SH-NEW-200" appear anywhere in this reply. Both rows name
+only SRTWC286-SH-NEW, row 10's own code.
+
+Note on step 6 ("4", also a prefix code - SRTWC286-SH is a prefix of -SH-150, -SH-200,
+-SH-NEW, -SH-NEW-150, -SH-NEW-P, -SH-NEW-200, -SH-P, -SH-PP, -SH-UF): the primary
+stock answer is correctly scoped to SRTWC286-SH only (four warehouse rows, all
+`*Product Code:* SRTWC286-SH`, no sibling code in the data). The reply then APPENDS a
+separate "Related products:" section re-listing all 10 family codes as a fresh follow-up
+picker ("Reply with a number to check its incoming, or reply 'yes' to escalate to
+purchasing team.") - a different, apparently intentional feature (a follow-up suggestion
+list), not the picked-product answer being polluted with siblings. Recorded verbatim
+since it does name every sibling code, even though it is not the same defect as the "10"
+bug: the answer's OWN data stayed scoped to one product.
+
+Screenshot: `s7c-g.png`.
+
+No browser console errors or uncaught exceptions observed. Browser session `focus-s7c`
+closed by name.
