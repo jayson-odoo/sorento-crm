@@ -35,12 +35,16 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from app.models.planning_change import PlanningChangeRow
 from app.models.project_so import SOLineAllocation
 from app.services import planning_change_service
+from app.services.project_fulfilment_board_service import FulfilmentBoardService
 from app.services.project_supply_service import _open_of
+from app.services.scm.front_planning_engine import qty_text
 from app.services.scm.outstanding_diff import CLOSED, PRODUCT_CHANGED, QTY_CHANGED, Change, Diff, Line
 
 from tests.test_planning_changes import (  # noqa: F401  (api is the fixture)
+    BASE,
     api,
     _confirm,
     _core_line,
@@ -410,3 +414,120 @@ def test_a_cancelled_core_line_reads_zero_open_qty(api):
         f"decision read it, but _open_of returned {_open_of(core_line)!r} "
         f"(qty_ordered={core_line.qty_ordered!r}, qty_delivered={core_line.qty_delivered!r})"
     )
+
+
+# --------------------------------------------------------------------------- #
+# R3: a cancelled line with a pending change row has a home on the board
+# --------------------------------------------------------------------------- #
+
+def _one_held_line_cancelled(api):
+    """One held Reserve line, then the book removes it - `line_status` written 'cancelled'
+    first (write-first), then a CLOSED `Change` fed to `build_batch` so a real pending
+    'cancelled' `PlanningChangeRow` exists, exactly the shape a manual SO edit or a book
+    re-upload produces (Slice A rule 5)."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="72",
+                            required_date=date(2026, 12, 28))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+    _stock(db, world.product, world.own_wh, on_hand="72")
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "72"}]),
+    ]})
+
+    core_line.line_status = "cancelled"
+    db.flush()
+    before = Line(doc_number=core_so.so_number, item_code=world.product.product_code,
+                  location=world.own_wh.warehouse_code, qty=72.0,
+                  required_date=date(2026, 12, 28), row_ref=str(core_line.id))
+    change = Change(CLOSED, core_so.so_number, world.product.product_code,
+                     world.own_wh.warehouse_code, before=before, after=None)
+    batch = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[change]),
+        applied_line_ids={id(change): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    assert batch is not None
+    return client, world, order, core_so, core_line, line, batch
+
+
+def test_board_payload_carries_a_cancelled_line_with_a_pending_change_row(api):
+    """Captain's R3 ruling (13 Sep, board-display round): a cancelled changed line has a
+    home on the board - `FulfilmentBoardService.build`'s `contributions` list (`_contribution`,
+    the list the FE List view reads per its own comment at project_fulfilment_board_service
+    .py ~730) is built from `_demand_rows`, which filters on `is_open_demand()`
+    (`SalesOrderLine.line_status == "open"`) - a cancelled core line never becomes a `_Row`
+    at all, so it is not merely wrong today, it is ABSENT. This is the genuine red: no
+    `cancelled`/`pending_change_batch_id` key exists on `_contribution`'s dict yet either
+    (grepped - neither name appears in the function), so the coder may need to name the
+    board-side flag differently than `cancelled`; write the assertion against `cancelled`
+    and note here it may need renaming to match whatever the coder actually calls it.
+    """
+    client, world, order, core_so, core_line, line, batch = _one_held_line_cancelled(api)
+    db = world.db
+
+    board = FulfilmentBoardService(db).build([core_so.so_number])
+    contributions = board["contributions"]
+    mine = [c for c in contributions if c["line_id"] == str(core_line.id)]
+    assert mine, (
+        f"the cancelled line ({core_line.id}) has a PENDING change row (batch "
+        f"{batch.id}) but is entirely absent from the board's contributions - "
+        f"is_open_demand() filters it out of _demand_rows before _contribution ever runs"
+    )
+    contrib = mine[0]
+    assert contrib["qty"] == qty_text(Decimal("0")), contrib
+    assert contrib["qty_outstanding"] == qty_text(Decimal("0")), contrib
+    # The board-side flag name is the coder's call - `cancelled` is the best-guess name
+    # from the captain's ruling; rename this assertion to match whatever key lands.
+    assert contrib.get("cancelled") is True, contrib
+    assert contrib.get("pending_change_batch_id") == str(batch.id), contrib
+
+    # Apply the batch (retire path) - the cancelled line is fully done and must NOT
+    # reappear on the board once nothing is pending for it any more.
+    planning_change_service.set_row_decision(
+        db, str(batch.id), str(_only_row(db, batch).id), "confirm",
+    )
+    db.commit()
+    planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+
+    board_after = FulfilmentBoardService(db).build([core_so.so_number])
+    still_there = [
+        c for c in board_after["contributions"] if c["line_id"] == str(core_line.id)
+    ]
+    assert still_there == [], (
+        "a cancelled line with no pending row left (already applied) must not appear on "
+        f"the board - found {still_there}"
+    )
+
+
+def test_confirm_all_counts_and_applies_the_cancelled_row(api):
+    """The board's Confirm (N) / Approve-all posts `POST .../fulfilment-planning/confirm-
+    all` with the order's own `batch_id` and no composed lines for a cancelled row (nothing
+    to compose FOR - `_confirm_a_planning_change` skips straight to `continue` on a
+    `kind == 'cancelled'` row). The row still applies through the retire path and must be
+    counted in `lines_decided`."""
+    client, world, order, core_so, core_line, line, batch = _one_held_line_cancelled(api)
+    db = world.db
+
+    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json={
+        "orders": [{"pso_id": order.id, "lines": [], "batch_id": str(batch.id)}],
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()
+    results = body["results"]
+    assert len(results) == 1, results
+    result = results[0]
+    assert result["ok"] is True, result
+    assert (result.get("lines_decided") or 0) >= 1, (
+        f"the cancelled row's retire must count as a decided line, got {result}"
+    )
+
+    row = _only_row(db, batch)
+    db.refresh(row)
+    assert row.applied_state == "applied", row.applied_state
