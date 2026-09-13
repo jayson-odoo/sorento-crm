@@ -299,6 +299,38 @@ describe('the Was / Now table of a changed line', () => {
     expect(annotation.now.decision).toBe('Use own location 25 from BRW-IB');
   });
 
+  it('never prints a warehouse id on the Now side, even when the composition only carries one (AC-C1)', () => {
+    // `composition.reserve` is `ConfirmReserveComponent[]` on the wire - `warehouse_id` and
+    // `qty` only, no `location` - because that is what Apply posts. A reserve drawn from the
+    // line's own site pool (`BRW`, no ownership-group suffix) still has to read as a pool
+    // share, not leak the raw id as if it named some other ownership group.
+    const annotation = annotationOf(
+      row({
+        held: {
+          reserve: [
+            { location: 'BRW', warehouse_id: '21608757-0065-4ef2-bd05-1397452411eb', qty: '8' },
+          ],
+          borrow: [],
+          buy_qty: '0',
+          timely_spo_qty: '0',
+          revision_no: 1,
+        },
+        composition: {
+          project_line_id: 'pl-1',
+          timely_spo_qty: '0',
+          reserve: [{ warehouse_id: '21608757-0065-4ef2-bd05-1397452411eb', qty: '15' }],
+          borrow: [],
+          buy_qty: '0',
+        },
+      }),
+      'SO381895',
+      'BRW',
+    );
+    expect(annotation.now.decision).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+    expect(annotation.now.decision).toMatch(/Pool share|Use/);
+    expect(annotation.now.decision).not.toContain('Borrow other location');
+  });
+
   it('carries the moved-transfer phrase when the batch flagged one', () => {
     const annotation = annotationOf(
       row({ kind: 'cancelled', moved_transfer: '10 moved BRW -> BRW-IB, line cancelled' }),

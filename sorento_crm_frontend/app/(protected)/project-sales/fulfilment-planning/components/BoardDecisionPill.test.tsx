@@ -115,6 +115,23 @@ describe('BoardDecisionPill: a line with no location', () => {
   });
 });
 
+describe('BoardDecisionPill: cancelled outranks unplannable (R3)', () => {
+  it('reads Cancelled, not "Needs a location", for a cancelled line that also has no location', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          cancelled: true,
+          unplannable: true,
+          fulfilment_location: null,
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Cancelled');
+    expect(screen.queryByText('Needs a location')).not.toBeInTheDocument();
+  });
+});
+
 describe('BoardDecisionPill: the warning flag (C10)', () => {
   it('shows the flag from the draft decision', () => {
     render(
