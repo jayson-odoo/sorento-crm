@@ -986,6 +986,10 @@ def apply(
 
         entry = raiser.raise_row(match, plan.orders[row.so_number], file_name=file_name)
         if entry is None:
+            # The plan said this order was plannable and the adoption service disagreed, so
+            # there is no row for its links to hang off either. Dropped from the tally rather
+            # than counted, or the result would report a link nothing carries.
+            links.pop(index, None)
             outcome.skip(row=row.source_row, code=oc.ORDER_NOT_PLANNABLE,
                          identity=identity, value=row.so_number)
             continue
