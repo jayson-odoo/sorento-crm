@@ -604,7 +604,7 @@ def entity_ids_transformer(
         # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
         # (S4 point 5); the route's own computation is unchanged by it.
         detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
-        if detail_pick in ("so", "do"):
+        if detail_pick in ("so", "do", "both"):
             out["detail"] = detail_pick
 
     # S2 (review round, 13 Sep 2026): a warehouse entity on a PLAIN order ask.
@@ -1414,6 +1414,11 @@ def _outstanding_offer_from_text(text: str) -> list[dict[str, Any]]:
         rows.append({"idx": len(rows) + 1, "label": "Sales order list", "value": "so"})
     if _DO_LIST_OFFER_RE.search(text):
         rows.append({"idx": len(rows) + 1, "label": "Delivery order list", "value": "do"})
+    if len(rows) == 2:
+        # R14 (owner ruling, 13 Sep 2026): with both lists on offer, the presenter adds
+        # `3. Both lists` - so the stored roster carries it too, or the position the
+        # customer can see would resolve against nothing.
+        rows.append({"idx": 3, "label": "Both lists", "value": "both"})
     return rows
 
 

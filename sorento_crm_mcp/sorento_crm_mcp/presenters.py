@@ -1930,7 +1930,9 @@ def _outstanding_report(report: dict) -> str:
         # position is still 1, so the pick resolves exactly as it does for two.
         text += f"\n\nReply 1 for the {offer[0].lower()}."
     elif offer:
-        options = "\n".join(f"{i + 1}. {label}" for i, label in enumerate(offer))
+        # R14 (owner ruling, 13 Sep 2026): with both lists on offer, asking for both at
+        # once is a third option rather than two round trips.
+        options = "\n".join(f"{i + 1}. {label}" for i, label in enumerate([*offer, "Both lists"]))
         text += "\n\n" + "Reply with a number for detail:\n" + options
     return text
 
@@ -1976,11 +1978,16 @@ def _outstanding_envelope(report: dict) -> dict:
     the text instead can only ever say "yes", because the header renders either way.
     """
     detail = report.get("detail")
-    if detail in ("so", "do"):
+    if detail in ("so", "do", "both"):
+        rows_present = (
+            bool(report.get("so_rows")) or bool(report.get("do_rows"))
+            if detail == "both"
+            else bool(report.get(f"{detail}_rows"))
+        )
         return {
             "result_type": "outstanding_detail",
             "response": _outstanding_detail(report, detail),
-            "has_result": bool(report.get(f"{detail}_rows")),
+            "has_result": rows_present,
         }
     so = report.get("so")
     do = report.get("do")
@@ -2003,6 +2010,15 @@ def _outstanding_detail(report: dict, scope: str) -> str:
     re-parse (D10). Every row renders, in whatever order `so_rows` / `do_rows`
     already carry (the route sorts them, per the backend contract); "no `+N
     more`" - D8 - falls out of this loop never truncating."""
+    if scope == "both":
+        # R14: one reply, both lists, each under a heading so the reader can tell which
+        # one they are in. SO first, the same order the offer lists them.
+        parts = [
+            f"{_OUTSTANDING_BOTH_HEADINGS[one]}\n{_outstanding_detail(report, one)}"
+            for one in ("so", "do")
+        ]
+        return "\n\n".join(parts)
+
     if scope == "so":
         rows = report.get("so_rows") or []
         field_defs = _OUTSTANDING_SO_FIELDS

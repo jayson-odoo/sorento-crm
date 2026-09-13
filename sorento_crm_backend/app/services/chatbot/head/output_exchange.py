@@ -1156,9 +1156,11 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             o["outstanding_reask_filters"] = filters
         return
 
-    # kind == "outstanding_detail" (AC-1138)
-    if picked in ("so", "do"):
-        o["order_status"] = "so_outstanding" if picked == "so" else "do_outstanding"
+    # kind == "outstanding_detail" (AC-1138; R14 added the third option)
+    if picked in ("so", "do", "both"):
+        o["order_status"] = {
+            "so": "so_outstanding", "do": "do_outstanding", "both": "outstanding_both",
+        }[picked]
         o["outstanding_detail_pick"] = picked
     else:
         # AC-1143(c): the message answered nothing on offer - a number that named no
