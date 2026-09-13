@@ -1,6 +1,6 @@
 # PLAN - Chatbot escalation routing: verb, team and brand from one source each
 
-Status: BUILT 13 Sep at 0d90c0c23: S1 to S6 plus two review rounds; reviews re-check pending; console pass pending (stack slot: owner's call); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4). Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863).
+Status: BUILT 13 Sep at 0bf10bc32: S1 to S6 plus three review rounds (security, reviewer, reviewer re-check) and the tester's rounds folded in; final reviewer re-check pending; console pass pending (stack slot: owner's call); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4). Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863).
 UAC: `chatbot-escalation-routing-acceptance-criteria.md` (AC-11xx).
 Predecessors: `PLAN-chatbot-focus-multi-domain.md` (lane 1, the dialogue state this lane's open questions live in), `PLAN-chatbot-turn-engine.md` S5 (the escalation lane port, hazards H26 / H27 / H37).
 Issue: #865 (13 Sep 2026).
