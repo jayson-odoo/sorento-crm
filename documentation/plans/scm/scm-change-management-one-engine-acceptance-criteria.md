@@ -105,10 +105,11 @@ paths; the borrow-hold release it performed happens on apply of the batch instea
 
 **AC-C9 [FE][UX] Indicator.** A changed line shows one amber hazard icon (the warning
 triangle already used beside a Rejected verdict) instead of the inline Was / Now block, in
-BOTH the board grid cell and the list row. In the list the icon sits in the column that
-changed: Required date when the date moved, Outstanding when the qty moved, Suggested for
-the composed suggestion (always present on a changed line); a line with qty and date moved
-shows it in both columns. In the grid it sits beside the line's figure in the cell.
+BOTH the board grid cell and the list row. In the list the icon sits in the column ruled by
+what moved: Required date and/or Outstanding when the date and/or the qty moved (a line
+with both moved shows it in both columns); Suggested ONLY when neither qty nor date moved -
+a pure suggestion/decision change with nothing to show in either of the other two columns.
+In the grid it sits beside the line's figure in the cell.
 
 **AC-C10 [FE][UX] Lightbox.** Clicking the icon opens a dialog titled "What changed, <SO>
 (Line <n>)" listing ONLY the fields that changed, one per line as "<label> <old> → <new>"

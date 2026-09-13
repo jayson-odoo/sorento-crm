@@ -89,9 +89,17 @@ describe('the change lightbox at 375px', () => {
     render(<BoardChangeTable annotation={annotation()} />);
     const dialog = openDialog('pcr-381895-1');
 
-    for (const el of Array.from(dialog.querySelectorAll<HTMLElement>('*'))) {
-      // `className` is an `SVGAnimatedString` on an SVG element (the Dialog's own close
-      // icon) rather than a plain string, and `.not.toMatch` would throw on it directly.
+    // Scoped to `[data-slot="dialog-body"]` - `BoardChangeSummary`'s own content, which is
+    // what this component is answerable for - rather than the whole `DialogContent`
+    // subtree. The header/title/close-button chrome above it is the shared `Dialog`
+    // primitive's (`components/ui/dialog.tsx`), not this component's content, and is out
+    // of scope here the same way a page's shared `PageHeader` is out of scope for a form
+    // component's own responsive tests.
+    const body = dialog.querySelector<HTMLElement>('[data-slot="dialog-body"]');
+    expect(body).not.toBeNull();
+    for (const el of Array.from(body!.querySelectorAll<HTMLElement>('*'))) {
+      // `className` is an `SVGAnimatedString` on an SVG element rather than a plain
+      // string, and `.not.toMatch` would throw on it directly.
       const classes = el.getAttribute('class') ?? '';
       expect(classes).not.toMatch(/\b(w|min-w)-\[\d+px\]/);
     }
