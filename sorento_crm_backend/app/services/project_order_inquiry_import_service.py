@@ -100,6 +100,13 @@ _AUTOCOUNT_TRIGGER = "autocount linkage"
 #: a board-raised one without a new column.
 _MIGRATION_STAMP = "Migrated from order inquiry sheet"
 
+#: How an EARLIER version of this importer wrote a row's extra citations onto its note, and
+#: how `ProjectOrderInquiryService._cited_documents` still reads them back off the rows that
+#: carry one. Read-only from here: the migration resolves every citation itself and keeps the
+#: first on `cited_document`, so nothing writes this prefix any more - but the rows that
+#: already have it are on the live database and the walk must go on understanding them.
+ALSO_CITED_PREFIX = "Also cited on the form:"
+
 #: The two target families, spelled once. `_purchase_side` answers in the same two words.
 _PO = "po_line_id"
 _SPO = "spo_allocation_id"
