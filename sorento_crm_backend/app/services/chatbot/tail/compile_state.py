@@ -386,7 +386,52 @@ def _rows_are_customers(rows: Any) -> bool:
     )
 
 
-def _keep_beside(gate: Any, rows: Any) -> list[dict[str, Any]]:
+def _from_sources(sources: tuple[Any, ...], key: str) -> list[Any]:
+    """`key` off the FIRST source that carries it. The order of `sources` is the ruling.
+
+    A `require_specific` turn's candidates live on the RESULT OBJECT
+    (`outcome["central-exchange"]`) - the same object `is_disambig` reads `require_specific`
+    and `compatible_entities` off - and the `gate` producer is a different node that may
+    carry nothing on this arm. Read in that order rather than from one hard-coded place,
+    because which producer ran is exactly what differs between the lanes that reach here.
+    """
+    for source in sources:
+        rows = [row for row in jsc.array(jsc.get(source, key)) if isinstance(row, dict)]
+        if rows:
+            return rows
+    return []
+
+
+def _picker_rows(options: Any, sources: tuple[Any, ...]) -> list[dict[str, Any]]:
+    """The rows the "multiple matches" reply NUMBERED, in the order it numbered them.
+
+    Three sources, best first, because which one holds them depends on what else the turn
+    did:
+
+    * `last_result_set` - the indexed rows the tail itself built, and the shape the sealed
+      reply carries. Present on the owner's real turn.
+    * `specific_options` - exposed for exactly this correlation ("so a reader can correlate
+      line N to the Nth candidate's uuid"), flattened candidate by candidate the same way
+      `gate.run` flattens it into the numbered lines. It is the answer whenever the tail
+      skipped its own indexing, which a `manualResponse` turn does.
+    * `compatible_entities` - last, and only when NO numbered lines were flattened at all.
+      The gate's own comment warns this list is "not the picker's own render order", which
+      is why it cannot outrank the two above; where neither of those exists there is no
+      rendered order for it to contradict.
+    """
+    rows = [row for row in jsc.array(options) if isinstance(row, dict)]
+    if rows:
+        return rows
+    flattened = [
+        candidate
+        for option in _from_sources(sources, "specific_options")
+        for candidate in jsc.array(jsc.get(option, "candidates"))
+        if isinstance(candidate, dict)
+    ]
+    return flattened or _from_sources(sources, "compatible_entities")
+
+
+def _keep_beside(sources: tuple[Any, ...], rows: Any) -> list[dict[str, Any]]:
     """Issue #708's siblings: what already resolved this turn, MINUS the rows on offer.
 
     Empty on today's `require_specific` turns, and measurably so rather than by accident:
@@ -410,9 +455,8 @@ def _keep_beside(gate: Any, rows: Any) -> list[dict[str, Any]]:
             "current_message": True,
             "confident": True,
         }
-        for entity in jsc.array(jsc.get(gate, "compatible_entities"))
-        if jsc.truthy(entity)
-        and jsc.nullish_str(jsc.get(entity, "uuid")).strip().lower() not in offered
+        for entity in _from_sources(sources, "compatible_entities")
+        if jsc.nullish_str(jsc.get(entity, "uuid")).strip().lower() not in offered
     ]
 
 
@@ -420,6 +464,7 @@ def _ask_for_turn(
     *,
     qf: Mapping[str, Any],
     gate: Any,
+    result_obj: Any,
     offer_open: bool,
     selection_context: Any,
     born_context: Any,
@@ -511,7 +556,8 @@ def _ask_for_turn(
         #
         # BEFORE the offer arm, because a numbered list is what the customer is looking at
         # and a question they can answer beats one they were never asked.
-        rows = list(jsc.array(options))
+        sources = (result_obj, gate)
+        rows = _picker_rows(options, sources)
         if rows:
             return oq.ask(
                 "customer_pick" if _rows_are_customers(rows) else "product_pick",
@@ -520,7 +566,7 @@ def _ask_for_turn(
                 domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
                 payload={
                     "domain": jsc.js_string(domain) if jsc.truthy(domain) else None,
-                    "keep": _keep_beside(gate, rows),
+                    "keep": _keep_beside(sources, rows),
                 },
             )
     if offer_open and _FROZEN_ESCALATE_PREFIX in jsc.js_string(reply_text or ""):
@@ -1330,6 +1376,9 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     asked_here = _ask_for_turn(
         qf=qf,
         gate=gate,
+        # A `require_specific` picker's candidates ride the RESULT object, which is also
+        # where `is_disambig` read them; the `gate` producer may carry nothing on this arm.
+        result_obj=r_obj,
         offer_open=offer_open,
         selection_context=variables.get("selection_context"),
         # The label THIS turn earned, beside the one the carries may have re-seated, and
