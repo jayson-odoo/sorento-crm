@@ -190,6 +190,11 @@ def _staff_lookup(db: Any):
     return call
 
 
+# `lanes/business/miss_suggest._dym_plan`'s own `d1s = d1s[:5]` - the number of TOKEN blocks
+# a did-you-mean offer prints. Its per-token cap is `_cap3`, imported where it is used.
+MISS_TOKEN_BLOCK_CAP = 5
+
+
 def _product_rows(payload: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """`(resolved, did_you_mean)` out of one resolver payload. Pure.
 
@@ -209,9 +214,26 @@ def _product_rows(payload: Any) -> tuple[list[dict[str, Any]], list[dict[str, An
     SEAT COVER FOR SRTWC60630-SH") and a category has no brand to route by. De-duplicated by
     uuid on the resolved side and by code on the offer side, which is what the customer can
     tell apart on screen.
+
+    **The OFFER side carries the business lane's own caps**, because AC-1124 says these are
+    "the business lane's did-you-mean rows" and a numbered list nobody can read is not an
+    offer. `lanes/business/miss_suggest._cap3` is three candidates per token and
+    `_dym_plan`'s `d1s = d1s[:5]` is five token blocks, so the resolver's 15 matches per
+    token over several tokens (75 rows on a five-token message) become at most 15 numbered
+    lines, in the resolver's own ranking. `_cap3` is imported rather than re-spelled so the
+    number cannot drift from the lane it is copied from; the block cap is a constant here
+    beside it, with its source named, because `_dym_plan` holds it as a literal inside a
+    500-line planner this lane does not run.
+
+    The RESOLVED side is not capped: it decides the brand, and "exactly one row" is the
+    test the lane makes on it (`escalation._resolve_product`), so dropping a row there would
+    change a routing decision rather than shorten a list.
     """
+    from app.services.chatbot.lanes.business.miss_suggest import _cap3
+
     resolved: dict[str, dict[str, Any]] = {}
     offers: dict[str, dict[str, Any]] = {}
+    blocks: list[list[dict[str, Any]]] = []
     for resolution in (payload or {}).get("resolutions") or []:
         if not isinstance(resolution, dict):
             continue
@@ -221,6 +243,7 @@ def _product_rows(payload: Any) -> tuple[list[dict[str, Any]], list[dict[str, An
             for row in (resolution.get(key) or [])
             if isinstance(row, dict)
         ]
+        block: list[dict[str, Any]] = []
         for row in rows:
             if str(row.get("entity_type") or "").lower() != "product":
                 continue
@@ -229,9 +252,15 @@ def _product_rows(payload: Any) -> tuple[list[dict[str, Any]], list[dict[str, An
                 uuid = str(row.get("uuid") or code or "")
                 if uuid and uuid not in resolved:
                     resolved[uuid] = row
-            elif code and code not in offers:
+            elif code and str(code) not in offers:
+                # Recorded in `offers` as it is seen so the de-dupe is across TOKENS, the
+                # way `_token_candidates`' uuid-keyed dedupe is, not per block.
                 offers[str(code)] = row
-    return list(resolved.values()), list(offers.values())
+                block.append(row)
+        if block:
+            blocks.append(_cap3(block))
+    did_you_mean = [row for block in blocks[:MISS_TOKEN_BLOCK_CAP] for row in block]
+    return list(resolved.values()), did_you_mean
 
 
 def _resolve_and_gate(db: Any):
