@@ -1339,9 +1339,19 @@ def _resolve_open_question(
         # answer that happens to name a product, and it ended at `low_signal` with the hard
         # default, the same failure this rung exists to close, one entity away. A carried
         # entity never mattered either way.
+        # AND ONLY WHERE THE PARSER EXPRESSED NO OPINION (review S12). `v3_signals` normalises
+        # `resolved` to `answer.get("resolved") is True`, so a v3 emission that says
+        # `answers_open_question: {resolved: false}` - an explicit NO, the model having looked at
+        # the question and decided this message does not answer it - arrives here looking exactly
+        # like a v1 emission that carries no such key at all. Inferring an answer over that
+        # explicit no is the one thing this rung must not do: on the contract where the parser
+        # has an opinion about the question, the opinion wins. The KEY's presence is the test
+        # rather than `emits_v3`, so a v3 prompt that does not implement the key yet still gets
+        # the rung, which is the same "no opinion" case v1 is.
+        parser_answered_key = isinstance(jsc.get(parser_raw, "answers_open_question"), dict)
         team_pick_idx = (
             None
-            if jsc.truthy(jsc.get(parser_raw, "domain_hint"))
+            if jsc.truthy(jsc.get(parser_raw, "domain_hint")) or parser_answered_key
             else open_question_mod.team_slug_pick(
                 question, jsc.get(jsc.get(parser_raw, "routing"), "suggested_team")
             )
