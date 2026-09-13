@@ -23,6 +23,8 @@ fixtures are wanted in addition, that is new scope beyond this red pass.
 """
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
 from app.services.chatbot.head.output_exchange import post_process, suggest_follow_up
@@ -221,6 +223,59 @@ def test_d9_dry_run_resolved_brand_reaches_the_preview_and_the_customer_copy() -
         f"the preview body must carry the resolved row's own brand, the same field the "
         f"live body reads: {preview_body!r}"
     )
+    assert preview_body.get("preview") is True, (
+        f"N2 (reviewer): the body handed to the read-only draw must flag itself as a "
+        f"preview, never a live one: {preview_body!r}"
+    )
+
+
+def test_d9_dry_run_named_person_is_the_assignee_with_no_draw_or_preview() -> None:
+    """S3 (reviewer, single-line mutation kill): the named-person branch inside the
+    dry-run arm (`escalation.py`'s `if named_assignee is not None: assignee =
+    named_assignee`) had no test at all - mutating it to `if False:` left every existing
+    test green. Mirrors `TestPersonMentionEscalationRoutesByStaffLookup.test_a_named_
+    person_routes_to_their_team_as_preferred_assignee` (`test_s5_escalation_lane.py`) with
+    `dry_run=True`: the customer named Nurain, the roster resolves to exactly one hit, and
+    the dry run must preview HER as the assignee - never draw through `preview_assignee` at
+    all, because a named person is a direct pick, never a rotation."""
+    ctx = _ctx(
+        routing={"suggested_team": None, "suggested_agent": None},
+        person_mention="Nurain",
+        prev_variables={
+            "routing": {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}
+        },
+        text="escalate to Nurain",
+    )
+    item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+    services = _services()
+    services.staff_lookup = Mock(
+        return_value=[
+            {
+                "team_code": "customer_service",
+                "team_name": "Customer Service",
+                "user_id": "usr-nurain",
+                "user_name": "Nurain Binti X",
+                "respond_user_id": "respond-usr-nurain",
+            }
+        ]
+    )
+
+    result = run(ctx, item, services=services, dry_run=True)
+
+    assert result["arm"] == "human-intervention", result
+    assign = next(a for a in result["actions"] if a["kind"] == "assign_conversation")
+    comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+    assert assign["respond_user_id"] == "respond-usr-nurain", (
+        f"a dry run must preview the NAMED person, not a draw off the inherited team: {assign!r}"
+    )
+    assert "Team: customer_service" in comment["text"], (
+        f"the preview comment must name Nurain's own team: {comment['text']!r}"
+    )
+    services.preview_assignee.assert_not_called(), (
+        "a named person is the assignee outright - there is nothing to draw a preview for"
+    )
+    services.next_assignee.assert_not_called()
+    services.sla_create.assert_not_called()
 
 
 def test_d9_dry_run_did_you_mean_returns_the_product_pick_ask_flagged_dry_run() -> None:
