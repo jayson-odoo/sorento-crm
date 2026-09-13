@@ -807,6 +807,311 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
             ),
         ),
     ),
+    # ----------------------------------------------------------------- #
+    # B2 (Opus S6 review, blocker): under the promoted v1 prompt there is no
+    # `answers_open_question` at all, so a bare "yes"/"no" over a merged roster is
+    # answered entirely through the OLD `is_affirmative` + `offer_is_open` path,
+    # never through `dialogue/open_question.resolve`. `open_question_answered` is a
+    # v3-only stamp, so `carry_after_answer` is never called for a v1 turn - the
+    # merged question survives the escalation with its offer still riding it
+    # (finding S2), and a second "yes" would re-escalate. RED on purpose: the coder
+    # wires the v1 escalation-confirmation path to consume/strip the question too.
+    # ----------------------------------------------------------------- #
+    OwnerWorld(
+        world_id="focus-pick-then-offer-yes-escalates-under-v1",
+        lane="escalation",
+        emits_v3=False,
+        acs=("AC-1014", "AC-1015"),
+        why=(
+            "B2 / finding S2: a bare 'yes' over a merged roster under the PROMOTED "
+            "v1 prompt reaches escalation only through output_exchange.offer_is_open "
+            "(is_affirmative + offered_escalation), never through "
+            "dialogue/open_question.resolve - there is no answers_open_question key "
+            "at all under v1. The escalation runs, but open_question_answered is a "
+            "v3-only stamp, so compile_state's carry_after_answer is never called and "
+            "the merged question - offer included - survives the escalation it just "
+            "ran, letting a second 'yes' re-escalate."
+        ),
+        turns=(
+            OwnerTurn(
+                message="yes",
+                arm={
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                        "expects": "pick_or_yes_no",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {
+                            "team": "purchasing",
+                            "domain": "inventory",
+                            "offer": {
+                                "team": "purchasing",
+                                "domain": "inventory",
+                                "options": [
+                                    {"idx": 1, "team": "purchasing", "label": "purchasing"}
+                                ],
+                            },
+                        },
+                    },
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "is_affirmative": True,
+                },
+                expect={
+                    "lane_ran": True,
+                    "open_question_kind": None,
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="focus-pick-then-offer-no-keeps-roster-under-v1",
+        emits_v3=False,
+        acs=("AC-1014", "AC-1015"),
+        why=(
+            "B2 / finding S2's decline half under v1: 'no' over a merged roster sets "
+            "escalation.is_escalation_confirmation False directly through the "
+            "is_affirmative path, never through carry_after_answer - so the offer is "
+            "never stripped and the roster comes back with expects still "
+            "pick_or_yes_no instead of reverting to pick."
+        ),
+        turns=(
+            OwnerTurn(
+                message="no",
+                arm={
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                        "expects": "pick_or_yes_no",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {
+                            "team": "purchasing",
+                            "domain": "inventory",
+                            "offer": {
+                                "team": "purchasing",
+                                "domain": "inventory",
+                                "options": [
+                                    {"idx": 1, "team": "purchasing", "label": "purchasing"}
+                                ],
+                            },
+                        },
+                    },
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "is_affirmative": False,
+                },
+                expect={
+                    "open_question_kind": "product_pick",
+                    "open_question_expects": "pick",
+                    "open_question_offer_team": None,
+                },
+            ),
+        ),
+    ),
+    # ----------------------------------------------------------------- #
+    # B3 (owner-found on :3081): a survived roster must never take the CURRENT
+    # turn's ANSWER rows as its own options. See
+    # tests/chatbot/test_sticky_roster_tail.py::TestASurvivedRosterNeverTakesTheAnswersRows
+    # for the unit-level pin; this world grades the same rule end to end.
+    # ----------------------------------------------------------------- #
+    OwnerWorld(
+        world_id="focus-tier-pick-hit-then-second-number-re-picks-dealer",
+        lane="business",
+        emits_v3=True,
+        acs=("AC-1014",),
+        why=(
+            "'promo for srtwc286' -> tier menu; '1' -> HIT, the promotion lane's reply "
+            "lists 3 promotions numbered 1..3; '2' must still resolve against the "
+            "TIER menu (dealer), not against the promotion file names the HIT reply "
+            "printed. Owner-found on :3081: after the '1' turn the persisted "
+            "open_question kept kind: tier_pick but its options became the three "
+            "promotion file names, and the next '2' resolved to a file name instead "
+            "of a tier."
+        ),
+        turns=(
+            OwnerTurn(
+                message="1",
+                arm={
+                    "open_question": {
+                        "kind": "tier_pick",
+                        "options": [
+                            {"idx": 1, "tier": "office", "label": "Office"},
+                            {"idx": 2, "tier": "dealer", "label": "Dealer"},
+                            {"idx": 3, "tier": "end_user", "label": "End user"},
+                        ],
+                        "expects": "pick",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {},
+                    },
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[1]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "tier_pick",
+                    "open_question_kind": "tier_pick",
+                },
+            ),
+            OwnerTurn(
+                message="2",
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "tier_pick",
+                    "focus_tier": ["dealer"],
+                    "open_question_kind": "tier_pick",
+                },
+            ),
+        ),
+    ),
+    # ----------------------------------------------------------------- #
+    # S5 (Opus S6 review, should-fix): AC-1020 / D19 rule 2 pinned only for "names
+    # its own subject" - a SURVIVED roster clears by the same existing rules too.
+    # ----------------------------------------------------------------- #
+    OwnerWorld(
+        world_id="focus-survived-roster-casual-leaves-it",
+        lane="business",
+        emits_v3=True,
+        acs=("AC-1014", "AC-1020"),
+        why=(
+            "A pick survives per D19 rule 1; a later CASUAL message ('thanks') that "
+            "neither answers nor asks anything must leave the survived roster exactly "
+            "as it was - the pre-existing AC-1020 rule, now exercised over a roster "
+            "that D19 keeps alive rather than one a lane just composed."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTKS8091 got stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTKS8091")],
+                    "asks": [{"domain": "inventory", "entities": [_product("SRTKS8091")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={"focus_products": ["SRTKS8091"]},
+            ),
+            OwnerTurn(
+                message="2",
+                arm={
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                        "expects": "pick",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {},
+                    },
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "product_pick",
+                    "focus_products": ["SRTKS8091-B"],
+                    "open_question_kind": "product_pick",
+                },
+            ),
+            OwnerTurn(
+                message="thanks",
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": None,
+                    "open_question_kind": "product_pick",
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="focus-survived-roster-topic-reset-clears-it",
+        emits_v3=True,
+        acs=("AC-1008", "AC-1014", "AC-1020"),
+        why=(
+            "D19 rule 2: a survived roster still clears by the existing rules - "
+            "topic_reset is one of them. Armed directly, with nothing else in focus, "
+            "so the engine's `if cleared_question:` truthiness check (`clearing.apply`'s "
+            "SECOND return value, the trace lines) is not accidentally satisfied by an "
+            "UNRELATED focus-slot decay line - a two-turn version of this world (a real "
+            "product+domain focus established first) passes for the WRONG reason, "
+            "because topic_reset's own focus-clearing lines make `cleared_question` "
+            "truthy and null the question as a side effect. Isolated like this, RED ON "
+            "PURPOSE (S5): dialogue/clearing.py's topic_reset arm loops over `focus` "
+            "only and never touches `open_question` at all."
+        ),
+        turns=(
+            OwnerTurn(
+                message="another one",
+                arm={
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                        "expects": "pick",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {},
+                    },
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": True,
+                },
+                expect={
+                    "open_question_kind": None,
+                },
+            ),
+        ),
+    ),
 )
 
 

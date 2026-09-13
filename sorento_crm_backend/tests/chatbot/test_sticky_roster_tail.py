@@ -30,6 +30,7 @@ Driven the way `tests/chatbot/test_tail_units.py` drives `compile_current_state`
 from __future__ import annotations
 
 from app.services.chatbot.dialogue import open_question as oq
+from app.services.chatbot.tail import compile_state as compile_state_mod
 from tests.chatbot.test_tail_units import _compile, _ctx
 
 
@@ -246,3 +247,266 @@ class TestTheMergedQuestionAnswered:
         assert not (after.get("payload") or {}).get("offer"), "the offer must be stripped"
         assert after["options"] == merged["options"]
         assert after["asked_at_turn"] == 3
+
+
+# --------------------------------------------------------------------------- #
+# B1 (Opus S6 review, blocker): the empty re-arm rescue never fires once an offer
+# has ridden the roster.
+# --------------------------------------------------------------------------- #
+
+
+class TestACasualTurnLeavesAMergedRosterIntact:
+    """`_is_the_same_question_re_armed_empty` requires `asked.expects == previous.expects`.
+
+    The LIVE question (merged) reads `pick_or_yes_no`; `_ask_for_turn` re-derives the
+    re-armed menu with the plain default `pick` (`KIND_SPEC`'s default, since the re-arm
+    carries no offer of its own). The two `expects` values can never match, so the rescue
+    that is supposed to keep the live roster's rows never fires and the freshly (EMPTY)
+    re-armed menu overwrites the live merged one - `tier_pick / pick / 0 rows / offer gone
+    / asked_at_turn 0`, reproduced by the reviewer through `compile_current_state` on a
+    casual turn where `_offer_carry` re-seats the `tier_offer` label onto a turn that built
+    no roster of its own.
+    """
+
+    def test_merged_tier_roster_survives_a_casual_turn(self) -> None:
+        offer = {
+            "team": "purchasing",
+            "domain": "promotion",
+            "options": [{"idx": 1, "team": "purchasing", "label": "purchasing"}],
+        }
+        merged = oq.ask(
+            "tier_pick",
+            options=_tier_rows(),
+            turn_no=9,
+            expects="pick_or_yes_no",
+            payload={"team": "purchasing", "domain": "promotion", "offer": offer},
+        )
+        ctx = _ctx(message_type="casual", domain_hint=None, intent_hint=None)
+        ctx["session"]["session_vars"]["variables"]["open_question"] = merged
+        ctx["parse"]["_open_question_before"] = merged
+
+        result = _compile({"outcome": {}}, ctx)
+
+        after = result["variables"]["open_question"]
+        assert after is not None, "the merged tier roster must survive a casual turn"
+        assert after["kind"] == "tier_pick"
+        assert after["expects"] == "pick_or_yes_no"
+        assert after["options"] == merged["options"]
+        assert (after.get("payload") or {}).get("offer", {}).get("team") == "purchasing"
+        assert after["asked_at_turn"] == 9
+
+    def test_merged_product_roster_survives_a_casual_turn(self) -> None:
+        offer = {
+            "team": "purchasing",
+            "domain": "inventory",
+            "options": [{"idx": 1, "team": "purchasing", "label": "purchasing"}],
+        }
+        merged = oq.ask(
+            "product_pick",
+            options=_rows("A", "B", "C"),
+            turn_no=9,
+            expects="pick_or_yes_no",
+            payload={"team": "purchasing", "domain": "inventory", "offer": offer},
+        )
+        ctx = _ctx(message_type="casual", domain_hint=None, intent_hint=None)
+        ctx["session"]["session_vars"]["variables"]["open_question"] = merged
+        ctx["parse"]["_open_question_before"] = merged
+
+        result = _compile({"outcome": {}}, ctx)
+
+        after = result["variables"]["open_question"]
+        assert after is not None, "the merged product roster must survive a casual turn"
+        assert after["kind"] == "product_pick"
+        assert after["expects"] == "pick_or_yes_no"
+        assert after["options"] == merged["options"]
+        assert (after.get("payload") or {}).get("offer", {}).get("team") == "purchasing"
+        assert after["asked_at_turn"] == 9
+
+
+# --------------------------------------------------------------------------- #
+# S1 (Opus S6 review, should-fix): `_live_roster` consults `previous` whenever
+# `carried` is not itself a roster - even when the tail deliberately armed a
+# different, non-roster question this turn.
+# --------------------------------------------------------------------------- #
+
+
+class TestArmCrossDomainOfferRespectsTheTailsOwnQuestion:
+    def test_a_fresh_clarify_survives_the_cross_domain_offer_arm(self) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        clarify = oq.ask(
+            "team_pick",
+            options=[
+                {"idx": 1, "team": "warehouse", "label": "warehouse"},
+                {"idx": 2, "team": "purchasing", "label": "purchasing"},
+            ],
+            turn_no=5,
+        )
+        stale_roster = oq.ask("product_pick", options=_rows("A", "B", "C"), turn_no=1)
+        sealed = {"session_patch": {"variables": {"open_question": clarify}}}
+        ctx = {"parse": {"_turn_no": 5, "_open_question_before": stale_roster}}
+
+        engine_mod._arm_cross_domain_offer(
+            sealed, {"team": "warehouse"}, ctx=ctx, domain="inventory"
+        )
+
+        after = sealed["session_patch"]["variables"]["open_question"]
+        assert after == clarify, (
+            "a question the tail deliberately armed this turn must survive untouched, "
+            f"not be replaced by a stale roster merged with the offer: got {after!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# S4 (Opus S6 review, should-fix): `_offered_team` reads `payload.team`, but a
+# merged roster carries the team at `payload.offer.team`.
+# --------------------------------------------------------------------------- #
+
+
+class TestOfferedTeamReadsTheRidingOffer:
+    def test_offered_team_reads_the_offer_riding_a_roster(self) -> None:
+        from app.services.chatbot.head import output_exchange as ox
+
+        offer = {
+            "team": "warehouse",
+            "domain": "inventory",
+            "options": [{"idx": 1, "team": "warehouse", "label": "warehouse"}],
+        }
+        merged = oq.ask(
+            "product_pick",
+            options=_rows("A", "B", "C"),
+            turn_no=1,
+            expects="pick_or_yes_no",
+            payload={"offer": offer},
+        )
+
+        team = ox._offered_team({"open_question": merged}, {"suggested_team": "purchasing"})
+
+        assert team == "warehouse", (
+            "the D1 guard (names_other_team) reads the OFFER's team over a merged "
+            f"roster, not the prior turn's routing - got {team!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Nit (Opus S6 review): `_offer_rides_on_roster` merges an offer with no team at
+# all (`_ask_for_turn` arms it with `options: []` when the team is falsy).
+# --------------------------------------------------------------------------- #
+
+
+class TestAnOfferWithNoTeamDoesNotRide:
+    def test_an_offer_with_no_team_does_not_ride(self) -> None:
+        previous = oq.ask("product_pick", options=_rows("A", "B", "C"), turn_no=1)
+        empty_offer_ask = {
+            "kind": "team_pick",
+            "expects": "yes_no",
+            "options": [],
+            "payload": {"team": None, "domain": "inventory"},
+            "asked_at_turn": 2,
+            "asked_at": None,
+        }
+
+        rides = compile_state_mod._offer_rides_on_roster(empty_offer_ask, previous)
+
+        assert rides is False, (
+            "an offer with no team is not a real offer - it must not ride the roster"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# B3 (owner-found on :3081): a survived roster must never take the CURRENT
+# turn's ANSWER rows as its own options.
+# --------------------------------------------------------------------------- #
+
+
+class TestASurvivedRosterNeverTakesTheAnswersRows:
+    """"promo for srtwc286" -> tier menu; "1" -> HIT, reply lists 3 promotions
+    numbered 1..3; "2" -> tier menu asked again.
+
+    Trace: after the "1" turn the persisted `open_question` kept `kind: tier_pick` but
+    its `options` became the three promotion file names the reply printed, and
+    `asked_at_turn` was re-stamped. The "2" turn then resolved `tier_pick` pick 2 to
+    that file name (`access_levels` = the file name), the tier gate found no tier and
+    re-asked. Cause under verification by the coder: `_picker_carry` re-seats the
+    `tier_offer` label and `_ask_for_turn` re-arms `tier_pick` with
+    `options=last_result_set` = THIS TURN's ANSWER rows, not the roster's own frozen
+    tiers.
+    """
+
+    def test_tier_roster_keeps_its_tiers_when_the_reply_prints_rows(self) -> None:
+        roster = oq.ask("tier_pick", options=_tier_rows(), turn_no=9)
+        ctx = _ctx(
+            message_type="casual",
+            open_question_answered="tier_pick",
+            domain_hint=None,
+            intent_hint=None,
+        )
+        ctx["session"]["session_vars"]["variables"]["open_question"] = roster
+        ctx["parse"]["_open_question_before"] = roster
+        # The reply the promo lane printed THIS turn: three promotion file names, not
+        # tiers - mirrors `test_tail_units._compile`'s way of seeding a fresh roster
+        # (`access-level-choice-message`'s own `tier_offer` / `tier_last_result_set`
+        # shape, which is what re-seats the `tier_offer` label and the printed rows).
+        promo_rows = [
+            {"idx": 1, "label": "UPDATED SORENTO WATER CLOSET PROMO_27082026.pdf"},
+            {"idx": 2, "label": "SORENTO BASIN PROMO_27082026.pdf"},
+            {"idx": 3, "label": "SORENTO SHOWER PROMO_27082026.pdf"},
+        ]
+        item = {
+            "outcome": {
+                "access-level-choice-message": {
+                    "tier_offer": True,
+                    "tier_last_result_set": promo_rows,
+                }
+            }
+        }
+
+        result = _compile(item, ctx)
+
+        after = result["variables"]["open_question"]
+        assert after is not None
+        assert after["kind"] == "tier_pick"
+        assert after["options"] == roster["options"], (
+            "the survived roster's own frozen tiers must stand, not this turn's "
+            f"printed rows: got {after['options']!r}"
+        )
+        assert after["asked_at_turn"] == 9
+        assert after["expects"] == "pick"
+
+    def test_product_roster_keeps_its_rows_when_the_reply_prints_rows(self) -> None:
+        roster = oq.ask("product_pick", options=_rows("A", "B", "C"), turn_no=9)
+        ctx = _ctx(
+            message_type="casual",
+            open_question_answered="product_pick",
+            domain_hint=None,
+            intent_hint=None,
+        )
+        ctx["session"]["session_vars"]["variables"]["open_question"] = roster
+        ctx["parse"]["_open_question_before"] = roster
+        # The did-you-mean lane's own re-seat shape: a fresh suggest-offer roster of
+        # STOCK rows, unrelated to the survived product picker's own three options.
+        stock_rows = [
+            {"idx": 1, "label": "SRTWC8517", "code": "SRTWC8517"},
+            {"idx": 2, "label": "SRTWC8518", "code": "SRTWC8518"},
+        ]
+        item = {
+            "outcome": {
+                "build-suggest-offer": {
+                    "suggest_offer": True,
+                    "suggest_response": "here is the stock",
+                    "suggest_last_result_set": stock_rows,
+                }
+            }
+        }
+
+        result = _compile(item, ctx)
+
+        after = result["variables"]["open_question"]
+        assert after is not None
+        assert after["kind"] == "product_pick"
+        assert after["options"] == roster["options"], (
+            "the survived roster's own frozen rows must stand, not this turn's "
+            f"printed answer rows: got {after['options']!r}"
+        )
+        assert after["asked_at_turn"] == 9
+        assert after["expects"] == "pick"
