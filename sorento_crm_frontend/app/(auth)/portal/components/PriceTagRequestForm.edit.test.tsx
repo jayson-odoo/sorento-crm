@@ -26,7 +26,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -49,13 +49,24 @@ vi.mock('../lib/price-tag-request-service', () => ({
   downloadPriceTagPdf: vi.fn(),
 }));
 
+vi.mock('../lib/portal-client', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../lib/portal-client')>();
+  return {
+    ...original,
+    fetchSubmissionNeighbours: vi.fn(),
+    uploadAttachment: vi.fn(),
+    getPriceTagDesign: vi.fn(() => Promise.resolve(null)),
+  };
+});
+
 // Same generic hooks `SubmissionForm` already reads for the legacy kinds
 // (`app/(auth)/portal/hooks/useRevisions.ts`) - R3-1 has `PriceTagRequestForm`
 // reuse them rather than a second revise mechanism (plan D-P1/"R3-1").
-const { revisePolicyMock, reviseMock, revisionHistoryMock } = vi.hoisted(() => ({
+const { revisePolicyMock, reviseMock, revisionHistoryMock, revisionReloadMock } = vi.hoisted(() => ({
   revisePolicyMock: vi.fn(),
   reviseMock: vi.fn(),
   revisionHistoryMock: vi.fn(),
+  revisionReloadMock: vi.fn(),
 }));
 vi.mock('../hooks/useRevisions', () => ({
   useRevisionPolicy: revisePolicyMock,
@@ -99,11 +110,16 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   ),
 }));
 
+let capturedOnPendingFilesChange: ((files: File[]) => void) | undefined;
 vi.mock('./AttachmentDropzone', () => ({
-  AttachmentDropzone: () => null,
+  AttachmentDropzone: (props: { onPendingFilesChange?: (files: File[]) => void }) => {
+    capturedOnPendingFilesChange = props.onPendingFilesChange;
+    return null;
+  },
 }));
 
 import { getRequest } from '../lib/price-tag-request-service';
+import { fetchSubmissionNeighbours, uploadAttachment } from '../lib/portal-client';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -130,6 +146,11 @@ function baseRequest(over: Record<string, unknown> = {}) {
     is_editable: false,
     revision_no: 0,
     last_revised_at: null,
+    // Review round 3: `revisionPolicy` now reads straight off the
+    // re-fetched request's own `revision` block (`request?.revision ??
+    // null`), not a second GET through `useRevisionPolicy` - so every test
+    // that wants a policy sets it here, not on the (now-unused) hook mock.
+    revision: null,
     ...over,
   };
 }
@@ -154,7 +175,9 @@ const BLOCKED_POLICY = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  revisePolicyMock.mockReturnValue({ policy: ALLOWED_POLICY, loading: false });
+  // Dead import kept mocked so it never crashes if something still calls
+  // it; the component no longer reads its RETURN value for the policy.
+  revisePolicyMock.mockReturnValue({ policy: null, loading: false });
   reviseMock.mockResolvedValue({
     submission: baseRequest({ debtor_name: 'ZZT Revised Dealer' }),
     revision: ALLOWED_POLICY,
@@ -164,7 +187,13 @@ beforeEach(() => {
     entries: [],
     loading: false,
     error: null,
-    reload: vi.fn(),
+    reload: revisionReloadMock,
+  });
+  asMock(fetchSubmissionNeighbours).mockResolvedValue({
+    prev_id: null,
+    next_id: null,
+    position: 1,
+    total: 1,
   });
 });
 
@@ -184,8 +213,9 @@ describe('PriceTagRequestForm - no Edit after submit (R3-1, AC-R7)', () => {
 
 describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (AC-R7)', () => {
   it('renders exactly one gear, holding Duplicate, Download PDF and Revise when the policy allows it', async () => {
-    revisePolicyMock.mockReturnValue({ policy: ALLOWED_POLICY, loading: false });
-    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'new', portal_draft_at: null }));
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
+    );
 
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
@@ -198,8 +228,9 @@ describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (A
   });
 
   it('hides Revise and shows the blocked reason in the header line when the policy refuses it', async () => {
-    revisePolicyMock.mockReturnValue({ policy: BLOCKED_POLICY, loading: false });
-    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'ready', portal_draft_at: null }));
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'ready', portal_draft_at: null, revision: BLOCKED_POLICY }),
+    );
 
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
@@ -211,7 +242,9 @@ describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (A
 
 describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
   it('tapping Revise shows a reason field and a Submit revision button', async () => {
-    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'new', portal_draft_at: null }));
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
+    );
 
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
@@ -223,7 +256,9 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
   });
 
   it('Submit revision calls the revise action and returns to the read view', async () => {
-    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'new', portal_draft_at: null }));
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
+    );
 
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
@@ -244,11 +279,87 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     );
     expect(screen.getByText('PT-202609-0001')).toBeInTheDocument();
   });
+
+  it('after Submit revision succeeds, the Revisions tab reloads and the header line reflects the re-fetched policy (review round 3)', async () => {
+    asMock(getRequest)
+      .mockResolvedValueOnce(
+        baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
+      )
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: 'new',
+          portal_draft_at: null,
+          revision_no: 1,
+          revision: { ...ALLOWED_POLICY, used: 1, remaining: 2 },
+        }),
+      );
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+
+    fireEvent.click(screen.getByText('Revise'));
+    const reasonField = await screen.findByLabelText(/reason/i);
+    fireEvent.change(reasonField, { target: { value: 'Dealer changed their mind' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit revision' }));
+
+    await waitFor(() => expect(revisionReloadMock).toHaveBeenCalled());
+    expect(await screen.findByText(/2 of 3 revisions left/)).toBeInTheDocument();
+  });
+
+  it('a file added during revise mode is uploaded when Submit revision runs', async () => {
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
+    );
+    asMock(uploadAttachment).mockResolvedValue({
+      link_id: 'link-1',
+      attachment_id: 'att-1',
+      filename: 'ZZT-po.pdf',
+      size: 3,
+      url: 'https://cdn.test/ZZT-po.pdf',
+      content_type: 'application/pdf',
+    });
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+
+    fireEvent.click(screen.getByText('Revise'));
+    const reasonField = await screen.findByLabelText(/reason/i);
+    fireEvent.change(reasonField, { target: { value: 'Attaching an updated PO' } });
+
+    const file = new File(['zzt'], 'ZZT-po.pdf', { type: 'application/pdf' });
+    expect(capturedOnPendingFilesChange).toBeDefined();
+    act(() => {
+      capturedOnPendingFilesChange?.([file]);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Submit revision' }));
+
+    await waitFor(() => expect(uploadAttachment).toHaveBeenCalled());
+  });
+});
+
+describe('PriceTagRequestForm - prev/next counter (AC-R7, review round 3)', () => {
+  it('shows "N of M revisions left" and the "1 / 3" prev/next counter from the neighbours call', async () => {
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
+    );
+    asMock(fetchSubmissionNeighbours).mockResolvedValue({
+      prev_id: null,
+      next_id: 'req-2',
+      position: 1,
+      total: 3,
+    });
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+
+    expect(await screen.findByText(/3 of 3 revisions left/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 \/ 3/)).toBeInTheDocument();
+  });
 });
 
 describe('PriceTagRequestForm - Revisions tab (AC-R7 second half)', () => {
   it('a saved request with an enabled policy shows a Revisions tab listing the history rows', async () => {
-    revisePolicyMock.mockReturnValue({ policy: ALLOWED_POLICY, loading: false });
     revisionHistoryMock.mockReturnValue({
       entries: [
         {
@@ -294,7 +405,9 @@ describe('PriceTagRequestForm - Revisions tab (AC-R7 second half)', () => {
       error: null,
       reload: vi.fn(),
     });
-    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'new', portal_draft_at: null }));
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
+    );
 
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');

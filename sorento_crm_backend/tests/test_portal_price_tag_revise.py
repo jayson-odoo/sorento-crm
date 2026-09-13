@@ -393,6 +393,14 @@ class TestReviseValidatesLines:
         detail = getattr(exc.value, "detail", None)
         code = detail.get("code") if isinstance(detail, dict) else None
         assert code == "DUPLICATE_LINE"
+        # Review round 3: the duplicate check must run BEFORE any mutation -
+        # the original line has to survive a refused revision untouched, the
+        # same "before any mutation" ordering the zero-lines/set-guard cases
+        # above already pin.
+        db.expire_all()
+        fresh = PriceTagRequestService.get_request(db, str(row.id))
+        assert len(fresh.lines) == 1
+        assert fresh.lines[0].product_id == product_id
 
     def test_override_survives_when_the_same_product_is_revised(self, db):
         from app.models.price_tag import PriceTagRequestLine
@@ -1023,5 +1031,131 @@ class TestRevisionRoutesMalformedId:
             f"{_PORTAL_BASE}/submissions/price_tag_request/not-a-uuid/revise",
             headers=headers,
             json={"reason": "Reason", "expected_revision_no": 0, "fields": {}},
+        )
+        assert res.status_code == 404, res.text
+
+
+# =========================================================================== #
+# Review round 3: price_mode validation, blank-debtor completeness, and the
+# neighbours route for price_tag_request.
+# =========================================================================== #
+
+
+class TestRevisePriceModeValidation:
+    """`price_mode` rides the generic setattr whitelist with no validation at
+    all - a null value 500s on the NOT NULL column instead of 422ing, and any
+    string outside ('list', 'selling') just persists."""
+
+    def test_null_price_mode_refuses_422_not_500(self, db):
+        contact, product_id, row = _setup(db)
+        token = _seed_token(contact)
+
+        with pytest.raises(HTTPException) as exc:
+            PortalRevisionService(db).revise(
+                token, "price_tag_request", str(row.id),
+                {"price_mode": None, "products": [{"product_id": product_id, "quantity": 1}]},
+                "Reason", 0,
+            )
+        assert exc.value.status_code == 422
+        db.expire_all()
+        assert PriceTagRequestService.get_request(db, str(row.id)).price_mode == "list"
+
+    def test_invalid_price_mode_refuses_422(self, db):
+        contact, product_id, row = _setup(db)
+        token = _seed_token(contact)
+
+        with pytest.raises(HTTPException) as exc:
+            PortalRevisionService(db).revise(
+                token, "price_tag_request", str(row.id),
+                {
+                    "price_mode": "banana",
+                    "products": [{"product_id": product_id, "quantity": 1}],
+                },
+                "Reason", 0,
+            )
+        assert exc.value.status_code == 422
+        db.expire_all()
+        assert PriceTagRequestService.get_request(db, str(row.id)).price_mode == "list"
+
+
+class TestReviseRequiresDebtorWithLines:
+    """`_apply_price_tag_lines` validates lines only when ``products`` is in
+    the payload - it never re-runs ``validate_submittable(require_debtor=
+    True)``, so a revise that blanks both debtor fields while also touching
+    lines commits a request with no dealer at all."""
+
+    def test_blank_debtor_with_products_refuses_422_submit_incomplete(self, db):
+        contact, product_id, row = _setup(db)
+        token = _seed_token(contact)
+
+        with pytest.raises(HTTPException) as exc:
+            PortalRevisionService(db).revise(
+                token, "price_tag_request", str(row.id),
+                {
+                    "debtor_code": "",
+                    "debtor_name": "",
+                    "products": [{"product_id": product_id, "quantity": 1}],
+                },
+                "Reason", 0,
+            )
+        assert exc.value.status_code == 422
+        detail = getattr(exc.value, "detail", None)
+        code = detail.get("code") if isinstance(detail, dict) else None
+        keys = detail.get("detail") if isinstance(detail, dict) else None
+        assert code == "SUBMIT_INCOMPLETE", detail
+        assert keys and "debtor_name" in keys, detail
+
+        db.expire_all()
+        fresh = PriceTagRequestService.get_request(db, str(row.id))
+        assert fresh.debtor_name == "ZZT Original Dealer"
+        assert fresh.revision_no == 0
+
+
+class TestNeighboursRouteForPriceTagRequest:
+    """``GET .../neighbours`` still dispatches through ``_check_kind``
+    (``SUPPORTED_TYPES`` only) and ``PortalService.get_neighbours`` (which
+    re-checks the same tuple and has no price_tag_request branch), so the
+    route 422s for every price tag request instead of answering prev/next."""
+
+    @pytest.fixture
+    def route_client(self):
+        from app.database import get_db
+
+        with blank_session() as db:
+
+            def _override_get_db():
+                yield db
+
+            app.dependency_overrides[get_db] = _override_get_db
+            try:
+                with TestClient(app) as c:
+                    yield c, db
+            finally:
+                app.dependency_overrides.clear()
+
+    def test_neighbours_for_the_owner(self, route_client):
+        c, db = route_client
+        contact, product_id, first = _setup(db)
+        second = _seed_request(db, contact, product_id)
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        res = c.get(
+            f"{_PORTAL_BASE}/submissions/price_tag_request/{first.id}/neighbours",
+            headers=headers,
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["total"] == 2
+        assert first.id in (body["prev_id"], body["next_id"]) or body["position"] in (1, 2)
+
+    def test_neighbours_other_contact_404(self, route_client):
+        c, db = route_client
+        _contact, _product_id, row = _setup(db)
+        intruder = _seed_contact(db)
+        headers = {"X-Portal-Token": _persisted_token(db, intruder)}
+
+        res = c.get(
+            f"{_PORTAL_BASE}/submissions/price_tag_request/{row.id}/neighbours",
+            headers=headers,
         )
         assert res.status_code == 404, res.text

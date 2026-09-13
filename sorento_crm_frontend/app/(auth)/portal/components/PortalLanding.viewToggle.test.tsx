@@ -58,7 +58,12 @@ vi.mock('../lib/portal-client', async (importOriginal) => {
   };
 });
 
+vi.mock('../lib/price-tag-request-service', () => ({
+  listRequestsAsSummaries: vi.fn(),
+}));
+
 import { fetchMeWithGrace, fetchSubmissions } from '../lib/portal-client';
+import { listRequestsAsSummaries } from '../lib/price-tag-request-service';
 import { PortalLanding } from './PortalLanding';
 
 const ME = {
@@ -208,5 +213,69 @@ describe('PortalLanding - List view is a DataGrid table (R3-2, AC-R9)', () => {
         expect.stringContaining('stock_inquiry/si-1'),
       ),
     );
+  });
+});
+
+describe('PortalLanding - list columns are per-kind (review round 3)', () => {
+  it('stock_inquiry has no Need by column, and Form Number is at least 170 wide', async () => {
+    window.localStorage.setItem('sorento.portalView', 'list');
+    render(<PortalLanding slug="darren" />);
+    await screen.findByRole('table', {}, { timeout: 2000 });
+
+    expect(screen.queryByRole('columnheader', { name: /Need by/ })).toBeNull();
+    // `tableLayout: { width: 'fixed' }` puts the column's `size` on the
+    // header cell as an inline `width: Npx` style - real, not computed
+    // layout, so it reads correctly even in jsdom (no CSS engine).
+    const formNumberHeader = screen.getByRole('columnheader', { name: /Form Number/ });
+    const widthPx = parseInt(formNumberHeader.style.width || '0', 10);
+    expect(widthPx).toBeGreaterThanOrEqual(170);
+  });
+
+  it('price_tag_request has a Need by column', async () => {
+    (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: 'ptr-1',
+        kind: 'price_tag_request',
+        title: 'ZZT Dealer',
+        document_number: 'PT-202608-0001',
+        reference: null,
+        status: 'new',
+        is_editable: false,
+        is_draft: false,
+        created_at: '2026-08-20T00:00:00Z',
+        customer_name: 'ZZT Dealer',
+        needed_by_date: '2026-09-04',
+      },
+    ]);
+    searchParams = new URLSearchParams('type=price_tag_request');
+    (fetchMeWithGrace as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...ME,
+      visible_form_types: ['price_tag_request'],
+    });
+    window.localStorage.setItem('sorento.portalView', 'list');
+
+    render(<PortalLanding slug="darren" />);
+
+    await screen.findByRole('table', {}, { timeout: 2000 });
+    expect(screen.getByRole('columnheader', { name: /Need by/ })).toBeInTheDocument();
+  });
+});
+
+describe('PortalLanding - New button label (review round 3, item 9)', () => {
+  // The "New <kind>" button lives in `SubmissionList` (PortalLanding.tsx),
+  // beside `LandingToolbar`, not inside the toolbar component itself - this
+  // suite renders the full `PortalLanding` for that reason. It is a CSS
+  // breakpoint (`hidden sm:inline`), not a `window.matchMedia` branch, so
+  // jsdom (no CSS engine) cannot show/hide text by viewport - what IS real
+  // and asserted here: the title/aria-label always carry the full label
+  // (what a narrow-viewport reader gets in place of the truncated text),
+  // and the visible label's OWN outer text node is bare "New".
+  it('the button always carries the full label as its title, and reads bare "New" as its own text', async () => {
+    render(<PortalLanding slug="darren" />);
+    await screen.findByText('SI-26-0184');
+
+    const button = screen.getByRole('link', { name: /New Stock Inquiry/ });
+    expect(button).toHaveAttribute('title', 'New Stock Inquiry');
+    expect(button).toHaveAttribute('aria-label', 'New Stock Inquiry');
   });
 });

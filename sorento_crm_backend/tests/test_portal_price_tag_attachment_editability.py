@@ -134,6 +134,26 @@ def _request(
     return req
 
 
+def _seed_revision_config(db: Session, *, enabled: bool = True) -> None:
+    from app.models.portal import PortalRevisionConfig
+    from app.models.user import SystemSetting
+
+    db.add(
+        SystemSetting(id=str(uuid.uuid4()), portal_revisions_enabled=True, portal_max_revisions=2)
+    )
+    db.add(
+        PortalRevisionConfig(
+            id=str(uuid.uuid4()),
+            source_entity_type="price_tag_request",
+            is_enabled=enabled,
+            max_revisions=None,
+            allowed_statuses=["new", "changes_requested"],
+            restart_stage_code=None,
+        )
+    )
+    db.commit()
+
+
 class TestAttachmentRoutesRefuseWhenNotEditable:
     def test_attachment_upload_and_delete_refused_when_not_editable(self, client):
         c, db = client
@@ -255,3 +275,64 @@ class TestAttachmentRoutesRefuseWhenNotEditable:
         # test_price_tag_request_portal_attachments.py::
         # test_delete_own_upload_removes_the_link).
         assert ok_delete_res.status_code == 200, ok_delete_res.text
+
+
+class TestAttachmentGateKeysOffPolicyNotDraftExistence:
+    """Review round 3: the gate should key off ``policy.allowed`` for a
+    submitted request - a request at a revisable status needs no PARKED
+    draft row to accept an attachment, since Send revision itself (no saved
+    draft first) is a perfectly normal path. Today ``_require_editable``
+    requires ``has_draft AND policy.allowed`` together, so a submitted
+    request with the policy enabled but no draft row still 409s."""
+
+    def test_allowed_with_no_draft_row_when_policy_allows(self, client):
+        c, db = client
+        _seed_revision_config(db, enabled=True)
+        contact = _contact(db)
+        token = _token(db, contact)
+        req = _request(db, contact.id, status="new", portal_draft_at=None)
+
+        upload_res = c.post(
+            _ATTACHMENTS_BASE,
+            data={"kind": "price_tag_request", "submission_id": req.id},
+            files={"file": ("po.pdf", io.BytesIO(b"%PDF-1.4 zzt"), "application/pdf")},
+            headers={"X-Portal-Token": token.token},
+        )
+        assert upload_res.status_code == 200, upload_res.text
+
+        link_id = upload_res.json()["link_id"]
+        delete_res = c.delete(
+            f"{_ATTACHMENTS_BASE}/{link_id}",
+            headers={"X-Portal-Token": token.token},
+        )
+        assert delete_res.status_code in (200, 204), delete_res.text
+
+    def test_refused_with_no_draft_row_when_config_disabled(self, client):
+        c, db = client
+        _seed_revision_config(db, enabled=False)
+        contact = _contact(db)
+        token = _token(db, contact)
+        req = _request(db, contact.id, status="new", portal_draft_at=None)
+
+        upload_res = c.post(
+            _ATTACHMENTS_BASE,
+            data={"kind": "price_tag_request", "submission_id": req.id},
+            files={"file": ("po.pdf", io.BytesIO(b"%PDF-1.4 zzt"), "application/pdf")},
+            headers={"X-Portal-Token": token.token},
+        )
+        assert upload_res.status_code == 409, upload_res.text
+
+    def test_refused_with_no_draft_row_at_a_status_the_policy_refuses(self, client):
+        c, db = client
+        _seed_revision_config(db, enabled=True)
+        contact = _contact(db)
+        token = _token(db, contact)
+        req = _request(db, contact.id, status="ready", portal_draft_at=None)
+
+        upload_res = c.post(
+            _ATTACHMENTS_BASE,
+            data={"kind": "price_tag_request", "submission_id": req.id},
+            files={"file": ("po.pdf", io.BytesIO(b"%PDF-1.4 zzt"), "application/pdf")},
+            headers={"X-Portal-Token": token.token},
+        )
+        assert upload_res.status_code == 409, upload_res.text
