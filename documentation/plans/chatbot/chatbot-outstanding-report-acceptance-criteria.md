@@ -510,6 +510,36 @@ resolution and the filter set in the console trace.
   alphabetical. No other transformation: an asterisk or a bracketed suffix in the
   ledger's own name is real data and stays verbatim. Evidence: pytest,
   `tests/test_outstanding_report.py::test_customer_header_dedupes_ledger_names`.
+- **AC-1164 [BE]** NEW (R20, owner round 7, 13 Sep 2026, live trace: `outsatnidng
+  dealer quantity for chin chun product SRTKT39SS in 2026` hit an ambiguous customer
+  picker stamped "- no DO" on every line and "None of these have a matching DO." -
+  "it is still kinda strange for me though, to say no DO, then later when i get the
+  summary, there is DO"). `lanes/business/pickers.py::annotate_customer`'s probe is
+  `crm_order_management_orders_list` filtered to a DELIVERED `actual_delivery_date` -
+  the OPPOSITE population from this report's DO block (DOs NOT yet delivered), so the
+  hint can only ever mislead on an outstanding ask. On a turn whose `order_status` is
+  `outstanding` / `so_outstanding` / `do_outstanding` / `outstanding_both`, the
+  ambiguous-customer picker prints NO delivery hint at all - no per-line `- has DO` /
+  `- no DO` suffix, no trailing "None of these have a ... DO." sentence - and the
+  probe is not run (nothing to annotate). Every other ask (no outstanding word) keeps
+  today's hint unchanged. Evidence: pytest, `tests/chatbot/test_outstanding_lane.py::
+  TestOutstandingAskPickerHasNoDeliveryHint` - `test_outstanding_ask_picker_has_no_do_
+  hint` (probe spy proves it is never called), `test_plain_delivery_ask_picker_keeps_
+  the_do_hint` (regression guard).
+- **AC-1165 [BE]** NEW (R19b, owner round 7, 13 Sep 2026, same live trace, second
+  cause: the scope question after the picker's pick printed "Customer: CHIN CHUN
+  HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE
+  SDN BHD, CHIN CHUN HARDWARE SDN BHD (MCH, SRT)" - the picker's OWN roster label,
+  company-code suffix and all, not a customer name). The scope question's `Customer:`
+  line is byte-equal to the report header's own line for the SAME `customer_ids`:
+  both built from the customer rows via `_customer_echo` (AC-1163's distinct,
+  first-seen names) - never from the picked roster row's label, which is a display
+  string for the PICK, not a customer name. Evidence: pytest, `tests/chatbot/
+  test_outstanding_lane.py::TestScopeQuestionCustomerLineMatchesReportHeader::
+  test_scope_question_customer_line_equals_the_report_header_line` (a 3-row account
+  family, real `customers` rows via `tests._mc_lookup_seed.customer`, the picked
+  family's `Customer:` line compared byte-for-byte against the report's own line for
+  the same three ids).
 
 ## Out of scope (backlog)
 

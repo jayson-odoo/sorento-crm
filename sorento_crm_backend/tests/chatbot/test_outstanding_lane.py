@@ -71,6 +71,7 @@ from app.services.chatbot.lanes.business.services import (
     ResolveGateServices,
 )
 from app.services.company_scope import DEFAULT_COMPANY_ID
+from tests._mc_lookup_seed import customer as mc_customer
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output, seeded  # noqa: F401
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401
@@ -299,6 +300,7 @@ def _run_turn(
     mcp_response: Any = None,
     real_resolver: bool = False,
     capture_user_block: list[str] | None = None,
+    resolve_services: ResolveGateServices | None = None,
 ):
     """One real `engine.run_turn`, business lane on, parser/access/resolver/MCP faked.
 
@@ -311,7 +313,13 @@ def _run_turn(
     engine actually sends to `parser.parse`) appended to it - D17 (owner design ruling,
     13 Sep 2026): the parser is meant to read the open question's OWN option labels off
     this text, so a test asserting on what the parser was actually shown reads this list
-    rather than guessing at an internal builder's name."""
+    rather than guessing at an internal builder's name.
+
+    `resolve_services`, given a `ResolveGateServices`, is used VERBATIM instead of
+    `_resolve_services(matches)` - the only way to hand the turn a `probe` callable that
+    is not the shared helper's `lambda **_: None` (R20, owner round 7, 13 Sep 2026): a
+    test grading whether the customer-picker probe ran AT ALL needs a probe that would
+    answer if called, not one that always renders the "probe failed" arm regardless."""
     _enable_business_lane(session_factory)
     monkeypatch.setattr(
         engine_mod,
@@ -355,7 +363,9 @@ def _run_turn(
         )
     else:
         _wire_business_services(
-            monkeypatch, resolve_services=_resolve_services(matches or {}), mcp_call=call
+            monkeypatch,
+            resolve_services=resolve_services or _resolve_services(matches or {}),
+            mcp_call=call,
         )
 
     envelope = _envelope()
@@ -3726,4 +3736,271 @@ class TestScopeQuestionCarriesTheFullHeader:
         assert "Order date: 01/09/2026 to 30/09/2026" in reply, reply
         assert f"Customer: {CUSTOMER_NAME}" in reply, (
             f"the re-asked question must still name the customer it is about: {reply!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Owner round 7 (13 Sep 2026, live): `outsatnidng dealer quantity for chin chun
+# product SRTKT39SS in 2026` -> ambiguous customer picker, EVERY line stamped
+# "- no DO" and "None of these have a matching DO." (Cause 1: the picker's probe
+# is `crm_order_management_orders_list`'s DELIVERED-DO population - the OPPOSITE
+# of what this outstanding ask is asking about) -> `1` -> scope question whose
+# `Customer:` line named the roster's own label, company-code suffix and all
+# ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)") -> `all` -> the REPORT's own
+# `Customer:` line named the real customer rows instead (Cause 2: two different
+# name sources for the "same" line). "it is still kinda strange for me though,
+# to say no DO, then later when i get the summary, there is DO."
+# R20 (AC-1164): an OUTSTANDING ask's customer picker prints no DO hint at all,
+# and does not probe for one. R19b (AC-1165): the scope question's `Customer:`
+# line is byte-equal to the report's own line for the same `customer_ids`.
+# --------------------------------------------------------------------------- #
+
+
+def _customer_header_line(reply: str) -> str:
+    for line in reply.split("\n"):
+        if line.startswith("Customer:"):
+            return line
+    return ""
+
+
+def _ambiguous_hanlim_resolve_services(probe: Any) -> ResolveGateServices:
+    """The R18 picker fixture's own two-family shape (HANLIM TRADING SDN BHD /
+    HANLIM HARDWARE SDN BHD), reached through a REAL turn this time (`_run_turn`'s
+    `resolve_services=` override) rather than a direct `gate.run_gate` call - R20
+    lives in `resolve_gate.py`'s probe/annotate step, which a direct gate call never
+    reaches. `_resolve_services` (this file's shared fake) hands one match per raw
+    token, so an ambiguous single-token pick needs its own `resolve_entity`."""
+
+    def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tokens": ["hanlim"],
+            "resolutions": [
+                {
+                    "token": "hanlim",
+                    "matches": [
+                        {
+                            "entity_type": "customer", "canonical_code": HANLIM_CODE_1,
+                            "uuid": HANLIM_UUID_1, "company_code": "SRT",
+                            "display": {"customer_name": "HANLIM TRADING SDN BHD"},
+                        },
+                        {
+                            "entity_type": "customer", "canonical_code": HANLIM_CODE_2,
+                            "uuid": HANLIM_UUID_2, "company_code": "SRT",
+                            "display": {"customer_name": "HANLIM HARDWARE SDN BHD"},
+                        },
+                    ],
+                },
+            ],
+            "unresolved_tokens": [],
+        }
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=_resolve_entity,
+        probe=probe,
+    )
+
+
+class TestOutstandingAskPickerHasNoDeliveryHint:
+    def test_outstanding_ask_picker_has_no_do_hint(self, session_factory, monkeypatch) -> None:
+        """AC-1164/R20: an OUTSTANDING ask's ambiguous-customer picker must print no
+        `- has DO` / `- no DO` suffix and no "None of these have a ... DO." sentence -
+        and the probe must not even run, because there is nothing this outstanding
+        ask needs it to measure (the probe's own population, DELIVERED DOs, is the
+        opposite of what the report's DO block counts). The probe here WOULD answer
+        with rows carrying no delivery date if called, so a pass here proves the
+        turn chose not to call it, not that the answer happened to come back empty."""
+        probe_calls: list[dict[str, Any]] = []
+
+        def spy_probe(*, tool: str, contact_id: Any, entities: Any, semantic_input: Any, user_prompt: Any) -> Any:
+            probe_calls.append({"tool": tool, "entities": entities})
+            return {
+                "items": [
+                    {
+                        "title": "SO1",
+                        "fields": [{"key": "customer_name", "label": "Customer", "value": "HANLIM TRADING SDN BHD"}],
+                    }
+                ],
+                "has_result": True,
+            }
+
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                domain_hint="order", intent_hint="check_order", order_status="outstanding",
+                entities=[
+                    {
+                        "raw": "hanlim", "hint": "customer", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="outstanding dealer quantity for hanlim",
+            msg_id="ZZT-outstanding-r20-picker-1",
+            attributes=["sales_orders.outstanding"],
+            resolve_services=_ambiguous_hanlim_resolve_services(spy_probe),
+        )
+        assert captured == [], captured
+        reply = (result.reply or {}).get("text") or ""
+        assert "Which customer do you mean?" in reply, reply
+        assert " - no DO" not in reply, reply
+        assert " - has DO" not in reply, reply
+        assert "None of these have" not in reply, (
+            f"an outstanding ask's picker must not claim a DO measurement it never took: {reply!r}"
+        )
+        assert probe_calls == [], (
+            f"an outstanding ask's picker must not probe for a delivery order at all: {probe_calls}"
+        )
+
+    def test_plain_delivery_ask_picker_keeps_the_do_hint(self, session_factory, monkeypatch) -> None:
+        """Guard: R20 is scoped to an OUTSTANDING ask - a plain order/delivery ask
+        against the SAME ambiguous customer keeps today's `- has DO` / `- no DO`
+        hint unchanged. `pickers.py`'s own unit-level guards already pin the
+        underlying `annotate_customer` behaviour this end-to-end turn exercises
+        (`tests/chatbot/test_resolve_gate_unit.py::TestPickerProbeArms::
+        test_a_defaulted_window_bounds_the_miss_claim`,
+        `test_an_order_with_no_delivery_order_is_not_counted_as_one`); this test is
+        the LANE-level regression lock that a sloppy R20 implementation (e.g. gating
+        on `domain_hint == "order"` instead of the order_status axis) does not also
+        silence the hint for every other order-domain picker."""
+
+        def spy_probe(*, tool: str, contact_id: Any, entities: Any, semantic_input: Any, user_prompt: Any) -> Any:
+            return {"items": [], "has_result": False}
+
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                domain_hint="order", intent_hint="check_order", order_status=None,
+                entities=[
+                    {
+                        "raw": "hanlim", "hint": "customer", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="orders for hanlim",
+            msg_id="ZZT-outstanding-r20-guard-1",
+            attributes=["sales_orders.outstanding"],
+            resolve_services=_ambiguous_hanlim_resolve_services(spy_probe),
+        )
+        assert captured == [], captured
+        reply = (result.reply or {}).get("text") or ""
+        assert " - no DO" in reply, (
+            f"a plain (non-outstanding) ask must keep today's DO hint unchanged: {reply!r}"
+        )
+
+
+class TestScopeQuestionCustomerLineMatchesReportHeader:
+    def test_scope_question_customer_line_equals_the_report_header_line(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """AC-1165/R19b: the scope question's `Customer:` line must be byte-equal to
+        the REPORT's own `Customer:` line for the SAME resolved `customer_ids` - both
+        built from the customer rows (`outstanding_report_service._customer_echo`'s
+        distinct, first-seen names), never from the picker's roster label (which
+        carries a company-code suffix like "(MCH, SRT)" that is not a customer name
+        at all). Real `customers` rows, seeded the way `tests/test_outstanding_
+        report.py` seeds them (`tests._mc_lookup_seed.customer`) - `_customer_echo`
+        is a DB read, and this is the seam through which R19b's fix reaches it: the
+        lane harness fakes the resolver, but the CUSTOMER NAMES here come from the
+        real `customers` table via `session_factory`'s own Postgres connection, not
+        from anything in the resolver map.
+
+        The picked roster line stands for a THREE-ROW account family - the same
+        mechanism `gate.py`'s "A picked CUSTOMER selects its whole ACCOUNT FAMILY"
+        re-seat already expands today (proven empirically: `outstanding_filters
+        ["customer_ids"]` already holds all three ids after the pick) - so this test
+        is pinned on the NAME SOURCE the header reads, not on whether the family
+        widens at all.
+        """
+        db = session_factory()
+        c1 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD")
+        c2 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD [A/C I]")
+        c3 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD - [CERAMIC]")
+        db.commit()
+        base_key = gate_mod._cust_base(
+            {"display": {"customer_name": "CHIN CHUN HARDWARE SDN BHD"}, "canonical_code": None}
+        )
+        roster = [
+            {
+                "idx": 1, "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)", "uuid": c1.id,
+                "product": None, "entity_type": "customer",
+            },
+        ]
+        _seed_contact(
+            session_factory,
+            variables={
+                "message_type": "business_query",
+                "domain_hint": "order",
+                "entities": [],
+                "selection_context": "disambiguation",
+                "last_result_set": roster,
+                "picker_last_result_set": roster,
+                "picker_selection_context": "disambiguation",
+                "picker_domain": "order",
+                "picker_families": {base_key: [c1.id, c2.id, c3.id]},
+                "outstanding_filters": {
+                    "product_code": None,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [],
+                    "warehouse_codes": [],
+                    "location_token": None,
+                },
+                "order_status": "outstanding",
+                "pending": None,
+            },
+        )
+        pick_result, pick_captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1], reference_target="dym", entity_op="reuse",
+                order_status=None,
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-r19b-pick-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert pick_captured == [], pick_captured
+        expected_name = (
+            "CHIN CHUN HARDWARE SDN BHD, "
+            "CHIN CHUN HARDWARE SDN BHD [A/C I], "
+            "CHIN CHUN HARDWARE SDN BHD - [CERAMIC]"
+        )
+        pick_reply = (pick_result.reply or {}).get("text") or ""
+        assert _customer_header_line(pick_reply) == f"Customer: {expected_name}", (
+            f"the scope question's Customer line must name the real customer rows, "
+            f"first-seen order, never the roster label: {pick_reply!r}"
+        )
+        assert "(MCH, SRT)" not in pick_reply, (
+            f"a picker label's company-code suffix must never reach the Customer line: {pick_reply!r}"
+        )
+
+        report_result, report_captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[3],
+            ),
+            text_body="3",
+            msg_id="ZZT-outstanding-r19b-answer-1",
+            attributes=["sales_orders.outstanding"],
+            mcp_response={**REPORT_HIT, "customer_name": expected_name},
+        )
+        assert report_captured, "the scope answer must run the report"
+        name, args = report_captured[0]
+        assert name == "crm_outstanding_report", name
+        assert args.get("customer_ids") == [c1.id, c2.id, c3.id], args
+        report_reply = (report_result.reply or {}).get("text") or ""
+        assert _customer_header_line(report_reply) == _customer_header_line(pick_reply), (
+            f"the scope question's Customer line and the report's own Customer line "
+            f"must be byte-equal for the same customer_ids: "
+            f"scope={_customer_header_line(pick_reply)!r} report={_customer_header_line(report_reply)!r}"
         )
