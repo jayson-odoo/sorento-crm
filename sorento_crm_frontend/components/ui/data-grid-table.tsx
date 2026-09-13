@@ -797,7 +797,24 @@ function DataGridTableBodyRow<TData>({
   dndAttributes?: Record<string, unknown>;
   dndListeners?: Record<string, unknown>;
 }) {
-  const { props, table } = useDataGrid();
+  const { props: gridProps, table } = useDataGrid();
+
+  // A row `isRowClickable` refuses opens nothing, so it must not offer to: no pointer, no
+  // press cue and no handler. Absent predicate means every row, which is every list that
+  // has used `onRowClick` until now.
+  //
+  // SHADOWED rather than renamed at each use, so the two class gates below still read
+  // `props.onRowClick` verbatim: `menu-item-pressed.test.tsx` is a SOURCE assertion on
+  // exactly those two expressions (M1-05 - a render test cannot reach them without
+  // standing up the whole grid context), and renaming them would have moved the press cue
+  // out from under its guard without changing a rendered byte.
+  const props =
+    gridProps.onRowClick && gridProps.isRowClickable
+      ? {
+          ...gridProps,
+          onRowClick: gridProps.isRowClickable(row.original) ? gridProps.onRowClick : undefined,
+        }
+      : gridProps;
 
   // The whole row opens the record, from anywhere on it, by mouse or by keyboard.
   // 78 of 193 lists did this and 26 had a detail route with no way to reach it.
@@ -823,12 +840,6 @@ function DataGridTableBodyRow<TData>({
   // `useReturnedRowId`) and cleared on the reader's first pointer OR key
   // interaction with the page, so it highlights "until the next pointer or key
   // event" rather than for the life of the URL.
-  // A row `isRowClickable` refuses opens nothing, so it must not offer to: no pointer, no
-  // press cue and no handler. Absent predicate means every row, which is every list that
-  // has used `onRowClick` until now.
-  const opensOnClick = Boolean(
-    props.onRowClick && (props.isRowClickable?.(row.original) ?? true),
-  );
   const restoreId = href ? rowRestoreId(table, row, rawHref) : undefined;
   const isReturned = Boolean(restoreId && returnedFromId && restoreId === returnedFromId);
   const scrollRef = React.useRef<HTMLTableRowElement | null>(null);
@@ -856,12 +867,12 @@ function DataGridTableBodyRow<TData>({
       // M5-07: the row Back restores, until the reader's next pointer event.
       'data-[returned=true]:bg-primary/5',
       extraClassName,
-      (href || opensOnClick) && 'cursor-pointer',
+      (href || props.onRowClick) && 'cursor-pointer',
       // The press cue belongs to the rows that take a press. It is not on the
       // skeleton row (nothing to open yet), and not on a stripped grid, where
       // the odd row already paints itself bg-muted/90 - darker than the /60 the
       // press would set, so the press would read as a lift, not a push.
-      (href || opensOnClick) && !props.tableLayout?.stripped && 'active:bg-muted/60',
+      (href || props.onRowClick) && !props.tableLayout?.stripped && 'active:bg-muted/60',
       !props.tableLayout?.stripped &&
         props.tableLayout?.rowBorder &&
         'border-b border-border [&:not(:last-child)>td]:border-b',
@@ -880,7 +891,7 @@ function DataGridTableBodyRow<TData>({
     );
   }
 
-  if (opensOnClick) {
+  if (props.onRowClick) {
     // A lightbox, not a URL: there is no second tab to open it in.
     return (
       <tr

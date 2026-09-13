@@ -143,6 +143,7 @@ export default function ChatHistoryPage() {
     isError: shadowFailed,
     truncated: shadowTruncated,
     limit: shadowLimit,
+    isPlaceholderData: shadowIsPlaceholder,
   } = useShadowTurnList({ from: range.date_from, to: range.date_to }, shadowOn);
 
   const { data, isLoading, isPlaceholderData } = useQuery({
@@ -588,6 +589,10 @@ export default function ChatHistoryPage() {
             table={shadowTable}
             recordCount={shadowRows.length}
             isLoading={shadowLoading}
+            // M4-01b / M4-02: the rows this grid shows while a NEW date range is in flight
+            // are the old range's. Forwarded so they are dimmed and say so, rather than
+            // reading as the answer for a window nobody has fetched yet.
+            isPlaceholderData={shadowIsPlaceholder}
             // A shadow row opens the LIVE turn beside it, so a row whose live turn has
             // been deleted has nothing to open. It stays in the list - its drift badge is
             // still evidence - and says so in the Drift cell instead of taking a press
