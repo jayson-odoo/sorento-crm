@@ -1062,8 +1062,20 @@ def portal_submission_neighbours(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Prev/next over the contact's OWN submissions of the same kind (UAC G1/G2)."""
-    return PortalService(db).get_neighbours(token, _check_kind(kind), submission_id)
+    """Prev/next over the contact's OWN submissions of the same kind (UAC G1/G2).
+
+    ``_check_revisable_kind`` (not ``_check_kind``): review round 3 - the
+    price tag header wants the same counter the legacy kinds' view page
+    shows, so this route widens the same way the revision routes already do
+    for that kind, dispatching to its own dedicated router's neighbours
+    query rather than ``PortalService``, which does not know about it.
+    """
+    k = _check_revisable_kind(kind)
+    if k == "price_tag_request":
+        from app.api.v1.public.portal_price_tag import price_tag_neighbours
+
+        return price_tag_neighbours(db, token, submission_id)
+    return PortalService(db).get_neighbours(token, k, submission_id)
 
 
 @router.post("/submissions/{kind}")

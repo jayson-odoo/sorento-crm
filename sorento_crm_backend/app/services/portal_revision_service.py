@@ -369,62 +369,92 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
     from app.services.error_handler import AppException
     from app.services.price_tag_request_service import PriceTagRequestService
 
-    # Gap A (security review of S10): a revise payload setattrs `promotion_id`
-    # straight onto the row via the generic field-whitelist writer
-    # (`portal._apply_payload`, which runs before this callable, so the
-    # attribute is already dirty in-memory by the time this check runs) -
-    # nothing gated a promotion this contact's audience cannot see, or one
-    # belonging to another company, the way create/update already do.
-    # `no_autoflush`: `validate_promotion_access` issues its own SELECT
-    # (`lookup_promotions`), and a plain query here would autoflush that
-    # dirty `promotion_id` to Postgres before this raises - "nothing
-    # written" has to mean nothing FLUSHED, not just nothing committed.
-    if "promotion_id" in payload:
-        from app.models.base import company_scope
-
-        with db.no_autoflush, company_scope(db, frozenset({row.company_id})):
-            PriceTagRequestService.validate_promotion_access(
-                db, row.contact_id, payload.get("promotion_id")
-            )
-
-    if "products" not in payload:
-        # No lines in this revision - still has to clear the same bar with
-        # whatever the row already carries.
-        PriceTagRequestService.validate_submittable(row, require_debtor=False)
-        return
-    converted = [_convert_ptag_revise_line(d) for d in (payload.get("products") or [])]
-    if not converted:
+    # Review round 3: `price_mode` reaches the row the same bare-setattr way
+    # `promotion_id` does (`portal._apply_payload`) - create/update validate
+    # it through pydantic's `Literal["list", "selling"]`, but a revise payload
+    # is a raw dict with no schema, so nothing stopped a bad or null value
+    # (`setattr(row, "price_mode", None)`) landing on a NOT NULL column.
+    if "price_mode" in payload and payload.get("price_mode") not in ("list", "selling"):
         raise AppException(
             status_code=422,
-            message="This request needs at least one line before it can be submitted.",
-            detail="lines",
-            code="SUBMIT_INCOMPLETE",
+            message="Price must be List price or Selling price.",
+            detail="price_mode",
+            code="VALIDATION_ERROR",
         )
-    offenders: list[tuple[int, str]] = []
-    for index, line in enumerate(converted):
-        code = PriceTagRequestService._ala_carte_offender(  # noqa: SLF001
-            db, line["line_type"], line.get("product_id")
-        )
-        if code:
-            offenders.append((index, code))
-    if offenders:
-        raise PriceTagRequestService._set_guard_refusal(offenders)  # noqa: SLF001
-    PriceTagRequestService._raise_on_duplicate_line(db, converted)  # noqa: SLF001
-    # Gap D (security review of S10): the revise composer's payload line has
-    # no field for `alternatives` / `included_accessories` - same reason it
-    # has none for `marketing_price_override` (review round 2's own
-    # carry-over) - so a revise silently wiped both back to `[]` / `None`.
-    # Carried from the OLD rows, keyed by product/set, same mechanism.
-    old_by_key = {
-        (old.product_id, old.product_set_id): (old.alternatives, old.included_accessories)
-        for old in row.lines
-    }
-    for line in converted:
-        key = (line.get("product_id"), line.get("product_set_id"))
-        if key in old_by_key:
-            alternatives, included_accessories = old_by_key[key]
-            line["alternatives"] = alternatives or []
-            line["included_accessories"] = included_accessories
+
+    # `no_autoflush` wraps every guard below, not just the promotion one:
+    # `portal._apply_payload` (which runs before this callable) already left
+    # `debtor_name` / `promotion_id` / `price_mode` dirty in-memory via bare
+    # setattr, and the FIRST query any guard below issues (the promotion
+    # lookup, `_ala_carte_offender`'s product lookup, even the lazy-load on
+    # `row.lines`) would autoflush that dirty state to Postgres before a
+    # later guard gets a chance to refuse it - "nothing written" on a refusal
+    # has to mean nothing FLUSHED, not just nothing committed.
+    with db.no_autoflush:
+        # Gap A (security review of S10): a revise payload setattrs
+        # `promotion_id` straight onto the row via the generic
+        # field-whitelist writer - nothing gated a promotion this contact's
+        # audience cannot see, or one belonging to another company, the way
+        # create/update already do.
+        if "promotion_id" in payload:
+            from app.models.base import company_scope
+
+            with company_scope(db, frozenset({row.company_id})):
+                PriceTagRequestService.validate_promotion_access(
+                    db, row.contact_id, payload.get("promotion_id")
+                )
+
+        if "products" not in payload:
+            # No lines in this revision - still has to clear the same bar
+            # with whatever the row already carries. `require_debtor=True`:
+            # review round 3 - a revision CAN change the dealer
+            # (`debtor_name` is on the portal edit whitelist, applied above
+            # via `portal._apply_payload`), so the post-submit PUT's own
+            # "debtor already locked in" argument for `require_debtor=False`
+            # does not hold here.
+            PriceTagRequestService.validate_submittable(row, require_debtor=True)
+            return
+        converted = [_convert_ptag_revise_line(d) for d in (payload.get("products") or [])]
+        if not converted:
+            raise AppException(
+                status_code=422,
+                message="This request needs at least one line before it can be submitted.",
+                detail="lines",
+                code="SUBMIT_INCOMPLETE",
+            )
+        offenders: list[tuple[int, str]] = []
+        for index, line in enumerate(converted):
+            code = PriceTagRequestService._ala_carte_offender(  # noqa: SLF001
+                db, line["line_type"], line.get("product_id")
+            )
+            if code:
+                offenders.append((index, code))
+        if offenders:
+            raise PriceTagRequestService._set_guard_refusal(offenders)  # noqa: SLF001
+        PriceTagRequestService._raise_on_duplicate_line(db, converted)  # noqa: SLF001
+        # Review round 3: the same completeness bar the no-products branch
+        # above runs - checked here, BEFORE `replace_lines` touches anything,
+        # since `require_debtor=True` (a revision can change the dealer) has
+        # to refuse before that call's own internal `db.flush()` calls, or a
+        # refused revision would still have wiped the request's existing
+        # lines and blanked its debtor.
+        PriceTagRequestService.validate_submittable(row, require_debtor=True)
+        # Gap D (security review of S10): the revise composer's payload line
+        # has no field for `alternatives` / `included_accessories` - same
+        # reason it has none for `marketing_price_override` (review round
+        # 2's own carry-over) - so a revise silently wiped both back to `[]`
+        # / `None`. Carried from the OLD rows, keyed by product/set, same
+        # mechanism.
+        old_by_key = {
+            (old.product_id, old.product_set_id): (old.alternatives, old.included_accessories)
+            for old in row.lines
+        }
+        for line in converted:
+            key = (line.get("product_id"), line.get("product_set_id"))
+            if key in old_by_key:
+                alternatives, included_accessories = old_by_key[key]
+                line["alternatives"] = alternatives or []
+                line["included_accessories"] = included_accessories
     PriceTagRequestService.replace_lines(db, row, converted)
 
 

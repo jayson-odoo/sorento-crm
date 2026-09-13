@@ -652,16 +652,26 @@ function SubmissionList({
           view={view}
           onViewChange={onViewChange}
         />
-        <Button asChild size="sm" className="shrink-0 max-w-[7.5rem] sm:max-w-none">
+        <Button
+          asChild
+          size="sm"
+          className="shrink-0"
+          title={`New ${LANDING_LABELS[kind]}`}
+          aria-label={`New ${LANDING_LABELS[kind]}`}
+        >
           <Link href={portalNewPath(kind, slug)}>
             <Plus className="shrink-0" />
-            {/* Review round 2: "New Price Tag Request" (the longest label)
-                pushed the toolbar onto two rows at 375px - truncated below
-                `sm` (icon plus as much of the label as fits, at minimum
-                "New"), the full label at `sm` and up. One text node, not a
-                second element also reading "New" - that collided with a
-                status pill of the same word elsewhere on the page. */}
-            <span className="truncate">New {LANDING_LABELS[kind]}</span>
+            {/* Review round 2/3: "New Price Tag Request" (the longest label)
+                pushed the toolbar onto two rows at 375px - below `sm` the
+                clip hides everything past "New" (no ellipsis, so it never
+                shows a ragged fragment of the kind name), the full label at
+                `sm` and up. One text node, not two - a wrapping element
+                around a bare "New" here reads as a second, stray "New" next
+                to a submission card's own status badge of the same word
+                (`PortalLanding.priceTag.test.tsx`). */}
+            <span className="block max-w-11 overflow-hidden whitespace-nowrap sm:max-w-none sm:inline">
+              New {LANDING_LABELS[kind]}
+            </span>
           </Link>
         </Button>
       </div>
@@ -842,9 +852,17 @@ function submissionTableColumns(
   sort: LandingSort,
   onSortChange: (next: LandingSort) => void,
 ): ColumnDef<PortalSubmissionSummary>[] {
-  const header = (field: LandingField) => () => (
-    <SortableHeader field={field} sort={sort} onSortChange={onSortChange} />
-  );
+  // Named, not an anonymous arrow returned from `header()` (react/display-name):
+  // a ColumnDef.header renders as its own component, and an unnamed one
+  // trips the lint rule even though it never gets its own devtools entry.
+  const header = (field: LandingField) => {
+    function SortableColumnHeader() {
+      return (
+        <SortableHeader field={field} sort={sort} onSortChange={onSortChange} />
+      );
+    }
+    return SortableColumnHeader;
+  };
   const documentField = fields.find((f) => f.key === 'document_number') ?? {
     key: 'document_number',
     label: 'Form Number',
@@ -870,9 +888,10 @@ function submissionTableColumns(
       f.key !== 'document_number' &&
       f.key !== 'status',
   );
-  const needByField: LandingField = fields.find(
-    (f) => f.key === 'needed_by_date',
-  ) ?? { key: 'needed_by_date', label: 'Need by', type: 'date' };
+  // Review round 3: the column only exists for a kind that actually carries
+  // the field (today, price_tag_request only) - a synthetic descriptor for
+  // every other kind gave every list a permanently blank "Need by" column.
+  const needByField = fields.find((f) => f.key === 'needed_by_date');
 
   const dateCell = (value: string | null | undefined) =>
     value ? (
@@ -893,7 +912,7 @@ function submissionTableColumns(
           </span>
         );
       },
-      size: 140,
+      size: 170,
       minSize: 100,
     },
     {
@@ -930,13 +949,17 @@ function submissionTableColumns(
         minSize: 100,
       }),
     ),
-    {
-      accessorKey: 'needed_by_date',
-      header: header(needByField),
-      cell: ({ row }) => dateCell(row.original.needed_by_date),
-      size: 110,
-      minSize: 90,
-    },
+    ...(needByField
+      ? [
+          {
+            accessorKey: 'needed_by_date',
+            header: header(needByField),
+            cell: ({ row }) => dateCell(row.original.needed_by_date),
+            size: 110,
+            minSize: 90,
+          } satisfies ColumnDef<PortalSubmissionSummary>,
+        ]
+      : []),
     {
       accessorKey: 'created_at',
       header: header(createdField),
@@ -1094,7 +1117,9 @@ function SubmissionCard({
         {row.needed_by_date && (
           <p className="text-sm text-foreground/80">
             <span className="text-muted-foreground">Need by: </span>
-            {row.needed_by_date}
+            {new Date(row.needed_by_date).toLocaleDateString(undefined, {
+              dateStyle: 'medium',
+            })}
           </p>
         )}
         {row.last_revised_at ? (

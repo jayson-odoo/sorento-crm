@@ -52,11 +52,7 @@ import {
   priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
 import { portalBase, portalDuplicatePath } from '../lib/portal-paths';
-import {
-  useRevisionHistory,
-  useRevisionPolicy,
-  useReviseSubmission,
-} from '../hooks/useRevisions';
+import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
@@ -89,7 +85,9 @@ import type { AIExtractedProductLine } from '../lib/portal-client';
 import {
   uploadAttachment,
   getPriceTagDesign,
+  fetchSubmissionNeighbours,
   type PortalAttachment,
+  type PortalSubmissionNeighbours,
 } from '../lib/portal-client';
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -344,8 +342,21 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // whatever a create call in THIS session already answered with.
   const effectiveId = requestId ?? createdRequestId ?? undefined;
   // R3-1/AC-R7: same generic revision hooks SubmissionForm reads for the
-  // legacy kinds, rather than a second revise mechanism.
-  const { policy: revisionPolicy } = useRevisionPolicy('price_tag_request', effectiveId);
+  // legacy kinds, rather than a second revise mechanism. Review round 3:
+  // the policy is read straight off the re-fetched request's own `revision`
+  // block (same as SubmissionForm's `detail?.revision`) rather than a
+  // SECOND GET through `useRevisionPolicy` - `_detail_body` already carries
+  // it on every `getRequest` response.
+  const revisionPolicy = request?.revision ?? null;
+  // R3-5: the one-line revision status, same wording SubmissionForm's own
+  // header line uses - review round 3 folds the price tag header into the
+  // SAME one muted truncating line, rather than its own separate blocked-
+  // reason sentence under a bold doc-number + colored pill.
+  const revisionStatusText = revisionPolicy
+    ? revisionPolicy.allowed
+      ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
+      : (revisionPolicy.blocked_reason ?? null)
+    : null;
   const { revise, submitting: revising } = useReviseSubmission(
     'price_tag_request',
     effectiveId,
@@ -354,6 +365,28 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // kinds - the generic revision routes already serve price_tag_request
   // (R3-1's ADAPTERS entry), this is just the FE surface catching up.
   const revisionHistory = useRevisionHistory('price_tag_request', effectiveId);
+
+  // Portal record navigation (review round 3), same as SubmissionForm: same
+  // kind, newest first, token-scoped to the contact's own requests.
+  const [neighbours, setNeighbours] =
+    useState<PortalSubmissionNeighbours | null>(null);
+  useEffect(() => {
+    if (!requestId) {
+      setNeighbours(null);
+      return;
+    }
+    let cancelled = false;
+    fetchSubmissionNeighbours('price_tag_request', requestId)
+      .then((n) => {
+        if (!cancelled) setNeighbours(n);
+      })
+      .catch(() => {
+        if (!cancelled) setNeighbours(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requestId]);
 
   // ---- Sections (D-P1): Customer open by default, everything else opens
   // progressively as the form gains the value the next section needs. A rule
@@ -990,11 +1023,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         },
         products: payloadLines(),
       });
+      // Review round 3: a file added while composing the revision sat in
+      // `pendingFiles` with nowhere to flush to (the request already exists,
+      // so it never goes through `handleSaveDraft`'s create-then-flush path) -
+      // same call Save Draft / Submit already make, before the request the
+      // policy will re-check moves on to its post-revision status.
+      await flushPendingFiles(effectiveId);
       const fresh = await getRequest(effectiveId);
       if (fresh) {
         setRequest(fresh);
         applyRequestFieldsFrom(fresh);
       }
+      // Review round 3: the lineage and the policy the header/gear read both
+      // changed under this revision - reload the one GET that changed
+      // (revisions), and `fresh.revision` (just re-fetched above) already IS
+      // the refreshed policy, so nothing else needs asking again.
+      revisionHistory.reload();
       setReviseMode(false);
       setReviseReason('');
       toast.success('Revision sent');
@@ -1002,7 +1046,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       toast.error(e instanceof Error ? e.message : 'Failed to send revision');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveId, reviseReason, revise, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, request, applyRequestFieldsFrom]);
+  }, [effectiveId, reviseReason, revise, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory]);
 
   const handleCancelRevise = useCallback(async () => {
     setReviseMode(false);
@@ -1176,8 +1220,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     const detailsContent = (
       <>
         <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-lg font-semibold">{request.doc_number}</h1>
+          {/* Review round 3: Status moves out of the header into a labeled
+              row here, same as the stock inquiry page - the header now
+              carries only the one muted truncating line (doc number,
+              revision status, neighbour counter). */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Status:</span>
             <span
               className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${priceTagStatusPillClass(request.status)}`}
             >
@@ -1185,17 +1233,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             </span>
           </div>
           {/* Read-only metadata, never a form field: created is derived, not
-              something the salesperson typed. The revision status (budget or
-              blocked reason) rides the same line, muted (AC-R7/R3-5). */}
+              something the salesperson typed. */}
           <p className="text-xs text-muted-foreground">
             Created {new Date(request.created_at).toLocaleDateString()}
-            {revisionPolicy && !revisionPolicy.allowed && revisionPolicy.blocked_reason && (
-              <>
-                {' '}
-                <span aria-hidden>·</span>{' '}
-                <span>{revisionPolicy.blocked_reason}</span>
-              </>
-            )}
           </p>
         </div>
 
@@ -1441,7 +1481,34 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           >
             <ArrowLeft className="size-4 mr-1" /> Back
           </Button>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            {/* R3-5/review round 3: the SAME one muted truncating line the
+                legacy kinds' header carries - doc number, revision status
+                (budget or blocked reason), neighbour counter - beside the
+                gear rather than a separate bold heading + colored pill. */}
+            {(request.doc_number || revisionStatusText || neighbours) && (
+              <span className="min-w-0 truncate text-sm text-muted-foreground">
+                {request.doc_number}
+                {revisionStatusText && (
+                  <>
+                    {request.doc_number && <span aria-hidden> · </span>}
+                    <span className="text-xs text-muted-foreground/70">
+                      {revisionStatusText}
+                    </span>
+                  </>
+                )}
+                {neighbours && (
+                  <>
+                    {(request.doc_number || revisionStatusText) && (
+                      <span aria-hidden> · </span>
+                    )}
+                    <span className="text-xs text-muted-foreground/70">
+                      {neighbours.position} / {neighbours.total}
+                    </span>
+                  </>
+                )}
+              </span>
+            )}
             {/* R3-1/AC-R7: no Edit after submit - a submitted request is
                 read-only exactly like a stock inquiry, and a change goes
                 through the revision engine instead. ONE gear: Duplicate,
@@ -1540,10 +1607,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   return (
     <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
       {reviseMode && request ? (
-        // R3-1: revise mode is the SAME header as the read view - doc
-        // number, status pill, Created line - with Cancel / Submit revision
-        // where the gear's Revise item was, not a bare heading and a second
-        // action row at the bottom of the page.
+        // R3-1: revise mode is the SAME header as the read view - the one
+        // muted truncating line (review round 3) - with Cancel / Submit
+        // revision where the gear's Revise item was, not a bare heading and
+        // a second action row at the bottom of the page.
         <>
           <div className="flex items-center justify-between gap-2">
             <Button
@@ -1563,20 +1630,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               </Button>
             </div>
           </div>
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-lg font-semibold">{request.doc_number}</h1>
-              <span
-                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${priceTagStatusPillClass(request.status)}`}
-              >
-                {priceTagStatusLabel(request.status)}
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Created {new Date(request.created_at).toLocaleDateString()}
-            </p>
-          </div>
-          <div className="space-y-1.5">
+          {(request.doc_number || neighbours) && (
+            <span className="min-w-0 truncate text-sm text-muted-foreground">
+              {request.doc_number}
+              {neighbours && (
+                <>
+                  {request.doc_number && <span aria-hidden> · </span>}
+                  <span className="text-xs text-muted-foreground/70">
+                    {neighbours.position} / {neighbours.total}
+                  </span>
+                </>
+              )}
+            </span>
+          )}
+          {/* Review round 3: the reason field in a card matching the
+              FormSection rhythm (same border/padding), not a bare label +
+              textarea floating between the header and the sections. */}
+          <Card className="space-y-1.5 px-4 py-4">
             <Label htmlFor="revision_reason">Reason</Label>
             <Textarea
               id="revision_reason"
@@ -1585,7 +1655,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               placeholder="What changed, and why?"
               rows={3}
             />
-          </div>
+          </Card>
         </>
       ) : (
         <>

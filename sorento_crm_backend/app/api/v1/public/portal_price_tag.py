@@ -613,6 +613,43 @@ def _require_own_request(db: Session, token: PortalToken, request_id: str):
     return req
 
 
+def price_tag_neighbours(db: Session, token: PortalToken, request_id: str) -> dict:
+    """Prev/next over the contact's OWN price tag requests, newest first -
+    same ordering ``PriceTagRequestService.list_requests`` uses (review round
+    3). Called from the generic ``/submissions/{kind}/{id}/neighbours`` route
+    in portal.py, dispatched the same way ownership/detail already are for
+    this kind (``_require_revisable_ownership`` / ``_revision_submission_detail``).
+    """
+    from app.models.price_tag import PriceTagRequest
+
+    # ownership + visibility + uuid validation; raises on miss
+    req = _require_own_request(db, token, request_id)
+    ids = [
+        str(r[0])
+        for r in db.query(PriceTagRequest.id)
+        .filter(PriceTagRequest.contact_id == token.contact_id)
+        .order_by(PriceTagRequest.created_at.desc())
+        .all()
+    ]
+    try:
+        idx = ids.index(str(req.id))
+    except ValueError:
+        # Unreachable in practice - _require_own_request above already
+        # confirmed ownership - but fail closed rather than raise unhandled.
+        raise AppException(
+            status_code=404,
+            message="Price tag request not found.",
+            code="NOT_FOUND",
+        )
+    total = len(ids)
+    return {
+        "prev_id": ids[idx - 1] if idx > 0 else None,
+        "next_id": ids[idx + 1] if idx + 1 < total else None,
+        "position": idx + 1,
+        "total": total,
+    }
+
+
 def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
     """A draft is ``portal_draft_at``, and nothing else (D48c).
 
@@ -627,28 +664,25 @@ def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
 
 def _require_editable(req, db: Session) -> None:
     """R3-1: the attachment gate (upload/delete). A draft is always editable;
-    a submitted request is editable ONLY while a revision draft is in
-    progress for it - the revision engine's own draft
-    (``PortalRevisionService.get_draft``), never the retired
-    ``new``/``changes_requested`` post-submit window S8 opened. Wired
-    through the real engine rather than a coincidental status check, so this
-    gate can never drift from what the revise composer is actually allowed
-    to touch.
+    a submitted request is editable while the revision policy currently
+    allows a revision for it - the same check ``revise``/``save_draft`` make
+    (``PortalRevisionService.policy_for``), never a coincidental status check
+    or the existence of a revision DRAFT row. Review round 3: keying this off
+    ``get_draft`` 409'd every attachment added mid-revision, since
+    ``PriceTagRequestForm`` composes a revision inline (reason + sections)
+    and never writes a ``PortalRevisionDraft`` row for it - that row is only
+    ever written by Save (as opposed to Send) on a revision draft.
 
-    Gap C (security review of S10): the mere EXISTENCE of a draft row is not
-    enough - a draft saved while the request was still ``new`` used to keep
-    unlocking attachments after the request moved on to a status the policy
-    would refuse outright (``ready``, ``void``). Re-checks the policy against
-    the request's CURRENT status, the same call ``revise``/``save_draft``
-    make, so a stale draft cannot outlive what it was actually allowed to do.
+    Gap C (security review of S10) still holds with this shape: the policy is
+    re-checked against the request's CURRENT status on every call, so a
+    request that has moved on to ``ready``/``void`` since a revision was
+    last open refuses attachments outright, same as before.
     """
     if req.portal_draft_at is not None:
         return
     from app.services.portal_revision_service import PortalRevisionService
 
-    service = PortalRevisionService(db)
-    has_draft = service.get_draft("price_tag_request", req.id) is not None
-    if has_draft and service.policy_for("price_tag_request", req.id).allowed:
+    if PortalRevisionService(db).policy_for("price_tag_request", req.id).allowed:
         return
     raise AppException(
         status_code=409,

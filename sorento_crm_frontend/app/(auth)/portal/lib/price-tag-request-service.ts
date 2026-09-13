@@ -11,6 +11,8 @@ import {
   portalFetch,
   unwrap,
   type PortalAttachment,
+  type PortalRevisionDraft,
+  type PortalRevisionPolicy,
   type PortalSubmissionSummary,
 } from './portal-client';
 
@@ -91,6 +93,12 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
    * list directly. Sent by the server since S8.
    */
   is_editable?: boolean;
+  /** AC-R7 round 3: the policy block (allowed, remaining, blocked reason) -
+   *  same as the legacy kinds' detail bodies, read straight off the
+   *  re-fetched request instead of a second `useRevisionPolicy` GET. */
+  revision?: PortalRevisionPolicy | null;
+  /** The in-progress revise composer, if any - rides along the same way. */
+  revision_draft?: PortalRevisionDraft | null;
 }
 
 export interface DebtorOption {
