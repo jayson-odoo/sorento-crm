@@ -461,7 +461,17 @@ def test_reconcile_mirrors_lines_an_adopted_order_gained_on_reingest(api):
     }
     assert str(reingested_line_2.id) in mirrored_core_ids, mirrored_core_ids
     assert str(reingested_line_3.id) in mirrored_core_ids, mirrored_core_ids
-    assert body["lines_linked"] == 3, body
+
+    # AC-FP19 (`test_a_link_to_a_closed_core_line_is_cleared_and_reported_missing`): the
+    # original mirror's own core line is now closed, so that link is cleared and reported
+    # missing rather than counted linked - only the two re-ingested lines are.
+    assert body["lines_linked"] == 2, body
+    original_line_out = next(
+        row for row in body["lines"] if row["line_no"] == original_mirror.line_no
+    )
+    assert original_line_out["link"] == "missing", original_line_out
+    missing = [exc for exc in body["exceptions"] if exc["kind"] == "missing"]
+    assert missing and missing[0]["line_no"] == original_mirror.line_no, body["exceptions"]
 
 
 # --------------------------------------------------------------------------- #
