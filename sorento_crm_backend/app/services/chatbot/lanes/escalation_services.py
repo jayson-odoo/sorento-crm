@@ -195,7 +195,42 @@ def _staff_lookup(db: Any):
 MISS_TOKEN_BLOCK_CAP = 5
 
 
-def _product_rows(payload: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _product_tokens(ctx: Any, body: dict[str, Any]) -> set[str]:
+    """The tokens THIS MESSAGE's product entities were sent to the resolver as.
+
+    Taken from the REQUEST, not re-derived: `resolve_entity_body` maps `ctx.parse.output.
+    entities` positionally onto `tokens` (and onto `allowed_entity_types`), and a product
+    token is folded on the way (`mfg6651-gm` is sent as `mfg6651gm`), so zipping the two is
+    the only way the filter can be byte-identical to what was asked about.
+
+    Why it has to exist at all: the body sends EVERY entity, the carried ones
+    (`current_message: false`) and the category beside the code included. Without the filter
+    a carried product or a category spec that resolves exact makes `resolved` non-empty, so
+    the turn skips the did-you-mean the typed code needed and routes on a brand belonging to
+    something the customer did not name this turn.
+    """
+    entities = (ctx or {}).get("parse", {}) if isinstance(ctx, dict) else {}
+    entities = (entities or {}).get("output", {}) if isinstance(entities, dict) else {}
+    rows = (entities or {}).get("entities") if isinstance(entities, dict) else None
+    rows = rows if isinstance(rows, list) else []
+    tokens = body.get("tokens") or []
+    wanted: set[str] = set()
+    for entity, token in zip(rows, tokens):
+        if not isinstance(entity, dict):
+            continue
+        if str(entity.get("hint") or "").lower() != "product":
+            continue
+        if entity.get("current_message") is not True:
+            continue
+        key = str(token or "").strip().lower()
+        if key:
+            wanted.add(key)
+    return wanted
+
+
+def _product_rows(
+    payload: Any, wanted_tokens: set[str] | None = None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """`(resolved, did_you_mean)` out of one resolver payload. Pure.
 
     The resolver answers per TOKEN with `matches` and `alternatives`, each row carrying
@@ -210,10 +245,17 @@ def _product_rows(payload: Any) -> tuple[list[dict[str, Any]], list[dict[str, An
       the resolver ranked them (variants first, then by similarity). These are the rows the
       customer is offered when the code they typed does not exist.
 
-    Product rows only: an escalation turn commonly names a category beside the code ("BIDET
-    SEAT COVER FOR SRTWC60630-SH") and a category has no brand to route by. De-duplicated by
-    uuid on the resolved side and by code on the offer side, which is what the customer can
-    tell apart on screen.
+    Product rows only, and only for the TOKENS THIS TURN'S PRODUCT ENTITIES WERE SENT AS
+    (`wanted_tokens`, from `_product_tokens`). Two filters, two different mistakes they stop:
+    an escalation turn commonly names a category beside the code ("BIDET SEAT COVER FOR
+    SRTWC60630-SH") and a category has no brand to route by; and the body sends the CARRIED
+    entities too, so a carried product that still resolves would answer for a code the
+    customer did not type this turn - `resolved` non-empty, no did-you-mean for the code that
+    missed, and the wrong brand on the assignment. `None` means "no filter", which is what a
+    direct caller with no ctx gets.
+
+    De-duplicated by uuid on the resolved side and by code on the offer side, which is what
+    the customer can tell apart on screen.
 
     **The OFFER side carries the business lane's own caps**, because AC-1124 says these are
     "the business lane's did-you-mean rows" and a numbered list nobody can read is not an
@@ -237,6 +279,10 @@ def _product_rows(payload: Any) -> tuple[list[dict[str, Any]], list[dict[str, An
     for resolution in (payload or {}).get("resolutions") or []:
         if not isinstance(resolution, dict):
             continue
+        if wanted_tokens is not None:
+            token = str(resolution.get("token") or "").strip().lower()
+            if token not in wanted_tokens:
+                continue
         rows = [
             row
             for key in ("matches", "alternatives")
@@ -294,9 +340,12 @@ def _resolve_and_gate(db: Any):
         from app.services.chatbot.lanes.business.services import production_services
 
         body = resolve_entity_body(ctx)
+        wanted = _product_tokens(ctx, body)
         with db.begin_nested():
             payload = production_services(db).resolve_entity(body)
-        resolved, did_you_mean = _product_rows(payload if isinstance(payload, dict) else {})
+        resolved, did_you_mean = _product_rows(
+            payload if isinstance(payload, dict) else {}, wanted
+        )
         return {"resolved": resolved, "did_you_mean": did_you_mean}
 
     return call
