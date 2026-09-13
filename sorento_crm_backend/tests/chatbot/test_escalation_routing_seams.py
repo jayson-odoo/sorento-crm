@@ -26,6 +26,7 @@ from __future__ import annotations
 import pytest
 
 from app.services.chatbot.head.output_exchange import post_process, suggest_follow_up
+from app.services.chatbot.head.route import decide
 from app.services.chatbot.lanes.escalation import run
 from tests.chatbot.test_escalation_routing_brand import _next_assignee_body, _product_entity, _resolved_row
 from tests.chatbot.test_escalation_routing_head import (
@@ -34,6 +35,7 @@ from tests.chatbot.test_escalation_routing_head import (
     TURN_3_PARSER_RAW,
     TURN_3_PREVIOUS_STATE,
     _decide_ctx,
+    _full_emission,
 )
 from tests.chatbot.test_s5_escalation_lane import _ctx, _item, _services
 
@@ -724,3 +726,224 @@ def test_s7_round3_dry_run_trace_facts_carry_the_preview_note(
         f"a dry run that assigned must stamp the preview note on the looked_up trace "
         f"facts, not on the actions: {looked_up['facts']!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Console pass finding, 13 Sep 2026: "photo for SRTWB8004" -> no photo -> a
+# one-team offer -> "yes" -> routed to customer_service on the real stack.
+# AC-1104 / T7 / T12's fixtures did not catch it because they built the open
+# question directly into a lane-unit ctx, never through the real five-key
+# session shape a photo turn actually leaves behind - the same class of gap
+# B1's kill test found in the old AC-1127 fixture. Built EXACTLY as persisted
+# (`chatbot.turns` 9c6a50ba in `sorento_ai_automation_focus_full`, parser_raw
+# from turn b77a6b2f): `focus.domains`, `focus.products`, `open_question` kind
+# `team_pick` / `expects: yes_no`, and NOTHING else - no `routing`, `pending`,
+# `selection_context` or `routing_brand` anywhere.
+# --------------------------------------------------------------------------- #
+
+CONSOLE_PREVIOUS_STATE = {
+    "focus": {
+        "domains": {
+            "value": ["product_attachment"],
+            "set_at_turn": 4,
+            "set_at": None,
+            "source": "reuse",
+        },
+        "products": {
+            "value": [
+                {
+                    "raw": "SRTWB8004",
+                    "hint": "product",
+                    "canonical_code": "SRTWB8004",
+                    "current_message": False,
+                    "confident": True,
+                }
+            ],
+            "set_at_turn": 4,
+            "set_at": None,
+            "source": "reuse",
+        },
+    },
+    "open_question": {
+        "kind": "team_pick",
+        "expects": "yes_no",
+        "options": [
+            {
+                "idx": 1,
+                "team": "marketing_product",
+                "label": "marketing_product",
+                "domain": "product_attachment",
+            }
+        ],
+        "payload": {"team": "marketing_product", "domain": "product_attachment"},
+        "asked_at_turn": 4,
+        "asked_at": None,
+    },
+    "ideation": None,
+    "access_levels": [],
+    "contains_flyer": False,
+}
+
+
+def _assert_only_five_keys(previous_state: dict) -> None:
+    from app.services.chatbot.contracts import SESSION_VAR_KEYS
+
+    assert set(previous_state) <= set(SESSION_VAR_KEYS), (
+        f"the fixture must be a REAL persisted session - only {SESSION_VAR_KEYS}, never a "
+        f"legacy routing/pending/selection_context/routing_brand mirror: {sorted(previous_state)!r}"
+    )
+
+
+def _run_console_turn(parser_raw: dict, *, text: str, gate_result: dict) -> tuple[dict, dict, dict]:
+    """The real chain, in `engine.run_turn`'s own order: `_resolve_open_question` first
+    (so a pick is applied as this turn's scope), then `post_process`, then
+    `suggest_follow_up`, then `route.decide`, then the real escalation lane - the same
+    shape `test_escalation_routing_seams.py::test_ac1144_*` already chains, extended with
+    the question-resolution step those turns did not need."""
+    from app.services.chatbot.engine import _resolve_open_question
+
+    _assert_only_five_keys(CONSOLE_PREVIOUS_STATE)
+
+    answered = _resolve_open_question(
+        CONSOLE_PREVIOUS_STATE,
+        parser_raw=parser_raw,
+        emits_v3=False,
+        referenced_result_set=None,
+        turn_no=5,
+    )
+    parent_input = {
+        "latest_user_message": text,
+        "contact_id": "ZZT-esc-console-1",
+        "previous_conversation_state": CONSOLE_PREVIOUS_STATE,
+        "parser_emits_v3": False,
+        "_answered": answered,
+        "turn_no": 5,
+    }
+    parse_block = post_process({"output": dict(parser_raw)}, {}, parent_input)
+    parse_block = suggest_follow_up(parse_block, parent_input)
+    qf = parse_block["output"]
+
+    ctx = {
+        "contact": {"id": "ZZT-esc-console-1", "phone": "+60123450099", "custom_fields": []},
+        "text": {"message": {"messageId": "ZZT-esc-console-msg-1", "message": {"type": "text", "text": text}}},
+        "session": {"session_vars": {"variables": CONSOLE_PREVIOUS_STATE}},
+        "parse": {"output": qf, "_parser_raw": parse_block.get("_parser_raw")},
+        "access": {"allowed": True, "decision": "allow"},
+        "media": None,
+    }
+    branch, _tier = decide(ctx)
+    item = {
+        "allowed": True,
+        "decision": "allow",
+        "agent_name": "General Enquiries",
+        "attributes": None,
+        "all_attributes_allowed": None,
+        "branch_kind": branch,
+    }
+
+    services = _services(gate=gate_result)
+    result = run(ctx, item, services=services)
+    return qf, {"branch": branch}, {"result": result, "services": services}
+
+
+def test_console_finding_a_bare_yes_over_a_team_pick_offer_routes_to_the_offered_team() -> None:
+    """Console pass, 13 Sep 2026, item 1/2/3. "yes" over a one-team `marketing_product`
+    offer, on a REAL five-key previous state, must route there - D3's same-team carry
+    re-resolves the focus product through the seam for its brand. RED today: the lane's
+    no-team-word acceptance arm (`_person_routing`, `if is_escalation_confirmation is
+    True: return None`) trusts the ALREADY-DERIVED `team`, and `output_exchange`'s own
+    routing chain has nothing to inherit from in a real session (no legacy `routing` key
+    survives migration 517), so it falls to the hard default `customer_service` instead
+    of ever reading `_offered_team(ctx)` / re-deriving from `focus.domains` - exactly the
+    stack's own observed behaviour."""
+    parser_raw = _full_emission(
+        message_type="casual",
+        is_affirmative=True,
+        entities=[],
+        entity_op="reuse",
+        routing={"suggested_team": None, "suggested_agent": None},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="yes",
+    )
+    gate_result = {
+        "resolved": [
+            {
+                "uuid": "u-srtwb8004",
+                "canonical_code": "SRTWB8004",
+                "company_id": "c-sorento",
+                "company_name": "Sorento",
+                "display": {"brand": {"brand_code": "sorento"}},
+            }
+        ],
+        "did_you_mean": [],
+    }
+
+    qf, branch_info, lane_info = _run_console_turn(parser_raw, text="yes", gate_result=gate_result)
+
+    assert branch_info["branch"] == "out_of_scope", (
+        f"a confirmed escalation must reach the escalation lane: {branch_info!r}"
+    )
+    result = lane_info["result"]
+    services = lane_info["services"]
+    assert result["pending"] is None, (
+        f"the offer is accepted - no team_clarify, ever: {result['pending']!r}"
+    )
+    services.next_assignee.assert_called_once()
+    body = services.next_assignee.call_args[0][0]
+    assert body["team_code"] == "marketing_product", body
+    assert body["agent_code"] == "general_enquiries", body
+    assert body["brand_code"] == "sorento", body
+    services.resolve_and_gate.assert_called_once()
+    called_with = str(services.resolve_and_gate.call_args)
+    assert "SRTWB8004" in called_with, (
+        f"the focus product must be the one asked about: {called_with}"
+    )
+    comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+    assert comment["text"].startswith("Team: marketing_product\n"), comment["text"]
+    routed_send = result["actions"][-1]
+    assert "marketing product" in routed_send["text"].lower(), routed_send["text"]
+
+
+def test_console_finding_companion_escalate_to_marketing_with_the_word_reaches_the_same_team() -> None:
+    """Console pass companion, item 4: the SAME real previous state, but this turn types
+    the family word "marketing" itself (`ESCALATE TO MARKETING`) instead of a bare "yes"
+    - D2's offer-narrows-the-family rung (`_offered_team(ctx)` reads `open_question.
+    payload.team` directly, never the broken derived routing), so this path is UNAFFECTED
+    by the same-team carry defect the primary test pins. GREEN today: confirmed as a
+    guard the console finding's OTHER half already passes."""
+    parser_raw = _full_emission(
+        message_type="request_for_help",
+        is_affirmative=None,
+        entities=[],
+        routing={"suggested_team": "marketing", "suggested_agent": None},
+        escalation={"is_escalation_confirmation": True, "company_pick": None},
+        user_goal="escalate to marketing",
+    )
+    gate_result = {
+        "resolved": [
+            {
+                "uuid": "u-srtwb8004",
+                "canonical_code": "SRTWB8004",
+                "company_id": "c-sorento",
+                "company_name": "Sorento",
+                "display": {"brand": {"brand_code": "sorento"}},
+            }
+        ],
+        "did_you_mean": [],
+    }
+
+    qf, branch_info, lane_info = _run_console_turn(parser_raw, text="ESCALATE TO MARKETING", gate_result=gate_result)
+
+    assert branch_info["branch"] == "out_of_scope", branch_info
+    result = lane_info["result"]
+    services = lane_info["services"]
+    assert result["pending"] is None, (
+        f"the offer's own team narrows the family with no question: {result['pending']!r}"
+    )
+    services.next_assignee.assert_called_once()
+    body = services.next_assignee.call_args[0][0]
+    assert body["team_code"] == "marketing_product", body
+    assert body["agent_code"] == "general_enquiries", body
+    assert body["brand_code"] == "sorento", body
+    routed_send = result["actions"][-1]
+    assert "marketing product" in routed_send["text"].lower(), routed_send["text"]
