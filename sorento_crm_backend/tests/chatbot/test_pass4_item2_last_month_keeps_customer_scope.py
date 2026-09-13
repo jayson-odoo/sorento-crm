@@ -255,14 +255,17 @@ def _wrong_debtor_code_sibling(name: str, uuid: str) -> dict[str, Any]:
     }
 
 
-class TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver:
+class TestACarriedCustomerPickIsPinnedAtTheGateBothWaysNow:
     """Issue #715 (H77/AC-825), closed by `gate.py`'s own "PINNED PICK WINS OVER FUZZY
-    RE-RESOLUTION" mechanism - NOT by an AND-mode `entity_pins`, which stays refused by
-    PR #456's own contract (references.py:1650-1655: an AND-mode intersection has no
-    per-token view to narrow, and a zero-intersection AND request retries under
-    `force_mode='or'`, where a pin would suddenly start applying). `resolve_entity_body`
-    is unchanged and still omits `entity_pins` in AND mode - asserted below, so this
-    class cannot silently start relying on a pin that was never sent.
+    RE-RESOLUTION" mechanism - which stays the fix for a NEAR-MISS pin (a did-you-mean
+    pick pinning a row an exact AND-mode probe cannot contain at all; see the class
+    below for that shape). What changed in S7 follow-up (owner-found on :3081): AND
+    mode's own `entity_pins` REFUSAL is gone - `resolve_entity_body` now sends the pin
+    in every mode, and the route narrows a pinned token's own candidates to the pinned
+    uuid before intersecting, rather than 400ing. `_the_picked_uuid_replaces...` below
+    still covers the case the ROUTE narrowing cannot reach (the picked uuid absent from
+    the resolver's own bare re-search entirely) - that is still `gate.py`'s job, not
+    the route's.
 
     The mechanism already existed for a CURRENT-turn pick (`pins`, `current_message is
     True`) and was already entered on a CARRIED one (`pins_all`, exec 13705266's own
@@ -283,10 +286,10 @@ class TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver:
     tractable scale (3 siblings, not 99) because the MECHANISM being tested has no
     dependency on the count."""
 
-    def test_resolve_entity_body_still_never_sends_a_pin_in_and_mode(self) -> None:
-        """The companion fact the class docstring states: nothing upstream of the gate
-        changed. If this ever starts asserting an `entity_pins` key, the "REPLACE at
-        the gate, never intersect at the resolver" account above is stale."""
+    def test_resolve_entity_body_now_sends_a_pin_in_and_mode_too(self) -> None:
+        """The ruling reversed (S7 follow-up, owner-found on :3081): the lane sends
+        `entity_pins` in every mode now, AND included. RED today: `resolve_entity_body`
+        still omits it whenever `match_mode == "and"`."""
         from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
 
         ctx = {
@@ -324,7 +327,7 @@ class TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver:
         }
         body = resolve_entity_body(ctx)
         assert body["tokens"] == ["301-C001"], body["tokens"]
-        assert "entity_pins" not in body, body.get("entity_pins")
+        assert body["entity_pins"] == {"301-C001": PICKED_UUID}, body.get("entity_pins")
 
     def test_the_picked_uuid_replaces_the_resolvers_wrong_debtor_code_siblings(self) -> None:
         from app.services.chatbot.lanes.business.gate import run_gate

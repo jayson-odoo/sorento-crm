@@ -468,9 +468,18 @@ class TestEntityPinsBody:
             },
         }
 
-    def test_and_mode_omits_entity_pins_even_with_a_pinned_uuid(self) -> None:
+    def test_and_mode_sends_entity_pins_with_a_pinned_uuid(self) -> None:
+        """Ruling reversed (S7 follow-up, owner-found on :3081): a picked code that is a
+        PREFIX of its siblings (SRTWC286-SH-NEW vs -NEW-150 / -NEW-P / -NEW-200)
+        re-expanded to all four the moment the lane re-resolved the bare token in AND
+        mode, because AND mode never sent the pin that would have narrowed it back to
+        the one row the customer picked. The lane sends pins in every mode now; the
+        route (not this file) is what narrows a pinned token's candidates BEFORE
+        intersecting in AND mode. RED: `resolve_entity_body` still omits `entity_pins`
+        whenever `match_mode == "and"`, regardless of a pinned uuid.
+        """
         body = resolve_gate.resolve_entity_body(self._ctx(match_mode="and"))
-        assert "entity_pins" not in body
+        assert body["entity_pins"] == {"ZZT1": "11111111-1111-1111-1111-111111111111"}
         assert body["match_mode"] == "and"
 
     def test_or_mode_with_a_pinned_uuid_carries_entity_pins(self) -> None:
