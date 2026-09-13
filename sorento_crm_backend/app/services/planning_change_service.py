@@ -935,13 +935,14 @@ def build_batch(
     # UNAPPLIED batch with a PENDING row is mid-review - a second Save, or this same
     # upload naming the order again, is not a second change to review, it is more of the
     # first one. Newest wins where an order somehow has more than one candidate (there
-    # should only ever be one - this IS the invariant), matching `pending_batch_id_by_
-    # sales_order`'s own "newest wins" rule. `id.desc()` breaks a `created_at` tie
-    # deterministically (the reviewer's own suspicion, R1 review round) - two batches born
-    # the same sub-second must not resolve differently between this lookup and `pending_
-    # batch_id_by_sales_order`'s identical ordering. Company scoping needs no extra filter
-    # here: both models are `CompanyScopedMixin` and the session's own scope listener
-    # already narrows every query on them to the caller's company.
+    # should only ever be one - this IS the invariant, restored below by the fold step if
+    # an earlier call left it broken), matching `pending_batch_id_by_sales_order`'s own
+    # "newest wins" rule. `id.desc()` breaks a `created_at` tie deterministically (the
+    # reviewer's own suspicion, R1 review round) - two batches born the same sub-second
+    # must not resolve differently between this lookup and `pending_batch_id_by_sales_
+    # order`'s identical ordering. Company scoping needs no extra filter here: both models
+    # are `CompanyScopedMixin` and the session's own scope listener already narrows every
+    # query on them to the caller's company.
     open_batch_id_by_order: Dict[str, str] = {}
     if by_order:
         for pso_id_found, batch_id_found in (
@@ -1012,6 +1013,10 @@ def build_batch(
     # Rows appended into an order's EXISTING open batch, keyed by that batch's id, so its
     # counts are settled against it rather than against the fresh one.
     kept_rows_by_existing_batch: Dict[str, List[PlanningChangeRow]] = defaultdict(list)
+    # Which orders this call appended a row into their EXISTING open batch for - append
+    # wins as the fold target over a same-call supersede's fresh row (R1 review round,
+    # the fold rule below).
+    orders_appended: set = set()
     for pso_id, group in by_order.items():
         order = group[0]["order"]
         open_batch_id = open_batch_id_by_order.get(pso_id)
@@ -1065,6 +1070,7 @@ def build_batch(
                 # id returned) rather than raising a second batch for the order to review.
                 row.batch_id = open_batch_id
                 kept_rows_by_existing_batch[open_batch_id].append(row)
+                orders_appended.add(pso_id)
                 continue
             if older is not None:
                 # R1's other half: a later change to a line the open batch ALREADY has a
@@ -1072,9 +1078,16 @@ def build_batch(
                 # it - superseded in place, reason stated, and the FRESH row below carries
                 # the line forward into a new batch (the open batch's own row for this
                 # line is no longer pending, so `pending_batch_id_by_sales_order` reads
-                # only the new one for the order - still exactly one candidate).
+                # only the new one for the order - still exactly one candidate, restored
+                # by the fold step below if this order also has OTHER pending rows
+                # elsewhere).
                 older.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
                 older.applied_reason = "Replaced by a later change"
+                # S2 (R1 review round): "Was" reads what the ACTIVE DECISION was taken
+                # against, not this edit's own before value - `older.from_json` already
+                # carries that forward correctly, whether `older` itself is the original
+                # held state or an earlier replacement that already chained it through.
+                row.from_json = older.from_json
             kept_rows.append(row)
 
     if not kept_rows and not kept_rows_by_existing_batch:
@@ -1110,6 +1123,84 @@ def build_batch(
             .all()
         })
         result_batch = result_batch or existing
+
+    # Fold (R1 review round, "a line has at most one live pending row across every open
+    # batch"): whichever batch THIS call designates as an order's PRIMARY one - the
+    # existing open batch it appended into, or else the fresh one a supersede (or a
+    # brand-new order) used - has to be the order's ONLY one left with pending rows once
+    # this call is done, or `pending_batch_id_by_sales_order` can miss a line entirely
+    # (two open batches, one candidate returned - the exact shape that reached SO400884).
+    # Every OTHER unapplied batch of the order still carrying a pending row has it moved
+    # into the primary, or superseded if the primary already covers that same line - never
+    # left behind in a batch nobody is looking at any more. Flushed first so the fold's own
+    # reads see every row this call itself just wrote or superseded.
+    db.flush()
+    folded_batch_ids: set = set()
+
+    def _primary_batch_id(pso_id: str) -> str:
+        return (
+            open_batch_id_by_order[pso_id]
+            if pso_id in orders_appended
+            else str(batch.id)
+        )
+
+    for pso_id in kept_orders:
+        primary_id = _primary_batch_id(pso_id)
+        primary_lines = {
+            str(line_id)
+            for (line_id,) in db.query(PlanningChangeRow.project_line_id)
+            .filter(
+                PlanningChangeRow.batch_id == primary_id,
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+                PlanningChangeRow.project_line_id.isnot(None),
+            )
+            .all()
+        }
+        stray_rows = (
+            db.query(PlanningChangeRow)
+            .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+            .filter(
+                PlanningChangeRow.project_sales_order_id == pso_id,
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+                PlanningChangeRow.batch_id != primary_id,
+                PlanningChangeBatch.applied_at.is_(None),
+            )
+            .all()
+        )
+        for stray in stray_rows:
+            line_id = str(stray.project_line_id) if stray.project_line_id else None
+            if line_id is not None and line_id in primary_lines:
+                stray.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
+                stray.applied_reason = "Replaced by a later change"
+                continue
+            folded_batch_ids.add(str(stray.batch_id))
+            stray.batch_id = primary_id
+            if line_id is not None:
+                primary_lines.add(line_id)
+
+    if folded_batch_ids:
+        db.flush()
+        primary_ids_touched = {_primary_batch_id(pso_id) for pso_id in kept_orders}
+        for touched_id in folded_batch_ids | primary_ids_touched:
+            touched = db.get(PlanningChangeBatch, touched_id)
+            if touched is None:
+                continue
+            # An append-only record of everything a batch has ever carried, superseded
+            # rows included - the fold moves or supersedes rows in place, so both the
+            # batch a row left and the one it landed in need this recount, not just the
+            # one this call's own main loop already settled above.
+            touched.line_count = (
+                db.query(PlanningChangeRow)
+                .filter(PlanningChangeRow.batch_id == touched.id)
+                .count()
+            )
+            touched.order_count = len({
+                str(pid)
+                for (pid,) in db.query(PlanningChangeRow.project_sales_order_id)
+                .filter(PlanningChangeRow.batch_id == touched.id)
+                .distinct()
+                .all()
+            })
 
     db.flush()
     return result_batch
