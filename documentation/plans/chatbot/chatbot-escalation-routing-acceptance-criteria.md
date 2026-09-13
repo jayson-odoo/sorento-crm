@@ -114,8 +114,10 @@ she typed and the code she picked.
   " handling <brand>" copy are previewable, for every shape above (H37). pytest parametrised
   over the shapes.
 - AC-1142 The lane's resolve call uses the production bundle's resolver with the request's
-  company scope; a resolver error degrades to "not found" (did-you-mean or brand none), never
-  a failed turn. pytest with a raising resolver.
+  company scope, in per-token OR mode (finding 7: AND mode has no exact tier at all, so an
+  exact code match never reached `resolved`) - a resolver error degrades to "not found"
+  (did-you-mean or brand none), never a failed turn. pytest with a raising resolver;
+  Postgres test for the seam (seeded product + brand, scoped session, real route).
 - AC-1143 The strict xfail tests for H26 and H27 in `test_s5_escalation_lane.py` become
   passing tests; their "no resolve call on live lane" counterparts are retired with a note.
 - AC-1144 Replay: no real n8n capture exists for the 11 Sep or 21 Aug turns (console-only),

@@ -1,6 +1,6 @@
 # PLAN - Chatbot escalation routing: verb, team and brand from one source each
 
-Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477; review follow-ups S9, N15, S11, S12 and the yes/no guard on top (cf5e10f3d, c79377c63, 09f9b6532). FOUR owner console passes, each finding one defect, each fixed with the tester's real-shape tests merged - the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), the miss lane's combined did-you-mean plus escalate offer (b6e108634), a pick dropping the non-product entity it had kept (bd815fcc8), and a parser-named team not answering the team question (13f91a219). Owner ruling D8 from the same pass is built: the routed-to-PIC copy names the brand for the two marketing teams (52a9c09a8). A FIFTH console pass found the brand unpreviewable from a dry run (finding 5); owner ruling D9 is built (S7, ce5b7acd4 + tester's red 096f65e53): a dry run now runs the resolver and the assignee preview exactly like a live turn, gating only `next_assignee` / `sla_create`. Review round 8 (D9) is READY on 836b769b0, no blockers - the verdict covers S7. S1 to S7, three review rounds, the tester's ten rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. All four console root causes are #863's - see "Found on the console pass". Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
+Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477; review follow-ups S9, N15, S11, S12 and the yes/no guard on top (cf5e10f3d, c79377c63, 09f9b6532). FOUR owner console passes, each finding one defect, each fixed with the tester's real-shape tests merged - the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), the miss lane's combined did-you-mean plus escalate offer (b6e108634), a pick dropping the non-product entity it had kept (bd815fcc8), and a parser-named team not answering the team question (13f91a219). Owner ruling D8 from the same pass is built: the routed-to-PIC copy names the brand for the two marketing teams (52a9c09a8). A FIFTH console pass found the brand unpreviewable from a dry run (finding 5); owner ruling D9 is built (S7, ce5b7acd4 + tester's red 096f65e53): a dry run now runs the resolver and the assignee preview exactly like a live turn, gating only `next_assignee` / `sla_create`. Review round 8 (D9) is READY on 836b769b0, no blockers - the verdict covers S7. Review round 9 was NOT READY on c500b4398 (D10's first cut over-fired on the D5 one-team offer and `engine._arm_crossdomain_offer`, plus doc/test nits); restated and fixed (071edb1da), pending re-review. A SIXTH console pass (finding 7, same session as finding 6) found the resolver itself never yielding a brand for a real code - AND mode has no exact tier - independent of D10; fixed (a48e5d93c), measured end to end on the stack DB, pending the tester's Postgres seam test and re-review. S1 to S7, three review rounds plus round 9, the tester's eleven rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. All four console root causes are #863's - see "Found on the console pass". Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
 UAC: `chatbot-escalation-routing-acceptance-criteria.md` (AC-11xx).
 Predecessors: `PLAN-chatbot-focus-multi-domain.md` (lane 1, the dialogue state this lane's open questions live in), `PLAN-chatbot-turn-engine.md` S5 (the escalation lane port, hazards H26 / H27 / H37).
 Issue: #865 (13 Sep 2026).
@@ -270,6 +270,31 @@ persisted `team_pick`'s own `payload.product_code`, and `_resumed_team_pick` now
 checks the previous question's `expects != "yes_no"` and that `payload.product_code` is
 truthy before returning it. `focus.products` is read only in the ORIGINAL D3 no-question
 case; the resumed case resolves the frozen code instead.
+
+**Finding 7 (owner console re-pass, 13 Sep 2026, prompt v16): the brand was STILL blank on
+the stack DB with D10 wired.** Measured in-process against `sorento_ai_automation_focus_full`
+with the contact's real company scope set: `escalation_services._resolve_and_gate` sends
+`resolve_entity_body`'s own `match_mode` default, `parse_output.match_mode or "and"` - every
+lane call therefore ran in AND mode, and AND mode has no exact tier at all. The route's AND
+path returns `{"intersection": [...], "by_entity_type": {...}}`, every row stamped
+`match_tier="and"` (`references.py`'s own note on `_and_probe_product`: "there is no exact
+tier on that path"), which carries no `resolutions` key at all - `_product_rows` reads only
+`payload["resolutions"][].matches`/`.alternatives` with tier `exact`, so `resolved` and
+`did_you_mean` came back empty for SRTWB8004 even though the route resolved it (one row,
+`display.brand` SORENTO) - `_carried_brand` and `_resolve_product` both saw `None`, brand
+null, no "handling" copy, independent of D10 entirely. Unscoped probes (and the CI DB, which
+has no seed data) AND falls back to OR with zero rows either way, which is why nothing had
+caught it before. Cause: this lane sends ONLY product code tokens and reads ONE fact per
+token (`_product_tokens` already scopes the read that way) - the per-token view IS the OR
+mode, and AND's cross-token intersection is for compound phrases ("bidet seat cover for
+SRTWC60630-SH" as one claim) this lane never sends. Fixed (a48e5d93c): `_resolve_and_gate`
+overrides a fourth key, `match_mode: "or"`, beside `query` / `spec_fallback` /
+`understand_phrase`. Measured end-to-end on the stack DB (turn
+`bc349fab-643c-4175-9fd4-90d5dbb902c3`, real ctx/item, real scope, real resolver, real
+roster, D10's `payload.product_code` simulated since the capture predates the fix): the
+routed send_message reads "...from Marketing Product team handling SORENTO...", and the
+previewed assignee (respond_user_id `1098828`) is Tay Zhi Yang, the Sorento-tagged tier-1
+member the plan's own roster facts name.
 
 ### Not built, with the reason
 
