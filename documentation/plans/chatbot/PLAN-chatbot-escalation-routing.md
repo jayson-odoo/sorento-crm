@@ -97,19 +97,37 @@ The `same_team` gate in `escalation_context` is kept in spirit (D3) and evaluate
 the landed team: the function takes the landed team as a parameter and `_human_intervention`
 re-runs it once the ladder has decided, so there is one ladder rather than two.
 
-**Deviation, S5, measured 13 Sep 2026 (coder).** The other half of this paragraph -
-`tail/compile_state`'s brand-company axes block and its `fresh` flag - is NOT changed, because
-on this stack that block's output is never read by another turn. Lane 1 (#863) reduced the
-persisted session to five keys (`contracts.SESSION_VAR_KEYS` = `focus`, `open_question`,
-`ideation`, `access_levels`, `contains_flyer`) and `SessionVars(extra="forbid")` rejects a
-sixth, so `routing`, `routing_brand`, `routing_brand_source`, `routing_company`,
-`routing_companies` and `routing_roster_plan` are computed there and then dropped. Comparing
-them against the landed team would change a value nothing reads, in a block 224
-`compile-current-state` captures grade. The trigger to do it: any of those keys returning to
-`SESSION_VAR_KEYS`. What carries the brand forward today is `focus.brands` through
-`query_brands`, which `escalation_context`'s `stated_brand` rung already reads, and the
-previous turn's TEAM is carried as the domain (`focus.domains` -> `derive_routing`), which is
-why the team ladder's "previous turn's team" rung falls back to the team this turn inherited.
+**Deviation, S5, corrected after review round 2 (captain's ruling, 13 Sep 2026).** The
+five-key session (`contracts.SESSION_VAR_KEYS` = `focus`, `open_question`, `ideation`,
+`access_levels`, `contains_flyer`, with `SessionVars(extra="forbid")` rejecting a sixth) means
+the keys the D3 rung was written against - `routing`, `routing_brand`, `routing_companies`,
+`routing_company`, `routing_roster_plan` - are never in a real turn's session at all. So the
+rung could not fire, and the first version of this paragraph named a fallback that does not
+exist: `query_brands` comes from `_stated_brands` (brand WORDS in the message, brand-hint
+entities, access levels) and a resolved product's brand is never written there. Journey step 4
+would have shipped with brand None, passing its test on a fixture shape no session can hold.
+
+**What the carry reads instead, with no new slot and no new key.** When this turn names no
+product, the lane takes the conversation's product from `focus.products` and the previous
+turn's team from `derive_routing` over `focus.domains` - the team is a function of the domain,
+by the same table the head's own chain uses, so a photo turn is `product_attachment` ->
+`marketing_product` and a stock turn is `inventory` -> `warehouse`. When that team equals the
+LANDED team, the lane resolves that focus product through the seam it already has (one extra
+call, on this rung only, inside the same savepoint) and takes its brand; otherwise the brand
+is none. `escalation.{_carried_products,_carried_team,_carry_ctx,_carried_brand}`, composed in
+`_landed_item` below this turn's own product and above the legacy axes.
+
+`escalation_context`'s rungs 2 and 3 keep their `routing_*` reads rather than being deleted:
+`routing_source == "multi_company_unpicked"` is how the company-clarify arm is reached and it
+is pinned end to end (`test_escalation_context_ladder`, `test_clarify_company_ask_always_in_
+reply`, `test_s5_escalation_seams.py`), and a session written by n8n's own spine still carries
+those keys while both halves of the migration are live. They are a documented no-op on a
+CRM-written session.
+
+`tail/compile_state`'s brand-company axes block and its `fresh` flag are NOT changed, for the
+same measured reason: every key that block writes is dropped before the session is written, so
+the change would alter a value no later turn reads inside a block 224 `compile-current-state`
+captures grade. The trigger to revisit: any of those keys returning to `SESSION_VAR_KEYS`.
 
 ### Not built, with the reason
 

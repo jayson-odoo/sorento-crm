@@ -211,6 +211,19 @@ def escalation_context(
     Both axes are always what the `get-cs-members` call USED, never re-derived from this
     turn's `query_brands`: re-deriving would narrow the assignee pool to one the customer
     was never shown.
+
+    **Rungs 2 and 3 read keys a five-key session cannot hold.** `routing`, `routing_brand`,
+    `routing_companies`, `routing_company` and `routing_roster_plan` stopped being persisted
+    when the session became five keys (`contracts.SESSION_VAR_KEYS`, and `SessionVars(extra=
+    "forbid")` rejects a sixth), so on a real turn `company_pick`, `sameTeam` and
+    `multi_company_unpicked` cannot fire. They are KEPT, not deleted, for two reasons: the
+    company-clarify arm is reached through `routing_source == "multi_company_unpicked"` and
+    is pinned end to end (`test_escalation_context_ladder`, `test_clarify_company_ask_always
+    _in_reply`, `test_s5_escalation_seams.py`), and a session written by n8n's own spine
+    still carries those keys while both halves of the migration are live. What D3's carry
+    actually runs on today is the FOCUS, in the lane: `_carried_brand` reads
+    `focus.products` and `_carried_team` re-derives the previous turn's team from
+    `focus.domains`, because that is what a real session holds.
     """
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     prev = _prev_variables(ctx)
@@ -635,9 +648,15 @@ def _human_intervention(
     # routing chain resolved stands.
     landed = routed["team"] if (routed is not None and routed["kind"] == "assign") else team
     assignee = routed["assignee"] if routed is not None else None
+    # D3, and it runs ONLY when this turn named no product of its own: the conversation's
+    # current product carries, but only from a turn that was already on the team this
+    # escalation lands on.
+    carried = _carried_brand(ctx, context_item, services, landed) if product is None else None
     actions = _assign(
         ctx,
-        _landed_item(context_item, ctx=ctx, team=team, landed=landed, product=product),
+        _landed_item(
+            context_item, ctx=ctx, team=team, landed=landed, product=product, carried=carried
+        ),
         landed,
         services,
         assignee=assignee,
@@ -664,6 +683,97 @@ def _this_turn_products(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _carried_products(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """WHAT THE CONVERSATION IS ABOUT, off the session's `focus.products` slot.
+
+    This is the D3 carry's subject, and `focus` is where it lives: the five-key session
+    (`contracts.SESSION_VAR_KEYS`) persists `focus`, `open_question`, `ideation`,
+    `access_levels` and `contains_flyer` and NOTHING else, so the `routing_*` keys the old
+    carry rung read are never in a real turn's session. `dialogue/focus.py` is the one
+    writer of this slot and it already carries the product forward, which is why the carry
+    needs no key of its own.
+    """
+    from app.services.chatbot.head.output_exchange import focus_value
+
+    value = focus_value(_prev_variables(ctx), "products")
+    rows = value if isinstance(value, list) else ([value] if jsc.truthy(value) else [])
+    return [
+        r
+        for r in rows
+        if jsc.truthy(r) and jsc.truthy(jsc.get(r, "canonical_code") or jsc.get(r, "raw"))
+    ]
+
+
+def _carried_team(ctx: dict[str, Any]) -> Any:
+    """The team the PREVIOUS turn was routed to, re-derived from the domain it carried.
+
+    `routing` is not a session key either, so the previous turn's team is not stored - but
+    its DOMAIN is (`focus.domains`), and the team is a function of the domain: one table,
+    `derive_routing`, the same one the head's own chain uses. A photo turn carries
+    `product_attachment`, which is `marketing_product`; a stock turn carries `inventory`,
+    which is `warehouse`. That is journey steps 4 and 6, and it is why one carries a brand
+    and the other does not.
+
+    Entities are deliberately EMPTY in the call: the only thing they decide in that function
+    is the certificate split inside `product_attachment`, which is a fact about the
+    PREVIOUS message's words, not about the domain it left behind.
+    """
+    from app.services.chatbot.head.output_exchange import derive_routing, focus_domain
+
+    domain = focus_domain(_prev_variables(ctx))
+    if not jsc.truthy(domain):
+        return None
+    derived = derive_routing(
+        {"domain_hint": domain, "entities": [], "intent_hint": None, "user_goal": None}
+    )
+    return jsc.nullish_str(jsc.get(derived, "suggested_team")).strip().lower() or None
+
+
+def _carry_ctx(ctx: dict[str, Any], products: list[dict[str, Any]]) -> dict[str, Any]:
+    """`ctx` with the CARRIED products standing in as this turn's entities, for one resolve.
+
+    A shallow copy down to `parse.output`, so the real emission is untouched: the resolve
+    seam answers "what is this code" and the code it must be asked about is the carried one,
+    not the empty entity list an escalation turn arrives with. `current_message` is stamped
+    true because that is how every reader of an entity list says "this is the set to
+    resolve", including the seam's own token filter.
+    """
+    parse = dict(jsc.get(ctx, "parse") or {})
+    output = dict(jsc.get(parse, "output") or {})
+    output["entities"] = [{**p, "current_message": True} for p in products]
+    parse["output"] = output
+    return {**ctx, "parse": parse}
+
+
+def _carried_brand(
+    ctx: dict[str, Any], context_item: dict[str, Any], services: Any, landed: Any
+) -> str | None:
+    """D3: the brand of the product the conversation is about, or None. One extra resolve.
+
+    The rule is the owner's (D3) and the discriminator is the LANDED team: the previous
+    turn's product and brand carry only when that turn was already routed to the team this
+    escalation lands on. A photo turn on marketing_product then "ESCALATE TO MARKETING"
+    carries `mocha` and asks nothing; a stock turn on warehouse then the same message
+    carries nothing, so the whole tier-1 pool is drawn from.
+
+    The BRAND is resolved rather than read from the session, because the session does not
+    hold one: the five keys carry what the conversation is ABOUT (`focus.products`), and the
+    brand is a fact about that product which the resolver owns. One extra call, on this rung
+    only, through the same seam and therefore the same savepoint as the main one.
+    """
+    if jsc.nullish_str(landed).strip().lower() != jsc.nullish_str(_carried_team(ctx)).strip().lower():
+        return None
+    products = _carried_products(ctx)
+    if not products:
+        return None
+    # NO did-you-mean on this rung: the customer did not type this code on this turn, so a
+    # picker about it would answer a question nobody asked. A miss simply carries no brand.
+    resolved = _resolve_product(
+        _carry_ctx(ctx, products), context_item, services, offer_did_you_mean=False
+    )
+    return jsc.get(resolved, "brand_code") if resolved is not None else None
+
+
 def _brand_of(row: Any) -> str | None:
     """`display.brand.brand_code`, lowercased - `lanes/business/gate.py`'s own `_bc`.
 
@@ -681,7 +791,11 @@ def _brand_of(row: Any) -> str | None:
 
 
 def _resolve_product(
-    ctx: dict[str, Any], context_item: dict[str, Any], services: Any
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    services: Any,
+    *,
+    offer_did_you_mean: bool = True,
 ) -> dict[str, Any] | None:
     """The product this turn named, resolved through the business lane's own resolver.
 
@@ -722,7 +836,7 @@ def _resolve_product(
     # has already chosen from rows we printed, and offering them again would be a loop with
     # the same three codes in it.
     ask = None
-    if not resolved and did_you_mean and _deferred_team_word(ctx) is None:
+    if offer_did_you_mean and not resolved and did_you_mean and _deferred_team_word(ctx) is None:
         ask = _product_pick_ask(ctx, context_item, did_you_mean)
     return {
         # One row is the answer. Several rows that agree on a brand still name it - that is
@@ -911,6 +1025,7 @@ def _landed_item(
     team: Any,
     landed: Any,
     product: dict[str, Any] | None,
+    carried: str | None = None,
 ) -> dict[str, Any]:
     """The item the assignment is built from: the LANDED team's axes, never the inherited.
 
@@ -941,6 +1056,11 @@ def _landed_item(
                 "resolved_product" if product["brand_code"] else item.get("routing_source")
             ),
         }
+    elif jsc.truthy(carried):
+        # D3's carry, judged against the landed team (`_carried_brand`). Below this turn's
+        # own product and above the legacy axes, which is the precedence the plan's steps
+        # 1 to 3 describe.
+        item = {**item, "brand_code": carried, "routing_source": "carried_product"}
     return item
 
 
