@@ -4,13 +4,14 @@
  * of the board, with the same `onDecide` write path the grid view uses.
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BoardContribution,
   BoardDecision,
   BoardDraft,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -64,6 +65,7 @@ function renderView(
     draft?: BoardDraft;
     onDecide?: (key: string, decision: BoardDecision | null) => void;
     onDecideMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+    annotations?: Map<string, BoardChangeAnnotation[]>;
   } = {},
 ) {
   const rows = overrides.contributions ?? [contribution()];
@@ -89,6 +91,7 @@ function renderView(
       draft={overrides.draft ?? {}}
       onDecide={onDecide}
       onDecideMany={onDecideMany}
+      annotations={overrides.annotations}
     />,
   );
   return { ...utils, onDecide, onDecideMany };
@@ -795,4 +798,98 @@ describe('FulfilmentBoardListView: thin rows (owner feedback 13 Sep, AC-C13)', (
     expect(screen.queryByTestId('supply-bar')).not.toBeInTheDocument();
     expect(document.querySelector('[role="progressbar"]')).toBeNull();
   });
+});
+
+/**
+ * R3 (captain's ruling, 13 Sep board-display round, scenario S5): a cancelled changed line
+ * has a home on the list - Outstanding 0, the change icon in the Outstanding column, a
+ * "Cancelled" verdict, and no quick-Save control (there is nothing left to decide FOR).
+ *
+ * `BoardContribution` carries no `cancelled` field yet (grepped `fulfilmentPlanning.types
+ * .ts` - absent), so this fixture adds it ad hoc; `BoardDecisionPill` has no branch for it
+ * either (only `unplannable` short-circuits), and `canQuickSave` (`_shared/lib/boardAmend
+ * .ts`) does not exclude a cancelled contribution - both are the genuine reds below. The
+ * change ICON itself is expected to already work: `changedFieldsOf` (`boardChangeAnnotations
+ * .ts`) returns a single `qty` field for a `closed: true` annotation, which
+ * `FulfilmentBoardListView`'s own `changeIcons` reads to place it in the 'outstanding'
+ * column - kept as an assertion here as a guard, not a claim of red.
+ */
+describe('FulfilmentBoardListView - a cancelled changed line (R3, S5)', () => {
+  const S5_LINE_ID = 'line-s5';
+  const S5_ROW_ID = 'row-s5';
+
+  function s5Annotation(): BoardChangeAnnotation {
+    return {
+      rowId: S5_ROW_ID,
+      soNumber: 'SO400884',
+      lineNo: 1,
+      itemCode: 'CB4702',
+      kind: 'cancelled',
+      closed: true,
+      was: { qty: '72', date: '2026-12-28', decision: 'Reserve 72 BRW-BB' },
+      now: { qty: null, date: null, decision: null },
+      suggestionLines: ['Release 72 to BRW-BB pool'],
+      lateDays: null,
+      shortfallQty: null,
+      productChangedFrom: null,
+      movedTransfer: null,
+      projectLineId: S5_LINE_ID,
+    };
+  }
+
+  function s5Contribution(): BoardContribution {
+    return {
+      ...contribution({
+        key: 'so-s5:line-1',
+        so_number: 'SO400884',
+        line_no: 1,
+        item_code: 'CB4702',
+        project_line_id: S5_LINE_ID,
+        qty: '0',
+        qty_outstanding: '0',
+        covered: false,
+        unplannable: false,
+        decision: null,
+      }),
+      // Not yet on `BoardContribution` - the field the board-side fix is expected to add
+      // (the captain's ruling names it `cancelled`; rename here if the coder picks a
+      // different key).
+      cancelled: true,
+    } as BoardContribution & { cancelled: boolean };
+  }
+
+  it('lists a cancelled changed line with Outstanding 0, a Cancelled verdict, the change icon, and no Save control', async () => {
+    renderView({
+      contributions: [s5Contribution()],
+      annotations: new Map([[S5_LINE_ID, [s5Annotation()]]]),
+    });
+
+    const row = (await screen.findByText('SO400884')).closest('tr') as HTMLElement;
+    expect(row).not.toBeNull();
+
+    // Outstanding qty column: 0.
+    expect(within(row).getByText('0')).toBeInTheDocument();
+
+    // The change icon, in the Outstanding column (`data-column="outstanding"`), per
+    // `changedFieldsOf`'s single `qty` field for a closed/cancelled annotation.
+    const icon = within(row).getByTestId(`board-change-icon-${S5_ROW_ID}`);
+    expect(icon).toHaveAttribute('data-column', 'outstanding');
+
+    // Verdict column: the plain word "Cancelled" - not "Suggested", which is what
+    // `BoardDecisionPill` falls through to today with no `cancelled` branch.
+    const pill = within(row).getByTestId('decision-pill-so-s5:line-1');
+    expect(pill.textContent).toBe('Cancelled');
+
+    // No quick-Save control: there is nothing left on this line to decide FOR.
+    expect(
+      within(row).queryByRole('button', { name: /Save SO400884 line 1 as suggested/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // "Counts a cancelled line in Confirm (N)" is a `confirmSummaryFor` unit test, not a list-
+  // view render test - `Confirm (N)` is not this component's own header, and `BoardDecided
+  // Marker` (the tick this file's other pattern would have reached for) answers a different
+  // question ("is this cell/row already covered by an active decision") that a cancelled,
+  // uncovered line does not touch either way. See `_shared/lib/fulfilmentBoard.test.ts`,
+  // `describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display round)')`.
 });
