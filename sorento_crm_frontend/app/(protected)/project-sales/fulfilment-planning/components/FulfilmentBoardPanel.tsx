@@ -52,6 +52,7 @@ import { usePlanningChangeBatchesByIds } from '../../_shared/hooks/usePlanningCh
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
   annotationsByCell,
+  annotationsByLine,
   preMarkedKeys,
   uncoverChangedLines,
 } from '../../_shared/lib/boardChangeAnnotations';
@@ -1000,6 +1001,15 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * The same annotations keyed by LINE, for the list view: a list row is one line, so it
+   * does not have to know which cell that line landed in to say what moved (AC-C9).
+   */
+  const changeAnnotationsByLine = React.useMemo(
+    () => annotationsByLine(changeBatchData),
+    [changeBatchData],
+  );
+
+  /**
    * What the decision strip is summed over: THE LINES THE CURRENT VIEW CAN SHOW.
    *
    * The grid renders cells, and at day granularity those are a 30-day window; the list renders
@@ -1529,6 +1539,7 @@ export function FulfilmentBoardPanel({
                 draft={draft}
                 onDecide={decide}
                 onDecideMany={decideMany}
+                annotations={changeAnnotationsByLine}
               />
             ) : (
               <>
