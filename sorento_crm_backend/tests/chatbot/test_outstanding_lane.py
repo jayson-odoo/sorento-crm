@@ -3523,7 +3523,16 @@ class TestScopeQuestionCarriesTheFullHeader:
     def test_first_ask_prints_all_four_header_lines(self, session_factory, monkeypatch) -> None:
         """A bare outstanding ask naming a product, a customer, a location word and a
         date window must print all four report-header lines, filled, before the
-        question - not just `Product:` (today's actual gap)."""
+        question - not just `Product:` (today's actual gap).
+
+        R19b (coder round 7): the `Customer:` line now comes ONLY from real
+        `customers` rows for the resolved `customer_ids` (`outstanding_report_
+        service._customer_echo`), no entity-label fallback - so the picked customer
+        needs a REAL row, not just a resolver match. `tests._mc_lookup_seed.customer`
+        mints its OWN id; this test uses the returned `row.id` in place of the old
+        `CUSTOMER_UUID` constant (the brief's other option, adding an id-taking
+        parameter to that shared helper, would touch every other file that imports
+        it for no gain here)."""
         from app.models.inventory import Warehouse
 
         db = session_factory()
@@ -3533,6 +3542,7 @@ class TestScopeQuestionCarriesTheFullHeader:
                 Warehouse(id=str(uuid.uuid4()), warehouse_code="MWH-IB", warehouse_name="MWH IB", is_active=True),
             ]
         )
+        cust = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name=CUSTOMER_NAME)
         db.commit()
         _seed_contact(session_factory, variables={})
         result, captured = _run_turn(
@@ -3562,7 +3572,7 @@ class TestScopeQuestionCarriesTheFullHeader:
             matches={
                 PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE},
                 "Dealer A": {
-                    "uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME,
+                    "uuid": cust.id, "entity_type": "customer", "canonical_code": CUSTOMER_NAME,
                     "display": {"customer_name": CUSTOMER_NAME},
                 },
             },
@@ -3610,14 +3620,27 @@ class TestScopeQuestionCarriesTheFullHeader:
     ) -> None:
         """AC-1162, R19 x R16: the owner's own live trace - after picking a customer
         off the picker the re-armed scope question printed `Product: SRTKT39SS` and
-        nothing else. The picked customer's own name (carried on the resolved pick
-        entity) must appear on a `Customer:` line, and the two axes nobody named
-        (`Location:` / `Order date:`) must say `all`, not be silently dropped."""
+        nothing else. The picked customer's own name (looked up from the real
+        `customers` row, R19b) must appear on a `Customer:` line, and the two axes
+        nobody named (`Location:` / `Order date:`) must say `all`, not be silently
+        dropped.
+
+        R19b (coder round 7): the `Customer:` line is the customer ROW's own name,
+        never the picker's roster label - `(SRT)` there is a company-code suffix the
+        picker prints so the reader can tell two accounts apart, not part of the
+        customer's name, and R19b forbids it on this line. The picked row (idx 1)
+        gets a REAL `customers` row, in place of the old `HANLIM_UUID_1` constant
+        (the id-substitution option, same as the other two tests in this class); the
+        unpicked row (idx 2) needs none, since only the RESOLVED `customer_ids`
+        (here, just the pick) reach the name lookup."""
         product_uuid = "66666666-6666-6666-6666-666666666666"
         product_code = "SRTKT39SS"
+        db = session_factory()
+        hanlim_trading = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="HANLIM TRADING SDN BHD")
+        db.commit()
         roster = [
             {
-                "idx": 1, "label": "HANLIM TRADING SDN BHD (SRT)", "uuid": HANLIM_UUID_1,
+                "idx": 1, "label": "HANLIM TRADING SDN BHD (SRT)", "uuid": hanlim_trading.id,
                 "product": HANLIM_CODE_1, "entity_type": "customer",
             },
             {
@@ -3670,8 +3693,12 @@ class TestScopeQuestionCarriesTheFullHeader:
         )
         reply = (result.reply or {}).get("text") or ""
         assert f"Product: {product_code}" in reply, reply
-        assert "Customer: HANLIM TRADING SDN BHD (SRT)" in reply, (
+        assert "Customer: HANLIM TRADING SDN BHD" in reply, (
             f"the JUST-PICKED customer's own name must appear on the Customer line: {reply!r}"
+        )
+        assert "Customer: HANLIM TRADING SDN BHD (SRT)" not in reply, (
+            f"the picker's company-code suffix is not part of the customer's name and "
+            f"must never reach this line (R19b): {reply!r}"
         )
         assert "Location: all" in reply, reply
         assert "Order date: all" in reply, reply
@@ -3687,7 +3714,15 @@ class TestScopeQuestionCarriesTheFullHeader:
         the question is actually about. Asserted on the reply text only (the brief's
         own preference) - the storage shape (an entities list carrying the resolved
         customer's name, mirrored here from the OTHER tests in this class) is the
-        coder's to choose."""
+        coder's to choose.
+
+        R19b (coder round 7): the `Customer:` line comes ONLY from a real
+        `customers` row for the stored `customer_ids`, so this test seeds one and
+        uses the returned `row.id` in place of the old `CUSTOMER_UUID` constant (the
+        same id-substitution choice made for the other two tests in this class)."""
+        db = session_factory()
+        cust = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name=CUSTOMER_NAME)
+        db.commit()
         _seed_contact(
             session_factory,
             variables={
@@ -3695,7 +3730,7 @@ class TestScopeQuestionCarriesTheFullHeader:
                 "domain_hint": "order",
                 "entities": [
                     {
-                        "raw": CUSTOMER_NAME, "hint": "customer", "uuid": CUSTOMER_UUID,
+                        "raw": CUSTOMER_NAME, "hint": "customer", "uuid": cust.id,
                         "canonical_code": CUSTOMER_NAME, "current_message": False,
                     },
                 ],
@@ -3709,7 +3744,7 @@ class TestScopeQuestionCarriesTheFullHeader:
                     "product_code": None,
                     "date_filter_start": None,
                     "date_filter_end": None,
-                    "customer_ids": [CUSTOMER_UUID],
+                    "customer_ids": [cust.id],
                     "warehouse_codes": [],
                     "location_token": None,
                 },
