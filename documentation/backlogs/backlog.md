@@ -213,3 +213,9 @@ removed copy, for whoever restores a UI for them:
   (rail / layers vertical group), not changed by r6. **Trigger:** any request with 3+ lines on a
   laptop-height viewport. Fix: give the rail its own `overflow-y-auto` with a min height, or
   size the rail panel from the line count. | `plans/dealer-kit/PLAN-price-tag-r6.md` | Medium | Open |
+- **BL-064** (2026-09-12, portal r8 security review): `POST /api/v1/public/portal/ai-extract`
+  has no per-contact or per-IP rate limit (only the 12 files / 150 MB per-call cap) while
+  `request-otp` is rate limited. Per-tile "Extract with AI" makes it a one-tap, repeatable LLM
+  spend surface for any valid portal token. **Trigger:** a contact over N extracts per hour in
+  `integration_logs`, or an LLM bill spike. Fix: reuse the `portal_otp` limiter shape keyed on
+  contact id. | `plans/portal/PLAN-portal-price-tag-journey-r8.md` | Low | Open |

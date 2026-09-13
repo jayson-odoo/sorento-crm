@@ -15,9 +15,11 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  Copy,
   FileText,
   History,
   Info,
+  PencilLine,
   Plus,
   Sparkles,
   Trash2,
@@ -43,6 +45,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -87,6 +91,7 @@ import {
 } from '../lib/portal-client';
 import {
   portalDetailPath,
+  portalDuplicatePath,
   portalHomePath,
   portalVerifyPath,
 } from '../lib/portal-paths';
@@ -99,7 +104,6 @@ import { AsyncCombobox } from './AsyncCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
 import { MultiPillInput } from './MultiPillInput';
-import { ReviseAction } from './ReviseAction';
 import { RevisionHistory } from './RevisionHistory';
 import {
   InquiryFormTableRow,
@@ -464,6 +468,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     [detail],
   );
   const revisionPolicy = detail?.revision ?? null;
+  // R3-5: the one-line revision status, moved into the header beside the form
+  // number and the prev/next counter - the ONLY place it renders now, not a
+  // second gear row's own budget text.
+  const revisionStatusText = revisionPolicy
+    ? revisionPolicy.allowed
+      ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
+      : (revisionPolicy.blocked_reason ?? null)
+    : null;
   // Where the revision actually lands, named by the backend from this type's
   // config (UAC E1a). The generic sentence is the fallback for when there is
   // nothing to name - not the target copy - because a purchase request restarting
@@ -591,34 +603,84 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [neighbours, kind, slug, router]);
 
+  // Shared by the revision-draft resume (below) and Duplicate's `?from=`
+  // prefill (D-D1): both copy fields + lines from an already-fetched source,
+  // sourced from the same field keys the form itself reads/writes.
+  const applySourceToForm = (source: Record<string, unknown>) => {
+    const next: Record<string, string | string[]> = {};
+    for (const f of fieldDefs) {
+      const v = source[f.name];
+      if (f.widget === 'do-multi-filter') {
+        if (Array.isArray(v)) {
+          next[f.name] = v.map((x) => String(x).trim()).filter(Boolean);
+        } else if (v == null || v === '') {
+          next[f.name] = [];
+        } else {
+          next[f.name] = String(v)
+            .split(/[,\n]/)
+            .map((x) => x.trim())
+            .filter(Boolean);
+        }
+      } else {
+        next[f.name] = v == null ? '' : String(v);
+      }
+    }
+    setFields(next);
+    if (showLines) {
+      const lines = (source as { products?: ProductLine[] }).products ?? [];
+      setProducts(lines.map((l) => ({ ...l })));
+    }
+    if (kind === 'complaint') {
+      const pls =
+        (
+          source as {
+            product_lines?: {
+              product_code?: string | null;
+              product_type?: string | null;
+              quantity?: string | null;
+            }[];
+          }
+        ).product_lines ?? [];
+      setComplaintLines(
+        pls
+          .filter((l) => (l.product_code ?? '').trim())
+          .map((l) => ({
+            product_code: (l.product_code ?? '').trim(),
+            product_type: (l.product_type ?? '').trim(),
+            quantity: (l.quantity ?? '').trim(),
+          })),
+      );
+    }
+  };
+
   useEffect(() => {
     if (!submissionId) {
       let cancelledNew = false;
-      const next: Record<string, string | string[]> = {};
-      const lookupFields: FieldDef[] = [];
-      for (const f of fieldDefs) {
-        if (f.widget === 'do-multi-filter') {
-          next[f.name] = [];
-          continue;
+      const seedEmptyForm = async () => {
+        const next: Record<string, string | string[]> = {};
+        const lookupFields: FieldDef[] = [];
+        for (const f of fieldDefs) {
+          if (f.widget === 'do-multi-filter') {
+            next[f.name] = [];
+            continue;
+          }
+          if (f.defaultFromContact === 'fullname') {
+            next[f.name] = defaultsFromContact.fullname;
+          } else if (f.defaultFromContact === 'first_name') {
+            next[f.name] = defaultsFromContact.first_name;
+          } else if (f.defaultFromContact === 'contact_id') {
+            next[f.name] = defaultsFromContact.contactId;
+          } else if (f.defaultToday) {
+            next[f.name] = new Date().toISOString().slice(0, 10);
+          } else {
+            next[f.name] = '';
+          }
+          if (f.widget === 'lookup-select' && f.setKey) lookupFields.push(f);
         }
-        if (f.defaultFromContact === 'fullname') {
-          next[f.name] = defaultsFromContact.fullname;
-        } else if (f.defaultFromContact === 'first_name') {
-          next[f.name] = defaultsFromContact.first_name;
-        } else if (f.defaultFromContact === 'contact_id') {
-          next[f.name] = defaultsFromContact.contactId;
-        } else if (f.defaultToday) {
-          next[f.name] = new Date().toISOString().slice(0, 10);
-        } else {
-          next[f.name] = '';
-        }
-        if (f.widget === 'lookup-select' && f.setKey) lookupFields.push(f);
-      }
-      // Seed each lookup field's binding default (Default (new forms) in the lookup
-      // admin) so the portal pre-selects it just like the system form. Must happen
-      // HERE, not in the widget: this init does a full setFields replace that would
-      // otherwise wipe a widget-applied value.
-      void (async () => {
+        // Seed each lookup field's binding default (Default (new forms) in the lookup
+        // admin) so the portal pre-selects it just like the system form. Must happen
+        // HERE, not in the widget: this init does a full setFields replace that would
+        // otherwise wipe a widget-applied value.
         await Promise.all(
           lookupFields.map((f) =>
             lookupSet(f.setKey as string)
@@ -634,7 +696,33 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           setComplaintLines([]);
           setLoading(false);
         }
-      })();
+      };
+
+      // Duplicate (D-D1): `?from=<id>` copies fields + lines from a submission
+      // this contact owns; attachments stay empty and nothing is saved until
+      // Save draft / Submit. An owned-by-someone-else or missing source falls
+      // back to a plain empty form with a toast, rather than a dead end.
+      const fromId =
+        typeof window !== 'undefined'
+          ? new URL(window.location.href).searchParams.get('from')
+          : null;
+      if (fromId && fromId.trim()) {
+        void (async () => {
+          try {
+            const source = await fetchSubmission(kind, fromId.trim());
+            if (cancelledNew) return;
+            applySourceToForm(source as unknown as Record<string, unknown>);
+            setAttachments([]);
+            setLoading(false);
+          } catch {
+            if (cancelledNew) return;
+            toast.error('Could not copy that submission.');
+            await seedEmptyForm();
+          }
+        })();
+      } else {
+        void seedEmptyForm();
+      }
       return () => {
         cancelledNew = true;
       };
@@ -648,57 +736,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         // Resume a saved-but-unsent revision (UAC: revision drafts): a stored,
         // non-stale draft prefills the form OVER the saved values, sourced from
         // the same field keys the saved submission itself is read from - so
-        // merging the draft's flat dict onto `data` and reading through the one
-        // block below covers fields, `products` and `product_lines` alike.
+        // merging the draft's flat dict onto `data` and reading through
+        // applySourceToForm covers fields, `products` and `product_lines` alike.
         const draft = data.revision_draft ?? null;
         const resumeDraft = Boolean(draft && !draft.stale);
         const source = resumeDraft
           ? { ...data, ...(draft!.fields || {}) }
           : data;
-        const next: Record<string, string | string[]> = {};
-        for (const f of fieldDefs) {
-          const v = (source as Record<string, unknown>)[f.name];
-          if (f.widget === 'do-multi-filter') {
-            if (Array.isArray(v)) {
-              next[f.name] = v.map((x) => String(x).trim()).filter(Boolean);
-            } else if (v == null || v === '') {
-              next[f.name] = [];
-            } else {
-              next[f.name] = String(v)
-                .split(/[,\n]/)
-                .map((x) => x.trim())
-                .filter(Boolean);
-            }
-          } else {
-            next[f.name] = v == null ? '' : String(v);
-          }
-        }
-        setFields(next);
-        if (showLines) {
-          const lines = (source as { products?: ProductLine[] }).products ?? [];
-          setProducts(lines.map((l) => ({ ...l })));
-        }
-        if (kind === 'complaint') {
-          const pls =
-            (
-              source as {
-                product_lines?: {
-                  product_code?: string | null;
-                  product_type?: string | null;
-                  quantity?: string | null;
-                }[];
-              }
-            ).product_lines ?? [];
-          setComplaintLines(
-            pls
-              .filter((l) => (l.product_code ?? '').trim())
-              .map((l) => ({
-                product_code: (l.product_code ?? '').trim(),
-                product_type: (l.product_type ?? '').trim(),
-                quantity: (l.quantity ?? '').trim(),
-              })),
-          );
-        }
+        applySourceToForm(source as unknown as Record<string, unknown>);
         setAttachments((data.attachments as PortalAttachment[]) ?? []);
         if (resumeDraft && draft) {
           setReason(draft.reason ?? '');
@@ -1419,17 +1464,6 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           This submission is not editable.
         </div>
       )}
-      {submissionId && !reviseMode && (
-        <ReviseAction
-          variant="menu"
-          policy={revisionPolicy}
-          onRevise={() => {
-            setReviseMode(true);
-            setReason('');
-            setReasonError(null);
-          }}
-        />
-      )}
       {submissionId && !reviseMode && detail?.revision_draft?.stale && (
         <Alert
           variant="warning"
@@ -1909,14 +1943,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     // M6-02: dvh - phone-facing portal form, so a `vh` shell that sits under
     // mobile Safari's dynamic toolbar clips the form the reader is filling in.
     <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" asChild>
+      <div className="flex items-center justify-between gap-3">
+        <Button variant="ghost" size="sm" asChild className="shrink-0">
           <Link href={portalHomePath({ type: kind })}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Link>
         </Button>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           {editing && (
             <Button
               type="button"
@@ -1924,25 +1958,71 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               size="sm"
               onClick={() => setAiExtractOpen(true)}
               data-testid="ai-extract-trigger"
+              className="shrink-0"
             >
               <Sparkles className="h-4 w-4 mr-2 text-primary" />
               AI Extract
             </Button>
           )}
-          {detail?.reference && (
-            <span className="text-sm text-muted-foreground">
-              {detail.reference}
+          {/* R3-5: form number, revision status and the prev/next counter
+              share ONE truncating line - the revision budget/blocked
+              sentence used to live in its own gear row below the tabs. */}
+          {(detail?.reference || revisionStatusText || neighbours) && (
+            <span className="min-w-0 truncate text-sm text-muted-foreground">
+              {detail?.reference}
+              {submissionId && !reviseMode && revisionStatusText && (
+                <>
+                  {/* Separator as its own node (not concatenated into the
+                      text span itself), so "2 / 5" etc stays exact for
+                      anything that queries that leaf's own text. */}
+                  {detail?.reference && <span aria-hidden> · </span>}
+                  <span className="text-xs text-muted-foreground/70">
+                    {revisionStatusText}
+                  </span>
+                </>
+              )}
               {neighbours && (
-                <span className="ml-2 text-xs text-muted-foreground/70">
-                  {neighbours.position} / {neighbours.total}
-                </span>
+                <>
+                  {(detail?.reference || revisionStatusText) && (
+                    <span aria-hidden> · </span>
+                  )}
+                  <span className="text-xs text-muted-foreground/70">
+                    {neighbours.position} / {neighbours.total}
+                  </span>
+                </>
               )}
             </span>
           )}
-          {!detail?.reference && neighbours && (
-            <span className="text-xs text-muted-foreground/70">
-              {neighbours.position} / {neighbours.total}
-            </span>
+          {/* View-page gear (D-D1, R3-5): one gear, every action - Duplicate
+              plus Revise when the policy allows it. Read-only view only -
+              the form itself (new or editing) has nothing to duplicate or
+              revise FROM yet. */}
+          {detail && !editing && (
+            <DetailActionsMenu
+              ariaLabel="Submission actions"
+              className="shrink-0"
+            >
+              <DropdownMenuItem
+                onSelect={() => {
+                  router.push(portalDuplicatePath(kind, detail.id, slug));
+                }}
+              >
+                <Copy className="h-4 w-4" />
+                Duplicate
+              </DropdownMenuItem>
+              {revisionPolicy?.allowed && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setReviseMode(true);
+                    setReason('');
+                    setReasonError(null);
+                  }}
+                >
+                  <PencilLine className="h-4 w-4" />
+                  Revise
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
           )}
         </div>
       </div>

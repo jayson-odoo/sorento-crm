@@ -10,7 +10,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, Filter, FileText, LogOut, Plus, Star } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  FileText,
+  LogOut,
+  Plus,
+  Star,
+} from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
+import { getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,15 +33,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import type { ListBoardViewMode } from '@/hooks/useListBoardViewPreference';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
@@ -60,13 +67,29 @@ import {
 import { revisionBadgeLabel } from '@/lib/document-number';
 import {
   portalDetailPath,
+  portalDuplicatePath,
   portalNewPath,
   portalRevisePath,
   portalVerifyPath,
 } from '../lib/portal-paths';
 import { useRevisionPolicy } from '../hooks/useRevisions';
-import { BookmarkHint } from './BookmarkHint';
 import { ReviseAction } from './ReviseAction';
+import { LandingToolbar } from './LandingToolbar';
+import {
+  DEFAULT_LANDING_SORT,
+  activeLandingFilterCount,
+  applyLandingFilters,
+  landingFieldValue,
+  landingFieldsFor,
+  sortLandingItems,
+  submissionStatusLabel,
+  type LandingField,
+  type LandingFilters,
+  type LandingSort,
+} from '../lib/landing-fields';
+
+// Shared across every kind, so the choice survives a type switch (AC-L7).
+const PORTAL_VIEW_KEY = 'sorento.portalView';
 
 // Display order differs from the canonical list: stock inquiry first.
 const TYPES: PortalSubmissionKind[] = [
@@ -94,8 +117,6 @@ const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
   sponsorship_form: [],
   price_tag_request: [],
 };
-
-type StatusFilter = 'all' | 'draft' | 'submitted' | 'rejected';
 
 type BadgeVariant =
   | 'primary'
@@ -150,12 +171,6 @@ function statusCardClass(row: PortalSubmissionSummary): string {
   return 'bg-primary/5 border-primary/30';
 }
 
-function effectiveStatus(row: PortalSubmissionSummary): StatusFilter {
-  if (row.is_draft) return 'draft';
-  if (row.status === 'rejected') return 'rejected';
-  return 'submitted';
-}
-
 // Per-kind primary/secondary metadata picked for the compact card layout.
 function pickCardMeta(row: PortalSubmissionSummary): {
   product?: string;
@@ -199,13 +214,39 @@ export function PortalLanding({ slug }: { slug?: string }) {
     debouncedValue: debouncedSearch,
     isSettling: searchSettling,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const initialTabFromUrl = (() => {
     const t = searchParams?.get('type');
     return isLandingKind(t) ? t : 'stock_inquiry';
   })();
   const [activeTab, setActiveTab] =
     useState<PortalLandingKind>(initialTabFromUrl);
+  // Filter + sort are component state that resets whenever the type changes
+  // (D-L4) - the field set differs per kind, so a status or field value
+  // picked for one kind has no business surviving a tab switch. The view
+  // choice (cards vs list) is the one thing that persists, per device,
+  // across both a reload and a type switch (AC-L7).
+  const [filters, setFilters] = useState<LandingFilters>({});
+  const [sort, setSort] = useState<LandingSort>(DEFAULT_LANDING_SORT);
+  useEffect(() => {
+    setFilters({});
+    setSort(DEFAULT_LANDING_SORT);
+  }, [activeTab]);
+  // Cards is the default at EVERY width (R3-2, AC-R9) - the old viewport-based
+  // default (list on `md:` and up) is gone. A stored choice still wins.
+  const [view, setViewState] = useState<ListBoardViewMode>('board');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = window.localStorage.getItem(PORTAL_VIEW_KEY);
+    if (stored === 'list' || stored === 'board') {
+      setViewState(stored);
+    }
+  }, []);
+  const setView = useCallback((mode: ListBoardViewMode) => {
+    setViewState(mode);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(PORTAL_VIEW_KEY, mode);
+    }
+  }, []);
   const userPickedTabRef = useRef<boolean>(Boolean(searchParams?.get('type')));
   // Mirror current URL `?type=` so loadAll's expired-token redirect can read it
   // without depending on `searchParams` (which would re-create loadAll and
@@ -410,7 +451,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
   if (loading) {
     return (
-      <div className="w-full px-3 pt-4 pb-4 space-y-3">
+      <div className="w-full max-w-3xl mx-auto px-3 pt-4 pb-4 space-y-3">
         <Skeleton className="h-10 w-48" />
         <Skeleton className="h-12 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -420,7 +461,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
   if (error) {
     return (
-      <div className="w-full px-3 pt-4 pb-4 space-y-3">
+      <div className="w-full max-w-3xl mx-auto px-3 pt-4 pb-4 space-y-3">
         <Alert variant="destructive">
           <AlertIcon>
             <AlertCircle />
@@ -440,7 +481,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
   }
 
   return (
-    <div className="w-full px-3 pt-3 pb-4 space-y-3">
+    <div className="w-full max-w-3xl mx-auto px-3 pt-3 pb-4 space-y-3">
       {/* Header - Welcome centered, Log out anchored to top-right. */}
       <div className="relative flex items-center justify-center min-h-[2.75rem]">
         <h1 className="text-lg font-semibold text-center break-words px-12">
@@ -458,59 +499,17 @@ export function PortalLanding({ slug }: { slug?: string }) {
         </Button>
       </div>
 
-      {/* First-visit nudge to bookmark the stable per-contact URL. */}
-      {slug && <BookmarkHint />}
-
-      {/* Search input + status-filter icon button on the same row to save
-          vertical space. The button gets a primary outline when a non-default
-          filter is active. */}
-      <div className="flex items-stretch gap-2">
-        <ListSearchInput
-          value={search}
-          onChange={setSearch}
-          isSettling={searchSettling}
-          placeholder="Search..."
-          aria-label="Search submissions"
-          className="flex-1"
-          inputClassName="h-12 text-base"
-        />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              className={`h-12 w-12 p-0 shrink-0 ${
-                statusFilter !== 'all' ? 'border-primary text-primary' : ''
-              }`}
-              aria-label="Filter by status"
-              title={
-                statusFilter === 'all'
-                  ? 'Filter by status'
-                  : `Filter: ${statusFilter}`
-              }
-            >
-              <Filter className="h-5 w-5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[10rem]">
-            <DropdownMenuRadioGroup
-              value={statusFilter}
-              onValueChange={(v) => setStatusFilter(v as StatusFilter)}
-            >
-              <DropdownMenuRadioItem value="all">
-                All statuses
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="draft">Draft</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="submitted">
-                Submitted
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="rejected">
-                Rejected
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      {/* Search input only (D-L3) - the status filter now lives in the
+          toolbar's Filter popover, alongside every other filterable field. */}
+      <ListSearchInput
+        value={search}
+        onChange={setSearch}
+        isSettling={searchSettling}
+        placeholder="Search..."
+        aria-label="Search submissions"
+        className="w-full"
+        inputClassName="h-12 text-base"
+      />
 
       <div className="flex items-stretch gap-2">
         <SearchableSelect
@@ -587,8 +586,15 @@ export function PortalLanding({ slug }: { slug?: string }) {
       <SubmissionList
         kind={activeTab}
         items={submissions[activeTab] ?? []}
-        statusFilter={statusFilter}
+        filters={filters}
+        onFiltersChange={setFilters}
+        sort={sort}
+        onSortChange={setSort}
+        view={view}
+        onViewChange={setView}
         slug={slug}
+        search={search}
+        onClearSearch={() => setSearch('')}
       />
     </div>
   );
@@ -597,20 +603,37 @@ export function PortalLanding({ slug }: { slug?: string }) {
 function SubmissionList({
   kind,
   items,
-  statusFilter,
+  filters,
+  onFiltersChange,
+  sort,
+  onSortChange,
+  view,
+  onViewChange,
   slug,
+  search,
+  onClearSearch,
 }: {
   kind: PortalLandingKind;
   items: PortalSubmissionSummary[];
-  statusFilter: StatusFilter;
+  filters: LandingFilters;
+  onFiltersChange: (next: LandingFilters) => void;
+  sort: LandingSort;
+  onSortChange: (next: LandingSort) => void;
+  view: ListBoardViewMode;
+  onViewChange: (mode: ListBoardViewMode) => void;
   slug?: string;
+  /** A search term is answered server-side (`fetchSubmissions(kind, q)`),
+   *  so a search-only zero result already arrives as `items.length === 0`
+   *  with no client-side `filters` set at all (review round 2, AC-L8) - the
+   *  empty state has to know about it too, not just `filters`. */
+  search?: string;
+  onClearSearch?: () => void;
 }) {
-  const filtered = useMemo(() => {
-    // Substring search runs server-side (every field). Local filter only
-    // narrows by status for a snappy tab switch.
-    if (statusFilter === 'all') return items;
-    return items.filter((r) => effectiveStatus(r) === statusFilter);
-  }, [items, statusFilter]);
+  const fields = useMemo(() => landingFieldsFor(kind), [kind]);
+  const filtered = useMemo(
+    () => sortLandingItems(applyLandingFilters(items, fields, filters), fields, sort),
+    [items, fields, filters, sort],
+  );
 
   const [previewRow, setPreviewRow] = useState<PortalSubmissionSummary | null>(
     null,
@@ -618,11 +641,37 @@ function SubmissionList({
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
-        <Button asChild className="h-10">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <LandingToolbar
+          fields={fields}
+          items={items}
+          filters={filters}
+          onFiltersChange={onFiltersChange}
+          sort={sort}
+          onSortChange={onSortChange}
+          view={view}
+          onViewChange={onViewChange}
+        />
+        <Button
+          asChild
+          size="sm"
+          className="shrink-0"
+          title={`New ${LANDING_LABELS[kind]}`}
+          aria-label={`New ${LANDING_LABELS[kind]}`}
+        >
           <Link href={portalNewPath(kind, slug)}>
-            <Plus className="h-4 w-4 mr-2" />
-            New {LANDING_LABELS[kind]}
+            <Plus className="shrink-0" />
+            {/* Review round 2/3: "New Price Tag Request" (the longest label)
+                pushed the toolbar onto two rows at 375px - below `sm` the
+                clip hides everything past "New" (no ellipsis, so it never
+                shows a ragged fragment of the kind name), the full label at
+                `sm` and up. One text node, not two - a wrapping element
+                around a bare "New" here reads as a second, stray "New" next
+                to a submission card's own status badge of the same word
+                (`PortalLanding.priceTag.test.tsx`). */}
+            <span className="block max-w-[31px] overflow-hidden whitespace-nowrap sm:max-w-none sm:inline">
+              New {LANDING_LABELS[kind]}
+            </span>
           </Link>
         </Button>
       </div>
@@ -630,13 +679,37 @@ function SubmissionList({
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground space-y-2">
             <FileText className="h-8 w-8 mx-auto" />
-            {items.length === 0 ? (
+            {items.length === 0 &&
+            !(search ?? '').trim() &&
+            activeLandingFilterCount(filters) === 0 ? (
               <p>No {LANDING_LABELS[kind].toLowerCase()} submissions yet.</p>
             ) : (
-              <p>No submissions match your filters.</p>
+              <>
+                <p>No submissions match your filters.</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    onFiltersChange({});
+                    onClearSearch?.();
+                  }}
+                >
+                  Clear filters
+                </Button>
+              </>
             )}
           </CardContent>
         </Card>
+      ) : view === 'list' ? (
+        <SubmissionTable
+          kind={kind}
+          items={filtered}
+          fields={fields}
+          sort={sort}
+          onSortChange={onSortChange}
+          slug={slug}
+        />
       ) : (
         <ul className="space-y-2.5">
           {filtered.map((row) => (
@@ -662,23 +735,25 @@ function SubmissionList({
   );
 }
 
-function SubmissionCard({
-  row,
+/**
+ * Click / long-press / keyboard wiring shared by SubmissionCard and
+ * SubmissionRow (D-L5) - both open the detail page on a tap/click/Enter and
+ * the preview dialog on a long-press, right-click or context-menu key.
+ */
+function useSubmissionPress({
   kind,
+  id,
   slug,
   onLongPress,
 }: {
-  row: PortalSubmissionSummary;
   kind: PortalLandingKind;
+  id: string;
   slug?: string;
   onLongPress: () => void;
 }) {
   const router = useRouter();
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
-  const meta = pickCardMeta(row);
-  const primary = row.document_number ?? row.title ?? '-';
-  const tintClass = statusCardClass(row);
 
   const startPress = () => {
     longPressFired.current = false;
@@ -694,6 +769,276 @@ function SubmissionCard({
     }
   };
 
+  return {
+    role: 'link' as const,
+    tabIndex: 0,
+    onClick: () => {
+      if (longPressFired.current) {
+        longPressFired.current = false;
+        return;
+      }
+      router.push(portalDetailPath(kind, id, slug));
+    },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        router.push(portalDetailPath(kind, id, slug));
+      }
+    },
+    onContextMenu: (e: React.MouseEvent) => {
+      e.preventDefault();
+      onLongPress();
+    },
+    onTouchStart: startPress,
+    onTouchEnd: clearPress,
+    onTouchMove: clearPress,
+    onTouchCancel: clearPress,
+    onMouseDown: startPress,
+    onMouseUp: clearPress,
+    onMouseLeave: clearPress,
+  };
+}
+
+/**
+ * List view (R3-2, AC-R9/AC-R10): the repo DataGrid, one column per field of
+ * the current kind, rather than the old `<ul>` of `SubmissionRow`. Header
+ * click drives the SAME sort state the toolbar's Sort dropdown uses (R3-3's
+ * rule: the active field flips direction, a different field picks its type's
+ * natural default) - `SortableHeader` duplicates that small rule rather than
+ * sharing it with `LandingToolbar`, since the two live in different DOM
+ * shapes (menu item vs. column header).
+ */
+function SortableHeader({
+  field,
+  sort,
+  onSortChange,
+}: {
+  field: LandingField;
+  sort: LandingSort;
+  onSortChange: (next: LandingSort) => void;
+}) {
+  const isActive = sort.key === field.key;
+  return (
+    <button
+      type="button"
+      className="flex items-center gap-1 text-left font-medium"
+      onClick={(e) => {
+        e.stopPropagation();
+        onSortChange({
+          key: field.key,
+          dir: isActive
+            ? sort.dir === 'asc'
+              ? 'desc'
+              : 'asc'
+            : field.type === 'date'
+              ? 'desc'
+              : 'asc',
+        });
+      }}
+    >
+      <span>{field.label}</span>
+      {isActive &&
+        (sort.dir === 'asc' ? (
+          <ArrowUp className="size-3.5 text-muted-foreground" />
+        ) : (
+          <ArrowDown className="size-3.5 text-muted-foreground" />
+        ))}
+    </button>
+  );
+}
+
+function submissionTableColumns(
+  fields: LandingField[],
+  sort: LandingSort,
+  onSortChange: (next: LandingSort) => void,
+): ColumnDef<PortalSubmissionSummary>[] {
+  // Named, not an anonymous arrow returned from `header()` (react/display-name):
+  // a ColumnDef.header renders as its own component, and an unnamed one
+  // trips the lint rule even though it never gets its own devtools entry.
+  const header = (field: LandingField) => {
+    function SortableColumnHeader() {
+      return (
+        <SortableHeader field={field} sort={sort} onSortChange={onSortChange} />
+      );
+    }
+    return SortableColumnHeader;
+  };
+  const documentField = fields.find((f) => f.key === 'document_number') ?? {
+    key: 'document_number',
+    label: 'Form Number',
+    type: 'text' as const,
+  };
+  const statusField = fields.find((f) => f.key === 'status') ?? {
+    key: 'status',
+    label: 'Status',
+    type: 'status' as const,
+  };
+  const createdField = fields.find((f) => f.key === 'created_at') ?? {
+    key: 'created_at',
+    label: 'Created',
+    type: 'date' as const,
+  };
+  // Every kind's card carries these three as COMMON_FIELDS; everything else
+  // in `fields` is the kind's own set. `needed_by_date` (price_tag_request
+  // only) is a date, so it never lands here - it gets its own "Need by"
+  // column below, same as the card's dedicated "Need by" row.
+  const textKindFields = fields.filter(
+    (f) =>
+      f.type === 'text' &&
+      f.key !== 'document_number' &&
+      f.key !== 'status',
+  );
+  // Review round 3: the column only exists for a kind that actually carries
+  // the field (today, price_tag_request only) - a synthetic descriptor for
+  // every other kind gave every list a permanently blank "Need by" column.
+  const needByField = fields.find((f) => f.key === 'needed_by_date');
+
+  const dateCell = (value: string | null | undefined) =>
+    value ? (
+      new Date(value).toLocaleDateString()
+    ) : (
+      <span className="text-muted-foreground">-</span>
+    );
+
+  const columns: ColumnDef<PortalSubmissionSummary>[] = [
+    {
+      accessorKey: 'document_number',
+      header: header(documentField),
+      cell: ({ row }) => {
+        const value = row.original.document_number ?? row.original.title ?? '-';
+        return (
+          <span className="block truncate" title={value}>
+            {value}
+          </span>
+        );
+      },
+      size: 170,
+      minSize: 100,
+    },
+    {
+      accessorKey: 'status',
+      header: header(statusField),
+      cell: ({ row }) => {
+        const text = submissionStatusLabel(row.original);
+        return (
+          <Badge
+            variant={statusVariant(row.original)}
+            className="truncate"
+            title={text}
+          >
+            {text}
+          </Badge>
+        );
+      },
+      size: 120,
+      minSize: 90,
+    },
+    ...textKindFields.map(
+      (field): ColumnDef<PortalSubmissionSummary> => ({
+        accessorKey: field.key,
+        header: header(field),
+        cell: ({ row }) => {
+          const value = landingFieldValue(row.original, field) ?? '-';
+          return (
+            <span className="block truncate" title={value}>
+              {value}
+            </span>
+          );
+        },
+        size: 150,
+        minSize: 100,
+      }),
+    ),
+    ...(needByField
+      ? [
+          {
+            accessorKey: 'needed_by_date',
+            header: header(needByField),
+            cell: ({ row }) => dateCell(row.original.needed_by_date),
+            size: 110,
+            minSize: 90,
+          } satisfies ColumnDef<PortalSubmissionSummary>,
+        ]
+      : []),
+    {
+      accessorKey: 'created_at',
+      header: header(createdField),
+      cell: ({ row }) => dateCell(row.original.created_at),
+      size: 110,
+      minSize: 90,
+    },
+  ];
+  return columns;
+}
+
+function SubmissionTable({
+  kind,
+  items,
+  fields,
+  sort,
+  onSortChange,
+  slug,
+}: {
+  kind: PortalLandingKind;
+  items: PortalSubmissionSummary[];
+  fields: LandingField[];
+  sort: LandingSort;
+  onSortChange: (next: LandingSort) => void;
+  slug?: string;
+}) {
+  const columns = useMemo(
+    () => submissionTableColumns(fields, sort, onSortChange),
+    [fields, sort, onSortChange],
+  );
+  // `items` arrives already filtered + sorted (`sortLandingItems`, driven by
+  // the same `sort` state the column headers write to) - the table just
+  // displays it in that order rather than re-sorting client-side itself.
+  const table = useReactTable({
+    columns,
+    data: items,
+    getRowId: (row) => row.id,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+  });
+
+  return (
+    <DataGrid
+      table={table}
+      recordCount={items.length}
+      rowHref={(row) => portalDetailPath(kind, row.id, slug)}
+      // Columns are DATA (they change with the kind), never a fixed set to
+      // remember per user - same rationale `McpToolsList` documents for its
+      // own `listingKey={null}`.
+      listingKey={null}
+      tableLayout={{
+        width: 'fixed',
+        columnsResizable: true,
+        columnsDraggable: false,
+        columnsMovable: false,
+        columnsVisibility: false,
+      }}
+    >
+      <DataGridTable />
+    </DataGrid>
+  );
+}
+
+function SubmissionCard({
+  row,
+  kind,
+  slug,
+  onLongPress,
+}: {
+  row: PortalSubmissionSummary;
+  kind: PortalLandingKind;
+  slug?: string;
+  onLongPress: () => void;
+}) {
+  const press = useSubmissionPress({ kind, id: row.id, slug, onLongPress });
+  const meta = pickCardMeta(row);
+  const primary = row.document_number ?? row.title ?? '-';
+  const tintClass = statusCardClass(row);
+
   // Complaints use the shared status map so portal labels + colours tally with
   // the internal system view; other kinds keep the generic badge variant.
   const isComplaint = row.kind === 'complaint';
@@ -705,32 +1050,7 @@ function SubmissionCard({
 
   return (
     <div
-      role="link"
-      tabIndex={0}
-      onClick={() => {
-        if (longPressFired.current) {
-          longPressFired.current = false;
-          return;
-        }
-        router.push(portalDetailPath(kind, row.id, slug));
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          router.push(portalDetailPath(kind, row.id, slug));
-        }
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onLongPress();
-      }}
-      onTouchStart={startPress}
-      onTouchEnd={clearPress}
-      onTouchMove={clearPress}
-      onTouchCancel={clearPress}
-      onMouseDown={startPress}
-      onMouseUp={clearPress}
-      onMouseLeave={clearPress}
+      {...press}
       className={`relative block rounded-lg border ${tintClass} px-3.5 py-3 pr-3 hover:brightness-95 active:brightness-90 transition-[filter] select-none cursor-pointer`}
     >
       {/* Status badge anchored top-right; allows multi-word status to wrap
@@ -797,7 +1117,9 @@ function SubmissionCard({
         {row.needed_by_date && (
           <p className="text-sm text-foreground/80">
             <span className="text-muted-foreground">Need by: </span>
-            {row.needed_by_date}
+            {new Date(row.needed_by_date).toLocaleDateString(undefined, {
+              dateStyle: 'medium',
+            })}
           </p>
         )}
         {row.last_revised_at ? (
@@ -928,6 +1250,17 @@ function SubmissionPreviewDialog({
             className="h-10"
           >
             Close
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (row) router.push(portalDuplicatePath(kind, row.id, slug));
+              onOpenChange(false);
+            }}
+            className="h-10"
+          >
+            <Copy className="h-4 w-4 mr-2" />
+            Duplicate
           </Button>
           <Button
             onClick={() => {

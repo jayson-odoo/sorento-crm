@@ -471,7 +471,7 @@ export async function fetchSubmissions(
 }
 
 export async function fetchSubmission(
-  kind: PortalSubmissionKind,
+  kind: PortalLandingKind,
   id: string,
 ): Promise<PortalSubmissionDetail> {
   const res = await portalFetch(
@@ -536,7 +536,7 @@ export async function submitDraft(
 /** GET .../submissions/{kind}/{id}/revisions - the original plus every version
  *  since, oldest first, each carrying what changed vs the one before it. */
 export async function fetchRevisions(
-  kind: PortalSubmissionKind,
+  kind: PortalLandingKind,
   id: string,
 ): Promise<PortalRevisionEntry[]> {
   const res = await portalFetch(
@@ -571,7 +571,7 @@ export interface ReviseSubmissionResult {
  * `extractApiError`.
  */
 export async function reviseSubmission(
-  kind: PortalSubmissionKind,
+  kind: PortalLandingKind,
   id: string,
   input: ReviseSubmissionInput,
 ): Promise<ReviseSubmissionResult> {
@@ -982,9 +982,11 @@ export interface PortalSubmissionNeighbours {
 }
 
 /** GET .../submissions/{kind}/{id}/neighbours - token-scoped to the contact's
- *  own submissions of the same kind, newest first. */
+ *  own submissions of the same kind, newest first. `PortalLandingKind`
+ *  (not `PortalSubmissionKind`): review round 3 widens the route the same
+ *  way the revision routes already were for `price_tag_request`. */
 export async function fetchSubmissionNeighbours(
-  kind: PortalSubmissionKind,
+  kind: PortalLandingKind,
   id: string,
 ): Promise<PortalSubmissionNeighbours> {
   const res = await portalFetch(

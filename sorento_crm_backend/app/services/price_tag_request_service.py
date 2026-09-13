@@ -138,6 +138,14 @@ class PriceTagRequestService:
         ``validate_submittable``.
 
         Sets ``portal_draft_at`` on creation (the request starts as a draft).
+
+        No promotion audience check here: this service method is also the
+        CRM-side entry point (``tag_data_service`` etc.), which is not bound
+        by a portal contact's audience. The audience gate
+        (``validate_promotion_access``) is applied by the PORTAL create/update
+        routes only (``portal_price_tag.py``), the one surface it is meant to
+        guard - moved out of here after it 422ed two CRM-side create paths
+        that have no contact audience to check.
         """
         request = PriceTagRequestService._insert_with_doc_number(
             db,
@@ -197,7 +205,13 @@ class PriceTagRequestService:
         )
 
     @staticmethod
-    def _add_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:
+    def _add_lines(
+        db: Session,
+        request: PriceTagRequest,
+        lines: list[dict],
+        *,
+        carry_overrides: dict[tuple, tuple] | None = None,
+    ) -> None:
         """Append lines in the order given, which is the order the form shows.
 
         ``show_promo_price`` is DERIVED from the request's header ``price_mode``
@@ -205,10 +219,26 @@ class PriceTagRequestService:
         every line save - create, replace on update - re-derives every line
         from whatever the header says right now, so a header flip never leaves
         a stale line behind.
+
+        ``carry_overrides`` (review round 2): ``replace_lines`` passes the old
+        table's ``(product_id, product_set_id) -> (marketing_price_override,
+        marketing_override_reason)`` map here, since the form payload has no
+        field for either - a re-save with just a new remark used to silently
+        wipe a marketing-set override on the same product/set.
+
+        Raises 422 ``DUPLICATE_LINE`` (round 3, R3-7/AC-R4) naming the code
+        the FIRST time the same product or set repeats within ``lines`` -
+        before any insert, so the table's own
+        ``uq_ptag_line_request_product`` / ``uq_ptag_line_request_set``
+        constraints never get the chance to answer with a 500.
         """
+        PriceTagRequestService._raise_on_duplicate_line(db, lines)
         show_promo_price = request.price_mode == "selling"
+        carry_overrides = carry_overrides or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
+            key = (line_data.get("product_id"), line_data.get("product_set_id"))
+            override_price, override_reason = carry_overrides.get(key, (None, None))
             db.add(
                 PriceTagRequestLine(
                     request_id=request.id,
@@ -221,8 +251,56 @@ class PriceTagRequestService:
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
+                    marketing_price_override=override_price,
+                    marketing_override_reason=override_reason,
                 )
             )
+
+    @staticmethod
+    def _raise_on_duplicate_line(db: Session, lines: list[dict]) -> None:
+        """The first repeated product or set in ``lines``, named by code, as a
+        422 - before ``_add_lines`` inserts a second row the table's own
+        unique constraint would otherwise refuse with an unhandled 500."""
+        seen_products: set[str] = set()
+        seen_sets: set[str] = set()
+        for line_data in lines:
+            product_id = line_data.get("product_id")
+            if product_id:
+                if product_id in seen_products:
+                    raise PriceTagRequestService._duplicate_line_refusal(
+                        db, product_id=product_id
+                    )
+                seen_products.add(product_id)
+            set_id = line_data.get("product_set_id")
+            if set_id:
+                if set_id in seen_sets:
+                    raise PriceTagRequestService._duplicate_line_refusal(
+                        db, product_set_id=set_id
+                    )
+                seen_sets.add(set_id)
+
+    @staticmethod
+    def _duplicate_line_refusal(
+        db: Session,
+        *,
+        product_id: str | None = None,
+        product_set_id: str | None = None,
+    ) -> AppException:
+        from app.models.product import Product
+        from app.models.product_set import ProductSet
+
+        if product_id:
+            row = db.query(Product).filter(Product.id == product_id).first()
+            code = row.product_code if row else product_id
+        else:
+            row = db.query(ProductSet).filter(ProductSet.id == product_set_id).first()
+            code = row.set_code if row else product_set_id
+        return AppException(
+            status_code=422,
+            message=f"{code} appears twice; merge the quantities.",
+            detail="lines",
+            code="DUPLICATE_LINE",
+        )
 
     @staticmethod
     def replace_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:
@@ -232,11 +310,33 @@ class PriceTagRequestService:
         state on the client and carry no stable identity there. Deleting through
         the relationship keeps ``delete-orphan`` in charge, so nothing is left
         pointing at the request.
+
+        Marketing's own per-line override (review round 2) is not part of the
+        form's payload, so it is captured from the OLD rows, keyed by product /
+        set, before they are cleared, and carried onto whichever new row keeps
+        the same product or set.
         """
+        carry_overrides = {
+            (old.product_id, old.product_set_id): (
+                old.marketing_price_override,
+                old.marketing_override_reason,
+            )
+            for old in request.lines
+            if old.marketing_price_override is not None
+            or old.marketing_override_reason is not None
+        }
         request.lines.clear()
         db.flush()
-        PriceTagRequestService._add_lines(db, request, lines)
+        PriceTagRequestService._add_lines(db, request, lines, carry_overrides=carry_overrides)
         db.flush()
+        # `_add_lines` inserts the new rows via `db.add(...)`, not
+        # `request.lines.append(...)`, so the in-memory collection is left
+        # holding the CLEARED (empty) state even though the DB now has the
+        # new rows - a caller reading `request.lines` right after this (e.g.
+        # a post-submit PUT's `validate_submittable`, review round 2) saw
+        # zero lines regardless of what was just saved. Expiring forces the
+        # next access to re-query.
+        db.expire(request, ["lines"])
 
     @staticmethod
     def submit_request(
@@ -414,7 +514,9 @@ class PriceTagRequestService:
         return request
 
     @staticmethod
-    def validate_submittable(request: PriceTagRequest) -> None:
+    def validate_submittable(
+        request: PriceTagRequest, *, require_debtor: bool = True
+    ) -> None:
         """What a request needs before it may be submitted (D48a).
 
         A draft can be sloppy; a submitted request cannot. Every missing field is
@@ -425,12 +527,17 @@ class PriceTagRequestService:
         A line with neither a product nor a set cannot exist here: the table's
         ``ck_price_tag_request_lines_one_ref`` refuses it on insert. The form
         catches that one on the client, where the empty row actually is.
+
+        ``require_debtor=False`` (review round 2): a post-submit PUT reuses this
+        for its own completeness bar (AC-B10), but that bar is lines-only - the
+        debtor was already locked in at the ORIGINAL submit and this PUT does
+        not touch it, so re-checking it here would refuse an edit over a field
+        the edit never asked about.
         """
+        # D-P2b: need by is optional - dropped from what "complete" requires.
         missing: list[tuple[str, str]] = []
-        if not (request.debtor_name or "").strip():
+        if require_debtor and not (request.debtor_name or "").strip():
             missing.append(("debtor_name", "a dealer"))
-        if request.needed_by_date is None:
-            missing.append(("needed_by_date", "a needed by date"))
         if not request.lines:
             missing.append(("lines", "at least one line"))
         if missing:
@@ -447,14 +554,8 @@ class PriceTagRequestService:
                 code="SUBMIT_INCOMPLETE",
             )
 
-        # D5: Selling price has nothing to sell against without a promotion.
-        if request.price_mode == "selling" and not request.promotion_id:
-            raise AppException(
-                status_code=422,
-                message="Selling price needs a promotion before this request can be submitted.",
-                detail="promotion_id",
-                code="PRICE_MODE_NEEDS_PROMOTION",
-            )
+        # D-P2 (owner ruling): Selling with no promotion is a valid end state
+        # now - the PRICE_MODE_NEEDS_PROMOTION guard is retired.
 
     @staticmethod
     def validate_claimable(request: PriceTagRequest) -> None:
@@ -638,15 +739,22 @@ class PriceTagRequestService:
     def list_items(db: Session, requests: list[PriceTagRequest]) -> list:
         """The listing rows the queue draws, names resolved."""
         from app.schemas.price_tag import PriceTagRequestListItem
+        from app.services.portal_service import PortalService
 
         labels = PriceTagRequestService.resolved_labels(
             db, [request.id for request in requests]
+        )
+        # R3-1/AC-R5: the summary carries whether an unsent revision draft is
+        # parked for this row, same shared check the other portal kinds use.
+        draft_ids = PortalService(db)._ids_with_revision_draft(  # noqa: SLF001
+            "price_tag_request", [str(request.id) for request in requests]
         )
         items = []
         for request in requests:
             item = PriceTagRequestListItem.model_validate(request)
             for key, value in labels.get(request.id, {}).items():
                 setattr(item, key, value)
+            item.has_revision_draft = str(request.id) in draft_ids
             items.append(item)
         return items
 
@@ -707,6 +815,11 @@ class PriceTagRequestService:
         response.has_completed_export = (
             latest_completed_export(db, request.id) is not None
         )
+
+        # R3-1/AC-R1: reverses S8's D-P6 - a submitted request is read-only
+        # exactly like a stock inquiry. True for a draft only; a submitted
+        # request changes through the revision engine instead.
+        response.is_editable = bool(request.portal_draft_at)
 
         # The header's names, from the same resolver the listing uses so the two
         # screens cannot disagree about who claimed a request.
@@ -929,6 +1042,29 @@ class PriceTagRequestService:
             for row in rows
             if row.access_levels and contact_codes & set(row.access_levels)
         ]
+
+    @staticmethod
+    def validate_promotion_access(
+        db: Session, contact_id: str, promotion_id: str | None
+    ) -> None:
+        """Review round 2: a raw ``promotion_id`` on create/update must be one
+        this contact's own audience can see. ``lookup_promotions`` already
+        gates the dropdown by access code and active window; nothing gated a
+        promotion id posted directly, so a promotion whose ``access_levels``
+        exclude this contact went through unchecked. Reuses the same lookup
+        rather than re-deriving the rule, so the two can never disagree.
+        """
+        if promotion_id is None:
+            return
+        allowed_ids = {
+            row["id"] for row in PriceTagRequestService.lookup_promotions(db, contact_id)
+        }
+        if promotion_id not in allowed_ids:
+            raise AppException(
+                status_code=422,
+                message="This promotion is not available for your account.",
+                code="PROMOTION_NOT_AVAILABLE",
+            )
 
     @staticmethod
     def lookup_debtors_for_agent(
