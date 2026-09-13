@@ -198,6 +198,8 @@ def test_migration_510_creates_table_checks_and_seeds(db):
     from sqlalchemy import text as sa_text
     from sqlalchemy.exc import IntegrityError
 
+    from app.services.spec_visibility import DEFAULT_HIDDEN_KEYS
+
     project = _segment(db, "project", "Project")
     contact = _contact(db)
     db.flush()
@@ -220,6 +222,9 @@ def test_migration_510_creates_table_checks_and_seeds(db):
     }
     assert by_tier[(None, None)] == (None, ["thickness", "board_thickness"])
     assert by_tier[(None, project.code)] == (None, [])
+    # B-1 (re-verify): the migration's seed is a literal (migrations stay frozen),
+    # so nothing but a test keeps it equal to the code-level fallback constant.
+    assert set(by_tier[(None, None)][1]) == DEFAULT_HIDDEN_KEYS
 
     sp = db.begin_nested()
     with pytest.raises(IntegrityError):

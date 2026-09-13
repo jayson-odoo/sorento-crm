@@ -715,39 +715,9 @@ def _remove_stock_visibility_policy(db: Session, payload: dict):
     return delete_policy(db, access_type_code=_entity_id(payload))
 
 
-def _resolve_contact_id_for_removal(db: Session, contact_id: str, space_id):
-    """The same two-step id resolution `field_access.resolve_contact_id` does
-    (internal id, else the Respond.io id, `space_id` disambiguating), WITHOUT
-    that function's own fail-closed `except Exception` swallow.
-
-    `resolve_contact_id` is right for its existing callers (a permission/grant
-    check, where "resolution broke" and "resolution found nobody" should read
-    identically - deny either way), but wrong INSIDE A FORM ACTION: every
-    handler's contract (`test_every_handler_resolves_its_service_import`)
-    proves its lazy imports are correctly named by breaking the session and
-    asserting the break itself surfaces, and `resolve_contact_id`'s swallow
-    would turn that into an ordinary 404 instead - hiding a renamed import
-    exactly as effectively as it hides a genuine DB failure in production.
-    """
-    from app.models.access import RespondContact
-    from app.models.respond_workspace import RespondWorkspace
-
-    key = str(contact_id)
-    if db.query(RespondContact.id).filter(RespondContact.id == key).first():
-        return key
-    q = db.query(RespondContact.id).filter(RespondContact.respond_io_id == key)
-    if space_id:
-        q = q.join(
-            RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id
-        ).filter(RespondWorkspace.space_id == str(space_id))
-    rows = q.limit(2).all()
-    if len(rows) != 1:
-        return None
-    return rows[0][0]
-
-
 def _remove_spec_visibility_policy(db: Session, payload: dict):
     from app.services.error_handler import handle_not_found, handle_validation_error
+    from app.services.field_access import resolve_contact_id
     from app.services.spec_visibility import delete_policy
 
     # The scope is the entity: a contact override or a market-segment policy. The
@@ -761,7 +731,16 @@ def _remove_spec_visibility_policy(db: Session, payload: dict):
         # and `delete_policy`'s own lookup is an exact-equality filter on the
         # column, so an unresolved Respond.io id would match no row and return
         # False - a SILENT no-op for anything but the internal id form.
-        resolved = _resolve_contact_id_for_removal(db, _entity_id(payload), payload.get("space_id"))
+        #
+        # `raise_through=True` (SF-3, security re-verify): every handler's
+        # contract (`test_every_handler_resolves_its_service_import`) proves
+        # its lazy imports are correctly named by breaking the session and
+        # asserting the break itself surfaces - `resolve_contact_id`'s default
+        # fail-closed swallow would turn that into an ordinary 404 instead,
+        # hiding a renamed import exactly as it would hide a real DB failure.
+        resolved = resolve_contact_id(
+            db, _entity_id(payload), payload.get("space_id"), raise_through=True
+        )
         if not resolved:
             raise handle_not_found("Contact", _entity_id(payload))
         return delete_policy(db, contact_id=resolved)

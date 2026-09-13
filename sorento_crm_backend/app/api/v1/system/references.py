@@ -2489,13 +2489,29 @@ def resolve_reference_post(
         # answer for that contact.
         hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
         if payload.contact_id:
+            from app.services.field_access import (
+                resolve_contact_with_null_workspace_fallback,
+            )
             from app.services.spec_visibility import (
                 full_registry_rows,
                 hidden_keys as _hidden_keys,
                 resolve_policy as _resolve_spec_policy,
             )
 
-            contact_policy = _resolve_spec_policy(db, payload.contact_id, payload.space_id)
+            # SF-1 (security re-verify): resolved through the SAME NULL-
+            # workspace fallback `check_access` uses, not the bare
+            # `resolve_contact_id` `resolve_policy` calls internally - a
+            # contact with `workspace_id IS NULL` (16 measured) resolves to
+            # nothing through the plain path, so this route would have handed
+            # such a contact the closed DEFAULT policy while `check_access`
+            # gives them their real one. Once resolved to the internal id,
+            # `resolve_policy` re-resolving it is a same-id no-op.
+            resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+                db, contact_id=payload.contact_id, space_id=payload.space_id
+            )
+            contact_policy = _resolve_spec_policy(
+                db, resolved_contact_id or payload.contact_id, payload.space_id
+            )
             registry_keys = {key for key, _label in full_registry_rows(db)}
             hidden_spec_keys |= _hidden_keys(contact_policy, registry_keys)
         if hidden_spec_keys:
@@ -2507,7 +2523,10 @@ def resolve_reference_post(
 
             for candidate in found.get("candidates") or []:
                 spec_values = candidate.get("specifications")
-                filtered_values: dict | None = None
+                matched_specs = candidate.get("matched_specs")
+                carried_hidden = isinstance(spec_values, dict) and (
+                    hidden_spec_keys & spec_values.keys()
+                )
                 if isinstance(spec_values, dict):
                     filtered_values = {
                         k: v for k, v in spec_values.items() if k not in hidden_spec_keys
@@ -2521,15 +2540,23 @@ def resolve_reference_post(
                     # filtering above never reached. Re-rendered from the
                     # FILTERED values through the real renderer (never a regex
                     # edit of the old sentence, which could not tell a hidden
-                    # number from any other). `render_spec_sentence` reads
-                    # `{key: {"value": ...}}`; `filtered_values` is already
-                    # values-only, so each is re-wrapped one level to match.
-                    nested = {k: {"value": v} for k, v in filtered_values.items()}
-                    # No fallback to the ORIGINAL summary on a None render - an
-                    # empty sentence is silence, not a leak of what filtering
-                    # removed.
-                    candidate["summary"] = render_spec_sentence(nested) or ""
-                matched_specs = candidate.get("matched_specs")
+                    # number from any other) - and ONLY for a candidate that
+                    # actually carried a hidden key (nit, re-verify): a
+                    # candidate with nothing to hide keeps its stored
+                    # `rendered_text` byte-identical rather than a
+                    # re-derivation that could drift from it in wording.
+                    if carried_hidden:
+                        # `render_spec_sentence` reads `{key: {"value": ...}}`;
+                        # `filtered_values` is already values-only, so each is
+                        # re-wrapped one level to match.
+                        nested = {k: {"value": v} for k, v in filtered_values.items()}
+                        # A None render (nothing left to say) falls back to the
+                        # product's own code, never the ORIGINAL summary - an
+                        # identifying code is not a leak of what filtering
+                        # removed, where the unfiltered sentence would be.
+                        candidate["summary"] = render_spec_sentence(nested) or candidate.get(
+                            "product_code", ""
+                        )
                 if isinstance(matched_specs, list):
                     candidate["matched_specs"] = [
                         k for k in matched_specs if k not in hidden_spec_keys

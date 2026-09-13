@@ -157,3 +157,67 @@ def test_resolve_spec_fallback_resolves_hidden_keys_server_side_from_contact(cli
     for match in matches:
         assert "thickness" not in match["display"]["specifications"]
         assert "thickness" not in (match["display"].get("matched_specs") or [])
+        # Nit (re-verify): the SAME leak B1 closed for the caller-supplied-list
+        # path applies to the server-resolved one - the rendered sentence must
+        # not carry the hidden value either.
+        assert "1.2" not in match["display"]["product_name"]
+
+
+def test_resolve_spec_fallback_resolves_hidden_keys_for_null_workspace_contact(client, db):
+    """SF-1 (security re-verify): a contact with `workspace_id IS NULL` (16
+    measured in production) must resolve to their REAL policy, not silently
+    fail closed to the ship-closed default. `resolve_contact_id`'s own JOIN
+    against `space_id` returns zero rows for a NULL-workspace contact - there
+    is no workspace row to join to - so before this fix the route fell back to
+    `default_policy` (which hides `thickness`) for exactly the contacts
+    `check_access` already resolves correctly via the NULL-workspace fallback.
+
+    This contact is tagged to the `project` segment, which hides nothing, so
+    the fixture sentence must still rank on thickness end to end - proving the
+    route reached the contact's REAL policy, not the closed floor.
+    """
+    from app.models.access import MarketSegment, RespondContact, respond_contact_market_segments
+
+    respond_io_id = f"ZZT-{uuid.uuid4().hex[:8]}"
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        respond_io_id=respond_io_id,
+        phone_number=f"+60{uuid.uuid4().int % 10**9:09d}",
+        name="ZZT Null Workspace Contact",
+        workspace_id=None,
+    )
+    db.add(contact)
+    db.flush()
+
+    segment = MarketSegment(id=str(uuid.uuid4()), code="project", name="Project", is_active=True)
+    db.add(segment)
+    db.flush()
+    db.execute(
+        respond_contact_market_segments.insert().values(
+            contact_id=contact.id, segment_code=segment.code
+        )
+    )
+    db.execute(
+        sa_text(
+            "INSERT INTO spec_visibility_policies (id, segment_code, spec_keys, excluded_spec_keys) "
+            "VALUES (gen_random_uuid(), 'project', NULL, ARRAY[]::text[])"
+        )
+    )
+    db.commit()
+
+    body = client.post(
+        RESOLVE,
+        json={
+            "query": SENTENCE,
+            "spec_fallback": True,
+            "contact_id": respond_io_id,
+            # A space_id that names no real workspace, matching the measured
+            # NULL-workspace shape: `resolve_contact_id`'s JOIN needs a
+            # workspace row to match through, and this contact has none.
+            "space_id": "ZZT-SPACE-NO-SUCH-WORKSPACE",
+        },
+    ).json()
+
+    matches = _spec_matches(body)
+    assert matches, "the fixture sentence must still rank by thickness for this contact"
+    assert matches[0]["display"]["specifications"].get("thickness") == 1.2

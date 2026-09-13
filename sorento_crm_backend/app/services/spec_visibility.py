@@ -17,7 +17,9 @@ shape matches and diverging on the two points the plan calls out
 **The floor is code, not data.** The default row is seeded by migration 510, but
 a database built by ``create_all`` (CI) has no seeds, so ``default_policy`` falls
 back to the ship-closed ``DEFAULT_HIDDEN_KEYS`` floor rather than to "everything
-visible" - the migration seed reads the same constant, so the two cannot drift.
+visible". The migration's seed is a literal (migrations stay frozen and do not
+import app code); a test pins the two lists equal so they cannot drift apart
+silently.
 """
 from __future__ import annotations
 
@@ -34,9 +36,10 @@ SOURCE_SEGMENT = "segment"
 SOURCE_DEFAULT = "default"
 
 #: The ship-closed floor (PLAN-spec-visibility-policy.md "Decisions" - "default
-#: ships closed"). Migration 510's seed reads this SAME constant when it inserts
-#: the default row, so the seeded data and this code-level fallback (for a
-#: database built by `create_all`, which has no seeds) cannot drift apart.
+#: ships closed"). Migration 510's seed is a literal with the SAME two keys
+#: (migrations stay frozen and do not import app code); a test in
+#: tests/test_spec_visibility_policy.py pins the seeded list equal to this
+#: constant, so the two cannot drift apart silently.
 DEFAULT_HIDDEN_KEYS: frozenset[str] = frozenset({"thickness", "board_thickness"})
 
 
