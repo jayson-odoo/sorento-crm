@@ -275,3 +275,323 @@ def test_ac1144_a_mocha_brand_turn_lands_marketing_product_with_brand_mocha() ->
     body = _next_assignee_body(services)
     assert body["team_code"] == "marketing_product", body
     assert body["brand_code"] == "mocha", body
+
+
+# --------------------------------------------------------------------------- #
+# Security review, S2 (real DB error, AC-1142), N2 (SLA agent), N4 (session
+# identity). Written on the tester's own branch after a merge of the coder's
+# slices (head 9742167a8), so these are RED against the shipped implementation.
+# --------------------------------------------------------------------------- #
+
+
+def test_s2_a_real_dbapi_error_from_the_resolver_never_poisons_the_lanes_session(
+    session_factory,
+) -> None:
+    """Security review S2 (AC-1142, real DB error). `_resolve_product`'s
+    `except Exception:` catches a real `sqlalchemy.exc.DBAPIError` fine, but a failed
+    statement on a Postgres session leaves that session's TRANSACTION aborted - every
+    later statement on the SAME session raises `PendingRollbackError` until it is rolled
+    back. `_resolve_product` never rolls the session back, so the two seams `_assign`
+    calls NEXT - `next_assignee` and `sla_create`, on the SAME session
+    (`production_session`'s whole point) - are the ones that actually fail, and the turn
+    that was supposed to degrade gracefully raises instead.
+
+    Built on the PRODUCTION bundle (`escalation_services.build`), the way
+    `test_s5_escalation_seams.py::TestProductionSeams` draws the assignee, so the session
+    is the real unit of work under test, not a mock standing in for one. The resolver's
+    OWN network call is stubbed at the business lane's `production_services` boundary (so
+    no real resolver logic is needed to prove the point) but the failure itself is a REAL
+    bad statement executed on the lane's own session - a genuine `ProgrammingError`, not a
+    stand-in exception. `next_assignee` and `sla_create` are then required to make a REAL
+    round trip on that SAME session, which only succeeds if it was rolled back.
+    """
+    from sqlalchemy import text as sql_text
+
+    from app.services.chatbot.lanes import escalation_services
+    from app.services.chatbot.lanes.business import services as business_services_mod
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+    db = session_factory()
+
+    def _boom(_body):
+        db.execute(sql_text("SELECT * FROM zzt_table_that_does_not_exist_at_all"))
+        return {}
+
+    def fake_production_services(passed_db, *, space_id=None):
+        return ResolveGateServices(
+            access_types=lambda **_: [], resolve_entity=_boom, probe=lambda **_: {}
+        )
+
+    original_production_services = business_services_mod.production_services
+    business_services_mod.production_services = fake_production_services
+    try:
+        real_services = escalation_services.build(db)
+        calls = {"next_assignee": 0, "sla_create": 0}
+
+        def counting_next_assignee(body):
+            calls["next_assignee"] += 1
+            # a REAL round trip on the SAME session `_resolve_product`'s catch left
+            # possibly aborted - this raises PendingRollbackError today
+            db.execute(sql_text("SELECT 1"))
+            return {
+                "assignee_id": "usr-pic-1",
+                "assignee_respond_user_id": "respond-usr-1",
+                "team_set_code": "CS",
+                "brand_code": None,
+                "company_id": None,
+                "is_already_assigned": False,
+            }
+
+        def counting_sla_create(body):
+            calls["sla_create"] += 1
+            db.execute(sql_text("SELECT 1"))
+            return {
+                "id": "sla-row-1",
+                "initiated_at": "2026-09-05T04:00:00+00:00",
+                "due_at": "2026-09-05T08:00:00+00:00",
+                "due_at_resolution": "2026-09-06T04:00:00+00:00",
+            }
+
+        services = escalation_services.EscalationServices(
+            resolve_and_gate=real_services.resolve_and_gate,
+            next_assignee=counting_next_assignee,
+            preview_assignee=real_services.preview_assignee,
+            sla_create=counting_sla_create,
+            team_members=real_services.team_members,
+            staff_lookup=real_services.staff_lookup,
+        )
+
+        ctx = _ctx(
+            routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+            parser_raw={"routing": {"suggested_team": "warehouse", "suggested_agent": None}},
+            escalation={"is_escalation_confirmation": False, "company_pick": None},
+            entities=[_product_entity("SRTWB8004")],
+        )
+        item = _item(team="warehouse")
+
+        result = run(ctx, item, services=services)  # must not raise
+
+        assert result["arm"] == "human-intervention", (
+            "the turn must still be assigned - a resolver failure degrades, it never "
+            f"fails the turn: {result!r}"
+        )
+        assert calls == {"next_assignee": 1, "sla_create": 1}, (
+            f"both downstream seams must still run, on the same session: {calls!r}"
+        )
+    finally:
+        business_services_mod.production_services = original_production_services
+
+
+def test_n2_sla_body_agent_code_matches_the_landed_teams_own_agent() -> None:
+    """Security review N2. `_next_assignee_body` already reads the LANDED team's own
+    agent off `context_item["agent_code"]` (AC-1129); `_sla_body` still reads
+    `ctx.parse.output.routing.suggested_agent` unconditionally - the INHERITED agent -
+    so the SLA row can name an agent the landed team does not have, the same class of
+    defect AC-1129 closed for the round-robin body."""
+    ctx = _ctx(
+        routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing_form", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+    )
+    item = _item(team="purchasing")
+    services = _services()
+
+    result = run(ctx, item, services=services)
+
+    assert result["arm"] == "human-intervention", result
+    services.sla_create.assert_called_once()
+    sla_body = services.sla_create.call_args[0][0]
+    assert sla_body["agent_code"] == "marketing_form", (
+        f"the SLA row's agent must be the LANDED team's own agent, never the inherited "
+        f"general_enquiries: {sla_body!r}"
+    )
+
+
+def test_n4_the_resolvers_session_is_the_same_object_production_session_yielded(
+    session_factory, monkeypatch
+) -> None:
+    """Security review N4 (scope pin). The production resolver seam closes over whatever
+    `db` `escalation_services.build(db)` was handed; the identity chain from
+    `production_session` through `production_services` to the resolver's own closure is
+    what H56 depends on for the resolver to carry the contact's company scope. Pinned by
+    IDENTITY so a future `SessionLocal()` swap anywhere on that chain fails this test."""
+    from app.services.chatbot.lanes import escalation as escalation_mod
+    from app.services.chatbot.lanes.business import services as business_services_mod
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+    opened: list = []
+
+    def factory():
+        s = session_factory()
+        opened.append(s)
+        return s
+
+    captured: dict = {}
+
+    def spying_production_services(db, *, space_id=None):
+        captured["db"] = db
+        return ResolveGateServices(
+            access_types=lambda **_: [],
+            resolve_entity=lambda _body: {"resolutions": []},
+            probe=lambda **_: {},
+        )
+
+    monkeypatch.setattr(business_services_mod, "production_services", spying_production_services)
+
+    from app.api.v1.external import next_assignee as next_assignee_mod
+    from app.services.sla_service import ConversationSLATrackingService
+
+    async def fake_post_next_assignee(*, body, current_user, db):
+        return {
+            "assignee_id": "usr-pic-1",
+            "assignee_respond_user_id": "respond-usr-1",
+            "team_set_code": "CS",
+            "brand_code": None,
+            "company_id": None,
+            "is_already_assigned": False,
+        }
+
+    class _Created:
+        id = "sla-row-1"
+        initiated_at = "2026-09-05T04:00:00+00:00"
+        due_at = "2026-09-05T08:00:00+00:00"
+        due_at_resolution = "2026-09-06T04:00:00+00:00"
+
+    def fake_create_tracking(self, payload):
+        return _Created()
+
+    monkeypatch.setattr(next_assignee_mod, "post_next_assignee", fake_post_next_assignee)
+    monkeypatch.setattr(ConversationSLATrackingService, "create_tracking", fake_create_tracking)
+
+    ctx = _ctx(
+        routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "warehouse", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWB8004")],
+    )
+    # Respond.io's own message ids are NUMBERS (millisecond epochs); `_ctx`'s default is a
+    # ZZT- string, and `ConversationSLATrackingCreate.message_id` coerces to int, so the
+    # REAL sla_create this test exercises needs a numeric one (same fix
+    # `test_s5_escalation_seams.py`'s own `MESSAGE_ID` constant carries).
+    ctx["text"]["message"]["messageId"] = 1788015893412
+    item = _item(team="warehouse")
+
+    escalation_mod.run(ctx, item, session_factory=factory)
+
+    assert "db" in captured, "the resolver seam was never invoked"
+    assert opened, "the lane never opened a session through the factory"
+    assert captured["db"] is opened[0], (
+        "the resolver must receive the SAME session object production_session yielded, "
+        "not a fresh SessionLocal() - a future swap must fail this identity check"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Security review round 3, S5: the resolver body must be a narrow product-token
+# lookup, never the business lane's full-message-understanding body verbatim.
+# --------------------------------------------------------------------------- #
+
+
+def test_s5_round3_the_resolver_body_is_a_narrow_product_lookup_not_the_customers_message(
+    session_factory, monkeypatch
+) -> None:
+    """Security review round 3, item S5. `escalation_services._resolve_and_gate` builds
+    its request with `lanes/business/resolve_gate.resolve_entity_body(ctx)` UNMODIFIED -
+    the BUSINESS lane's own body builder, whose defaults are `spec_fallback: True` and
+    `understand_phrase: True` (further AI processing over `query`), and whose `query` is
+    `ctx.text.message.message.text` - the customer's FULL raw message. An escalation turn
+    only ever wants "does this ONE code exist"; sending the whole message through
+    spec-fallback and phrase-understanding is unnecessary AI spend on customer-controlled
+    text and a wider processing surface than the lookup needs. RED until the escalation
+    seam builds its own narrow body: `spec_fallback: False`, `understand_phrase: False`,
+    `query` limited to the product token(s) this turn named."""
+    from app.services.chatbot.lanes import escalation_services
+    from app.services.chatbot.lanes.business import services as business_services_mod
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+    db = session_factory()
+    captured: dict = {}
+
+    def fake_production_services(passed_db, *, space_id=None):
+        def spying_resolve_entity(body):
+            captured["body"] = body
+            return {"resolutions": []}
+
+        return ResolveGateServices(
+            access_types=lambda **_: [], resolve_entity=spying_resolve_entity, probe=lambda **_: {}
+        )
+
+    monkeypatch.setattr(business_services_mod, "production_services", fake_production_services)
+
+    # Calling the seam directly - not the full `run()` - keeps this test about the BODY
+    # shape only; `next_assignee` needs real seeded SLAPolicy/Team rows this file's other
+    # tests do not carry, and that seeding is not what S5 is pinning.
+    services = escalation_services.build(db)
+    ctx = _ctx(
+        routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "warehouse", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWB8004")],
+        text="ESCALATE TO MARKETING FOR SRTWB8004, PLEASE HELP URGENTLY I NEED SOMEONE NOW",
+    )
+    item = _item(team="warehouse")
+
+    services.resolve_and_gate(ctx, item)
+
+    assert "body" in captured, "the resolver seam was never invoked"
+    body = captured["body"]
+    assert body.get("spec_fallback") is False, (
+        f"an escalation code lookup must not fall back to spec search: {body!r}"
+    )
+    assert body.get("understand_phrase") is False, (
+        f"an escalation code lookup must not run phrase understanding over the message: {body!r}"
+    )
+    query = body.get("query") or ""
+    assert "URGENTLY" not in query.upper() and "PLEASE HELP" not in query.upper(), (
+        f"the query must be the product token(s), never the customer's own message: {query!r}"
+    )
+    assert "SRTWB8004" in query.replace("-", "").upper() or "SRTWB8004" in [
+        t.upper() for t in (body.get("tokens") or [])
+    ], (
+        f"the product token itself must still be searchable: {body!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Security review round 3, S3: the dry-run preview names the LANDED team's own
+# pair, never the inherited one, and reaches no seam.
+# --------------------------------------------------------------------------- #
+
+
+def test_s3_round3_dry_run_preview_names_the_landed_team_and_agent_never_the_inherited_pair() -> None:
+    """Security review round 3, item S3. `run(..., dry_run=True)`'s preview branch calls
+    `_preview_routing`, which decides the landed team through `_person_routing` same as a
+    live turn - but the customer-facing preview text (`ROUTED_TO_PIC_REPLY.format(team=
+    ...)`) and the comment it would send must still reflect the LANDED pair (AC-1129's own
+    rule), not the inherited `purchasing` / `general_enquiries` this fixture starts from,
+    and no seam may be reached at all (H37)."""
+    ctx = _ctx(
+        routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing_form", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+    )
+    item = _item(team="purchasing")
+    services = _services()
+
+    result = run(ctx, item, services=services, dry_run=True)
+
+    services.resolve_and_gate.assert_not_called()
+    services.next_assignee.assert_not_called()
+    services.sla_create.assert_not_called()
+
+    second_send = result["actions"][-1]
+    assert second_send["kind"] == "send_message"
+    assert "marketing form" in second_send["text"].lower(), (
+        f"the preview's customer-facing text must name the LANDED team, not the inherited "
+        f"purchasing: {second_send['text']!r}"
+    )
+    comment = next((a for a in result["actions"] if a["kind"] == "add_comment"), None)
+    if comment is not None:
+        assert comment["text"].startswith("Team: marketing_form\n"), (
+            f"the preview comment must name the landed team too: {comment['text']!r}"
+        )
