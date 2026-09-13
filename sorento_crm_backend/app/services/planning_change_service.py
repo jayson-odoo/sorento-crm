@@ -94,7 +94,7 @@ from app.models.project_so import (
     SOSupplyDecision,
 )
 from app.models.projects import Project
-from app.models.scm import ItemClassification, OrderLinkClaim
+from app.models.scm import ItemClassification
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE, TIMELY_SPO, qty_text
@@ -4307,22 +4307,6 @@ def _apply_one_order(
             db, order, so_number, live, document_links, pool_cache,
             batch_line_ids, actor,
         )
-
-    # The CORE-line `OrderLinkClaim` a placed PO/SPO wrote (`_upsert_lines`'s removal check
-    # used to refuse on this; review round, second re-walk: it now survives the save and is
-    # resolved here) is retired once its line is fully cancelled - the pairing it recorded
-    # has nothing left to pair. Neither the shift above nor `_execute_reallocations`
-    # touches this table (both only ever move the `OrderInquiryLink`), so it is explicit.
-    cancelled_core_line_ids = [
-        r.core_line_id for r in live if r.kind == "cancelled" and r.core_line_id
-    ]
-    if cancelled_core_line_ids:
-        for claim in (
-            db.query(OrderLinkClaim)
-            .filter(OrderLinkClaim.so_line_id.in_(cancelled_core_line_ids))
-            .all()
-        ):
-            db.delete(claim)
 
     # What the suggestion warned about, recorded on what it decided (rule 8).
     if revised:

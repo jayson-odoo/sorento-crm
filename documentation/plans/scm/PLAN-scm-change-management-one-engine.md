@@ -197,10 +197,12 @@ the other (`_execute_reallocations`'s filter now explicitly excludes `kind == "c
 since `set_row_decision` allows a cancelled row to be marked "confirm" too - the board
 pre-marks every changed line it shows - which would otherwise let it slip through the
 `decision in ("confirm", "amend")` test). The CORE-line `OrderLinkClaim` a placed PO/SPO
-wrote is deleted explicitly once its line is cancelled at apply, since neither the shift nor
-the reallocation engine ever touches that table directly (both only ever move the
-`OrderInquiryLink`, whose own audit claim, `source = 'order_inquiry'`, `_remove_links`
-already frees via `claim_id`).
+wrote needs no separate deletion at apply: `_shift_links_off_retired_lines` calls
+`service._remove_links` for the link it cannot shift to a survivor, and that already retires
+the claim tied to it via `claim_id` (`source = 'order_inquiry'`, guarded so a claim two links
+on the same document still share is not freed out from under the surviving one) - review
+round confirmed this by disabling an apply-time block that deleted the claim unconditionally
+and finding the acceptance test still green, so the block was the redundant one and is gone.
 
 `tests/scm/test_planning_change_diff_parity.py::test_removing_a_line_with_an_allocation_claim_is_accepted_and_cancelled`,
 `::test_removing_a_line_placed_on_a_po_is_accepted_and_cancelled` and
