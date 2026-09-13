@@ -42,6 +42,7 @@ CONTACT), brand narrows members (tagged with it plus untagged). Both rules alrea
 | D7 | Company is the contact's, never the product's. Brand is the resolved product's. The confirmation flag is read only while an offer is open. |
 | D8 | (console pass, 13 Sep) The routed-to-PIC copy names the resolved brand when the landed team is Marketing Product or Marketing Promotion ("from marketing product team handling Sorento"); other teams and no-brand cases unchanged. The brand DISPLAY is `brands.brand_name`, never the code, read off the same resolved row the next-assignee body takes `brand_code` from; the PIC comment's Team line carries the same fragment. |
 | D9 | (console pass, 13 Sep) A console dry run resolves the product and names the brand exactly like a live turn - the owner tests from the console, the console only ever runs dry, and `resolve_and_gate` / `preview_assignee` are both reads (savepoint-wrapped, no db writes). `dry_run` gates only the two WRITING seams, `next_assignee`'s draw and `sla_create`'s row, never the resolver or the preview draw. `PREVIEW_BRAND_NOTE` is retired outright, not relocated. |
+| D10 | (captain's console re-pass, 13 Sep, finding 6) The D3 same-team gate is for a product left over from an UNRELATED earlier turn. A `team_pick` the lane itself asked, on a turn that named the product, is a deferral of that SAME escalation - so a reply that resumes it carries the product regardless of the previous turn's team. `_resumed_team_pick(ctx)` reads `ctx.parse._answered.handler == "team_pick"` and the previous turn's persisted `open_question.kind == "team_pick"`, the same two-signal pattern `_deferred_escalation` uses for its own `product_pick` deferral. No new session key, no payload change - the existing D3 resolve runs, just ungated. |
 
 ## Design: three facts, one ladder each, all decided in the escalation lane
 
@@ -234,6 +235,26 @@ D6's did-you-mean-first ordering and D8's brand fragment were both live-only in 
 routing, the D3 carry, the landed item - on a dry run exactly as it does live, since
 `resolve_and_gate` and `preview_assignee` are both reads; `dry_run` now gates only the two
 WRITING seams (`next_assignee`, `sla_create`) at the very end. `PREVIEW_BRAND_NOTE` is retired.
+
+**Finding 6 (D10, captain's console re-pass, 13 Sep 2026, prompt v16): the brand was still
+blank on a resumed team_pick, live and dry alike.** `ESCLATE TO MARKETING ABOUT WATER TAP OF
+SRTWB8004` resolved the product (D6) then asked which marketing team (D2); the `team_pick`
+persisted `payload: {team: "purchasing", domain: "master_products"}` (the INHERITED team,
+`routing_source: none`), with `focus.domains: master_products` and `focus.products:
+[SRTWB8004, canonical_code null]`. "MARKETING PRODUCT" answered it
+(`ctx.parse._answered.handler == "team_pick"`) and landed `marketing_product` - but
+`_this_turn_products` is empty (SRTWB8004 carries `current_message: false` on this turn), so
+`_resolve_product` returns `None`, and `_carried_brand`'s D3 same-team gate compared the
+LANDED team (`marketing_product`) against `_carried_team(ctx)` (`purchasing`, derived from
+`focus.domains`) and returned `(None, None)` - the copy read "...from Marketing Product
+team." with no ` handling SORENTO`. Cause: the same-team gate is right for a product left
+over from an unrelated earlier turn, but wrong for the product THIS escalation itself named
+- the team question was the lane's own deferral of that request, not a new turn about
+something else. Fixed (3e024feea): `_resumed_team_pick(ctx)` reads the same two structured
+signals `_deferred_escalation` already uses for its own `product_pick` deferral
+(`ctx.parse._answered.handler` and the previous turn's persisted `open_question.kind`, both
+`team_pick`) and `_carried_brand` skips the same-team gate when it says true, then resolves
+`focus.products` through the existing seam exactly as the D3 rung already does.
 
 ### Not built, with the reason
 

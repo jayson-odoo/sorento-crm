@@ -92,7 +92,11 @@ she typed and the code she picked.
   marketing").
 - AC-1128 No product named this turn, previous turn's team != the landed team: `brand_code`
   null in the body. pytest (stock turn then "escalate to marketing" then pick Marketing
-  Product).
+  Product). This same-team gate does NOT apply when this turn resumed the lane's own
+  `team_pick` question (D10): the product that turn's escalation request named carries to
+  the landing regardless of the previous turn's team, because the question was the lane's
+  own deferral of that same request. pytest, live and dry (SRTWB8004 named, family word
+  asked, team picked).
 - AC-1129 The body's `team_code` is the team the ladder landed on and `agent_code` is that
   team's agent from the domain table, never the inherited pair. pytest with inherited
   purchasing/general_enquiries and landed marketing_product.
