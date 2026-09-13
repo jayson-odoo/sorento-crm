@@ -29,6 +29,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.project_so import (
     DECISION_ACTIVE,
     INQUIRY_CANCELLED,
@@ -44,8 +45,9 @@ from app.models.project_so import (
     SOSupplyDecision,
 )
 from app.services import planning_change_service
+from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.project_supply_service import ProjectSupplyService
-from app.services.scm.outstanding_diff import DATE_MOVED, QTY_CHANGED, Diff
+from app.services.scm.outstanding_diff import CLOSED, DATE_MOVED, QTY_CHANGED, Change, Diff, Line
 
 from tests._pg_fixture import blank_session
 from tests.test_planning_changes import (  # noqa: F401  (api is the fixture)
@@ -110,6 +112,76 @@ def _drop_line_to_100(api):
 
 def _links_of(db, row_id) -> list:
     return db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_id).all()
+
+
+def _wholly_placed_buy_world(api, *, qty="34"):
+    """A single held Buy line, its WHOLE quantity placed on a real PO - no remainder, no
+    other line of the order carrying this product. The removal shape rule 6 has to answer:
+    a line's whole placement has to move somewhere when the line itself goes, never simply
+    released for nothing (`_place_row_on_a_real_po`'s own shape, reused rather than copied
+    for the qty-down world since this needs the WHOLE quantity placed, not a partial)."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered=qty,
+                            required_date=date(2027, 3, 1))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty=qty, buy_reason="ZZT no stock anywhere"),
+    ]})
+    raised_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    supplier = Supplier(
+        id=_uid(), company_id=world.company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} supplier",
+    )
+    po = PurchaseOrder(
+        id=_uid(), company_id=world.company_id, po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([supplier, po])
+    db.flush()
+    po_line = PurchaseOrderLine(
+        id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+        product_id=world.product.id, warehouse_id=world.own_wh.id,
+        qty_ordered=Decimal(qty), qty_received=Decimal("0"), line_status="open",
+    )
+    db.add(po_line)
+    db.commit()
+    ProjectOrderInquiryService(db).place_on_po_allocations(
+        raised_row.id, [{"po_line_id": po_line.id, "qty": qty}], actor_user_id=world.actor,
+    )
+    db.commit()
+    db.expire_all()
+    raised_row = db.get(OrderInquiryRow, raised_row.id)
+    assert raised_row.state == INQUIRY_PLACED, raised_row.state
+    return world, core_so, core_line, order, line, po, po_line
+
+
+def _cancel_the_line(db, world, core_so, core_line):
+    """Write-first (the book removes the line), then a CLOSED Change fed to build_batch -
+    the same shape `_so400884_shape`'s own "line 1 is removed - cancelled" save uses."""
+    old_qty = float(core_line.qty_ordered)
+    core_line.line_status = "cancelled"
+    db.flush()
+    before = Line(doc_number=core_so.so_number, item_code=world.product.product_code,
+                  location=world.own_wh.warehouse_code, qty=old_qty,
+                  required_date=core_line.required_date, row_ref=str(core_line.id))
+    change = Change(CLOSED, core_so.so_number, world.product.product_code,
+                     world.own_wh.warehouse_code, before=before, after=None)
+    batch = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[change]),
+        applied_line_ids={id(change): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="test.xlsx",
+    )
+    db.commit()
+    return batch
 
 
 # --------------------------------------------------------------------------- #
@@ -934,3 +1006,133 @@ def test_a_freed_spo_share_is_unlinked_and_named_unallocated(api):
     fresh = db.get(PlanningChangeRow, row.id)
     released = (fresh.result_json or {}).get("released_documents") or []
     assert spo.spo_number in released, fresh.result_json
+
+
+# --------------------------------------------------------------------------- #
+# Rule 6: a cancelled line's placed quantity with no same-order taker
+# --------------------------------------------------------------------------- #
+
+def test_a_cancelled_lines_placed_quantity_with_no_same_order_taker_follows_rule_6(api):
+    """Order A's line is wholly Buy, wholly placed on a real PO (34), no other line of A
+    carries this product. Order B has a raised, unlinked ORDER row for the SAME product,
+    due EARLIER. Removing A's line has nowhere to shift the placement to on A's own order
+    (`_shift_links_off_retired_lines` only looks at survivors of the SAME order) - rule 6
+    says the whole placement still has to go somewhere, cross-order, the same way a
+    confirmed row's freed PO quantity would (`_execute_reallocations`'s own
+    `_redeal_document`), which is exactly what `_execute_reallocations` skips for a
+    cancelled row today (`kind != "cancelled"`).
+    """
+    world, core_so, core_line, order, line, po, po_line = _wholly_placed_buy_world(api)
+    db = world.db
+    client = api[0]
+
+    other_so = _core_so(db, world.company_id)
+    other_line_core = _core_line(db, other_so, world.product, world.own_wh, qty_ordered="50",
+                                  required_date=date(2027, 2, 1))
+    other_order = _project_so(db, world.project, so_id=other_so.id,
+                               autocount_doc_no=other_so.so_number)
+    other_project_line = _project_line(db, other_order, line_no=1, product=world.product,
+                                        core_line=other_line_core)
+    db.commit()
+    _confirm(client, other_order.id, {"lines": [
+        _line_payload(other_project_line.id, buy_qty="50", buy_reason="Nothing free elsewhere."),
+    ]})
+    other_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == other_project_line.id,
+                OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+
+    batch = _cancel_the_line(db, world, core_so, core_line)
+    row = _only_row(db, batch)
+    assert row.kind == "cancelled", row.kind
+    reallocate_components = [
+        c for c in (row.suggestion_json or {}).get("components", [])
+        if c.get("action") == "reallocate"
+    ]
+    assert len(reallocate_components) == 1, row.suggestion_json
+    assert f"{other_so.so_number} ORDER" in reallocate_components[0]["label"], (
+        reallocate_components[0]
+    )
+
+    _, result = _confirm_row_and_apply(db, batch, world.actor)
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    other_row = db.get(OrderInquiryRow, other_row.id)
+    links = _links_of(db, other_row.id)
+    assert sum(Decimal(str(l.qty)) for l in links) == Decimal("34"), links
+    assert other_row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED), other_row.state
+    assert other_row.note and f"Found: {po.po_number} 34" in other_row.note, other_row.note
+
+    from app.models.procurement import PurchaseOrderLine as _POLine
+
+    fresh_po_line = db.get(_POLine, po_line.id)
+    po_links = (
+        db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == fresh_po_line.id).all()
+    )
+    po_linked_total = sum(Decimal(str(l.qty)) for l in po_links)
+    assert po_linked_total == fresh_po_line.qty_ordered, (
+        "the PO line must read fully claimed", po_linked_total, fresh_po_line.qty_ordered
+    )
+
+    from app.models.planning_change import PlanningChangeRow
+
+    fresh = db.get(PlanningChangeRow, row.id)
+    executed = (fresh.result_json or {}).get("executed_reallocations") or []
+    released = (fresh.result_json or {}).get("released_documents") or []
+    assert any(
+        po.po_number in item and "34" in item and f"{other_so.so_number} ORDER" in item
+        for item in executed
+    ), fresh.result_json
+    assert not any(po.po_number in item for item in released), fresh.result_json
+
+
+def test_a_cancelled_lines_placed_quantity_lands_on_a_pool_row_when_nobody_needs_it(api):
+    """Same shape, no order B: nobody waiting for the product anywhere, so the whole
+    placement has to land on a pool-location row instead (the "last resort" leg of rule 6,
+    the same shape a confirmed row's freed PO quantity gets via `_pool_row_for`), rather
+    than the released-document/qty-0 outcome `_shift_links_off_retired_lines` gives it
+    today when it finds no same-order survivor.
+    """
+    world, core_so, core_line, order, line, po, po_line = _wholly_placed_buy_world(api)
+    db = world.db
+
+    batch = _cancel_the_line(db, world, core_so, core_line)
+    row = _only_row(db, batch)
+    _, result = _confirm_row_and_apply(db, batch, world.actor)
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    pool_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
+        .all()
+    )
+    assert len(pool_rows) == 1, pool_rows
+    assert pool_rows[0].qty == Decimal("34"), pool_rows[0].qty
+    pool_links = _links_of(db, pool_rows[0].id)
+    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("34"), pool_links
+
+    from app.models.procurement import PurchaseOrderLine as _POLine
+
+    fresh_po_line = db.get(_POLine, po_line.id)
+    po_links = (
+        db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == fresh_po_line.id).all()
+    )
+    po_linked_total = sum(Decimal(str(l.qty)) for l in po_links)
+    assert po_linked_total == fresh_po_line.qty_ordered, (
+        "the PO line must read fully claimed against the pool row", po_linked_total,
+        fresh_po_line.qty_ordered,
+    )
+
+    from app.models.planning_change import PlanningChangeRow
+
+    fresh = db.get(PlanningChangeRow, row.id)
+    executed = (fresh.result_json or {}).get("executed_reallocations") or []
+    released = (fresh.result_json or {}).get("released_documents") or []
+    assert any(po.po_number in item and "34" in item and "pool" in item.lower()
+               for item in executed), fresh.result_json
+    assert not any(po.po_number in item for item in released), fresh.result_json
