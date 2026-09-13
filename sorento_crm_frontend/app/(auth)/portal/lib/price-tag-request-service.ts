@@ -329,6 +329,13 @@ export async function listRequestsAsSummaries(
       created_at: r.created_at,
       customer_name: r.debtor_name,
       needed_by_date: r.needed_by_date,
+      // AC-R7: the same revision fields the legacy kinds' own summaries carry
+      // (D45's landing card reads these for the "Rev N" / "Revising" badges) -
+      // the list payload already carries all three, this just stopped
+      // dropping them.
+      revision_no: r.revision_no,
+      last_revised_at: r.last_revised_at,
+      has_revision_draft: r.has_revision_draft,
     };
   });
 }

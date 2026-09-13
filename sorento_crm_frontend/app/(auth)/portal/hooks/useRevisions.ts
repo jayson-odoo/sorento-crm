@@ -51,7 +51,14 @@ export function useRevisionHistory(
     }
     let cancelled = false;
     setLoading(true);
-    fetchRevisions(kind, submissionId)
+    // `Promise.resolve().then(...)` defers the CALL itself, same reasoning as
+    // `useRevisionPolicy` below: a caller whose test mocks `portal-client.ts`
+    // without `fetchRevisions` (every price tag test predating AC-R7's reuse
+    // of this hook for that kind) throws SYNCHRONOUSLY on the bare call,
+    // which no `.catch` after it would ever see; deferred, it lands in the
+    // same "no history" fallback a real network failure already takes.
+    Promise.resolve()
+      .then(() => fetchRevisions(kind, submissionId))
       .then((items) => {
         if (cancelled) return;
         setEntries(items);
@@ -61,7 +68,19 @@ export function useRevisionHistory(
         if (cancelled) return;
         // An expired/foreign token is handled by the page that owns the
         // submission; history just stays empty rather than double-redirecting.
-        if (e instanceof PortalUnauthorizedError || e instanceof PortalOwnerMismatchError) {
+        // The `instanceof` checks are themselves wrapped: a test whose mock of
+        // this module omits these two classes (every price tag test predating
+        // AC-R7's reuse of this hook) throws on the bare reference, which must
+        // land in the same generic fallback below rather than escape as a
+        // second, unrelated unhandled rejection.
+        let isAuthOrOwnership = false;
+        try {
+          isAuthOrOwnership =
+            e instanceof PortalUnauthorizedError || e instanceof PortalOwnerMismatchError;
+        } catch {
+          isAuthOrOwnership = false;
+        }
+        if (isAuthOrOwnership) {
           setEntries([]);
           setError(null);
           return;

@@ -13,6 +13,8 @@ import {
   Check,
   Copy,
   Download,
+  FileText,
+  History,
   Loader2,
   MessageSquare,
   PencilLine,
@@ -36,9 +38,11 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { FormSection } from './FormSection';
+import { RevisionHistory } from './RevisionHistory';
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -48,7 +52,11 @@ import {
   priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
 import { portalBase, portalDuplicatePath } from '../lib/portal-paths';
-import { useRevisionPolicy, useReviseSubmission } from '../hooks/useRevisions';
+import {
+  useRevisionHistory,
+  useRevisionPolicy,
+  useReviseSubmission,
+} from '../hooks/useRevisions';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
@@ -342,6 +350,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     'price_tag_request',
     effectiveId,
   );
+  // AC-R7: same history hook/component SubmissionForm reads for the legacy
+  // kinds - the generic revision routes already serve price_tag_request
+  // (R3-1's ADAPTERS entry), this is just the FE surface catching up.
+  const revisionHistory = useRevisionHistory('price_tag_request', effectiveId);
 
   // ---- Sections (D-P1): Customer open by default, everything else opens
   // progressively as the form gains the value the next section needs. A rule
@@ -1155,78 +1167,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // section beneath it (AC-S2-2); `RequestDetailView` no longer exists as a
   // separate layout.
   if (request && !showEditForm) {
-    return (
-      <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-          >
-            <ArrowLeft className="size-4 mr-1" /> Back
-          </Button>
-          <div className="flex items-center gap-2">
-            {/* R3-1/AC-R7: no Edit after submit - a submitted request is
-                read-only exactly like a stock inquiry, and a change goes
-                through the revision engine instead. ONE gear: Duplicate,
-                Download PDF (disabled with a reason until a completed
-                export exists), and Revise when the policy allows it.
-                Controlled open state so the menu closes itself once the
-                download settles, instead of sitting open with a stale item
-                until an outside click. */}
-            <DetailActionsMenu
-              ariaLabel="Price tag request actions"
-              open={gearOpen}
-              onOpenChange={setGearOpen}
-            >
-              <DropdownMenuItem
-                disabled={!request.has_completed_export || downloadingPdf}
-                onSelect={(event) => {
-                  event.preventDefault();
-                  void handleDownloadPdf();
-                }}
-              >
-                {downloadingPdf ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Download className="size-4" />
-                )}
-                <span className="flex flex-col items-start">
-                  <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
-                  {!request.has_completed_export && !downloadingPdf && (
-                    <span className="text-xs text-muted-foreground">
-                      No completed export yet
-                    </span>
-                  )}
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={(event) => {
-                  event.preventDefault();
-                  setGearOpen(false);
-                  router.push(portalDuplicatePath('price_tag_request', request.id, slug));
-                }}
-              >
-                <Copy className="size-4" />
-                Duplicate
-              </DropdownMenuItem>
-              {revisionPolicy?.allowed && (
-                <DropdownMenuItem
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    setGearOpen(false);
-                    setReviseMode(true);
-                    setReviseReason('');
-                  }}
-                >
-                  <PencilLine className="size-4" />
-                  Revise
-                </DropdownMenuItem>
-              )}
-            </DetailActionsMenu>
-          </div>
-        </div>
+    // AC-R7: same tab shape SubmissionForm gives the legacy kinds - Revisions
+    // becomes its own tab once this type has revisions on (the generic
+    // revision routes already serve price_tag_request via R3-1's ADAPTERS
+    // entry; this is just the FE surface catching up).
+    const revisionsTabbed = revisionPolicy?.enabled === true;
 
+    const detailsContent = (
+      <>
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-lg font-semibold">{request.doc_number}</h1>
@@ -1469,6 +1417,119 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+          </>
+        )}
+      </>
+    );
+
+    const revisionHistoryCard = (
+      <RevisionHistory
+        entries={revisionHistory.entries}
+        loading={revisionHistory.loading}
+        error={revisionHistory.error}
+        currentAttachments={attachments}
+      />
+    );
+
+    return (
+      <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
+          >
+            <ArrowLeft className="size-4 mr-1" /> Back
+          </Button>
+          <div className="flex items-center gap-2">
+            {/* R3-1/AC-R7: no Edit after submit - a submitted request is
+                read-only exactly like a stock inquiry, and a change goes
+                through the revision engine instead. ONE gear: Duplicate,
+                Download PDF (disabled with a reason until a completed
+                export exists), and Revise when the policy allows it.
+                Controlled open state so the menu closes itself once the
+                download settles, instead of sitting open with a stale item
+                until an outside click. */}
+            <DetailActionsMenu
+              ariaLabel="Price tag request actions"
+              open={gearOpen}
+              onOpenChange={setGearOpen}
+            >
+              <DropdownMenuItem
+                disabled={!request.has_completed_export || downloadingPdf}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  void handleDownloadPdf();
+                }}
+              >
+                {downloadingPdf ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Download className="size-4" />
+                )}
+                <span className="flex flex-col items-start">
+                  <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
+                  {!request.has_completed_export && !downloadingPdf && (
+                    <span className="text-xs text-muted-foreground">
+                      No completed export yet
+                    </span>
+                  )}
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={(event) => {
+                  event.preventDefault();
+                  setGearOpen(false);
+                  router.push(portalDuplicatePath('price_tag_request', request.id, slug));
+                }}
+              >
+                <Copy className="size-4" />
+                Duplicate
+              </DropdownMenuItem>
+              {revisionPolicy?.allowed && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setGearOpen(false);
+                    setReviseMode(true);
+                    setReviseReason('');
+                  }}
+                >
+                  <PencilLine className="size-4" />
+                  Revise
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
+          </div>
+        </div>
+
+        {revisionsTabbed ? (
+          <Tabs defaultValue="details">
+            {/* Same underlined strip the office detail pages use, and the
+                same tab shape SubmissionForm gives the legacy kinds (AC-R7) -
+                a record's tabs look the same whichever side of the system,
+                and whichever portal form, you are on. */}
+            <TabsList variant="line" className="mb-5 w-full justify-start">
+              <TabsTrigger value="details">
+                <FileText />
+                <span>Details</span>
+              </TabsTrigger>
+              <TabsTrigger value="revisions">
+                <History />
+                <span>Revisions</span>
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="details" className="m-0 space-y-4">
+              {detailsContent}
+            </TabsContent>
+            <TabsContent value="revisions" className="m-0">
+              {revisionHistoryCard}
+            </TabsContent>
+          </Tabs>
+        ) : (
+          <>
+            {detailsContent}
+            {revisionHistoryCard}
           </>
         )}
       </div>
