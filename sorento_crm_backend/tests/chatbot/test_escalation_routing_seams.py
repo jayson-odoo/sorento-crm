@@ -1257,3 +1257,211 @@ def test_console_finding2_guard_a_plain_did_you_mean_pick_offer_never_manufactur
         f"a product_pick with no `then.escalate` payload has no team to resume onto - the "
         f"open-question layer must leave it unresolved, not invent an acceptance: {answered!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Owner regression, found on 532ab8a24: a numbered pick against a product_pick
+# whose payload carries BOTH `then.escalate` and issue #708's `keep` (a sibling
+# entity of a DIFFERENT type - an attachment_type, not a product) drops the
+# kept sibling. `_product_pick`'s own `focus["products"]` fold
+# (`entities + [e for e in keep if _is_product(e)]`, `open_question.py` ~287)
+# only ever re-admits a kept PRODUCT; `apply_open_question_outcome`
+# (`output_exchange.py` ~1171) reads only `outcome.focus["products"]` /
+# `["customer"]` and never `outcome.keep` itself, so a non-product sibling
+# never reaches `o["entities"]` at all - whether or not `then` is present.
+# --------------------------------------------------------------------------- #
+
+
+def _keep_pick_previous_state(*, with_then: bool) -> dict:
+    payload: dict = {
+        "keep": [
+            {
+                "raw": "Product Photos",
+                "hint": "attachment_type",
+                "uuid": "90e76894-8384-4186-a3f7-ef73667726ff",
+                "canonical_code": "Product Photos",
+                "current_message": True,
+            }
+        ],
+        "domain": "product_attachment",
+        "picked": [],
+        "offer_id": "42267ebd-0000-0000-0000-000000000000",
+    }
+    if with_then:
+        payload["then"] = {"escalate": {"offer_team": "marketing_product"}}
+    return {
+        "focus": {
+            "domains": {
+                "value": ["product_attachment"],
+                "set_at_turn": 4,
+                "set_at": None,
+                "source": "reuse",
+            },
+            "products": {
+                "value": [
+                    {
+                        "raw": "srtwc60630-sh",
+                        "hint": "product",
+                        "canonical_code": None,
+                        "current_message": False,
+                        "confident": True,
+                    }
+                ],
+                "set_at_turn": 4,
+                "set_at": None,
+                "source": "reuse",
+            },
+        },
+        "open_question": {
+            "kind": "product_pick",
+            "options": [
+                {
+                    "idx": 1,
+                    "uuid": "8e076b8e-ad64-495c-8919-4d06b734df60",
+                    "label": "SRTWC6030-SH-BL",
+                    "value": "SRTWC6030-SH-BL",
+                    "product": "SRTWC6030-SH-BL",
+                    "domain": "product_attachment",
+                    "entity_type": "product",
+                },
+                {
+                    "idx": 2,
+                    "uuid": None,
+                    "label": "SRTWC6030-SH-MG",
+                    "value": "SRTWC6030-SH-MG",
+                    "product": "SRTWC6030-SH-MG",
+                    "domain": "product_attachment",
+                    "entity_type": "product",
+                },
+                {
+                    "idx": 3,
+                    "uuid": None,
+                    "label": "SRTWC6030-SH-MK",
+                    "value": "SRTWC6030-SH-MK",
+                    "product": "SRTWC6030-SH-MK",
+                    "domain": "product_attachment",
+                    "entity_type": "product",
+                },
+            ],
+            "expects": "pick",
+            "payload": payload,
+            "asked_at_turn": 4,
+            "asked_at": None,
+        },
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
+    }
+
+
+def _run_keep_pick_turn(previous_state: dict, *, message_type: str):
+    from app.services.chatbot.engine import _resolve_open_question
+
+    _assert_only_five_keys(previous_state)
+
+    parser_raw = _full_emission(
+        message_type=message_type,
+        is_affirmative=None,
+        entities=[],
+        reference_positions=[1],
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="1",
+    )
+    answered = _resolve_open_question(
+        previous_state, parser_raw=parser_raw, emits_v3=False, referenced_result_set=None, turn_no=5
+    )
+    parent_input = {
+        "latest_user_message": "1",
+        "contact_id": "ZZT-esc-keep-1",
+        "previous_conversation_state": previous_state,
+        "parser_emits_v3": False,
+        "_answered": answered,
+        "turn_no": 5,
+    }
+    parse_block = post_process({"output": dict(parser_raw)}, {}, parent_input)
+    parse_block = suggest_follow_up(parse_block, parent_input)
+    qf = parse_block["output"]
+
+    ctx = {
+        "contact": {"id": "ZZT-esc-keep-1", "phone": "+60123450099", "custom_fields": []},
+        "text": {"message": {"messageId": "ZZT-esc-keep-msg-1", "message": {"type": "text", "text": "1"}}},
+        "session": {"session_vars": {"variables": previous_state}},
+        "parse": {"output": qf, "_parser_raw": parse_block.get("_parser_raw")},
+        "access": {"allowed": True, "decision": "allow"},
+        "media": None,
+    }
+    branch, _tier = decide(ctx)
+    return answered, qf, branch
+
+
+def test_owner_regression_a_pick_over_a_deferred_escalation_keeps_the_sibling_attachment_type() -> None:
+    """Owner regression, found on `532ab8a24`. Previous state exactly as specified: a
+    `product_pick` offering three SRTWC6030-SH variants, `payload.keep` holding the
+    `Product Photos` attachment_type entity that already resolved on the turn the picker
+    was raised (issue #708), and `payload.then.escalate.offer_team` from the miss lane's
+    combined offer (console pass finding 2). "1" picks `SRTWC6030-SH-BL`.
+
+    Expected: the picked product AND the kept attachment_type both reach `qf["entities"]`,
+    and the turn lands on the BUSINESS lane (a numbered pick answers the product question,
+    never resumes the escalation - the same rule the console finding 2 companion pins).
+    Asserted at BOTH the open-question outcome level (`answered["outcome"].keep` already
+    carries the sibling correctly - `_product_pick` never lost it) and the derived
+    entities level (`qf["entities"]` does not - `apply_open_question_outcome` only reads
+    `outcome.focus["products"]` / `["customer"]`, and `_product_pick`'s own
+    `focus["products"]` fold only re-admits a kept row that IS a product). Not driven
+    through the real resolve gate (`lanes/business/gate.py`'s `'{domain}' requires
+    [{missing}] but none resolved`, ~line 317) - the dropped entity is conclusive at the
+    entities level, since that is the gate's own input; asserting at this level is the
+    reviewer's own named alternative to a full resolver-stub drive.
+
+    RED today: the outcome carries only the pick."""
+    previous_state = _keep_pick_previous_state(with_then=True)
+
+    answered, qf, branch = _run_keep_pick_turn(previous_state, message_type="business_query")
+
+    outcome = answered["outcome"]
+    assert outcome is not None and outcome.resolved is True
+    kept_codes = {e.get("canonical_code") or e.get("raw") for e in outcome.keep}
+    assert "Product Photos" in kept_codes, (
+        f"the open-question layer itself must still carry the kept sibling: {outcome!r}"
+    )
+
+    assert branch == "business_query", (
+        f"a numbered pick answers the product question, never the deferred escalation: {branch!r}"
+    )
+    raws = {str(e.get("raw")) for e in (qf.get("entities") or [])}
+    assert "SRTWC6030-SH-BL" in raws, (
+        f"the picked product must be in scope: {qf.get('entities')!r}"
+    )
+    assert "Product Photos" in raws, (
+        f"issue #708's kept sibling must survive a pick even when the SAME question also "
+        f"carries a deferred escalation - it is dropped entirely: {qf.get('entities')!r}"
+    )
+    picked_entity = next(e for e in qf["entities"] if e.get("raw") == "SRTWC6030-SH-BL")
+    assert picked_entity.get("current_message") is True
+    assert picked_entity.get("uuid") == "8e076b8e-ad64-495c-8919-4d06b734df60"
+
+
+def test_owner_regression_companion_the_same_keep_without_a_deferred_escalation() -> None:
+    """Owner regression companion: the SAME payload, minus `then` - a plain issue #708
+    `keep` with no escalation offer riding alongside it. MEASURED, not assumed to already
+    hold: the plan's own framing called this "green today", but the drop is in
+    `apply_open_question_outcome` / `_product_pick`'s focus fold, neither of which reads
+    `then` at all - the mixed-type keep (an attachment_type sibling beside a product pick)
+    is what is untested, not the escalation payload beside it. RED for the same reason as
+    the primary test above."""
+    previous_state = _keep_pick_previous_state(with_then=False)
+
+    answered, qf, branch = _run_keep_pick_turn(previous_state, message_type="business_query")
+
+    outcome = answered["outcome"]
+    assert outcome is not None and outcome.resolved is True
+    kept_codes = {e.get("canonical_code") or e.get("raw") for e in outcome.keep}
+    assert "Product Photos" in kept_codes, outcome
+
+    raws = {str(e.get("raw")) for e in (qf.get("entities") or [])}
+    assert "SRTWC6030-SH-BL" in raws, qf.get("entities")
+    assert "Product Photos" in raws, (
+        f"a plain #708 keep with a NON-product sibling is dropped too - this is not "
+        f"specific to the deferred-escalation payload: {qf.get('entities')!r}"
+    )
