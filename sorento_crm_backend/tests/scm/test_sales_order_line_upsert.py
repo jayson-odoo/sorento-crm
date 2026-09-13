@@ -217,7 +217,11 @@ def test_dropping_a_line_reconciled_to_a_project_so_is_refused(db, world):
     assert db.get(SalesOrderLine, second.id) is not None
 
 
-def test_dropping_a_line_claimed_by_a_purchase_order_is_refused(db, world):
+def test_dropping_a_line_claimed_by_a_purchase_order_is_accepted_and_cancelled(db, world):
+    """Re-walk ruling (13 Sep, SO419595): removal never refuses on a dependent any more - a
+    PO/SPO link claim takes the cancel path (kept, `line_status` cancelled) instead of the
+    409 this used to raise. The claim itself is untouched by the save - it is resolved at
+    apply (rule 6), which this file's plain `SalesOrderService.update` calls never reach."""
     so, line = _uploaded_order(db, world)
     second = SalesOrderLine(
         id=_u(), sales_order_id=so.id, product_id=world["product_b"].id,
@@ -232,17 +236,22 @@ def test_dropping_a_line_claimed_by_a_purchase_order_is_refused(db, world):
     db.add(claim)
     db.flush()
 
-    with pytest.raises(AppException) as exc:
-        SalesOrderService(db).update(
-            so.id,
-            SalesOrderUpdate(lines=[{"sku": world["product_a"].product_code, "qty_ordered": 10, "uom": ""}]),
-            user_id=None,
-        )
-    assert exc.value.status_code == 409
-    assert claim.po_number in exc.value.detail["message"]
+    out = SalesOrderService(db).update(
+        so.id,
+        SalesOrderUpdate(lines=[{"sku": world["product_a"].product_code, "qty_ordered": 10, "uom": ""}]),
+        user_id=None,
+    )
+    lines_by_id = {str(ln["id"]): ln for ln in out["lines"]}
+    assert str(second.id) in lines_by_id, "kept, not deleted"
+    assert lines_by_id[str(second.id)]["line_status"] == "cancelled", lines_by_id[str(second.id)]
 
     db.expire_all()
-    assert db.get(SalesOrderLine, second.id) is not None
+    reloaded = db.get(SalesOrderLine, second.id)
+    assert reloaded is not None, "kept, not deleted"
+    assert reloaded.line_status == "cancelled", reloaded.line_status
+    assert db.get(OrderLinkClaim, claim.id) is not None, (
+        "the claim must survive the save - only apply resolves it (rule 6)"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -295,9 +304,16 @@ def test_dropping_a_line_mirrored_by_an_empty_adoption_record_prunes_the_mirror_
     assert db.get(ProjectSalesOrderLine, mirror_kept.id) is not None, "a sibling mirror line is untouched"
 
 
-def test_dropping_a_line_mirrored_by_an_allocated_adoption_line_is_refused(db, world):
+def test_dropping_a_line_mirrored_by_an_allocated_adoption_line_is_accepted_and_cancelled(db, world):
     """The mirror line is empty in NAME only once real planning happened on it - a
-    `SOLineAllocation` counts as planning, so this is still a 409, not a prune."""
+    `SOLineAllocation` counts as planning.
+
+    Re-walk ruling (13 Sep, SO419595): superseded the old "still a 409, not a prune" - an
+    allocation is one of the dependents removal now cancels instead of refusing (kept,
+    `line_status` cancelled), the SAME cancel path a held-or-inquired line already takes.
+    The mirror line and its allocation survive the save untouched, exactly the way a held
+    line's own mirror does - only apply resolves what the allocation actually does with the
+    freed quantity (rule 6)."""
     so, line = _uploaded_order(db, world)
     second = SalesOrderLine(
         id=_u(), sales_order_id=so.id, product_id=world["product_b"].id,
@@ -318,19 +334,25 @@ def test_dropping_a_line_mirrored_by_an_allocated_adoption_line_is_refused(db, w
     db.add(allocation)
     db.flush()
 
-    with pytest.raises(AppException) as exc:
-        SalesOrderService(db).update(
-            so.id,
-            SalesOrderUpdate(lines=[{"sku": world["product_a"].product_code, "qty_ordered": 10, "uom": ""}]),
-            user_id=None,
-        )
-    assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "SO_LINE_LINKED_TO_PROJECT"
-    assert project_so.provisional_ref in exc.value.detail["message"]
+    out = SalesOrderService(db).update(
+        so.id,
+        SalesOrderUpdate(lines=[{"sku": world["product_a"].product_code, "qty_ordered": 10, "uom": ""}]),
+        user_id=None,
+    )
+    lines_by_id = {str(ln["id"]): ln for ln in out["lines"]}
+    assert str(second.id) in lines_by_id, "kept, not deleted"
+    assert lines_by_id[str(second.id)]["line_status"] == "cancelled", lines_by_id[str(second.id)]
 
     db.expire_all()
-    assert db.get(SalesOrderLine, second.id) is not None, "refused entirely - nothing half-committed"
-    assert db.get(ProjectSalesOrderLine, mirror_line.id) is not None
+    reloaded = db.get(SalesOrderLine, second.id)
+    assert reloaded is not None, "kept, not deleted"
+    assert reloaded.line_status == "cancelled", reloaded.line_status
+    assert db.get(ProjectSalesOrderLine, mirror_line.id) is not None, (
+        "the mirror line survives the save, exactly like a held line's own mirror"
+    )
+    assert db.get(SOLineAllocation, allocation.id) is not None, (
+        "the allocation must survive the save - only apply resolves it (rule 6)"
+    )
 
 
 # --------------------------------------------------------------------------- #
