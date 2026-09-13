@@ -316,11 +316,24 @@ class SupplyProposal(BaseModel):
 class ConfirmReserveComponent(BaseModel):
     warehouse_id: str
     qty: Decimal = Decimal("0")
+    #: The warehouse CODE the id names (R4, review round, second re-walk). Optional and
+    #: ignored on the way IN - addressing is the id's job, and the endpoint reads nothing
+    #: else here - but this SAME schema is reused as the OUTPUT shape for a planning-change
+    #: row's stored `composition` (`app/schemas/planning_change.py` imports `ConfirmLine`
+    #: from this module), and without this field declared, `response_model` drops the code
+    #: `_validate_composition_shape` already wrote into the stored JSON on its way back out
+    #: over the wire - a reader of the ROUTE's response never sees it, only a reader of the
+    #: row directly off the database would.
+    location: Optional[str] = None
 
 
 class ConfirmBorrowComponent(BaseModel):
     source: BorrowSource
     warehouse_id: str
+    #: The warehouse CODE the id names (R4), same reasoning as `ConfirmReserveComponent.
+    #: location` - ignored on input, needed on output since this schema is reused for a
+    #: planning-change row's stored `composition`.
+    location: Optional[str] = None
     donor_project_id: Optional[str] = None
     qty: Decimal = Decimal("0")
     #: Required, but NOT by the schema: an empty reason is a failing LINE, named by line

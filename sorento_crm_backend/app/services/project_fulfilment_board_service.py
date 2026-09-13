@@ -1400,19 +1400,29 @@ class FulfilmentBoardService:
         return rows
 
     def _cancelled_pending_change_rows(self, so_numbers: Sequence[str]) -> List[_Row]:
-        """R3 (13 Sep browser walk): a line the book CANCELLED still has a home on the
-        board while its `cancelled` change row is still PENDING.
+        """R3 (13 Sep browser walk, widened on the second re-walk): a line the book has
+        CLOSED OUT - cancelled, or otherwise no longer open demand - still has a home on
+        the board while a change row about it is still PENDING.
 
-        `is_open_demand()` (`_demand_rows`) rightly drops a cancelled line out of ordinary
+        `is_open_demand()` (`_demand_rows`) rightly drops such a line out of ordinary
         demand - there is nothing left to plan for it - but CS still has to SEE and decide
-        that row, and `_demand_rows`' own query is where it would otherwise vanish without
-        a trace between the book upload and the next Confirm. Read separately rather than
+        the row, and `_demand_rows`' own query is where it would otherwise vanish without
+        a trace between the book upload and the next Confirm. NOT scoped to `kind ==
+        "cancelled"` alone: a `product_changed` row on a line since fully delivered (closed,
+        `qty_delivered == qty_ordered`, an honest drift - see `_carry_snapshot_has_drifted`)
+        is just as invisible to `_demand_rows` and just as undecided, so the same predicate
+        that already excludes it from ordinary demand (`~is_open_demand()`) is what admits
+        it here, whatever kind its own pending row carries. Read separately rather than
         folded into `_demand_rows`'s shared predicate (`is_open_demand()` is read by the
-        netting engine and the worklist too, and neither of those wants a cancelled line
-        back): every field the ladder would have filled stays at `_Row`'s own zero default
-        (no walk runs for it, `qty` is forced to zero), and `_contribution` prints it
-        read-only - `cancelled: true`, the batch it is pending in, nothing to compose.
-        Absent again the moment that row applies (`applied_state` stops being `pending`).
+        netting engine and the worklist too, and neither of those wants a closed-out line
+        back): the ladder never runs for one (`qty` is forced to zero, `qty_delivered` is
+        read straight off the core line, UNCHANGED by a product change - the delivered
+        figure is a fact about the OLD product, not something this read invents), and
+        `_contribution` prints it read-only - the batch it is pending in, nothing to
+        compose. `cancelled` is true only when the row's own `kind` actually is
+        "cancelled" (R3): a product change is a different verdict and must not wear the
+        same pill. Absent again the moment that row applies (`applied_state` stops being
+        `pending`).
         """
         if not so_numbers:
             return []
@@ -1420,7 +1430,10 @@ class FulfilmentBoardService:
         from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
 
         records = (
-            self.db.query(SalesOrderLine, SalesOrder, ProjectSalesOrderLine, PlanningChangeRow)
+            self.db.query(
+                SalesOrderLine, SalesOrder, ProjectSalesOrderLine, PlanningChangeRow,
+                Warehouse, SalesAgent,
+            )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(
                 ProjectSalesOrderLine,
@@ -1431,12 +1444,13 @@ class FulfilmentBoardService:
                 PlanningChangeRow.project_line_id == ProjectSalesOrderLine.id,
             )
             .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+            .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status == "open",
                 SalesOrder.demand_class == "project",
-                SalesOrderLine.line_status == "cancelled",
-                PlanningChangeRow.kind == "cancelled",
+                ~is_open_demand(),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
                 PlanningChangeBatch.applied_at.is_(None),
             )
@@ -1444,13 +1458,23 @@ class FulfilmentBoardService:
         )
         if not records:
             return []
+        # Same helper `_demand_rows` reads its customer names off - one query for the whole
+        # set rather than one per row.
+        customers = self._customers(
+            {str(order.customer_id) for _cl, order, *_r in records if order.customer_id}
+        )
         rows: List[_Row] = []
-        for core_line, order, project_line, change_row in records:
+        for core_line, order, project_line, change_row, warehouse, agent in records:
+            customer_id = str(order.customer_id) if order.customer_id else None
             rows.append(
                 _Row(
                     line_id=str(core_line.id),
                     sales_order_id=str(order.id),
                     so_number=order.so_number,
+                    customer_id=customer_id,
+                    customer_name=customers.get(customer_id or ""),
+                    agent_code=agent.sales_agent if agent else None,
+                    agent_label=agent.person_label if agent else None,
                     line_no=change_row.line_no,
                     item_code=change_row.item_code,
                     product_id=str(core_line.product_id) if core_line.product_id else None,
@@ -1459,8 +1483,10 @@ class FulfilmentBoardService:
                     qty_ordered=core_line.qty_ordered,
                     qty_delivered=core_line.qty_delivered,
                     required_date=core_line.required_date,
+                    warehouse_id=str(core_line.warehouse_id) if core_line.warehouse_id else None,
+                    location=warehouse.warehouse_code if warehouse else None,
                     bucket_key=NO_DATE_BUCKET,
-                    cancelled=True,
+                    cancelled=change_row.kind == "cancelled",
                     pending_change_batch_id=str(change_row.batch_id),
                 )
             )

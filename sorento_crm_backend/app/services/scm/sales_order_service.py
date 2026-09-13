@@ -1607,6 +1607,19 @@ class SalesOrderService:
                     target, old_qty, target.required_date, old_item_code, old_location,
                 ))
                 target.product_id = prod.id
+                if old_item_code != prod.product_code:
+                    # R5 (review round, second re-walk): a product change on a MATCHED line
+                    # (the line id is kept, only the SKU differs) must move the ADOPTED
+                    # mirror's own `product_id` too - left alone, the mirror keeps naming
+                    # the OLD product forever, disagreeing with the core line it reconciles
+                    # to and with the `product_changed` change row this same edit raises.
+                    mirror_line = (
+                        self.db.query(ProjectSalesOrderLine)
+                        .filter(ProjectSalesOrderLine.core_sales_order_line_id == target.id)
+                        .first()
+                    )
+                    if mirror_line is not None:
+                        mirror_line.product_id = prod.id
                 target.qty_ordered = ln.qty_ordered
                 if old_qty > 0 and float(ln.qty_ordered or 0) <= 0:
                     # Settling a held line's qty to 0 ends it exactly like a removal does

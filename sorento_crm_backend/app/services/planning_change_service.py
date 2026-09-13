@@ -2537,7 +2537,14 @@ def _reserve_components_from_sources(sources: List[dict], reserve_qty: Decimal) 
             break
         take = min(_dec(s.get("qty")), remaining)
         if take > _ZERO:
-            out.append({"warehouse_id": s["warehouse_id"], "qty": qty_text(take)})
+            out.append({
+                "warehouse_id": s["warehouse_id"],
+                "qty": qty_text(take),
+                # R4: the proposal's own `BoardSource.location` (a warehouse CODE), carried
+                # straight through - `_validate_composition_shape` only resolves one itself
+                # when a component arrives without it.
+                "location": s.get("location"),
+            })
             remaining -= take
     # Whatever the sources could not address (the proposal rounded, or asked for more than
     # any one source stated) lands on the last addressable warehouse - the only one this
@@ -2576,6 +2583,9 @@ def _borrow_components_from_sources(sources: List[dict], borrow_qty: Decimal) ->
         out.append({
             "source": ALLOC_SOURCE_OTHER_LOCATION,
             "warehouse_id": s["warehouse_id"],
+            # R4: carried straight through from the proposal's own `BoardSource.location` -
+            # `_validate_composition_shape` resolves one itself only when absent.
+            "location": s.get("location"),
             "donor_project_id": None,
             "qty": qty_text(take),
             "reason": s.get("reason") or "",
@@ -2598,7 +2608,7 @@ def _borrow_components_from_sources(sources: List[dict], borrow_qty: Decimal) ->
 
 
 def _validate_composition_shape(
-    composition: dict, row: PlanningChangeRow, open_qty: Decimal
+    db: Session, composition: dict, row: PlanningChangeRow, open_qty: Decimal
 ) -> dict:
     """The PUT-time check (module docstring, PLAN section 1): shape + total == open quantity,
     mirroring the board editor's own `lineBalance`/`lineBlockers`. `_check_line` runs the FULL
@@ -2640,17 +2650,42 @@ def _validate_composition_shape(
             "planning_change_composition_mismatch",
         )
 
+    # R4 (review round, 13 Sep browser walk, SO419595): a stored reserve/borrow component
+    # names its warehouse by id ONLY - the id is what the confirm mechanics address by,
+    # and a reader (the board's "Was/Now" printer) has no other way to spell it than "another
+    # location" or the raw id itself. Resolved once, here, for every warehouse this
+    # composition names, so BOTH the confirm-as-is path (`composition_from_proposal`, whose
+    # `sources` usually already carry a `BoardSource.location` - kept when the caller sent
+    # one) and a hand-composed amendment (which may not) store the code beside the id.
+    warehouse_ids = {
+        str(i["warehouse_id"]) for i in reserve if i.get("warehouse_id") and not i.get("location")
+    } | {
+        str(i["warehouse_id"]) for i in borrow if i.get("warehouse_id") and not i.get("location")
+    }
+    codes_by_id: Dict[str, str] = {}
+    if warehouse_ids:
+        codes_by_id = dict(
+            db.query(Warehouse.id, Warehouse.warehouse_code)
+            .filter(Warehouse.id.in_(list(warehouse_ids)))
+            .all()
+        )
+
     return {
         "project_line_id": str(composition.get("project_line_id")),
         "timely_spo_qty": qty_text(timely),
         "reserve": [
-            {"warehouse_id": i["warehouse_id"], "qty": qty_text(_dec(i.get("qty")))}
+            {
+                "warehouse_id": i["warehouse_id"],
+                "qty": qty_text(_dec(i.get("qty"))),
+                "location": i.get("location") or codes_by_id.get(str(i["warehouse_id"])),
+            }
             for i in reserve
         ],
         "borrow": [
             {
                 "source": i.get("source"),
                 "warehouse_id": i["warehouse_id"],
+                "location": i.get("location") or codes_by_id.get(str(i["warehouse_id"])),
                 "donor_project_id": i.get("donor_project_id"),
                 "qty": qty_text(_dec(i.get("qty"))),
                 "reason": i.get("reason") or "",
@@ -2754,7 +2789,7 @@ def set_row_decision(
                     code="planning_change_composition_required",
                 )
             composed = composition
-        row.composition_json = _validate_composition_shape(composed, row, open_qty)
+        row.composition_json = _validate_composition_shape(db, composed, row, open_qty)
     else:
         row.composition_json = None
 
