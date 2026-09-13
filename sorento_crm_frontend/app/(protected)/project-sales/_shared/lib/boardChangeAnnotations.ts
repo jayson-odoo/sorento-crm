@@ -204,14 +204,81 @@ export function decisionWords(
  * the line held - a change that leaves supply alone reads the same decision on both sides,
  * which is the honest answer rather than a blank.
  */
+/**
+ * The warehouse CODE for a composed component, never the id it is addressed by.
+ *
+ * A composition is what Apply POSTS, so it carries `warehouse_id` and, until the engine
+ * started writing one beside it, no code at all - and the board reads a component's
+ * `location` as a code ("BRW", "BRW-IB"). Printed raw, the id read as a warehouse nobody
+ * recognises: measured on SO419595 line 9 (13 September 2026), the Now side said "Borrow
+ * other location 15 from 21608757-0065-4ef2-bd05-1397452411eb" for what was a pool share at
+ * BRW - a UUID on screen, and the wrong rung with it, because a location that matches no
+ * known code can only read as somebody else's.
+ *
+ * Three sources, in order: what the component itself says, the code the SAME id is already
+ * spelled with elsewhere on this row, and failing both, plain words. Never an id.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function locationOf(
+  stated: string | null | undefined,
+  warehouseId: string | null | undefined,
+  codes: Map<string, string>,
+): string | undefined {
+  const said = (stated ?? '').trim();
+  if (said) return said;
+  const id = (warehouseId ?? '').trim();
+  if (!id) return undefined;
+  // Not an id at all: a caller that already had the code and put it in the only field the
+  // confirm payload has for a warehouse. Read as what it is rather than resolved.
+  if (!UUID.test(id)) return id;
+  const resolved = codes.get(id);
+  if (resolved) return resolved;
+  // Nowhere on this row spells that id. "Another location" is the honest reading, and it
+  // is the same phrase the supply vocabulary uses for a warehouse it cannot name.
+  return 'another location';
+}
+
+/**
+ * Every warehouse id this row already spells a code for, from the two places that carry
+ * both: what the line HELD, and the proposal the engine composed for it.
+ */
+function warehouseCodesOf(row: PlanningChangeRow): Map<string, string> {
+  const codes = new Map<string, string>();
+  const note = (id: string | null | undefined, code: string | null | undefined) => {
+    if (!id || !code) return;
+    if (!codes.has(String(id))) codes.set(String(id), code);
+  };
+  for (const reserve of row.held?.reserve ?? []) note(reserve.warehouse_id, reserve.location);
+  for (const borrow of row.held?.borrow ?? []) note(borrow.warehouse_id, borrow.location);
+  const proposal = (row.proposal ?? null) as BoardContribution | null;
+  for (const source of proposal?.sources ?? []) {
+    note(
+      (source as { warehouse_id?: string | null }).warehouse_id,
+      (source as { location?: string | null }).location,
+    );
+  }
+  note(proposal?.fulfilment_warehouse_id, proposal?.fulfilment_location);
+  return codes;
+}
+
 function proposedParts(row: PlanningChangeRow): SupplyPart[] {
   if (row.composition) {
+    const codes = warehouseCodesOf(row);
     const parts: SupplyPart[] = [];
     for (const reserve of row.composition.reserve ?? []) {
-      parts.push({ kind: 'reserve', qty: reserve.qty, location: reserve.warehouse_id });
+      parts.push({
+        kind: 'reserve',
+        qty: reserve.qty,
+        location: locationOf(reserve.location, reserve.warehouse_id, codes),
+      });
     }
     for (const borrow of row.composition.borrow ?? []) {
-      parts.push({ kind: 'borrow', qty: borrow.qty, location: borrow.warehouse_id });
+      parts.push({
+        kind: 'borrow',
+        qty: borrow.qty,
+        location: locationOf(null, borrow.warehouse_id, codes),
+      });
     }
     if (Number(row.composition.timely_spo_qty ?? '0') > 0) {
       parts.push({ kind: 'timely_spo', qty: row.composition.timely_spo_qty });

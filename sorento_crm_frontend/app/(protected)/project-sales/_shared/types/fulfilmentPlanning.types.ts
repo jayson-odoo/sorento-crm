@@ -533,6 +533,16 @@ export interface SupplyProposal {
 export interface ConfirmReserveComponent {
   warehouse_id: string;
   qty: string;
+  /**
+   * The warehouse CODE the id names, when whoever built this component knew it.
+   *
+   * Addressing is the id's job and the endpoint reads nothing else; this is here so a
+   * READER does not have to guess. A composition read back off a planning-change row is
+   * printed in board words ("Pool share 15 at BRW"), and with the id alone the only
+   * honest thing to print is "another location" - or, before this existed, the raw UUID
+   * (measured on SO419595 line 9, 13 September 2026).
+   */
+  location?: string | null;
 }
 
 export interface ConfirmBorrowComponent {
