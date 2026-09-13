@@ -108,57 +108,62 @@ export function LandingToolbar({
         </PopoverContent>
       </Popover>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-label="Sort"
-            title="Sort"
-          >
-            <ArrowDownUp />
-            {sortField && (
-              <span className="hidden md:inline">{sortField.label}</span>
-            )}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-[12rem]">
-          {/* R3-3: one row per field, not an Ascending/Descending pair - the
-              active field shows its own direction as an arrow; tapping it
-              flips that direction, tapping another field selects it at its
-              type's natural default (dates newest first, text A to Z). */}
-          {fields.map((field) => {
-            const isActive = sort.key === field.key;
-            return (
-              <DropdownMenuItem
-                key={field.key}
-                onSelect={(e) => {
-                  e.preventDefault();
-                  onSortChange({
-                    key: field.key,
-                    dir: isActive
-                      ? sort.dir === 'asc'
-                        ? 'desc'
-                        : 'asc'
-                      : field.type === 'date'
-                        ? 'desc'
-                        : 'asc',
-                  });
-                }}
-              >
-                <span className="flex-1">{field.label}</span>
-                {isActive &&
-                  (sort.dir === 'asc' ? (
-                    <ArrowUp className="size-3.5 text-muted-foreground" />
-                  ) : (
-                    <ArrowDown className="size-3.5 text-muted-foreground" />
-                  ))}
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {/* R3-2: List view is the DataGrid - its own column headers sort, so
+          the Sort button (which drove Cards' own client-side ordering) is
+          redundant there and only shows in Cards view. */}
+      {view !== 'list' && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="Sort"
+              title="Sort"
+            >
+              <ArrowDownUp />
+              {sortField && (
+                <span className="hidden md:inline">{sortField.label}</span>
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[12rem]">
+            {/* R3-3: one row per field, not an Ascending/Descending pair - the
+                active field shows its own direction as an arrow; tapping it
+                flips that direction, tapping another field selects it at its
+                type's natural default (dates newest first, text A to Z). */}
+            {fields.map((field) => {
+              const isActive = sort.key === field.key;
+              return (
+                <DropdownMenuItem
+                  key={field.key}
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    onSortChange({
+                      key: field.key,
+                      dir: isActive
+                        ? sort.dir === 'asc'
+                          ? 'desc'
+                          : 'asc'
+                        : field.type === 'date'
+                          ? 'desc'
+                          : 'asc',
+                    });
+                  }}
+                >
+                  <span className="flex-1">{field.label}</span>
+                  {isActive &&
+                    (sort.dir === 'asc' ? (
+                      <ArrowUp className="size-3.5 text-muted-foreground" />
+                    ) : (
+                      <ArrowDown className="size-3.5 text-muted-foreground" />
+                    ))}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       <ListBoardViewToggle value={view} onChange={onViewChange} />
     </div>
