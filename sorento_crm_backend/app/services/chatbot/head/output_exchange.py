@@ -3184,10 +3184,21 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 # ("nah just sorento") -> company pick.
                 o["escalation"] = {"is_escalation_confirmation": True, "company_pick": co_pick_any}
                 o["entities"] = []
-            elif o.get("is_affirmative") is False:
+            elif o.get("is_affirmative") is False and not named_team_help:
                 # plain decline. Emit a DETERMINISTIC marker the spine's
                 # is-escalation-declined keys on, so the reply is a FIXED
                 # "Escalation declined." and NEVER the clarification LLM.
+                #
+                # D1's guard, the THIRD copy of the same rule (the others are the
+                # switch-word arm above and `suggest_follow_up`'s decline arm), and this is
+                # the one AC-1101 names explicitly as "member offer": a help request that
+                # names a team is an escalation whatever was open. Tier 1 above does not
+                # save it, because `retarget_team` only fires for an EXACT catalogue team -
+                # a family word like `marketing` is exactly what falls through to here, and
+                # "no, escalate to marketing" over a member roster was answered
+                # "Escalation declined." The roster is what the customer declined; the
+                # escalation is what they asked for instead, and the lane's own ladder is
+                # what narrows the family.
                 o["escalation"] = {
                     "is_escalation_confirmation": False,
                     "escalation_declined": True,
