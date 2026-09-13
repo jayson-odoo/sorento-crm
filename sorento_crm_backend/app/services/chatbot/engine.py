@@ -1229,11 +1229,12 @@ def _run_stages(  # noqa: PLR0915
         "previous_conversation_state": variables,
         "referenced_result_set": referenced_result_set,
     }
+    pending_options = _pending_options(variables)
     user_block = parser.build_user_block(
         previous_response=variables.get("response"),
         latest_user_message=latest_user_message,
         pending_kind=_pending_kind(variables),
-        pending_options=_pending_options(variables),
+        pending_options=pending_options,
     )
     # G6: a dry run may supply the emission instead of paying for it. The mock goes
     # through the SAME `post_process` + `suggest_follow_up` the real parse takes, so a
@@ -1311,6 +1312,13 @@ def _run_stages(  # noqa: PLR0915
             # nothing: a missing row reads as "free", which no LLM call is.
             "tokens": int(parser_usage.get("total_tokens") or 0),
             "parser_bypassed": parser_bypassed,
+            # D17 (live failure, 13 Sep 2026): WHICH options the parser was shown, on the
+            # record. Diagnosing "the model answered casual" needs to separate "it was
+            # never told what was on offer" from "it was told and did not take it", and
+            # this stage stored only the parser's own output - so the first answer cost a
+            # debug print against a running stack. `None` when no numbered question was
+            # open, which is most turns.
+            "open_question_options": pending_options,
         },
         raw={"parser_raw": parse_block.get("_parser_raw"), "derived": qf},
     )
