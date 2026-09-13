@@ -94,7 +94,7 @@ from app.models.project_so import (
     SOSupplyDecision,
 )
 from app.models.projects import Project
-from app.models.scm import ItemClassification
+from app.models.scm import ItemClassification, OrderLinkClaim
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE, TIMELY_SPO, qty_text
@@ -3046,6 +3046,31 @@ def _unclaim_shares(
         qty = _dec(link.qty)
         owner = db.get(OrderInquiryRow, link.row_id)
         if qty <= remaining:
+            # The audit claim this link wrote (`source = "order_inquiry"`, held by
+            # `order_link_service.delete_own_claim`/`_remove_links`) goes with it, same
+            # guard as `_remove_links`: only when no OTHER surviving link leans on the
+            # same claim - two links on one document share it. Without this, a line's
+            # placement re-dealt through THIS seam (rule 6, a cancelled row with no
+            # same-order survivor) left the claim behind forever, since only `_remove_
+            # links`'s own call sites used to free it.
+            if link.claim_id:
+                claim = (
+                    db.query(OrderLinkClaim)
+                    .filter(
+                        OrderLinkClaim.id == link.claim_id,
+                        OrderLinkClaim.source == "order_inquiry",
+                    )
+                    .first()
+                )
+                if claim is not None and not (
+                    db.query(OrderInquiryLink)
+                    .filter(
+                        OrderInquiryLink.claim_id == claim.id,
+                        OrderInquiryLink.id != link.id,
+                    )
+                    .first()
+                ):
+                    db.delete(claim)
             db.delete(link)
             wanted[str(link.po_line_id)] = remaining - qty
         else:
@@ -3235,11 +3260,26 @@ def _redeal_document(
     if remaining > _ZERO:
         taken = _take_document_shares(shares, remaining)
         _unclaim_shares(db, service, row, taken, shares)
-        done.append(_pool_row_for(
-            db, service, row, taken=taken, document=document,
-            pool_words="dealer pool" if dealer_hot_selling else "pool",
-            so_number=so_number, item_code=item_code, pool_cache=pool_cache, actor=actor,
-        ))
+        pool_code = _pool_code_for_core_line(db, row.core_line_id, pool_cache)
+        if row.kind == "cancelled" and not pool_code:
+            # The line is RETIRED, not merely reduced (rule 6, review round): there is no
+            # pool warehouse configured for it and no live line left to force a synthetic
+            # one for - `_pool_row_for` would only 409. Given back instead, the same
+            # honest outcome `_release_spo_share` already reports for an SPO share:
+            # unlinked and free for the next raised row's own re-run to claim, never a
+            # quantity silently left claiming a line that no longer exists. A pool row
+            # still gets created normally below when one IS configured (`else`).
+            took = sum((_dec(share["qty"]) for share in taken), _ZERO)
+            done.append(
+                f"Release {_share_words(taken, document)} {qty_text(took)}, "
+                "unallocated for purchasing"
+            )
+        else:
+            done.append(_pool_row_for(
+                db, service, row, taken=taken, document=document,
+                pool_words="dealer pool" if dealer_hot_selling else "pool",
+                so_number=so_number, item_code=item_code, pool_cache=pool_cache, actor=actor,
+            ))
     return done
 
 
@@ -3748,6 +3788,7 @@ def _shift_links_off_retired_lines(
     order: ProjectSalesOrder,
     cancelled_row_ids: Sequence[str],
     actor: Optional[str],
+    rule_six_line_ids: Sequence[str] = (),
 ) -> Dict[str, Dict[str, List[str]]]:
     """A closed line's placements move to the row that still needs them (AC-P3-6).
 
@@ -3775,16 +3816,22 @@ def _shift_links_off_retired_lines(
     returns them). Read off the line instead, an old cancelled row that still carried links
     would have its documents re-dealt by a change that was never about it.
 
+    `rule_six_line_ids` (review round, second re-walk) names which of these lines' own
+    suggestion has a component `_execute_reallocations` can actually act on (`reallocate`,
+    or `release`/`spo` - `_moving_components`'s own filter): ONLY for those does a link no
+    same-order survivor touches at all get left alone here (no key in the returned dict)
+    rather than unlinked, so `_apply_one_order` can route it to that cascade instead
+    (cross-order raised row, else pool). A line named a `release`/`borrow` component (a
+    step-3 supply-borrow's own release, say) has NO executor in `_execute_reallocations` at
+    all - passing it through unresolved would strand the link, pinned to a row purchasing
+    can no longer act on, so it is excluded from `rule_six_line_ids` by its caller and keeps
+    the ORIGINAL behavior below regardless of a same-order survivor's own verdict.
+
     Returns, per closed line's `project_line_id` (D5, the same shape `_execute_reallocations`
     reports in on a confirmed row's `result_json`): `executed_reallocations` for a placement
     a same-order survivor took (whole or partial), `released_documents` for the remainder of
-    a PARTIAL take that no survivor could absorb. SAME-ORDER-SURVIVOR IS TRIED FIRST, always
-    (AC-P3-6's own priority) - but a line whose link no same-order survivor touches AT ALL is
-    left entirely alone here (no key in the returned dict) rather than unlinked: rule 6 (review
-    round, second re-walk) says its placement still has to go SOMEWHERE, cross-order, the same
-    way a confirmed row's freed document would - `_apply_one_order` reads the ABSENCE of a
-    line's key here as "still needs settling" and routes it to `_execute_reallocations`'s own
-    cascade instead. A PARTIAL same-order take keeps the OLDER behavior for its leftover
+    a PARTIAL take, or of a placement no same-order survivor touched and rule 6 does not
+    reach either. A PARTIAL same-order take keeps the OLDER behavior for its leftover
     (unlinked, given back to the ordinary reorder pass) unchanged, since that leg is already
     proven by `test_a_survivor_with_partial_headroom_splits_the_retired_links_qty_across_
     survivor_and_cascade` and rule 6's cross-order/pool cascade was never asked to reach a
@@ -3807,6 +3854,7 @@ def _shift_links_off_retired_lines(
     )
     if not cancelled_rows:
         return {}
+    rule_six_lines = {str(line_id) for line_id in rule_six_line_ids}
 
     # The product each retired line named, and every line of this order, so a survivor is
     # found by PRODUCT rather than by item code (two codes can spell one product).
@@ -3896,20 +3944,28 @@ def _shift_links_off_retired_lines(
                         f"Reallocate {link.document or 'the document'} {qty_text(take)} to "
                         f"{_row_target_words(db, taker, take)}"
                     )
-            if not repointed and remaining < whole:
-                # A same-order survivor took SOME of it - whatever it did not take goes
-                # back to the cascade the ordinary way (unlinked here, free for the next
-                # raised row's own re-run to notice), and the part it DID take now lives on
-                # a link of its own - so the original is removed either way, and the
-                # purchase-order line is free for its balance.
-                if line_key:
+            leave_for_rule_six = (
+                not repointed and remaining >= whole and line_key in rule_six_lines
+            )
+            if not repointed and not leave_for_rule_six:
+                # Whatever the survivors did not take goes back to the cascade the
+                # ordinary way (unlinked here, free for the next raised row's own re-run to
+                # notice) - a PARTIAL take's own leftover always lands here (rule 6 was
+                # never asked to reach a partial remainder), and so does a placement with
+                # NO same-order survivor at all whose line's own suggestion has nothing
+                # `_execute_reallocations` can act on (`rule_six_lines` excludes it -
+                # review round, a `release`/`borrow` release has no executor there, and
+                # leaving its link untouched would strand it, pinned to a row purchasing
+                # can no longer act on). The part a survivor DID take now lives on a link
+                # of its own either way, so the original is removed regardless.
+                if line_key and remaining > _ZERO:
                     done[line_key]["released_documents"].append(
                         link.document or "the document"
                     )
                 service._remove_links(cancelled, [link])
-            # else (not repointed and remaining == whole): NO same-order survivor took
-            # anything - the link is left exactly as it stands, untouched, for
-            # `_execute_reallocations` to settle through rule 6's own cascade (a cross-order
+            # else (leave_for_rule_six): NO same-order survivor took anything AND rule 6 has
+            # an executor for this line's own suggestion - the link is left exactly as it
+            # stands, untouched, for `_execute_reallocations` to settle (a cross-order
             # waiting row, else the pool - review round, second re-walk). `line_key`'s
             # ABSENCE from this function's return is what tells `_apply_one_order` to route
             # it there instead of treating it as already resolved.
@@ -4345,7 +4401,19 @@ def _apply_one_order(
     shifted_by_line: Dict[str, Dict[str, List[str]]] = {}
     if cancelled_row_ids:
         db.flush()
-        shifted_by_line = _shift_links_off_retired_lines(db, order, cancelled_row_ids, actor)
+        # Which of the cancelled lines have a suggestion component `_execute_reallocations`
+        # can actually act on (review round, second re-walk, rule 6) - only those are told
+        # to leave a same-order-survivor-less link alone for that cascade; every other
+        # cancelled line (a `release`/`borrow` release, say, which has no executor there)
+        # keeps the shift's OWN original give-back behavior regardless.
+        rule_six_line_ids = {
+            str(r.project_line_id)
+            for r in live
+            if r.kind == "cancelled" and r.project_line_id and _moving_components(r)
+        }
+        shifted_by_line = _shift_links_off_retired_lines(
+            db, order, cancelled_row_ids, actor, rule_six_line_ids=rule_six_line_ids,
+        )
 
     # NOW the cascade, once every document this order already owns has found its own row.
     # Whatever headroom is still open after the shift is what genuinely needs a stranger's
