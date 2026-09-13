@@ -44,11 +44,11 @@ cases:
           branch_kind: business_query
           reply_contains: ["Outstanding for which document?"]
 
-      # 2. Scope answer - both docs.
+      # 2. Scope answer - both docs, customer in header (R19 onwards).
       - text: "3"
         expect:
           branch_kind: business_query
-          reply_contains: ["Sales order outstanding", "Delivery order outstanding", "Order date: all"]
+          reply_contains: ["Customer: CNK HARDWARE SDN BHD", "Sales order outstanding", "Delivery order outstanding", "Order date: all"]
 
       # 3. Date refinement - narrows the date range, keeps both scopes.
       - text: "i want to see this month only"
@@ -132,7 +132,7 @@ cases:
           reply_contains: ["Sales order outstanding"]
           reply_not_contains: ["FULLSHUN SANITARYWARE SDN BHD, FULLSHUN SANITARYWARE SDN BHD,"]
 
-  - name: R20 - picker shows warehouse hint (DO present/absent), no hint on scope question header
+  - name: R20 - no DO hint on the customer picker of an outstanding ask
     cold: true
     turns:
       # 1. Picker includes DO presence hint in option labels.
@@ -233,9 +233,10 @@ cases:
         expect:
           reply_contains: ["Reply 1 for the sales order list."]
 
-      # 3. Greeting - ends the conversation, no offer.
+      # 3. Greeting - ends the conversation, no offer, replies with greeting.
       - text: "hi"
         expect:
+          reply_contains: ["How can I help"]
           reply_not_contains: ["Reply 1 for", "Sales order outstanding"]
 
   - name: R23 - SO detail list shows latest order date first
