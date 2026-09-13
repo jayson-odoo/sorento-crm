@@ -167,6 +167,49 @@ is the source of truth once code diverges from the table above:
    re-keyed AutoCount line (new DtlKey, same product) reads `cancelled` + `added`, not one
    moved line; counted on the first ESB run after deploy.
 
+### I. Removal re-walk: ANY dependent cancels, only project ownership refuses (captain, SO419595, 13 September 2026)
+
+Point 5's "is_authored and the OrderLinkClaim 409 are untouched" is superseded. A removed
+core line's mirror project line reconciled to an AUTHORED project sales order (`project_id`
+set, or a status other than `adopted`) is still the ONLY removal `_upsert_lines` refuses -
+every other dependent a removed line can carry (a draft finding, an `AllocationClaim`, a
+`ProjectSODivergenceLine`, an `SOLineAllocation`, an open Order Inquiry row, or an
+`OrderLinkClaim` an SO<->PO/SPO placement wrote) now takes the SAME cancel path a
+held-or-inquired line already did, instead of a 409. `OrderLinkClaim.so_line_id` is checked
+against every removed core line, not only ones with a project mirror, so a claim made before
+the order was ever adopted still cancels rather than orphaning the claim to a hard delete. A
+line with NEITHER a mirror reconciled to it NOR any dependent still deletes exactly as
+before (`test_a_line_dropped_from_the_payload_is_deleted` is the acceptance test, unchanged).
+
+The claim/link itself is untouched at SAVE time - only the suggestion names what will happen
+to it (`compose_suggestion`'s existing `kind == "cancelled"` path already composes a
+`reallocate`/`po` component for a placed Buy and a `release`/`spo` component for a placed
+SPO share, unchanged by this round). APPLY is where it resolves:
+`_shift_links_off_retired_lines` (already the mechanism AC-P3-6 built for a held/inquiry
+line's own placements) now returns per-line wording (`executed_reallocations` /
+`released_documents`, the same shape `_execute_reallocations` reports for a confirmed row),
+merged onto the cancelled `PlanningChangeRow.result_json`. Same-order-survivor-first is
+preserved (a closed line's placement still goes to a sibling line of the SAME order before
+anything else, AC-P3-6's own priority) - a cancelled row's placement is deliberately NEVER
+routed through `_execute_reallocations`'s general cross-order cascade, which would
+double-process the same link `_shift_links_off_retired_lines` already resolved one way or
+the other (`_execute_reallocations`'s filter now explicitly excludes `kind == "cancelled"`,
+since `set_row_decision` allows a cancelled row to be marked "confirm" too - the board
+pre-marks every changed line it shows - which would otherwise let it slip through the
+`decision in ("confirm", "amend")` test). The CORE-line `OrderLinkClaim` a placed PO/SPO
+wrote is deleted explicitly once its line is cancelled at apply, since neither the shift nor
+the reallocation engine ever touches that table directly (both only ever move the
+`OrderInquiryLink`, whose own audit claim, `source = 'order_inquiry'`, `_remove_links`
+already frees via `claim_id`).
+
+`tests/scm/test_planning_change_diff_parity.py::test_removing_a_line_with_an_allocation_claim_is_accepted_and_cancelled`,
+`::test_removing_a_line_placed_on_a_po_is_accepted_and_cancelled` and
+`::test_applying_the_cancelled_row_frees_the_po_link` are the acceptance tests.
+`tests/scm/test_sales_order_line_upsert.py::test_dropping_a_line_mirrored_by_an_allocated_
+adoption_line_is_refused` and `::test_dropping_a_line_claimed_by_a_purchase_order_is_refused`
+encode the RETIRED 409s and are flagged to the tester to rewrite to the cancel outcome, not
+edited by the coder (lane rule: tests are tester-owned).
+
 ## Slice B contract (captain, 13 September 2026, issue #857)
 
 `tests/scm/test_planning_change_delta_seam.py` (the tester's own red-test pass, 10 cases)
