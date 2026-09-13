@@ -439,7 +439,15 @@ export function canQuickSave(
   contribution: BoardContribution,
   draft: BoardDraft,
 ): boolean {
-  return !contribution.covered && !contribution.unplannable && !draft[contribution.key];
+  return (
+    !contribution.covered &&
+    !contribution.unplannable &&
+    // A cancelled line has nothing left to decide FOR (R3): the book removed it, and Confirm
+    // retires it. Offering to save the engine's suggestion for it would be offering to
+    // source a quantity nobody is owed.
+    !contribution.cancelled &&
+    !draft[contribution.key]
+  );
 }
 
 /**

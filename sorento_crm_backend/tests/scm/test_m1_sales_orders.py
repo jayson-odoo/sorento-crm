@@ -472,3 +472,96 @@ def test_update_order_type_sets_demand_class(scm_app):
         assert upd3.status_code == 200, upd3.text
         db.refresh(row)
         assert row.demand_class == "retail"
+
+
+# --------------------------------------------------------------------------- #
+# planning-change row on the single-read line (SO change-management, 13 Sep)   #
+# --------------------------------------------------------------------------- #
+
+
+def test_the_single_read_tells_each_line_its_latest_planning_change_row(scm_app):
+    """A cancelled line leaves the fulfilment board entirely (a closed line has no cell),
+    so the board's own "Where it went" dialog is unreachable there right when CS needs it
+    most - the same fact the SO detail screen now reads off `planning_change` instead
+    (`SalesOrderDetail.test.tsx`'s own "opens the What-changed dialog ... instead of the
+    plain Suggestion changed badge").
+
+    One batch can carry MORE than one row for the same line (measured live on SO419851's
+    batch 32d37118: a `qty_up` row superseded by a later `cancelled` row, both `line_no 9`)
+    - the wire must read the LATEST one, whatever its `applied_state`, tie-broken by
+    `created_at` then `id`, never the first one found. A line with no row at all reads
+    `None`, never an empty object - "nothing was ever raised about this line" and "raised,
+    then untouched" are different answers.
+    """
+    import uuid
+    from datetime import datetime, timedelta
+
+    from app.models.order import SalesOrder as SalesOrderModel
+    from app.models.order import SalesOrderLine
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+    from app.models.product import Product
+    from app.models.project_so import SO_STATUS_ADOPTED, ProjectSalesOrder
+
+    app, db = _as(scm_app, "purchasing")
+    product = db.query(Product).filter(Product.product_code == SKU).one()
+
+    order = SalesOrderModel(
+        id=str(uuid.uuid4()), so_number=f"ZZTSO{uuid.uuid4().hex[:8]}".upper(), status="open",
+    )
+    db.add(order)
+    db.flush()
+    line_a = SalesOrderLine(
+        id=str(uuid.uuid4()), sales_order_id=order.id, product_id=product.id,
+        qty_ordered=3, qty_delivered=0, line_status="open",
+    )
+    line_b = SalesOrderLine(
+        id=str(uuid.uuid4()), sales_order_id=order.id, product_id=product.id,
+        qty_ordered=5, qty_delivered=0, line_status="open",
+    )
+    db.add_all([line_a, line_b])
+    db.flush()
+
+    project_so = ProjectSalesOrder(
+        id=str(uuid.uuid4()), provisional_ref=f"ZZT-PSO-{uuid.uuid4().hex[:8]}",
+        so_id=order.id, status=SO_STATUS_ADOPTED,
+    )
+    db.add(project_so)
+    db.flush()
+
+    batch = PlanningChangeBatch(id=str(uuid.uuid4()), source_kind="so_manual_edit")
+    db.add(batch)
+    db.flush()
+
+    now = datetime.utcnow()
+    older_superseded_row = PlanningChangeRow(
+        id=str(uuid.uuid4()), batch_id=batch.id, project_sales_order_id=project_so.id,
+        core_line_id=line_a.id, line_no=9, item_code=product.product_code, kind="qty_up",
+        facts_json={}, applied_state="superseded", created_at=now - timedelta(hours=1),
+    )
+    newest_applied_row = PlanningChangeRow(
+        id=str(uuid.uuid4()), batch_id=batch.id, project_sales_order_id=project_so.id,
+        core_line_id=line_a.id, line_no=9, item_code=product.product_code, kind="cancelled",
+        facts_json={}, applied_state="applied", created_at=now,
+        result_json={
+            "executed_reallocations": ["Reallocate PO-1 3 to pool"],
+            "released_documents": [],
+        },
+    )
+    db.add_all([older_superseded_row, newest_applied_row])
+    db.flush()
+
+    got = TestClient(app).get(f"/api/v1/scm/sales-orders/{order.id}")
+
+    assert got.status_code == 200, got.text
+    lines = {ln["id"]: ln for ln in got.json()["lines"]}
+
+    assert lines[line_a.id]["planning_change"] == {
+        "id": newest_applied_row.id,
+        "kind": "cancelled",
+        "applied_state": "applied",
+        "result": {
+            "executed_reallocations": ["Reallocate PO-1 3 to pool"],
+            "released_documents": [],
+        },
+    }
+    assert lines[line_b.id]["planning_change"] is None

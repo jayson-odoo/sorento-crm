@@ -26,6 +26,7 @@ from sqlalchemy import text
 
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
+    SO_STATUS_ADOPTED,
     SO_STATUS_PUBLISHED,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -42,6 +43,8 @@ VIEW = "projects.projects.view"
 EDIT = "projects.projects.edit"
 
 D1 = date(2027, 1, 7)
+D2 = date(2027, 2, 4)
+D3 = date(2027, 3, 4)
 
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -125,6 +128,7 @@ def _project_order(
     autocount_doc_no: str | None = None,
     so_id: str | None = None,
     area_group: str = "TOWER",
+    status: str = SO_STATUS_PUBLISHED,
 ) -> ProjectSalesOrder:
     row = ProjectSalesOrder(
         id=_uid(),
@@ -134,7 +138,7 @@ def _project_order(
         provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
         autocount_doc_no=autocount_doc_no,
         so_id=so_id,
-        status=SO_STATUS_PUBLISHED,
+        status=status,
         published_at=datetime.utcnow(),
         grouping_origin="area",
     )
@@ -401,6 +405,73 @@ def test_reconcile_route_refuses_a_viewer_without_edit_permission(reader_api):
     response = client.post(f"{BASE}/sales-orders/{linked.id}/reconcile")
 
     assert response.status_code == 403, response.text
+
+
+def test_reconcile_mirrors_lines_an_adopted_order_gained_on_reingest(api):
+    """`reconcile()`'s own docstring on an ADOPTED order: "its reconciliation is a
+    one-way SYNC of the mirror against the book ... Until the sync lands, `evaluate`
+    is the honest answer" - measured live (attempt 7 browser walk, SO419851): an
+    AutoCount re-ingest can close the core lines an adopted order's mirror already
+    points at and insert brand-new OPEN core lines nobody mirrors, and pressing
+    Re-sync (this very route) leaves `lines_linked` and the exception list byte
+    identical - the sync `ProjectSOAdoptionService.mirror_missing_lines` performs on
+    `adopt()`'s already-adopted branch never runs from here. This asserts the same
+    additive mirroring `mirror_missing_lines` (AC-FP12) gives `adopt()`: every
+    still-open core line the order's mirror does not carry gets one, and the
+    response's `lines_linked` counts it."""
+    client, db, project, _linked, _awaiting, _owner = api
+
+    product = _product(db)
+    core = _core_order(db, so_number=f"ZZT-SO-{_uid()[:8]}")
+    original_core_line = _core_line(db, core, product, required_date=D1)
+    order = _project_order(
+        db, project, autocount_doc_no=core.so_number, so_id=core.id,
+        status=SO_STATUS_ADOPTED,
+    )
+    original_mirror = _project_line(db, order, product, line_no=1, delivery_date=D1)
+    original_mirror.core_sales_order_line_id = original_core_line.id
+    db.flush()
+
+    # The re-ingest shape: the old line closes, two brand-new OPEN lines nobody has
+    # mirrored yet take its place.
+    original_core_line.line_status = "closed"
+    reingested_line_2 = _core_line(db, core, product, required_date=D2)
+    reingested_line_3 = _core_line(db, core, product, required_date=D3)
+    db.commit()
+
+    before = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.project_sales_order_id == order.id)
+        .count()
+    )
+    assert before == 1, before
+
+    response = client.post(f"{BASE}/sales-orders/{order.id}/reconcile")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    mirror_lines = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.project_sales_order_id == order.id)
+        .all()
+    )
+    mirrored_core_ids = {
+        row.core_sales_order_line_id for row in mirror_lines if row.core_sales_order_line_id
+    }
+    assert str(reingested_line_2.id) in mirrored_core_ids, mirrored_core_ids
+    assert str(reingested_line_3.id) in mirrored_core_ids, mirrored_core_ids
+
+    # AC-FP19 (`test_a_link_to_a_closed_core_line_is_cleared_and_reported_missing`): the
+    # original mirror's own core line is now closed, so that link is cleared and reported
+    # missing rather than counted linked - only the two re-ingested lines are.
+    assert body["lines_linked"] == 2, body
+    original_line_out = next(
+        row for row in body["lines"] if row["line_no"] == original_mirror.line_no
+    )
+    assert original_line_out["link"] == "missing", original_line_out
+    missing = [exc for exc in body["exceptions"] if exc["kind"] == "missing"]
+    assert missing and missing[0]["line_no"] == original_mirror.line_no, body["exceptions"]
 
 
 # --------------------------------------------------------------------------- #

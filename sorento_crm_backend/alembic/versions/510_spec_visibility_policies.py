@@ -12,7 +12,7 @@ segment code already exists, so a database with no ``project`` segment gets the
 default row alone. Both are idempotent - re-running adds nothing.
 
 Revision ID: 510_spec_visibility_policies
-Revises: ptag_0006_revisions
+Revises: 515_planning_change_suggestion
 
 Re-parented onto the lane's actual base at PR time (the plan's own revision line
 named ``509_merge_508_summary_exclwh``, main's head when the plan was written;
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 
 revision = "510_spec_visibility_policies"
-down_revision = "ptag_0006_revisions"
+down_revision = "515_planning_change_suggestion"
 branch_labels = None
 depends_on = None
 

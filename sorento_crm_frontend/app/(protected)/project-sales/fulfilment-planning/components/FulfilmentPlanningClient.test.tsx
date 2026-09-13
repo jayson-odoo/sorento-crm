@@ -1135,6 +1135,53 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     ).not.toBeInTheDocument();
   });
 
+  /**
+   * A "Changed" link (the sales-order list's own badge, or the planning-changes list) deep-
+   * links `?orders=<so>&batch=<id>`. Clicking a SECOND such link while this screen is already
+   * open is a SAME-ROUTE navigation - only the query string moves - and today `boardOrders`
+   * (FulfilmentPlanningClient.tsx ~147-156) is a `React.useState` LAZY INITIALIZER that reads
+   * `urlOrders`/`batchId` once, at mount: a lazy initializer never re-runs on a later render,
+   * so the worklist stays on screen instead of opening the board for the new order. A full
+   * reload (a fresh mount) works, which is why this only reproduces on a rerender of the SAME
+   * instance, not a fresh `renderClient()` call.
+   */
+  it('opens the board for a new order when a same-route link only changes ?orders=/?batch=', async () => {
+    currentSearchParams = new URLSearchParams('orders=SO100001&batch=batch-1');
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1), planned(2)]));
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <FulfilmentPlanningClient />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('Planning 1 sales orders together');
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100001'], 'week', false, {}),
+    );
+
+    getPlanningBoard.mockClear();
+    // The SAME route, a DIFFERENT order and batch - what clicking a second "Changed" link
+    // does, without ever unmounting this screen. A FRESH element, not the same object
+    // reference rerendered: React bails out of a rerender with an identical element and
+    // never re-reads `useSearchParams`, which would hide the very bug this test exists to
+    // catch (the coder proved this with a probe).
+    currentSearchParams = new URLSearchParams('orders=SO100002&batch=batch-2');
+    rerender(
+      <QueryClientProvider client={client}>
+        <FulfilmentPlanningClient />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100002'], 'week', false, {}),
+    );
+  });
+
   it('writes the selection into the URL when the board is opened', async () => {
     listFulfilmentPlanning.mockResolvedValue(envelope([planned(1), planned(2)]));
     getPlanningBoard.mockReturnValue(new Promise(() => {}));
@@ -1215,5 +1262,48 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     await waitFor(() =>
       expect(routerPush).toHaveBeenLastCalledWith('/scm/sales-orders'),
     );
+  });
+});
+
+/**
+ * AC-B7 (`PLAN-scm-board-picks-up-pending-change.md`): the worklist shows the same
+ * `Changed` pill the SCM Sales Orders list shows, copied from `SalesOrdersGrid.tsx:499-509`,
+ * in the `so_number` cell - linking to the board on that order and batch, no `batch=`
+ * required by anything else, but present here since it is a known one.
+ */
+describe('FulfilmentPlanningClient: the Changed pill (AC-B7)', () => {
+  it('shows a Changed pill linking to the board+batch for a row with a pending batch', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([
+        row({
+          id: 'pso-changed',
+          so_number: 'SO381895',
+          planning_change_batch_id: 'pcb-so381895',
+        }),
+      ]),
+    );
+
+    renderClient();
+    await screen.findByText('SO381895');
+
+    const pill = screen.queryByTestId('so-changed-SO381895');
+    expect(pill).toBeInTheDocument();
+    expect(pill?.getAttribute('href')).toEqual(
+      expect.stringContaining('orders=SO381895'),
+    );
+    expect(pill?.getAttribute('href')).toEqual(
+      expect.stringContaining('batch=pcb-so381895'),
+    );
+  });
+
+  it('shows no Changed pill for a row with no pending batch', async () => {
+    listFulfilmentPlanning.mockResolvedValue(
+      envelope([row({ id: 'pso-unchanged', so_number: 'SO381896' })]),
+    );
+
+    renderClient();
+    await screen.findByText('SO381896');
+
+    expect(screen.queryByTestId('so-changed-SO381896')).not.toBeInTheDocument();
   });
 });

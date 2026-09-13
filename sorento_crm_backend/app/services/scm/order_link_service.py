@@ -1106,6 +1106,46 @@ def delete_own_claim(
         db.delete(claim)
 
 
+def free_claim_if_orphaned(
+    db: Session, claim_id: Optional[str], *, excluding: Sequence[str]
+) -> None:
+    """Delete a `source = 'order_inquiry'` claim, unless another surviving order-inquiry
+    link still leans on it (S3, review round - the guard `_remove_links`
+    [`project_order_inquiry_service.py`] and `_unclaim_shares`
+    [`planning_change_service.py`] each used to write out for themselves).
+
+    The claim's identity is the DOCUMENT, not the line - two links on one purchase-order
+    line share the one claim - so it only goes when nothing else still points at it.
+
+    `excluding` is every link id the CALLER is disposing of in this same pass, not only
+    the one link presently being removed: a link deleted earlier in the same pass has not
+    been flushed yet (both callers run with `autoflush=False`), so a query that excluded
+    only the current link would still see an about-to-be-deleted sibling as "surviving"
+    and wrongly keep a claim that nothing will be left to reference.
+    """
+    if not claim_id:
+        return
+    from app.models.project_so import OrderInquiryLink
+
+    claim = (
+        db.query(OrderLinkClaim)
+        .filter(OrderLinkClaim.id == claim_id, OrderLinkClaim.source == "order_inquiry")
+        .first()
+    )
+    if claim is None:
+        return
+    if (
+        db.query(OrderInquiryLink)
+        .filter(
+            OrderInquiryLink.claim_id == claim.id,
+            OrderInquiryLink.id.notin_(list(excluding)),
+        )
+        .first()
+    ):
+        return
+    db.delete(claim)
+
+
 def open_claims(db: Session) -> dict:
     """What is still waiting, and for which side.
 

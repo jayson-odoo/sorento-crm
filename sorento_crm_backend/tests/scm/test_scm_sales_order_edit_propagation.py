@@ -179,6 +179,49 @@ def _linked_line(world, project, *, qty_ordered, required_date=date(2026, 8, 20)
     return core_so, core_line, product
 
 
+def _line_payload(project_line_id, *, timely_spo_qty="0", reserve=None, borrow=None,
+                   buy_qty="0", buy_reason=None, amend_reason=None):
+    """Copied from `tests/test_planning_changes.py::_line_payload` - same reason as the
+    module docstring: that file is owned by a concurrent slice."""
+    body = {
+        "project_line_id": project_line_id, "timely_spo_qty": timely_spo_qty,
+        "reserve": reserve or [], "borrow": borrow or [], "buy_qty": buy_qty,
+    }
+    if buy_reason is not None:
+        body["buy_reason"] = buy_reason
+    if amend_reason is not None:
+        body["amend_reason"] = amend_reason
+    return body
+
+
+def _freeze_with_a_full_buy(db, world, core_so):
+    """Confirms a wholly-Buy decision for `core_so`'s only project line, freezing it in the
+    order's ACTIVE decision - `PLAN-scm-planning-change-gate-held-or-inquiry.md`: a manual
+    edit only raises a planning-change row when the changed line is HELD (or carries an
+    open inquiry). A full Buy needs no stock/warehouse setup beyond `world.own_wh`, unlike a
+    reserve, which is why this slice's edit-propagation world only seeds one warehouse."""
+    order = db.query(ProjectSalesOrder).filter_by(so_id=core_so.id).one()
+    line = (
+        db.query(ProjectSalesOrderLine)
+        .filter_by(project_sales_order_id=order.id, line_no=1)
+        .one()
+    )
+    core_line = db.get(SalesOrderLine, line.core_sales_order_line_id)
+    open_qty = str(core_line.qty_ordered - core_line.qty_delivered)
+    client, originals = _api_client(db, world.actor)
+    try:
+        response = client.post(
+            f"/api/v1/project-sales/sales-orders/{order.id}/confirm",
+            json={"lines": [
+                _line_payload(line.id, buy_qty=open_qty, buy_reason="ZZT no stock anywhere"),
+            ]},
+        )
+        assert response.status_code == 200, response.text
+    finally:
+        _restore_api_client(originals)
+    db.commit()
+
+
 def _row_for(db, batch_id: str) -> PlanningChangeRow:
     return db.query(PlanningChangeRow).filter(PlanningChangeRow.batch_id == batch_id).one()
 
@@ -227,9 +270,13 @@ def _restore_api_client(originals) -> None:
 # --------------------------------------------------------------------------- #
 
 def test_qty_up_raises_a_batch_with_source_kind_manual_edit(api):
+    """AC-G1/AC-G2 (`PLAN-scm-planning-change-gate-held-or-inquiry.md`): the line must be
+    HELD in the order's active decision for a manual edit to raise a batch - frozen here
+    with a full Buy before the qty edit runs."""
     world, project = api
     db = world.db
     core_so, core_line, product = _linked_line(world, project, qty_ordered=72)
+    _freeze_with_a_full_buy(db, world, core_so)
 
     result = SalesOrderService(db).update(
         core_so.id,
@@ -256,10 +303,15 @@ def test_manual_edit_batch_is_listed_by_the_planning_changes_route(api):
     schema was pinned to `'so_book_upload'` alone, so the first `so_manual_edit` batch
     failed response validation and `GET /planning-changes` 500'd (read by the caller as an
     empty list). Drive the real route, not just the service, so a future narrowing of the
-    literal is caught the same way this one was missed - at the wire, not the model."""
+    literal is caught the same way this one was missed - at the wire, not the model.
+
+    Frozen with a full Buy first (`PLAN-scm-planning-change-gate-held-or-inquiry.md`): an
+    undecided line raises no batch at all under the new gate, and this test is about the
+    listing route, not the gate."""
     world, project = api
     db = world.db
     core_so, core_line, product = _linked_line(world, project, qty_ordered=72)
+    _freeze_with_a_full_buy(db, world, core_so)
 
     result = SalesOrderService(db).update(
         core_so.id,
@@ -290,6 +342,7 @@ def test_qty_down_raises_a_batch_kind_qty_down(api):
     world, project = api
     db = world.db
     core_so, core_line, product = _linked_line(world, project, qty_ordered=72)
+    _freeze_with_a_full_buy(db, world, core_so)
 
     result = SalesOrderService(db).update(
         core_so.id,
@@ -316,6 +369,7 @@ def test_date_moved_later_raises_a_delayed_row(api):
     core_so, core_line, product = _linked_line(
         world, project, qty_ordered=72, required_date=date(2026, 8, 20),
     )
+    _freeze_with_a_full_buy(db, world, core_so)
 
     result = SalesOrderService(db).update(
         core_so.id,
@@ -339,6 +393,7 @@ def test_date_moved_earlier_raises_an_advanced_row(api):
     core_so, core_line, product = _linked_line(
         world, project, qty_ordered=72, required_date=date(2026, 8, 20),
     )
+    _freeze_with_a_full_buy(db, world, core_so)
 
     result = SalesOrderService(db).update(
         core_so.id,
@@ -353,6 +408,33 @@ def test_date_moved_earlier_raises_an_advanced_row(api):
     assert envelope is not None
     row = _row_for(db, envelope["id"])
     assert row.kind == "advanced"
+
+
+# --------------------------------------------------------------------------- #
+# AC-G1b: an undecided line is silent through the manual-edit path too
+# --------------------------------------------------------------------------- #
+
+def test_ac_g1b_undecided_line_manual_edit_raises_no_batch(api):
+    """AC-G1b (`PLAN-scm-planning-change-gate-held-or-inquiry.md`): a material qty change
+    on an adopted project-linked line that was NEVER confirmed (no active decision, no
+    inquiry row) raises nothing through the manual-edit trigger either - the same rule
+    `build_batch` enforces for a re-uploaded book. No `_freeze_with_a_full_buy` call here;
+    that absence is the point."""
+    world, project = api
+    db = world.db
+    core_so, core_line, product = _linked_line(world, project, qty_ordered=72)
+    before_count = db.query(PlanningChangeBatch).count()
+
+    result = SalesOrderService(db).update(
+        core_so.id,
+        SalesOrderUpdate(lines=[{
+            "id": core_line.id, "sku": product.product_code, "qty_ordered": 90,
+        }]),
+        user_id=world.actor,
+    )
+
+    assert result["planning_change_batch"] is None
+    assert db.query(PlanningChangeBatch).count() == before_count
 
 
 # --------------------------------------------------------------------------- #

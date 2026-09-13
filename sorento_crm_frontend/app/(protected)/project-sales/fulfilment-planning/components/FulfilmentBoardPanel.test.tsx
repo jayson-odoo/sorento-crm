@@ -163,10 +163,8 @@ import {
   deleteLineDraft,
   putLineDraft,
 } from '../../_shared/services/fulfilmentPlanningService';
-import {
-  FulfilmentBoardPanel,
-  unpostableNotices,
-} from './FulfilmentBoardPanel';
+import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
   type BoardDemandLine,
@@ -1768,6 +1766,174 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
 });
 
 /**
+ * `runConfirmAll` rebuilds `psoIdBySalesOrder` from the REFETCHED board only. `adopt` itself
+ * already returns the id the server just created - it is the whole reason the mutation
+ * resolves with a body rather than `void` - but that return value is discarded, and if the
+ * refetch still reports `project_sales_order_id: null` for the order (an eventually-consistent
+ * read, or a mirror the refetch's own cache has not caught up on yet), the order is silently
+ * left out of the batch: `if (!psoId) continue`, then `if (orders.length === 0) return` ends
+ * the press having posted nothing and rendered nothing.
+ */
+describe('FulfilmentBoardPanel: Confirm posts against the id adopt itself returned', () => {
+  /** One order, one saved-but-cancelled line, never adopted - the refetch keeps saying so. */
+  function boardStillNull() {
+    const built = boardOf([
+      demand({
+        sales_order_id: 'so-419851',
+        so_number: 'SO419851',
+        line_no: 9,
+        item_code: 'WESERP10B',
+        qty: '0',
+        project_line_id: 'pl-9',
+      }),
+    ]);
+    return allSaved(
+      withContribution(
+        {
+          ...built,
+          orders: built.orders.map((order) => ({
+            ...order,
+            project_sales_order_id: null,
+            pending_change_batch_id: 'b-1',
+          })),
+        },
+        () => true,
+        (entry) => ({
+          ...entry,
+          cancelled: true,
+          covered: false,
+          unplannable: false,
+          qty: '0',
+          qty_outstanding: '0',
+        }),
+      ),
+    );
+  }
+
+  async function openConfirmDialog() {
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+  }
+
+  it('posts against the id the adopt call returned, even though the refetched board still names none', async () => {
+    // The refetch (`board.refetch()`, `mockResolvedValue` covers every call) is the SAME
+    // board: `project_sales_order_id` is still null, exactly the eventually-consistent read
+    // that leaves the real bug room to bite.
+    getPlanningBoard.mockResolvedValue(boardStillNull());
+    adoptSalesOrder.mockResolvedValue({
+      project_sales_order_id: 'pso-1',
+      so_number: 'SO419851',
+      review_state: 'needs_cs_review',
+      already_adopted: true,
+    });
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-1', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(['SO419851']);
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(adoptSalesOrder).toHaveBeenCalledWith('so-419851'),
+    );
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      { orders: { pso_id: string; batch_id: string | null; lines: { project_line_id: string }[] }[] },
+    ];
+    expect(body.orders).toEqual([
+      expect.objectContaining({
+        pso_id: 'pso-1',
+        batch_id: 'b-1',
+        lines: expect.arrayContaining([
+          expect.objectContaining({ project_line_id: 'pl-9' }),
+        ]),
+      }),
+    ]);
+  });
+
+  it('names the sales order in the result, rather than ending the press with nothing shown', async () => {
+    getPlanningBoard.mockResolvedValue(boardStillNull());
+    adoptSalesOrder.mockRejectedValue(
+      new Error('Another planning record already holds SO419851.'),
+    );
+
+    renderPanel(['SO419851']);
+    expect(screen.queryByText(/SO419851/)).not.toBeInTheDocument();
+
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(adoptSalesOrder).toHaveBeenCalledWith('so-419851'),
+    );
+    expect(await screen.findByText(/SO419851/)).toBeInTheDocument();
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * An ADOPTED order whose lines still carry no mirror (`project_line_id: null` on every
+ * contribution - a core-line re-ingest under new ids, or a mirror the adoption itself never
+ * wrote). `confirmLinesFor` -> `lineFor` returns the `'no_mirror'` STRING for each of them,
+ * which `confirmLinesFor` filters out (it only pushes an actual `ConfirmLine`), so `lines`
+ * comes back empty. Nothing is added to `orders` for this SO, and nothing is added to
+ * `skipped` either - that branch only fires when `psoId` itself is falsy, and this order has
+ * one. `orders.length === 0` with `skipped` also empty ends the press with `batchResults`
+ * never set: no toast, no results block, nothing on screen says the press did anything at all.
+ */
+describe('FulfilmentBoardPanel: a Confirm that posts nothing says so', () => {
+  /** One already-adopted order; every contribution has no mirror line to post against. */
+  function boardAdoptedNoMirror() {
+    const built = boardOf([
+      demand({
+        sales_order_id: 'so-419852',
+        so_number: 'SO419852',
+        line_no: 1,
+        item_code: 'WESERP10B',
+      }),
+    ]);
+    return allSaved(
+      withContribution(
+        {
+          ...built,
+          orders: built.orders.map((order) => ({
+            ...order,
+            project_sales_order_id: 'pso-1',
+          })),
+        },
+        () => true,
+        (entry) => ({ ...entry, project_line_id: null }),
+      ),
+    );
+  }
+
+  async function openConfirmDialog() {
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+  }
+
+  it('names SO419852 and says nothing was posted, rather than ending the press with nothing shown', async () => {
+    getPlanningBoard.mockResolvedValue(boardAdoptedNoMirror());
+
+    renderPanel(['SO419852']);
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => {
+      const match = screen.queryAllByText(/SO419852/).find((node) =>
+        /not on the planning record|nothing (was )?posted/i.test(
+          node.textContent ?? '',
+        ),
+      );
+      expect(match).toBeTruthy();
+    });
+    expect(adoptSalesOrder).not.toHaveBeenCalled();
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * Searching the board (the captain: "i need the search here also btw").
  *
  * The board is ONE already-fetched payload, so this filters the product ROWS in the browser: it
@@ -2793,8 +2959,13 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
     await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Suggested'));
 
+    // The coder's multi-open rework (8d7b06766): opening B never closes A any more, so
+    // A's own rejected-and-reopened panel is still up - two "Save decision" buttons on
+    // screen, and B's is the second of them.
     fireEvent.click(await screen.findByText('WESERP20B'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: 'Save decision' }))[1],
+    );
     await waitFor(() => expect(pillFor('WESERP20B')).toHaveTextContent('Saved'));
 
     // A's rejection must not have resurrected or otherwise touched B.
