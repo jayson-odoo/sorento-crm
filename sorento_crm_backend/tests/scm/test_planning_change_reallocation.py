@@ -1391,3 +1391,278 @@ def test_a_cancelled_lines_placed_buy_with_no_pool_configured_is_released_not_ex
     assert any(
         po.po_number in item and "unallocated for purchasing" in item for item in released
     ), fresh.result_json
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer probe P4: a freed document split across a waiting row and the pool
+# --------------------------------------------------------------------------- #
+
+def _split_across_two_po_lines_world(api, *, warehouse=None):
+    """A single held Buy line (no other line of the order carrying this product), its
+    WHOLE quantity placed across TWO real purchase-order lines of 17 each - no same-order
+    survivor at all, so both links must be re-dealt cross-order/pool."""
+    client, world = api
+    db = world.db
+    wh = warehouse or world.own_wh
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, wh, qty_ordered="34",
+                            required_date=date(2027, 3, 1))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="34", buy_reason="ZZT no stock anywhere"),
+    ]})
+    row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    supplier = Supplier(
+        id=_uid(), company_id=world.company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} supplier",
+    )
+    po = PurchaseOrder(
+        id=_uid(), company_id=world.company_id, po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([supplier, po])
+    db.flush()
+    po_line_a = PurchaseOrderLine(
+        id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+        product_id=world.product.id, warehouse_id=wh.id,
+        qty_ordered=Decimal("17"), qty_received=Decimal("0"), line_status="open",
+    )
+    po_line_b = PurchaseOrderLine(
+        id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+        product_id=world.product.id, warehouse_id=wh.id,
+        qty_ordered=Decimal("17"), qty_received=Decimal("0"), line_status="open",
+    )
+    db.add_all([po_line_a, po_line_b])
+    db.commit()
+    ProjectOrderInquiryService(db).place_on_po_allocations(
+        row.id,
+        [
+            {"po_line_id": po_line_a.id, "qty": "17"},
+            {"po_line_id": po_line_b.id, "qty": "17"},
+        ],
+        actor_user_id=world.actor,
+    )
+    db.commit()
+    db.expire_all()
+    row = db.get(OrderInquiryRow, row.id)
+    assert row.state == INQUIRY_PLACED, row.state
+    return {
+        "world": world, "core_so": core_so, "core_line": core_line, "order": order,
+        "line": line, "po": po, "po_line_a": po_line_a, "po_line_b": po_line_b, "row": row,
+    }
+
+
+def test_a_freed_document_split_across_a_waiting_row_and_the_pool_lands_both_legs(api):
+    """A cancelled line's Buy 34 sits on TWO purchase-order lines of 17 each; no same-
+    order survivor at all. Order B's raised, unlinked ORDER row has headroom 17 - LESS
+    than the whole 34 - and a pool warehouse IS configured, so the remainder must land on
+    a pool row: one leg to the waiting row, the other to the pool, never both stranded on
+    the cancelled row nor both piled onto the same taker.
+
+    Today `_unclaim_shares` (planning_change_service.py ~3073) deletes a link without
+    calling `service._invalidate_link_cache()` - so when the SECOND `place_on_po_
+    allocations` of the same apply pass (the pool leg, after order B's leg already ran)
+    checks the po line's own claimed total, it reads a STALE, still-fully-claimed memo
+    and refuses with `order_inquiry_po_line_short`; the order's savepoint fails and it
+    lands in `failed_orders`.
+    """
+    fixture = _split_across_two_po_lines_world(api)
+    world = fixture["world"]
+    db = world.db
+    client = api[0]
+    core_so = fixture["core_so"]
+    core_line = fixture["core_line"]
+    po = fixture["po"]
+    row = fixture["row"]
+
+    other_so = _core_so(db, world.company_id)
+    other_line_core = _core_line(db, other_so, world.product, world.own_wh, qty_ordered="17",
+                                  required_date=date(2027, 3, 1))
+    other_order = _project_so(db, world.project, so_id=other_so.id,
+                               autocount_doc_no=other_so.so_number)
+    other_project_line = _project_line(db, other_order, line_no=1, product=world.product,
+                                        core_line=other_line_core)
+    db.commit()
+    _confirm(client, other_order.id, {"lines": [
+        _line_payload(other_project_line.id, buy_qty="17", buy_reason="Nothing free elsewhere."),
+    ]})
+    other_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == other_project_line.id,
+                OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+
+    batch = _cancel_the_line(db, world, core_so, core_line)
+    change_row = _only_row(db, batch)
+    _, result = _confirm_row_and_apply(db, batch, world.actor)
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    cancelled_row = db.get(OrderInquiryRow, row.id)
+    assert _links_of(db, cancelled_row.id) == [], _links_of(db, cancelled_row.id)
+
+    other_row = db.get(OrderInquiryRow, other_row.id)
+    other_links = _links_of(db, other_row.id)
+    assert len(other_links) == 1, other_links
+    assert sum(Decimal(str(l.qty)) for l in other_links) == Decimal("17"), other_links
+    assert other_row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED), other_row.state
+
+    pool_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
+        .all()
+    )
+    assert len(pool_rows) == 1, pool_rows
+    pool_links = _links_of(db, pool_rows[0].id)
+    assert len(pool_links) == 1, pool_links
+    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("17"), pool_links
+
+    # Each PO line claimed exactly once - by the waiting row XOR the pool row, never both,
+    # never neither.
+    po_line_ids = {fixture["po_line_a"].id, fixture["po_line_b"].id}
+    claimed_po_line_ids = {l.po_line_id for l in other_links} | {l.po_line_id for l in pool_links}
+    assert claimed_po_line_ids == po_line_ids, (other_links, pool_links)
+    assert {l.po_line_id for l in other_links} != {l.po_line_id for l in pool_links}
+
+    from app.models.planning_change import PlanningChangeRow
+
+    fresh = db.get(PlanningChangeRow, change_row.id)
+    executed = (fresh.result_json or {}).get("executed_reallocations") or []
+    released = (fresh.result_json or {}).get("released_documents") or []
+    assert len(executed) == 2, fresh.result_json
+    assert any(po.po_number in item and "17" in item for item in executed), fresh.result_json
+    assert released == [], fresh.result_json
+
+
+def test_a_freed_document_lands_on_survivor_waiting_row_and_pool_three_way(api):
+    """Same shape, widened: line 1's own quantity is 51 (the two original 17-unit PO
+    lines plus a third), placed wholly across THREE purchase-order lines of 17. A same-
+    order survivor with headroom 17 takes its own leg, the waiting row takes a second, and
+    the pool takes the third - three purchase-order lines of 17, three different
+    destinations, none stranded and none double-claimed."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="51",
+                              required_date=date(2027, 3, 1))
+    core_line_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="17",
+                              required_date=date(2027, 3, 1))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line_1 = _project_line(db, order, line_no=1, product=world.product, core_line=core_line_1)
+    line_2 = _project_line(db, order, line_no=2, product=world.product, core_line=core_line_2)
+    db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line_1.id, buy_qty="51", buy_reason="ZZT no stock anywhere"),
+        _line_payload(line_2.id, buy_qty="17", buy_reason="ZZT no stock anywhere"),
+    ]})
+    row_1 = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_1.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    row_2 = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_2.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    supplier = Supplier(
+        id=_uid(), company_id=world.company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} supplier",
+    )
+    po = PurchaseOrder(
+        id=_uid(), company_id=world.company_id, po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([supplier, po])
+    db.flush()
+    po_lines = []
+    for _ in range(3):
+        po_line = PurchaseOrderLine(
+            id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+            product_id=world.product.id, warehouse_id=world.own_wh.id,
+            qty_ordered=Decimal("17"), qty_received=Decimal("0"), line_status="open",
+        )
+        db.add(po_line)
+        po_lines.append(po_line)
+    db.commit()
+    ProjectOrderInquiryService(db).place_on_po_allocations(
+        row_1.id,
+        [{"po_line_id": pl.id, "qty": "17"} for pl in po_lines],
+        actor_user_id=world.actor,
+    )
+    db.commit()
+    db.expire_all()
+    row_1 = db.get(OrderInquiryRow, row_1.id)
+    assert row_1.state == INQUIRY_PLACED, row_1.state
+
+    other_so = _core_so(db, world.company_id)
+    other_line_core = _core_line(db, other_so, world.product, world.own_wh, qty_ordered="17",
+                                  required_date=date(2027, 3, 1))
+    other_order = _project_so(db, world.project, so_id=other_so.id,
+                               autocount_doc_no=other_so.so_number)
+    other_project_line = _project_line(db, other_order, line_no=1, product=world.product,
+                                        core_line=other_line_core)
+    db.commit()
+    _confirm(client, other_order.id, {"lines": [
+        _line_payload(other_project_line.id, buy_qty="17", buy_reason="Nothing free elsewhere."),
+    ]})
+    other_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == other_project_line.id,
+                OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+
+    batch = _cancel_the_line(db, world, core_so, core_line_1)
+    change_row = _only_row(db, batch)
+    _, result = _confirm_row_and_apply(db, batch, world.actor)
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    cancelled_row = db.get(OrderInquiryRow, row_1.id)
+    assert _links_of(db, cancelled_row.id) == [], _links_of(db, cancelled_row.id)
+
+    survivor_links = _links_of(db, row_2.id)
+    assert len(survivor_links) == 1, survivor_links
+    assert sum(Decimal(str(l.qty)) for l in survivor_links) == Decimal("17"), survivor_links
+
+    other_row = db.get(OrderInquiryRow, other_row.id)
+    other_links = _links_of(db, other_row.id)
+    assert len(other_links) == 1, other_links
+    assert sum(Decimal(str(l.qty)) for l in other_links) == Decimal("17"), other_links
+
+    pool_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
+        .all()
+    )
+    assert len(pool_rows) == 1, pool_rows
+    pool_links = _links_of(db, pool_rows[0].id)
+    assert len(pool_links) == 1, pool_links
+    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("17"), pool_links
+
+    claimed_po_line_ids = (
+        {l.po_line_id for l in survivor_links}
+        | {l.po_line_id for l in other_links}
+        | {l.po_line_id for l in pool_links}
+    )
+    assert claimed_po_line_ids == {pl.id for pl in po_lines}, (
+        survivor_links, other_links, pool_links,
+    )
+
+    from app.models.planning_change import PlanningChangeRow
+
+    fresh = db.get(PlanningChangeRow, change_row.id)
+    executed = (fresh.result_json or {}).get("executed_reallocations") or []
+    released = (fresh.result_json or {}).get("released_documents") or []
+    assert len(executed) == 3, fresh.result_json
+    assert released == [], fresh.result_json
