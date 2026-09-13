@@ -1,6 +1,6 @@
 # PLAN - Chatbot focus + multi-domain: one dialogue state, then fan-out
 
-Status: APPROVED by owner 12 Sep 2026 on the lavish page ("best quality and the shortest time"); lane 1 `feat/chatbot-focus` S0 to S4 BUILT 13 Sep (backend green on the lane DB, replay 1791, one head 517), S5: reviews CLOSED 13 Sep, pre-PR gate green at 09d5a3af3, DRAFT PR opening 13 Sep; browser verification + owner console pass PENDING (frontend slot); lane 2 `feat/chatbot-multi-domain` stacked after. Two lanes, two PRs. S6 sticky roster (D19) BUILT 13 Sep, review round closed at d72420498 (2 blockers + the owner's B3 promo-menu report + 5 should-fix + 3 nits), suite green (replay 1791, chatbot suite 4216, one head 517), owner re-pass on :3081 pending.
+Status: APPROVED by owner 12 Sep 2026 on the lavish page ("best quality and the shortest time"); lane 1 `feat/chatbot-focus` S0 to S4 BUILT 13 Sep (backend green on the lane DB, replay 1791, one head 517), S5: reviews CLOSED 13 Sep, pre-PR gate green at 09d5a3af3, DRAFT PR opening 13 Sep; browser verification + owner console pass PENDING (frontend slot); lane 2 `feat/chatbot-multi-domain` stacked after. Two lanes, two PRs. S6 sticky roster (D19) BUILT 13 Sep, review round closed at d72420498 (2 blockers + the owner's B3 promo-menu report + 5 should-fix + 3 nits). S7 multiple-matches picker armed + dash fold at the send boundary BUILT 13 Sep at 3dcb9fb1f (replay 1791 unmoved, chatbot suite 4224, one head 517); owner re-pass on :3081 pending.
 UAC: `chatbot-focus-multi-domain-acceptance-criteria.md` (AC-10xx).
 Supersedes: Slice B of `PLAN-chatbot-growth-r1.md`. CORRECTION 12 Sep: its lane
 `feat/chatbot-growth-dialogue` WAS built, locally, never pushed: 14 commits, 42 files,
@@ -48,6 +48,18 @@ owner ask, made on 12 Sep 2026, recorded as such.
 | D16 | No fan-out cap. |
 | D17 | Deferred, triggers unchanged: episodes (L2 retrieval), profile, learning from corrections, answer LLM (D1 of growth-r1 stands: no answer LLM). |
 | D19 | Owner, 13 Sep 2026, after the console pass on :3081 ("why my dym pick does not stick like before" / "need to restore"): a pick does NOT consume its roster. Restores ruling K rule 1 (6 Sep, AC-816) and the 7 Sep deviation 5, superseding AC-1014's close-on-answer clause the 12 Sep UAC introduced. A ROSTER question (`product_pick`, `customer_pick`, `tier_pick`) stays open after a pick, options frozen, `asked_at_turn` unchanged; a later bare number re-resolves against the same frozen roster. It clears only by the existing rules (a newer question of another kind, `topic_reset`, a message naming its own subject, conversation-closed). The one-team yes/no escalate offer that a pick's rerun-miss produces RIDES on the roster question instead of replacing it: `kind`/`options`/`asked_at_turn` stay the roster's, `expects` becomes `pick_or_yes_no`, `payload.offer` carries `{team, domain, options}`; a number re-picks, `yes` runs escalation and consumes the whole question, `no` declines and the roster stays with the offer stripped. Non-roster kinds (`team_pick` clarify, `company_pick`, `member_offer`) keep today's consume-on-answer behaviour. `OPEN_QUESTION_EXPECTS` gains `pick_or_yes_no` (`contracts.py`). |
+
+## Found during S6 verification (13 Sep 2026)
+
+Three defects the console pass and the browser run surfaced, each fixed in S7. They are
+recorded here because two of them are older than this lane and would otherwise read as
+S6 regressions.
+
+| what | root cause | where fixed |
+|---|---|---|
+| The "multiple matches" picker did not survive: `incoming wc286` printed ten numbered products and the next `8` answered nothing (owner, turn 26b15a53-87a8-43be-8e55-5839b3ce3149) | LANE-INTRODUCED at L1-S3d. The five-key session replaced `last_result_set` / `selection_context` with `open_question`, and four of the five roster labels were converted; `disambiguation` was not, so the tail armed nothing and the escalate offer won by default. The did-you-mean roster was unaffected because its own lane freezes it (`miss_suggest._attach_question`). | `_ask_for_turn` gains the `disambiguation` arm, before the offer arm, reading its rows from `last_result_set`, then `specific_options`, then `compatible_entities` |
+| A yes/no the customer was never shown was persisted on that same turn | PRE-EXISTING. `is_escalate_offer = not is_clarification` (`tail/outcome.py:148`) and `pickers.annotate_incoming` sets `is_clarification: False` on a numbered PICKER "for parity with the not-found require_specific branch", so the flag asserts an open offer on a turn whose reply ends at row 10. | the offer arm now also requires the reply to carry the frozen "Would you like me to escalate to" phrase; the flag itself is untouched, since other readers depend on it |
+| One clarifier turn produced two console bubbles, the second carrying a U+2014 in customer-facing text (tester, chain E) | PRE-EXISTING ON MAIN. The casual lane builds its `send_message` from the clarifier's RAW words before the tail runs, and the tail's fold reaches only the sealed reply - so one turn carried two texts differing by one character, and `console_service._customer_texts` de-duplicates by exact equality. | `sanitize_dashes` (em AND en) at the process boundary: the row `_close_turn` writes, `TurnResult` / `CompleteResult`, and `_attachments_src`. The tail's fold stays em-only, because six graded captures carry a U+2013 in a field it walks |
 
 ## What exists (origin/main 62e911e, 12 Sep 2026)
 
@@ -263,6 +275,7 @@ equality, `yes` re-asks with the same buttons (handler outcome `reask`).
 | L1-S4 | Shadow: enqueue, `ingress = shadow`, list filter + summary, FE chip + badge + summary line + drawer column | AC-1027, 1029, 1030, 1031 |
 | L1-S5 | Owner console pass (`console_cases/2026-09-xx-focus.yaml`), guide, DoD | AC-1037 |
 | L1-S6 | Sticky roster (D19): `pick_or_yes_no`, `open_question.ROSTER_KINDS` / `carry_after_answer` / `with_offer`, the tail's carry, the offer merge in `_arm_cross_domain_offer`, `offer_is_open` | AC-1014 (amended), AC-1018, AC-1020 |
+| L1-S7 | Found during S6 verification (below): `_ask_for_turn`'s missing `disambiguation` arm, the offer arm gated on the frozen phrase, and the dash fold at the process boundary | AC-1013, AC-1014, AC-1020 |
 
 L1-S3 is the slice that changes reply semantics. Rule for the 72 test files importing
 `output_exchange`: the `tester` lists, before the coder starts S3, which tests assert a
