@@ -253,8 +253,14 @@ def _product_rows(
     SRTWC60630-SH") and a category has no brand to route by; and the body sends the CARRIED
     entities too, so a carried product that still resolves would answer for a code the
     customer did not type this turn - `resolved` non-empty, no did-you-mean for the code that
-    missed, and the wrong brand on the assignment. `None` means "no filter", which is what a
-    direct caller with no ctx gets.
+    missed, and the wrong brand on the assignment.
+
+    The two degenerate values are different on purpose. `None` means NO FILTER, which is what a
+    direct caller with no ctx gets (the cap still applies). An EMPTY LIST means "this turn named
+    no product token", so every resolution is filtered out and both sides come back empty -
+    which is the honest answer: the lane then carries no brand and arms no ask, exactly as a
+    turn that named no product at all does (`escalation._resolve_product` does not even reach
+    the seam on that turn, so the empty list is only seen by a caller that asked about nothing).
 
     De-duplicated by uuid on the resolved side and by code on the offer side, which is what
     the customer can tell apart on screen.
