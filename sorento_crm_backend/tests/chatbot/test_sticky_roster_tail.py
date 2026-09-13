@@ -510,3 +510,190 @@ class TestASurvivedRosterNeverTakesTheAnswersRows:
         )
         assert after["asked_at_turn"] == 9
         assert after["expects"] == "pick"
+
+
+# --------------------------------------------------------------------------- #
+# S7a (owner regression, lane-introduced at the five-key session): the
+# "multiple matches" picker (`lanes/business/gate.py`'s `require_specific`
+# ladder) composes a numbered reply and never calls `ask()`; `_ask_for_turn`
+# has arms for team_clarify / company_clarify / member_offer / tier_offer and
+# `offer_open`, but NO arm for the `disambiguation` label, so the escalate
+# offer wins (or nothing at all) and the roster is dropped. Real evidence:
+# turns 26b15a53-87a8-43be-8e55-5839b3ce3149 ("incoming wc286", persisted
+# open_question = team_pick yes_no with ONE row, reply text has no escalate
+# sentence) and 7528f2f4-84ce-4cdb-b9c4-92f32c95d013 ("8") on DB
+# sorento_ai_automation_focus_full.
+# --------------------------------------------------------------------------- #
+
+
+def _compatible_entities(*codes: str, entity_type: str = "product") -> list[dict]:
+    """The gate's own `compatible_entities` shape (`{uuid, entity_type, code}`,
+    `lanes/business/gate.py`'s `exact_entities` / `compatible_entities` builders) -
+    what a `require_specific` reply's `outcome["central-exchange"]` carries."""
+    return [
+        {"uuid": f"uuid-{code}", "entity_type": entity_type, "code": code}
+        for code in codes
+    ]
+
+
+class TestADisambiguationTurnArmsItsRoster:
+    def test_ten_product_rows_become_a_product_pick(self) -> None:
+        codes = [f"SRTWC286-{i}" for i in range(1, 11)]
+        ctx = _ctx(
+            message_type="business_query",
+            domain_hint="incoming",
+            intent_hint="check_incoming",
+        )
+        ctx["parse"]["_turn_no"] = 4
+        item = {
+            "outcome": {
+                "central-exchange": {
+                    "require_specific": True,
+                    "compatible_entities": _compatible_entities(*codes),
+                }
+            }
+        }
+
+        result = _compile(item, ctx)
+
+        after = result["variables"]["open_question"]
+        assert after is not None, "a disambiguation turn must arm its own roster"
+        assert after["kind"] == "product_pick"
+        assert after["expects"] == "pick"
+        assert [r["idx"] for r in after["options"]] == list(range(1, 11))
+        picked_codes = [r.get("product") or r.get("code") for r in after["options"]]
+        assert picked_codes == codes
+        assert after["asked_at_turn"] == 4
+
+    def test_customer_rows_become_a_customer_pick(self) -> None:
+        codes = [f"ABC-TRADING-{i}" for i in range(1, 4)]
+        ctx = _ctx(
+            message_type="business_query",
+            domain_hint="order",
+            intent_hint="check_order",
+        )
+        ctx["parse"]["_turn_no"] = 2
+        item = {
+            "outcome": {
+                "central-exchange": {
+                    "require_specific": True,
+                    "compatible_entities": _compatible_entities(
+                        *codes, entity_type="customer"
+                    ),
+                }
+            }
+        }
+
+        result = _compile(item, ctx)
+
+        after = result["variables"]["open_question"]
+        assert after is not None, "a disambiguation turn must arm its own roster"
+        assert after["kind"] == "customer_pick", (
+            "the SAME rule miss_suggest._attach_question uses: all rows customer -> "
+            "customer_pick"
+        )
+        assert after["expects"] == "pick"
+        assert len(after["options"]) == 3
+
+
+class TestTheOfferDoesNotReplaceABornDisambiguationRoster:
+    def test_the_offer_does_not_replace_a_born_disambiguation_roster(self) -> None:
+        codes = [f"SRTWC286-{i}" for i in range(1, 4)]
+        ctx = _ctx(
+            message_type="business_query",
+            domain_hint="incoming",
+            intent_hint="check_incoming",
+            routing={"suggested_team": "purchasing", "suggested_agent": "order_enquiries"},
+        )
+        ctx["parse"]["_turn_no"] = 1
+        item = {
+            "outcome": {
+                "central-exchange": {
+                    "require_specific": True,
+                    "compatible_entities": _compatible_entities(*codes),
+                },
+                # The reply ACTUALLY carries the escalate sentence this turn
+                # (`escalate-catalog`'s own `is_escalate_offer` flag, which is what
+                # `offer_open` is computed from) - a turn that both misses to a picker
+                # AND appends an escalate offer must not let the offer win.
+                "escalate-catalog": {
+                    "is_escalate_offer": True,
+                    "response": "Would you like me to escalate to purchasing team?",
+                    "manualResponse": True,
+                    "includeResponse": True,
+                },
+            }
+        }
+
+        result = _compile(item, ctx)
+
+        after = result["variables"]["open_question"]
+        assert after is not None
+        assert after["kind"] == "product_pick", (
+            f"the roster must win over the plain escalate offer: got {after.get('kind')!r}"
+        )
+
+    def test_no_offer_means_no_payload_offer(self) -> None:
+        codes = [f"SRTWC286-{i}" for i in range(1, 4)]
+        ctx = _ctx(
+            message_type="business_query",
+            domain_hint="incoming",
+            intent_hint="check_incoming",
+        )
+        ctx["parse"]["_turn_no"] = 1
+        item = {
+            "outcome": {
+                "central-exchange": {
+                    "require_specific": True,
+                    "compatible_entities": _compatible_entities(*codes),
+                }
+            }
+        }
+
+        result = _compile(item, ctx)
+
+        after = result["variables"]["open_question"]
+        assert after is not None
+        assert after["kind"] == "product_pick"
+        assert not (after.get("payload") or {}).get("offer"), (
+            "the reply carried no escalate sentence this turn - there is nothing to ride"
+        )
+
+
+class TestACarriedDisambiguationLabelDoesNotReArmFromTheAnswer:
+    """B3 shape for this kind (owner-found on :3081, same class as the tier-menu
+    regression): once `_ask_for_turn` gains a `disambiguation` arm, the SAME carry
+    that re-seats the label for a survived `product_pick` (`_picker_carry`) must not
+    let that arm re-compose the roster from THIS TURN's answer rows."""
+
+    def test_a_carried_disambiguation_label_does_not_re_arm_from_the_answer(self) -> None:
+        roster = oq.ask("product_pick", options=_rows("A", "B", "C"), turn_no=9)
+        ctx = _ctx(
+            message_type="business_query",
+            open_question_answered="product_pick",
+            domain_hint=None,
+            intent_hint=None,
+        )
+        ctx["session"]["session_vars"]["variables"]["open_question"] = roster
+        ctx["parse"]["_open_question_before"] = roster
+        # This turn's ANSWER: a plain hit reply naming ONE product - the shape a
+        # pick's own rerun prints, not a fresh require_specific roster.
+        item = {
+            "outcome": {
+                "central-exchange": {
+                    "items": [{"title": "A", "fields": []}],
+                }
+            }
+        }
+
+        result = _compile(item, ctx)
+
+        after = result["variables"]["open_question"]
+        assert after is not None
+        assert after["kind"] == "product_pick"
+        assert after["options"] == roster["options"], (
+            "the survived roster's own frozen rows must stand, not this turn's "
+            f"printed answer row: got {after['options']!r}"
+        )
+        assert after["asked_at_turn"] == 9
+        assert after["expects"] == "pick"
