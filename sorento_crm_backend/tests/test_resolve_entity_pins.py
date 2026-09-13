@@ -365,22 +365,61 @@ def test_out_of_scope_pin_raises_same_as_bogus(db):
 
 
 # --------------------------------------------------------------------------- #
-# match_mode="and" + entity_pins -> 400 (AND-mode has no per-token view to
-# pin, and the force_mode="or" retry would otherwise apply pins by surprise)
+# match_mode="and" + entity_pins: ruling reversed (S7 follow-up, owner-found on
+# :3081, turn chain G). A picked code that is a PREFIX of its siblings
+# (SRTWC286-SH-NEW vs -NEW-150 / -NEW-P / -NEW-200) re-expanded to all four the
+# moment the chatbot lane re-resolved the bare token in AND mode - AND mode never
+# sent the pin that would have narrowed it back to the one row the customer
+# picked, and the route rejected AND-mode pins outright with a 400. The lane now
+# sends pins in every mode (`resolve_gate.resolve_entity_body`); the route's job
+# in AND mode is to narrow a pinned token's own candidates to the pinned uuid
+# BEFORE intersecting, not to 400.
 # --------------------------------------------------------------------------- #
-def test_and_mode_with_entity_pins_is_rejected(db):
+def test_and_mode_with_a_pinned_prefix_code_narrows_before_intersecting(db):
+    """AND mode, one token whose code is a PREFIX of three other seeded products
+    (the exact live shape, SRTWC286-SH-NEW vs -NEW-150 / -NEW-P / -NEW-200) and is
+    pinned to one of them - the response carries exactly the pinned row.
+
+    Single-token, deliberately: AND mode is a genuine cross-token INTERSECTION
+    (measured - two tokens naming unrelated products resolve to an EMPTY
+    `intersection`, not their union), so a second, unrelated token would prove
+    nothing about the pin and would fail for a reason that has nothing to do with
+    this defect.
+    """
     from app.api.v1.system.references import _resolve_input
 
-    with pytest.raises(HTTPException) as exc_info:
-        _resolve_input(
-            db,
-            "",
-            [SHARED_CODE],
-            match_mode="and",
-            entity_pins={SHARED_CODE: str(uuid.uuid4())},
-        )
+    base_code = unique_code("SHNEW")
+    base_id = _product(db, code=base_code, company_id=DEFAULT_COMPANY_ID)
+    _product(db, code=f"{base_code}-150", company_id=DEFAULT_COMPANY_ID)
+    _product(db, code=f"{base_code}-P", company_id=DEFAULT_COMPANY_ID)
+    _product(db, code=f"{base_code}-200", company_id=DEFAULT_COMPANY_ID)
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
 
-    assert exc_info.value.status_code == 400
+    # Baseline, unpinned: confirm the prefix really does re-expand to all four
+    # today, so the pinned assertion below is proven against a real ambiguity
+    # rather than a fixture that never collided in the first place.
+    unpinned = _resolve_input(
+        db, "", [base_code], match_mode="and", allowed_entity_types=["product"]
+    )
+    unpinned_uuids = {m.get("uuid") for m in unpinned.get("intersection") or []}
+    assert len(unpinned_uuids) == 4, (
+        f"fixture must reproduce the prefix collision: {unpinned_uuids!r}"
+    )
+
+    result = _resolve_input(
+        db,
+        "",
+        [base_code],
+        match_mode="and",
+        allowed_entity_types=["product"],
+        entity_pins={base_code: base_id},
+    )
+
+    matched_uuids = {m.get("uuid") for m in result.get("intersection") or []}
+    assert matched_uuids == {base_id}, (
+        f"the pinned token must resolve to exactly its own pinned row: {matched_uuids!r}"
+    )
 
 
 # --------------------------------------------------------------------------- #
