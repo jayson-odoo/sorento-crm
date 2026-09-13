@@ -200,16 +200,22 @@ def _capturing_mcp(response: Any = None):
     return _call, captured
 
 
-def _enable_business_lane(session_factory) -> None:
+def _enable_business_lane(session_factory, *, extra_completed_lanes: list[str] | None = None) -> None:
     """`chatbot_business_lane_enabled` ON and `business_query` in `chatbot_completed_lanes`
-    - same two-step switch `test_foundre_rung_end_to_end.py::_run_stock_turn` flips."""
+    - same two-step switch `test_foundre_rung_end_to_end.py::_run_stock_turn` flips.
+
+    `extra_completed_lanes`, given, is APPENDED - called fresh on EVERY `_run_turn`
+    (coder round 9 finding, 13 Sep 2026), so a lane a test seeded before a later turn
+    for that turn's OWN benefit (e.g. `low_signal`, so an R22(b) turn that must
+    complete in-process rather than delegate) is wiped back to `["business_query"]`
+    on the very next call unless it is asked for again here, every time."""
     set_chatbot_switches(session_factory, business_lane=True)
     db = session_factory()
     row = db.query(SystemSetting).first()
     if row is None:
         row = SystemSetting()
         db.add(row)
-    row.chatbot_completed_lanes = ["business_query"]
+    row.chatbot_completed_lanes = ["business_query", *(extra_completed_lanes or [])]
     db.commit()
 
 
@@ -301,6 +307,7 @@ def _run_turn(
     real_resolver: bool = False,
     capture_user_block: list[str] | None = None,
     resolve_services: ResolveGateServices | None = None,
+    extra_completed_lanes: list[str] | None = None,
 ):
     """One real `engine.run_turn`, business lane on, parser/access/resolver/MCP faked.
 
@@ -319,8 +326,13 @@ def _run_turn(
     `_resolve_services(matches)` - the only way to hand the turn a `probe` callable that
     is not the shared helper's `lambda **_: None` (R20, owner round 7, 13 Sep 2026): a
     test grading whether the customer-picker probe ran AT ALL needs a probe that would
-    answer if called, not one that always renders the "probe failed" arm regardless."""
-    _enable_business_lane(session_factory)
+    answer if called, not one that always renders the "probe failed" arm regardless.
+
+    `extra_completed_lanes`, given, is appended to THIS turn's `chatbot_completed_
+    lanes` beside `business_query` (see `_enable_business_lane`'s own docstring) - the
+    only way a turn that must complete in a different in-process lane (`low_signal`)
+    is actually told to, since this function resets the row on every call."""
+    _enable_business_lane(session_factory, extra_completed_lanes=extra_completed_lanes)
     monkeypatch.setattr(
         engine_mod,
         "check_access",
@@ -4411,6 +4423,21 @@ class TestOpenOfferCanBeLeft:
             f"the FIRST unreadable turn must still re-print the offer, unchanged: {reply1!r}"
         )
 
+        # The SECOND unreadable turn must close the offer AND complete in-process as
+        # `low_signal` (the greeting), rather than delegate - `low_signal` has to be in
+        # `chatbot_completed_lanes` for that (production carries it; the coder measured
+        # it on the prod copy), and `_enable_business_lane`'s per-turn reset wipes any
+        # lane list a test seeded before THIS call unless asked for again here, every
+        # time. Clarifier stubbed the same two-line way `test_s4_casual_lane.py`'s own
+        # `_install_stub_lane` does, so this reaches no LLM.
+        from app.services.chatbot.lanes import casual as casual_mod
+
+        monkeypatch.setattr(casual_mod, "resolve_clarifier_config", lambda db, **_: object())
+        monkeypatch.setattr(
+            casual_mod,
+            "call_clarifier",
+            lambda config, user_prompt: '{"response": "Hi! How can I help you today?"}',
+        )
         result2, captured2 = _run_turn(
             session_factory,
             monkeypatch,
@@ -4421,17 +4448,27 @@ class TestOpenOfferCanBeLeft:
             text_body="hi",
             msg_id="ZZT-outstanding-r22-second-2",
             attributes=["sales_orders.outstanding"],
+            extra_completed_lanes=["low_signal"],
         )
         assert captured2 == [], captured2
+        assert result2.status == "done", result2.error
         reply2 = (result2.reply or {}).get("text") or ""
         assert "Sales order list" not in reply2, (
             f"a SECOND unreadable turn must close the offer, not print a third copy "
             f"of it: {reply2!r}"
         )
         assert "Delivery order list" not in reply2, reply2
+        assert reply2 == "Hi! How can I help you today?", (
+            f"the offer is gone, so this turn's OWN reply (the greeting) is what the "
+            f"customer sees: {reply2!r}"
+        )
         stored = _session_of(session_factory)["variables"]
         assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
             f"the offer must be closed after the second unreadable turn: {stored.get('pending')!r}"
+        )
+        assert stored.get("pending") is None, stored.get("pending")
+        assert "outstanding_filters" not in stored, (
+            f"the closed offer's filter set dies with it: {stored.get('outstanding_filters')!r}"
         )
 
         result3, captured3 = _run_turn(
