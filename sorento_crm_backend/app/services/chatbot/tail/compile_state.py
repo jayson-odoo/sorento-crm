@@ -1128,10 +1128,17 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         # the same list. Every other kind is consumed, exactly as before, and so is a
         # roster whose riding offer the customer accepted. The rule is
         # `dialogue/open_question.carry_after_answer`; this is its one caller.
+        # THE ANSWER THE HANDLER SAW, off the engine's own stamp, because only its
+        # `yes_no` tells an ACCEPTED riding offer (the question goes) from a declined one
+        # (the roster stays). The emission is the fallback for a caller that drove the
+        # tail without the engine - a replay fixture, a unit call - where the stamp is
+        # absent; it is the same object the stamp was normalised FROM, so the two cannot
+        # say different things.
+        answered_here = jsc.get(jsc.get(ctx, "parse"), "_answered")
         variables["open_question"] = pending_open_question.carry_after_answer(
             previous,
             jsc.get(qf, "open_question_answered"),
-            jsc.get(jsc.get(jsc.get(ctx, "parse"), "_answered"), "answer"),
+            jsc.get(answered_here, "answer") or jsc.get(qf, "answers_open_question"),
         )
     else:
         # Nothing asked this turn: the one the customer is still looking at stands.
