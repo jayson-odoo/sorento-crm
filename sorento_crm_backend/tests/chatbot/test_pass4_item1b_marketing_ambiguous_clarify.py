@@ -99,14 +99,14 @@ class TestABareMarketingWordClarifiesOverOnlyTheThreeMarketingTeams:
 
         sends = [a for a in (head.actions or []) if a.get("kind") == "send_message"]
         send_text = " ".join((s.get("text") or "") for s in sends)
-        for team_word in ("marketing product", "marketing form", "marketing promotion"):
+        for team_word in ("Marketing Product", "Marketing Form", "Marketing Promotion"):
             assert team_word in send_text, f"{team_word!r} missing from the clarify: {send_text!r}"
         for other_team in (
-            "purchasing",
-            "purchasing certification",
-            "customer service",
-            "warehouse",
-            "it admin",
+            "Purchasing",
+            "Purchasing Certification",
+            "Customer Service",
+            "Warehouse",
+            "It Admin",
         ):
             assert other_team not in send_text, (
                 f"an ambiguous 'marketing' must clarify over ONLY the three marketing teams, "

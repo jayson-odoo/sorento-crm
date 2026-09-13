@@ -2016,7 +2016,7 @@ class TestAnAcceptanceIsNeverAskedWhichTeam:
         # answer has something to resolve against. Nothing narrowed this one, so it is the
         # whole vocabulary.
         assert result["pending"]["options"] == [
-            {"team": t, "label": t.replace("_", " ")} for t in SUGGESTED_TEAMS
+            {"team": t, "label": t.replace("_", " ").title()} for t in SUGGESTED_TEAMS
         ], result["pending"]["options"]
         services.next_assignee.assert_not_called()
 
@@ -2042,7 +2042,7 @@ class TestAnAcceptanceIsNeverAskedWhichTeam:
             parser_team="marketing",
         )
         assert result["arm"] == "clarify", result["arm"]
-        assert result["clarify"]["clarify_text"].count("marketing") == 3, (
+        assert result["clarify"]["clarify_text"].count("Marketing") == 3, (
             "an ambiguous word asks over the members it names, not the whole catalogue: "
             f"{result['clarify']['clarify_text']!r}"
         )

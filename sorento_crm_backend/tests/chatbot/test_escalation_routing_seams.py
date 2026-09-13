@@ -1834,7 +1834,7 @@ def test_d8_the_pic_copy_and_comment_name_the_brand_marketing_product_sorento() 
     first_send, assign, comment, second_send = result["actions"]
     assert second_send["text"] == (
         "This inquiry has been routed to the respective person-in-charge (PIC) from "
-        "marketing product team handling Sorento. We will get back to you soon. "
+        "Marketing Product team handling Sorento. We will get back to you soon. "
         "Thanks for your patience."
     ), second_send["text"]
 
@@ -1883,7 +1883,7 @@ def test_d8_companion_marketing_promotion_mocha() -> None:
     _first_send, _assign, comment, second_send = result["actions"]
     assert second_send["text"] == (
         "This inquiry has been routed to the respective person-in-charge (PIC) from "
-        "marketing promotion team handling Mocha. We will get back to you soon. "
+        "Marketing Promotion team handling Mocha. We will get back to you soon. "
         "Thanks for your patience."
     ), second_send["text"]
     assert comment["text"].startswith("Team: marketing_promotion handling Mocha\n"), comment["text"]
@@ -1905,7 +1905,7 @@ def test_d8_companion_marketing_team_with_no_brand_resolved_stays_unchanged() ->
     _first_send, _assign, comment, second_send = result["actions"]
     assert second_send["text"] == (
         "This inquiry has been routed to the respective person-in-charge (PIC) from "
-        "marketing product team. We will get back to you soon. Thanks for your patience."
+        "Marketing Product team. We will get back to you soon. Thanks for your patience."
     ), second_send["text"]
     assert comment["text"].startswith("Team: marketing_product\n"), comment["text"]
     assert "handling" not in second_send["text"] and "handling" not in comment["text"]
@@ -1936,7 +1936,7 @@ def test_d8_companion_a_non_brand_split_team_with_a_resolved_brand_stays_unchang
     _first_send, _assign, comment, second_send = result["actions"]
     assert second_send["text"] == (
         "This inquiry has been routed to the respective person-in-charge (PIC) from "
-        "warehouse team. We will get back to you soon. Thanks for your patience."
+        "Warehouse team. We will get back to you soon. Thanks for your patience."
     ), second_send["text"]
     assert comment["text"].startswith("Team: warehouse\n"), comment["text"]
     assert "handling" not in second_send["text"] and "handling" not in comment["text"]
@@ -1962,7 +1962,7 @@ def test_d8_companion_a_resolved_brand_code_with_no_name_prints_no_fragment() ->
     _first_send, _assign, comment, second_send = result["actions"]
     assert second_send["text"] == (
         "This inquiry has been routed to the respective person-in-charge (PIC) from "
-        "marketing product team. We will get back to you soon. Thanks for your patience."
+        "Marketing Product team. We will get back to you soon. Thanks for your patience."
     ), second_send["text"]
     assert comment["text"].startswith("Team: marketing_product\n"), comment["text"]
     assert "handling" not in second_send["text"] and "handling" not in comment["text"]

@@ -469,10 +469,30 @@ def escalation_result(
 
 
 def _pretty_team(team: Any) -> str:
-    """Underscores to spaces, for CUSTOMER copy only. The slug is what routing keeps."""
+    """Underscores to spaces, then TITLE CASE, for CUSTOMER copy only.
+
+    Owner ruling (console pass, 13 Sep 2026): a team is a proper name in the sentence the
+    dealer reads - "from Marketing Product team handling Sorento", "from Customer Service
+    team", "from Purchasing team" - and lowercase read as a typo beside the brand D8 added.
+
+    SCOPED TO WHAT THE RULING NAMES, which is this lane's customer surfaces: the routed-to-PIC
+    sentence and the team_pick question's labels and quick replies (`_clarify_over`,
+    `_team_clarify_pairs`, `_team_clarify_text` all read this). Three other sentences print a
+    team and are deliberately NOT changed - `lanes/business/answer`'s suggest offer,
+    `tail/compile_state`'s frozen escalate phrase and `tail/outcome`'s canned escalate offer -
+    because they are graded against real n8n captures byte for byte (measured: title-casing
+    `outcome.pretty_team` moved 12 capture replays in `test_s6c_answer_lane` and
+    `test_worlds`), and re-casing them would trade parity evidence for a change the ruling does
+    not ask for. When the owner wants those too it is one call plus a registered divergence per
+    capture, with this measurement as the reason.
+
+    The PIC comment's `Team:` line keeps the raw slug, which is what an operator searches by,
+    and the labels the question freezes are display only: an answer is resolved against the
+    option's `team` SLUG and never against its label (N17).
+    """
     from app.services.chatbot.tail.outcome import pretty_team
 
-    return pretty_team(team)
+    return pretty_team(team).title()
 
 
 def _malaysia(value: Any) -> str:
