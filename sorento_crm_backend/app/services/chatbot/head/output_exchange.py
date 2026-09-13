@@ -1185,8 +1185,12 @@ def apply_open_question_outcome(
     # non-product, which is why it surfaced now and not with the three picks an hour earlier
     # (their `keep` was empty).
     #
-    # De-duplicated against what the focus already supplied, by hint and code, so a product
-    # sibling is not added twice.
+    # De-duplicated against what the focus already supplied, by hint and code. That key is a
+    # SECOND NET, not the primary rule: `open_question._same_code` (hint-insensitive) has
+    # already dropped any keep row sharing a code with the pick, so what is left for this to
+    # catch is a duplicate row within `keep` itself, or one whose code matches the customer the
+    # focus supplied. Hence (hint, code) rather than the code alone - two rows may legitimately
+    # share a code across types, and dropping one of those would put the defect back.
     seen = {
         (
             jsc.lower_or_empty(jsc.get(e, "hint")),
