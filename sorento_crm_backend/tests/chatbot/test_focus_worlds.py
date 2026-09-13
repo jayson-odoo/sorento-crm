@@ -264,16 +264,16 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
         ),
     ),
     OwnerWorld(
-        world_id="focus-picker-two-resolves-then-two-again-is-a-new-message",
+        world_id="focus-picker-two-then-three-re-picks-the-third-row",
         lane="business",
         emits_v3=True,
         acs=("AC-1014",),
         why=(
             "A picker of 3 products is offered. '2' resolves to the SECOND FROZEN "
-            "option. '2' again, with the question already answered and nothing open, "
-            "is a NEW MESSAGE - never a second answer to a question that closed the "
-            "moment it was answered (AC-1020: an open question is never silently "
-            "re-answered)."
+            "option. '3', with the roster still alive, RE-PICKS the THIRD frozen "
+            "option (owner 13 Sep 2026, D19, sticky roster) - a pick does not consume "
+            "its roster, restoring ruling K rule 1 / 7 Sep deviation 5 and superseding "
+            "AC-1014's close-on-answer clause the 12 Sep UAC introduced."
         ),
         turns=(
             OwnerTurn(
@@ -319,22 +319,24 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                 },
             ),
             OwnerTurn(
-                message="2",
+                message="3",
                 emission={
                     "message_type": "casual",
                     "domain_hint": None,
                     "intent_hint": None,
                     "entities": [],
                     "asks": [],
-                    "answers_open_question": _answers(resolved=False),
+                    "answers_open_question": _answers(resolved=True, picks=[3]),
                     "anaphora": False,
                     "topic_reset": False,
                 },
                 expect={
-                    # Nothing open: "2" answers nothing, and the alive product from the
-                    # last REAL pick is what a bare continuation would still carry.
-                    "answered": None,
-                    "focus_products": ["SRTKS8091-B"],
+                    # The roster from turn 2 is STILL ALIVE (D19): "3" re-picks the
+                    # third frozen option, and the question stays open for a further
+                    # pick.
+                    "answered": "product_pick",
+                    "focus_products": ["SRTKS8091-C"],
+                    "open_question_kind": "product_pick",
                 },
             ),
         ),
@@ -546,6 +548,261 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                     "focus_products": ["SRTWT2635"],
                     "focus_domains": ["incoming"],
                     "branch_kind": "business_query",
+                },
+            ),
+        ),
+    ),
+    # ----------------------------------------------------------------- #
+    # D19 (owner 13 Sep 2026): sticky roster. A pick does NOT consume its
+    # roster. See PLAN-chatbot-focus-multi-domain.md D19 and
+    # tests/chatbot/test_sticky_roster_tail.py for the persistence-level pins;
+    # these four worlds grade the same rule end to end through a real turn.
+    # ----------------------------------------------------------------- #
+    OwnerWorld(
+        world_id="focus-tier-pick-then-second-number-re-picks",
+        lane="business",
+        emits_v3=True,
+        acs=("AC-1014",),
+        why=(
+            "A promo tier menu (office / dealer / end_user) is offered for one "
+            "product. '1' resolves office. '2', with the roster still alive (D19 "
+            "rule 1 applies to every roster kind, not only product_pick), re-picks "
+            "dealer rather than answering nothing."
+        ),
+        turns=(
+            OwnerTurn(
+                message="1",
+                arm={
+                    "open_question": {
+                        "kind": "tier_pick",
+                        "options": [
+                            {"idx": 1, "tier": "office", "label": "Office"},
+                            {"idx": 2, "tier": "dealer", "label": "Dealer"},
+                            {"idx": 3, "tier": "end_user", "label": "End user"},
+                        ],
+                        "expects": "pick",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {},
+                    },
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[1]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "tier_pick",
+                    "focus_tier": ["office"],
+                    "open_question_kind": "tier_pick",
+                },
+            ),
+            OwnerTurn(
+                message="2",
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "tier_pick",
+                    "focus_tier": ["dealer"],
+                    "open_question_kind": "tier_pick",
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="focus-pick-then-offer-yes-escalates",
+        lane="escalation",
+        emits_v3=True,
+        acs=("AC-1014", "AC-1015"),
+        why=(
+            "D19 rule 3: the one-team escalate offer a pick's own rerun-miss "
+            "produces RIDES on the roster question instead of replacing it with a "
+            "bare team_pick. Armed directly rather than driving an actual "
+            "pick-then-miss through the real resolve+gate seam (the harness has no "
+            "deterministic way to force a miss there) - the merge's OWN "
+            "construction is pinned at the unit level "
+            "(tests/chatbot/test_sticky_roster_tail.py::"
+            "TestTheOfferRidesOnTheRosterInsteadOfReplacingIt); this world grades "
+            "what happens NEXT: 'yes' runs the escalation lane and consumes the "
+            "whole merged question."
+        ),
+        turns=(
+            OwnerTurn(
+                message="yes please",
+                arm={
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                        "expects": "pick_or_yes_no",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {
+                            "team": "purchasing",
+                            "domain": "inventory",
+                            "offer": {
+                                "team": "purchasing",
+                                "domain": "inventory",
+                                "options": [
+                                    {"idx": 1, "team": "purchasing", "label": "purchasing"}
+                                ],
+                            },
+                        },
+                    },
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "is_affirmative": True,
+                    "answers_open_question": _answers(resolved=True, yes_no="yes"),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "team_pick",
+                    "branch_kind": "out_of_scope",
+                    "lane_ran": True,
+                    "open_question_gone": True,
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="focus-pick-then-offer-no-keeps-roster",
+        lane="business",
+        emits_v3=True,
+        acs=("AC-1014", "AC-1015"),
+        why=(
+            "D19 rule 3's other half: 'no' declines the escalate offer riding the "
+            "roster WITHOUT closing the roster - the offer comes off "
+            "(expects reverts to 'pick', no payload.offer) and a further pick still "
+            "resolves against the same frozen rows (rule 1). Armed directly, same "
+            "simplification as focus-pick-then-offer-yes-escalates."
+        ),
+        turns=(
+            OwnerTurn(
+                message="no",
+                arm={
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                        "expects": "pick_or_yes_no",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {
+                            "team": "purchasing",
+                            "domain": "inventory",
+                            "offer": {
+                                "team": "purchasing",
+                                "domain": "inventory",
+                                "options": [
+                                    {"idx": 1, "team": "purchasing", "label": "purchasing"}
+                                ],
+                            },
+                        },
+                    },
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "is_affirmative": False,
+                    "answers_open_question": _answers(resolved=True, yes_no="no"),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "team_pick",
+                    "open_question_kind": "product_pick",
+                    "open_question_expects": "pick",
+                    "open_question_offer_team": None,
+                },
+            ),
+            OwnerTurn(
+                message="2",
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "asks": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "answered": "product_pick",
+                    "focus_products": ["SRTKS8091-B"],
+                    "open_question_kind": "product_pick",
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="focus-pick-then-new-subject-clears-roster",
+        lane="business",
+        emits_v3=True,
+        acs=("AC-1014", "AC-1020"),
+        why=(
+            "D19 rule 2: a sticky roster still clears by the EXISTING rules - naming "
+            "its own subject is one of them (AC-1020). 'SRTWC8517 stock?' arriving "
+            "over a live roster (offer included) must clear it - roster and offer "
+            "both - and answer the NEW product, not read as a further pick."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTWC8517 stock?",
+                arm={
+                    "open_question": {
+                        "kind": "product_pick",
+                        "options": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                        "expects": "pick_or_yes_no",
+                        "asked_at_turn": 1,
+                        "asked_at": None,
+                        "payload": {
+                            "team": "purchasing",
+                            "domain": "inventory",
+                            "offer": {
+                                "team": "purchasing",
+                                "domain": "inventory",
+                                "options": [
+                                    {"idx": 1, "team": "purchasing", "label": "purchasing"}
+                                ],
+                            },
+                        },
+                    },
+                },
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTWC8517")],
+                    "asks": [{"domain": "inventory", "entities": [_product("SRTWC8517")]}],
+                    "answers_open_question": _answers(),
+                    "anaphora": False,
+                    "topic_reset": False,
+                },
+                expect={
+                    "focus_products": ["SRTWC8517"],
+                    "answered": None,
+                    "open_question_gone": True,
                 },
             ),
         ),

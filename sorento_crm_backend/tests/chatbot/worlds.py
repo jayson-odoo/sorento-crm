@@ -1131,13 +1131,13 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
         why=(
             "A picker of three products is offered. '2' resolves to the SECOND FROZEN "
             "option. The 7 Sep deviation 5 (a second pick against the same list still "
-            "resolving, on owner ruling K rule 1's authority) is SUPERSEDED by the 12 Sep "
-            "UAC: AC-1014 says a pick resolves the entity and CLOSES the question - "
-            "'2' again with no open question alive is a new message, not a second pick, "
-            "which is what turn 3 now grades. `test_focus_worlds.py::"
-            "focus-picker-two-resolves-then-two-again-is-a-new-message` already asserts "
-            "the same rule directly; this world keeps it end to end through a real "
-            "three-turn chain."
+            "resolving, on owner ruling K rule 1's authority) was SUPERSEDED by the 12 Sep "
+            "UAC's AC-1014 close-on-answer clause, then RESTORED by the owner's 13 Sep "
+            "ruling (D19, sticky roster): a pick does NOT consume its roster, so turn 3's "
+            "'1' re-picks the FIRST frozen option rather than answering nothing. "
+            "`test_focus_worlds.py::focus-picker-two-then-three-re-picks-the-third-row` "
+            "already asserts the same rule directly; this world keeps it end to end "
+            "through a real three-turn chain."
         ),
         turns=(
             OwnerTurn(
@@ -1191,7 +1191,13 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
                     "anaphora": False,
                     "topic_reset": False,
                 },
-                expect={"answered": None, "focus_products": ["SRTKS8091-B"]},
+                expect={
+                    "answered": "product_pick",
+                    "focus_products": ["SRTKS8091-A"],
+                    "branch_kind": "business_query",
+                    "lane_ran": True,
+                    "exit_kind_declared": True,
+                },
             ),
         ),
     ),
