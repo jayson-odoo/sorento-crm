@@ -346,12 +346,19 @@ def test_escalation_context_ladder(case_id: str) -> None:
     assert out["allowed"] is True
 
 
-@pytest.mark.xfail(strict=True, reason="pending B-TEAM re-port; not live at bac9613b")
 def test_no_hard_default_team() -> None:
-    """FUTURE (B-TEAM-1'): once `clarify-team-gate` promotes, a null team asks instead of
-    silently defaulting. NOT live today - see `test_no_team_clarify_on_live` for what
-    `bac9613b` actually does with the same input. `strict=True` so the promotion itself
-    flips this test green and forces the marker's removal."""
+    """AC-1143 / PLAN-chatbot-escalation-routing.md: B-TEAM-1' is PROMOTED by this lane
+    (D2's team ladder). A null team now asks over the whole catalogue rather than silently
+    defaulting - the `xfail(strict=True)` this test carried is retired because the
+    promotion this test was waiting for is the plan this file's sibling
+    `test_escalation_routing_team.py` builds. RED until the coder's slice S2 lands the
+    ladder's "no word: unchanged 8 Sep ruling" branch's OWN clarify-on-null-team half.
+
+    `test_no_team_clarify_on_live_team_flows_through_unguarded` (the "not live" companion
+    this promotion retires) is DELETED rather than kept skipped: H27 does not stay open
+    once this lane's own team-clarify ladder is what runs, and a passing "unguarded" test
+    beside a passing "guarded" one would contradict each other rather than describe two
+    eras of the same code."""
     from app.services.chatbot.lanes.escalation import run
 
     ctx = _ctx(routing={"suggested_team": None, "suggested_agent": None})
@@ -365,33 +372,6 @@ def test_no_hard_default_team() -> None:
     assert result["pending"]["kind"] == "team_clarify"
     services.next_assignee.assert_not_called()
     services.team_members.assert_not_called()
-
-
-def test_no_team_clarify_on_live_team_flows_through_unguarded() -> None:
-    """H27 stays open on LIVE (`bac9613b`, 10 nodes): `escalation-context.live.js` applies
-    no default (`team = o.routing.suggested_team || null` - null stays null) and there is no
-    `clarify-team-gate` in the live graph to catch it, so a null team proceeds straight into
-    the human-intervention arm, unguarded - never asking, never defaulting AT THIS LAYER.
-
-    This input is synthetic at the lane's own boundary: in the real pipeline `routing.
-    suggested_team` is never actually null by the time it gets here, because the ALREADY-
-    PORTED parser (`head/output_exchange.py`'s nullish chain) hard-defaults it to
-    `"customer_service"` first - "the LIVE default" the correction names lives one layer up,
-    not in this lane. Both facts matter: the lane itself has no guard (H27 unfixed) AND the
-    parser's own hard default is what actually prevents the gap from biting in practice."""
-    from app.services.chatbot.lanes.escalation import run
-
-    ctx = _ctx(routing={"suggested_team": None, "suggested_agent": "general_enquiries"})
-    item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
-    services = _services()
-
-    result = run(ctx, item, services=services)
-
-    assert result["arm"] == "human-intervention"
-    assert result["pending"] is None
-    services.next_assignee.assert_called_once()
-    body = services.next_assignee.call_args[0][0]
-    assert body.get("team_code") in (None, "")
 
 
 def test_clarify_company_ask_always_in_reply() -> None:
@@ -704,12 +684,17 @@ def test_reasoned_fixtures_are_replayed_and_reported(capsys) -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(strict=True, reason="pending B-TEAM re-port; not live at bac9613b")
 def test_fresh_entity_gate_calls_resolve() -> None:
-    """FUTURE (B-HB-1): once `fresh-entity-gate` promotes, a fresh entity on this turn
-    resolves and gates before the ladder runs. NOT live today - see
-    `test_no_resolve_call_on_live_escalation_lane` for what `bac9613b` actually does.
-    `strict=True` so the promotion flips this test green and forces the marker's removal."""
+    """AC-1143 / PLAN-chatbot-escalation-routing.md: B-HB-1 is PROMOTED by this lane (the
+    "Brand and company" section's resolve-through-the-business-gate step, S3). The
+    `xfail(strict=True)` this test carried is retired - the day it names has arrived, and
+    `test_escalation_routing_brand.py` is where the tester designs the seam's exact shape.
+    RED until the coder's slice S3 wires `resolve_and_gate`.
+
+    `test_no_resolve_call_on_live_escalation_lane` (the "not live" companion this promotion
+    retires) is DELETED rather than kept skipped: H26 does not stay open once this lane
+    resolves the turn's own product, and a passing "never calls the resolver" test beside a
+    passing "calls the resolver" one would contradict each other."""
     from app.services.chatbot.lanes.escalation import run
 
     ctx_with_entity = _ctx(
@@ -721,36 +706,14 @@ def test_fresh_entity_gate_calls_resolve() -> None:
     services.resolve_and_gate.assert_called_once()
 
 
-def test_no_resolve_call_on_live_escalation_lane() -> None:
-    """H26 stays open on live: `bac9613b` has no `fresh-entity-gate` / `Call 'sub-resolve-
-    and-gate'` anywhere in the graph, so the escalation lane never calls the resolver -
-    brand-blind routing is not fixed by this slice, it is reproduced and noted. A fresh
-    entity on the turn changes nothing about this: `resolve_and_gate` is never called
-    either way."""
-    from app.services.chatbot.lanes.escalation import run
-
-    with_entity = _services(gate=None)
-    run(
-        _ctx(routing={"suggested_team": "customer_service"}, entities=[{"raw": "widget", "hint": "product", "current_message": True}]),
-        _item(),
-        services=with_entity,
-    )
-    with_entity.resolve_and_gate.assert_not_called()
-
-    without_entity = _services(gate=None)
-    run(_ctx(routing={"suggested_team": "customer_service"}, entities=[]), _item(), services=without_entity)
-    without_entity.resolve_and_gate.assert_not_called()
-
-
 # --------------------------------------------------------------------------- #
 # R3: the pending marker replaces the frozen-string read
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(strict=True, reason="pending B-TEAM re-port; not live at bac9613b")
 def test_pending_marker_written_for_team_clarify() -> None:
-    """FUTURE (B-TEAM-1'): a `team_clarify` pending marker. NOT live - see
-    `test_no_team_clarify_on_live_team_flows_through_unguarded`."""
+    """AC-1143: the `xfail(strict=True)` this test carried is retired for the same reason
+    `test_no_hard_default_team` gives above - B-TEAM-1' is what this lane's D2 ladder is."""
     from app.services.chatbot.lanes.escalation import run
 
     team_ctx = _ctx(routing={"suggested_team": None, "suggested_agent": None})
