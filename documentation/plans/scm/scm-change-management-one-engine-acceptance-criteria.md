@@ -101,6 +101,35 @@ signal.
 **AC-E2.** `challenge_if_drifted` has no caller on the sheet read, confirm and reconcile
 paths; the borrow-hold release it performed happens on apply of the batch instead.
 
+## Slice C, board display (owner feedback 13 Sep)
+
+**AC-C9 [FE][UX] Indicator.** A changed line shows one amber hazard icon (the warning
+triangle already used beside a Rejected verdict) instead of the inline Was / Now block, in
+BOTH the board grid cell and the list row. In the list the icon sits in the column that
+changed: Required date when the date moved, Outstanding when the qty moved, Suggested for
+the composed suggestion (always present on a changed line); a line with qty and date moved
+shows it in both columns. In the grid it sits beside the line's figure in the cell.
+
+**AC-C10 [FE][UX] Lightbox.** Clicking the icon opens a dialog titled "What changed, <SO>
+(Line <n>)" listing ONLY the fields that changed, one per line as "<label> <old> → <new>"
+(Qty 234 → 334; Date 4 Sep → 20 Nov; Decision Buy 234 → Buy 334), unchanged fields
+omitted, then the suggestion lines verbatim (server labels), "Late by N days" / shortfall
+once. Escape and a Close button close it. Same component in grid and list.
+
+**AC-C11 [FE][UX] One shortfall line.** A shortfall renders exactly once (the label "Short
+N by <date> (was Buy M)"); no separate "Short N" line.
+
+**AC-C12 [FE][UX] Expand all / Collapse all.** The list view carries Expand all and
+Collapse all controls with the same placement and behaviour as reorder planning's (find
+it: grep the reorder planning list for "Expand all").
+
+**AC-C13 [FE][UX] Thin rows.** The list's Sales order cell reads "<SO> (Line <n>)" on one
+line; the Suggested and Decided cells carry no progress bar; a row is one text line tall
+(assert the cell renders no element with the bar's class / role).
+
+**AC-C14 [FE][UX] Works at 375 and 1280 (the dialog fits the viewport, icons stay in their
+columns).**
+
 ## Cross-cutting
 
 **AC-X1.** Purchasing is notified once per applied order, after the order's savepoint commits

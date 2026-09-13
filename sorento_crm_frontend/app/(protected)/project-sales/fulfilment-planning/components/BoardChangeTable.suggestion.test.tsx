@@ -11,11 +11,12 @@
  * adds nothing to it and drops nothing from it.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { BoardChangeTable } from './BoardChangeTable';
 import { annotationOf } from '../../_shared/lib/boardChangeAnnotations';
+import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 import { MOCK_PLANNING_CHANGE_BATCH_PENDING } from '../../_shared/__mocks__/planningChanges';
 import type { PlanningChangeRow } from '../../_shared/types/planningChange.types';
 
@@ -178,5 +179,114 @@ describe('the composed suggestion on the board', () => {
     expect(screen.queryByTestId('board-change-suggestion-pcr-s6')).toBeNull();
     expect(screen.queryByTestId('board-change-late-pcr-s6')).toBeNull();
     expect(screen.queryByTestId('board-change-short-pcr-s6')).toBeNull();
+  });
+});
+
+/**
+ * Owner feedback, 13 September 2026 (Slice C board display, UAC AC-C9 to AC-C11): the inline
+ * Was / Now table this file's other describe block pins is retired from the grid cell. A
+ * changed line shows one amber hazard icon instead (the same warning triangle already used
+ * beside a Rejected verdict); clicking it opens a lightbox naming only what changed, then the
+ * composed suggestion verbatim, then the late/short fact exactly once. RED: no icon, no dialog
+ * exist yet - `BoardChangeTable` still renders the full inline table unconditionally.
+ */
+function sampleAnnotation(overrides: Partial<BoardChangeAnnotation> = {}): BoardChangeAnnotation {
+  // The captain's own worked example (AC-C10): "Qty 234 -> 334; Date 4 Sep -> 20 Nov;
+  // Decision Buy 234 -> Buy 334", on the lane's own canonical demo order (SO419772, line 1).
+  return {
+    rowId: 'pcr-demo',
+    soNumber: 'SO419772',
+    lineNo: 1,
+    itemCode: 'B2155-NL-BLUE',
+    kind: 'qty_up',
+    closed: false,
+    was: { qty: '234', date: '2026-09-04', decision: 'Buy 234' },
+    now: { qty: '334', date: '2026-11-20', decision: 'Buy 334' },
+    suggestionLines: ['Buy 334 (was 234)'],
+    lateDays: null,
+    shortfallQty: null,
+    productChangedFrom: null,
+    movedTransfer: null,
+    projectLineId: 'pl-demo-1',
+    ...overrides,
+  };
+}
+
+describe('the change indicator, lightbox and one shortfall line (owner feedback 13 Sep)', () => {
+  it('AC-C9: a changed line shows one amber hazard icon in the grid cell, not the inline Was/Now block', () => {
+    const { row, soNumber } = rowOf('pcr-s1');
+    render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
+
+    expect(screen.getByTestId('board-change-icon-pcr-s1')).toBeInTheDocument();
+    // The inline table this file's OTHER describe block still pins is gone in its place.
+    expect(screen.queryByTestId('board-change-pcr-s1')).not.toBeInTheDocument();
+  });
+
+  it('AC-C10: clicking the icon opens a dialog titled "What changed, <SO> (Line <n>)", listing only the changed fields then the suggestion verbatim', async () => {
+    render(<BoardChangeTable annotation={sampleAnnotation()} />);
+
+    fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+
+    expect(within(dialog).getByText('What changed, SO419772 (Line 1)')).toBeInTheDocument();
+    // Every field changed in this sample, so all three lines are present, one per line.
+    expect(within(dialog).getByText('Qty 234 → 334')).toBeInTheDocument();
+    expect(within(dialog).getByText('Date 4 Sep → 20 Nov')).toBeInTheDocument();
+    expect(within(dialog).getByText('Decision Buy 234 → Buy 334')).toBeInTheDocument();
+    // Then the composed suggestion, verbatim - the server's own sentence, unchanged.
+    expect(within(dialog).getByText('Buy 334 (was 234)')).toBeInTheDocument();
+  });
+
+  it('AC-C10: an unchanged field is omitted from the dialog entirely', async () => {
+    // Only the date moved this time; qty and decision are the SAME on both sides.
+    render(
+      <BoardChangeTable
+        annotation={sampleAnnotation({
+          rowId: 'pcr-demo-date-only',
+          was: { qty: '134', date: '2026-09-04', decision: 'Keep 134' },
+          now: { qty: '134', date: '2026-09-25', decision: 'Keep 134' },
+          suggestionLines: ['Keep 134'],
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo-date-only'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+
+    expect(within(dialog).getByText('Date 4 Sep → 25 Sep')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/^Qty /)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/^Decision /)).not.toBeInTheDocument();
+  });
+
+  it('AC-C10: Escape and the Close button both close the dialog', async () => {
+    render(<BoardChangeTable annotation={sampleAnnotation()} />);
+
+    fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByTestId('board-change-dialog')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo'));
+    const reopened = await screen.findByTestId('board-change-dialog');
+    fireEvent.click(within(reopened).getByRole('button', { name: 'Close' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByTestId('board-change-dialog')).not.toBeInTheDocument();
+  });
+
+  it('AC-C11: a shortfall renders exactly once, and the retired standalone Short paragraph is gone', async () => {
+    const { row, soNumber } = rowOf('pcr-s11');
+    render(<BoardChangeTable annotation={annotationOf(row, soNumber)} />);
+
+    fireEvent.click(screen.getByTestId('board-change-icon-pcr-s11'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+
+    // `getByText` itself throws on more than one match, so this pins "exactly once".
+    expect(
+      within(dialog).getByText('Short 44 by 22 Aug (was Buy 134)'),
+    ).toBeInTheDocument();
+    // The old inline block's own separate "Short 44" paragraph must not exist ANYWHERE -
+    // not duplicated inside the dialog, not left behind outside it.
+    expect(screen.queryByTestId('board-change-short-pcr-s11')).not.toBeInTheDocument();
   });
 });

@@ -246,6 +246,50 @@ describe('the changed cell', () => {
 });
 
 /**
+ * Owner feedback, 13 September 2026 (Slice C board display, AC-C9/AC-C10): through the FULL
+ * panel this time, not the isolated `BoardChangeTable` component
+ * (`BoardChangeTable.suggestion.test.tsx` owns that half) - the matrix cell must wire the
+ * SAME icon-and-dialog through to a real batch, not only when handed an annotation directly.
+ * RED: the matrix cell still renders `BoardChangeTable`'s full inline table today.
+ */
+describe('the changed cell shows the hazard icon and lightbox (owner feedback 13 Sep)', () => {
+  it('shows one hazard icon in the matrix cell instead of the inline Was/Now block', async () => {
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(await screen.findByTestId('board-change-icon-pcr-381895-1')).toBeInTheDocument();
+    expect(screen.queryByTestId('board-change-pcr-381895-1')).not.toBeInTheDocument();
+  });
+
+  it('opens the lightbox on click, naming the SO and line, then the composed suggestion', async () => {
+    renderPanel();
+    const icon = await screen.findByTestId('board-change-icon-pcr-381895-1');
+    fireEvent.click(icon);
+
+    const dialog = await screen.findByTestId('board-change-dialog');
+    expect(within(dialog).getByText('What changed, SO381895 (Line 1)')).toBeInTheDocument();
+    expect(within(dialog).getByText('Buy 25 (was 10)')).toBeInTheDocument();
+  });
+
+  /**
+   * AC-C9's list half: `pcr-381895-1` (kind `advanced`) moved BOTH qty (10 -> 25) and date
+   * (25 Aug -> 19 Aug), so the icon must sit in BOTH the Required date and Outstanding
+   * columns of the row it lands on - never a single icon that leaves one column silent
+   * about what moved.
+   */
+  it('in the List view, shows the icon in both the Required date and Outstanding columns for a line where both moved', async () => {
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SO381895');
+
+    const icons = screen.getAllByTestId('board-change-icon-pcr-381895-1');
+    const columns = icons.map((icon) => icon.getAttribute('data-column')).sort();
+    expect(columns).toEqual(['outstanding', 'required_date']);
+  });
+});
+
+/**
  * R13/D1/D5 retired the per-order commit rail this describe block was written against: no
  * `commit-row-*` card, no `commit-blocked` per order, no "Confirm this order" button. The
  * board's ONE Confirm posts through `confirmMany`, and AC-P3-4 still holds: when the board was

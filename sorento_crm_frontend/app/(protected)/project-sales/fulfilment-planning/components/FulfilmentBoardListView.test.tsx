@@ -691,3 +691,78 @@ describe('FulfilmentBoardListView: the Local pill', () => {
     expect(screen.queryByText('Local')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Owner feedback, 13 September 2026 (Slice C board display, AC-C12): the reorder-planning
+ * list's own Expand all / Collapse all (`app/(protected)/scm/reorder/components/
+ * PlanLinesGrid.tsx`, "Expand all"/"Collapse all" icon buttons beside its toolbar) is missing
+ * here, even though this list carries the same per-row expandable decision panel. RED: no
+ * such control exists on this screen today.
+ */
+describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 Sep, AC-C12)', () => {
+  function twoRows() {
+    return [
+      contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 }),
+      contribution({
+        key: 'so-2:line-20',
+        sales_order_id: 'so-2',
+        line_id: 'core-line-20',
+        so_number: 'SO397451',
+        line_no: 20,
+      }),
+    ];
+  }
+
+  it('carries Expand all and Collapse all controls', async () => {
+    renderView({ contributions: twoRows() });
+    await screen.findByText('SO397450');
+
+    expect(screen.getByTestId('board-list-expand-all')).toBeInTheDocument();
+    expect(screen.getByTestId('board-list-collapse-all')).toBeInTheDocument();
+  });
+
+  it('Expand all opens every row’s decision panel; Collapse all closes them all', async () => {
+    renderView({ contributions: twoRows() });
+    await screen.findByText('SO397450');
+
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    expect(
+      await screen.findAllByRole('button', { name: 'Save decision' }),
+    ).toHaveLength(2);
+
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
+    await waitFor(() =>
+      expect(
+        screen.queryAllByRole('button', { name: 'Save decision' }),
+      ).toHaveLength(0),
+    );
+  });
+});
+
+/**
+ * Owner feedback, 13 September 2026 (Slice C board display, AC-C13): a row today is TWO
+ * text lines tall - the Sales order cell splits the SO number and "Line N" onto separate
+ * `div`s - and the Suggested / Decided cells each carry a `SupplyBar` (this file's own
+ * "agrees with the grid about the supply bar" describe block pins its presence, which AC-C13
+ * retires). RED: the SO cell renders on two lines and the bar still renders.
+ */
+describe('FulfilmentBoardListView: thin rows (owner feedback 13 Sep, AC-C13)', () => {
+  it('reads the Sales order cell as "<SO> (Line <n>)" on one line', async () => {
+    renderView({
+      contributions: [contribution({ so_number: 'SO419772', line_no: 1 })],
+    });
+
+    expect(await screen.findByText('SO419772 (Line 1)')).toBeInTheDocument();
+    // Not the two-line shape this replaces.
+    expect(screen.queryByText('SO419772')).not.toBeInTheDocument();
+    expect(screen.queryByText('Line 1')).not.toBeInTheDocument();
+  });
+
+  it('draws no progress bar in the Suggested or Decided cells', async () => {
+    renderView();
+    await screen.findByText('SO397450');
+
+    expect(screen.queryByTestId('supply-bar')).not.toBeInTheDocument();
+    expect(document.querySelector('[role="progressbar"]')).toBeNull();
+  });
+});
