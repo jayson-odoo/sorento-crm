@@ -45,6 +45,7 @@ from app.models.procurement import (
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    INQUIRY_ACTIONED,
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -1338,6 +1339,9 @@ def test_closed_line_row_not_open_demand():
 
         assert result["rows_raised"] == 1, result
         assert snapshot() == before
+        # The state the view ignores, and the honest word for it: purchasing dealt with
+        # this instruction and the goods went out.
+        assert w.one_row().state == INQUIRY_ACTIONED
 
 
 # --------------------------------------------------------------------------- #
