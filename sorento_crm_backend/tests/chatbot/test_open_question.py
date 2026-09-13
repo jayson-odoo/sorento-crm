@@ -378,6 +378,27 @@ class TestStickyRoster:
         assert first.tiers == ["office"]
         assert second.tiers == ["dealer"]
 
+    def test_offer_is_open_reads_a_riding_offer(self) -> None:
+        """B2 (Opus S6 review): under the promoted v1 prompt there is no
+        `answers_open_question` at all, so a bare "yes" over a merged roster reaches
+        escalation ONLY through `output_exchange.offer_is_open`'s
+        `expects == "pick_or_yes_no"` read - a production line with no direct test
+        guard until now."""
+        merged = oq.with_offer(
+            oq.ask("product_pick", options=_rows("A", "B", "C"), turn_no=1),
+            oq.ask(
+                "team_pick",
+                options=[{"idx": 1, "team": "warehouse", "label": "warehouse"}],
+                turn_no=1,
+                expects="yes_no",
+                payload={"team": "warehouse"},
+            ),
+        )
+        plain_roster = oq.ask("product_pick", options=_rows("A", "B", "C"), turn_no=1)
+
+        assert ox.offer_is_open({"open_question": merged}) is True
+        assert ox.offer_is_open({"open_question": plain_roster}) is False
+
 
 # --------------------------------------------------------------------------- #
 # The mirror
