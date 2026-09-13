@@ -14,16 +14,16 @@
     "order_date_max": "2026-08-28"
   },
   "do": {
-    "do_qty": 700,
-    "delivered_qty": 60,
+    "do_qty": 640,
+    "delivered_qty": 0,
     "pending_qty": 640,
     "do_count": 3,
     "do_date_min": "2026-02-03",
     "do_date_max": "2026-08-30"
   },
   "so_by_location": [
-    {"code": "BRW-IB", "ordered_qty": 1200, "outstanding_qty": 1200},
-    {"code": "MWH-IB", "ordered_qty": 1211, "outstanding_qty": 1211}
+    {"code": "MWH-IB", "ordered_qty": 1211, "outstanding_qty": 1211},
+    {"code": "BRW-IB", "ordered_qty": 1200, "outstanding_qty": 1200}
   ],
   "so_by_customer": [
     {"customer_name": "Dealer A Sdn Bhd", "ordered_qty": 900, "outstanding_qty": 900},
@@ -31,10 +31,10 @@
     {"customer_name": "Dealer C Hardware", "ordered_qty": 700, "outstanding_qty": 700}
   ],
   "do_by_location": [
-    {"code": "BRW-IB", "do_qty": 700, "pending_qty": 640}
+    {"code": "BRW-IB", "do_qty": 640, "pending_qty": 640}
   ],
   "do_by_customer": [
-    {"customer_name": "Dealer A Sdn Bhd", "do_qty": 700, "pending_qty": 640}
+    {"customer_name": "Dealer A Sdn Bhd", "do_qty": 640, "pending_qty": 640}
   ],
   "so_rows": [
     {

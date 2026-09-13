@@ -121,12 +121,16 @@ def test_report_do_scope_only_omits_so_block_and_uses_single_line_offer():
 
 
 def test_do_block_prints_do_qty_delivered_and_outstanding_lines():
+    """R11 (owner testing round 3, 13 Sep 2026) made the DO block ONE population
+    (outstanding DOs only), so `do_qty` now equals `Outstanding` and `Delivered` is
+    always `0` given today's schema - the mock reflects that identity, the same way
+    a real route response now would."""
     rendered = _outstanding_report(_MOCK)
     assert "*Delivery order outstanding*" in rendered, rendered
     assert "Delivery order pending" not in rendered, rendered
     assert "Delivery orders: 3" in rendered, rendered
-    assert "DO qty: 700" in rendered, rendered
-    assert "Delivered: 60" in rendered, rendered
+    assert "DO qty: 640" in rendered, rendered
+    assert "Delivered: 0" in rendered, rendered
     assert "Outstanding: 640" in rendered, rendered
     assert "Pending:" not in rendered, rendered
 
@@ -139,8 +143,8 @@ def test_do_block_lines_print_in_the_r7_order():
     lines = block.splitlines()[:5]
     assert lines == [
         "Delivery orders: 3",
-        "DO qty: 700",
-        "Delivered: 60",
+        "DO qty: 640",
+        "Delivered: 0",
         "Outstanding: 640",
         "DO date range: 03/02/2026 to 30/08/2026",
     ], lines
@@ -148,23 +152,17 @@ def test_do_block_lines_print_in_the_r7_order():
 
 def test_do_breakdown_lines_carry_do_qty_with_the_outstanding_bracket():
     rendered = _outstanding_report(_MOCK)
-    assert "BRW-IB: 700 (O/S: 640)" in rendered, rendered
-    assert "Dealer A Sdn Bhd: 700 (O/S: 640)" in rendered, rendered
+    assert "BRW-IB: 640 (O/S: 640)" in rendered, rendered
+    assert "Dealer A Sdn Bhd: 640 (O/S: 640)" in rendered, rendered
 
 
-def test_do_breakdown_line_pending_zero_still_prints_the_bracket():
-    """R6: "a name whose pending is 0 is still printed as `(O/S: 0)`" - a
-    location/customer that is only ever delivered must not be elided."""
-    report = copy.deepcopy(_MOCK)
-    report["do_by_location"] = report["do_by_location"] + [
-        {"code": "MWH-IB", "do_qty": 20, "pending_qty": 0},
-    ]
-    report["do_by_customer"] = report["do_by_customer"] + [
-        {"customer_name": "Dealer Delivered Only", "do_qty": 50, "pending_qty": 0},
-    ]
-    rendered = _outstanding_report(report)
-    assert "MWH-IB: 20 (O/S: 0)" in rendered, rendered
-    assert "Dealer Delivered Only: 50 (O/S: 0)" in rendered, rendered
+# R11 (owner testing round 3, 13 Sep 2026) RETIRES the "(O/S: 0) still prints" test
+# R6 had here: "the breakdown list should tally with whatever reported at the summary
+# at the top" - a name whose outstanding is 0 is no longer sent by the route AT ALL
+# (option 1: breakdowns list only names with outstanding above 0), so there is no
+# more real scenario for this presenter to render. The presenter itself is still a
+# dumb pass-through - `test_breakdowns_print_in_the_order_given_never_resort` below
+# covers what it must and must not do to whatever list it is handed.
 
 
 def test_do_breakdowns_sum_to_both_do_qty_and_outstanding_block_totals():
@@ -178,6 +176,66 @@ def test_do_breakdowns_sum_to_both_do_qty_and_outstanding_block_totals():
     customer_pending = sum(row["pending_qty"] for row in _MOCK["do_by_customer"])
     assert location_do_qty == _MOCK["do"]["do_qty"] == customer_do_qty
     assert location_pending == _MOCK["do"]["pending_qty"] == customer_pending
+
+
+# --------------------------------------------------------------------------
+# R10 (owner testing round 3, 13 Sep 2026): "be it DO outstanding or SO outstanding,
+# we need to rank by highest quantity at the top." Sorting happens in the ROUTE
+# service (`sorento_crm_backend/tests/test_outstanding_report.py` pins the actual
+# ranking on seeded data); the presenter's own job is narrower and already true
+# today - print whatever order the arrays arrive in, never re-sort. This is a
+# contract lock, not a red test: the presenter has never sorted anything, so it
+# already passes - it exists so a LATER change that starts re-sorting in the
+# presenter (duplicating or contradicting the route's own order) fails here first.
+# --------------------------------------------------------------------------
+
+
+def test_breakdowns_print_in_the_order_given_never_resort():
+    report = copy.deepcopy(_MOCK)
+    # Deliberately ASCENDING (the opposite of ranked order), so a presenter that
+    # re-sorted would print the descending order instead and this test would catch it.
+    report["so_by_location"] = [
+        {"code": "ZZT-LOW", "ordered_qty": 5, "outstanding_qty": 5},
+        {"code": "ZZT-MID", "ordered_qty": 10, "outstanding_qty": 10},
+        {"code": "ZZT-HIGH", "ordered_qty": 20, "outstanding_qty": 20},
+    ]
+    report["so_by_customer"] = [
+        {"customer_name": "ZZT Low Corp", "ordered_qty": 5, "outstanding_qty": 5},
+        {"customer_name": "ZZT High Corp", "ordered_qty": 20, "outstanding_qty": 20},
+        {"customer_name": "ZZT Mid Corp", "ordered_qty": 10, "outstanding_qty": 10},
+    ]
+    report["do_by_location"] = [
+        {"code": "ZZT-DO-LOW", "do_qty": 5, "pending_qty": 5},
+        {"code": "ZZT-DO-HIGH", "do_qty": 20, "pending_qty": 20},
+    ]
+    report["do_by_customer"] = [
+        {"customer_name": "ZZT DO Low Corp", "do_qty": 5, "pending_qty": 5},
+        {"customer_name": "ZZT DO High Corp", "do_qty": 20, "pending_qty": 20},
+    ]
+    rendered = _outstanding_report(report)
+
+    def _lines_between(start_marker: str, end_marker: str) -> list[str]:
+        block = rendered.split(start_marker, 1)[1].split(end_marker, 1)[0]
+        return [line for line in block.splitlines() if line and ":" in line]
+
+    so_location_lines = _lines_between("*_By location_*", "*_By customer_*")
+    assert [line.split(":")[0] for line in so_location_lines[:3]] == ["ZZT-LOW", "ZZT-MID", "ZZT-HIGH"], (
+        f"the presenter must print so_by_location in the order it was GIVEN, not "
+        f"re-sort it: {so_location_lines}"
+    )
+    assert "ZZT Low Corp" in rendered and "ZZT High Corp" in rendered
+    low_at = rendered.index("ZZT Low Corp")
+    high_at = rendered.index("ZZT High Corp")
+    mid_at = rendered.index("ZZT Mid Corp")
+    assert low_at < high_at < mid_at, (
+        f"so_by_customer must print in the GIVEN (unsorted) order: {rendered}"
+    )
+    do_low_at = rendered.index("ZZT-DO-LOW")
+    do_high_at = rendered.index("ZZT-DO-HIGH")
+    assert do_low_at < do_high_at, "do_by_location must print in the GIVEN order too"
+    do_cust_low_at = rendered.index("ZZT DO Low Corp")
+    do_cust_high_at = rendered.index("ZZT DO High Corp")
+    assert do_cust_low_at < do_cust_high_at, "do_by_customer must print in the GIVEN order too"
 
 
 # --------------------------------------------------------------------------
