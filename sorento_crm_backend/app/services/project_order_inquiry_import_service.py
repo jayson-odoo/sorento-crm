@@ -961,6 +961,7 @@ def apply(
     _stamp_orders(plan)
     raiser = _Raiser(db, actor, now)
     service = None
+    linked: List[Any] = []
     raised = 0
 
     for index, match in enumerate(plan.matches):
@@ -1011,7 +1012,13 @@ def apply(
                 actor_user_id=link_actor,
                 auto_trigger=_AUTOCOUNT_TRIGGER if take["from_book"] else None,
             )
-        service.refresh_link_state([entry])
+        linked.append(entry)
+
+    if service is not None and linked:
+        # ONCE, for every row this upload linked. `refresh_link_state` re-derives each
+        # inquiry's bundles before reading the links, so calling it per row would redo that
+        # derivation for the whole inquiry on every row of a sheet that names it.
+        service.refresh_link_state(linked)
 
     db.flush()
     return _result(plan, links, not_linkable, rows_raised=raised)
