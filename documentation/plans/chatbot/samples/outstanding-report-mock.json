@@ -50,6 +50,8 @@
       "do_number": "DO220456",
       "customer_name": "Dealer A Sdn Bhd",
       "location": "BRW-IB",
+      "do_qty": 640,
+      "delivered_qty": 0,
       "pending_qty": 640,
       "do_date": "2026-02-03"
     }

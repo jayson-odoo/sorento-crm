@@ -330,13 +330,32 @@ def test_detail_do_list_byte_equal_to_golden():
     assert _outstanding_detail(_MOCK, "do") == _golden("outstanding-detail-do.txt")
 
 
-def test_detail_do_list_has_no_do_qty_or_delivered_fields():
-    """R1: the DO detail row is `DO Number`, `Customer`, `Location`, `Pending`,
-    `DO Date` - no `DO Qty` / `Delivered` field, matching the block above it."""
+def test_detail_do_list_shows_delivered_even_when_zero():
+    """R3, REWRITTEN (owner testing round 2, 13 Sep 2026): "need to show delivered
+    also, doesn't mean if it is 0 then we don't show, if it is 0 then we show 0,
+    don't hide." The DO detail row is `DO Number`, `Customer`, `Location`, `DO Qty`,
+    `Delivered`, `Pending`, `DO Date` - `DO Qty` and `Delivered` are BACK (R1 had
+    dropped them), and `Delivered` prints `0` rather than being omitted. The BLOCK
+    above the list (Pending / Delivery orders / DO date range / breakdowns) is
+    UNCHANGED by this - it still covers pending DOs only (R1 stands there)."""
     rendered = _outstanding_detail(_MOCK, "do")
-    assert "*DO Qty:*" not in rendered, rendered
-    assert "*Delivered:*" not in rendered, rendered
+    assert "*DO Qty:* 640" in rendered, rendered
+    assert "*Delivered:* 0" in rendered, rendered
     assert "*Pending:* 640" in rendered, rendered
+    fields = [line.split(":*")[0].lstrip("*") for line in rendered.splitlines() if line.startswith("*")]
+    assert fields == ["Customer", "Location", "DO Qty", "Delivered", "Pending", "DO Date"], (
+        f"field order must be Customer, Location, DO Qty, Delivered, Pending, DO Date: {rendered!r}"
+    )
+
+
+def test_do_block_and_breakdowns_stay_pending_only_despite_row_level_do_qty():
+    """R3 is a `do_rows[]`-only change - the block totals and the two breakdowns must
+    still show ONLY the pending figure, unaffected by DO Qty/Delivered coming back on
+    the rows."""
+    rendered = _outstanding_report(_MOCK)
+    assert "DO qty:" not in rendered, rendered
+    assert "Delivered:" not in rendered, rendered
+    assert "Pending: 640" in rendered, rendered
 
 
 def test_detail_so_list_every_row_renders_numbered():

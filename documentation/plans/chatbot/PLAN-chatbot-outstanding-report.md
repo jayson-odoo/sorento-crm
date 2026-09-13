@@ -1,6 +1,6 @@
 # PLAN - Chatbot outstanding report: SO backlog and DO pending, one shape, four filters
 
-Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) sits on origin/main and ships WITHOUT #847. S1 to S4 built; Phase 3 PASSED (reviewer + security reviewer + console run 5, six of six journey turns green); PR open. Two further owner rulings, 13 Sep 2026, on the same lane stack (R1, R2 below) - RED tests written in `test/chatbot-outstanding-red`, not yet implemented.
+Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) sits on origin/main and ships WITHOUT #847. S1 to S4 built; Phase 3 PASSED (reviewer + security reviewer + console run 5, six of six journey turns green); PR open. Owner testing round 1, 13 Sep 2026 (R1, R2) implemented. Owner testing round 2, 13 Sep 2026 (R3, D16/AC-1144/AC-1145) - RED tests written in `test/chatbot-outstanding-red`, not yet implemented.
 UAC: `chatbot-outstanding-report-acceptance-criteria.md` (AC-11xx).
 Base: stacked on `feat/chatbot-focus` (lane 1 of `PLAN-chatbot-focus-multi-domain.md`,
 issue #847), because the scope question and the detail pick are open-question kinds that
@@ -42,8 +42,10 @@ Three defects and one missing definition, all measured (UAC "Measured"):
 | D11 | The chatbot stops calling the `so_outstanding` bucket for outstanding asks. That bucket and `include_pipeline` stay for their other readers; repairing them is backlog (trigger in UAC). |
 | D13 | Access (owner ruling on the lavish page): every `order_enquiries` contact sees DO figures, as today. SO figures are gated per contact by ONE field-reveal key `sales_orders.outstanding` on Contacts > Access (same table and screen as `purchase_orders.placed`, which already gates a whole answer family: `answer.py:936, 1113-1122`). Default deny. Without the key the scope question is never asked (scope is DO) and an explicit SO ask prints `Sales order figures are not enabled for your account.` then the DO block. Checked before any fetch. No new table, no new agent. |
 | D12 | The existing order-list MCP tools additionally expose `customer_query` and `warehouse_codes`. NOT `order_date_*`: the DO list tool's dates are actual delivery dates by a standing ruling (`sorento_crm_mcp/tests/test_catalog_compile.py::test_orders_list_uses_actual_delivery_date_only`), and pending DOs by order date are served by the new report route instead. |
-| R1 | **REWRITTEN, owner testing 13 Sep 2026.** "Delivery order pending" means DOs that still have pending quantity, nothing else - "most of the DO are delivered right so what's outstanding? I thought outstanding means still got some pending quantity." The DO block, its two breakdowns and `do_rows[]` cover ONLY DOs matching `_outstanding_clause`; `do_qty` and `delivered_qty` are GONE everywhere on this route - there is nothing left to disambiguate a pending figure from, so the breakdown lines drop their `(O/S: ...)` bracket too (`name: pending`, no bracket). See "The reply" and "Backend contract" below for the new shape. |
-| R2 | **NEW, owner testing 13 Sep 2026.** The detail offer is STICKY: after "1" (SO list), typing "2" must give the DO list - today `pending.kind = "outstanding_detail"` is consumed by the first pick (`tail/compile_state.py::_offer_carry`'s own one-turn exclusion for it), so a second pick falls into the generic order lane. Rule: the offer stays open across picks and casual turns until a NEW ASK (a message carrying a product code or a domain word) or a topic change - the SAME carry condition `suggest_offer` / the tier offer already use, copied with its justification (`_offer_carry`), never `member_offer`'s TTL. |
+| R1 | **REWRITTEN, owner testing round 1, 13 Sep 2026.** "Delivery order pending" means DOs that still have pending quantity, nothing else - "most of the DO are delivered right so what's outstanding? I thought outstanding means still got some pending quantity." The DO block and its two breakdowns cover ONLY DOs matching `_outstanding_clause`; `do_qty` and `delivered_qty` are GONE from the block and both breakdowns - there is nothing left to disambiguate a pending figure from, so the breakdown lines drop their `(O/S: ...)` bracket too (`name: pending`, no bracket). See "The reply" and "Backend contract" below for the new shape. PARTIALLY SUPERSEDED by R3: `do_rows[]` regains `do_qty`/`delivered_qty` on the ROW only. |
+| R2 | **NEW, owner testing round 1, 13 Sep 2026.** The detail offer is STICKY: after "1" (SO list), typing "2" must give the DO list - today `pending.kind = "outstanding_detail"` is consumed by the first pick (`tail/compile_state.py::_offer_carry`'s own one-turn exclusion for it), so a second pick falls into the generic order lane. Rule: the offer stays open across picks and casual turns until a NEW ASK (a message carrying a product code or a domain word) or a topic change - the SAME carry condition `suggest_offer` / the tier offer already use, copied with its justification (`_offer_carry`), never `member_offer`'s TTL. |
+| R3 | **NEW, owner testing round 2, 13 Sep 2026.** DO detail rows show the delivered quantity even when it is zero - "need to show delivered also, doesn't mean if it is 0 then we don't show, if it is 0 then we show 0, don't hide." `do_rows[]` regains `do_qty` (the DO's line quantity for the product) and `delivered_qty` (`do_qty` minus `pending_qty`, `0` for a pending DO today) - ROWS ONLY, the block and both breakdowns stay pending-only (R1 stands there). |
+| D16 | **NEW, owner testing round 2, 13 Sep 2026.** Word answers, no number required. On `outstanding_scope`: "sales"/"sales order"/"SO" -> 1, "delivery"/"delivery order"/"DO" -> 2, "both"/"all"/"everything" -> 3 (case-insensitive, filler words like "the"/"list"/"please" tolerated) - the owner typed "all" and got the question re-asked. On `outstanding_detail`: "sales order list"/"SO list"/"SO"/"sales" -> the Sales order list option, "DO list"/"delivery order list"/"DO"/"delivery" -> the Delivery order list option, matched against WHICHEVER options are actually on offer (a word for a scope not offered re-prints the offer, never silently drops through) - the owner typed "DO list" after an SO-only report and fell into the generic order lane (a full DO list with transporter fields). A product code or a domain word is still a new ask, unchanged (R2/AC-1143). |
 
 ## The reply (contract for Phase 1)
 
@@ -103,13 +105,18 @@ Detail, SO list (D6, D10), one item per SO:
 *Order Date:* 20/12/2024
 ```
 
-Detail, DO list (D6, D10), one item per PENDING DO only (REWRITTEN, R1, 13 Sep - no `DO
-Qty` / `Delivered` field, matching the block above it):
+Detail, DO list (D6, D10), one item per PENDING DO only, fields REWRITTEN TWICE (R1 then
+R3, owner testing rounds 1 and 2, 13 Sep): R1 dropped `DO Qty` / `Delivered`; R3 brought
+them BACK on the ROW ONLY (the block above stays pending-only) because the owner wants
+`Delivered` shown even when it is `0` - "doesn't mean if it is 0 then we don't show, if
+it is 0 then we show 0, don't hide":
 
 ```
 1. *DO Number:* DO220456
 *Customer:* Dealer A Sdn Bhd
 *Location:* BRW-IB
+*DO Qty:* 640
+*Delivered:* 0
 *Pending:* 640
 *DO Date:* 03/02/2026
 ```
@@ -301,6 +308,12 @@ The wiring, smallest shape that fits each of those:
 - AC-1140 `test_no_so_key_skips_question_and_runs_do_only`; AC-1141 `test_no_so_key_explicit_so_ask_refuses_then_do_block`; AC-1142 `test_so_key_listed_on_reveal_screen`.
 - AC-1143 (NEW, R2) `test_detail_offer_survives_a_pick`, `test_detail_offer_survives_a_casual_turn`,
   `test_detail_offer_drops_on_a_new_ask`, `test_detail_offer_survives_an_out_of_range_pick`.
+- AC-1115 (R3 addendum) / detail rows `test_do_block_covers_pending_dos_only` (rewritten again):
+  do_rows[].do_qty/delivered_qty back, delivered=0 shown not omitted;
+  `test_detail_do_list_shows_delivered_even_when_zero` (MCP presenter).
+- AC-1144 (NEW, D16 - scope words) `test_scope_word_*` table over sales/SO/delivery/DO/both/all/everything.
+- AC-1145 (NEW, D16 - detail words) `test_detail_word_do_list_gives_do_detail`,
+  `test_detail_word_so_list_gives_so_detail`, `test_detail_word_for_an_unoffered_scope_reprints_the_offer`.
 
 ## Design brief
 

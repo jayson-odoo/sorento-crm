@@ -89,12 +89,15 @@ resolution and the filter set in the console trace.
 - **AC-1105 [T]** Header `Location:` prints the resolved codes in brackets after the token,
   `IB (BRW-IB, MWH-IB)`; an exact code prints alone `BRW-IB`; no token prints `all`. Evidence:
   fixture.
-- **AC-1106 [T]**, REWRITTEN (R1) Detail list (SO): one row per SO, fields `SO Number`,
-  `Customer`, `Location`, `Ordered`, `Transferred to DO`, `Outstanding`, `Order Date`, in that
-  order, as `*Label:* value` lines, numbered `1.`, `2.`, ... Every row rendered. Detail list
-  (DO): one row per PENDING DO only, fields `DO Number`, `Customer`, `Location`, `Pending`,
-  `DO Date` - NO `DO Qty` / `Delivered` field (R1: matches the block above it). Evidence:
-  golden fixtures `outstanding-detail-so.txt`, `outstanding-detail-do.txt`.
+- **AC-1106 [T]**, REWRITTEN TWICE (R1 then R3) Detail list (SO): one row per SO, fields `SO
+  Number`, `Customer`, `Location`, `Ordered`, `Transferred to DO`, `Outstanding`, `Order Date`,
+  in that order, as `*Label:* value` lines, numbered `1.`, `2.`, ... Every row rendered. Detail
+  list (DO): one row per PENDING DO only, fields `DO Number`, `Customer`, `Location`, `DO Qty`,
+  `Delivered`, `Pending`, `DO Date` - `DO Qty`/`Delivered` were dropped by R1 and BROUGHT BACK
+  by R3 (owner testing round 2, 13 Sep 2026: "need to show delivered also, doesn't mean if it
+  is 0 then we don't show, if it is 0 then we show 0, don't hide") - `Delivered` prints `0`
+  rather than being omitted; the BLOCK above the list is unaffected, still pending-only (R1
+  stands there). Evidence: golden fixtures `outstanding-detail-so.txt`, `outstanding-detail-do.txt`.
 - **AC-1107 [T]** Miss: a scope with zero rows prints its block as one line `No open sales
   order.` / `No pending delivery order.` under the same header; when every requested scope is
   empty the EXISTING escalate offer and team picker follow (`escalate_yes_no` then
@@ -132,16 +135,21 @@ resolution and the filter set in the console trace.
 - **AC-1114 [BE]** `so_rows[]` is one row per SO: an SO with two live lines of the product
   (205 + 205) returns one row with `ordered_qty=410`, `location` = the distinct warehouse
   codes joined by `, `. Sorted by `order_date` asc then `so_number`. Evidence: pytest.
-- **AC-1115 [BE]**, REWRITTEN (R1, owner testing 13 Sep 2026: "most of the DO are delivered
-  right so what's outstanding? I thought outstanding means still got some pending
-  quantity.") `do` block covers ONLY DOs matching `_outstanding_clause`
-  (`order_service.py:67-93`) - a DELIVERED DO (matching `_delivered_clause`) contributes to
-  NOTHING here, not even a total. `pending_qty` = SUM `order_lines.quantity` for the product
-  over pending DOs; `do_count` counts pending DOs only; `do_date_min`/`do_date_max` is the
-  order_date range over pending DOs only; `do_rows[]` one row per PENDING DO ONLY. `do_qty`
-  and `delivered_qty` are GONE from the block, from `do_by_location[]` / `do_by_customer[]`,
-  and from every `do_rows[]` row. Evidence: pytest with one delivered DO (qty 5) and one
-  pending DO (qty 7) asserts pending 7, count 1, `do_rows` lists the pending DO only.
+- **AC-1115 [BE]**, REWRITTEN TWICE (R1 then R3, owner testing rounds 1 and 2, 13 Sep 2026:
+  "most of the DO are delivered right so what's outstanding? I thought outstanding means
+  still got some pending quantity"; then "need to show delivered also, doesn't mean if it is
+  0 then we don't show, if it is 0 then we show 0, don't hide.") `do` block covers ONLY DOs
+  matching `_outstanding_clause` (`order_service.py:67-93`) - a DELIVERED DO (matching
+  `_delivered_clause`) contributes to NOTHING to the block or the two breakdowns, not even a
+  total. `pending_qty` = SUM `order_lines.quantity` for the product over pending DOs;
+  `do_count` counts pending DOs only; `do_date_min`/`do_date_max` is the order_date range
+  over pending DOs only. `do_qty` and `delivered_qty` are GONE from the block and from
+  `do_by_location[]` / `do_by_customer[]`. `do_rows[]` (R3, ROWS ONLY) is one row per PENDING
+  DO ONLY, and REGAINS `do_qty` (the DO's line quantity for the product) and `delivered_qty`
+  (`do_qty` minus `pending_qty`, `0` for a pending DO today, printed not omitted). Evidence:
+  pytest with one delivered DO (qty 5) and one pending DO (qty 7) asserts `do` block pending
+  7 / count 1 with no `do_qty`/`delivered_qty` field, and `do_rows` lists the pending DO only
+  with `do_qty=7`, `delivered_qty=0`.
 - **AC-1116 [BE]**, REWRITTEN (R1) `so_by_location[]` / `so_by_customer[]` carry
   `ordered_qty` and `outstanding_qty`; `do_by_location[]` / `do_by_customer[]` carry
   `pending_qty` ONLY (no `do_qty`); each filtered identically to its block's totals, and
@@ -249,6 +257,24 @@ resolution and the filter set in the console trace.
   Evidence: pytest on the rendered-text / tool-call-args path
   (`test_detail_offer_survives_a_pick`, `test_detail_offer_survives_a_casual_turn`,
   `test_detail_offer_drops_on_a_new_ask`, `test_detail_offer_survives_an_out_of_range_pick`).
+- **AC-1144 [BE]** NEW (D16, owner testing round 2, 13 Sep 2026 - the owner typed "all" and
+  got the scope question re-asked). On `pending.kind == "outstanding_scope"`, a WORD answer
+  resolves without a number, case-insensitive, filler words ("the", "list", "please")
+  tolerated: "sales" / "sales order" / "SO" -> option 1 (so); "delivery" / "delivery order" /
+  "DO" -> option 2 (do); "both" / "all" / "everything" -> option 3 (both). Resolves the SAME
+  way a numbered reply does - `order_status` stamped, `outstanding_filters` restored, the
+  report runs in the same turn. Evidence: pytest table, one case per synonym group plus "all".
+- **AC-1145 [BE]** NEW (D16, owner testing round 2, 13 Sep 2026 - the owner typed "DO list"
+  and fell through to the generic order lane, a full DO list with transporter fields). On
+  `pending.kind == "outstanding_detail"`, a WORD answer resolves against WHICHEVER options
+  are actually on offer: "sales order list" / "SO list" / "SO" / "sales" -> the Sales order
+  list option (only when offered); "DO list" / "delivery order list" / "DO" / "delivery" ->
+  the Delivery order list option (only when offered). A word naming a scope that is NOT on
+  offer (e.g. "DO list" after an SO-only report) re-prints the SAME offer rather than falling
+  through to a different lane. A message carrying a product code or a domain word is still a
+  new ask, unchanged (AC-1143). Evidence: pytest - "DO list" after a both-scope report gives
+  the DO detail with the carried filters; "SO list" gives the SO detail; "DO list" after an
+  SO-only report re-prints the offer.
 
 ## Out of scope (backlog)
 

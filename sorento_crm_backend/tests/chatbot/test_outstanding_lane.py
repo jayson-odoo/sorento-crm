@@ -1294,6 +1294,66 @@ class TestScopeAnswerRunsReportWithCarriedFilters:
 
 
 # --------------------------------------------------------------------------- #
+# D16 / AC-1144 (owner testing round 2, 13 Sep 2026) - scope WORD answers
+# --------------------------------------------------------------------------- #
+
+
+class TestScopeWordAnswers:
+    """The owner typed "all" against the scope question and got it re-asked - a WORD
+    answer must resolve the SAME way a numbered one does, with no number in the
+    message at all: "sales"/"sales order"/"SO" -> 1 (so); "delivery"/"delivery
+    order"/"DO" -> 2 (do); "both"/"all"/"everything" -> 3 (both), case-insensitive,
+    filler words ("the", "list", "please") tolerated. The parser emits NO
+    `reference_positions` for a bare word like this (there is no number to find), so
+    a resolver keyed only on `reference_positions` cannot see it at all - the same
+    shape the real turn that prompted this ruling had."""
+
+    @pytest.mark.parametrize(
+        "text_body,expected_scope",
+        [
+            ("sales", "so"),
+            ("sales order", "so"),
+            ("SO", "so"),
+            ("the sales order please", "so"),
+            ("delivery", "do"),
+            ("delivery order", "do"),
+            ("DO", "do"),
+            ("the delivery order list", "do"),
+            ("both", "both"),
+            ("all", "both"),
+            ("everything", "both"),
+        ],
+    )
+    def test_scope_word_resolves_without_a_number(
+        self, session_factory, monkeypatch, text_body: str, expected_scope: str
+    ) -> None:
+        _seed_open_outstanding_scope(session_factory)
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[],
+            ),
+            text_body=text_body,
+            msg_id=f"ZZT-outstanding-scope-word-{abs(hash(text_body))}",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, (
+            f"{text_body!r} must resolve the scope question without a number - no tool "
+            f"was called at all (the question was re-asked instead)"
+        )
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (text_body, name, args)
+        assert args.get("scope") == expected_scope, (
+            f"{text_body!r} must resolve to scope={expected_scope!r}: {args}"
+        )
+        assert args.get("product_code") == PRODUCT_CODE, (text_body, args)
+
+
+# --------------------------------------------------------------------------- #
 # AC-1135 - a hit arms the detail offer and suppresses the escalate offer
 # --------------------------------------------------------------------------- #
 
@@ -1838,6 +1898,123 @@ class TestDetailOfferIsSticky:
         assert args2.get("detail") == "so", f"'1' must give the SO detail: {args2}"
         reply2 = (result2.reply or {}).get("text") or ""
         assert "*SO Number:*" in reply2, reply2
+
+
+# --------------------------------------------------------------------------- #
+# D16 / AC-1145 (owner testing round 2, 13 Sep 2026) - detail-offer WORD answers
+# --------------------------------------------------------------------------- #
+
+
+class TestDetailWordAnswers:
+    """The owner typed "DO list" and fell through to the generic order lane (a full
+    DO list with transporter fields) - a WORD answer must resolve against whichever
+    options are ACTUALLY on offer: "sales order list"/"SO list"/"SO"/"sales" -> the
+    Sales order list option; "DO list"/"delivery order list"/"DO"/"delivery" -> the
+    Delivery order list option. A word naming a scope that is NOT offered re-prints
+    the SAME offer rather than falling through to a different lane."""
+
+    def test_do_list_word_after_a_both_scope_report_gives_the_do_detail(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_detail(session_factory)
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[],
+            ),
+            text_body="DO list",
+            msg_id="ZZT-outstanding-detail-word-do-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "'DO list' must resolve the offer without a number"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (name, args)
+        assert args.get("detail") == "do", f"'DO list' must give the DO detail: {args}"
+        assert args.get("product_code") == PRODUCT_CODE, (
+            f"the SAME carried filters, not re-parsed: {args}"
+        )
+
+    def test_so_list_word_after_a_both_scope_report_gives_the_so_detail(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_detail(session_factory)
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[],
+            ),
+            text_body="SO list",
+            msg_id="ZZT-outstanding-detail-word-so-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "'SO list' must resolve the offer without a number"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (name, args)
+        assert args.get("detail") == "so", f"'SO list' must give the SO detail: {args}"
+
+    def test_do_list_word_after_an_so_only_report_reprints_the_offer(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Only "1 Sales order list" is on offer (the DO block was empty) - "DO list"
+        names a scope that was never offered, so it must NOT resolve as a pick at
+        all (no tool call) and must NOT fall into the generic order lane; the SAME
+        offer is re-printed instead. Measured today: the word is not recognised as
+        anything at all, `message_type: casual` routes to `low_signal`, which is not
+        in `chatbot_completed_lanes` (["business_query"]), so the turn DELEGATES and
+        comes back with an empty reply - `result.status == "delegated"`,
+        `result.branch_kind == "low_signal"` - a third, silent way this reads as
+        "not recognised", beyond the re-ask or the generic-lane shapes."""
+        _seed_contact(
+            session_factory,
+            variables={
+                "message_type": "business_query",
+                "domain_hint": "order",
+                "entities": [],
+                "selection_context": "outstanding_detail",
+                "last_result_set": [
+                    {"idx": 1, "label": "Sales order list", "value": "so"},
+                ],
+                "outstanding_filters": {
+                    "product_code": PRODUCT_CODE,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [],
+                    "warehouse_codes": [],
+                },
+                "pending": {"kind": "outstanding_detail"},
+            },
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[],
+            ),
+            text_body="DO list",
+            msg_id="ZZT-outstanding-detail-word-unoffered-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured == [], (
+            f"'DO list' names a scope that was never offered - it must not run any "
+            f"report at all: {captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Sales order list" in reply, (
+            f"the SAME offer must be re-printed, not a fall-through to the generic "
+            f"order lane: {reply!r}"
+        )
+        assert "Transporter" not in reply and "Lorry Plate" not in reply, (
+            f"'DO list' must never fall into the generic order-list lane: {reply!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #

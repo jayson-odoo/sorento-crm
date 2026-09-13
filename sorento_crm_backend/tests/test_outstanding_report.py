@@ -388,14 +388,19 @@ def test_so_rows_roll_up_lines_per_so(client, db):
 
 
 def test_do_block_covers_pending_dos_only(client, db):
-    """R1, REWRITTEN (owner ruling, 13 Sep 2026): "most of the DO are delivered right
-    so what's outstanding? I thought outstanding means still got some pending
-    quantity." The `do` block, its breakdowns and `do_rows` cover ONLY DOs matching
-    `_outstanding_clause` - a delivered DO contributes to NOTHING here, not even a
-    total. One delivered DO (qty 5) and one pending DO (qty 7) for the same product:
-    pending 7, count 1, `do_rows` lists the pending DO only. `do_qty` and
-    `delivered_qty` are gone from the block and from every row - there is no
-    quantity left to disambiguate a pending figure from."""
+    """R1: "most of the DO are delivered right so what's outstanding? I thought
+    outstanding means still got some pending quantity." The `do` block and its
+    breakdowns cover ONLY DOs matching `_outstanding_clause` - a delivered DO
+    contributes to NOTHING there, not even a total. One delivered DO (qty 5) and one
+    pending DO (qty 7) for the same product: pending 7, count 1, `do_rows` lists the
+    pending DO only.
+
+    R3, REWRITTEN (owner testing round 2, 13 Sep 2026): "need to show delivered
+    also, doesn't mean if it is 0 then we don't show, if it is 0 then we show 0,
+    don't hide." `do_rows[]` REGAINS `do_qty` / `delivered_qty` per row (rows only -
+    the `do` block and the two breakdowns stay pending-only, R1 stands there): `do_qty`
+    is the DO's line quantity for the product, `delivered_qty = do_qty - pending_qty`
+    (0 for a pending DO, since a delivered DO is excluded from this route entirely)."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT DO Customer")
@@ -417,8 +422,8 @@ def test_do_block_covers_pending_dos_only(client, db):
     do = resp.json()["do"]
     assert do["pending_qty"] == 7
     assert do["do_count"] == 1
-    assert "do_qty" not in do
-    assert "delivered_qty" not in do
+    assert "do_qty" not in do, "the BLOCK stays pending-only (R1)"
+    assert "delivered_qty" not in do, "the BLOCK stays pending-only (R1)"
 
     rows = {r["do_number"]: r for r in resp.json()["do_rows"]}
     assert set(rows) == {"ZZT-DO-PENDING"}, (
@@ -426,8 +431,15 @@ def test_do_block_covers_pending_dos_only(client, db):
     )
     pending_row = rows["ZZT-DO-PENDING"]
     assert pending_row["pending_qty"] == 7
-    assert "do_qty" not in pending_row
-    assert "delivered_qty" not in pending_row
+    assert pending_row["do_qty"] == 7, (
+        f"R3: do_rows[].do_qty is back, and equals the pending qty for a pending DO: {pending_row}"
+    )
+    assert pending_row["delivered_qty"] == 0, (
+        f"R3: delivered_qty prints 0 rather than being omitted: {pending_row}"
+    )
+
+    for row in resp.json()["do_by_location"] + resp.json()["do_by_customer"]:
+        assert "do_qty" not in row, f"the BREAKDOWNS stay pending-only (R1): {row}"
 
 
 def test_a_sales_order_with_no_customer_echoes_null_not_the_string_none(client, db):
@@ -493,7 +505,9 @@ def test_scope_omits_block_and_response_model_keeps_every_field(client, db):
     """A scope not asked for is ABSENT from the body (not an empty dict); `scope=both`
     (default) keeps every field the plan's contract declares - a `response_model`
     silently drops any undeclared one. R1: `do.do_qty` / `do.delivered_qty` are no
-    longer part of that contract at all - their ABSENCE is the field list now."""
+    longer part of the BLOCK's contract, and neither breakdown carries them either.
+    R3, REWRITTEN: `do_rows[]` is the one place they come BACK - every row must carry
+    both, `delivered_qty` present even when it is `0`, never omitted."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Field Customer")
@@ -526,9 +540,16 @@ def test_scope_omits_block_and_response_model_keeps_every_field(client, db):
         assert key in body["do"], f"missing do.{key}"
     for key in ("do_qty", "delivered_qty"):
         assert key not in body["do"], f"R1 dropped do.{key} - it must not be on the wire"
-    for row in body["do_by_location"] + body["do_by_customer"] + body["do_rows"]:
+    for row in body["do_by_location"] + body["do_by_customer"]:
         assert "do_qty" not in row and "delivered_qty" not in row, (
-            f"R1 dropped do_qty/delivered_qty from every DO row: {row}"
+            f"R1 dropped do_qty/delivered_qty from both breakdowns: {row}"
+        )
+    for row in body["do_rows"]:
+        assert "do_qty" in row and "delivered_qty" in row, (
+            f"R3 brought do_qty/delivered_qty BACK on do_rows[] specifically: {row}"
+        )
+        assert row["delivered_qty"] == 0, (
+            f"R3: delivered_qty must be present as 0, never omitted, for a pending DO: {row}"
         )
 
 
