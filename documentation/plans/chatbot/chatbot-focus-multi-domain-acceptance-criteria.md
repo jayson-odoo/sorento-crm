@@ -96,25 +96,19 @@ console.
 
 - AC-1013 [BE] `open_question` is one slot or null: `{kind, expects, options, asked_at_turn,
   asked_at, payload}`. `kind` is one of `product_pick`, `customer_pick`,
-  `tier_pick`, `team_pick`, `company_pick`, `member_offer`. `expects` is `pick`, `yes_no` or
-  `free`. `options` are frozen rows `{idx, label, uuid, code, domain, ...}` with `idx`
-  numbered from 1 across the whole roster. Evidence: pytest on the contract; one handler per
-  kind in `dialogue/open_question.py`.
+  `tier_pick`, `team_pick`, `company_pick`, `member_offer`. `expects` is `pick`, `yes_no`,
+  `pick_or_yes_no` or `free`. `options` are frozen rows `{idx, label, uuid, code, domain, ...}`
+  with `idx` numbered from 1 across the whole roster. Evidence: pytest on the contract; one
+  handler per kind in `dialogue/open_question.py`.
 - AC-1014 [T] A picker of 3 products is offered; "2" resolves to the second frozen option even
-  if the product list would resolve differently today. AMENDED by owner ruling D19 (13 Sep
-  2026, console pass): the roster is NOT consumed by the pick, so "3" next re-resolves against
-  the same frozen rows and reruns the alive domains for the third row. Evidence: world.
-- AC-1014a [T] (D19) A roster (`product_pick`, `customer_pick`, `tier_pick`) survives its own
-  pick with its `options` and `asked_at_turn` unchanged, and clears only by the AC-1020 routes:
-  a newer question of a kind other than the one-team escalate offer, `topic_reset`, a message
-  naming its own subject, the conversation closing. `team_pick` clarify, `company_pick` and
-  `member_offer` are still consumed by being answered. Evidence: pytest per kind, worlds.
-- AC-1014b [T] (D19) The one-team yes/no escalate offer a pick's rerun produces RIDES on the
-  roster rather than replacing it: `expects` becomes `pick_or_yes_no` and `payload.offer` is
-  `{team, domain, options}`. A number re-picks; `yes` runs the escalation lane and consumes the
-  whole question; `no` renders the declined copy and leaves the roster with the offer removed
-  and `expects` back to `pick`. A `yes` on a roster with no offer resolves nothing. Evidence:
-  pytest on the handler, two worlds.
+  if the product list would resolve differently today. "2" again after the pick RE-RESOLVES
+  against the same frozen roster (owner 13 Sep 2026, D19, sticky roster - restoring ruling K
+  rule 1 / 7 Sep deviation 5 and superseding this AC's own earlier close-on-answer clause): the
+  roster stays open until it is replaced, reset, a new subject is named, or the conversation
+  closes. The one-team escalate offer that follows a pick's own rerun-miss RIDES on the roster
+  question instead of replacing it: a number re-picks (rule 1 above), "yes" runs the
+  escalation and consumes the whole question, "no" declines and the roster stays with the
+  offer removed. Evidence: world.
 - AC-1015 [T] Escalate offer with one team, then "yes" runs the escalation lane; "no" renders
   the declined copy; "SRTWC8517 stock?" instead is a new ask: the offer is cleared with a
   trace line at `received` and the stock is answered. Evidence: three worlds.
@@ -127,7 +121,10 @@ console.
   `focus.domains` for it. Evidence: world (one domain in lane 1; AC-1049 covers many).
 - AC-1019 [T] `member_offer` follows the same clearing rule as every other kind (its TTL 3
   is gone); the five legacy `pending` kinds, `dym_offer`, `selection_context` and `picker_*`
-  no longer exist as state. Evidence: grep in review + the worlds that exercised them.
+  no longer exist as state. A non-roster question (`team_pick` clarify, `company_pick`,
+  `member_offer`) is cleared when it is answered; a ROSTER question (`product_pick`,
+  `customer_pick`, `tier_pick`) stays open when answered by a pick (D19). Evidence: grep in
+  review + the worlds that exercised them.
 - AC-1020 [T] While a question is open: a casual or low-signal message leaves it open; a
   message naming a subject (a current-message entity) that does not answer it clears it with
   a trace line and is handled as a new ask; a newer question replaces it. A domain word alone

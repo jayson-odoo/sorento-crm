@@ -578,6 +578,22 @@ def _assert_owner_expectations(
         assert (variables.get("open_question") or {}).get("kind") == expect[
             "open_question_kind"
         ], f"{where}: what the bot is still waiting for"
+    if "open_question_expects" in expect:
+        assert (variables.get("open_question") or {}).get("expects") == expect[
+            "open_question_expects"
+        ], f"{where}: what kind of answer the open question expects (D19)"
+    if "open_question_offer_team" in expect:
+        # D19 rule 3: the one-team escalate offer that rides ON a roster question,
+        # under `payload.offer`, rather than replacing it.
+        payload = (variables.get("open_question") or {}).get("payload") or {}
+        offer = payload.get("offer") or {}
+        assert offer.get("team") == expect["open_question_offer_team"], (
+            f"{where}: the offer riding the roster question"
+        )
+    if "focus_tier" in expect:
+        assert (focus.get("tier") or {}).get("value") == expect["focus_tier"], (
+            f"{where}: focus.tier"
+        )
     if "decayed" in expect:
         decayed = tuple(r["slot"] for r in trace if r.get("kind") == "decay")
         assert decayed == expect["decayed"], f"{where}: what decayed at intake"
