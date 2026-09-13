@@ -311,9 +311,15 @@ function proposedParts(row: PlanningChangeRow): SupplyPart[] {
  * suggestion is - only the engine knows which document covered what, and re-phrasing here
  * could only drift from the record. A released document is a bare document number in the
  * result, so it is the one thing given a sentence around it.
+ *
+ * Takes the RESULT rather than the row: the sales-order detail reads the same fact off a line
+ * that carries only the batch row's result (a cancelled line leaves the board once Apply has
+ * run, so the dialog it would have opened there is unreachable), and the two screens must not
+ * word it differently.
  */
-function whereItWentOf(row: PlanningChangeRow): string[] {
-  const result = row.result;
+export function whereItWentFrom(
+  result: PlanningChangeRow['result'],
+): string[] {
   if (!result) return [];
   return [
     ...(result.executed_reallocations ?? []),
@@ -369,7 +375,7 @@ export function annotationOf(
     productChangedFrom:
       row.kind === 'product_changed' ? row.from?.item_code ?? null : null,
     movedTransfer: row.moved_transfer ?? null,
-    whereItWent: whereItWentOf(row),
+    whereItWent: whereItWentFrom(row.result),
     projectLineId: lineId,
   };
 }

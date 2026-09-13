@@ -93,6 +93,8 @@ import type {
 // ONE vocabulary for where supply comes from (PLAN-scm-cs-planning-uat.md section 2), shared
 // with the planning board rather than restated here.
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
+import { BoardChangeTable } from '@/app/(protected)/project-sales/fulfilment-planning/components/BoardChangeTable';
+import { lineChangeAnnotation } from './salesOrderLineChange';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { useSalesOrderActions } from '../../actions';
 
@@ -361,6 +363,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const { data, isLoading, isError } = useSalesOrder(id);
+  // Read here rather than off `so` below, which is narrowed after the loading and error
+  // returns: the Lines columns are built above them, and the What-changed dialog titles
+  // itself with the order this line belongs to.
+  const soNumber = data?.so_number ?? '';
   const backHref = useBackToListHref('/scm/sales-orders');
   // The set the list row's "..." renders too (D15). Delete used to be a red icon
   // in the list and nothing at all here, so a record could only be removed by
@@ -1105,35 +1111,38 @@ export function SalesOrderDetail({ id }: { id: string }) {
         // `supply_saved` never both answer for one line (Confirm deletes the draft it
         // promotes), so this is never a choice between two real compositions.
         cell: ({ row }) => {
-          if (row.original.supply_decided != null) {
+          const line = row.original;
+          const parts = line.supply_decided ?? line.supply_saved ?? null;
+          const text = (
+            <SupplyText parts={parts} ownLocation={line.warehouse_code} absent="-" />
+          );
+          // THE BOOK ACTUALLY CHANGED THIS LINE. The board's own dialog, on this screen: it
+          // says what moved and - once Apply has run - where the held quantity went, which a
+          // static "Suggestion changed" badge cannot, and which the board itself can no
+          // longer be asked once a cancelled line closes and leaves it.
+          const annotation = lineChangeAnnotation(line, soNumber);
+          if (annotation) {
             return (
-              <SupplyText
-                parts={row.original.supply_decided}
-                ownLocation={row.original.warehouse_code}
-                absent="-"
-              />
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1">{text}</span>
+                <BoardChangeTable annotation={annotation} compact className="shrink-0" />
+              </div>
             );
           }
-          if (row.original.supply_saved == null) {
-            return <SupplyText parts={null} ownLocation={row.original.warehouse_code} absent="-" />;
-          }
+          // Unchanged lines keep exactly what they had: the decided composition alone, or
+          // the saved draft with its Saved / Suggestion changed badge beside it.
+          if (line.supply_decided != null || line.supply_saved == null) return text;
           return (
             <div className="flex min-w-0 items-center gap-1.5">
-              <span className="min-w-0 flex-1">
-                <SupplyText
-                  parts={row.original.supply_saved}
-                  ownLocation={row.original.warehouse_code}
-                  absent="-"
-                />
-              </span>
+              <span className="min-w-0 flex-1">{text}</span>
               <Badge
-                data-testid={`saved-decision-badge-${row.original.id}`}
-                variant={row.original.saved_stale ? 'warning' : 'success'}
+                data-testid={`saved-decision-badge-${line.id}`}
+                variant={line.saved_stale ? 'warning' : 'success'}
                 appearance="light"
                 size="sm"
                 className="shrink-0"
               >
-                {row.original.saved_stale ? 'Suggestion changed' : 'Saved'}
+                {line.saved_stale ? 'Suggestion changed' : 'Saved'}
               </Badge>
             </div>
           );
@@ -1213,6 +1222,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
       outstandingTotal,
       amountTotal,
       handleRemoveLine,
+      soNumber,
     ],
   );
 
