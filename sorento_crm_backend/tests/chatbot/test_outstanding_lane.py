@@ -1866,6 +1866,37 @@ class TestDetailOfferIsSticky:
         reply2 = (result2.reply or {}).get("text") or ""
         assert "*DO Number:*" in reply2, reply2
 
+    def test_a_casual_turn_under_an_open_offer_reprints_it_rather_than_greeting(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Seen on the owner's stack, 13 Sep 2026: with the detail offer open, a message
+        the parser read as casual routed to `low_signal` and answered "Hi! How can I help
+        you today?" - a greeting, mid-conversation, over an offer that is still on the
+        customer's screen. An unanswered open question is still open: re-print it. No
+        tool runs (nothing was picked) and the pending stays."""
+        _seed_open_outstanding_detail(session_factory)
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], user_goal="saying something else",
+            ),
+            text_body="hmm",
+            msg_id="ZZT-outstanding-casual-reprint-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured == [], f"nothing was picked, so nothing is fetched: {captured}"
+        reply = (result.reply or {}).get("text") or ""
+        assert "Sales order list" in reply and "Delivery order list" in reply, (
+            f"the open offer must be re-printed, not replaced by a greeting: {reply!r}"
+        )
+        assert "How can I help" not in reply, (
+            f"a greeting mid-conversation, over an offer still on screen: {reply!r}"
+        )
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", stored.get("pending")
+
     def test_detail_offer_drops_on_a_new_ask(self, session_factory, monkeypatch) -> None:
         """A product code after the report is a NEW ASK, not a pick against the old
         offer: a fresh report for the NEW product runs, and the old offer is gone -

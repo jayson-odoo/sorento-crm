@@ -1077,18 +1077,6 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # The new-ask decision is made ONCE, on the first pass: by the second the fields it
     # reads are this function's OWN output (the domain it stamped, the picked row's
     # label written over the entities), so re-deciding could only ever undo the answer.
-    if (
-        not already_applied
-        and kind == "outstanding_detail"
-        and picked is None
-        and not has_positions
-        and not own_question
-    ):
-        # AC-1143(b): a casual turn in between ("thanks") is neither an answer to the
-        # offer nor a new ask, so the turn is left exactly as the parser emitted it and
-        # the offer simply carries (`tail/compile_state.py::_offer_carry`). Rewriting it
-        # into the carried outstanding ask would answer a question nobody asked.
-        return
     if not already_applied and (
         names_entity or (own_question and (kind == "outstanding_detail" or picked is None))
     ):
@@ -1173,11 +1161,20 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
         o["order_status"] = "so_outstanding" if picked == "so" else "do_outstanding"
         o["outstanding_detail_pick"] = picked
     else:
-        # AC-1143(c): the number named no option ("3" against a two-option offer). The
-        # offer is RE-PRINTED and nothing is fetched - it used to re-run the whole
-        # report, which answers a question the customer did not ask and charges a read
-        # for a typo. `run_fetch` reads these rows directly, the way the scope question's
-        # own out-of-range re-ask does, because this turn typed no product to resolve.
+        # AC-1143(c): the message answered nothing on offer - a number that named no
+        # option ("3" against a two-option offer), or a reply the parser could make
+        # nothing of at all. Either way the question is still open and still on the
+        # customer's screen, so it is RE-PRINTED and nothing is fetched.
+        #
+        # Re-printing beats the two things this used to do: re-running the whole report
+        # (answering a question the customer did not ask, and paying for a read on a
+        # typo), and - for the unreadable reply - leaving the turn alone, which routed it
+        # to `low_signal` and greeted the customer with "Hi! How can I help you today?"
+        # mid-conversation, over an offer they were in the middle of answering (seen on
+        # the owner's own stack, 13 Sep 2026).
+        #
+        # `run_fetch` reads these rows directly, the way the scope question's own
+        # out-of-range re-ask does, because this turn typed no product to resolve.
         o["outstanding_detail_reask"] = {
             "filters": filters,
             "rows": [dict(row) for row in jsc.array(jsc.get(prev_state, "last_result_set"))
