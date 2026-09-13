@@ -2793,8 +2793,13 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
     await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Suggested'));
 
+    // The coder's multi-open rework (8d7b06766): opening B never closes A any more, so
+    // A's own rejected-and-reopened panel is still up - two "Save decision" buttons on
+    // screen, and B's is the second of them.
     fireEvent.click(await screen.findByText('WESERP20B'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: 'Save decision' }))[1],
+    );
     await waitFor(() => expect(pillFor('WESERP20B')).toHaveTextContent('Saved'));
 
     // A's rejection must not have resurrected or otherwise touched B.

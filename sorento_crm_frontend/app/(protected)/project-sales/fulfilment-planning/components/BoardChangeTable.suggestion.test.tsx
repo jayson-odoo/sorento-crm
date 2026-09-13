@@ -127,16 +127,16 @@ describe('the composed suggestion on the board', () => {
     ]);
   });
 
-  it('S5: a cancelled line reads Cancelled in the Qty line and still says where its hold went', () => {
+  it('S5: a cancelled line reads Cancelled once and still says where its hold went', () => {
     const dialog = openDialog('pcr-s5');
-    // Was the `change-now-qty`/`change-now-decision` table-cell check; the lightbox states
-    // the same fact as one changed-field line instead (`changedFieldsOf`, AC-C10).
-    expect(within(dialog).getByText('Qty 134 → Cancelled')).toBeInTheDocument();
-    expect(
-      within(dialog).getByText(
-        'Decision Borrow other location 50 from BRW-IB · Buy 84 → Cancelled',
-      ),
-    ).toBeInTheDocument();
+    // Was the `change-now-qty`/`change-now-decision` table-cell check. The coder's own
+    // follow-up (ffeec9576): a cancelled line is a STATEMENT, not three fields each moving
+    // to the same place, so the lightbox prints "Cancelled" once - the quantities that
+    // moved live in the suggestion lines beneath it instead.
+    expect(within(dialog).getByText('Cancelled')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/^Qty /)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/^Date /)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/^Decision /)).not.toBeInTheDocument();
     expect(
       within(dialog)
         .getAllByTestId('board-change-suggestion-line')

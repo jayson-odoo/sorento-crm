@@ -245,6 +245,9 @@ describe('FulfilmentBoardListView', () => {
   });
 
   it('asks before it closes a row holding an unsaved edit (C5)', async () => {
+    // The coder's multi-open rework (8d7b06766): opening ANOTHER row never prompts any
+    // more - several rows are meant to be open together - only CLOSING a dirty one does.
+    // So row A's own gesture has to be a CLOSE (clicking A again), not opening B.
     renderView({
       contributions: [
         contribution(),
@@ -259,7 +262,8 @@ describe('FulfilmentBoardListView', () => {
       target: { value: 'The group is short' },
     });
 
-    fireEvent.click(screen.getAllByText('JEREMY')[1]);
+    // Close row A (click it again), not open row B.
+    fireEvent.click(screen.getAllByText('JEREMY')[0]);
 
     expect(await screen.findByRole('alertdialog')).toHaveTextContent(
       'Leave this decision unsaved?',

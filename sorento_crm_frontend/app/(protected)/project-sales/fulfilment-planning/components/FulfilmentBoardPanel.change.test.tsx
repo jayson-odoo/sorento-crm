@@ -209,15 +209,20 @@ describe('the changed cell', () => {
     expect(screen.queryByTestId('board-change-pcr-381895-3')).not.toBeInTheDocument();
   });
 
-  it('reads Cancelled in the Now half of the Qty line for a line the book closed', async () => {
+  it('reads Cancelled once for a line the book closed, with the suggestion beneath it', async () => {
     renderPanel();
     fireEvent.click(await screen.findByTestId('board-change-icon-pcr-381895-2'));
     const dialog = await screen.findByTestId('board-change-dialog');
 
     expect(within(dialog).getByText('What changed, SO381895 (Line 2)')).toBeInTheDocument();
-    // pcr-381895-2 held 10 (`from.qty`); the book closed it, so the Now half reads Cancelled
-    // rather than a quantity nobody may act on.
-    expect(within(dialog).getByText('Qty 10 → Cancelled')).toBeInTheDocument();
+    // The coder's own follow-up (ffeec9576): a cancelled line is a STATEMENT, not a Qty/
+    // Date/Decision field each moving to the same place, so the lightbox prints "Cancelled"
+    // once - what the held 10 became lives in the suggestion line beneath it instead.
+    expect(within(dialog).getByText('Cancelled')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/^Qty /)).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Release Buy 10, line cancelled'),
+    ).toBeInTheDocument();
   });
 
   it('says a transfer already moved for a cancelled line, and proposes no reversal', async () => {
