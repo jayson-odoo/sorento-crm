@@ -193,12 +193,21 @@ def _prev_context(prev_question: Any) -> str | None:
     return _SELECTION_CONTEXT_BY_KIND.get(kind)
 
 
-def _is_the_same_question_re_armed_empty(asked: Any, previous: Any) -> bool:
-    """Is this turn's ask the SAME question again, minus its rows? (D19 rule 1)
+# The two `expects` a ROSTER can be in, and they are the SAME QUESTION (S6 review, B1).
+# A roster reads `pick` normally and `pick_or_yes_no` while an escalate offer rides on it
+# (D19 rule 3); `_ask_for_turn` re-derives the label from this turn's own keys and can only
+# ever produce the plain `pick`, so comparing the two for equality made the re-arm guard
+# below permanently false for exactly the questions it exists to protect - the merged ones.
+_PICK_EXPECTS = ("pick", "pick_or_yes_no")
 
-    A ROSTER kind, the same kind and the same `expects`, the live one has rows and the
-    new one has none. That pair can only be a re-arm: a genuinely new roster has rows,
-    and a numbered list with no rows is not one the customer can answer.
+
+def _is_a_re_arm_of(asked: Any, previous: Any) -> bool:
+    """Is this turn's ask the LIVE ROSTER over again, rather than a new list? (D19 r1)
+
+    A ROSTER kind, the same kind as the live one, both in a PICK expectation, and the live
+    one has rows. Whether the re-arm brought rows of its OWN is deliberately not asked:
+    that was the B1 shape of this test and it missed the case the owner hit on 13 Sep,
+    where the rows it brought were THIS TURN'S ANSWER (see `_re_armed`).
 
     ROSTER kinds only, and the exclusion is load-bearing rather than tidy. A `member_offer`
     is re-offered with NO options on purpose - it is a plain accept or decline, and the two
@@ -206,33 +215,98 @@ def _is_the_same_question_re_armed_empty(asked: Any, previous: Any) -> bool:
     (`escalation`'s clarify arm, pinned by `test_s5_escalation_seams.py::
     test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state` and
     `test_s3_canned_and_ideate.py::TestOfferHold`) - so an empty re-offer there is the
-    question, not a re-arm of one. `expects` is in the test for the same class of reason:
-    the plain escalate offer (`team_pick`, `yes_no`) can never inherit the roster of a team
-    CLARIFY (`team_pick`, `pick`).
+    question, not a re-arm of one. The expectation test is why `_PICK_EXPECTS` exists
+    rather than a `==`: the plain escalate offer (`team_pick`, `yes_no`) must never inherit
+    the roster of a team CLARIFY (`team_pick`, `pick`), and a MERGED roster
+    (`pick_or_yes_no`) must be recognised as the same question its own re-arm names.
     """
     if not isinstance(asked, dict) or not isinstance(previous, dict):
         return False
-    if asked.get("kind") not in pending_open_question.ROSTER_KINDS:
+    kind = asked.get("kind")
+    if kind not in pending_open_question.ROSTER_KINDS or kind != previous.get("kind"):
         return False
-    if asked.get("kind") != previous.get("kind") or asked.get("expects") != previous.get("expects"):
+    if asked.get("expects") not in _PICK_EXPECTS or previous.get("expects") not in _PICK_EXPECTS:
         return False
-    return not jsc.array(asked.get("options")) and len(jsc.array(previous.get("options"))) > 0
+    return len(jsc.array(previous.get("options"))) > 0
+
+
+def _re_armed(asked: Mapping[str, Any], previous: Mapping[str, Any]) -> dict[str, Any]:
+    """The live question again, whole, with nothing the re-arm brought (B1 + B3).
+
+    **A SURVIVED ROSTER NEVER TAKES ROWS FROM THE ANSWER.** Owner, console v15 on 13 Sep,
+    contact 437264483: "promo for srtwc286" offered the tier menu, "1" answered it and the
+    reply listed three PROMOTIONS numbered 1 to 3 - and the persisted `tier_pick` came back
+    holding those three promotion filenames as its options. The next "2" therefore resolved
+    to a PDF name as the tier ("access_levels: [...flyer_21072026.pdf]"), the tier gate
+    found no valid tier, and the customer was asked the menu all over again. The seat is
+    `_ask_for_turn`, which is handed the CARRIED label (`variables.selection_context`,
+    re-seated by `_offer_carry` / `_picker_carry`) together with THIS turn's
+    `last_result_set` - the label of the question the customer is looking at, paired with
+    the rows of the answer they just got.
+
+    A re-arm knows the LABEL and nothing else, so everything else comes from the live
+    question: the rows, the expectation, the riding offer and the turn it was first asked
+    on. Restoring only the rows (the first cut) still lost the other three - a merged tier
+    roster came back `pick` with no offer and `asked_at_turn` 0, which is the same
+    complaint one turn later. The re-arm's own payload is kept underneath, so a team or a
+    domain it knows about this turn is not lost.
+    """
+    payload = {**(asked.get("payload") or {})}
+    offer = jsc.get(previous.get("payload"), "offer")
+    if jsc.truthy(offer):
+        payload["offer"] = offer
+    else:
+        payload.pop("offer", None)
+    return {
+        **asked,
+        "options": previous.get("options"),
+        "expects": previous.get("expects"),
+        "asked_at_turn": int(jsc.js_number(previous.get("asked_at_turn")) or 0),
+        "payload": payload,
+    }
 
 
 def _offer_answer(qf: Mapping[str, Any]) -> dict[str, Any] | None:
-    """The riding offer's yes or no, read back off the emission (D19 rule 3).
+    """The riding offer's yes or no as the EMISSION records it, or None (D19 rule 3).
 
-    `apply_open_question_outcome` writes `escalation.is_escalation_confirmation` from the
-    SAME outcome that stamps `open_question_answered`, so where one is present so is the
-    other: True is the customer accepting the offer, False is them declining it. That is
-    what makes this a faithful reading rather than a second guess at the answer.
+    ONE helper, TWO callers, and the second is the one that earns it (S6 review, S2):
+
+    * the v3 path, as a fallback where the engine's `_answered` stamp is absent (a replay
+      fixture, a direct unit call). `apply_open_question_outcome` writes both of these
+      keys from the SAME outcome that stamps `open_question_answered`.
+    * **the PROMOTED v1 prompt, which is what answers customers today.** A v1 emission
+      has no `answers_open_question`, so `_resolve_open_question` produces no outcome and
+      nothing stamps `open_question_answered` - and a bare "yes" over a merged roster then
+      escalated (through `offer_is_open` + `is_affirmative`, the legacy arm) while the
+      question SURVIVED with its offer still on it, so the next "yes" escalated again.
+
+    The two signals are read rather than one because they mean different things and only
+    one of them is unambiguous on its own. `is_escalation_confirmation` is True ONLY when
+    an offer was accepted. Its False is the parser's default on every ordinary turn and
+    says nothing, so the decline is read from `is_affirmative is False` - an explicit no,
+    `None` when the customer said nothing of the kind, and what the v3 declined outcome
+    writes too. A casual message under an open offer therefore answers neither and the
+    question stands, which is AC-1004.
     """
-    confirmed = jsc.get(jsc.get(qf, "escalation"), "is_escalation_confirmation")
-    if confirmed is True:
+    if jsc.get(jsc.get(qf, "escalation"), "is_escalation_confirmation") is True:
         return {"yes_no": "yes"}
-    if confirmed is False:
+    if jsc.get(qf, "is_affirmative") is False:
         return {"yes_no": "no"}
     return None
+
+
+def _offer_answered_without_a_resolver(
+    previous: Any, qf: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """The yes or no a v1 turn gave the offer riding on `previous`, or None (S2).
+
+    Guarded on `payload.offer` because that is what makes the question answerable by a
+    yes: without one, `previous` is a plain roster and an `is_affirmative` of False is the
+    customer saying no to something else entirely.
+    """
+    if not jsc.truthy(jsc.get(jsc.get(previous, "payload"), "offer")):
+        return None
+    return _offer_answer(qf)
 
 
 def _offer_rides_on_roster(asked: Any, previous: Any) -> bool:
@@ -247,7 +321,14 @@ def _offer_rides_on_roster(asked: Any, previous: Any) -> bool:
         return False
     if asked.get("kind") != "team_pick" or asked.get("expects") != "yes_no":
         return False
-    return previous.get("kind") in pending_open_question.ROSTER_KINDS
+    if previous.get("kind") not in pending_open_question.ROSTER_KINDS:
+        return False
+    # AN OFFER WITH NOBODY TO ESCALATE TO IS NOT AN OFFER (S6 review nit). `_ask_for_turn`
+    # builds an empty roster when the turn resolved no team, and merging that would leave
+    # a question whose "yes" assigns nothing while still reading as an open offer
+    # everywhere (`offer_is_open`, `_pending_kind`). The roster is better off plain.
+    payload = asked.get("payload") if isinstance(asked.get("payload"), dict) else {}
+    return jsc.truthy(payload.get("team")) and len(jsc.array(asked.get("options"))) > 0
 
 
 def _ask_for_turn(
@@ -1134,8 +1215,21 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # have not been converted yet and for a replay fixture that feeds this function a node
     # output composed before the conversion - it goes with the last of them (step 4).
     asked = jsc.get(sug, "open_question") if jsc.truthy(sug) else None
-    if not (isinstance(asked, dict) and asked.get("kind")):
+    # WHO ASKED, which decides whether this is a NEW list or the live one over again
+    # (B3). A lane that composed the question with `ask` froze the rows it showed at the
+    # moment it showed them; `_ask_for_turn` only re-derives a LABEL, and the rows it is
+    # handed are this turn's `last_result_set` - which on an answered turn are the
+    # ANSWER's rows, not the roster's.
+    lane_asked = isinstance(asked, dict) and bool(asked.get("kind"))
+    if not lane_asked:
         asked = asked_here
+    # BORN THIS TURN beats carried, always. The local `selection_context` is the label a
+    # producer that ran THIS turn earned (a fresh tier menu, a fresh member roster); the
+    # one on `variables` may have been re-seated by `_offer_carry` / `_picker_carry` from
+    # the question the LAST turn left open. Only the second is a re-arm.
+    label_was_carried = not jsc.truthy(selection_context) and jsc.truthy(
+        variables.get("selection_context")
+    )
     # THE CLOCK DOES NOT RESTART ON A CARRY. A question the customer can still see is the
     # same question: re-stamping it every turn would make its age permanently zero, and the
     # trace would say the bot asked it again when it did not.
@@ -1152,15 +1246,14 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     )
     if isinstance(asked, dict) and asked.get("kind"):
         turn_no = int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0)
-        if _is_the_same_question_re_armed_empty(asked, previous):
-            # A RE-ARM IS NOT A NEW LIST (D19 rule 1). `_ask_for_turn` re-derives the
-            # label from keys THIS turn re-seated, so a menu whose lane did not run again
-            # comes back with no rows at all - and persisting that over the live roster
-            # threw away the very list the customer is looking at, which is what the
-            # owner's console pass saw on the promo tier menu: "1" answered, then "2"
-            # resolved nothing because the three tiers were gone. The rows the previous
-            # turn FROZE are the rows on the screen, so they are the rows that stand.
-            asked = {**asked, "options": previous["options"]}
+        if not lane_asked and label_was_carried and _is_a_re_arm_of(asked, previous):
+            # A RE-ARM IS NOT A NEW LIST (D19 rule 1, B1 + B3). The label came off the
+            # question the LAST turn left open, so the rows `_ask_for_turn` was handed
+            # beside it are not that question's - they are whatever this turn happened to
+            # print, an empty list when no lane ran and the ANSWER's own rows when one
+            # did. Both wrote a roster the customer had never seen over the roster they
+            # are looking at. The question the previous turn FROZE stands, whole.
+            asked = _re_armed(asked, previous)
         if pending_open_question.same_question(asked, previous) and isinstance(previous, dict):
             turn_no = int(previous.get("asked_at_turn", turn_no))
         if _offer_rides_on_roster(asked, previous):
@@ -1191,8 +1284,19 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
             jsc.get(answered_here, "answer") or _offer_answer(qf),
         )
     else:
-        # Nothing asked this turn: the one the customer is still looking at stands.
-        variables["open_question"] = previous if isinstance(previous, dict) else None
+        # Nothing asked this turn: the one the customer is still looking at stands -
+        # UNLESS they just answered the offer riding on it under the PROMOTED v1 prompt
+        # (S6 review, S2). There is no `answers_open_question` under v1, so no outcome was
+        # produced and the branch above never fires; meanwhile the legacy arm in
+        # `output_exchange` has already turned that "yes" into an escalation. Without this
+        # the merged question survived the escalation with its offer intact, and the next
+        # "yes" escalated all over again.
+        v1_answer = _offer_answered_without_a_resolver(previous, qf)
+        variables["open_question"] = (
+            pending_open_question.carry_after_answer(previous, "team_pick", v1_answer)
+            if v1_answer is not None
+            else (previous if isinstance(previous, dict) else None)
+        )
 
     # THE ROWS THE SENDER RENDERS travel with the TURN, not with the memory (L1-S3).
     # `sub-sendmsg` reaches for `result_set` by name (AC-207) and it used to read it off

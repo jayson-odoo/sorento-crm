@@ -916,9 +916,19 @@ def _offered_team(state: Any, prior_routing: Any) -> Any:
     the marker is there. A session written by the old n8n spine carries only the frozen
     sentence and no marker, and there the previous turn's routing is the same fact by
     another route - the offer's copy is composed FROM that routing.
+
+    A MERGED ROSTER KEEPS IT ONE LEVEL DOWN (D19 rule 3, S6 review S4). When the offer
+    rides on a roster the team is `payload.offer.team`, and reading only the top level
+    returned None there - which made the D1 guard below (`names_other_team`, "escalate to
+    marketing" over a warehouse offer, console pass 3) inert for exactly the questions
+    lane 2 will make the common shape, so the stale offer's team would have been assigned
+    again.
     """
     question = open_question_of(state)
-    team = jsc.get(jsc.get(question, "payload"), "team") if question is not None else None
+    payload = jsc.get(question, "payload") if question is not None else None
+    team = jsc.get(payload, "team")
+    if not jsc.truthy(team):
+        team = jsc.get(jsc.get(payload, "offer"), "team")
     if not jsc.truthy(team):
         team = jsc.get(prior_routing, "suggested_team")
     return jsc.norm(team)

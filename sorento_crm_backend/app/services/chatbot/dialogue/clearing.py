@@ -81,6 +81,22 @@ def apply(
                 _line(name, "the customer changed the subject (topic_reset)")
             )
             focus.pop(name)
+        # THE QUESTION GOES WITH THE SUBJECT (D19 rule 2, S6 review S5). A reset clears
+        # what the conversation is ABOUT, and a numbered list about the old subject is not
+        # something the new one can be answered with - a "2" after it would pick a row
+        # from a conversation the customer has left. This was a gap from the start (the
+        # reset only ever touched focus slots); D19 made it load-bearing, because a roster
+        # now outlives the pick that answered it and a reset is one of the few things left
+        # that ends it.
+        if question is not None:
+            lines.append(
+                _line(
+                    "open_question",
+                    "the customer changed the subject (topic_reset), so the question they "
+                    "were being asked went with it",
+                )
+            )
+            question = None
 
     for name in _axes_named_this_message(emission):
         slot = focus.get(name)

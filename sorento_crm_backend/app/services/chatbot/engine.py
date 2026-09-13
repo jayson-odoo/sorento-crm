@@ -418,7 +418,16 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
     block: without it, a contact on the older prompt would lose the only signal the model
     gets that its next message is an answer to something.
     """
-    kind = jsc.get(variables.get("open_question"), "kind")
+    question = variables.get("open_question")
+    # AN OFFER ON THE SCREEN IS WHAT THE BOT IS WAITING FOR (D19 rule 3, S6 review nit).
+    # A roster carrying an escalate offer keeps the ROSTER's kind, because the rows are
+    # still the rows; but this line is the only open-question signal a v1 / v2 prompt is
+    # given, and on that turn the thing the customer is most likely answering is the yes/no
+    # question the reply ended with. Naming the roster there would tell the model "a pick
+    # is expected" about a message that is about to say "yes".
+    if jsc.truthy(jsc.get(jsc.get(question, "payload"), "offer")):
+        return "team_pick"
+    kind = jsc.get(question, "kind")
     return str(kind) if kind else None
 
 
@@ -3420,18 +3429,24 @@ def _arm_cross_domain_offer(
 def _live_roster(carried: Any, previous: Any) -> dict[str, Any] | None:
     """The numbered list still on the customer's screen, or None (D19).
 
-    The TAIL's answer wins over the head's: `compile_state` has already decided what
-    survives this turn - a roster it carried through a pick, a roster it replaced, or
-    nothing - and `_open_question_before` is only consulted for the case where the tail
-    wrote no question at all.
+    THE TAIL'S ANSWER IS FINAL, including when it is "something else" (S6 review, S1).
+    `compile_state` has already decided what survives this turn, and reading past a
+    question it deliberately armed - a team clarify, a fresh picker - to a stale roster on
+    `_open_question_before` deleted that decision: measured on the review probe, the
+    clarify the tail had just written vanished and the stale `product_pick` came back
+    merged with the offer. So `previous` is consulted for exactly one case, the one it was
+    added for: the tail wrote no question at all.
     """
-    for question in (carried, previous):
-        if (
-            isinstance(question, dict)
-            and question.get("kind") in open_question_mod.ROSTER_KINDS
-        ):
-            return question
-    return None
+    if _is_a_roster(carried):
+        return carried
+    return previous if carried is None and _is_a_roster(previous) else None
+
+
+def _is_a_roster(question: Any) -> bool:
+    return (
+        isinstance(question, dict)
+        and question.get("kind") in open_question_mod.ROSTER_KINDS
+    )
 
 
 def run_tail(
