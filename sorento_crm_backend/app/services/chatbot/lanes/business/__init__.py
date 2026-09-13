@@ -78,6 +78,15 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
             uid = e.get("uuid")
             if uid and uid not in customer_ids:
                 customer_ids.append(uid)
+    if not customer_ids:
+        # R13/R15: the same fallback `fetch._outstanding_filters_from_ctx` makes. A turn
+        # that RE-ASKS this question (an out-of-range answer, or R15's refinement of an
+        # open one) resolved no customer of its own - the ids rode in on the carried
+        # filter set, already resolved, and they have to ride back out on it too or the
+        # re-asked question loses the only subject it has.
+        customer_ids = [
+            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+        ]
     return {
         "product_code": product_code,
         "date_filter_start": semantic_input.get("date_filter_start"),
@@ -97,6 +106,57 @@ def _outstanding_scope_ask(entities: Any, semantic_input: dict[str, Any]) -> dic
     return _outstanding_scope_ask_from_filters(_outstanding_filters_from(entities, semantic_input))
 
 
+def _outstanding_scope_filter_lines(filters: dict[str, Any]) -> list[str]:
+    """The question's own "what am I about to search" lines, in the REPORT's wording
+    (`sorento_crm_mcp.presenters._outstanding_report`'s header: `Product:` /
+    `Location:` / `Order date:`, dd/mm/yyyy).
+
+    Written here rather than imported because the header the report prints is rendered
+    MCP-side and the backend container does not carry that package - so the rule is
+    that the WORDING follows the presenter and nothing else is invented. A line is
+    printed only for a filter that is actually set: the presenter prints `all` for the
+    rest because a report has to say what it counted, whereas this is a question, and
+    `Customer: all` above "which document?" is three words of noise. The customer ids
+    are uuids, which never reach a customer's screen (R13), so there is no customer
+    line at all.
+
+    R15: this is what makes a REFINED question legible - "i want to see this month
+    only" comes back as the same question with `Order date: 01/09/2026 to 30/09/2026`
+    under it, so the customer can see the narrowing landed.
+    """
+    lines: list[str] = []
+    product_code = jsc.js_string(filters.get("product_code") or "").strip()
+    if product_code:
+        lines.append(f"Product: {product_code}")
+    codes = [jsc.js_string(c) for c in jsc.array(filters.get("warehouse_codes")) if jsc.truthy(c)]
+    token = jsc.js_string(filters.get("location_token") or "").strip()
+    if codes:
+        # The presenter's own rule: an exact code prints alone (brackets would only
+        # repeat it), a word that resolved to several codes names them.
+        lines.append(
+            f"Location: {token} ({', '.join(codes)})"
+            if token and [token] != codes
+            else f"Location: {token or ', '.join(codes)}"
+        )
+    start = _outstanding_ddmmyyyy(filters.get("date_filter_start"))
+    end = _outstanding_ddmmyyyy(filters.get("date_filter_end"))
+    if start or end:
+        if start and end:
+            lines.append(f"Order date: {start}" if start == end else f"Order date: {start} to {end}")
+        else:
+            lines.append(f"Order date: {start or end}")
+    return lines
+
+
+def _outstanding_ddmmyyyy(value: Any) -> str:
+    """`2026-09-01` -> `01/09/2026`; anything else -> "" (nothing to print)."""
+    text = jsc.js_string(value or "").strip().split("T")[0]
+    parts = text.split("-")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return ""
+    return f"{parts[2]}/{parts[1]}/{parts[0]}"
+
+
 def _outstanding_scope_ask_from_filters(filters: dict[str, Any]) -> dict[str, Any]:
     """AC-1130/AC-1132: ARM the scope question, no fetch this turn. Builds the SAME
     `structured` shape `output_structurer`'s `crm_outstanding_report` branch returns for
@@ -107,11 +167,11 @@ def _outstanding_scope_ask_from_filters(filters: dict[str, Any]) -> dict[str, An
     # R13: the subject line names the PRODUCT when there is one, and is omitted entirely
     # when the subject is a customer - the ids on the filter set are uuids, which never
     # reach a customer's screen, and `Product: ` with nothing after it was what the owner
-    # read on a customer-only ask.
-    product_code = jsc.js_string(filters.get("product_code") or "").strip()
+    # read on a customer-only ask. R15 puts the rest of the filter set on the same
+    # footing: whatever this question is about to search for, in the report's own words.
+    header = "".join(f"{line}\n" for line in _outstanding_scope_filter_lines(filters))
     text = (
-        (f"Product: {product_code}\n" if product_code else "")
-        + "Outstanding for which document?\n"
+        header + "Outstanding for which document?\n"
         "1. Sales orders (not yet transferred to DO)\n"
         "2. Delivery orders (not yet delivered)\n"
         "3. Both"
@@ -238,10 +298,22 @@ def run_until_exit(
     carried_customer_answer = bool(
         jsc.array(parse_output_peek.get("outstanding_carried_customer_ids"))
     ) and not jsc.array(parse_output_peek.get("entities"))
+    # R15, the same short-circuit for the same reason: a REFINEMENT turn's subject was
+    # resolved by the turn that asked, and the only filter it may name that resolve+gate
+    # would otherwise handle is a location WORD - which this report resolves ITSELF
+    # (`run_fetch`'s `resolve_warehouse_token` loop, D5), off the raw parsed entities,
+    # precisely because the generic resolver never returns a suffix token like "IB".
+    # Anything else it names (a customer under a product report) does need the resolver,
+    # so that turn takes the normal path.
+    outstanding_refinement = jsc.truthy(parse_output_peek.get("outstanding_refined")) and all(
+        jsc.js_string(jsc.get(e, "hint") or "") == "warehouse"
+        for e in jsc.array(parse_output_peek.get("entities"))
+    )
     if (
         isinstance(parse_output_peek.get("outstanding_reask_filters"), dict)
         or isinstance(parse_output_peek.get("outstanding_detail_reask"), dict)
         or carried_customer_answer
+        or outstanding_refinement
     ):
         return {
             "delegate": DELEGATE,

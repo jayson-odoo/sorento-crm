@@ -1506,6 +1506,11 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
         # the TOKEN travels with the codes - the answering turn has to print the same
         # header ("IB (BRW-IB, MWH-IB)") as the turn that asked.
         "location_token": semantic_input.get("outstanding_location_token"),
+        # AC-1157 (R15): WHICH scope this report was run for. The offer exists only
+        # because a report ran, so the scope is settled by the time this filter set is
+        # built - and a REFINEMENT of that offer ("this month only") has to re-run the
+        # same scope rather than re-ask a question the customer already answered.
+        "scope": semantic_input.get("outstanding_scope"),
     }
 
 
