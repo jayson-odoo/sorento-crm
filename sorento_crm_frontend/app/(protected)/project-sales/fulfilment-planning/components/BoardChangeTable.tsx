@@ -119,7 +119,12 @@ export function BoardChangeSummary({
           className="space-y-1"
         >
           {fields.map((field) => {
-            const line = `${field.label} ${field.from} → ${field.to}`;
+            // A field with no sides is a statement, not a move (a cancelled line): the label
+            // IS the line.
+            const line =
+              field.from || field.to
+                ? `${field.label} ${field.from} → ${field.to}`
+                : field.label;
             return (
               <li key={field.key} className="truncate" title={line}>
                 {line}

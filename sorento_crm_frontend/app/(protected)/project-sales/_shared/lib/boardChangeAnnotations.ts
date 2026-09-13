@@ -58,6 +58,7 @@ export interface BoardChangeSide {
 export interface BoardChangeField {
   key: 'qty' | 'date' | 'decision';
   label: string;
+  /** Both empty on a field that is a STATEMENT rather than a move: a cancelled line. */
   from: string;
   to: string;
 }
@@ -83,7 +84,15 @@ export interface BoardChangeAnnotation {
   suggestionLines: string[];
   /** The unit is kept but lands N days late (S12, AC-C6). `null` when it is on time. */
   lateDays: number | null;
-  /** Quantity nothing covers in time (S11, AC-B3). `null` when the unit is covered. */
+  /**
+   * Quantity nothing covers in time (S11, AC-B3). `null` when the unit is covered.
+   *
+   * NOTHING PRINTS IT since AC-C11: the engine's own label already reads "Short 44 by 22 Aug
+   * (was Buy 134)", and a bare "Short 44" beside it was that fact said twice. It stays as
+   * the engine's own figure, which `boardChangeAnnotations.test.ts` reads directly, and
+   * because a caller that needs the number rather than the sentence has nowhere else to get
+   * it.
+   */
   shortfallQty: string | null;
   /** The product this line used to be, on a `product_changed` row only (S7, AC-C5). */
   productChangedFrom: string | null;
@@ -122,27 +131,28 @@ export function shortDay(value: string | null | undefined): string {
  * the list puts the change icon in the column each key names, so the two cannot come to
  * disagree about what moved.
  *
- * A cancelled line reads `Cancelled` on the Now side of every field it stated, because that
- * IS what changed about it - not a blank, which a reader would take for "unknown".
+ * A CANCELLED line says it ONCE, as the single word: the book closed it, so its quantity,
+ * its date and its decision all end in the same place, and three lines each reading
+ * "-> Cancelled" is one fact printed three times. What was HELD is not lost with them - the
+ * suggestion lines under it say where each part of the hold went, in the engine's own words
+ * ("Release 50 to dealer pool", "Reallocate PO-B 84 to dealer pool").
  */
 export function changedFieldsOf(
   annotation: Pick<BoardChangeAnnotation, 'was' | 'now' | 'closed'>,
 ): BoardChangeField[] {
   const { was, now, closed } = annotation;
+  if (closed) {
+    return [{ key: 'qty', label: 'Cancelled', from: '', to: '' }];
+  }
   const out: BoardChangeField[] = [];
   const push = (key: BoardChangeField['key'], label: string, from: string, to: string) => {
     if (!from && !to) return;
     if (from === to) return;
     out.push({ key, label, from: from || 'Not stated', to: to || 'Not stated' });
   };
-  push('qty', 'Qty', was.qty ?? '', closed ? 'Cancelled' : now.qty ?? '');
-  push('date', 'Date', shortDay(was.date), closed ? 'Cancelled' : shortDay(now.date));
-  push(
-    'decision',
-    'Decision',
-    was.decision ?? '',
-    closed ? 'Cancelled' : now.decision ?? '',
-  );
+  push('qty', 'Qty', was.qty ?? '', now.qty ?? '');
+  push('date', 'Date', shortDay(was.date), shortDay(now.date));
+  push('decision', 'Decision', was.decision ?? '', now.decision ?? '');
   return out;
 }
 
