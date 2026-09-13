@@ -209,6 +209,15 @@ def _is_a_re_arm_of(asked: Any, previous: Any) -> bool:
     that was the B1 shape of this test and it missed the case the owner hit on 13 Sep,
     where the rows it brought were THIS TURN'S ANSWER (see `_re_armed`).
 
+    Nor is it asked whether the LABEL was born this turn or carried, and that is a
+    deliberate simplification rather than an oversight. The only roster `_ask_for_turn`
+    can build is the tier menu, whose rows are the tiers this CONTACT holds - the same
+    list every time it is composed within a conversation - so a re-ask cannot bring rows
+    the live roster does not already have. What it can bring is the ANSWER's rows, which
+    is the defect. A roster whose rows really are stale is cleared, not overwritten: by a
+    topic reset, by a message naming its own subject, or by the conversation closing
+    (`dialogue/clearing.py`).
+
     ROSTER kinds only, and the exclusion is load-bearing rather than tidy. A `member_offer`
     is re-offered with NO options on purpose - it is a plain accept or decline, and the two
     company names the customer reads ride the composed text rather than a persisted roster
@@ -1223,13 +1232,6 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     lane_asked = isinstance(asked, dict) and bool(asked.get("kind"))
     if not lane_asked:
         asked = asked_here
-    # BORN THIS TURN beats carried, always. The local `selection_context` is the label a
-    # producer that ran THIS turn earned (a fresh tier menu, a fresh member roster); the
-    # one on `variables` may have been re-seated by `_offer_carry` / `_picker_carry` from
-    # the question the LAST turn left open. Only the second is a re-arm.
-    label_was_carried = not jsc.truthy(selection_context) and jsc.truthy(
-        variables.get("selection_context")
-    )
     # THE CLOCK DOES NOT RESTART ON A CARRY. A question the customer can still see is the
     # same question: re-stamping it every turn would make its age permanently zero, and the
     # trace would say the bot asked it again when it did not.
@@ -1246,7 +1248,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     )
     if isinstance(asked, dict) and asked.get("kind"):
         turn_no = int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0)
-        if not lane_asked and label_was_carried and _is_a_re_arm_of(asked, previous):
+        if not lane_asked and _is_a_re_arm_of(asked, previous):
             # A RE-ARM IS NOT A NEW LIST (D19 rule 1, B1 + B3). The label came off the
             # question the LAST turn left open, so the rows `_ask_for_turn` was handed
             # beside it are not that question's - they are whatever this turn happened to

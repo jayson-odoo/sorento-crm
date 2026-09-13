@@ -1673,6 +1673,7 @@ def _run_stages(  # noqa: PLR0915
     answered_entry = answered["entry"]
     lane_override = answered["lane"]
     cleared_question: list[dict[str, Any]] = []
+    the_question_was_cleared = False
 
     if answered_entry is not None:
         turn_trace.add("open_question", answered_entry)
@@ -1683,7 +1684,16 @@ def _run_stages(  # noqa: PLR0915
         variables, cleared_question = clearing_mod.apply(
             variables, qf, trace=turn_trace
         )
-        if cleared_question:
+        # WHAT `apply` RETURNED, not whether it returned ANYTHING. `cleared_question` is
+        # every line the clearing step wrote, and most of them are about FOCUS SLOTS - a
+        # product replaced, a date replaced, a topic reset. Reading the list's truthiness
+        # made any one of those null the open question as a side effect, so a turn that
+        # merely named a new product closed a question nobody had answered or asked past
+        # (tester, writing the topic-reset world: a two-turn version with real focus
+        # established tripped it). The state `apply` hands back is the honest source, and
+        # the summary below now keys on the same fact.
+        the_question_was_cleared = variables.get("open_question") is None
+        if the_question_was_cleared:
             open_question_before = None
 
     # The focus is ALREADY on the parse block, stamped where the out-parameter was read.
@@ -1700,7 +1710,7 @@ def _run_stages(  # noqa: PLR0915
             if answered_entry is not None and open_question_before
             else (
                 "The customer asked something else, so the open question was cleared."
-                if cleared_question
+                if the_question_was_cleared
                 else "Nothing was waiting on an answer."
             )
         ),
@@ -3417,13 +3427,34 @@ def _arm_cross_domain_offer(
         payload={"team": team, "domain": domain},
     )
     previous = jsc.get(parse, "_open_question_before") or variables.get("open_question")
-    roster = _live_roster(variables.get("open_question"), previous)
+    carried = variables.get("open_question")
+    roster = _live_roster(carried, previous)
     if roster is not None:
         variables["open_question"] = open_question_mod.with_offer(roster, question)
+        return
+    if _the_tail_armed_its_own(carried, previous):
+        # THE TAIL ASKED SOMETHING ELSE THIS TURN, and it is the one that knows (S1). A
+        # team clarify, a company clarify, a fresh picker: the reply the customer is
+        # about to read IS that question, and overwriting it with the escalate line's
+        # yes/no left them answering one thing while the bot waited for another. Only a
+        # question the tail merely CARRIED (the same one `_open_question_before` holds) is
+        # this arm's to replace, because then the offer is the only news of the turn.
         return
     if open_question_mod.same_question(question, previous) and isinstance(previous, dict):
         question["asked_at_turn"] = int(previous.get("asked_at_turn", question["asked_at_turn"]))
     variables["open_question"] = question
+
+
+def _the_tail_armed_its_own(carried: Any, previous: Any) -> bool:
+    """Did `compile_state` ask a question of its OWN this turn, rather than carry one?
+
+    Carrying is the case this arm exists to override: a question that is simply still open
+    says nothing about the escalate line `crossdomain_compose` has just appended. Asking is
+    not - the tail composed it from what happened this turn, with the rows it printed.
+    """
+    if not isinstance(carried, dict) or not carried.get("kind"):
+        return False
+    return not open_question_mod.same_question(carried, previous)
 
 
 def _live_roster(carried: Any, previous: Any) -> dict[str, Any] | None:
