@@ -3081,6 +3081,14 @@ def _unclaim_shares(
     if not touched:
         return
     db.flush()
+    # Blocker B2 (review round): every OTHER writer of a link calls this
+    # (`_invalidate_link_cache`'s own docstring) so a total already changed cannot be read
+    # stale - this one did not, and a second `place_on_po_allocations` later in the SAME
+    # `_redeal_document` pass (a freed document split across a waiting row and the pool,
+    # say) read the memo `_candidates_for_row` cached before this delete, saw the
+    # purchase-order line as still fully claimed, and 409'd `order_inquiry_po_line_short`
+    # over quantity that was already free.
+    service._invalidate_link_cache()
     service.refresh_link_state(list(touched.values()))
 
 
