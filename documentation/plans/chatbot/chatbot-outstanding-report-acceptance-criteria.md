@@ -483,6 +483,33 @@ resolution and the filter set in the console trace.
   becomes a line in that picker or counts toward "N different companies". Evidence: pytest,
   `TestOwnerRoundFivePickerAndOfferScope::test_a_warehouse_word_never_enters_the_customer_
   picker` (direct `gate.run_gate` call, `test_last_cost_gate.py`'s own pattern).
+- **AC-1162 [BE]** NEW (R19, owner ruling, 13 Sep 2026, live trace: after picking a
+  customer off the picker the scope question came back as "Product: SRTKT39SS /
+  Outstanding for which document?" - "i have chosen the customer already, but you only
+  say Product ... what about the customer, sometimes i might even have dates, location
+  filters, they should be stated down in this message also"). EVERY outstanding scope
+  question - the FIRST ask, an R15 refinement re-ask, an ask resumed after a
+  customer-picker pick (R16) - prints the SAME four header lines the report itself
+  prints (`sorento_crm_mcp/presenters.py::_outstanding_report`), same order, same
+  wording, above "Outstanding for which document?": `Product: <code or all>`,
+  `Customer: <names or all>`, `Location: <token (codes) or all>`, `Order date: <range
+  or all>`. A filter not given prints `all` - never omitted, the way the FIRST line
+  (`Product:`) already always prints today. Values come from the stored
+  `outstanding_filters` plus the names the resolved customer entities carry. Evidence:
+  pytest, `tests/chatbot/test_outstanding_lane.py::TestScopeQuestionCarriesTheFullHeader`
+  - `test_first_ask_prints_all_four_header_lines`,
+  `test_first_ask_prints_all_for_every_missing_filter`,
+  `test_scope_question_after_a_customer_pick_names_the_picked_customer`,
+  `test_refinement_reask_prints_customer_too`.
+- **AC-1163 [BE]** NEW (R19, owner ruling, 13 Sep 2026, live trace: a FULLSHUN
+  outstanding ask printed "FULLSHUN SANITARYWARE SDN BHD" five times among 14 ledger
+  names). The report's `customer_name` echo (`outstanding_report_service.
+  _customer_echo`, AC-1136's own function) and so the scope question's `Customer:` line
+  built from it both print DISTINCT names, in FIRST-SEEN order (the order the resolved
+  `customer_ids` arrived in) - never one line per matched ledger row, never
+  alphabetical. No other transformation: an asterisk or a bracketed suffix in the
+  ledger's own name is real data and stays verbatim. Evidence: pytest,
+  `tests/test_outstanding_report.py::test_customer_header_dedupes_ledger_names`.
 
 ## Out of scope (backlog)
 

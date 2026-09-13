@@ -830,6 +830,39 @@ def test_customer_ids_echo_the_resolved_names_in_the_header(client, db):
     assert both.json()["customer_name"] == "ZZT Echo Customer A, ZZT Echo Customer B", both.json()
 
 
+def test_customer_header_dedupes_ledger_names(client, db):
+    """AC-1163 (R19, owner ruling, 13 Sep 2026, live trace): a FULLSHUN outstanding ask
+    printed "FULLSHUN SANITARYWARE SDN BHD" five times among 14 ledger names - one
+    company, several `customers` rows (one per ledger/branch), and `_customer_echo`
+    joins EVERY MATCHED ROW's name with no dedupe at all. The fix is DISTINCT names, in
+    FIRST-SEEN order (the order `customer_ids` arrived in - never alphabetical, which
+    `ORDER BY customer_name` gives today and which would put the asterisked SHOWCASE
+    name first). The asterisk is real ledger data and is never stripped or
+    transformed."""
+    plain_1 = customer(db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD")
+    plain_2 = customer(db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD")
+    plain_3 = customer(db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD")
+    showcase = customer(
+        db, company_id=DEFAULT_COMPANY_ID, name="*FULLSHUN SANITARYWARE SDN BHD (SHOWCASE)"
+    )
+    ac3_1 = customer(
+        db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD [A/C III]"
+    )
+    ac3_2 = customer(
+        db, company_id=DEFAULT_COMPANY_ID, name="FULLSHUN SANITARYWARE SDN BHD [A/C III]"
+    )
+    db.commit()
+
+    ids = ",".join([plain_1.id, plain_2.id, plain_3.id, showcase.id, ac3_1.id, ac3_2.id])
+    resp = client.get(BASE, params={"customer_ids": ids, "scope": "so"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["customer_name"] == (
+        "FULLSHUN SANITARYWARE SDN BHD, "
+        "*FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), "
+        "FULLSHUN SANITARYWARE SDN BHD [A/C III]"
+    ), resp.json()
+
+
 def test_fractional_quantities_round_to_whole_units(client, db):
     """`sales_order_lines.qty_ordered` is `Numeric(15,4)`, so a fraction is storable;
     every quantity on this report is declared `int` (the reply prints whole units with

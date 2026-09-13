@@ -3495,3 +3495,235 @@ class TestOwnerRoundFivePickerAndOfferScope:
         )
         assert "1. HANLIM TRADING SDN BHD (SRT)" in clarification, clarification
         assert "2. HANLIM HARDWARE SDN BHD (SRT)" in clarification, clarification
+
+
+# --------------------------------------------------------------------------- #
+# R19 (owner ruling, 13 Sep 2026, live trace): "i have chosen the customer
+# already, but you only say Product ... what about the customer, sometimes i
+# might even have dates, location filters, they should be stated down in this
+# message also." EVERY scope question - first ask, R15 refinement re-ask, ask
+# after a customer-picker pick - prints the SAME four header lines the report
+# itself prints, same order, same wording, `all` for anything not given.
+# AC-1162 (header, tests 1-4) / AC-1163 (distinct customer names, test 5, in
+# tests/test_outstanding_report.py::test_customer_header_dedupes_ledger_names).
+# --------------------------------------------------------------------------- #
+
+
+class TestScopeQuestionCarriesTheFullHeader:
+    def test_first_ask_prints_all_four_header_lines(self, session_factory, monkeypatch) -> None:
+        """A bare outstanding ask naming a product, a customer, a location word and a
+        date window must print all four report-header lines, filled, before the
+        question - not just `Product:` (today's actual gap)."""
+        from app.models.inventory import Warehouse
+
+        db = session_factory()
+        db.add_all(
+            [
+                Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW-IB", warehouse_name="BRW IB", is_active=True),
+                Warehouse(id=str(uuid.uuid4()), warehouse_code="MWH-IB", warehouse_name="MWH IB", is_active=True),
+            ]
+        )
+        db.commit()
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(
+                order_status="outstanding",
+                entities=[
+                    {
+                        "raw": PRODUCT_CODE, "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                    {
+                        "raw": "Dealer A", "hint": "customer", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                    {
+                        "raw": "IB", "hint": "warehouse", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+                date_filter_start="2026-01-01", date_filter_end="2026-03-31",
+            ),
+            text_body="Srtwt7445 sales order outstanding for Dealer A in IB from Jan to March",
+            msg_id="ZZT-outstanding-r19-first-ask-1",
+            attributes=["sales_orders.outstanding"],
+            matches={
+                PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE},
+                "Dealer A": {
+                    "uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME,
+                    "display": {"customer_name": CUSTOMER_NAME},
+                },
+            },
+        )
+        assert captured == [], (
+            f"the scope question fetches nothing: {captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        expected_header = (
+            f"Product: {PRODUCT_CODE}\n"
+            f"Customer: {CUSTOMER_NAME}\n"
+            "Location: IB (BRW-IB, MWH-IB)\n"
+            "Order date: 01/01/2026 to 31/03/2026\n"
+            "Outstanding for which document?\n"
+        )
+        assert reply.startswith(expected_header), reply
+
+    def test_first_ask_prints_all_for_every_missing_filter(self, session_factory, monkeypatch) -> None:
+        """A product-only ask must still print all four lines - `Customer:` /
+        `Location:` / `Order date:` say `all` rather than being omitted, exactly the
+        way the REPORT's own header never omits a line."""
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="outstanding"),
+            text_body="SRTWT7445 outstanding",
+            msg_id="ZZT-outstanding-r19-all-filters-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+        )
+        assert captured == [], captured
+        reply = (result.reply or {}).get("text") or ""
+        expected_header = (
+            f"Product: {PRODUCT_CODE}\n"
+            "Customer: all\n"
+            "Location: all\n"
+            "Order date: all\n"
+            "Outstanding for which document?\n"
+        )
+        assert reply.startswith(expected_header), reply
+
+    def test_scope_question_after_a_customer_pick_names_the_picked_customer(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """AC-1162, R19 x R16: the owner's own live trace - after picking a customer
+        off the picker the re-armed scope question printed `Product: SRTKT39SS` and
+        nothing else. The picked customer's own name (carried on the resolved pick
+        entity) must appear on a `Customer:` line, and the two axes nobody named
+        (`Location:` / `Order date:`) must say `all`, not be silently dropped."""
+        product_uuid = "66666666-6666-6666-6666-666666666666"
+        product_code = "SRTKT39SS"
+        roster = [
+            {
+                "idx": 1, "label": "HANLIM TRADING SDN BHD (SRT)", "uuid": HANLIM_UUID_1,
+                "product": HANLIM_CODE_1, "entity_type": "customer",
+            },
+            {
+                "idx": 2, "label": "HANLIM TRADING (JB) SDN BHD (SRT)", "uuid": HANLIM_UUID_2,
+                "product": HANLIM_CODE_2, "entity_type": "customer",
+            },
+        ]
+        _seed_contact(
+            session_factory,
+            variables={
+                "message_type": "business_query",
+                "domain_hint": "order",
+                "entities": [
+                    {
+                        "raw": product_code, "hint": "product", "uuid": product_uuid,
+                        "canonical_code": product_code, "current_message": False,
+                    },
+                ],
+                "selection_context": "disambiguation",
+                "last_result_set": roster,
+                "picker_last_result_set": roster,
+                "picker_selection_context": "disambiguation",
+                "picker_domain": "order",
+                "outstanding_filters": {
+                    "product_code": product_code,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [],
+                    "warehouse_codes": [],
+                    "location_token": None,
+                },
+                "order_status": "outstanding",
+                "pending": None,
+            },
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1], reference_target="dym", entity_op="reuse",
+                order_status=None,
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-r19-pick-scope-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured == [], (
+            f"the resumed ask arms the scope question, it does not fetch: {captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert f"Product: {product_code}" in reply, reply
+        assert "Customer: HANLIM TRADING SDN BHD (SRT)" in reply, (
+            f"the JUST-PICKED customer's own name must appear on the Customer line: {reply!r}"
+        )
+        assert "Location: all" in reply, reply
+        assert "Order date: all" in reply, reply
+        assert reply.index("Product:") < reply.index("Customer:") < reply.index("Location:") < (
+            reply.index("Order date:")
+        ), reply
+
+    def test_refinement_reask_prints_customer_too(self, session_factory, monkeypatch) -> None:
+        """AC-1162, R19 x R15: the SAME re-armed scope question a date-only refinement
+        prints (`test_a_date_only_turn_under_the_scope_question_reasks_with_the_new_
+        window`, `TestDateNarrowingUnderAnOpenOffer`) must ALSO name the stored
+        customer subject - today it prints only `Order date:`, dropping the customer
+        the question is actually about. Asserted on the reply text only (the brief's
+        own preference) - the storage shape (an entities list carrying the resolved
+        customer's name, mirrored here from the OTHER tests in this class) is the
+        coder's to choose."""
+        _seed_contact(
+            session_factory,
+            variables={
+                "message_type": "business_query",
+                "domain_hint": "order",
+                "entities": [
+                    {
+                        "raw": CUSTOMER_NAME, "hint": "customer", "uuid": CUSTOMER_UUID,
+                        "canonical_code": CUSTOMER_NAME, "current_message": False,
+                    },
+                ],
+                "selection_context": "outstanding_scope",
+                "last_result_set": [
+                    {"idx": 1, "label": "Sales orders", "value": "so"},
+                    {"idx": 2, "label": "Delivery orders", "value": "do"},
+                    {"idx": 3, "label": "Both", "value": "both"},
+                ],
+                "outstanding_filters": {
+                    "product_code": None,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [CUSTOMER_UUID],
+                    "warehouse_codes": [],
+                    "location_token": None,
+                },
+                "pending": {"kind": "outstanding_scope"},
+            },
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], entity_op="reuse", broaden_axis="date",
+                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
+                user_goal="trying to see this month only",
+            ),
+            text_body="i want to see this month only",
+            msg_id="ZZT-outstanding-r19-refine-reask-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured == [], (
+            f"a date-only turn under an open scope question must not fetch: {captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Order date: 01/09/2026 to 30/09/2026" in reply, reply
+        assert f"Customer: {CUSTOMER_NAME}" in reply, (
+            f"the re-asked question must still name the customer it is about: {reply!r}"
+        )
