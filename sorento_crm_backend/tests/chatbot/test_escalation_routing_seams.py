@@ -947,3 +947,301 @@ def test_console_finding_companion_escalate_to_marketing_with_the_word_reaches_t
     assert body["brand_code"] == "sorento", body
     routed_send = result["actions"][-1]
     assert "marketing product" in routed_send["text"].lower(), routed_send["text"]
+
+
+# --------------------------------------------------------------------------- #
+# Console pass finding 2, 13 Sep 2026: "SRTWT2643 photo" -> the miss lane's
+# did-you-mean offer, WITH the persisted `then.escalate.offer_team` test 1
+# (`test_escalation_routing_brand.py`) pins - built as it will exist once that
+# fix lands, so these four tests exercise the CONSUMPTION side independently.
+# --------------------------------------------------------------------------- #
+
+MISS_LANE_PREVIOUS_STATE = {
+    "focus": {
+        "domains": {
+            "value": ["product_attachment"],
+            "set_at_turn": 5,
+            "set_at": None,
+            "source": "reuse",
+        },
+        "products": {
+            "value": [
+                {
+                    "raw": "SRTWT2643",
+                    "hint": "product",
+                    "canonical_code": None,
+                    "current_message": False,
+                    "confident": True,
+                }
+            ],
+            "set_at_turn": 5,
+            "set_at": None,
+            "source": "reuse",
+        },
+    },
+    "open_question": {
+        "kind": "product_pick",
+        "options": [
+            {
+                "idx": 1,
+                "uuid": "a3055471-0000-0000-0000-000000000000",
+                "label": "SRTWT2632",
+                "value": "SRTWT2632",
+                "product": "SRTWT2632",
+                "domain": "product_attachment",
+                "entity_type": "product",
+            },
+            {
+                "idx": 2,
+                "uuid": None,
+                "label": "SRTWT2633",
+                "value": "SRTWT2633",
+                "product": "SRTWT2633",
+                "domain": "product_attachment",
+                "entity_type": "product",
+            },
+            {
+                "idx": 3,
+                "uuid": None,
+                "label": "SRTWT2634",
+                "value": "SRTWT2634",
+                "product": "SRTWT2634",
+                "domain": "product_attachment",
+                "entity_type": "product",
+            },
+        ],
+        "expects": "pick",
+        "payload": {
+            "keep": [
+                {
+                    "raw": "Product Photos",
+                    "hint": "attachment_type",
+                    "canonical_code": "Product Photos",
+                    "current_message": True,
+                }
+            ],
+            "domain": "product_attachment",
+            "picked": [],
+            "offer_id": "1699b69d-bd49-47ca-be67-45cfcb5d5a31",
+            "then": {"escalate": {"offer_team": "marketing_product"}},
+        },
+        "asked_at_turn": 5,
+        "asked_at": None,
+    },
+    "ideation": None,
+    "access_levels": [],
+    "contains_flyer": False,
+}
+
+
+def _run_miss_lane_turn(parser_raw: dict, *, text: str):
+    """The same chained shape as the console finding above (real head, real
+    `_resolve_open_question`, real `route.decide`), against `MISS_LANE_PREVIOUS_STATE`."""
+    from app.services.chatbot.engine import _resolve_open_question
+
+    _assert_only_five_keys(MISS_LANE_PREVIOUS_STATE)
+
+    answered = _resolve_open_question(
+        MISS_LANE_PREVIOUS_STATE,
+        parser_raw=parser_raw,
+        emits_v3=False,
+        referenced_result_set=None,
+        turn_no=6,
+    )
+    parent_input = {
+        "latest_user_message": text,
+        "contact_id": "ZZT-esc-miss-1",
+        "previous_conversation_state": MISS_LANE_PREVIOUS_STATE,
+        "parser_emits_v3": False,
+        "_answered": answered,
+        "turn_no": 6,
+    }
+    parse_block = post_process({"output": dict(parser_raw)}, {}, parent_input)
+    parse_block = suggest_follow_up(parse_block, parent_input)
+    qf = parse_block["output"]
+
+    ctx = {
+        "contact": {"id": "ZZT-esc-miss-1", "phone": "+60123450099", "custom_fields": []},
+        "text": {"message": {"messageId": "ZZT-esc-miss-msg-1", "message": {"type": "text", "text": text}}},
+        "session": {"session_vars": {"variables": MISS_LANE_PREVIOUS_STATE}},
+        "parse": {"output": qf, "_parser_raw": parse_block.get("_parser_raw")},
+        "access": {"allowed": True, "decision": "allow"},
+        "media": None,
+    }
+    branch, _tier = decide(ctx)
+    return answered, qf, branch, ctx
+
+
+def test_console_finding2_yes_over_the_miss_lane_offer_routes_to_the_named_team() -> None:
+    """Console pass finding 2, item 2. "yes" over the persisted did-you-mean-plus-escalate
+    offer must route to `marketing_product` (the team the reply named), agent
+    `general_enquiries`, brand None (no product resolved this turn - the customer
+    answered the ESCALATE half, not a pick), and the question must be CONSUMED
+    (`open_question_answered`), never a fresh `team_pick`. RED today:
+    `engine._resolve_open_question`'s v1 synthesis only fires when `question.expects ==
+    "yes_no"` (`ec2b3bb7b`); this question's `expects` is `"pick"` (it is a PRODUCT pick
+    that also carries an escalate option), so a bare "yes" resolves nothing at all and the
+    lane's acceptance path has no `_offered_team` read wired to it for this shape either."""
+    parser_raw = _full_emission(
+        message_type="casual",
+        is_affirmative=True,
+        entities=[],
+        entity_op="reuse",
+        routing={"suggested_team": None, "suggested_agent": None},
+        escalation={"is_escalation_confirmation": True, "company_pick": None},
+        user_goal="yes",
+    )
+
+    answered, qf, branch, ctx = _run_miss_lane_turn(parser_raw, text="yes")
+
+    assert branch == "out_of_scope", (
+        f"a confirmed escalation over the offer must reach the escalation lane: {branch!r}"
+    )
+    assert qf.get("open_question_answered") == "product_pick", (
+        f"the question must be CONSUMED, not left open for the next turn to re-answer: {qf!r}"
+    )
+    item = {
+        "allowed": True,
+        "decision": "allow",
+        "agent_name": "General Enquiries",
+        "attributes": None,
+        "all_attributes_allowed": None,
+        "branch_kind": branch,
+    }
+    services = _services(gate={"resolved": [], "did_you_mean": []})
+    result = run(ctx, item, services=services)
+
+    assert result["pending"] is None, (
+        f"the offer is accepted - no team_pick, ever: {result['pending']!r}"
+    )
+    services.next_assignee.assert_called_once()
+    body = services.next_assignee.call_args[0][0]
+    assert body["team_code"] == "marketing_product", body
+    assert body["agent_code"] == "general_enquiries", body
+    assert body.get("brand_code") is None, (
+        f"no product was resolved on the ACCEPTING turn - brand stays None: {body!r}"
+    )
+
+
+def test_console_finding2_no_over_the_miss_lane_offer_declines_with_no_actions() -> None:
+    """Console pass finding 2, item 3 (guard): "no" over the same offer must clear the
+    question and decline - the pre-existing `offered_escalation and is_decline` arm in
+    `output_exchange.py` already produces the canned "Escalation declined." copy and a
+    TAG_ONLY branch with no lane call at all. Confirmed green today."""
+    parser_raw = _full_emission(
+        message_type="casual",
+        is_affirmative=False,
+        entities=[],
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="no",
+    )
+
+    answered, qf, branch, ctx = _run_miss_lane_turn(parser_raw, text="no")
+
+    assert qf["escalation"].get("escalation_declined") is True, qf["escalation"]
+    assert branch != "out_of_scope", (
+        f"a decline must never reach the escalation lane: {branch!r}"
+    )
+
+
+def test_console_finding2_a_numbered_pick_over_the_miss_lane_offer_answers_the_product_not_the_escalation() -> None:
+    """Console pass finding 2, item 4. "2" must pick `SRTWT2633` and re-run the photo ask
+    as an ordinary product answer - the escalate option sits ALONGSIDE the did-you-mean
+    pick, it is not implied by making one.
+
+    MEASURED, not assumed to already hold (worth stating since the plan called this shape
+    a green guard): today `dialogue.open_question._product_pick` treats ANY resolved pick
+    against a `then.escalate` payload as resuming the escalation (`if truthy(team_word) or
+    truthy(offer_team): outcome.escalate = True`), with no read of WHICH answer shape
+    resumed it. That rule is right for the escalation lane's OWN did-you-mean (`team_word`
+    payloads - the customer already asked for a person, and picking the code they meant is
+    the only way to continue that request). It is wrong here: this offer's `offer_team`
+    payload rides an ORDINARY product question the miss lane asked on a `business_query`
+    turn, and a numbered pick only answers THAT - `apply_open_question_outcome`'s escalate
+    branch fires anyway, and `is_escalation_confirmation` survives `suggest_follow_up`'s
+    later retype of `message_type` back to `business_query`, so the turn still lands on
+    the escalation lane. RED."""
+    parser_raw = _full_emission(
+        message_type="business_query",
+        is_affirmative=None,
+        entities=[],
+        reference_positions=[2],
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="2",
+    )
+
+    answered, qf, branch, ctx = _run_miss_lane_turn(parser_raw, text="2")
+
+    assert branch == "business_query", (
+        f"a numbered pick answers the PRODUCT question, not the escalate offer - it must "
+        f"never reach the escalation lane: {branch!r}, qf={qf!r}"
+    )
+    raws = {str(e.get("raw")) for e in (qf.get("entities") or [])}
+    assert "SRTWT2633" in raws, (
+        f"the pick must scope this turn to the product the customer chose: {raws!r}"
+    )
+
+
+def test_console_finding2_guard_a_plain_did_you_mean_pick_offer_never_manufactures_an_acceptance() -> None:
+    """Console pass finding 2, item 5 (guard). A product_pick with NO escalate offer in
+    its payload (a plain stock did-you-mean) has nothing for `_product_pick`'s deferred-
+    escalation read to find, so `open_question.resolve` must not manufacture one. Scoped
+    to the OPEN-QUESTION layer deliberately: a bare "yes" over THIS shape is ALSO caught by
+    `suggest_follow_up`'s separate, pre-existing "plain yes on a picker = escalate to the
+    carried team" rule (predates this feature and is not what this guard is about), so the
+    lane still assigns SOMETHING further downstream - that is the old, documented
+    behaviour for a picker with no offer info at all, not a claim this test makes or
+    disturbs. What this test pins is narrower and already true today: the DEFERRED-
+    ESCALATION mechanism itself (`_product_pick`'s `then.escalate` read) has nothing to
+    resume here and must not invent a team."""
+    from app.services.chatbot.engine import _resolve_open_question
+    from app.services.chatbot.head.output_exchange import post_process, suggest_follow_up
+
+    previous_state = {
+        "focus": {
+            "products": {
+                "value": [],
+                "set_at_turn": 2,
+                "set_at": None,
+                "source": "reuse",
+            }
+        },
+        "open_question": {
+            "kind": "product_pick",
+            "options": [
+                {
+                    "idx": 1,
+                    "uuid": None,
+                    "label": "SRTKS6091",
+                    "value": "SRTKS6091",
+                    "product": "SRTKS6091",
+                    "domain": "inventory",
+                    "entity_type": "product",
+                }
+            ],
+            "expects": "pick",
+            "payload": {"domain": "inventory", "keep": [], "picked": []},
+            "asked_at_turn": 2,
+            "asked_at": None,
+        },
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
+    }
+    _assert_only_five_keys(previous_state)
+    parser_raw = _full_emission(
+        message_type="casual",
+        is_affirmative=True,
+        entities=[],
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="yes",
+    )
+
+    answered = _resolve_open_question(
+        previous_state, parser_raw=parser_raw, emits_v3=False, referenced_result_set=None, turn_no=3
+    )
+
+    assert answered["outcome"] is None, (
+        f"a product_pick with no `then.escalate` payload has no team to resume onto - the "
+        f"open-question layer must leave it unresolved, not invent an acceptance: {answered!r}"
+    )

@@ -889,3 +889,104 @@ def test_s1_round3_a_carried_resolved_product_never_masks_the_typed_unresolved_o
             "the carried product must never be assigned as if it answered the typed, "
             f"still-unresolved code: {result['actions']!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Console pass finding 2, 13 Sep 2026: "SRTWT2643 photo" -> the MISS lane's own
+# did-you-mean offer ends "...or would you like me to escalate to marketing
+# product team?" (chatbot.turns 1699b69d-bd49-47ca-be67-45cfcb5d5a31, v16
+# prompt), but the persisted `product_pick` question's payload never recorded
+# WHICH team it offered - so a later "yes" has nothing to resume onto.
+# --------------------------------------------------------------------------- #
+
+
+def test_console_finding2_the_miss_lane_persists_the_team_it_offered_to_escalate_to() -> None:
+    """Console pass finding 2, item 1. `miss_suggest._attach_question` freezes the
+    did-you-mean rows and `payload.keep` / `domain` / `offer_id` / `picked` - everything
+    the pick needs to resume the PRODUCT question - but not the team `build_suggest_offer`
+    named in the reply text it composed ("...or would you like me to escalate to
+    marketing product team?"). RED until the payload also carries `then.escalate.
+    offer_team`, the SAME shape the escalation lane's own did-you-mean payload already
+    uses (`escalation._product_pick_ask`), so `dialogue/open_question._product_pick`'s
+    existing deferred-escalation read (`payload.then.escalate`) can resume onto it without
+    a new field name.
+
+    Built directly against `_attach_question`, the one function that composes this
+    payload (`lanes/business/miss_suggest.py`) - `build_suggest_offer`'s own captures are
+    graded byte for byte by 76 fixtures and may not grow a key (the module's own
+    docstring), so the team has to reach the question from OUTSIDE that node, which is
+    exactly what `_attach_question` is for."""
+    from app.services.chatbot.lanes.business.miss_suggest import _attach_question
+
+    item = {
+        "suggest_offer": True,
+        "suggest_selection_context": "suggest_offer",
+        "suggest_response": (
+            'Couldn\'t find "SRTWT2643" (product). Did you mean:\n'
+            "1. SRTWT2632\n2. SRTWT2633\n3. SRTWT2634\n"
+            "Reply with a code to continue, or would you like me to escalate to "
+            "marketing product team?"
+        ),
+        "suggest_quick_reply": "SRTWT2632,SRTWT2633,SRTWT2634,Yes escalate,No it's okay",
+        "suggest_last_result_set": [
+            {
+                "idx": 1,
+                "label": "SRTWT2632",
+                "value": "SRTWT2632",
+                "product": "SRTWT2632",
+                "uuid": "a3055471-0000-0000-0000-000000000000",
+                "entity_type": "product",
+            },
+            {
+                "idx": 2,
+                "label": "SRTWT2633",
+                "value": "SRTWT2633",
+                "product": "SRTWT2633",
+                "uuid": None,
+                "entity_type": "product",
+            },
+            {
+                "idx": 3,
+                "label": "SRTWT2634",
+                "value": "SRTWT2634",
+                "product": "SRTWT2634",
+                "uuid": None,
+                "entity_type": "product",
+            },
+        ],
+        "dym_offer": {
+            "id": "1699b69d-bd49-47ca-be67-45cfcb5d5a31",
+            "candidates": [],
+            "picked": [],
+        },
+    }
+    gate = {
+        "compatible_entities": [
+            {"code": "Product Photos", "entity_type": "attachment_type", "uuid": None},
+        ],
+    }
+    parser = {
+        "domain_hint": "product_attachment",
+        "routing": {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+    }
+
+    result = _attach_question(item, parser=parser, gate=gate)
+
+    question = result["open_question"]
+    assert question["kind"] == "product_pick"
+    payload = question["payload"]
+    assert payload["offer_id"] == "1699b69d-bd49-47ca-be67-45cfcb5d5a31", payload
+    assert payload["keep"] == [
+        {
+            "raw": "Product Photos",
+            "hint": "attachment_type",
+            "canonical_code": "Product Photos",
+            "uuid": None,
+            "current_message": True,
+            "confident": True,
+        }
+    ], payload
+    assert payload.get("then", {}).get("escalate", {}).get("offer_team") == "marketing_product", (
+        f"the reply offered marketing_product by name - the persisted payload must say so, "
+        f"or a later 'yes' has no team to resume onto: {payload!r}"
+    )
