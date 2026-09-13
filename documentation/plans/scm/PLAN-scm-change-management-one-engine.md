@@ -448,6 +448,43 @@ exactly one row per batch) - both are being rewritten to R1 by the tester rather
 being narrowed, per the captain's ruling (13 September 2026): the old assumption, not R1, is
 what was wrong.
 
+**R1 review round (13 September 2026):** three gaps found by an R1-shaped browser walk with
+commits between each Save, closed in `build_batch` and `pending_batch_id_by_sales_order`:
+
+- **Fold.** The append/supersede rule above only settles the batch THIS call touches; it left
+  an order that had picked up a stray second open batch (e.g. a hand-seeded row, or an earlier
+  call that ran before the fold existed) with a pending row stranded in a batch nobody was
+  looking at any more, so a line could read pending in two open batches at once and
+  `pending_batch_id_by_sales_order` could miss one entirely. Every `build_batch` call now
+  folds, per order it touched: whichever batch the call designates PRIMARY (the existing open
+  batch it appended into, or the fresh batch a supersede/new order used) absorbs every OTHER
+  unapplied batch of that order still carrying a pending row - moved in if the line is new to
+  the primary, superseded in place if the primary already has that line - restoring "at most
+  one live pending row per line, across every open batch of the order" as an invariant every
+  call re-establishes, not just an initial condition. `tests/scm/test_planning_change_one_
+  open_batch.py::test_a_line_has_at_most_one_live_pending_row_across_every_open_batch` is the
+  acceptance test.
+- **Was reads the held state.** A replacement row's `from_json` ("Was" on the board and the
+  change dialog) now carries forward the superseded row's own `from_json` rather than
+  recomputing against the immediately-preceding edit's before value, so a chain of edits (e.g.
+  qty 36 -> 60 -> 80) always reads Was against 36, the state the active decision was actually
+  taken against, not 60. `::test_a_replacement_rows_was_reads_the_held_state` is the
+  acceptance test. This directly contradicts the older `::test_a_second_change_on_the_same_
+  line_supersedes_the_pending_row`'s `from_json == "60"` assertion for the mechanically
+  identical setup; that assertion is now stale against this ruling and is flagged to the
+  tester rather than edited by the coder (lane rule: tests are tester-owned).
+- **Per-order resolver.** `pending_batch_id_by_sales_order`'s "newest wins" ordering now
+  breaks a `created_at` tie with `id.desc()`, matching the identical tie-break added to
+  `build_batch`'s own open-batch lookup, so a caller reading straight after a write and
+  `build_batch` itself never disagree on which batch is "newest" for an order born the same
+  sub-second. `::test_a_multi_order_upload_reports_every_batch_it_wrote_into` (S1) still fails
+  after this fix: its "order A" scenario reuses the SAME core line across its first and second
+  edit, which per R1's own confirmed same-line-supersede rule must land in a fresh batch, but
+  the test's docstring frames it as "a different situation from a same-line replacement" and
+  asserts equality with the original batch - a test-authoring conflict (likely an accidental
+  line reuse where a genuinely different second line was intended), flagged to the tester
+  rather than edited.
+
 **R3. A cancelled line with a pending change row has a home on the board.**
 `FulfilmentBoardService._cancelled_pending_change_rows` reads it separately from
 `_demand_rows`'s own `is_open_demand()` predicate (shared with the netting engine and the
