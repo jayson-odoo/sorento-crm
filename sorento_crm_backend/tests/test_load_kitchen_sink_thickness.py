@@ -21,6 +21,7 @@ from scripts.load_kitchen_sink_thickness import (
     RowResult,
     SteelGradeParseError,
     ThicknessParseError,
+    _assert_reachable,
     dedupe_rows,
     finish_labels_by_row,
     normalise_sheet_code,
@@ -86,6 +87,7 @@ def _product(db, code: str) -> Product:
         ("0.9mm ", {"thickness": 0.9}),
         ("1.15mm", {"thickness": 1.15}),
         ("2.5mm", {"thickness": 2.5}),
+        ("0.9", {"thickness": 0.9}),
     ],
 )
 def test_parse_thickness_text_forms(text, expected):
@@ -100,6 +102,13 @@ def test_parse_thickness_text_rejects_unrecognised_text():
 def test_parse_thickness_text_rejects_blank():
     with pytest.raises(ThicknessParseError):
         parse_thickness_text("")
+
+
+def test_parse_thickness_text_rejects_an_implausible_bare_number():
+    """A bare number with no 面板/盆胆/厚度 marker above 20mm is almost certainly a
+    stray code fragment (e.g. "2427"), not a thickness."""
+    with pytest.raises(ThicknessParseError):
+        parse_thickness_text("2427")
 
 
 # --------------------------------------------------------------------------- #
@@ -161,6 +170,22 @@ def test_finish_groups_by_contiguous_fill_colour():
 # --------------------------------------------------------------------------- #
 def test_normalise_sheet_code_strips_parenthetical_and_upcases():
     assert normalise_sheet_code(" srtks1025-bl (new) ") == "SRTKS1025-BL"
+
+
+# --------------------------------------------------------------------------- #
+# _assert_reachable - the inline stand-in for the route's _validate_reachable
+# --------------------------------------------------------------------------- #
+def test_assert_reachable_refuses_a_value_with_no_synonym():
+    with pytest.raises(SystemExit):
+        _assert_reachable("enum", ["a", "b"], {"a": ["a word"]})
+
+
+def test_assert_reachable_accepts_a_fully_covered_enum():
+    _assert_reachable("enum", ["a", "b"], {"a": ["a word"], "b": ["b word"]})
+
+
+def test_assert_reachable_ignores_non_enum_types():
+    _assert_reachable("numeric", [], {})
 
 
 # --------------------------------------------------------------------------- #

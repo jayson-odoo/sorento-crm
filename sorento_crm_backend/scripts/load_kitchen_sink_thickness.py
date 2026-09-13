@@ -52,15 +52,18 @@ REGISTRY KEYS
 Two keys are created if missing, mirroring `create_spec_key`
 (`app/api/v1/master_data/spec_registry.py`) - `source="user"`, `synonyms={}`,
 `match_tolerance`/`match_decay` from `default_match_window(unit)`, and the same
-`_validate_reachable` check the route runs before it ever adds a row:
+reachability check the route runs before it ever adds a row (`_assert_reachable`
+below - a plain inline check, not an import of the route's own private helper):
 
   * `board_thickness` - numeric, mm, `applies_when {"class": ["Kitchen Sink"]}`,
     the same `rank_weight` as the seeded `thickness` key.
   * `surface_texture` - enum (normal / honeycomb / nano_volcano / nano_grain /
     andria_series), `applies_when {"class": ["Kitchen Sink"]}`, the same
     `rank_weight` as the seeded `finish` key, with a customer-language synonym for
-    every value (so `_validate_reachable` accepts it, and term resolution in
-    `product_spec_search.py` can actually find it).
+    every value (so `_assert_reachable` accepts it, and term resolution in
+    `product_spec_search.py` can actually find it) - bare "nano" is deliberately
+    NOT one of them, since the seeded `material` key already binds that word to
+    "nanograin".
 
 `thickness`, `material` and `steel_grade` already exist in the seed and are only
 read here, never created.
@@ -144,6 +147,11 @@ _GENERAL_RE = re.compile(r"厚度\s*[:：]?\s*" + _NUM)
 # "mm" text at all (e.g. `str(0.9)` == "0.9"), and it means the same thing as "0.9mm".
 _BARE_RE = re.compile(r"^" + _NUM + r"\s*(?:mm)?\s*$", re.IGNORECASE)
 
+# A bare number with no 面板/盆胆/厚度 marker above this is not a plausible sheet
+# or bowl thickness - it is almost certainly a stray code fragment (e.g. "2427")
+# that landed in the thickness column - so it is refused rather than read as one.
+_MAX_BARE_THICKNESS_MM = 20.0
+
 
 def parse_thickness_text(text: str) -> dict[str, float]:
     """{"board_thickness": ..., "thickness": ...} (either key may be absent).
@@ -153,8 +161,9 @@ def parse_thickness_text(text: str) -> dict[str, float]:
     "0.9mm", "0.9mm " (trailing space), "1.15mm", "2.5mm", and a bare numeric cell
     such as "0.9". 面板 and the bowl figure are read independently, so a cell that
     somehow carries both "面板 N" and "厚度 M" (no 盆胆) keeps both rather than the
-    厚度 figure being silently dropped in favour of the board one. Anything that
-    yields neither raises ThicknessParseError.
+    厚度 figure being silently dropped in favour of the board one. A BARE number
+    (no marker at all) above `_MAX_BARE_THICKNESS_MM` is refused, not read as a
+    thickness. Anything that yields neither raises ThicknessParseError.
     """
     stripped = (text or "").strip()
     if not stripped:
@@ -175,7 +184,10 @@ def parse_thickness_text(text: str) -> dict[str, float]:
         else:
             bare_match = _BARE_RE.match(stripped)
             if bare_match:
-                result["thickness"] = float(bare_match.group(1))
+                bare_value = float(bare_match.group(1))
+                if bare_value > _MAX_BARE_THICKNESS_MM:
+                    raise ThicknessParseError(stripped)
+                result["thickness"] = bare_value
 
     if not result:
         raise ThicknessParseError(stripped)
@@ -402,6 +414,19 @@ def dedupe_rows(
 # --------------------------------------------------------------------------- #
 # registry keys
 # --------------------------------------------------------------------------- #
+def _assert_reachable(data_type: str, allowed_values: list, synonyms: dict) -> None:
+    """Every enum value needs at least one customer-facing synonym, or nothing
+    could ever match it - the same rule `create_spec_key`'s `_validate_reachable`
+    (`app/api/v1/master_data/spec_registry.py`) enforces, kept here inline rather
+    than imported so this script does not drag the FastAPI route chain in.
+    """
+    if data_type != "enum":
+        return
+    unreachable = [v for v in allowed_values if not synonyms.get(v)]
+    if unreachable:
+        raise SystemExit(f"no synonym for: {', '.join(unreachable)}")
+
+
 _NEW_KEY_DEFS: dict[str, dict] = {
     "board_thickness": {
         "spec_key": "board_thickness",
@@ -427,9 +452,14 @@ _NEW_KEY_DEFS: dict[str, dict] = {
         "applies_when": {"class": ["Kitchen Sink"]},
         "user_synonyms": {
             "_self": ["surface texture", "texture", "surface finish"],
-            "normal": ["normal", "plain", "smooth"],
+            # "normal" / "plain" / "smooth" are too generic for the shared
+            # vocabulary; "normal finish" / "normal surface" say what is meant.
+            "normal": ["normal finish", "normal surface"],
             "honeycomb": ["honeycomb", "honey comb", "hc"],
-            "nano_volcano": ["nano volcano", "volcano", "nano"],
+            # Bare "nano" is NOT here - the seeded `material` key already binds it
+            # to "nanograin", and a second key claiming the same bare word would
+            # coin-flip which one a customer meant.
+            "nano_volcano": ["nano volcano", "volcano"],
             "nano_grain": ["nano grain", "nanograin", "grain"],
             "andria_series": ["andria", "andria series"],
         },
@@ -448,14 +478,13 @@ def ensure_registry_keys(db: Session) -> dict:
     """Create `board_thickness` / `surface_texture` if missing, ORM-only, mirroring
     `create_spec_key` (`app/api/v1/master_data/spec_registry.py`): `source="user"`,
     `synonyms={}`, `match_tolerance`/`match_decay` from `default_match_window(unit)`,
-    and the same `_validate_reachable` gate the route runs before `db.add`. Never
-    touches a key that already exists.
+    and the same reachability gate the route runs before `db.add` (`_assert_reachable`
+    above). Never touches a key that already exists.
 
     Always attempted, dry run included - `run()` holds everything in one
     transaction and rolls it back when not applying, so this INSERT is part of
     what a dry run proves would happen, not skipped and reported on faith.
     """
-    from app.api.v1.master_data.spec_registry import _validate_reachable
     from app.models.product_spec import ProductSpecRegistry
     from app.services.product_spec_registry import SPEC_REGISTRY_SEED, default_match_window
 
@@ -473,7 +502,7 @@ def ensure_registry_keys(db: Session) -> dict:
             existing.append(spec_key)
             continue
 
-        _validate_reachable(
+        _assert_reachable(
             definition["data_type"], definition["allowed_values"], definition["user_synonyms"]
         )
 
