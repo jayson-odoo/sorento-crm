@@ -443,6 +443,40 @@ class TestScopeWordsBind:
         assert table == {"so_outstanding": "so", "do_outstanding": "do", "outstanding_both": "both"}
 
 
+class TestPromptTeachesScopeWordsInsideLongerSentences:
+    """R12 (parser gap found live, 13 Sep 2026): `"Srtwc8518-SH dealer delivery order
+    outstanding how many at BRW?"` parsed `order_status: "outstanding"` (bare) instead of
+    `do_outstanding`, so the bot (re-)asked a scope question the message had already
+    answered. D17 stands - this is a PROMPT fix (no deterministic code reads this word),
+    so the red test pins the ADDENDUM TEXT the coder must extend, not any behaviour."""
+
+    def test_addendum_carries_examples_of_scope_words_embedded_in_a_longer_sentence(self) -> None:
+        from app.services import chatbot_parser_prompt as prompt_mod
+
+        addendum = prompt_mod.GROWTH_R1_ADDENDUM
+        assert "dealer delivery order outstanding how many at BRW" in addendum, (
+            "the addendum must carry the exact live phrasing that mis-parsed as an "
+            "example of do_outstanding, embedded inside a longer sentence"
+        )
+        assert "sales order outstanding for IB" in addendum, (
+            "the addendum must carry a so_outstanding example embedded in a longer sentence"
+        )
+        assert "outstanding both" in addendum, (
+            "the addendum must carry an outstanding_both example (may already be present "
+            "from the standalone vocabulary - R12 is about EMBEDDED examples specifically)"
+        )
+
+    def test_addendum_states_the_document_word_decides_scope_wherever_it_sits(self) -> None:
+        from app.services import chatbot_parser_prompt as prompt_mod
+
+        addendum = prompt_mod.GROWTH_R1_ADDENDUM.lower()
+        assert "wherever it sits" in addendum or "anywhere in the message" in addendum, (
+            "the addendum must state the rule in words: the document word (sales order / "
+            "delivery order / both) decides the scope wherever it sits in the message, "
+            "not only when the message is otherwise bare"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # AC-1133 - location token resolution (D5), reading the real `warehouses` table
 # --------------------------------------------------------------------------- #
