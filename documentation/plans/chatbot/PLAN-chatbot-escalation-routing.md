@@ -1,6 +1,6 @@
 # PLAN - Chatbot escalation routing: verb, team and brand from one source each
 
-Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477 (S9 comment fix on top); THREE owner console passes since, each finding one defect, each fixed with the tester's real-shape tests merged - the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), the miss lane's combined did-you-mean plus escalate offer (b6e108634), and a pick dropping the non-product entity it had kept (bd815fcc8). S1 to S6, three review rounds, the tester's seven rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. All three console root causes are #863's - see "Found on the console pass". Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
+Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477 (S9 and N15 comment fixes on top); FOUR owner console passes since, each finding one defect, each fixed with the tester's real-shape tests merged - the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), the miss lane's combined did-you-mean plus escalate offer (b6e108634), a pick dropping the non-product entity it had kept (bd815fcc8), and a parser-named team not answering the team question (13f91a219). S1 to S6, three review rounds, the tester's nine rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. All four console root causes are #863's - see "Found on the console pass". Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
 UAC: `chatbot-escalation-routing-acceptance-criteria.md` (AC-11xx).
 Predecessors: `PLAN-chatbot-focus-multi-domain.md` (lane 1, the dialogue state this lane's open questions live in), `PLAN-chatbot-turn-engine.md` S5 (the escalation lane port, hazards H26 / H27 / H37).
 Issue: #865 (13 Sep 2026).
@@ -187,6 +187,31 @@ Measured as #863's, not this lane's: `_product_pick`'s outcome is byte-identical
 the `then` key the pass above added, and the three picks an hour earlier on the same install
 carried only the product too (their `keep` was empty, which is why this was the first turn to
 expose it). It is issue #708's other half - the keep list was only ever honoured for products.
+
+**Fourth pass (13f91a219): a team the parser named was not an answer to the team question.**
+"mrktg product" answered the three-way marketing clarify; the parser did the language and emitted
+`routing.suggested_team: "marketing_product"`, and the engine's fallback resolved only positions
+and yes/no - so the `team_pick` stayed unresolved and the turn fell through to `low_signal`, the
+bot greeting an answer it had asked for. Cause: `origin/main` consumed exactly this in
+`output_exchange._team_clarify_pick` (owner rule R-b), #863 deleted it (AC-1032) and nothing
+picked the job up.
+
+Fixed by STRUCTURE, never language (the owner's standing rule, restated with force that day: the
+parser owns language, code consumes parser output and structured state).
+`open_question.team_slug_pick` asks one thing - is the slug the parser emitted one of the slugs
+this question offered - normalising both sides the way `escalation._catalogue_teams` does. No
+label matching, no text, no regex, no similarity; a family word that equals no option stays
+unresolved and the lane's narrowing handles it.
+
+**And it is bounded to a turn that said nothing else, because a coincidence is not an answer.**
+The first cut fired on any team word, and the world corpus caught it: under the older prompt
+bodies `routing.suggested_team` was DERIVED FROM THE DOMAIN, so a plain stock question emits
+`warehouse`, and with a one-team warehouse offer open the slug equals the option - the next
+ordinary question would have been read as accepting the offer. Chain 900000006 (three stock
+turns, each `business_query` / `inventory` / one product entity, each carrying `warehouse`)
+stopped grading at turn 2, which is how it surfaced: `test_worlds.py` went 38 passed / 184
+skipped to 37 / 185. An answer to "which team" carries no domain and no current-message entity
+of its own, and that is the gate.
 
 ### Not built, with the reason
 
