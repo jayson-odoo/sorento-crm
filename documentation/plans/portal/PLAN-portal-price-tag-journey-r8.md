@@ -1,6 +1,6 @@
 # PLAN - Portal journey round 8: verify card, landing toolbar, price tag request sections
 
-Status: PR #861 open 13 Sep 2026, reviewed + security re-check ready, browser-verified on lane :3080/:8081
+Status: PR #861 open; owner round 3 (13 Sep) building on the lane, stack :3082/:8082
 UAC: `documentation/plans/portal/portal-price-tag-journey-r8-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-r7-request-ux.md` (merged #758)
 Branch: `feat/portal-journey-r8`, worktree `.claude/worktrees/portal-journey-r8`
@@ -160,6 +160,67 @@ All line refs are `origin/main` at c385da410.
   as `ContainerRequestSection.tsx` does. The design-language frequency band permits none, it
   clears the keyboard-motion hard-fail (Enter / Space toggles the header) and the literal
   `duration-N` guardrail (`css/design-tokens.test.ts`). Filter / Sort keep the shared surfaces.
+
+## Round 3 (owner test on the lane, 13 Sep 2026) - rulings, all final
+
+- **R3-1 No Edit after submit; Revise instead.** D-P6 is REVERSED: a submitted price tag request
+  is read-only exactly like a stock inquiry, and changes go through the portal revision engine,
+  gated by System Settings > Portal Revisions (global switch + the per-type row). Drafts stay
+  editable (that part the owner liked). Implementation: register a `price_tag_request`
+  `RevisionAdapter` in `app/services/portal_revision_service.py` (model `PriceTagRequest`,
+  `number_attr="doc_number"`, `snapshot_form_fields=(debtor_code, debtor_name, promotion_id,
+  needed_by_date, notes, price_mode)`, `serialize_lines` over `PriceTagRequestLine` (product /
+  set code + name, quantity, remarks), `frozen_on_revise=()`, `invalidated_on_revise=()`,
+  `status_for_stage` -> `new`, `terminal_statuses=("void", "ready")`, an `apply_lines` callable
+  (new adapter field; the purchase request adapter moves its `_replace_request_lines_if_needed`
+  call onto the same field) that calls `PriceTagRequestService.replace_lines`); migration
+  `ptag_0006_revisions` adds `revision_no INTEGER NOT NULL DEFAULT 0` and `last_revised_at
+  TIMESTAMP NULL` to `price_tag_requests` and seeds the `portal_revision_configs` row
+  (`price_tag_request`, disabled, allowed statuses `new, changes_requested`, restart stage as
+  the others); the revision routes in `portal.py` (`list_revisions`, `revise`, `revision-draft`
+  PUT/DELETE, `neighbours` policy block) accept `price_tag_request` (a `_check_revisable_kind`
+  over `ADAPTERS` keys, distinct from `_check_kind`); the detail body carries `revision`
+  (policy) and `revision_draft` like the legacy kinds; the summary carries `revision_no` /
+  `last_revised_at` / `has_revision_draft`. The post-submit PUT gate from S8 goes back to
+  `_require_draft` (`is_editable` = draft only); the post-submit validators, override carry-over
+  and audit shape move INTO the revise path (the adapter's `apply_lines` runs
+  `validate_set_guard` + `validate_submittable`, and the engine's own revision row is the audit).
+  Attachment upload / delete stay gated: allowed on a draft or while a revision is in progress
+  (the engine's draft), refused otherwise. Settings: `portal-revision-options.ts` label map and
+  the status options for `price_tag_request` (`new`, `designing`, `changes_requested`) so the
+  Form Types table shows the row and the dialog can edit it. FE: `PriceTagRequestForm` gets the
+  same `useRevisionPolicy` + `ReviseAction` + revise mode (reason field, frozen nothing, Submit
+  revision via `reviseSubmission`) + Revisions tab (reuse the SubmissionForm revisions list
+  component, lift it into `portal/components/RevisionsTab.tsx` if it is inline today) as
+  `SubmissionForm`. The Edit / Save / Cancel header buttons and `handleSaveEdit` are removed.
+- **R3-2 List view is a DataGrid table; Cards is the default.** `ListBoardViewToggle` default is
+  `board` at every width (stored choice still wins). List view renders the repo `DataGrid`
+  (`components/ui/data-grid`, `tableLayout: { width: 'fixed', columnsResizable: true }`,
+  `columnResizeMode: 'onChange'`, explicit `size` per column, `truncate` + `title`) with columns
+  from `landing-fields.ts` for the kind (Form Number, Status as `Badge`, the kind's text fields,
+  Need by, Created), header click sorts, row click opens the detail (`rowHref`); horizontal
+  scroll inside the grid at 375px. The Sort button is hidden in list view (headers sort) and
+  shown in card view.
+- **R3-3 Sort menu: one row per field.** The menu lists the fields once; the active field shows
+  an up / down arrow; tapping the active field flips direction; tapping another field selects it
+  descending for dates and ascending for text. No "Ascending / Descending" sub-rows.
+- **R3-4 Filter popover fits.** The Created / Need by From-To inputs overflow the popover at
+  its current width: make the two date inputs `min-w-0 flex-1` inside a `flex` row (or a
+  2-column grid) so nothing leaks past the popover edge at 375 and 1280.
+- **R3-5 One gear per view page.** The view page of every kind has exactly one gear in the
+  header, holding every action (Duplicate, Revise when the policy allows it, Download PDF for
+  price tags). The `ReviseAction variant="menu"` gear below the tabs is removed and its items
+  fold into the header gear. The revision line ("3 of 3 revisions left" or "This form cannot be
+  revised.") moves into the header, on the same line as the form number and the prev/next
+  counter (`SI26-0148 · 3 of 3 revisions left · 1/3 ⚙`), muted, truncating at 375.
+- **R3-6 No line reorder arrows.** The up / down arrows on price tag lines are removed
+  (`moveLine`, `ArrowUp` / `ArrowDown` imports). Sort order = insertion order.
+- **R3-7 Duplicate product lines never 500.** Backend: `replace_lines` / `_add_lines` raise 422
+  `DUPLICATE_LINE` naming the code ("SRTWC8066 appears twice; merge the quantities") before the
+  unique constraint `uq_ptag_line_request_product` can fire; the portal create/update routes
+  surface it as the usual AppException. Frontend: AI Confirm and prefill merges rows with the
+  same product (quantities summed, remarks joined with "; ") and Add line / the item picker
+  refuses a product already on the request with an inline message.
 
 ## Slices (one lane, one PR, commit per slice)
 

@@ -1,7 +1,7 @@
 # UAC - Portal journey round 8: verify card, landing toolbar, price tag request sections
 
 Plan: `documentation/plans/portal/PLAN-portal-price-tag-journey-r8.md`
-Status: PR #861 open 13 Sep 2026
+Status: PR #861 open; round 3 ACs (R3) added 13 Sep 2026, building
 
 ## Journey
 
@@ -234,3 +234,57 @@ gesture (tens/day band): no height animation.
 
 Server-side filter / sort / paging; a bookmark mechanism; notifying the designer on a
 post-submit edit; duplicating attachments; a generic schema endpoint for portal forms.
+
+## Round 3 (owner test, 13 Sep 2026)
+
+- **AC-R1 [BE][T]** Given a submitted price tag request (not a draft), when the contact PUTs
+  it, then 409 `NOT_DRAFT` at every status (the post-submit edit path no longer exists) and the
+  detail carries `is_editable: false`; a draft still carries `true` and accepts PUT.
+- **AC-R2 [BE][T]** Given Portal Revisions enabled globally and the `price_tag_request` row
+  enabled with allowed statuses `new, changes_requested`, when the owning contact POSTs
+  `.../submissions/price_tag_request/{id}/revise` with a reason, header fields and lines, then
+  200, `revision_no` increments, `last_revised_at` is set, a `portal_form_revisions` row holds
+  the previous snapshot including lines, the request's fields and lines are replaced, status is
+  `new`, and the form SLA restart fires once. With the row disabled, or the status outside the
+  allowed list, or the max reached, then 422 with the policy's reason. At `approved` / `ready`
+  / `void`, then 422. Another contact: 404.
+- **AC-R3 [BE][T]** Given a revise payload with zero lines, a set-guarded line, or the same
+  product twice, then 422 and nothing changes (`DUPLICATE_LINE` names the product for the
+  duplicate case). Given lines carrying a marketing override, when revised with the same
+  product, then the override survives.
+- **AC-R4 [BE][T]** Given POST create or PUT draft with the same product on two lines, then 422
+  `DUPLICATE_LINE`, never a 500 from `uq_ptag_line_request_product`.
+- **AC-R5 [BE][T]** Given the revisions list GET and the revision-draft PUT / DELETE for kind
+  `price_tag_request`, then they work for the owner (draft saved, resumed on the detail body as
+  `revision_draft`, discarded) and 404 for another contact. `GET /submissions/price_tag_request`
+  summaries carry `revision_no`, `last_revised_at`, `has_revision_draft`.
+- **AC-R6 [BE][T]** Given the System Settings Portal Revisions API, when listing form types,
+  then `price_tag_request` is a row (seeded disabled) and can be enabled with statuses from
+  `new, designing, changes_requested`.
+- **AC-R7 [FE]** Given a submitted price tag request, when its view page renders, then there is
+  no Edit button; the header holds the form number, the revision line ("N of M revisions left"
+  or the blocked reason), the prev / next counter and ONE gear with Duplicate, Download PDF and
+  Revise (when allowed). Tapping Revise opens the revise mode: a reason field, the four sections
+  editable, Save draft / Submit revision; Submit revision calls the revise route and returns to
+  the read view with the revision badge. A Revisions tab lists the lineage like a stock
+  inquiry's.
+- **AC-R8 [FE]** Given the stock inquiry / purchase request / sponsorship / complaint view pages,
+  when they render, then the same single header gear holds Duplicate and Revise, the revision
+  line sits beside the form number, and the second gear below the tabs is gone.
+- **AC-R9 [FE]** Given the landing with no stored view choice, when it renders at 375 and 1280,
+  then Cards is the view. Given List view, then a DataGrid table renders with one column per
+  field of the kind (Form Number, Status badge, the kind's fields, Need by, Created), header
+  click sorts, row click opens the detail, the grid scrolls horizontally inside its container at
+  375, and the Sort button is hidden; back in Cards the Sort button returns.
+- **AC-R10 [FE]** Given the Sort menu, when opened, then each field appears once; the active
+  field shows an arrow for its direction; tapping it flips the direction; tapping another field
+  selects it (dates newest first, text A to Z).
+- **AC-R11 [FE]** Given the Filter popover at 375 and 1280, when it renders, then the From / To
+  date inputs sit inside the popover edge.
+- **AC-R12 [FE]** Given the price tag lines table, then no up / down arrows render; Add line or
+  the item picker refuses a product already on the request with an inline message; AI Confirm
+  and prefill merges duplicate products (quantities summed).
+- **AC-R13 [E2E]** agent-browser evidence: enable Portal Revisions for price tag request in
+  settings (CRM, sidebar clicks), revise PT-202609-0002 from the portal, see revision 1 on the
+  card and in the Revisions tab; list view DataGrid at 1280 and 375; one gear on a stock inquiry
+  view page; duplicate product refused at 422 with the inline message.
