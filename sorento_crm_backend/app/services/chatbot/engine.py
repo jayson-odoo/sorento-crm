@@ -61,7 +61,6 @@ from app.services.chatbot.head.output_exchange import (
 )
 from app.services.chatbot.head.route import decide
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
-from app.services.chatbot.lanes.escalation import PREVIEW_BRAND_NOTE
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.usage import record_parser_usage
@@ -2876,14 +2875,11 @@ def _run_escalation_arm(
             "arm": arm,
             "actions": [a.get("kind") for a in lane_actions],
             "dry_run": dry_run,
-            # WHAT THIS PREVIEW CANNOT KNOW, on the record the console renders its technical
-            # details from (AC-1145). Present only on a dry run that assigned: a live turn's
-            # brand is resolved, and an arm that asked something assigned nobody to preview.
-            **(
-                {"preview_note": PREVIEW_BRAND_NOTE}
-                if dry_run and arm == "human-intervention"
-                else {}
-            ),
+            # Owner ruling D9 (console pass, 13 Sep 2026): a dry run resolves the product
+            # and previews the assignee the same way a live turn would (the two seams are
+            # reads), so there is no longer anything this preview cannot know - the brand,
+            # the did-you-mean arm and the routed-to-PIC copy are all previewable, and this
+            # record carries no note saying otherwise.
         },
         raw={"clarify": clarify, "pending": pending},
     )

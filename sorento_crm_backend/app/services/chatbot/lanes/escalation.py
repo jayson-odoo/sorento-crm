@@ -24,9 +24,15 @@ Both are marked `xfail(strict=True)` in the tester's suite, so the promotion mak
 noticed rather than needing to be remembered.
 
 **D14 is evaluated FIRST** (H37). Live's own `test-guard` If sits ahead of the first
-send and everything after it, so a dry run reaches no seam at all: no assignee is picked,
-no SLA row is created, no cursor moves. `run()` reproduces that ordering literally rather
-than guarding each seam, because "guarded afterwards" is what H37 records going wrong.
+send and everything after it, so a dry run reaches no WRITING seam at all: no assignee is
+drawn, no SLA row is created, no round-robin cursor moves. `run()` reproduces that ordering
+literally rather than guarding each seam, because "guarded afterwards" is what H37 records
+going wrong. Owner ruling D9 (console pass, 13 Sep 2026) draws the line at writing rather
+than at "no seam": `resolve_and_gate` and `preview_assignee` are READS - see
+`lanes/business/resolve_gate.py` and `escalation_services._preview_assignee` - so a dry run
+DOES call them, the same way a live turn would, which is the whole point of testing from
+the console. What a dry run still never reaches is `next_assignee`'s draw, `sla_create`,
+or a send.
 
 **D9: the CRM never sends.** Every effect leaves as an `action` for the caller to execute,
 in the order the live graph performs them.
@@ -132,16 +138,6 @@ _CODE_FOLD = re.compile(r"[-\s]+")
 def _fold_code(value: Any) -> str:
     return _CODE_FOLD.sub("", jsc.js_string(value).strip().lower()) if jsc.truthy(value) else ""
 
-
-# WHAT A DRY RUN CANNOT KNOW, said where the console actually reads. The brand comes from a
-# resolver call and a dry run reaches no seam that writes OR reads (H37, AC-1141), so the
-# previewed assignee is drawn from the turn's team and company alone - and without the note a
-# blank brand beside a correct team reads as a routing defect.
-#
-# It rides the TRACE, on the `looked_up` record's facts (`engine.py`), not the actions. On the
-# actions it had no reader at all: the executor executes `kind` and its own fields, and the
-# trace record carries only the action KINDS, so nothing rendered it. One string, one reader.
-PREVIEW_BRAND_NOTE = "brand resolved on live turns only"
 
 # `get-round-robin-assignee`'s body has these two frozen, as literals in the JSON.
 NEXT_ASSIGNEE_POLICY_CODE = "NORMAL"
@@ -562,10 +558,13 @@ def run(
     mechanism for the whole turn beats a per-callee pin. A caller that injects `services`
     never reaches it, which is why it is optional here and required at `production_session`.
 
-    **The dry-run check is the first thing that happens after the arm is chosen**, which is
-    live's own `test-guard` ordering and the whole of H37: n8n called `next-assignee` and
-    guarded afterwards, so a test turn moved a real round-robin cursor. Here the seams are
-    not reached at all.
+    **`dry_run` gates the two WRITING seams only** (`_human_intervention`'s own doc, D9):
+    live's own `test-guard` sat ahead of the first send and everything after it, which is
+    the whole of H37 - n8n called `next-assignee` and guarded afterwards, so a test turn
+    moved a real round-robin cursor. The port keeps that ordering for `next_assignee` and
+    `sla_create`, never reached here on a dry run - but the READS the ladder needs to
+    decide what it WOULD do (the resolver, the routing gate, the assignee preview) run the
+    same way live or dry, because the owner tests exactly that from the console.
     """
     context_item = escalation_context(item, ctx=ctx)
 
@@ -591,76 +590,39 @@ def run(
     result = escalation_result()
     team = jsc.get(context_item, "team")
 
-    if dry_run:
-        # D14 / H37, AC-507. No WRITING seam is reached - nothing is drawn, no cursor
-        # advances, no SLA row is written - and the turn still returns every action it WOULD
-        # have taken, in order, each flagged `dry_run` and `preview`. The executor renders
-        # its expressions against this shape, so a dry run that returned a shorter list
-        # would be a different contract from the live one and could not be rendered against.
-        #
-        # The assignee is PREVIEWED, not left blank: `preview_assignee` reads the same pool
-        # and the same cursor as the live draw and advances neither, so the owner sees the
-        # name the live turn would have picked. "Would assign to somebody" answered the
-        # question nobody was asking.
-        #
-        # The ROUTING decision is previewed too, and that is not a nicety: the owner finds
-        # these defects from the console, and the console runs dry (`is_test`). A dry run
-        # that skipped the person / team gate would show the inherited team a live turn
-        # would never use, which is the very thing the gate exists to stop being shown.
-        # Both reads, no writes.
-        #
-        # `assign_conversation` is always present here: whether the live run omits it
-        # depends on `is_already_assigned`, which only the seam knows, so a preview cannot
-        # honestly leave it out.
-        preview_sla = {
-            "initiated_at": PREVIEW,
-            "due_at": PREVIEW,
-            "due_at_resolution": PREVIEW,
-        }
-        routed, preview_assignee = _preview_routing(
-            ctx, context_item, team, services, session_factory
-        )
-        if routed is not None and routed["kind"] == "clarify":
-            clarify = {
-                **context_item,
-                "clarify_team": True,
-                "clarify_text": routed["text"],
-                "clarify_team_options": routed.get("option_pairs") or [],
-            }
-            return {
-                **escalation_result(clarify_team=clarify),
-                "actions": _clarify_actions(
-                    routed["text"], options=routed.get("options") or [], dry_run=True
-                ),
-                "pending": {
-                    "kind": "team_clarify",
-                    "options": routed.get("option_pairs") or [],
-                },
-            }
-        if routed is not None and routed["kind"] == "assign":
-            team = routed["team"]
-        actions = _assignment_actions(
-            ctx,
-            team,
-            assignee=preview_assignee,
-            sla=preview_sla,
-            include_assign=True,
-            dry_run=True,
-            preview=True,
-        )
-        return {**result, "actions": actions, "pending": None}
-
     if services is not None:
-        return _human_intervention(ctx, context_item, team, services, result)
+        return _human_intervention(ctx, context_item, team, services, result, dry_run=dry_run)
 
-    # No injected seam, so this is production: the session is opened HERE, off the TURN's
-    # own factory (so it carries the contact's company scope, H56), and closed on the way
-    # out whether the seams answered or raised. See `escalation_services`.
+    if dry_run:
+        # Production dry run, no injected seam: the bundle - and with it the READS D9
+        # calls for (the resolver, the assignee preview) - only exists inside the TURN's
+        # own unit of work (H56), the same one the live branch below opens. Fails soft:
+        # no session factory, a session that will not open, or a bundle build that raises
+        # still returns the full preview shape with every read left at None, because a
+        # dry run must never fail a turn over the extra detail it is trying to show
+        # (AC-1142's own rule, extended to the preview side of it).
+        from app.services.chatbot.lanes import escalation_services
+
+        try:
+            if session_factory is None:
+                raise RuntimeError("no session factory for a production dry run")
+            with escalation_services.production_session(session_factory) as db:
+                return _human_intervention(
+                    ctx, context_item, team, escalation_services.build(db), result, dry_run=True
+                )
+        except Exception:  # noqa: BLE001 - a preview is never worth failing a test turn for
+            logger.warning("chatbot: dry-run routing preview did not run", exc_info=True)
+            return _human_intervention(ctx, context_item, team, None, result, dry_run=True)
+
+    # No injected seam and not a dry run, so this is a genuine production write: the
+    # session is opened HERE, off the TURN's own factory (so it carries the contact's
+    # company scope, H56), and closed on the way out whether the seams answered or raised.
+    # See `escalation_services`.
     from app.services.chatbot.lanes import escalation_services
 
     with escalation_services.production_session(session_factory) as db:
         return _human_intervention(
-            ctx, context_item, team, production_services(db), result
+            ctx, context_item, team, production_services(db), result, dry_run=False
         )
 
 
@@ -670,8 +632,10 @@ def _human_intervention(
     team: Any,
     services: Any,
     result: dict[str, Any],
+    *,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Assign the conversation, or ask which team - one place, both seam sources.
+    """Assign the conversation, or ask which team - one place, both seam sources, both runs.
 
     The person / team decision needs a seam, so it happens HERE rather than in `run()`,
     where the production bundle does not exist yet. So does the product resolve, and the
@@ -679,10 +643,17 @@ def _human_intervention(
     word gets the did-you-mean rows before the question about which team, because the
     brand the team is narrowed by comes off the product.
 
-    Nothing here runs on a dry run: `run()` returns from its own preview branch above, so
-    no seam is reached at all (H37, AC-1141) - not this one, not the round robin.
+    **Owner ruling D9 (console pass, 13 Sep 2026): every READ in this ladder runs on a dry
+    run exactly as it does live.** `resolve_and_gate` and `preview_assignee` are reads (see
+    `lanes/business/resolve_gate.py` and `escalation_services._preview_assignee`: neither
+    writes to the db), and the owner tests from the console, which only ever runs dry - so
+    a dry run that skipped them showed no brand and the inherited team's pool, which is
+    exactly the defect the console pass exists to catch. `dry_run` is threaded through and
+    gates ONLY the two WRITING seams, at the very bottom of this function: `next_assignee`'s
+    draw and `sla_create`'s row (H37, AC-1141 as amended). Nothing above that line changes
+    shape between the two; the actions the tail builds do.
     """
-    product = _resolve_product(ctx, context_item, services)
+    product = _resolve_product(ctx, context_item, services, dry_run=dry_run)
     if product is not None and product["ask"] is not None:
         return product["ask"]
     routed = _person_routing(ctx, context_item, team, services)
@@ -701,10 +672,8 @@ def _human_intervention(
         }
         return {
             **escalation_result(clarify_team=clarify),
-            # `dry_run=False` is a fact here, not a default: `run()` returns from its own
-            # dry-run branch above before this function is reached.
             "actions": _clarify_actions(
-                routed["text"], options=routed.get("options") or [], dry_run=False
+                routed["text"], options=routed.get("options") or [], dry_run=dry_run
             ),
             "pending": {
                 "kind": "team_clarify",
@@ -715,7 +684,9 @@ def _human_intervention(
     # (AC-1129). `routed is None` means the ladder had nothing to correct, so the team the
     # routing chain resolved stands.
     landed = routed["team"] if (routed is not None and routed["kind"] == "assign") else team
-    assignee = routed["assignee"] if routed is not None else None
+    # A person the customer NAMED, not drawn - a direct pick stands on a dry run too,
+    # because a staff lookup is a read and the customer already said who they meant.
+    named_assignee = routed["assignee"] if routed is not None else None
     # D3, and it runs ONLY when this turn named no product of its own: the conversation's
     # current product carries, but only from a turn that was already on the team this
     # escalation lands on.
@@ -731,16 +702,62 @@ def _human_intervention(
         carried=carried,
         carried_name=carried_name,
     )
+    product_line = _product_line(ctx, product)
+    # OFF THE LANDED ITEM, the same object `_next_assignee_body` reads `brand_code` from,
+    # so the copy and the draw (or its preview) cannot disagree about the brand (D8).
+    brand_name = jsc.get(landed_item, "brand_name")
+
+    if dry_run:
+        # D14 / H37, AC-507, AC-1141 as amended by D9. The two WRITING seams - the round
+        # robin draw and the SLA row - are the only things this branch never reaches;
+        # everything above already ran. `assign_conversation` is always present here:
+        # whether the live run omits it depends on `is_already_assigned`, which only the
+        # write seam knows, so a preview cannot honestly leave it out.
+        if named_assignee is not None:
+            assignee = named_assignee
+        else:
+            seam = getattr(services, "preview_assignee", None) if services is not None else None
+            if seam is None:
+                assignee = None
+            else:
+                body = {
+                    **_next_assignee_body(ctx, landed_item),
+                    "team_code": landed,
+                    "preview": True,
+                }
+                try:
+                    assignee = seam(body)
+                except Exception:  # noqa: BLE001 - a preview is never worth failing a turn for
+                    logger.warning(
+                        "chatbot: dry-run assignee preview did not run", exc_info=True
+                    )
+                    assignee = None
+        preview_sla = {
+            "initiated_at": PREVIEW,
+            "due_at": PREVIEW,
+            "due_at_resolution": PREVIEW,
+        }
+        actions = _assignment_actions(
+            ctx,
+            landed,
+            assignee=assignee,
+            sla=preview_sla,
+            include_assign=True,
+            dry_run=True,
+            preview=True,
+            product_line=product_line,
+            brand_name=brand_name,
+        )
+        return {**result, "actions": actions, "pending": None}
+
     actions = _assign(
         ctx,
         landed_item,
         landed,
         services,
-        assignee=assignee,
-        product_line=_product_line(ctx, product),
-        # OFF THE LANDED ITEM, the same object `_next_assignee_body` reads `brand_code` from,
-        # so the copy and the draw cannot disagree about the brand (D8).
-        brand_name=jsc.get(landed_item, "brand_name"),
+        assignee=named_assignee,
+        product_line=product_line,
+        brand_name=brand_name,
     )
     return {**result, "actions": actions, "pending": None}
 
@@ -1651,58 +1668,6 @@ def _team_clarify_text(person: Any, hits: list, *, options: list[str] | None = N
             f"Which team should I pass this to - {listed}?"
         )
     return f"Which team should I pass this to - {listed}?"
-
-
-def _preview_routing(
-    ctx: dict[str, Any],
-    context_item: dict[str, Any],
-    team: Any,
-    services: Any,
-    session_factory: Any,
-) -> tuple[dict[str, Any] | None, Any]:
-    """`(routing decision, assignee)` for a dry run - both READS, in one unit of work.
-
-    Fails soft throughout, on purpose: a bundle with no preview seam (an older injected
-    stub), a lookup that raises, or no session factory at all leave the assignee null,
-    which is the placeholder AC-507 shipped with. A dry run must never fail a turn over the
-    extra detail it is trying to show.
-    """
-
-    def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any]:
-        routed = _person_routing(ctx, context_item, team, bundle)
-        if routed is not None and routed["kind"] == "clarify":
-            return routed, None  # a clarify assigns nobody, so there is no draw to preview
-        if routed is not None and routed.get("assignee") is not None:
-            return routed, routed["assignee"]  # a named person IS the assignee
-        seam = getattr(bundle, "preview_assignee", None)
-        if seam is None:
-            return routed, None
-        # THE LANDED TEAM'S OWN POOL, which is the whole point of previewing the routing: a
-        # named team is the common escalation, and drawing the preview from `context_item`
-        # showed the inherited team's pool (and its agent) beside a customer copy naming the
-        # landed one. The brand is NOT resolved here - a dry run reaches no seam (AC-1141) -
-        # so the body carries none and the TRACE says so (`PREVIEW_BRAND_NOTE`, stamped on
-        # the `looked_up` record's facts by the engine - the console renders facts, and an
-        # action field had no reader).
-        landed = routed["team"] if routed is not None else team
-        item = _landed_item(context_item, ctx=ctx, team=team, landed=landed, product=None)
-        body = {**_next_assignee_body(ctx, item), "team_code": landed, "preview": True}
-        return routed, seam(body)
-
-    try:
-        if services is not None:
-            return _both(services)
-        if session_factory is None:
-            return None, None
-        # Production dry run: the same read-only unit of work the live branch uses, so both
-        # reads are scoped to the contact's company exactly as the draw would be (H56).
-        from app.services.chatbot.lanes import escalation_services
-
-        with escalation_services.production_session(session_factory) as db:
-            return _both(escalation_services.build(db))
-    except Exception:  # noqa: BLE001 - a preview is never worth failing a test turn for
-        logger.warning("chatbot: dry-run routing preview did not run", exc_info=True)
-        return None, None
 
 
 def _assign(
