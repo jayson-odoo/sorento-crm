@@ -159,14 +159,24 @@ def test_a_second_save_on_an_order_with_a_pending_batch_appends_to_it(api):
 # R1b: a second change on the SAME line supersedes the pending row
 # --------------------------------------------------------------------------- #
 
-def test_a_second_change_on_the_same_line_supersedes_the_pending_row(api):
+def test_a_second_change_on_the_same_line_supersedes_the_pending_row():
     """Two successive edits to the SAME held line (qty 36 -> 60, then 60 -> 80) must leave
     ONE live pending row - the newest - whose from/to reads the LATEST edit's own before/
     after (60 -> 80, since `_change_and_batch` always diffs against the core line's value at
     the moment it is called, which is already 60 by the second call), with the older row
     (36 -> 60) marked `applied_state = 'superseded'`, reason "Replaced by a later change"
-    (R1). Today neither batch even knows the other exists, so the older row is left
-    'pending' forever - the assertion on it is the genuine red."""
+    (R1, landed). The second edit's row lands in a FRESH batch (a line can only have one
+    live pending row at a time, so the open batch is not where the replacement goes) -
+    `batch_1.id != batch_2.id` is expected, not a defect.
+
+    No `api` fixture parameter: this test builds its own `blank_session()` directly (it
+    needs two successive `build_batch` calls against one hand-built world, not the HTTP
+    client `api` provides) - an earlier draft declared `api` anyway and never used it,
+    which left a second, unused scratch-schema connection open for the whole test and was
+    the reproducible cause of a `psycopg2.OperationalError: server closed the connection
+    unexpectedly` at teardown (3/3 runs) once the shared dev Postgres was under any
+    concurrent-agent load.
+    """
     from tests._pg_fixture import blank_session
 
     with blank_session() as db:
@@ -195,13 +205,35 @@ def test_a_second_change_on_the_same_line_supersedes_the_pending_row(api):
 # R2a/R2b: apply never carries a cancelled or renamed line
 # --------------------------------------------------------------------------- #
 
+def _row_for_line(db, batch_id, project_line_id) -> PlanningChangeRow:
+    """The batch's own row for ONE line.
+
+    R1 (one open batch per order) collapses a multi-save fixture like `_so400884_shape`
+    into a SINGLE open batch carrying several pending rows - a later save on a line the
+    open batch has not seen yet joins it rather than raising a new one - so `_only_row`
+    (which asserts exactly one row per batch) no longer applies to it. This finds the row
+    for the specific line a test means to decide, the same way a real board picks one row
+    out of several pending on the same batch.
+    """
+    return (
+        db.query(PlanningChangeRow)
+        .filter(PlanningChangeRow.batch_id == batch_id,
+                PlanningChangeRow.project_line_id == project_line_id)
+        .one()
+    )
+
+
 def _so400884_shape(api):
     """Four held Reserve lines on one order - the SO400884 shape from the browser walk.
     Three SEPARATE `build_batch` calls follow (one per edit), matching real multi-save
-    usage: a single combined-Diff/single-batch fixture would already be handled correctly
-    by `_apply_one_order`'s SAME-BATCH `undecided_changed_line_ids`/`kind == 'cancelled'`
-    branches and would risk a false green. Only the CROSS-batch case - a pending row for
-    line 1/2 sitting in a batch OTHER than the one being applied - is unhandled today."""
+    usage. Under R1 (one open batch per order, landed 13 Sep) the second and third calls
+    APPEND their rows into the FIRST call's still-open batch rather than raising a new one
+    each time - none of the three edits touches a line the open batch has already seen, so
+    `batch1`, `batch2` and `batch4` below all resolve to the SAME batch, now carrying three
+    pending rows. The R2 assertions this fixture backs (nothing carried for the cancelled/
+    renamed lines) still exercise the real thing worth pinning: `_apply_one_order` deciding
+    ONE line of a batch must never carry the OTHERS' stale state into the new revision,
+    same-batch or not."""
     client, world = api
     db = world.db
     core_so = _core_so(db, world.company_id)
@@ -286,6 +318,16 @@ def _so400884_shape(api):
     db.commit()
     assert batch4 is not None
 
+    # R1: one open batch per order - all three saves landed in the SAME batch.
+    assert batch2.id == batch1.id, (batch1.id, batch2.id)
+    assert batch4.id == batch1.id, (batch1.id, batch4.id)
+    rows_in_batch = (
+        db.query(PlanningChangeRow)
+        .filter(PlanningChangeRow.batch_id == batch1.id)
+        .all()
+    )
+    assert len(rows_in_batch) == 3, [r.kind for r in rows_in_batch]
+
     return {
         "world": world, "order": order, "core_so": core_so, "new_product": new_product,
         "line1": line1, "line2": line2, "line3": line3, "line4": line4,
@@ -304,7 +346,7 @@ def test_apply_of_one_row_never_carries_a_cancelled_line(api):
     db = shape["world"].db
     order = shape["order"]
 
-    row4 = _only_row(db, shape["batch4"])
+    row4 = _row_for_line(db, shape["batch4"].id, shape["plan4"].id)
     planning_change_service.set_row_decision(db, str(shape["batch4"].id), str(row4.id), "confirm")
     db.commit()
     planning_change_service.apply(db, str(shape["batch4"].id), shape["world"].actor)
@@ -344,29 +386,34 @@ def test_apply_of_one_row_never_carries_a_cancelled_line(api):
 
 
 def test_a_renamed_products_demand_gets_a_decision_or_a_buy_row_on_the_next_confirm(api):
-    """After the qty-raise on line 4 is applied (previous test's shape), confirming line 2's
-    OWN product_changed row must raise demand for the NEW product (a Buy/Reserve component)
-    and drop the hold on the OLD product - not leave the old product's allocation standing
-    beside a new, unrelated one."""
+    """Confirming line 2's OWN product_changed row must raise demand for the NEW product (a
+    Buy/Reserve component) and drop the hold on the OLD product - not leave the old
+    product's allocation standing beside a new, unrelated one.
+
+    R1: `batch2` and `batch4` are now the SAME open batch (`_so400884_shape`'s own
+    invariant), so both rows are DECIDED before the one `apply()` that settles the batch -
+    `apply()` stamps the whole batch's `applied_at` once it has revised the order with no
+    pending row of a WANTED order left out, so a second `apply()` call on this same batch
+    (the previous test's two-call shape) would 409 'This batch has already been applied.'
+    """
     shape = _so400884_shape(api)
     db = shape["world"].db
     order = shape["order"]
     world = shape["world"]
 
-    row4 = _only_row(db, shape["batch4"])
+    row4 = _row_for_line(db, shape["batch4"].id, shape["plan4"].id)
     planning_change_service.set_row_decision(db, str(shape["batch4"].id), str(row4.id), "confirm")
-    db.commit()
-    planning_change_service.apply(db, str(shape["batch4"].id), world.actor)
     db.commit()
 
     # Stock exists for the NEW product too, so the engine has something to compose with.
     _stock(db, shape["new_product"], world.own_wh, on_hand="50")
     db.commit()
 
-    row2 = _only_row(db, shape["batch2"])
+    row2 = _row_for_line(db, shape["batch2"].id, shape["plan2"].id)
     planning_change_service.set_row_decision(db, str(shape["batch2"].id), str(row2.id), "confirm")
     db.commit()
-    planning_change_service.apply(db, str(shape["batch2"].id), world.actor)
+
+    planning_change_service.apply(db, str(shape["batch4"].id), world.actor)
     db.commit()
 
     active = _active_decision(db, order.id)
@@ -377,15 +424,19 @@ def test_a_renamed_products_demand_gets_a_decision_or_a_buy_row_on_the_next_conf
     components = line2_snapshot.get("components") or []
     assert components, "confirming the renamed line must compose SOMETHING for the new product"
 
-    # No live hold remains against the OLD product for this line.
-    old_product_allocs = (
-        db.query(SOLineAllocation)
-        .filter(SOLineAllocation.so_line_id == shape["plan2"].id,
-                SOLineAllocation.product_id == world.product.id,
-                SOLineAllocation.confirmed_at.isnot(None))
-        .all()
+    # `SOLineAllocation` carries no `product_id` (grepped `app/models/project_so.py` -
+    # absent) and `Stock.quantity_reserved` is not the live ledger either (measured: it
+    # stays 0 throughout this fixture - the ladder reads `SOLineAllocation` rows, not this
+    # column) - neither can tell an OLD-product hold apart from a NEW one on the SAME
+    # so_line_id. What CAN be measured, and is the real point of "raises demand for the new
+    # product": the line's own confirmed snapshot names the NEW product, not the old one -
+    # there is exactly one product on a line, so this and "the old hold is gone" are the
+    # same fact.
+    assert line2_snapshot.get("product_id") == str(shape["new_product"].id), (
+        f"line 2's own confirmed snapshot still names "
+        f"{line2_snapshot.get('product_id')!r}, not the renamed product "
+        f"{shape['new_product'].id!r}"
     )
-    assert old_product_allocs == [], [str(a.id) for a in old_product_allocs]
 
 
 # --------------------------------------------------------------------------- #

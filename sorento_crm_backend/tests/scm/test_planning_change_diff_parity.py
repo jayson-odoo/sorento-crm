@@ -587,8 +587,18 @@ def test_re_adding_the_same_product_after_a_cancellation_creates_a_new_open_line
     assert envelope is not None
     batch = db.get(PlanningChangeBatch, envelope["id"])
     rows = _rows_for(db, batch.id)
-    assert len(rows) == 1, [r.kind for r in rows]
-    assert rows[0].kind == "added", rows[0].kind
+    # R1 (one open batch per order, 13 Sep browser walk): the order already carried an
+    # unapplied batch with the first save's pending 'cancelled' row, and this second save's
+    # 'added' row is for a DIFFERENT line (the new one) that batch has never seen - it JOINS
+    # that same open batch rather than raising a second one, so `envelope["id"]` is the
+    # SAME batch the first save produced and it now carries both rows.
+    assert len(rows) == 2, [r.kind for r in rows]
+    kinds = sorted(r.kind for r in rows)
+    assert kinds == ["added", "cancelled"], kinds
+    # The re-added line reads as a genuinely NEW open line ('added'), never a 'qty_down' the
+    # SKU fallback would produce by matching it back onto the cancelled row.
+    added_row = next(r for r in rows if r.kind == "added")
+    assert added_row.kind == "added", added_row.kind
 
 
 # --------------------------------------------------------------------------- #
