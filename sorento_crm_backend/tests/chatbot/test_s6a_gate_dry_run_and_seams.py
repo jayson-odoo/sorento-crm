@@ -468,7 +468,7 @@ class TestEntityPinsBody:
             },
         }
 
-    def test_and_mode_now_carries_entity_pins_when_something_is_pinned(self) -> None:
+    def test_and_mode_sends_entity_pins_with_a_pinned_uuid(self) -> None:
         """Ruling reversed (S7 follow-up, owner-found on :3081): a picked code that is a
         PREFIX of its siblings (SRTWC286-SH-NEW vs -NEW-150 / -NEW-P / -NEW-200)
         re-expanded to all four the moment the lane re-resolved the bare token in AND

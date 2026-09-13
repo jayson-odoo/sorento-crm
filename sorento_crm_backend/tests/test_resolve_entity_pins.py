@@ -375,7 +375,7 @@ def test_out_of_scope_pin_raises_same_as_bogus(db):
 # in AND mode is to narrow a pinned token's own candidates to the pinned uuid
 # BEFORE intersecting, not to 400.
 # --------------------------------------------------------------------------- #
-def test_and_mode_with_a_pinned_prefix_code_narrows_before_intersecting(db):
+def test_and_mode_narrows_a_pinned_token_to_its_uuid(db):
     """AND mode, one token whose code is a PREFIX of three other seeded products
     (the exact live shape, SRTWC286-SH-NEW vs -NEW-150 / -NEW-P / -NEW-200) and is
     pinned to one of them - the response carries exactly the pinned row.
