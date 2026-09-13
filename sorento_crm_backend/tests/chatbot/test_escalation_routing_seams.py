@@ -28,7 +28,12 @@ import pytest
 from app.services.chatbot.head.output_exchange import post_process, suggest_follow_up
 from app.services.chatbot.head.route import decide
 from app.services.chatbot.lanes.escalation import run
-from tests.chatbot.test_escalation_routing_brand import _next_assignee_body, _product_entity, _resolved_row
+from tests.chatbot.test_escalation_routing_brand import (
+    _focus_previous_state,
+    _next_assignee_body,
+    _product_entity,
+    _resolved_row,
+)
 from tests.chatbot.test_escalation_routing_head import (
     TURN_1_PARSER_RAW,
     TURN_1_PREVIOUS_STATE,
@@ -99,23 +104,34 @@ DRY_RUN_SHAPES = {
 
 
 @pytest.mark.parametrize("shape", DRY_RUN_SHAPES, ids=list(DRY_RUN_SHAPES))
-def test_ac1141_a_dry_run_reaches_no_seam_for_every_new_shape(shape: str) -> None:
-    """AC-1141 / H37. All four shapes are GREEN today, and for two different reasons:
-    `plain_assign` and `team_clarify` because the dry-run gate already exists
-    (`test_dry_run_never_reaches_next_assignee` proves the mechanism); `product_resolve`
-    and `product_not_found` only because `resolve_and_gate` is not wired AT ALL yet (H26 -
-    see `test_escalation_routing_brand.py`), so there is trivially nothing to call under a
-    dry run either. Kept as a GUARD: once the coder wires the resolver (S3/S4), it must be
-    wired BEHIND this same `dry_run` check, and this parametrisation is what would catch a
-    seam added in front of it instead."""
+def test_ac1141_a_dry_run_reaches_no_writing_seam_for_every_new_shape(shape: str) -> None:
+    """AC-1141 / H37, AMENDED by owner ruling D9 (console pass, 13 Sep 2026): "a dry run
+    reaches no seam AT ALL" was never the actual rule the console needed - it was "a dry run
+    writes nothing", and the two shapes that name a product (`product_resolve`,
+    `product_not_found`) need the SAME product resolve a live turn makes so the console's
+    dry-run re-pass can see the brand a live turn would have named, exactly like `_person_
+    routing`'s team decision already runs on this branch. `resolve_and_gate` is a READ
+    (savepoint-wrapped, `lanes/business/resolve_gate.py` has no writes), so calling it here
+    is not the H37 hazard - the hazard was `next_assignee` moving the round-robin cursor and
+    `sla_create` writing a row, both of which stay uncalled on every shape below.
+
+    `plain_assign` and `team_clarify` name no product entity at all
+    (`_this_turn_products(ctx)` is empty), so `resolve_and_gate` is never reached for them
+    either - there is nothing to resolve. `product_resolve` and `product_not_found` DO name
+    one, so the seam must be called once for each: RED today because the dry-run branch
+    still returns before `_resolve_product` is ever invoked (H26/H37 as they read before
+    D9)."""
     ctx, item = DRY_RUN_SHAPES[shape]()
     services = _services(gate={"resolved": [_resolved_row("SRTWB8004", brand="sorento")], "did_you_mean": []})
 
     run(ctx, item, services=services, dry_run=True)
 
-    services.resolve_and_gate.assert_not_called()
     services.next_assignee.assert_not_called()
     services.sla_create.assert_not_called()
+    if shape in ("product_resolve", "product_not_found"):
+        services.resolve_and_gate.assert_called_once()
+    else:
+        services.resolve_and_gate.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -148,6 +164,164 @@ def test_ac1142_a_raising_resolver_degrades_instead_of_raising_out_of_run() -> N
         assert body.get("brand_code") is None, (
             f"a raising resolver must degrade to no brand, never propagate a half-read: {body!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# D9, owner ruling (console pass, 13 Sep 2026): "a console dry run resolves the product and
+# names the brand exactly like a live turn." The dry-run branch of `run()` used to skip
+# `_resolve_product` entirely (AC-1141 as it read before this ruling), so the owner's own
+# console re-pass showed "...from Marketing Product team." with no ` handling SORENTO`
+# fragment and a `preview_note: "brand resolved on live turns only"` in the trace. `_resolve_
+# product` (and, on the D3 carry, `_carried_brand`) is a READ - `resolve_and_gate` is
+# savepoint-wrapped, `lanes/business/resolve_gate.py` has no writes - so calling it on a dry
+# run is not the H37 hazard; only `next_assignee` and `sla_create` (the actual WRITES) stay
+# unreached. `_resolved_row_with_brand_name` is the D8 section's own builder, further down
+# this file, reused rather than duplicated.
+# --------------------------------------------------------------------------- #
+
+
+def test_d9_dry_run_resolved_brand_reaches_the_preview_and_the_customer_copy() -> None:
+    """D9. RED today: `run(..., dry_run=True)` never calls `resolve_and_gate` at all, so the
+    resolved row's brand name never reaches the preview body or the routed customer copy -
+    the second `send_message` still reads "...from Marketing Product team." with no
+    ` handling SORENTO` fragment, and `preview_assignee` is called with no `brand_code`."""
+    ctx = _ctx(
+        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWB8004")],
+    )
+    item = _item(team="marketing_product")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="SORENTO")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services, dry_run=True)
+
+    services.resolve_and_gate.assert_called_once()
+    services.next_assignee.assert_not_called()
+    services.sla_create.assert_not_called()
+
+    second_send = result["actions"][-1]
+    assert second_send["kind"] == "send_message"
+    assert second_send.get("dry_run") is True
+    assert second_send["text"] == (
+        "This inquiry has been routed to the respective person-in-charge (PIC) from "
+        "Marketing Product team handling SORENTO. We will get back to you soon. "
+        "Thanks for your patience."
+    ), second_send["text"]
+
+    services.preview_assignee.assert_called_once()
+    preview_body = services.preview_assignee.call_args[0][0]
+    assert preview_body.get("brand_code") == "sorento", (
+        f"the preview body must carry the resolved row's own brand, the same field the "
+        f"live body reads: {preview_body!r}"
+    )
+
+
+def test_d9_dry_run_did_you_mean_returns_the_product_pick_ask_flagged_dry_run() -> None:
+    """D9 + D6 order preserved on a dry run: an unresolved code with did-you-mean rows arms
+    the SAME `product_pick` ask a live turn would - before any team question - with every
+    action flagged `dry_run`, and no assignment is previewed. RED today: the dry-run branch
+    never calls `_resolve_product`, so this shape falls straight to the team-routing preview
+    instead of arming the ask."""
+    ctx = _ctx(
+        routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWC60630-SH")],
+    )
+    item = _item(team="warehouse")
+    did_you_mean = [
+        _resolved_row("SRTWC6030-SH-BL", brand="sorento"),
+        _resolved_row("SRTWC6030-SH-UF", brand="sorento"),
+    ]
+    services = _services(gate={"resolved": [], "did_you_mean": did_you_mean})
+
+    result = run(ctx, item, services=services, dry_run=True)
+
+    services.resolve_and_gate.assert_called_once()
+    assert result["arm"] == "product_pick", (
+        f"a dry run must arm the SAME did-you-mean ask a live turn would: {result!r}"
+    )
+    assert result["pending"]["kind"] == "product_pick", result["pending"]
+    offered_codes = {o.get("code") for o in result["pending"]["options"]}
+    assert offered_codes == {"SRTWC6030-SH-BL", "SRTWC6030-SH-UF"}, offered_codes
+    assert result["actions"], "the ask must still be sent on a dry run"
+    assert all(a.get("dry_run") is True for a in result["actions"]), result["actions"]
+
+    services.preview_assignee.assert_not_called()
+    services.next_assignee.assert_not_called()
+    services.sla_create.assert_not_called()
+
+
+def test_d9_dry_run_raising_resolver_degrades_to_no_brand_preview() -> None:
+    """AC-1142 on the dry-run branch: a resolver that raises must still return the preview
+    actions (H37 stands - no WRITING seam is reached), with the brand left None rather than
+    the turn failing. RED today for the same reason as the other D9 tests: nothing in the
+    dry-run branch calls the resolver at all, so there is nothing to degrade FROM."""
+    ctx = _ctx(
+        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWB8004")],
+    )
+    item = _item(team="marketing_product")
+    services = _services()
+    services.resolve_and_gate.side_effect = RuntimeError("resolver seam is down")
+
+    result = run(ctx, item, services=services, dry_run=True)  # must not raise
+
+    services.resolve_and_gate.assert_called_once()
+    services.next_assignee.assert_not_called()
+    services.sla_create.assert_not_called()
+    assert result["arm"] == "human-intervention", result
+    kinds = [a["kind"] for a in result["actions"]]
+    assert "assign_conversation" in kinds, (
+        f"a raising resolver must still leave the preview assignment in place: {kinds!r}"
+    )
+    second_send = result["actions"][-1]
+    assert "handling" not in second_send["text"], (
+        f"a degraded (unresolved) brand must print no fragment: {second_send['text']!r}"
+    )
+
+
+def test_d9_dry_run_carried_brand_reaches_the_preview() -> None:
+    """D3 on a dry run: this turn names no product of its own, but the previous turn's real
+    five-key `focus.products`/`focus.domains` land on the SAME team this escalation lands
+    on, so the carried product's brand must reach the preview exactly as it reaches a live
+    turn's body (`test_ac1127_no_product_named_but_the_previous_team_matches_the_landed_one_
+    carries_it` in `test_escalation_routing_brand.py` is the live twin this fixture copies).
+    RED today: the dry-run branch never resolves anything, carried or otherwise."""
+    ctx = _ctx(
+        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[],
+        prev_variables=_focus_previous_state(product_code="MWC7625-SH-S10", domain="product_attachment"),
+    )
+    item = _item(team="marketing_product")
+    services = _services(gate={"resolved": [_resolved_row("MWC7625-SH-S10", brand="mocha")], "did_you_mean": []})
+
+    result = run(ctx, item, services=services, dry_run=True)
+
+    services.resolve_and_gate.assert_called_once()
+    called_with = str(services.resolve_and_gate.call_args)
+    assert "MWC7625-SH-S10" in called_with, (
+        f"the seam must be asked to resolve the CARRIED code, not a fresh one: {called_with}"
+    )
+    services.next_assignee.assert_not_called()
+    services.sla_create.assert_not_called()
+
+    services.preview_assignee.assert_called_once()
+    preview_body = services.preview_assignee.call_args[0][0]
+    assert preview_body.get("brand_code") == "mocha", (
+        f"the carried product's brand must reach the preview body, same as a live turn's: "
+        f"{preview_body!r}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -610,15 +784,22 @@ def test_s3_round3_dry_run_preview_names_the_landed_team_and_agent_never_the_inh
     assert preview_body.get("brand_code") is None, preview_body
 
 
-def test_s7_round3_dry_run_trace_facts_carry_the_preview_note(
+def test_d9_dry_run_trace_facts_carry_no_preview_note(
     session_factory, system_settings_row, monkeypatch
 ) -> None:
-    """Security review round 3, item S7 (the other half): the coder moved
-    `PREVIEW_BRAND_NOTE` off the dry-run actions and onto the `looked_up` trace record's
-    `facts` (`engine.py`'s own comment: "the console renders facts, and an action field
-    had no reader") - driven through the REAL engine and the REAL escalation lane (only
-    the parser is stubbed), because the fact is stamped by `engine.py`, not by
-    `escalation.run()` itself, and a lane-unit call has no trace to assert on at all."""
+    """D9 (owner ruling, console pass, 13 Sep 2026), superseding Security review round 3
+    item S7. S7 moved `PREVIEW_BRAND_NOTE` off the dry-run actions and onto the `looked_up`
+    trace record's `facts`, because a dry run could not know the brand at all. D9 removes
+    the premise: a dry run resolves the product exactly like a live turn now (see the D9
+    section above), so there is nothing left for the note to disclaim - `PREVIEW_BRAND_NOTE`
+    and its stamp in `engine.py` (~line 2883) are retired outright, not just relocated again.
+    Inverted rather than deleted, per the tester's brief: RED today because the stamp is
+    still there and the import this test used to make (`PREVIEW_BRAND_NOTE`) would itself
+    become an `ImportError` once the coder retires the constant - so this version imports
+    nothing from `escalation.py` for the note at all, and simply asserts its absence -
+    driven through the REAL engine and the REAL escalation lane (only the parser is
+    stubbed), because the fact is stamped by `engine.py`, not by `escalation.run()` itself,
+    and a lane-unit call has no trace to assert on at all."""
     import json as _json
 
     from sqlalchemy import text as sql_text
@@ -629,7 +810,6 @@ def test_s7_round3_dry_run_trace_facts_carry_the_preview_note(
     from app.services.chatbot import trace as trace_mod
     from app.services.chatbot.contracts import Envelope
     from app.services.chatbot.head import parser as parser_mod
-    from app.services.chatbot.lanes.escalation import PREVIEW_BRAND_NOTE
 
     contact_id = "ZZT-esc-s7-dry-1"
     db = session_factory()
@@ -722,9 +902,9 @@ def test_s7_round3_dry_run_trace_facts_carry_the_preview_note(
 
     row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
     looked_up = next(r for r in trace_mod.stage_records(row.trace) if r["stage"] == "looked_up")
-    assert looked_up["facts"].get("preview_note") == PREVIEW_BRAND_NOTE, (
-        f"a dry run that assigned must stamp the preview note on the looked_up trace "
-        f"facts, not on the actions: {looked_up['facts']!r}"
+    assert "preview_note" not in looked_up["facts"], (
+        f"D9 retires the preview note outright - a dry run resolves the product like a "
+        f"live turn now, so there is nothing left to disclaim: {looked_up['facts']!r}"
     )
 
 
