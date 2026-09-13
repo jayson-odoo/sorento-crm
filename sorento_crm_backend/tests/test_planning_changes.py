@@ -1196,7 +1196,9 @@ def test_composition_from_proposal_reads_the_boards_own_sources():
     }
     composed = planning_change_service.composition_from_proposal(proposal)
     assert composed["project_line_id"] == "line-1"
-    assert composed["reserve"] == [{"warehouse_id": "wh-own", "qty": "20"}]
+    assert composed["reserve"] == [
+        {"warehouse_id": "wh-own", "qty": "20", "location": "OWN"}
+    ]
     assert composed["borrow"] == []
     assert composed["buy_qty"] == "30"
     assert composed["timely_spo_qty"] == "0"
@@ -1391,7 +1393,11 @@ def test_route_put_amend_stores_the_planners_own_composition_and_apply_writes_it
     )
     assert response.status_code == 200, response.text
     assert response.json()["composition"]["reserve"] == [
-        {"warehouse_id": world.pool_wh.id, "qty": "72"}
+        {
+            "warehouse_id": world.pool_wh.id,
+            "qty": "72",
+            "location": world.pool_wh.warehouse_code,
+        }
     ]
 
     apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
