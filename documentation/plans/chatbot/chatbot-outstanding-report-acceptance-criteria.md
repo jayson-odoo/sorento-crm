@@ -540,6 +540,29 @@ resolution and the filter set in the console trace.
   family, real `customers` rows via `tests._mc_lookup_seed.customer`, the picked
   family's `Customer:` line compared byte-for-byte against the report's own line for
   the same three ids).
+- **AC-1166 [BE]** NEW (R21, owner round 8, 13 Sep 2026, live trace: `outsatnidng
+  dealer quantity for chin chun product SRTKT39SS in 2026` hit a THREE-family
+  customer picker; `all` ran the PLAIN order list for all three families - a total
+  miss - while the SAME ask answered `1` armed the scope question correctly. "why
+  when i say all for customer picker it didn't work, but when i choose 1 it
+  worked?"). Traced: the parser's raw read of "all" is `entity_op: "clear"`, which
+  the entity-operation executor consumes (wiping entities, stamping
+  `entity_op_applied`) BEFORE the "ALL on a numbered menu" structural arm
+  relabels the turn `entity_op: "reuse"` and expands `reference_positions` to
+  every offered position - so R16's carry (`order_status`, dates, the rest of the
+  reuse branch), which lives inside that SAME executor pass, never re-runs once
+  the label changes; a single "1" pick arrives as `reuse` from the start and so
+  already takes that branch. A did-you-mean pick, whether one option or all of
+  them, continues the question the picker interrupted: the scope question arms
+  for the UNION of every picked family's `customer_ids`, the same four-line
+  header (`Customer:` names every picked family, distinct, first-seen; `Order
+  date:` from the original ask), and `crm_order_management_orders_list` is never
+  called. Evidence: pytest, `tests/chatbot/test_outstanding_lane.py::
+  TestAllOnTheCustomerPickerKeepsTheQuestion` - `test_all_on_the_customer_picker_
+  arms_the_scope_question_for_every_family`, `test_all_pick_then_scope_answer_
+  runs_the_report_for_every_family`, `test_all_on_the_customer_picker_under_a_
+  plain_ask_still_lists_every_family` (regression guard: a non-outstanding ask
+  keeps today's behaviour).
 
 ## Out of scope (backlog)
 

@@ -4039,3 +4039,253 @@ class TestScopeQuestionCustomerLineMatchesReportHeader:
             f"must be byte-equal for the same customer_ids: "
             f"scope={_customer_header_line(pick_reply)!r} report={_customer_header_line(report_reply)!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Owner round 8 (13 Sep 2026, live): `outsatnidng dealer quantity for chin chun
+# product SRTKT39SS in 2026` -> customer picker (3 families) -> `all` -> the
+# PLAIN order list for all three families instead of the outstanding scope
+# question - `crm_order_management_orders_list`, a total miss. The SAME ask
+# answered with `1` worked (armed the scope question correctly). "why when i
+# say all for customer picker it didn't work, but when i choose 1 it worked?"
+#
+# Cause (traced): `entity_op: "clear"` (the parser's raw read of "all") runs
+# through the ENTITY OPERATION EXECUTOR - the block that wipes `entities` and
+# stamps `entity_op_applied` - BEFORE the "ALL/SEMUA on a numbered menu"
+# structural arm re-labels the turn `entity_op: "reuse"` and expands
+# `reference_positions` to every offered position. R16's carry (order_status,
+# dates, requested_attributes, is_active - the `elif op == "reuse":` branch)
+# lives INSIDE that same executor pass and never re-runs once the label
+# changes, so a multi-pick "all" loses every axis the SAME executor already
+# carries correctly for a single "1" pick (which arrives as `entity_op: reuse`
+# from the START, so it takes that branch the first time).
+#
+# R21 (owner ruling, 13 Sep 2026): a did-you-mean pick, whether one option or
+# all of them, continues the question the picker interrupted - the SAME
+# carried `order_status` and dates apply. For an outstanding ask that means the
+# scope question arms for the UNION of every picked family's `customer_ids`,
+# same header (Customer line = every picked family, distinct, first-seen;
+# Order date from the original ask), and `crm_order_management_orders_list` is
+# never called. AC-1166.
+# --------------------------------------------------------------------------- #
+
+
+PRODUCT_CODE_R21 = "SRTKT39SS"
+PRODUCT_UUID_R21 = "77777777-7777-7777-7777-777777777777"
+
+
+def _seed_open_outstanding_three_family_picker(session_factory) -> tuple[str, str, str]:
+    """The state after `outsatnidng dealer quantity for chin chun product
+    SRTKT39SS in 2026` hit an ambiguous CUSTOMER picker with THREE families -
+    real `customers` rows (R19b: the header can only ever name a row that
+    exists), one row per family (a family of size one needs no `picker_families`
+    widening - the roster's own uuid IS the whole family). Returns the three
+    seeded ids in roster order.
+
+    `date_filter_start` / `date_filter_end` are persisted at the TOP LEVEL
+    (never inside `outstanding_filters`, which is this file's OWN carried-filter
+    convention, not a session field production writes before a scope question
+    is ever armed) - the SAME generic date-carry key the reuse arm already
+    reads for every domain (`head/output_exchange.py` ~1917-1922), matching
+    what a genuine "... in 2026" ask persists BEFORE any picker interrupts it.
+    """
+    db = session_factory()
+    c1 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD")
+    c2 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HOMEMART SDN BHD")
+    c3 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN TRADING SDN BHD")
+    db.commit()
+    roster = [
+        {
+            "idx": 1, "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)", "uuid": c1.id,
+            "product": None, "entity_type": "customer",
+        },
+        {
+            "idx": 2, "label": "CHIN CHUN HOMEMART SDN BHD (SRT)", "uuid": c2.id,
+            "product": None, "entity_type": "customer",
+        },
+        {
+            "idx": 3, "label": "CHIN CHUN TRADING SDN BHD (SRT)", "uuid": c3.id,
+            "product": None, "entity_type": "customer",
+        },
+    ]
+    _seed_contact(
+        session_factory,
+        variables={
+            "message_type": "business_query",
+            "domain_hint": "order",
+            "entities": [
+                {
+                    "raw": PRODUCT_CODE_R21, "hint": "product", "uuid": PRODUCT_UUID_R21,
+                    "canonical_code": PRODUCT_CODE_R21, "current_message": False,
+                },
+            ],
+            "selection_context": "disambiguation",
+            "last_result_set": roster,
+            "picker_last_result_set": roster,
+            "picker_selection_context": "disambiguation",
+            "picker_domain": "order",
+            "outstanding_filters": {
+                "product_code": PRODUCT_CODE_R21,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [],
+                "warehouse_codes": [],
+                "location_token": None,
+            },
+            "order_status": "outstanding",
+            "date_filter_start": "2026-01-01",
+            "date_filter_end": "2026-12-31",
+            "pending": None,
+        },
+    )
+    return c1.id, c2.id, c3.id
+
+
+def _all_pick_parser_output() -> dict[str, Any]:
+    """The parser's OWN raw read of "all" over the picker, verbatim from the owner's
+    trace: `entity_op: "clear"`, `broaden_axis: "all"`, `scope_intent: "broaden"`,
+    no `reference_positions`, no `order_status`, no dates. The STRUCTURAL "ALL on a
+    numbered menu" arm is what turns this into a pick-all - never a parser field
+    this file invents."""
+    return _parser_output(
+        message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+        reference_positions=[], reference_target=None, entity_op="clear",
+        broaden_axis="all", scope_intent="broaden", order_status=None,
+    )
+
+
+class TestAllOnTheCustomerPickerKeepsTheQuestion:
+    def test_all_on_the_customer_picker_arms_the_scope_question_for_every_family(
+        self, session_factory, monkeypatch
+    ) -> None:
+        c1_id, c2_id, c3_id = _seed_open_outstanding_three_family_picker(session_factory)
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_all_pick_parser_output(),
+            text_body="all",
+            msg_id="ZZT-outstanding-r21-all-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured == [], (
+            f"the pick-all must arm the scope question, never fetch the plain order "
+            f"list: {captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        expected_header = (
+            f"Product: {PRODUCT_CODE_R21}\n"
+            "Customer: CHIN CHUN HARDWARE SDN BHD, CHIN CHUN HOMEMART SDN BHD, "
+            "CHIN CHUN TRADING SDN BHD\n"
+            "Location: all\n"
+            "Order date: 01/01/2026 to 31/12/2026\n"
+            "Outstanding for which document?\n"
+        )
+        assert reply.startswith(expected_header), reply
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
+            stored.get("pending")
+        )
+        filters_out = stored.get("outstanding_filters") or {}
+        assert filters_out.get("customer_ids") == [c1_id, c2_id, c3_id], (
+            f"every picked family's id must be in the stored subject: {filters_out}"
+        )
+        assert filters_out.get("date_filter_start") == "2026-01-01", filters_out
+        assert filters_out.get("date_filter_end") == "2026-12-31", filters_out
+
+    def test_all_pick_then_scope_answer_runs_the_report_for_every_family(
+        self, session_factory, monkeypatch
+    ) -> None:
+        c1_id, c2_id, c3_id = _seed_open_outstanding_three_family_picker(session_factory)
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_all_pick_parser_output(),
+            text_body="all",
+            msg_id="ZZT-outstanding-r21-all-2a",
+            attributes=["sales_orders.outstanding"],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[3],
+            ),
+            text_body="3",
+            msg_id="ZZT-outstanding-r21-all-2b",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the scope answer must run the report in the same turn"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", name
+        assert args.get("customer_ids") == [c1_id, c2_id, c3_id], (
+            f"the report must run for EVERY picked family, not just one: {args}"
+        )
+        assert args.get("order_date_from") == "2026-01-01", args
+        assert args.get("order_date_to") == "2026-12-31", args
+        assert args.get("scope") == "both", args
+        _result_unused = result
+
+    def test_all_on_the_customer_picker_under_a_plain_ask_still_lists_every_family(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Guard: R21 is scoped to an OUTSTANDING ask. A PLAIN order ask against the
+        same three-family picker keeps today's behaviour - `all` still lists orders
+        for every family via `crm_order_management_orders_list`. No existing test
+        pins this exact shape (a `disambiguation` customer picker's own "ALL on a
+        numbered menu" pick, as opposed to a product did-you-mean's `suggest_offer`
+        roster, which `test_r3_pending_end_to_end.py`'s own chain covers) - checked
+        by grep before writing this, per the brief."""
+        db = session_factory()
+        c1 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD")
+        c2 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HOMEMART SDN BHD")
+        c3 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN TRADING SDN BHD")
+        db.commit()
+        roster = [
+            {
+                "idx": 1, "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)", "uuid": c1.id,
+                "product": None, "entity_type": "customer",
+            },
+            {
+                "idx": 2, "label": "CHIN CHUN HOMEMART SDN BHD (SRT)", "uuid": c2.id,
+                "product": None, "entity_type": "customer",
+            },
+            {
+                "idx": 3, "label": "CHIN CHUN TRADING SDN BHD (SRT)", "uuid": c3.id,
+                "product": None, "entity_type": "customer",
+            },
+        ]
+        _seed_contact(
+            session_factory,
+            variables={
+                "message_type": "business_query",
+                "domain_hint": "order",
+                "entities": [
+                    {
+                        "raw": PRODUCT_CODE_R21, "hint": "product", "uuid": PRODUCT_UUID_R21,
+                        "canonical_code": PRODUCT_CODE_R21, "current_message": False,
+                    },
+                ],
+                "selection_context": "disambiguation",
+                "last_result_set": roster,
+                "picker_last_result_set": roster,
+                "picker_selection_context": "disambiguation",
+                "picker_domain": "order",
+                "pending": None,
+            },
+        )
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_all_pick_parser_output(),
+            text_body="all",
+            msg_id="ZZT-outstanding-r21-guard-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured, "a plain ask's pick-all must still be answered"
+        name, args = captured[0]
+        assert name == "crm_order_management_orders_list", (
+            f"a plain (non-outstanding) ask must keep today's behaviour unchanged: {name}"
+        )
+        assert set(args.get("customer_ids") or []) == {c1.id, c2.id, c3.id}, args
