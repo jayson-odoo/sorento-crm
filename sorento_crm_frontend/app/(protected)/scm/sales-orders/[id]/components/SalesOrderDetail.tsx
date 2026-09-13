@@ -80,6 +80,10 @@ import {
   salesOrderStatusLabel,
   salesOrderStatusVariant,
 } from '../../../lib/salesOrderStatus';
+import {
+  productFallbackFor,
+  type LineDraft,
+} from './salesOrderLineDraft';
 import type {
   SalesOrder,
   SalesOrderLine,
@@ -259,25 +263,6 @@ function lineSignature(
     .join(',');
 }
 
-export type LineDraft = {
-  sku: string;
-  qty_ordered: string;
-  warehouse_code: string;
-  required_date: string;
-  uom: string;
-  unit_price: string;
-  discount: string;
-  /**
-   * The product option the person actually PICKED, kept whole.
-   *
-   * The select resolves its own trigger label out of the page it last fetched, and that page
-   * is refetched per open and thrown away on close - so a picked product read fine for a
-   * moment and then fell back to "Select product" the instant the popover shut. Holding the
-   * option here means the cell can say what was chosen without asking the server again.
-   */
-  picked_product?: SearchableSelectOption | null;
-};
-
 /** The in-progress draft for a line, or one seeded from the row as loaded when nothing has
  *  touched it yet - so any single field's onChange can spread this and set only the field it
  *  owns without silently dropping the other six. */
@@ -341,35 +326,6 @@ function lineAmount(
 /** The money cell's text: the figure, or a plain "-" for a line nobody priced. */
 function fmtMoneyCell(value: string | null | undefined): string {
   return value ? formatMyrExact(value) : '-';
-}
-
-/**
- * The option the Product select shows for a line whose product is not on the page the
- * server just returned - which is most of them, against a 22,000-row catalogue.
- *
- * TWO SOURCES, in this order. What the person PICKED in this session, kept on the draft -
- * because the select's own label comes from `asyncOptions`, a per-open fetch that is
- * discarded when the popover closes, so a picked product reverted to "Select product" the
- * moment it shut (measured in the browser twice, 13 September 2026). Then the line's OWN
- * product as it loaded, for the untouched case. Nothing when the draft names a product
- * neither source can label: a stale row label over somebody else's SKU would be worse than
- * the placeholder.
- *
- * Pure, and exported, so it can be read on its own: the defect it exists to stop is
- * invisible in jsdom, where the fetch resolves after the popover has already closed.
- */
-export function productFallbackFor(
-  row: Pick<SalesOrderLine, 'sku' | 'product_name'>,
-  draft: Pick<LineDraft, 'sku' | 'picked_product'> | undefined,
-): SearchableSelectOption | undefined {
-  const sku = draft?.sku ?? row.sku;
-  const picked = draft?.picked_product;
-  if (picked && picked.value === sku) return picked;
-  if (!row.sku || sku !== row.sku) return undefined;
-  return {
-    value: row.sku,
-    label: row.product_name ? `${row.sku} · ${row.product_name}` : row.sku,
-  };
 }
 
 /**
