@@ -3190,7 +3190,7 @@ def _redeal_document(
     document_links: Dict[str, List[dict]],
     exclude_line_ids: Sequence[str],
     actor: Optional[str],
-) -> List[str]:
+) -> Tuple[List[str], List[str]]:
     """One `reallocate` of document quantity, executed in rule 6's own order.
 
     Dealer hot-selling wins outright (AC-D1): retail needs the pool stock, and a waiting
@@ -3206,19 +3206,34 @@ def _redeal_document(
     the batch says the order failed and why, and the pool row it may have written rolls back
     with it - rather than reporting success over a quantity that never moved.
 
-    Returns what it did, in the SENTENCE THE LABEL USED (D5): `Reallocate <document>
-    <qty> to <target>`, with the target that actually received it. Where nothing moved
-    between compose and apply, the two read identically, and where they differ the row
-    records the truth rather than the plan.
+    Returns `(executed, released)` (blocker B1, review round): `executed` is every
+    `Reallocate ...` sentence, in `result_json["executed_reallocations"]`; `released` is
+    the no-pool give-back sentence below, in `result_json["released_documents"]` - a
+    single flat list used to conflate the two, so a cancelled line's honest "nothing moved,
+    it is free again" read as an executed move.
+
+    Where nothing moved between compose and apply, the two read identically, and where
+    they differ the row records the truth rather than the plan.
     """
     freed = _dec(component.get("qty_now"))
     document = component.get("document")
     said_code = component.get("item_code")
     if freed <= _ZERO:
-        return []
+        return [], []
     shares = document_links.get(str(row.id)) or []
     available = sum((_dec(share["qty"]) for share in shares), _ZERO)
-    if available < freed:
+    if row.kind == "cancelled":
+        # Blocker B1 (review round): `_shift_links_off_retired_lines` runs first and may
+        # already have repointed PART of this placement straight to a same-order survivor,
+        # live, on the `OrderInquiryLink` rows themselves - `document_links` for a
+        # cancelled row is re-read AFTER that shift (`_apply_one_order`), so `available`
+        # here is already the live truth. `qty_now` is the COMPOSE-time total, written
+        # before any survivor was found, so it may now overstate what is genuinely left -
+        # capped to `available` rather than raised over the part the shift already moved.
+        freed = min(freed, available)
+        if freed <= _ZERO:
+            return [], []
+    elif available < freed:
         raise AppException(
             status_code=409,
             message=(
@@ -3228,7 +3243,8 @@ def _redeal_document(
             code="planning_change_reallocation_no_document",
         )
 
-    done: List[str] = []
+    executed: List[str] = []
+    released: List[str] = []
     remaining = freed
     if not dealer_hot_selling:
         for waiting_row, unlinked in _waiting_rows(
@@ -3255,7 +3271,7 @@ def _redeal_document(
                 f"{waiting_row.note}\n{found}" if waiting_row.note else found
             )
             target = _row_target_words(db, waiting_row, took)
-            done.append(f"Reallocate {words} {_qty_of(took, said_code)} to {target}")
+            executed.append(f"Reallocate {words} {_qty_of(took, said_code)} to {target}")
             remaining -= took
     if remaining > _ZERO:
         taken = _take_document_shares(shares, remaining)
@@ -3270,17 +3286,17 @@ def _redeal_document(
             # quantity silently left claiming a line that no longer exists. A pool row
             # still gets created normally below when one IS configured (`else`).
             took = sum((_dec(share["qty"]) for share in taken), _ZERO)
-            done.append(
+            released.append(
                 f"Release {_share_words(taken, document)} {qty_text(took)}, "
                 "unallocated for purchasing"
             )
         else:
-            done.append(_pool_row_for(
+            executed.append(_pool_row_for(
                 db, service, row, taken=taken, document=document,
                 pool_words="dealer pool" if dealer_hot_selling else "pool",
                 so_number=so_number, item_code=item_code, pool_cache=pool_cache, actor=actor,
             ))
-    return done
+    return executed, released
 
 
 def _release_spo_share(
@@ -3545,7 +3561,6 @@ def _execute_reallocations(
     pool_cache: Dict[str, Optional[str]],
     exclude_line_ids: Sequence[str],
     actor: Optional[str],
-    already_shifted_line_ids: Sequence[str] = (),
 ) -> Dict[str, Dict[str, List[str]]]:
     """Every `reallocate` and `release` of document quantity the confirmed suggestion
     named, carried out (Slice D).
@@ -3557,29 +3572,33 @@ def _execute_reallocations(
     rolls back with it. An apply that reports success over quantity that never moved is the
     one outcome this may not have.
 
+    Runs for EVERY cancelled row with a moving component, not only the ones no same-order
+    survivor touched at all (blocker B1, review round): `_shift_links_off_retired_lines`
+    runs first and repoints what it can straight to a survivor, live, per LINK - a row can
+    have one link taken and one left, and excluding the WHOLE row the moment ANY link was
+    taken stranded the other link, pinned to a row purchasing can no longer act on. The
+    correctness that used to come from that exclusion now comes from `_redeal_document`
+    itself: for a cancelled row it caps what it redeals to what `document_links` shows is
+    LIVE, read there after the shift, never the compose-time total.
+
     Returns, per planning row id, what it did IN WORDS (D5):
     `executed_reallocations` says where each moved quantity actually went, in the sentence
-    the label used, and `released_documents` names an SPO given back. The row's
-    `result_json` keeps both, so the batch page can say what happened even when a later
-    read of the live world would pick a different row.
+    the label used, and `released_documents` names an SPO given back, or a cancelled line's
+    document nobody needed and no pool exists to carry (R3). The row's `result_json` keeps
+    both, so the batch page can say what happened even when a later read of the live world
+    would pick a different row.
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-    already_shifted = {str(line_id) for line_id in already_shifted_line_ids}
     rows = [
         r for r in live_rows
         if _moving_components(r) and (
-            (r.decision in ("confirm", "amend") and r.kind != "cancelled")
-            # `kind == "cancelled"` (review round, second re-walk, rule 6): a removed
-            # line's placed PO/SPO with NO same-order survivor rides this SAME general
-            # cascade a confirmed row's freed document already gets (cross-order waiting
-            # row, else pool) - `set_row_decision` lets a cancelled row be marked "confirm"
-            # too (the board pre-marks every changed line it shows), so `kind` is checked
-            # explicitly rather than trusting `decision` alone. `already_shifted_line_ids`
-            # is `_shift_links_off_retired_lines`'s own report of which lines IT already
-            # settled (same-order survivor found, whole or partial) - excluded here so the
-            # same link is never processed by both.
-            or (r.kind == "cancelled" and str(r.project_line_id) not in already_shifted)
+            r.kind == "cancelled"
+            # `set_row_decision` lets a cancelled row be marked "confirm" too (the board
+            # pre-marks every changed line it shows), so `kind` is checked explicitly
+            # first, rather than trusting `decision` alone, and a cancelled row never
+            # needs the second clause.
+            or r.decision in ("confirm", "amend")
         )
     ]
     if not rows:
@@ -3622,13 +3641,15 @@ def _execute_reallocations(
                     product_id=product_id, exclude_line_ids=exclude_line_ids, actor=actor,
                 ))
             else:
-                done[str(row.id)]["executed_reallocations"].extend(_redeal_document(
+                executed, released = _redeal_document(
                     db, service, row, component, so_number=so_number,
                     product_id=product_id, item_code=item_code,
                     dealer_hot_selling=bool(product_id and product_id in dealer_where),
                     pool_cache=pool_cache, document_links=document_links,
                     exclude_line_ids=exclude_line_ids, actor=actor,
-                ))
+                )
+                done[str(row.id)]["executed_reallocations"].extend(executed)
+                done[str(row.id)]["released_documents"].extend(released)
     return {
         row_id: {key: words for key, words in said.items() if words}
         for row_id, said in done.items()
@@ -3966,9 +3987,12 @@ def _shift_links_off_retired_lines(
             # else (leave_for_rule_six): NO same-order survivor took anything AND rule 6 has
             # an executor for this line's own suggestion - the link is left exactly as it
             # stands, untouched, for `_execute_reallocations` to settle (a cross-order
-            # waiting row, else the pool - review round, second re-walk). `line_key`'s
-            # ABSENCE from this function's return is what tells `_apply_one_order` to route
-            # it there instead of treating it as already resolved.
+            # waiting row, else the pool - review round, second re-walk). It is left
+            # PER LINK, not per line (blocker B1): one link of a row can be repointed here
+            # while another is left for that cascade, so `_apply_one_order` re-reads
+            # `document_links` for the whole cancelled row live, AFTER this function
+            # returns, rather than reading this function's own wording keys to decide
+            # what still needs the cascade.
         if cancelled not in touched:
             touched.append(cancelled)
 
@@ -4414,6 +4438,19 @@ def _apply_one_order(
         shifted_by_line = _shift_links_off_retired_lines(
             db, order, cancelled_row_ids, actor, rule_six_line_ids=rule_six_line_ids,
         )
+        # Blocker B1 (review round): the shift above may have just repointed part of a
+        # cancelled row's placement straight onto a same-order survivor's OWN link, live -
+        # so `document_links`, snapshotted before either the confirm or the shift ran
+        # (`_document_links_by_row` above), is stale for exactly these rows the moment the
+        # shift touches them. Re-read it live, now, for every cancelled row: what remains
+        # is what `_execute_reallocations` genuinely still has to redeal, never the
+        # compose-time total a partial same-order take has already partly answered.
+        cancelled_live_rows = [
+            r for r in live if r.kind == "cancelled" and r.project_line_id
+        ]
+        for r in cancelled_live_rows:
+            document_links.pop(str(r.id), None)
+        document_links.update(_document_links_by_row(db, cancelled_live_rows))
 
     # NOW the cascade, once every document this order already owns has found its own row.
     # Whatever headroom is still open after the shift is what genuinely needs a stranger's
@@ -4432,7 +4469,6 @@ def _apply_one_order(
         reallocated = _execute_reallocations(
             db, order, so_number, live, document_links, pool_cache,
             batch_line_ids, actor,
-            already_shifted_line_ids=shifted_by_line.keys(),
         )
 
     # What the suggestion warned about, recorded on what it decided (rule 8).
@@ -4498,15 +4534,25 @@ def _apply_one_order(
                 "back_on_board": True,
             }
             # WHERE A PLACED PO/SPO ACTUALLY WENT (D5): `_shift_links_off_retired_lines`
-            # settles it when a same-order survivor exists (keyed by `project_line_id`
-            # there, since a cancelled row has no board_link of its own composition to key
-            # against); `_execute_reallocations` settles whatever it left untouched (rule 6,
-            # review round second re-walk - no same-order taker, so the cross-order/pool
-            # cascade runs instead, keyed by `r.id` there like a confirmed row). A row is
-            # only ever handled by one or the other, never both, so merging both is safe.
-            if r.project_line_id:
-                r.result_json.update(shifted_by_line.get(str(r.project_line_id)) or {})
-            r.result_json.update(reallocated.get(str(r.id)) or {})
+            # settles what a same-order survivor took (keyed by `project_line_id` there,
+            # since a cancelled row has no board_link of its own composition to key
+            # against); `_execute_reallocations` settles the rest (rule 6's cross-order/
+            # pool cascade, keyed by `r.id` there like a confirmed row). EXTENDED, not
+            # `dict.update` (blocker B1, review round): a same row now routinely has BOTH
+            # a same-order survivor take AND a rule-six cascade for what that survivor
+            # could not hold (a placed Buy split across several purchase-order lines,
+            # say) - both write to the SAME key (`executed_reallocations` or
+            # `released_documents`), and `dict.update` let one silently replace the other
+            # instead of both being kept.
+            for key in ("executed_reallocations", "released_documents"):
+                words: List[str] = []
+                if r.project_line_id:
+                    words.extend(
+                        (shifted_by_line.get(str(r.project_line_id)) or {}).get(key) or []
+                    )
+                words.extend((reallocated.get(str(r.id)) or {}).get(key) or [])
+                if words:
+                    r.result_json[key] = words
         else:
             r.result_json = {"board_link": r.board_link}
 
