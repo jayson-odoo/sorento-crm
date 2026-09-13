@@ -508,3 +508,96 @@ class TestAskForTurnFreezesTheProductCodeOnlyOnTheTeamClarify:
             f"the one-team escalate offer must never carry a product_code, even when one "
             f"was resolved - only the team_clarify branch (D2) is D10's: {question!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# S1 (reviewer round 10): the WIRE between the lane's clarify fragment and the freeze
+# above is unpinned. `TestAskForTurnFreezesTheProductCodeOnlyOnTheTeamClarify` drives
+# `_ask_for_turn` directly with a hand-supplied `team_pick_product_code=` kwarg - it
+# cannot see whether `compile_current_state` ever actually READS
+# `outcome["clarify-company-reply"]["clarify_product_code"]` and carries it that far
+# (`compile_state.py` ~1070's `team_pick_product_code=turn_state.get(...)` and ~2314's
+# `turn_state["team_pick_product_code"] = jsc.get(clar, "clarify_product_code")`). Both of
+# those lines can be mutated to `None` with the whole suite - including that class - still
+# green, because nothing drives `compile_current_state` itself with a `clar` carrying the
+# field. This does: the lane's own clarify dict, exactly as `escalation._human_intervention`
+# builds it, through the PUBLIC entry point.
+# --------------------------------------------------------------------------- #
+
+
+class TestCompileCurrentStateWiresTheLanesClarifyProductCodeThrough:
+    def _clarify_item(self, *, product_code: str | None = "SRTWB8004") -> dict:
+        """`escalation._human_intervention`'s own clarify fragment (D10), verbatim -
+        this is `item["outcome"]["clarify-company-reply"]` on a turn the ESCALATION lane's
+        team-clarify arm ran (the field the tail reads the freeze off, whatever the miss
+        lane's OWN `clarify-company-reply` carrier name suggests - one carrier, two
+        producers, `CARRIER_FIELDS["clarify-company-reply"] = "clarify"`)."""
+        return {
+            "outcome": {
+                "clarify-company-reply": {
+                    "clarify_team": True,
+                    "clarify_text": (
+                        "Which team should I pass this to - Marketing Product, Marketing "
+                        "Form or Marketing Promotion?"
+                    ),
+                    "clarify_team_options": [
+                        {"team": "marketing_product", "label": "Marketing Product"},
+                        {"team": "marketing_form", "label": "Marketing Form"},
+                        {"team": "marketing_promotion", "label": "Marketing Promotion"},
+                    ],
+                    "clarify_product_code": product_code,
+                }
+            }
+        }
+
+    def test_the_lanes_clarify_freezes_product_code_onto_the_persisted_open_question(self) -> None:
+        item = self._clarify_item(product_code="SRTWB8004")
+        ctx = _ctx(domain_hint="master_products", routing={"suggested_team": "purchasing"})
+
+        patch = _compile(item, ctx)
+
+        question = patch["variables"]["open_question"]
+        assert question is not None and question["kind"] == "team_pick", question
+        assert question["payload"]["product_code"] == "SRTWB8004", (
+            f"the WIRE from the lane's own clarify fragment into the persisted question "
+            f"must carry the resolved code end to end, not just `_ask_for_turn`'s own "
+            f"kwarg in isolation: {question!r}"
+        )
+        assert [o.get("team") for o in question["options"]] == [
+            "marketing_product",
+            "marketing_form",
+            "marketing_promotion",
+        ], (
+            f"the teams the lane's own ask offered must be the ones frozen onto the "
+            f"persisted question: {question!r}"
+        )
+
+    def test_the_ordinary_carry_turn_keeps_the_frozen_code_options_and_age(self) -> None:
+        """Turn 2: the customer's reply resumed nothing new this turn (no fresh clarify,
+        no offer) - `compile_current_state`'s own carry rung (`variables["open_question"]
+        = previous`) must hand the SAME question back, `product_code`, `options` and
+        `asked_at_turn` all included, not just whatever `_ask_for_turn` alone would have
+        built from an empty `turn_state`."""
+        frozen_question = {
+            "kind": "team_pick",
+            "options": [
+                {"idx": 1, "team": "marketing_product", "label": "Marketing Product"},
+                {"idx": 2, "team": "marketing_form", "label": "Marketing Form"},
+                {"idx": 3, "team": "marketing_promotion", "label": "Marketing Promotion"},
+            ],
+            "expects": "pick",
+            "asked_at_turn": 3,
+            "asked_at": None,
+            "payload": {"team": "purchasing", "domain": "master_products", "product_code": "SRTWB8004"},
+        }
+        item: dict = {"outcome": {}}
+        ctx = _ctx(domain_hint=None, routing={"suggested_team": "purchasing"})
+        ctx["session"]["session_vars"]["variables"]["open_question"] = frozen_question
+
+        patch = _compile(item, ctx)
+
+        question = patch["variables"]["open_question"]
+        assert question == frozen_question, (
+            f"nothing asked this turn - the previously frozen question, product_code and "
+            f"age included, must carry forward unchanged: {question!r}"
+        )

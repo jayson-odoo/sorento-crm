@@ -1295,10 +1295,9 @@ def test_d10_narrow_a_one_team_yes_no_offer_never_carries_even_when_resumed() ->
 
     result = run(ctx, item, services=services)
 
-    services.resolve_and_gate.assert_not_called(), (
-        "a one-team yes/no offer's payload carries no product_code - the D10 carry must "
-        "never fire off it, whatever the conversation happened to be carrying before"
-    )
+    # a one-team yes/no offer's payload carries no product_code - the D10 carry must
+    # never fire off it, whatever the conversation happened to be carrying before
+    services.resolve_and_gate.assert_not_called()
     assert result["arm"] == "human-intervention", result
     body = _next_assignee_body(services)
     assert body["team_code"] == "marketing_product", body
@@ -1307,6 +1306,48 @@ def test_d10_narrow_a_one_team_yes_no_offer_never_carries_even_when_resumed() ->
     )
     second_send = result["actions"][-1]
     assert "handling" not in second_send["text"], second_send["text"]
+
+
+def test_d10_n1_a_one_team_yes_no_offer_with_a_frozen_product_code_still_never_carries() -> None:
+    """N1 pin (reviewer round 10): the sibling test above sets BOTH `expects: "yes_no"`
+    AND `payload.product_code: None`, so a mutation that deletes `escalation.py` ~896's own
+    `expects != "yes_no"` clause from `_resumed_team_pick` is not independently caught - the
+    payload's own missing code already blocks the carry on its own (clause 4), whatever
+    clause 3 does. This fixture holds clause 4 TRUE (`product_code: "SRTWB8004"`, as if a
+    one-team offer somehow carried one) so ONLY clause 3 - the question must be the D2
+    multi-team clarify, never the D5 one-team yes/no offer - stands between it and a carry.
+    RED under that one mutation, green on today's code."""
+    ctx = _resumed_team_pick_ctx(
+        expects="yes_no",
+        payload_product_code="SRTWB8004",
+        focus_product_code="MWC7625-SH-S10",
+        focus_domain="inventory",
+        team_options=[{"idx": 1, "team": "marketing_product", "label": "Marketing Product"}],
+    )
+    item = _item(team="warehouse")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name(
+                    "MWC7625-SH-S10", brand_code="mocha", brand_name="Mocha",
+                    company_id="co-mocha", company_name="Mocha",
+                )
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    # a `yes_no` offer must never carry, even with a truthy payload.product_code on it
+    services.resolve_and_gate.assert_not_called()
+    assert result["arm"] == "human-intervention", result
+    body = _next_assignee_body(services)
+    assert body["team_code"] == "marketing_product", body
+    assert body.get("brand_code") is None, (
+        f"the `expects != \"yes_no\"` guard must hold even with a truthy product_code on "
+        f"the payload: {body!r}"
+    )
 
 
 def test_d10_narrow_a_multi_team_pick_whose_payload_named_no_product_never_carries() -> None:
@@ -1454,6 +1495,38 @@ def test_d10_the_lane_freezes_the_resolved_products_code_on_the_team_clarify_ask
     assert result["clarify"] is not None
     assert result["clarify"].get("clarify_product_code") == "SRTWB8004", (
         f"the team_clarify ask must freeze the code this escalation resolved: {result['clarify']!r}"
+    )
+
+
+def test_d10_n2_the_frozen_code_is_the_resolved_canonical_never_the_typed_raw() -> None:
+    """N2 pin (reviewer round 10): "canonical, never raw" - `clarify_product_code` must be
+    `product["code"]`, the RESOLVED row's `canonical_code` (`escalation.py` ~696), not the
+    typo the customer actually typed. The customer types "srtwb-8004"; the resolver's row
+    corrects it to `SRTWB8004`. A mutation that freezes the typed token instead would leave
+    a resumed pick asking the seam to resolve a code that does not exist."""
+    ctx = _ctx(
+        routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("srtwb-8004")],
+    )
+    item = _item(team="purchasing")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="SORENTO")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    assert result["arm"] == "clarify", result
+    assert result["clarify"] is not None
+    assert result["clarify"].get("clarify_product_code") == "SRTWB8004", (
+        f"the frozen code must be the resolved row's own canonical_code, not the raw "
+        f"token the customer typed: {result['clarify']!r}"
     )
 
 
