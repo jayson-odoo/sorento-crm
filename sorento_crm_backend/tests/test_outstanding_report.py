@@ -9,11 +9,16 @@ route over HTTP and must fail with 404 (route not found) until the coder wires i
 an import error, not a fixture bug. Postgres only (`tests/_pg_fixture.py`), every row seeded
 here; CI's database has none.
 
-AC-1115 (captain ruling, 12 Sep 2026): the `do` block carries the same identity as the `so`
-block - `do_qty = delivered_qty + pending_qty` over every DO (pending and delivered) matching
-the product/filters, `pending_qty` = SUM over `_outstanding_clause`, `delivered_qty` = SUM over
-`_delivered_clause`, `do_count` counts both, and `do_rows[]` lists BOTH pending and delivered
-DOs, each row carrying its own `do_qty` / `delivered_qty` / `pending_qty`.
+AC-1115, REWRITTEN (owner ruling, 13 Sep 2026, R1): "most of the DO are delivered right so
+what's outstanding? I thought outstanding means still got some pending quantity." The `do`
+block covers ONLY DOs matching `_outstanding_clause` (`order_service.py:67-93`) - a DELIVERED
+DO contributes to nothing on this route at all, not even a total. `pending_qty` = SUM
+`order_lines.quantity` for the product over pending DOs, `do_count` counts pending DOs only,
+`do_date_min/max` is the order_date range over pending DOs only, and `do_rows[]` lists pending
+DOs only. `do_qty` and `delivered_qty` are GONE from the block, from `do_by_location[]` /
+`do_by_customer[]`, and from `do_rows[]` - there is nothing left to disambiguate a pending
+figure from, so no field carries the word "delivered" or the bare "do_qty" anywhere in this
+response.
 """
 from __future__ import annotations
 
@@ -256,11 +261,16 @@ def test_order_date_window_filters_so_and_do(client, db):
     assert sum(row["ordered_qty"] for row in body["so_by_location"]) == 6
     assert [row["order_date"] for row in body["so_rows"]] == ["2026-06-01"]
 
-    assert body["do"]["do_qty"] == 25
+    # R1: the DO block covers pending DOs only - both seeded DOs are pending
+    # (`actual_delivery_date=None`), so the pending figure is unchanged in value,
+    # only the field name changes (`do_qty` is gone from the response entirely).
+    assert body["do"]["pending_qty"] == 25
     assert body["do"]["do_count"] == 1
-    assert [row["do_qty"] for row in body["do_rows"]] == [25]
-    assert sum(row["do_qty"] for row in body["do_by_location"]) == 25
-    assert sum(row["do_qty"] for row in body["do_by_customer"]) == 25
+    assert [row["pending_qty"] for row in body["do_rows"]] == [25]
+    assert sum(row["pending_qty"] for row in body["do_by_location"]) == 25
+    assert sum(row["pending_qty"] for row in body["do_by_customer"]) == 25
+    assert "do_qty" not in body["do"]
+    assert "delivered_qty" not in body["do"]
 
 
 # --------------------------------------------------------------------- AC-1112
@@ -295,7 +305,8 @@ def test_warehouse_codes_filter_and_null_bucket(client, db):
     fbody = filtered.json()
     assert fbody["so"]["ordered_qty"] == 10  # the NULL-warehouse line is excluded
     assert {row["code"] for row in fbody["so_by_location"]} == {"ZZT-BRW-IB"}
-    assert fbody["do"]["do_qty"] == 7
+    assert fbody["do"]["pending_qty"] == 7  # R1: the seeded DO is pending, do_qty is gone
+    assert "do_qty" not in fbody["do"]
     assert {row["code"] for row in fbody["do_by_location"]} == {"ZZT-BRW-IB"}
 
 
@@ -376,11 +387,15 @@ def test_so_rows_roll_up_lines_per_so(client, db):
 # --------------------------------------------------------------------- AC-1115
 
 
-def test_do_block_pending_and_delivered(client, db):
-    """One delivered DO (qty 5) and one pending DO (qty 7) for the same product:
-    `do_qty = delivered_qty + pending_qty` (12 = 5 + 7), `do_count` counts both, and
-    `do_rows` lists BOTH DOs, each carrying its own `do_qty` / `delivered_qty` /
-    `pending_qty` (captain ruling 12 Sep 2026 - see module docstring)."""
+def test_do_block_covers_pending_dos_only(client, db):
+    """R1, REWRITTEN (owner ruling, 13 Sep 2026): "most of the DO are delivered right
+    so what's outstanding? I thought outstanding means still got some pending
+    quantity." The `do` block, its breakdowns and `do_rows` cover ONLY DOs matching
+    `_outstanding_clause` - a delivered DO contributes to NOTHING here, not even a
+    total. One delivered DO (qty 5) and one pending DO (qty 7) for the same product:
+    pending 7, count 1, `do_rows` lists the pending DO only. `do_qty` and
+    `delivered_qty` are gone from the block and from every row - there is no
+    quantity left to disambiguate a pending figure from."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT DO Customer")
@@ -400,16 +415,19 @@ def test_do_block_pending_and_delivered(client, db):
     resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "do"})
     assert resp.status_code == 200, resp.text
     do = resp.json()["do"]
-    assert (do["do_qty"], do["delivered_qty"], do["pending_qty"]) == (12, 5, 7)
-    assert do["do_qty"] == do["delivered_qty"] + do["pending_qty"]
-    assert do["do_count"] == 2
+    assert do["pending_qty"] == 7
+    assert do["do_count"] == 1
+    assert "do_qty" not in do
+    assert "delivered_qty" not in do
 
     rows = {r["do_number"]: r for r in resp.json()["do_rows"]}
-    assert set(rows) == {"ZZT-DO-DELIVERED", "ZZT-DO-PENDING"}
-    delivered_row = rows["ZZT-DO-DELIVERED"]
-    assert (delivered_row["do_qty"], delivered_row["delivered_qty"], delivered_row["pending_qty"]) == (5, 5, 0)
+    assert set(rows) == {"ZZT-DO-PENDING"}, (
+        f"a delivered DO must not appear in do_rows at all: {rows}"
+    )
     pending_row = rows["ZZT-DO-PENDING"]
-    assert (pending_row["do_qty"], pending_row["delivered_qty"], pending_row["pending_qty"]) == (7, 0, 7)
+    assert pending_row["pending_qty"] == 7
+    assert "do_qty" not in pending_row
+    assert "delivered_qty" not in pending_row
 
 
 # --------------------------------------------------------------------- AC-1116
@@ -417,7 +435,8 @@ def test_do_block_pending_and_delivered(client, db):
 
 def test_breakdowns_sum_to_totals(client, db):
     """so_by_location/so_by_customer and do_by_location/do_by_customer each sum to
-    their block's totals."""
+    their block's totals. R1: the DO side sums `pending_qty` only - `do_qty` no
+    longer exists anywhere in the response."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh1 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH1"))
     wh2 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH2"))
@@ -439,10 +458,11 @@ def test_breakdowns_sum_to_totals(client, db):
     assert sum(r["ordered_qty"] for r in body["so_by_customer"]) == body["so"]["ordered_qty"]
     assert sum(r["outstanding_qty"] for r in body["so_by_customer"]) == body["so"]["outstanding_qty"]
 
-    assert sum(r["do_qty"] for r in body["do_by_location"]) == body["do"]["do_qty"]
     assert sum(r["pending_qty"] for r in body["do_by_location"]) == body["do"]["pending_qty"]
-    assert sum(r["do_qty"] for r in body["do_by_customer"]) == body["do"]["do_qty"]
     assert sum(r["pending_qty"] for r in body["do_by_customer"]) == body["do"]["pending_qty"]
+    assert "do_qty" not in body["do"]
+    assert all("do_qty" not in r for r in body["do_by_location"])
+    assert all("do_qty" not in r for r in body["do_by_customer"])
 
 
 # --------------------------------------------------------------------- AC-1117
@@ -451,7 +471,8 @@ def test_breakdowns_sum_to_totals(client, db):
 def test_scope_omits_block_and_response_model_keeps_every_field(client, db):
     """A scope not asked for is ABSENT from the body (not an empty dict); `scope=both`
     (default) keeps every field the plan's contract declares - a `response_model`
-    silently drops any undeclared one."""
+    silently drops any undeclared one. R1: `do.do_qty` / `do.delivered_qty` are no
+    longer part of that contract at all - their ABSENCE is the field list now."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Field Customer")
@@ -480,8 +501,14 @@ def test_scope_omits_block_and_response_model_keeps_every_field(client, db):
         assert key in body, f"missing field: {key}"
     for key in ("ordered_qty", "transferred_qty", "outstanding_qty", "so_count", "order_date_min", "order_date_max"):
         assert key in body["so"], f"missing so.{key}"
-    for key in ("do_qty", "delivered_qty", "pending_qty", "do_count", "do_date_min", "do_date_max"):
+    for key in ("pending_qty", "do_count", "do_date_min", "do_date_max"):
         assert key in body["do"], f"missing do.{key}"
+    for key in ("do_qty", "delivered_qty"):
+        assert key not in body["do"], f"R1 dropped do.{key} - it must not be on the wire"
+    for row in body["do_by_location"] + body["do_by_customer"] + body["do_rows"]:
+        assert "do_qty" not in row and "delivered_qty" not in row, (
+            f"R1 dropped do_qty/delivered_qty from every DO row: {row}"
+        )
 
 
 # --------------------------------------------------------------------- AC-1118

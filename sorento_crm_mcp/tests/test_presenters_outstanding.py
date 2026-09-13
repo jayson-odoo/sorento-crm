@@ -63,7 +63,7 @@ def _miss_report() -> dict:
             "so_count": 0, "order_date_min": None, "order_date_max": None,
         },
         "do": {
-            "do_qty": 0, "delivered_qty": 0, "pending_qty": 0,
+            "pending_qty": 0,
             "do_count": 0, "do_date_min": None, "do_date_max": None,
         },
         "so_by_location": [], "so_by_customer": [],
@@ -97,6 +97,34 @@ def test_report_do_scope_only_omits_so_block_and_renumbers_option_1():
     assert rendered == _golden("outstanding-report-do.txt")
     assert "Sales order outstanding" not in rendered
     assert rendered.rstrip().endswith("1. Delivery order list")
+
+
+# --------------------------------------------------------------------------
+# R1 (owner ruling, 13 Sep 2026): "Delivery order pending" covers ONLY DOs that
+# still have pending quantity - "most of the DO are delivered right so what's
+# outstanding? I thought outstanding means still got some pending quantity."
+# The DO block drops `DO qty:` / `Delivered:` entirely; every number left in the
+# block (the totals AND the two breakdowns) is a pending-only figure, so the
+# `(O/S: ...)` bracket - which existed to show pending ALONGSIDE a bigger total -
+# has nothing left to disambiguate and is dropped too: `name: pending`, no bracket.
+# --------------------------------------------------------------------------
+
+
+def test_do_block_never_prints_do_qty_or_delivered_lines():
+    rendered = _outstanding_report(_MOCK)
+    assert "DO qty:" not in rendered, rendered
+    assert "Delivered:" not in rendered, rendered
+    assert "Pending: 640" in rendered, rendered
+    assert "Delivery orders: 3" in rendered, rendered
+
+
+def test_do_breakdown_lines_have_no_bracket_every_number_is_pending():
+    rendered = _outstanding_report(_MOCK)
+    assert "BRW-IB: 640\n" in rendered, rendered
+    assert "Dealer A Sdn Bhd: 640\n" in rendered or rendered.endswith("Dealer A Sdn Bhd: 640"), rendered
+    assert "(O/S:" not in rendered.split("*Delivery order pending*")[1].split(
+        "Reply with a number"
+    )[0], rendered
 
 
 # --------------------------------------------------------------------------
@@ -272,6 +300,15 @@ def test_detail_so_list_byte_equal_to_golden():
 
 def test_detail_do_list_byte_equal_to_golden():
     assert _outstanding_detail(_MOCK, "do") == _golden("outstanding-detail-do.txt")
+
+
+def test_detail_do_list_has_no_do_qty_or_delivered_fields():
+    """R1: the DO detail row is `DO Number`, `Customer`, `Location`, `Pending`,
+    `DO Date` - no `DO Qty` / `Delivered` field, matching the block above it."""
+    rendered = _outstanding_detail(_MOCK, "do")
+    assert "*DO Qty:*" not in rendered, rendered
+    assert "*Delivered:*" not in rendered, rendered
+    assert "*Pending:* 640" in rendered, rendered
 
 
 def test_detail_so_list_every_row_renders_numbered():

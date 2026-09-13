@@ -18,15 +18,13 @@ Dealer B Trading: 811 (O/S: 811)
 Dealer C Hardware: 700 (O/S: 700)
 
 *Delivery order pending*
-DO qty: 640
-Delivered: 0
 Pending: 640
 Delivery orders: 3
 DO date range: 03/02/2026 to 30/08/2026
 *_By location_*
-BRW-IB: 640 (O/S: 640)
+BRW-IB: 640
 *_By customer_*
-Dealer A Sdn Bhd: 640 (O/S: 640)
+Dealer A Sdn Bhd: 640
 
 Reply with a number for detail:
 1. Sales order list

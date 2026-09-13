@@ -1,6 +1,6 @@
 # PLAN - Chatbot outstanding report: SO backlog and DO pending, one shape, four filters
 
-Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) sits on origin/main and ships WITHOUT #847. S1 to S4 built; Phase 3 PASSED (reviewer + security reviewer + console run 5, six of six journey turns green); PR open.
+Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) sits on origin/main and ships WITHOUT #847. S1 to S4 built; Phase 3 PASSED (reviewer + security reviewer + console run 5, six of six journey turns green); PR open. Two further owner rulings, 13 Sep 2026, on the same lane stack (R1, R2 below) - RED tests written in `test/chatbot-outstanding-red`, not yet implemented.
 UAC: `chatbot-outstanding-report-acceptance-criteria.md` (AC-11xx).
 Base: stacked on `feat/chatbot-focus` (lane 1 of `PLAN-chatbot-focus-multi-domain.md`,
 issue #847), because the scope question and the detail pick are open-question kinds that
@@ -34,14 +34,16 @@ Three defects and one missing definition, all measured (UAC "Measured"):
 | D3 | No date in the message = all dates, printed as `Order date: all`. A parsed window filters SO on `sales_orders.order_date` and DO on `orders.order_date`. No date question in this lane (trigger in UAC backlog). |
 | D4 | Cancelled quantity is never shown and never summed. |
 | D5 | Location grammar: a token equal to a warehouse code is that code only (`BRW` = `BRW`); a token that is a `-suffix` is every code with that suffix (`IB` = `BRW-IB`, `MWH-IB`). Resolved against the `warehouses` table. |
-| D6 | Grain: totals sum lines; the list is one row per SO with lines rolled up; the DO list one row per DO. By location and By customer are printed INSIDE each block: SO figures under the SO block, DO figures under the DO block (owner markup, 12 Sep). |
+| D6 | Grain: totals sum lines; the list is one row per SO with lines rolled up; the DO list one row per PENDING DO ONLY (REWRITTEN, R1, 13 Sep). By location and By customer are printed INSIDE each block: SO figures under the SO block, DO figures under the DO block (owner markup, 12 Sep). |
 | D7 | Customer filter by `customer_name` only. Debtor code is not an input and not printed. |
 | D8 | Reply is `Label: value` lines, no `.` separators, exact date ranges (`dd/mm/yyyy to dd/mm/yyyy`), no "oldest", no "+N more". Every row is sent; n8n chunks long messages already. |
-| D9 | RULED on the lavish page 12 Sep: SO breakdown lines read `name: ordered (O/S: outstanding)`, DO breakdown lines `name: DO qty (O/S: pending)`, the suffix shape the stock answer already uses (`presenters.py:1259-1287`). Sub-headings print `*_By location_*` / `*_By customer_*` (bold italic; WhatsApp has no underline). |
+| D9 | RULED on the lavish page 12 Sep: SO breakdown lines read `name: ordered (O/S: outstanding)`, the suffix shape the stock answer already uses (`presenters.py:1259-1287`). DO breakdown lines READ `name: pending`, no bracket (REWRITTEN, R1, 13 Sep: `do_qty` is gone, so there is nothing left for the bracket to disambiguate pending from). Sub-headings print `*_By location_*` / `*_By customer_*` (bold italic; WhatsApp has no underline). |
 | D10 | Detail is offered as a numbered reply (`1. Sales order list`, `2. Delivery order list`). CHANGED 13 Sep (captain, main mechanism): the answering turn re-runs the SAME tool call with the stored filter set plus `detail=so|do`; the session keeps the filters, never the rows (so_rows can be hundreds of SOs and session variables are not a cache). One GET, same numbers. |
 | D11 | The chatbot stops calling the `so_outstanding` bucket for outstanding asks. That bucket and `include_pipeline` stay for their other readers; repairing them is backlog (trigger in UAC). |
 | D13 | Access (owner ruling on the lavish page): every `order_enquiries` contact sees DO figures, as today. SO figures are gated per contact by ONE field-reveal key `sales_orders.outstanding` on Contacts > Access (same table and screen as `purchase_orders.placed`, which already gates a whole answer family: `answer.py:936, 1113-1122`). Default deny. Without the key the scope question is never asked (scope is DO) and an explicit SO ask prints `Sales order figures are not enabled for your account.` then the DO block. Checked before any fetch. No new table, no new agent. |
 | D12 | The existing order-list MCP tools additionally expose `customer_query` and `warehouse_codes`. NOT `order_date_*`: the DO list tool's dates are actual delivery dates by a standing ruling (`sorento_crm_mcp/tests/test_catalog_compile.py::test_orders_list_uses_actual_delivery_date_only`), and pending DOs by order date are served by the new report route instead. |
+| R1 | **REWRITTEN, owner testing 13 Sep 2026.** "Delivery order pending" means DOs that still have pending quantity, nothing else - "most of the DO are delivered right so what's outstanding? I thought outstanding means still got some pending quantity." The DO block, its two breakdowns and `do_rows[]` cover ONLY DOs matching `_outstanding_clause`; `do_qty` and `delivered_qty` are GONE everywhere on this route - there is nothing left to disambiguate a pending figure from, so the breakdown lines drop their `(O/S: ...)` bracket too (`name: pending`, no bracket). See "The reply" and "Backend contract" below for the new shape. |
+| R2 | **NEW, owner testing 13 Sep 2026.** The detail offer is STICKY: after "1" (SO list), typing "2" must give the DO list - today `pending.kind = "outstanding_detail"` is consumed by the first pick (`tail/compile_state.py::_offer_carry`'s own one-turn exclusion for it), so a second pick falls into the generic order lane. Rule: the offer stays open across picks and casual turns until a NEW ASK (a message carrying a product code or a domain word) or a topic change - the SAME carry condition `suggest_offer` / the tier offer already use, copied with its justification (`_offer_carry`), never `member_offer`'s TTL. |
 
 ## The reply (contract for Phase 1)
 
@@ -66,15 +68,13 @@ Dealer B Trading: 811 (O/S: 811)
 Dealer C Hardware: 700 (O/S: 700)
 
 *Delivery order pending*
-DO qty: 640
-Delivered: 0
 Pending: 640
 Delivery orders: 3
 DO date range: 03/02/2026 to 30/08/2026
 *_By location_*
-BRW-IB: 640 (O/S: 640)
+BRW-IB: 640
 *_By customer_*
-Dealer A Sdn Bhd: 640 (O/S: 640)
+Dealer A Sdn Bhd: 640
 
 Reply with a number for detail:
 1. Sales order list
@@ -103,6 +103,21 @@ Detail, SO list (D6, D10), one item per SO:
 *Order Date:* 20/12/2024
 ```
 
+Detail, DO list (D6, D10), one item per PENDING DO only (REWRITTEN, R1, 13 Sep - no `DO
+Qty` / `Delivered` field, matching the block above it):
+
+```
+1. *DO Number:* DO220456
+*Customer:* Dealer A Sdn Bhd
+*Location:* BRW-IB
+*Pending:* 640
+*DO Date:* 03/02/2026
+```
+
+D10 is ALSO sticky now (R2, 13 Sep): the offer this reply ends with stays open across
+picks and casual turns until a new ask or a topic change, not just the one turn that
+answers it.
+
 ## Backend contract
 
 `GET /api/v1/order-management/outstanding-report`
@@ -125,16 +140,16 @@ Response (`OutstandingReportResponse`, every field declared):
   "order_date_from": "2026-01-01" | null, "order_date_to": ... | null,
   "so": { "ordered_qty", "transferred_qty", "outstanding_qty", "so_count",
           "order_date_min", "order_date_max" },              # absent when scope=do
-  "do": { "do_qty", "delivered_qty", "pending_qty", "do_count",
-          "do_date_min", "do_date_max" },                    # absent when scope=so
+  "do": { "pending_qty", "do_count",
+          "do_date_min", "do_date_max" },                    # absent when scope=so; REWRITTEN R1 - no do_qty/delivered_qty
   "so_by_location": [ { "code": "BRW-IB" | null, "ordered_qty", "outstanding_qty" } ],
   "so_by_customer": [ { "customer_name", "ordered_qty", "outstanding_qty" } ],
-  "do_by_location": [ { "code" | null, "do_qty", "pending_qty" } ],
-  "do_by_customer": [ { "customer_name", "do_qty", "pending_qty" } ],
+  "do_by_location": [ { "code" | null, "pending_qty" } ],
+  "do_by_customer": [ { "customer_name", "pending_qty" } ],
   "so_rows": [ { "so_number", "customer_name", "location", "ordered_qty",
                  "transferred_qty", "outstanding_qty", "order_date" } ],
-  "do_rows": [ { "do_number", "customer_name", "location", "do_qty",
-                 "delivered_qty", "pending_qty", "do_date" } ]
+  "do_rows": [ { "do_number", "customer_name", "location",
+                 "pending_qty", "do_date" } ]                 # REWRITTEN R1 - no do_qty/delivered_qty
 }
 ```
 
@@ -144,10 +159,22 @@ qty_delivered > 0` joined to the product and the optional filters. `ordered_qty 
 qty_ordered`, `transferred_qty = SUM qty_delivered`, `outstanding_qty = SUM (qty_ordered -
 qty_delivered)`. The identity is then arithmetic, not luck.
 
-DO population: `OrderService._outstanding_clause` (`order_service.py:67-93`) for pending,
-`_delivered_clause` for delivered, qty from `order_lines.quantity` for the product, location
-from `order_lines.warehouse_id`. `do_qty = delivered_qty + pending_qty` over the DOs in the
-window, so the DO block carries the same identity as the SO block (captain ruling 12 Sep).
+DO population, REWRITTEN (R1, owner testing 13 Sep 2026, supersedes the captain's 12 Sep
+ruling below): the block, its breakdowns and `do_rows[]` cover ONLY DOs matching
+`OrderService._outstanding_clause` (`order_service.py:67-93`) - a DELIVERED DO (matching
+`_delivered_clause`) contributes to NOTHING on this route, not even a total. `pending_qty =
+SUM order_lines.quantity` for the product over pending DOs in the window, location from
+`order_lines.warehouse_id`. There is no `do_qty` / `delivered_qty` identity to hold any more
+because there is nothing left to add: `pending_qty` is the only quantity on the DO side.
+
+<details><summary>Superseded 12 Sep wording, kept for the commit history's sake</summary>
+
+`do_qty = delivered_qty + pending_qty` over every DO (pending and delivered) in the window,
+so the DO block carried the same identity as the SO block. The owner's own testing (R1)
+found this reads as "outstanding" including DOs that are actually delivered, which is not
+what "outstanding" means to him.
+
+</details>
 
 One service function `outstanding_report(db, filters) -> dict` in a new
 `app/services/outstanding_report_service.py` (about 150 lines: two base queries, four
@@ -213,7 +240,15 @@ The wiring, smallest shape that fits each of those:
    order list` (only the scopes present) and the same stored filters; no escalate offer on a
    hit. Next turn "1"/"2" re-runs `crm_outstanding_report` with `detail=so|do`; the MCP tool
    passes `detail` through and `present_response` renders `_outstanding_detail` when it is
-   set. One-turn life.
+   set. STICKY, REWRITTEN (R2, owner testing 13 Sep 2026, supersedes "One-turn life"
+   below): "after '1' (SO list), typing '2' must give the DO list" - `_offer_carry`
+   (`tail/compile_state.py`) must carry `outstanding_detail` the way it already carries
+   `suggest_offer` / the tier offer (a new label this turn replaces it; a domain change
+   clears it; otherwise it survives, including across the pick that just answered it),
+   not `member_offer`'s TTL - the one-turn exclusion that used to sit beside `team_clarify`
+   is removed for this kind. `outstanding_scope` KEEPS its one-turn life (it is a QUESTION,
+   answered on the very next turn or not at all, same as `team_clarify` - AC-1132's own
+   out-of-range re-ask already covers it by a different path, not this carry).
 6. **Miss**: both requested scopes empty → `not_found_error_message` returns the presenter's
    miss text as `found_summary` and the frozen `escalate_message`, so the existing
    escalate offer + team picker follow unchanged (AC-1107). A hit never offers.
@@ -248,7 +283,8 @@ The wiring, smallest shape that fits each of those:
 - AC-1112 `test_warehouse_codes_filter_and_null_bucket`: filtered out when set; `code=None` when not.
 - AC-1113 `test_customer_query_matches_name_not_debtor_code`.
 - AC-1114 `test_so_rows_roll_up_lines_per_so`: 205 + 205 → one row, 410, locations joined.
-- AC-1115 `test_do_block_pending_and_delivered`.
+- AC-1115, REWRITTEN R1 `test_do_block_covers_pending_dos_only`: one delivered (5), one
+  pending (7) DO seeded, pending 7, count 1, `do_rows` lists the pending DO only.
 - AC-1116 `test_breakdowns_sum_to_totals`.
 - AC-1117 `test_scope_omits_block_and_response_model_keeps_every_field`.
 - AC-1118 `test_route_permission_and_api_key_act_as`.
@@ -263,6 +299,8 @@ The wiring, smallest shape that fits each of those:
 - AC-1136 `test_customer_entity_becomes_customer_ids`.
 - AC-1138 `test_detail_pick_reruns_tool_with_detail` (D10 on main); AC-1139 `test_report_skips_search_scope_header`.
 - AC-1140 `test_no_so_key_skips_question_and_runs_do_only`; AC-1141 `test_no_so_key_explicit_so_ask_refuses_then_do_block`; AC-1142 `test_so_key_listed_on_reveal_screen`.
+- AC-1143 (NEW, R2) `test_detail_offer_survives_a_pick`, `test_detail_offer_survives_a_casual_turn`,
+  `test_detail_offer_drops_on_a_new_ask`, `test_detail_offer_survives_an_out_of_range_pick`.
 
 ## Design brief
 

@@ -1650,6 +1650,194 @@ class TestDetailPickRerunsToolWithDetail:
 
 
 # --------------------------------------------------------------------------- #
+# R2 (owner ruling, 13 Sep 2026) - the detail offer is STICKY
+# --------------------------------------------------------------------------- #
+
+
+class TestDetailOfferIsSticky:
+    """"After '1' (SO list), typing '2' must give the DO list" - the owner's own
+    report. Today `outstanding_detail` is a ONE-TURN pending: `tail/compile_state.py::
+    _offer_carry` explicitly excludes it (S4 points 4/5's own comment, "answered on
+    the very next turn or not at all"), so the first pick consumes it and a second
+    pick falls into the generic order lane. Rule (owner, 13 Sep 2026): the offer stays
+    open across picks and casual turns until a NEW ASK (a product code or a domain
+    word) or a topic change - `_offer_carry`'s OWN condition, the one `suggest_offer`
+    and the tier offer already carry under (a new label this turn replaces it; a
+    domain change clears it; otherwise it survives, including across the answer this
+    turn just produced), never `member_offer`'s TTL. Every assertion here is on the
+    RENDERED TEXT / the tool call args, the same as a real turn - not a hand-inspected
+    session key, because that is what a customer and the owner both actually see.
+    """
+
+    def test_detail_offer_survives_a_pick(self, session_factory, monkeypatch) -> None:
+        """Report -> "1" -> "2" gives the DO detail with the SAME carried filters,
+        with NO re-seed between the two picks - "2" only resolves at all if the
+        offer the report armed is still open after "1" answered it."""
+        _seed_open_outstanding_detail(session_factory)
+        result1, captured1 = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1", msg_id="ZZT-sticky-pick-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured1 and captured1[0][1].get("detail") == "so", captured1
+        reply1 = (result1.reply or {}).get("text") or ""
+        assert "*SO Number:*" in reply1, reply1
+
+        result2, captured2 = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[2],
+            ),
+            text_body="2", msg_id="ZZT-sticky-pick-2",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured2, (
+            "the offer must still be open after '1' answered it - '2' must re-run the "
+            "report, not fall into a different lane with no tool call at all"
+        )
+        name2, args2 = captured2[0]
+        assert name2 == "crm_outstanding_report", (name2, args2)
+        assert args2.get("detail") == "do", f"'2' must give the DO detail: {args2}"
+        assert args2.get("product_code") == PRODUCT_CODE, (
+            f"the SAME carried filters, not re-parsed from a bare '2': {args2}"
+        )
+        reply2 = (result2.reply or {}).get("text") or ""
+        assert "*DO Number:*" in reply2, reply2
+
+    def test_detail_offer_survives_a_casual_turn(self, session_factory, monkeypatch) -> None:
+        """"thanks" between the report and "2" must not close the offer - a casual
+        reply names no product and no domain, so it is neither a pick nor a new ask."""
+        _seed_open_outstanding_detail(session_factory)
+        _result1, captured1 = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], user_goal="saying thanks",
+            ),
+            text_body="thanks", msg_id="ZZT-sticky-casual-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert not captured1, "a bare 'thanks' must not itself trigger a report re-run"
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
+            f"the offer must survive a casual turn in between: {stored.get('pending')!r}"
+        )
+        assert stored.get("outstanding_filters", {}).get("product_code") == PRODUCT_CODE, (
+            f"the filters must survive too: {stored.get('outstanding_filters')!r}"
+        )
+
+        result2, captured2 = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[2],
+            ),
+            text_body="2", msg_id="ZZT-sticky-casual-2",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured2, "'2' after the casual turn must still resolve against the offer"
+        name2, args2 = captured2[0]
+        assert name2 == "crm_outstanding_report", (name2, args2)
+        assert args2.get("detail") == "do", f"'2' must give the DO detail: {args2}"
+        reply2 = (result2.reply or {}).get("text") or ""
+        assert "*DO Number:*" in reply2, reply2
+
+    def test_detail_offer_drops_on_a_new_ask(self, session_factory, monkeypatch) -> None:
+        """A product code after the report is a NEW ASK, not a pick against the old
+        offer: a fresh report for the NEW product runs, and the old offer is gone -
+        typing "2" afterwards must never resolve against the FIRST product's rows."""
+        _seed_open_outstanding_detail(session_factory)
+        other_uuid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        other_code = "SRTWC999"
+        other_hit = {**REPORT_HIT, "product_code": other_code}
+        _result1, captured1 = _run_turn(
+            session_factory, monkeypatch,
+            qf=_qf(order_status="outstanding_both", entities=[
+                {"raw": other_code, "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+            ]),
+            text_body=f"{other_code} outstanding both",
+            msg_id="ZZT-sticky-new-ask-1",
+            attributes=["sales_orders.outstanding"],
+            matches={other_code: {"uuid": other_uuid, "entity_type": "product", "canonical_code": other_code}},
+            mcp_response=other_hit,
+        )
+        assert captured1 and captured1[0][1].get("product_code") == other_code, (
+            f"a product code is a NEW ASK and must run its own report: {captured1}"
+        )
+
+        result2, captured2 = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[2],
+            ),
+            text_body="2", msg_id="ZZT-sticky-new-ask-2",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        if captured2:
+            assert captured2[0][1].get("product_code") != PRODUCT_CODE, (
+                f"the ORIGINAL offer must be gone - '2' must never resolve against the "
+                f"first product's stale filters: {captured2}"
+            )
+        reply2 = (result2.reply or {}).get("text") or ""
+        assert PRODUCT_CODE not in reply2, (
+            f"the first product's detail must never come back from a bare '2' once a "
+            f"new ask replaced the offer: {reply2!r}"
+        )
+
+    def test_detail_offer_survives_an_out_of_range_pick(self, session_factory, monkeypatch) -> None:
+        """Only options 1 and 2 are offered; "3" is out of range and must not close
+        the offer - a subsequent "1" must still resolve, the same re-ask rule
+        AC-1132 already gives the scope question."""
+        _seed_open_outstanding_detail(session_factory)
+        _result1, captured1 = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[3],
+            ),
+            text_body="3", msg_id="ZZT-sticky-oor-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert not captured1, "an out-of-range pick must not run any report"
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
+            f"an out-of-range pick must not close the offer: {stored.get('pending')!r}"
+        )
+
+        result2, captured2 = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1", msg_id="ZZT-sticky-oor-2",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured2, "'1' after the out-of-range pick must still resolve against the offer"
+        name2, args2 = captured2[0]
+        assert name2 == "crm_outstanding_report", (name2, args2)
+        assert args2.get("detail") == "so", f"'1' must give the SO detail: {args2}"
+        reply2 = (result2.reply or {}).get("text") or ""
+        assert "*SO Number:*" in reply2, reply2
+
+
+# --------------------------------------------------------------------------- #
 # S2 (security review, 13 Sep 2026) - the legacy so_outstanding bucket, gated
 # --------------------------------------------------------------------------- #
 

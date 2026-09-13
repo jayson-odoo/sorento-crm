@@ -62,14 +62,18 @@ resolution and the filter set in the console trace.
 
 ## Phase 1 - presenter over a mock report (no backend)
 
-- **AC-1101 [T]** Given the mock report JSON for SRTWT7445 / scope both / all customers /
-  location IB / dates 2026, when the presenter renders it, then the text is byte-equal to
-  `samples/outstanding-report-both.txt`: header lines `Product:`, `Customer:`, `Location:`,
-  `Order date:`; block `*Sales order outstanding*` with `Ordered:`, `Transferred to DO:`,
-  `Outstanding:`, `Sales orders:`, `Order date range:`; block `*Delivery order pending*` with
-  `DO qty:`, `Delivered:`, `Pending:`, `Delivery orders:`, `DO date range:`; a `*_By location_*`
-  and a `*_By customer_*` group (bold italic sub-heading) INSIDE each block (SO figures under
-  SO, DO figures under DO);
+- **AC-1101 [T]**, REWRITTEN (R1, owner testing 13 Sep 2026) Given the mock report JSON for
+  SRTWT7445 / scope both / all customers / location IB / dates 2026, when the presenter
+  renders it, then the text is byte-equal to `samples/outstanding-report-both.txt`: header
+  lines `Product:`, `Customer:`, `Location:`, `Order date:`; block `*Sales order outstanding*`
+  with `Ordered:`, `Transferred to DO:`, `Outstanding:`, `Sales orders:`, `Order date range:`;
+  block `*Delivery order pending*` with `Pending:`, `Delivery orders:`, `DO date range:` -
+  NO `DO qty:` / `Delivered:` line, anywhere, ever (R1: the block covers pending DOs only, so
+  there is nothing left to sum them against); a `*_By location_*` and a `*_By customer_*`
+  group (bold italic sub-heading) INSIDE each block (SO figures under SO, DO figures under
+  DO) - the SO lines keep their `(O/S: ...)` bracket, the DO lines DROP it (`name: pending`,
+  no bracket - R1, every number in the DO block is pending now, so there is nothing left to
+  disambiguate);
   `Reply with a number for detail:` then `1. Sales order list`,
   `2. Delivery order list`. Evidence: golden fixture test.
 - **AC-1102 [T]** Given scope SO only, then the Delivery order block and option 2 are absent
@@ -85,10 +89,11 @@ resolution and the filter set in the console trace.
 - **AC-1105 [T]** Header `Location:` prints the resolved codes in brackets after the token,
   `IB (BRW-IB, MWH-IB)`; an exact code prints alone `BRW-IB`; no token prints `all`. Evidence:
   fixture.
-- **AC-1106 [T]** Detail list (SO): one row per SO, fields `SO Number`, `Customer`,
-  `Location`, `Ordered`, `Transferred to DO`, `Outstanding`, `Order Date`, in that order, as
-  `*Label:* value` lines, numbered `1.`, `2.`, ... Every row rendered. Detail list (DO): `DO
-  Number`, `Customer`, `Location`, `DO Qty`, `Delivered`, `Pending`, `DO Date`. Evidence:
+- **AC-1106 [T]**, REWRITTEN (R1) Detail list (SO): one row per SO, fields `SO Number`,
+  `Customer`, `Location`, `Ordered`, `Transferred to DO`, `Outstanding`, `Order Date`, in that
+  order, as `*Label:* value` lines, numbered `1.`, `2.`, ... Every row rendered. Detail list
+  (DO): one row per PENDING DO only, fields `DO Number`, `Customer`, `Location`, `Pending`,
+  `DO Date` - NO `DO Qty` / `Delivered` field (R1: matches the block above it). Evidence:
   golden fixtures `outstanding-detail-so.txt`, `outstanding-detail-do.txt`.
 - **AC-1107 [T]** Miss: a scope with zero rows prints its block as one line `No open sales
   order.` / `No pending delivery order.` under the same header; when every requested scope is
@@ -127,19 +132,27 @@ resolution and the filter set in the console trace.
 - **AC-1114 [BE]** `so_rows[]` is one row per SO: an SO with two live lines of the product
   (205 + 205) returns one row with `ordered_qty=410`, `location` = the distinct warehouse
   codes joined by `, `. Sorted by `order_date` asc then `so_number`. Evidence: pytest.
-- **AC-1115 [BE]** `do` block: `pending_qty` = SUM `order_lines.quantity` for the product on
-  orders matching `_outstanding_clause` (`order_service.py:67-93`); `delivered_qty` = same
-  sum over orders matching `_delivered_clause`; `do_qty = delivered_qty + pending_qty`;
-  `do_count` counts both; `do_rows[]` one row per DO (pending and delivered, each row
-  carrying its own `do_qty`, `delivered_qty`, `pending_qty`). Evidence: pytest with one
-  delivered DO (qty 5) and one pending DO (qty 7) asserts 12 / 5 / 7.
-- **AC-1116 [BE]** `so_by_location[]` / `so_by_customer[]` carry `ordered_qty` and
-  `outstanding_qty`; `do_by_location[]` / `do_by_customer[]` carry `do_qty` and
-  `pending_qty`; each filtered identically to its block's totals, and each group's sums equal
-  its block totals. Evidence: pytest asserts equality for all four.
-- **AC-1117 [BE]** `scope=so|do|both` (default `both`); a scope not requested is absent from
-  the body (not empty). Response is declared on a `response_model` and a test asserts every
-  field above is present (response_model drops undeclared fields). Evidence: pytest.
+- **AC-1115 [BE]**, REWRITTEN (R1, owner testing 13 Sep 2026: "most of the DO are delivered
+  right so what's outstanding? I thought outstanding means still got some pending
+  quantity.") `do` block covers ONLY DOs matching `_outstanding_clause`
+  (`order_service.py:67-93`) - a DELIVERED DO (matching `_delivered_clause`) contributes to
+  NOTHING here, not even a total. `pending_qty` = SUM `order_lines.quantity` for the product
+  over pending DOs; `do_count` counts pending DOs only; `do_date_min`/`do_date_max` is the
+  order_date range over pending DOs only; `do_rows[]` one row per PENDING DO ONLY. `do_qty`
+  and `delivered_qty` are GONE from the block, from `do_by_location[]` / `do_by_customer[]`,
+  and from every `do_rows[]` row. Evidence: pytest with one delivered DO (qty 5) and one
+  pending DO (qty 7) asserts pending 7, count 1, `do_rows` lists the pending DO only.
+- **AC-1116 [BE]**, REWRITTEN (R1) `so_by_location[]` / `so_by_customer[]` carry
+  `ordered_qty` and `outstanding_qty`; `do_by_location[]` / `do_by_customer[]` carry
+  `pending_qty` ONLY (no `do_qty`); each filtered identically to its block's totals, and
+  each group's sums equal its block totals. Evidence: pytest asserts equality for the SO
+  pair and the DO pair, and asserts `do_qty` is absent from every do_by_location /
+  do_by_customer row.
+- **AC-1117 [BE]**, REWRITTEN (R1) `scope=so|do|both` (default `both`); a scope not
+  requested is absent from the body (not empty). Response is declared on a `response_model`
+  and a test asserts every field above is present (response_model drops undeclared fields) -
+  including that `do.do_qty` / `do.delivered_qty` are ABSENT (R1 dropped them from the
+  contract entirely, not just from the reply text). Evidence: pytest.
 - **AC-1118 [BE]** Route is behind `order_management.orders.view` and the
   `order_management` module guard; the X-API-Key principal with
   `EXTERNAL_API_KEY_ACT_AS_USER_ID` reaches it. Evidence: pytest (403 without the grant).
@@ -186,11 +199,12 @@ resolution and the filter set in the console trace.
 - **AC-1134 [BE]** No date in the message → no `order_date_*` param and header `Order date:
   all`. A parsed window → `order_date_from/to`, never `actual_delivery_date_*`, for this tool.
   Evidence: pytest on `fetch.py`.
-- **AC-1135 [BE]** After a report with at least one non-empty block, the session carries
-  `selection_context = "outstanding_detail"`, `pending.kind = "outstanding_detail"`,
-  `last_result_set` = the offered options only (1 Sales order list, 2 Delivery order list,
-  per scope present) and the same `outstanding_filters`; no escalate offer is appended on a
-  hit. Evidence: pytest on compile_state / pending.
+- **AC-1135 [BE]**, AMENDED (R2, 13 Sep 2026 - the marker's LIFETIME moved to AC-1143, this
+  AC keeps only the arming shape) After a report with at least one non-empty block, the
+  session carries `selection_context = "outstanding_detail"`, `pending.kind =
+  "outstanding_detail"`, `last_result_set` = the offered options only (1 Sales order list, 2
+  Delivery order list, per scope present) and the same `outstanding_filters`; no escalate
+  offer is appended on a hit. Evidence: pytest on compile_state / pending.
 - **AC-1138 [BE]** Given `pending.kind == "outstanding_detail"` and the next message is "1",
   then the lane calls `crm_outstanding_report` again with the stored filters plus
   `detail=so` and the reply is the SO detail list (AC-1106); "2" → `detail=do`. A product
@@ -220,6 +234,21 @@ resolution and the filter set in the console trace.
   against the lane stack, and the trace shows the scope question asked and resolved, the
   location resolution and the final filter set. Evidence: console run recorded under
   `documentation/plans/chatbot/evidence/outstanding-report/`.
+- **AC-1143 [BE]** NEW (R2, owner testing 13 Sep 2026: "after '1' (SO list), typing '2' must
+  give the DO list"). The `outstanding_detail` offer is STICKY: `pending.kind =
+  "outstanding_detail"` and `outstanding_filters` survive (a) a pick that answers it ("1"
+  then "2" still gives the DO list with the SAME carried filters, no re-parse), (b) a casual
+  turn in between ("thanks" between the report and "2"), and (c) an out-of-range pick ("3"
+  when only 1/2 are offered re-asks rather than closing the offer) - exactly the carry
+  condition `tail/compile_state.py::_offer_carry` already gives `suggest_offer` / the tier
+  offer (a new label this turn replaces it; a domain change clears it; otherwise it
+  survives), never `member_offer`'s TTL. The offer DROPS on a NEW ASK (a message carrying a
+  product code or a domain word) - a fresh report runs for the new subject and a bare
+  positional reply afterward must never resolve against the old offer's stale filters.
+  `outstanding_scope` is NOT covered by this AC - it keeps its one-turn life (AC-1130/1132).
+  Evidence: pytest on the rendered-text / tool-call-args path
+  (`test_detail_offer_survives_a_pick`, `test_detail_offer_survives_a_casual_turn`,
+  `test_detail_offer_drops_on_a_new_ask`, `test_detail_offer_survives_an_out_of_range_pick`).
 
 ## Out of scope (backlog)
 
