@@ -92,6 +92,18 @@ Buy row cancelled) and this line is re-sourced whole for its new date.
 **AC-D6.** The board shows every reallocation as "PO-A 34 to SO420103" or "to BRW" in words,
 never a UUID.
 
+**AC-D9 [BE] (defect round B1).** Given a cancelled line's placed Buy split across two
+purchase-order lines, and a same-order survivor with headroom for only ONE of them, then
+apply moves BOTH: the survivor takes what it can, the other link is found by a cross-order
+waiting row (or, absent one, the pool), and the order does not fail. Test:
+`tests/scm/test_planning_change_reallocation.py::test_every_link_of_a_cancelled_row_finds_a_taker_survivor_and_cross_order`.
+
+**AC-D10 [BE] (defect round R3).** Given the same shape with no cross-order taker and no
+pool warehouse configured for the line, then the link nobody can take is released
+(unlinked) and named in `released_documents`, never `executed_reallocations`. Tests:
+`tests/scm/test_planning_change_reallocation.py::test_every_link_of_a_cancelled_row_finds_a_taker_survivor_then_release_when_nobody_needs_it`,
+`::test_a_cancelled_lines_placed_buy_with_no_pool_configured_is_released_not_executed`.
+
 ## Slice E. One signal
 
 **AC-E1.** Given a confirmed decision and any qualifying change, then no decision is set to
@@ -130,6 +142,28 @@ line; the Suggested and Decided cells carry no progress bar; a row is one text l
 
 **AC-C14 [FE][UX] Works at 375 and 1280 (the dialog fits the viewport, icons stay in their
 columns).**
+
+**AC-C15 [BE][FE] (defect round, non-open rows).** The board wire's `BoardContribution`
+carries `cancelled` and `pending_change_batch_id`; a cancelled row also carries its
+location, customer and agent fields (not left blank the way a bare non-open read would),
+and the decision pill reads verdict "Cancelled" even when the row has no location (cancelled
+outranks "Needs a location"). Tests:
+`tests/test_planning_change_apply_on_board.py::test_the_boards_contribution_wire_carries_cancelled_and_its_batch_id`,
+`::test_the_boards_cancelled_contribution_carries_location_and_customer_fields`;
+`BoardDecisionPill.test.tsx` ("reads Cancelled, not 'Needs a location', for a cancelled line
+that also has no location").
+
+**AC-C16 [BE] (defect round, non-open rows).** A pending change row on a line the book has
+since closed (delivered, or otherwise no longer open demand) is still listed, with `qty`
+forced to 0 - the ladder never runs for a line that is not open demand any more. Test:
+`tests/test_planning_change_apply_on_board.py::test_a_pending_product_changed_row_on_a_closed_and_delivered_line_still_appears_on_the_board`.
+
+**AC-C17 [BE][FE] (defect round R4).** A stored composition's reserve/borrow component
+carries `location` (the warehouse code) beside `warehouse_id`; read back on a later render,
+the frontend prints the code, never the id. Test:
+`tests/scm/test_planning_change_delta_seam.py::test_an_amended_reserve_posted_with_no_location_key_reads_back_carrying_one`
+(FE renders it through the same words-only board display AC-C10 already covers - no
+component reads `warehouse_id` for display).
 
 ## Cross-cutting
 

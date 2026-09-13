@@ -785,3 +785,57 @@ on a line with two ORDER rows sharing a purchase-order line the OLDER row's link
 stripped first regardless of which row over-claimed. The totals it leaves are always right
 (the same quantity comes off the same purchase-order line either way); only which of the
 line's own rows the link is attributed to is approximate.
+
+### F. Judgement calls, defect round (13 September 2026)
+
+**(a) A cancelled line's placed quantity with no same-order taker follows rule 6, capped to
+what is actually still there.** `_shift_links_off_retired_lines` decides per LINK whether a
+same-order survivor takes it; where none does and the line's own suggestion has an executor
+in the cascade (`rule_six_line_ids`), the link is left alone rather than given back. Because
+that leave happens per LINK, not per line, `_execute_reallocations` runs for every cancelled
+row with a moving component rather than excluding the whole row the moment any ONE of its
+links found a survivor - a Buy split across two purchase-order lines with a survivor
+holding room for only one of them must move BOTH, never strand the other. The freed
+quantity `_redeal_document` acts on is capped to what `document_links` shows LIVE, re-read
+in `_apply_one_order` right after the shift, never the compose-time total: a partial
+same-order take has already answered part of it, and raising over the rest would refuse work
+that already happened. The result_json merge for a cancelled row EXTENDS
+`executed_reallocations` and `released_documents` across both the shift's own wording and
+the cascade's, rather than a `dict.update` that let one silently replace the other on a
+shared key.
+
+**(b) No pool warehouse configured, and nobody else needs it: released, not executed.**
+`_redeal_document`'s no-pool branch for a cancelled row names the give-back in
+`released_documents`, never `executed_reallocations` - a release is not a move, and the two
+lists must not blur.
+
+**(c) A step-3 supply-borrow release keeps the ordinary give-back.** `_moving_components`
+never matches a `release`/`borrow` component (the ladder's own step-3 release), so a
+cancelled line whose ONLY component is one has no executor in the cascade at all - passing
+it through unresolved would strand the link, pinned to a row purchasing can no longer act
+on. `rule_six_line_ids` excludes such a line from the per-link deferral above, so it keeps
+the original behavior (unlinked and given back through `_remove_links`) regardless of what a
+same-order survivor does.
+
+**(d) Non-open rows on the board are pure book status, never purchasing's own covered
+ruling.** `_cancelled_pending_change_rows`'s predicate is `line_status != 'open' OR
+demand_qty() <= 0`, not `~is_open_demand()`: `is_open_demand()` also requires
+`purchasing_status != 'covered'`, and a covered-but-still-open, still-owed line is a
+PERSON's decision ("no purchase needed"), never the book closing the line - that line stays
+ordinary demand (`_demand_rows` already excludes it correctly) and must not also read as a
+non-open row here. The two predicates are deliberately not exact complements; they agree on
+every other case and diverge only on that one.
+
+**(e) `qty_delivered` is an AutoCount fact, never rewritten by a product change; the
+mirror's `product_id` follows the core.** A `product_changed` row's own `qty_delivered` read
+is unchanged - it is a fact about the OLD product, not something the suggestion invents.
+`_upsert_lines`'s matched-line branch updates the mirror `ProjectSalesOrderLine.product_id`
+whenever the core line's own product changes, so the two never disagree about which product
+a line names.
+
+**(f) A stored composition's reserve/borrow component carries `location` beside
+`warehouse_id`; the frontend never prints an id.** `ConfirmReserveComponent` /
+`ConfirmBorrowComponent` gained an optional `location` field, the human-readable warehouse
+code the board already shows - resolved once at write time, read back at every later render,
+so a composition survives a revision without a second lookup and without ever putting a
+UUID in front of a person.
