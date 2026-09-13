@@ -259,7 +259,7 @@ function lineSignature(
     .join(',');
 }
 
-type LineDraft = {
+export type LineDraft = {
   sku: string;
   qty_ordered: string;
   warehouse_code: string;
@@ -267,6 +267,15 @@ type LineDraft = {
   uom: string;
   unit_price: string;
   discount: string;
+  /**
+   * The product option the person actually PICKED, kept whole.
+   *
+   * The select resolves its own trigger label out of the page it last fetched, and that page
+   * is refetched per open and thrown away on close - so a picked product read fine for a
+   * moment and then fell back to "Select product" the instant the popover shut. Holding the
+   * option here means the cell can say what was chosen without asking the server again.
+   */
+  picked_product?: SearchableSelectOption | null;
 };
 
 /** The in-progress draft for a line, or one seeded from the row as loaded when nothing has
@@ -338,14 +347,24 @@ function fmtMoneyCell(value: string | null | undefined): string {
  * The option the Product select shows for a line whose product is not on the page the
  * server just returned - which is most of them, against a 22,000-row catalogue.
  *
- * Only while the draft still names the line's OWN product: once a different one has been
- * picked, its label comes from the fetched page and this fallback would relabel it.
+ * TWO SOURCES, in this order. What the person PICKED in this session, kept on the draft -
+ * because the select's own label comes from `asyncOptions`, a per-open fetch that is
+ * discarded when the popover closes, so a picked product reverted to "Select product" the
+ * moment it shut (measured in the browser twice, 13 September 2026). Then the line's OWN
+ * product as it loaded, for the untouched case. Nothing when the draft names a product
+ * neither source can label: a stale row label over somebody else's SKU would be worse than
+ * the placeholder.
+ *
+ * Pure, and exported, so it can be read on its own: the defect it exists to stop is
+ * invisible in jsdom, where the fetch resolves after the popover has already closed.
  */
-function productFallback(
-  row: SalesOrderLine,
-  draftSku: string | undefined,
+export function productFallbackFor(
+  row: Pick<SalesOrderLine, 'sku' | 'product_name'>,
+  draft: Pick<LineDraft, 'sku' | 'picked_product'> | undefined,
 ): SearchableSelectOption | undefined {
-  const sku = draftSku ?? row.sku;
+  const sku = draft?.sku ?? row.sku;
+  const picked = draft?.picked_product;
+  if (picked && picked.value === sku) return picked;
   if (!row.sku || sku !== row.sku) return undefined;
   return {
     value: row.sku,
@@ -714,10 +733,22 @@ export function SalesOrderDetail({ id }: { id: string }) {
                       [row.original.id]: { ...draftOrRow(prev, row.original), sku: v },
                     }))
                   }
+                  // The whole option, not only its code: this is what the cell shows after
+                  // the popover has closed and the page it was picked from is gone.
+                  onOptionChange={(option) =>
+                    setLineDrafts((prev) => ({
+                      ...prev,
+                      [row.original.id]: {
+                        ...draftOrRow(prev, row.original),
+                        sku: option?.value ?? '',
+                        picked_product: option,
+                      },
+                    }))
+                  }
                   paginated
                   pageSize={SELECT_PAGE_SIZE}
                   fetchOptions={searchProductOptions}
-                  selectedOption={productFallback(row.original, draft?.sku)}
+                  selectedOption={productFallbackFor(row.original, draft)}
                   placeholder="Select product"
                   emptyMessage="No product found."
                   size="sm"
