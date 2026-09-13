@@ -103,10 +103,16 @@ def portal_create_price_tag_request(
 ):
     """Create a new price tag request as a draft."""
     _assert_visible(db, token.contact_id)
+    company_id = _resolve_company(db, token)
+    if payload.promotion_id is not None:
+        with company_scope(db, frozenset({company_id})):
+            PriceTagRequestService.validate_promotion_access(
+                db, token.contact_id, payload.promotion_id
+            )
     req = PriceTagRequestService.create_request(
         db,
         contact_id=token.contact_id,
-        company_id=_resolve_company(db, token),
+        company_id=company_id,
         data=payload.model_dump(),
     )
     db.commit()

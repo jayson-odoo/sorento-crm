@@ -138,11 +138,15 @@ class PriceTagRequestService:
         ``validate_submittable``.
 
         Sets ``portal_draft_at`` on creation (the request starts as a draft).
+
+        No promotion audience check here: this service method is also the
+        CRM-side entry point (``tag_data_service`` etc.), which is not bound
+        by a portal contact's audience. The audience gate
+        (``validate_promotion_access``) is applied by the PORTAL create/update
+        routes only (``portal_price_tag.py``), the one surface it is meant to
+        guard - moved out of here after it 422ed two CRM-side create paths
+        that have no contact audience to check.
         """
-        with company_scope(db, frozenset({company_id})):
-            PriceTagRequestService.validate_promotion_access(
-                db, contact_id, data.get("promotion_id")
-            )
         request = PriceTagRequestService._insert_with_doc_number(
             db,
             lambda doc_number: PriceTagRequest(
