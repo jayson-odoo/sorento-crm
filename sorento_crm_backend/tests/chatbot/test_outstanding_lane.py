@@ -3438,7 +3438,16 @@ class TestOwnerRoundFivePickerAndOfferScope:
                             "canonical_code": HANLIM_CODE_2,
                             "uuid": HANLIM_UUID_2,
                             "company_code": "SRT",
-                            "display": {"customer_name": "HANLIM TRADING (JB) SDN BHD"},
+                            # A genuinely DIFFERENT family, not a bracket-suffixed
+                            # variant of the first: `gate._cust_base` strips
+                            # brackets/parens (`_BRACKET_OR_PAREN`) before grouping, so
+                            # "HANLIM TRADING (JB) SDN BHD" collapsed onto "HANLIM
+                            # TRADING SDN BHD" as ONE family - the fixture bug the
+                            # coder found, review round 13 Sep 2026. "HANLIM HARDWARE"
+                            # shares no base string with "HANLIM TRADING" at all, so
+                            # this is unambiguously the second real company the
+                            # ambiguous "hanlim" word matched.
+                            "display": {"customer_name": "HANLIM HARDWARE SDN BHD"},
                         },
                     ],
                 },
@@ -3473,7 +3482,9 @@ class TestOwnerRoundFivePickerAndOfferScope:
         }
         out = gate_mod.run_gate({}, parser=parser, resolver=resolver)
         assert out.get("gate_passed") is False, out
-        assert "2 different companies" in (out.get("gate_reason") or ""), (
+        assert "'order' customer token matches 2 different companies" in (
+            out.get("gate_reason") or ""
+        ), (
             f"the warehouse-hinted token must never inflate the customer count: "
             f"{out.get('gate_reason')!r}"
         )
@@ -3482,5 +3493,5 @@ class TestOwnerRoundFivePickerAndOfferScope:
             f"a warehouse token resolved (however wrongly) as a customer must never "
             f"become a line in the customer picker: {clarification!r}"
         )
-        assert "HANLIM TRADING SDN BHD" in clarification, clarification
-        assert "HANLIM TRADING (JB) SDN BHD" in clarification, clarification
+        assert "1. HANLIM TRADING SDN BHD (SRT)" in clarification, clarification
+        assert "2. HANLIM HARDWARE SDN BHD (SRT)" in clarification, clarification
