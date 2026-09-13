@@ -1318,6 +1318,17 @@ def _resolve_open_question(
             for p in jsc.array(jsc.get(parser_raw, "reference_positions"))
             if isinstance(p, (int, float)) and int(p) >= 1
         ]
+        # DID THE PARSER EXPRESS AN OPINION ABOUT THIS QUESTION? (review S12, and the captain's
+        # widening of it.) `v3_signals` normalises `resolved` to `answer.get("resolved") is
+        # True`, so a v3 emission saying `answers_open_question: {resolved: false}` - the model
+        # having looked at the open question and decided this message does not answer it -
+        # arrives here looking exactly like a v1 emission that carries no such key at all.
+        # Neither inferring rung below may override that explicit no: on the contract where the
+        # parser has an opinion, the opinion wins. The KEY's presence is the test rather than
+        # `emits_v3`, so a v3 prompt that has not implemented it yet is in the same "no opinion"
+        # position v1 is and still gets both rungs. POSITIONS are not gated by it: a number is
+        # not an inference.
+        parser_answered_key = isinstance(jsc.get(parser_raw, "answers_open_question"), dict)
         # Read for BOTH prompt contracts, and that is why it sits in this block rather than
         # under the v1 comment above: the block runs whenever `answers_open_question` did not
         # resolve the turn, which is every v1 emission and every v3 one that carried no answer.
@@ -1339,16 +1350,6 @@ def _resolve_open_question(
         # answer that happens to name a product, and it ended at `low_signal` with the hard
         # default, the same failure this rung exists to close, one entity away. A carried
         # entity never mattered either way.
-        # AND ONLY WHERE THE PARSER EXPRESSED NO OPINION (review S12). `v3_signals` normalises
-        # `resolved` to `answer.get("resolved") is True`, so a v3 emission that says
-        # `answers_open_question: {resolved: false}` - an explicit NO, the model having looked at
-        # the question and decided this message does not answer it - arrives here looking exactly
-        # like a v1 emission that carries no such key at all. Inferring an answer over that
-        # explicit no is the one thing this rung must not do: on the contract where the parser
-        # has an opinion about the question, the opinion wins. The KEY's presence is the test
-        # rather than `emits_v3`, so a v3 prompt that does not implement the key yet still gets
-        # the rung, which is the same "no opinion" case v1 is.
-        parser_answered_key = isinstance(jsc.get(parser_raw, "answers_open_question"), dict)
         team_pick_idx = (
             None
             if jsc.truthy(jsc.get(parser_raw, "domain_hint")) or parser_answered_key
@@ -1376,9 +1377,20 @@ def _resolve_open_question(
             # handles it, exactly as it does when the word arrives without a question open.
             answer = {**answer, "resolved": True, "picks": [team_pick_idx]}
         elif (
-            jsc.get(question, "expects") == "yes_no"
-            or open_question_mod.escalation_offer_team(question) is not None
-        ) and isinstance(jsc.get(parser_raw, "is_affirmative"), bool):
+            (
+                jsc.get(question, "expects") == "yes_no"
+                or open_question_mod.escalation_offer_team(question) is not None
+            )
+            # The SAME guard the team rung below carries, and for the same reason (review S12,
+            # widened here by the captain's ruling): a v3 emission that says
+            # `answers_open_question: {resolved: false}` has looked at the question and decided
+            # this message does not answer it, and `v3_signals` normalises that to the shape a
+            # v1 emission with no key has. Inferring a yes over the parser's explicit no is the
+            # one thing neither rung may do. The key's ABSENCE is the test, so a v3 prompt that
+            # has not implemented it yet still gets the rung.
+            and not parser_answered_key
+            and isinstance(jsc.get(parser_raw, "is_affirmative"), bool)
+        ):
             # THE OTHER HALF OF THE v1 PATH, and without it a yes was not an answer at all.
             # Owner console pass, 13 Sep 2026, journey step 5: "photo for SRTWB8004" left a
             # one-team `team_pick` open (`expects: yes_no`, `options[0].team:
