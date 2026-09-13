@@ -344,10 +344,9 @@ def test_ac1128_no_product_and_the_previous_team_differs_from_the_landed_one_car
 
     result = run(ctx, item, services=services)
 
-    services.resolve_and_gate.assert_not_called(), (
-        "the carried product must never reach the resolver once the landed team differs "
-        "from the team the conversation was carrying it on"
-    )
+    # N3 (reviewer): the carried product must never reach the resolver once the landed
+    # team differs from the team the conversation was carrying it on.
+    services.resolve_and_gate.assert_not_called()
     assert result["arm"] == "human-intervention", result
     body = _next_assignee_body(services)
     assert body["team_code"] == "marketing_product", body
@@ -380,9 +379,9 @@ def test_ac1128_companion_a_different_family_member_landing_also_carries_nothing
 
     result = run(ctx, item, services=services)
 
-    services.resolve_and_gate.assert_not_called(), (
-        "a different member of the SAME family still fails the landed-team carry gate"
-    )
+    # N3 (reviewer): a different member of the SAME family still fails the landed-team
+    # carry gate.
+    services.resolve_and_gate.assert_not_called()
     assert result["arm"] == "human-intervention", result
     body = _next_assignee_body(services)
     assert body["team_code"] == "marketing_form", body
@@ -1216,10 +1215,9 @@ def test_d10_guard_a_fresh_team_pick_with_no_answered_record_still_drops_the_car
 
     result = run(ctx, item, services=services)
 
-    services.resolve_and_gate.assert_not_called(), (
-        "no `_answered` record means this turn never resumed the open team_pick - the D3 "
-        "same-team gate must still apply and drop the carry"
-    )
+    # N3 (reviewer): no `_answered` record means this turn never resumed the open
+    # team_pick - the D3 same-team gate must still apply and drop the carry.
+    services.resolve_and_gate.assert_not_called()
     assert result["arm"] == "human-intervention", result
     body = _next_assignee_body(services)
     assert body["team_code"] == "marketing_product", body
@@ -1248,9 +1246,8 @@ def test_d10_guard_a_resumed_team_pick_with_no_carried_product_resolves_nothing(
 
     result = run(ctx, item, services=services)
 
-    services.resolve_and_gate.assert_not_called(), (
-        "a resumed team_pick with no carried product has nothing to resolve"
-    )
+    # N3 (reviewer): a resumed team_pick with no carried product has nothing to resolve.
+    services.resolve_and_gate.assert_not_called()
     assert result["arm"] == "human-intervention", result
     body = _next_assignee_body(services)
     assert body["team_code"] == "marketing_product", body

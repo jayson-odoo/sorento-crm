@@ -196,6 +196,7 @@ def _ask_for_turn(
     selection_context: Any,
     options: Any,
     team_clarify_options: Any,
+    team_pick_product_code: Any = None,
     roster_plan: Any,
     companies: Any,
     turn_no: int,
@@ -219,12 +220,16 @@ def _ask_for_turn(
     payload = {"team": team, "domain": domain}
 
     if context == "team_clarify":
+        # D10: the product THIS escalation request resolved, frozen onto the `team_pick`
+        # payload the same way `then.escalate`'s `team_word` always rides the did-you-mean
+        # deferral - the KEY is always written, `None` included, so the resume turn's
+        # reader never has to tell "absent" apart from "resolved to nothing".
         return oq.ask(
             "team_pick",
             options=list(jsc.array(team_clarify_options)),
             turn_no=turn_no,
             domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
-            payload=payload,
+            payload={**payload, "product_code": team_pick_product_code},
         )
     if context == "company_clarify":
         return oq.ask(
@@ -1003,6 +1008,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         "answered_domain": answered_domain,
         "offer_open": False,
         "team_clarify_options": [],
+        "team_pick_product_code": None,
     }
     _miss_company_routing(
         output,
@@ -1061,6 +1067,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         selection_context=variables.get("selection_context"),
         options=last_result_set,
         team_clarify_options=turn_state.get("team_clarify_options"),
+        team_pick_product_code=turn_state.get("team_pick_product_code"),
         roster_plan=variables.get("routing_roster_plan"),
         companies=variables.get("routing_companies"),
         turn_no=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
@@ -2299,6 +2306,12 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
             turn_state["team_clarify_options"] = jsc.array(
                 jsc.get(clar, "clarify_team_options")
             )
+            # D10: the product THIS escalation request resolved, so the RESUME turn can
+            # tell it apart from whatever `focus.products` happens to carry (a leftover
+            # from an unrelated earlier turn, the D3 gate's own case). `None` when this
+            # turn named no product or it did not resolve, same as the field it is read
+            # off (`escalation.py`'s `clarify_product_code`).
+            turn_state["team_pick_product_code"] = jsc.get(clar, "clarify_product_code")
         elif fresh_gate:
             variables["selection_context"] = None
         elif jsc.truthy(_prev_context(prev_question)):

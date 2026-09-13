@@ -684,6 +684,18 @@ def _human_intervention(
             # the persisted marker so the next turn can resolve a tap against the exact
             # string this ask composed (AC-822).
             "clarify_team_options": routed.get("option_pairs") or [],
+            # D10: THE PRODUCT THIS ESCALATION REQUEST ITSELF RESOLVED, frozen onto the
+            # ask so the RESUME turn can tell it apart from whatever `focus.products`
+            # happens to carry (which may be a leftover from an unrelated earlier turn -
+            # the D3 gate's whole case). `product` is in scope here because D6 already ran
+            # the resolve above, live or dry alike (D9). None when this turn named no
+            # product, or named one that did not resolve to exactly one row - the same
+            # reader that pins `payload.product_code` (`tail/compile_state._ask_for_turn`)
+            # treats an absent code as "nothing to carry", same as `_deferred_escalation`'s
+            # `then.escalate` payload does for the did-you-mean deferral.
+            "clarify_product_code": (
+                product["code"] if (product is not None and jsc.truthy(product.get("code"))) else None
+            ),
         }
         return {
             **escalation_result(clarify_team=clarify),
@@ -859,30 +871,52 @@ def _carry_ctx(ctx: dict[str, Any], products: list[dict[str, Any]]) -> dict[str,
     return {**ctx, "parse": parse}
 
 
-def _resumed_team_pick(ctx: dict[str, Any]) -> bool:
-    """D10: true when THIS turn resolved the lane's OWN team question, not a fresh one.
+def _resumed_team_pick(ctx: dict[str, Any]) -> str | None:
+    """D10: the product code THIS escalation request itself named, when this turn resolved
+    the lane's own team clarify - or `None` for a fresh turn, an unrelated open question, or
+    a clarify the request named no product on.
 
-    Owner ruling D10 (captain's console re-pass, 13 Sep 2026): "escalate to marketing about
-    water tap of SRTWB8004" resolves the product (D6), then asks which marketing team (D2)
-    - and the reply that answers THAT question is a deferral of the SAME escalation, not a
-    turn about something else. The D3 same-team gate exists for a product left over from an
-    unrelated earlier turn; it must not also swallow the product THIS escalation request
-    itself named, just because the team question it triggered happened to land on a
-    different team than the one the conversation was carrying before.
+    Owner ruling D10 (captain's console re-pass, 13 Sep 2026, restated after the first cut
+    over-fired): "escalate to marketing about water tap of SRTWB8004" resolves the product
+    (D6), then asks which marketing team (D2) - and the reply that answers THAT question is
+    a deferral of the SAME escalation, not a turn about something else. The D3 same-team
+    gate exists for a product left over from an unrelated earlier turn; it must not also
+    swallow the product THIS escalation request itself named, just because the team question
+    it triggered happened to land on a different team than the one the conversation was
+    carrying before.
 
-    Same pattern as `_deferred_escalation` below - two structured signals, no new session
-    key: the question THIS message answered (`ctx.parse._answered.handler`, the engine's
-    own record from the `answered` stage) and the PREVIOUS turn's persisted
-    `open_question.kind` both have to say `team_pick`. The handler alone is not enough - a
-    stale `_answered` record naming `team_pick` with nothing actually open would be a false
-    positive - so the previous question's own kind is read too, the same defence
-    `_deferred_escalation` applies to its own `product_pick` handler.
+    **Both clauses are structural, not "any team_pick".** The first cut gated on the
+    handler and the previous question's kind alone, and the world corpus caught it: a stock
+    turn about MWC7625-SH-S10 (Mocha) then "escalate to marketing" also resolves through a
+    `team_pick` - either the multi-team clarify (D2) or the one-team yes/no escalate offer
+    (D5, `_ask_for_turn`'s `offer_open` branch), both handled by the SAME `_team_pick`
+    handler (`dialogue/open_question.py`) - and would have carried Mocha into the marketing
+    draw, which D3 forbids (a direct "escalate to marketing product" on the same
+    conversation correctly carries nothing). Four checks, all reading the two structured
+    signals `_deferred_escalation` already reads for its own `product_pick` deferral, no new
+    session key:
+
+    1. `ctx.parse._answered.handler == "team_pick"` - this turn resolved a team_pick.
+    2. The PREVIOUS turn's persisted `open_question.kind == "team_pick"` - a real one was
+       open, not a stale `_answered` record naming the handler with nothing to answer.
+    3. That question's `expects != "yes_no"` - ONLY the lane's own multi-team clarify (D2)
+       qualifies; the one-team escalate offer (D5) is a different question with a different
+       history and is never read here, whatever a "yes" resolves to.
+    4. `payload.product_code` is truthy - frozen at ASK time by `tail/compile_state.
+       _ask_for_turn`'s `team_clarify` branch off `escalation.py`'s own
+       `clarify_product_code` (set when `_human_intervention` resolved a product for D6
+       before it built the ask). `None` here means the escalation that triggered the
+       clarify named no product of its own - a stock turn's "escalate to marketing" still
+       asks which team (D2), but there is nothing D10 has a claim to carry.
     """
     answered = jsc.get(jsc.get(ctx, "parse"), "_answered")
     if not isinstance(answered, dict) or jsc.get(answered, "handler") != "team_pick":
-        return False
+        return None
     question = jsc.get(_prev_variables(ctx), "open_question")
-    return jsc.get(question, "kind") == "team_pick"
+    if jsc.get(question, "kind") != "team_pick" or jsc.get(question, "expects") == "yes_no":
+        return None
+    code = jsc.get(jsc.get(question, "payload"), "product_code")
+    return jsc.js_string(code).strip() if jsc.truthy(code) else None
 
 
 def _carried_brand(
@@ -901,10 +935,12 @@ def _carried_brand(
     carries `mocha` and asks nothing; a stock turn on warehouse then the same message
     carries nothing, so the whole tier-1 pool is drawn from.
 
-    **Except when this turn RESUMED the lane's own team question (D10,
-    `_resumed_team_pick`)**: the product the escalation request named carries to the
-    landing regardless of the previous turn's team, because the team question was the
-    lane's own deferral of that same request, not a new turn about something else.
+    **Except when this turn RESUMED the lane's own team CLARIFY with a product frozen on
+    it (D10, `_resumed_team_pick`)**: the product THAT escalation request itself named
+    resolves regardless of the previous turn's team, because the team question was the
+    lane's own deferral of that same request, not a new turn about something else - and it
+    is THAT product, never `focus.products`, which may hold something unrelated left over
+    from an earlier turn the D3 gate exists to keep out.
 
     The BRAND is resolved rather than read from the session, because the session does not
     hold one: the five keys carry what the conversation is ABOUT (`focus.products`), and the
@@ -916,13 +952,19 @@ def _carried_brand(
     regardless, but a caller reading `_resolve_product`'s own contract should not have to
     know that to trust the flag was not silently dropped one call down.
     """
-    if not _resumed_team_pick(ctx) and (
-        jsc.nullish_str(landed).strip().lower() != jsc.nullish_str(_carried_team(ctx)).strip().lower()
-    ):
-        return None, None
-    products = _carried_products(ctx)
-    if not products:
-        return None, None
+    resumed_code = _resumed_team_pick(ctx)
+    if resumed_code is not None:
+        # THE FROZEN CODE, not `focus.products`: D10 is a claim about the product the
+        # escalation request itself named, and `_carry_ctx` needs only the one field
+        # `resolve_gate._token_of` reads (`canonical_code`, else `raw`) plus `hint` so the
+        # resolver's own product filter (`_product_tokens`) keeps it.
+        products = [{"hint": "product", "canonical_code": resumed_code}]
+    else:
+        if jsc.nullish_str(landed).strip().lower() != jsc.nullish_str(_carried_team(ctx)).strip().lower():
+            return None, None
+        products = _carried_products(ctx)
+        if not products:
+            return None, None
     # NO did-you-mean on this rung: the customer did not type this code on this turn, so a
     # picker about it would answer a question nobody asked. A miss simply carries no brand.
     resolved = _resolve_product(

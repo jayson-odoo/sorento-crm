@@ -271,9 +271,9 @@ def test_d9_dry_run_named_person_is_the_assignee_with_no_draw_or_preview() -> No
     assert "Team: customer_service" in comment["text"], (
         f"the preview comment must name Nurain's own team: {comment['text']!r}"
     )
-    services.preview_assignee.assert_not_called(), (
-        "a named person is the assignee outright - there is nothing to draw a preview for"
-    )
+    # N3 (reviewer): a named person is the assignee outright - there is nothing to draw a
+    # preview for.
+    services.preview_assignee.assert_not_called()
     services.next_assignee.assert_not_called()
     services.sla_create.assert_not_called()
 
