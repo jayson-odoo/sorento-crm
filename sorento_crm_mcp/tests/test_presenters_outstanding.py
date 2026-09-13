@@ -445,17 +445,20 @@ def test_detail_do_list_shows_delivered_even_when_zero():
     """R3 (owner testing round 2, 13 Sep 2026): "need to show delivered also,
     doesn't mean if it is 0 then we don't show, if it is 0 then we show 0, don't
     hide." R7 (round 3), RENAMED: the row label `Pending` becomes `Outstanding`
-    (the JSON field stays `pending_qty` - presentation only). The DO detail row
-    is `DO Number`, `Customer`, `Location`, `DO Qty`, `Delivered`, `Outstanding`,
-    `DO Date`, and `Delivered` prints `0` rather than being omitted."""
+    (the JSON field stays `pending_qty` - presentation only). R13 (round 3, same
+    sitting): the row GAINS a `Product` line - rows always carry a product now.
+    The DO detail row is `DO Number`, `Customer`, `Product`, `Location`, `DO Qty`,
+    `Delivered`, `Outstanding`, `DO Date`, and `Delivered` prints `0` rather than
+    being omitted."""
     rendered = _outstanding_detail(_MOCK, "do")
     assert "*DO Qty:* 640" in rendered, rendered
     assert "*Delivered:* 0" in rendered, rendered
     assert "*Outstanding:* 640" in rendered, rendered
+    assert "*Product:* SRTWT7445" in rendered, rendered
     assert "*Pending:*" not in rendered, rendered
     fields = [line.split(":*")[0].lstrip("*") for line in rendered.splitlines() if line.startswith("*")]
-    assert fields == ["Customer", "Location", "DO Qty", "Delivered", "Outstanding", "DO Date"], (
-        f"field order must be Customer, Location, DO Qty, Delivered, Outstanding, DO Date: {rendered!r}"
+    assert fields == ["Customer", "Product", "Location", "DO Qty", "Delivered", "Outstanding", "DO Date"], (
+        f"field order must be Customer, Product, Location, DO Qty, Delivered, Outstanding, DO Date: {rendered!r}"
     )
 
 
@@ -464,6 +467,7 @@ def test_detail_so_list_every_row_renders_numbered():
     report["so_rows"] = report["so_rows"] + [
         {
             "so_number": "SO331900", "customer_name": "Dealer B Trading",
+            "product_code": "SRTWT7445",
             "location": "BRW-IB, MWH-IB", "ordered_qty": 811, "transferred_qty": 0,
             "outstanding_qty": 811, "order_date": "2026-01-05",
         },
@@ -473,6 +477,110 @@ def test_detail_so_list_every_row_renders_numbered():
     assert rendered.startswith("1. *SO Number:* SO331785")
     assert "2. *SO Number:* SO331900" in rendered
     assert "more" not in rendered
+
+
+# --------------------------------------------------------------------------
+# R13 (owner ruling, 13 Sep 2026): "when we generate the outstanding summary for
+# customer and for product it is different, they should be the same ... when we
+# ask for customer, the by customer section becomes by product section." The
+# report's subject is a product, a customer, or both, same summary shape for all
+# three. Header prints `Product: all` with no product; a `*_By product_*` group
+# renders wherever the body carries `so_by_product[]` / `do_by_product[]`,
+# same `name: total (O/S: outstanding)` shape as `*_By customer_*`.
+# --------------------------------------------------------------------------
+
+
+def _customer_subject_report() -> dict:
+    """A customer-subject body: no product_code, `so_by_product`/`do_by_product`
+    instead of the `_customer` breakdowns - the shape the ROUTE now sends for a
+    customer-only ask (`test_outstanding_report.py::
+    test_customer_subject_report_has_by_product_not_by_customer` pins the route
+    side; this is the presenter's own golden)."""
+    report = copy.deepcopy(_MOCK)
+    report["product_code"] = None
+    report["customer_name"] = "Dealer A Sdn Bhd"
+    del report["so_by_customer"]
+    report["so_by_product"] = [
+        {"product_code": "SRTWT7445", "ordered_qty": 900, "outstanding_qty": 900},
+        {"product_code": "SRTWT9002", "ordered_qty": 811, "outstanding_qty": 811},
+        {"product_code": "SRTWT1200", "ordered_qty": 700, "outstanding_qty": 700},
+    ]
+    del report["do_by_customer"]
+    report["do_by_product"] = [
+        {"product_code": "SRTWT7445", "do_qty": 640, "pending_qty": 640},
+    ]
+    return report
+
+
+def test_header_prints_product_all_when_no_product_is_given():
+    report = _customer_subject_report()
+    rendered = _outstanding_report(report)
+    assert rendered.startswith("Product: all\n"), rendered
+
+
+def test_customer_subject_report_byte_equal_to_golden():
+    """R13's own golden - a customer-subject report renders `*_By product_*`
+    instead of `*_By customer_*`, in both blocks, same `name: total (O/S:
+    outstanding)` line shape, ranked (R10)."""
+    rendered = _outstanding_report(_customer_subject_report())
+    assert rendered == _golden("outstanding-report-customer.txt")
+    assert "*_By customer_*" not in rendered, rendered
+    assert "*_By product_*" in rendered, rendered
+    assert "SRTWT7445: 900 (O/S: 900)" in rendered, rendered
+
+
+def test_product_subject_report_keeps_by_customer_not_by_product():
+    """The mirror: the EXISTING product-subject mock must still render
+    `*_By customer_*`, never `*_By product_*` - only a customer subject
+    introduces the new group."""
+    rendered = _outstanding_report(_MOCK)
+    assert "*_By customer_*" in rendered, rendered
+    assert "*_By product_*" not in rendered, rendered
+
+
+# --------------------------------------------------------------------------
+# R14 (owner ruling, 13 Sep 2026): on the two-option detail offer, an answer
+# meaning BOTH returns both lists in one reply, SO then DO, each under its own
+# heading; the offer gains `3. Both lists` whenever two scopes are on offer.
+# --------------------------------------------------------------------------
+
+
+def test_offer_gains_both_lists_option_when_two_scopes_are_offered():
+    rendered = _outstanding_report(_MOCK)
+    assert rendered.rstrip().endswith("3. Both lists"), rendered
+    lines = rendered.splitlines()
+    assert lines[-3:] == ["1. Sales order list", "2. Delivery order list", "3. Both lists"], lines[-3:]
+
+
+def test_single_scope_offer_never_gains_both_lists():
+    """R9 stands: a single-scope offer is still one sentence, never a numbered
+    list, so there is nothing for `3. Both lists` to be added to."""
+    so_only = copy.deepcopy(_MOCK)
+    so_only["do"] = None
+    rendered = _outstanding_report(so_only)
+    assert "Both lists" not in rendered, rendered
+
+
+def test_detail_both_renders_the_so_list_then_the_do_list_each_under_its_heading():
+    """R14: `_outstanding_detail(report, "both")` (or whatever position 3 resolves
+    to) must print BOTH lists in one reply, SO first, each headed so the reader
+    can tell which list they are reading - this file's own choice of exact
+    heading text, since no golden precedent exists yet for it."""
+    rendered = _outstanding_detail(_MOCK, "both")
+    assert "*SO Number:* SO331785" in rendered, rendered
+    assert "*DO Number:* DO220456" in rendered, rendered
+    so_at = rendered.index("*SO Number:* SO331785")
+    do_at = rendered.index("*DO Number:* DO220456")
+    assert so_at < do_at, "the SO list must come BEFORE the DO list: {!r}".format(rendered)
+
+
+def test_envelope_dispatches_detail_both_to_the_combined_render():
+    detail = copy.deepcopy(_MOCK)
+    detail["detail"] = "both"
+    rendered = json.loads(present_response("crm_outstanding_report", json.dumps(detail)))
+    assert rendered["has_result"] is True
+    assert rendered["response"] == _outstanding_detail(detail, "both")
+    assert "*SO Number:*" in rendered["response"] and "*DO Number:*" in rendered["response"]
 
 
 # --------------------------------------------------------------------------
@@ -524,6 +632,7 @@ _BANNED = ("\u2014", "\u2013", "\u2192", "->", "=>")
         "outstanding-report-both.txt",
         "outstanding-report-so.txt",
         "outstanding-report-do.txt",
+        "outstanding-report-customer.txt",
         "outstanding-report-miss.txt",
         "outstanding-detail-so.txt",
         "outstanding-detail-do.txt",

@@ -1,5 +1,6 @@
 1. *SO Number:* SO331785
 *Customer:* Dealer A Sdn Bhd
+*Product:* SRTWT7445
 *Location:* BRW-BB
 *Ordered:* 410
 *Transferred to DO:* 0

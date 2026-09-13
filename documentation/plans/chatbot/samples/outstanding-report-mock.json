@@ -40,6 +40,7 @@
     {
       "so_number": "SO331785",
       "customer_name": "Dealer A Sdn Bhd",
+      "product_code": "SRTWT7445",
       "location": "BRW-BB",
       "ordered_qty": 410,
       "transferred_qty": 0,
@@ -51,6 +52,7 @@
     {
       "do_number": "DO220456",
       "customer_name": "Dealer A Sdn Bhd",
+      "product_code": "SRTWT7445",
       "location": "BRW-IB",
       "do_qty": 640,
       "delivered_qty": 0,

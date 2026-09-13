@@ -31,3 +31,4 @@ Dealer A Sdn Bhd: 640 (O/S: 640)
 Reply with a number for detail:
 1. Sales order list
 2. Delivery order list
+3. Both lists

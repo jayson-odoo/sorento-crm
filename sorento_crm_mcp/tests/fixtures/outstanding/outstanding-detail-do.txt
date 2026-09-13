@@ -1,5 +1,6 @@
 1. *DO Number:* DO220456
 *Customer:* Dealer A Sdn Bhd
+*Product:* SRTWT7445
 *Location:* BRW-IB
 *DO Qty:* 640
 *Delivered:* 0

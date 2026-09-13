@@ -2443,3 +2443,145 @@ class TestParserPromptTeachesOpenQuestionAnswers:
             "the addendum must say that a message naming something new (a product, a "
             "customer, an order, another topic) is NOT an answer to the open question"
         )
+
+
+# --------------------------------------------------------------------------- #
+# R13 (owner ruling, 13 Sep 2026) - the customer-only carve-out (D11, S4 point 2)
+# is RETIRED for outstanding asks: a customer with no product now reaches
+# crm_outstanding_report too, never the legacy so_outstanding/include_pipeline
+# bucket. "when we generate the outstanding summary for customer and for
+# product it is different, they should be the same."
+# --------------------------------------------------------------------------- #
+
+CUSTOMER_ONLY_UUID = "cccccccc-1111-cccc-1111-cccccccc1111"
+CUSTOMER_ONLY_NAME = "Hanlim Trading"
+
+
+class TestCustomerOnlyOutstandingAskReachesTheReport:
+    def test_bare_outstanding_customer_only_arms_the_scope_question(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Today: `has_product` is a HARD requirement of the outstanding-report
+        override (`lanes/business/__init__.py`, "S4 point 2"), so a customer-only
+        bare "outstanding" ask never arms the scope question at all - it falls
+        through to the plain order-list tool / the legacy so_outstanding bucket."""
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", intent_hint="check_order", domain_hint="order",
+                order_status="outstanding",
+                entities=[
+                    {
+                        "raw": "hanlim", "hint": "customer", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+            ),
+            text_body="outstanding report for hanlim",
+            msg_id="ZZT-outstanding-customer-only-scope-1",
+            attributes=["sales_orders.outstanding"],
+            matches={"hanlim": {"uuid": CUSTOMER_ONLY_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_ONLY_NAME}},
+        )
+        assert captured == [], (
+            f"no report/order tool may be called while the scope question is open: {captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" in reply, reply
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
+            f"a customer-only outstanding ask must arm the scope question exactly like "
+            f"a product ask does: {stored.get('pending')!r}"
+        )
+        assert stored.get("outstanding_filters", {}).get("customer_ids") == [CUSTOMER_ONLY_UUID], (
+            f"the resolved customer must be stored in the carried filter set even with "
+            f"no product: {stored.get('outstanding_filters')}"
+        )
+
+    def test_explicit_scope_word_customer_only_picks_the_report_with_customer_ids(
+        self, session_factory
+    ) -> None:
+        """A customer-only ask that ALREADY names its scope (`do_outstanding` here,
+        e.g. "delivery order outstanding for hanlim") must run the report directly,
+        `customer_ids` set, no `product_code` needed at all."""
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp(REPORT_HIT)
+        payload = {
+            "gate": {
+                "compatible_entities": [
+                    {"uuid": CUSTOMER_ONLY_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_ONLY_NAME},
+                ]
+            },
+            "tier_gate": None,
+            "ctx": {
+                "parse": {
+                    "output": _parser_output(
+                        domain_hint="order", intent_hint="check_order", order_status="do_outstanding",
+                        entities=[
+                            {
+                                "raw": "hanlim", "hint": "customer", "canonical_code": None,
+                                "current_message": True, "confident": True,
+                            },
+                        ],
+                    )
+                },
+                "contact": {"id": CONTACT_ID},
+                "access": {"attributes": ["sales_orders.outstanding"]},
+            },
+        }
+        run_fetch(payload, services=FetchServices(mcp_call=call))
+        assert captured, (
+            "a customer-only ask that names its own scope must still reach "
+            "crm_outstanding_report - today it needs a product entity to be picked at all"
+        )
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (name, args)
+        assert args.get("customer_ids") == [CUSTOMER_ONLY_UUID], args
+        assert args.get("scope") == "do", args
+        assert not args.get("product_code"), (
+            f"no product was named, so product_code must be absent/empty: {args}"
+        )
+
+    def test_delivery_to_hanlim_without_an_outstanding_word_stays_on_the_order_lane(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Regression lock: R13 relaxes the PRODUCT requirement, never the SCOPE
+        requirement - a customer ask that names no outstanding/delivery-status word
+        at all is still a plain order-list ask, not a report. (This is expected to
+        pass already; kept here so a later change cannot fold "any order-domain
+        customer ask" into the report by accident.)"""
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp(REPORT_HIT)
+        payload = {
+            "gate": {
+                "compatible_entities": [
+                    {"uuid": CUSTOMER_ONLY_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_ONLY_NAME},
+                ]
+            },
+            "tier_gate": None,
+            "ctx": {
+                "parse": {
+                    "output": _parser_output(
+                        domain_hint="order", intent_hint="check_order", order_status=None,
+                        entities=[
+                            {
+                                "raw": "hanlim", "hint": "customer", "canonical_code": None,
+                                "current_message": True, "confident": True,
+                            },
+                        ],
+                    )
+                },
+                "contact": {"id": CONTACT_ID},
+                "access": {"attributes": ["sales_orders.outstanding"]},
+            },
+        }
+        run_fetch(payload, services=FetchServices(mcp_call=call))
+        assert captured, "the plain order ask must still be answered"
+        name, _args = captured[0]
+        assert name != "crm_outstanding_report", (
+            f"a customer ask with no outstanding word must stay on the plain order "
+            f"lane: {name}"
+        )

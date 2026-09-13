@@ -216,3 +216,27 @@ cases:
           reply_contains: ["Delivery order outstanding", "Location: BRW"]
           reply_not_contains: ["Outstanding for which document?"]
           no_uuid: true
+
+  - name: R13 - a customer-only ask reaches the same report, By product instead of By customer
+    # R13 (owner testing round 3, 13 Sep 2026): "when we generate the outstanding summary
+    # for customer and for product it is different, they should be the same." The legacy
+    # so_outstanding bucket is no longer reachable for ANY outstanding ask, customer-only
+    # included (D11, S4 point 2 retired).
+    # NEEDS AN OWNER CHECK before this case is run: "hanlim" stands in for a real customer
+    # name this tenant's `customers` table resolves uniquely (see the header note on
+    # partial-name pickers).
+    cold: true
+    turns:
+      - text: "outstanding report for hanlim"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Outstanding for which document?", "1. Sales orders", "2. Delivery orders", "3. Both"]
+          pending_kind: outstanding_scope
+          no_uuid: true
+
+      - text: "3"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Product: all", "Sales order outstanding", "Delivery order outstanding", "By product", "3. Both lists"]
+          reply_not_contains: ["By customer"]
+          no_uuid: true

@@ -976,3 +976,167 @@ def test_warehouse_codes_over_fifty_is_422(client, db):
     too_many = ",".join(f"ZZT-WH-{i}" for i in range(51))
     resp = client.get(BASE, params={"product_code": prod.product_code, "warehouse_codes": too_many})
     assert resp.status_code == 422, resp.text
+
+
+# --------------------------------------------------------------------------- R13
+# (owner ruling, 13 Sep 2026): "when we generate the outstanding summary for
+# customer and for product it is different, they should be the same ... when we
+# ask for customer, the by customer section becomes by product section." The
+# report's subject is a product, a customer, or both. `product_code` becomes
+# optional; at least one of `product_code` / `customer_ids` / `customer_query`
+# is required. Which breakdown groups the response carries depends on the
+# subject: product subject -> by_location + by_customer (today's shape);
+# customer subject -> by_location + by_product (NEW); both -> by_location ONLY
+# (by_customer AND by_product both absent, not empty). so_rows[]/do_rows[] now
+# ALWAYS carry both customer_name and product_code, whatever the subject.
+
+
+def test_product_code_is_optional_when_a_customer_is_given(client, db):
+    """A customer-only ask (no product_code at all) must reach the route and
+    succeed - today `product_code` is still a required query param, so this
+    request 422s before the service ever runs."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT R13 Customer")
+    _so_line(db, product_id=prod.id, ordered=10, delivered=2, customer_id=cust.id, warehouse_id=wh.id)
+    db.commit()
+
+    resp = client.get(BASE, params={"customer_ids": cust.id, "scope": "so"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("product_code") is None, (
+        f"no product was given, so product_code must echo null, not a required string: {body}"
+    )
+
+
+def test_422_when_neither_product_nor_customer_is_given(client, db):
+    """R13: at least one of product_code/customer_ids/customer_query is required.
+    Today this already 422s, but for the WRONG reason (product_code is still a
+    required field at the FastAPI layer) - the assertion on the message content
+    is what actually pins the NEW business rule, not the coincidental status code."""
+    resp = client.get(BASE, params={"scope": "so"})
+    assert resp.status_code == 422, resp.text
+    assert "customer_query" in resp.text and "product_code" in resp.text, (
+        f"the 422 must name the business rule (at least one of product_code / "
+        f"customer_ids / customer_query), not FastAPI's generic 'field required': {resp.text}"
+    )
+
+
+def test_customer_subject_report_has_by_product_not_by_customer(client, db):
+    """R13's own words: "when we ask for customer, the by customer section
+    becomes by product section." A customer-only ask (no product_code) gets
+    `so_by_product[]` / `do_by_product[]` instead of `so_by_customer[]` /
+    `do_by_customer[]`, which must be ABSENT from the body entirely."""
+    prod1 = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU1"))
+    prod2 = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU2"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT R13 Multi Product")
+    _so_line(db, product_id=prod1.id, ordered=10, delivered=0, customer_id=cust.id, warehouse_id=wh.id)
+    _so_line(db, product_id=prod2.id, ordered=6, delivered=0, customer_id=cust.id, warehouse_id=wh.id)
+    _do(db, product_id=prod1.id, warehouse_id=wh.id, qty=7, customer_id=cust.id)
+    _do(db, product_id=prod2.id, warehouse_id=wh.id, qty=3, customer_id=cust.id)
+    db.commit()
+
+    resp = client.get(BASE, params={"customer_ids": cust.id, "scope": "both"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "so_by_product" in body, f"a customer subject must carry so_by_product: {body}"
+    assert "do_by_product" in body, f"a customer subject must carry do_by_product: {body}"
+    assert "so_by_customer" not in body, (
+        f"so_by_customer must be ABSENT for a customer subject, not just empty: {body}"
+    )
+    assert "do_by_customer" not in body, (
+        f"do_by_customer must be ABSENT for a customer subject, not just empty: {body}"
+    )
+    assert "so_by_location" in body and "do_by_location" in body, (
+        "by_location stays present for every subject"
+    )
+    so_products = {r["product_code"] for r in body["so_by_product"]}
+    assert so_products == {prod1.product_code, prod2.product_code}, body["so_by_product"]
+    do_products = {r["product_code"] for r in body["do_by_product"]}
+    assert do_products == {prod1.product_code, prod2.product_code}, body["do_by_product"]
+
+
+def test_product_subject_report_still_has_by_customer_not_by_product(client, db):
+    """The mirror: a product-only ask (today's existing shape) must NOT carry
+    so_by_product/do_by_product at all - only a customer subject introduces them."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT R13 Product Subject")
+    _so_line(db, product_id=prod.id, ordered=10, delivered=0, customer_id=cust.id, warehouse_id=wh.id)
+    _do(db, product_id=prod.id, warehouse_id=wh.id, qty=7, customer_id=cust.id)
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "both"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "so_by_customer" in body and "do_by_customer" in body
+    assert "so_by_product" not in body, (
+        f"so_by_product must be ABSENT for a product subject: {body}"
+    )
+    assert "do_by_product" not in body, (
+        f"do_by_product must be ABSENT for a product subject: {body}"
+    )
+
+
+def test_both_subject_report_has_only_by_location(client, db):
+    """R13: product AND customer given together -> by_location ONLY. Neither
+    by_customer nor by_product may appear, on either side."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT R13 Both Subject")
+    _so_line(db, product_id=prod.id, ordered=10, delivered=0, customer_id=cust.id, warehouse_id=wh.id)
+    _do(db, product_id=prod.id, warehouse_id=wh.id, qty=7, customer_id=cust.id)
+    db.commit()
+
+    resp = client.get(
+        BASE, params={"product_code": prod.product_code, "customer_ids": cust.id, "scope": "both"}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "so_by_location" in body and "do_by_location" in body
+    for absent in ("so_by_customer", "do_by_customer", "so_by_product", "do_by_product"):
+        assert absent not in body, f"{absent} must be ABSENT when both a product and a customer are given: {body}"
+
+
+def test_rows_carry_both_customer_name_and_product_code(client, db):
+    """R13: so_rows[]/do_rows[] always carry BOTH customer_name and product_code,
+    whatever the subject - the row fields are SO Number/Customer/Product/Location/
+    Ordered/Transferred to DO/Outstanding/Order Date (SO) and DO Number/Customer/
+    Product/Location/DO Qty/Delivered/Outstanding/DO Date (DO)."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT R13 Row Customer")
+    _so_line(db, product_id=prod.id, ordered=10, delivered=0, customer_id=cust.id, warehouse_id=wh.id)
+    _do(db, product_id=prod.id, warehouse_id=wh.id, qty=7, customer_id=cust.id)
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "both"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["so_rows"][0]["product_code"] == prod.product_code, body["so_rows"]
+    assert body["so_rows"][0]["customer_name"] == "ZZT R13 Row Customer", body["so_rows"]
+    assert body["do_rows"][0]["product_code"] == prod.product_code, body["do_rows"]
+    assert body["do_rows"][0]["customer_name"] == "ZZT R13 Row Customer", body["do_rows"]
+
+
+def test_by_product_ranked_and_tallies_with_the_block(client, db):
+    """R10 (ranking) and R11 (tally) both apply to the NEW by_product group exactly
+    as they do to by_location/by_customer: ranked by outstanding desc, and the
+    breakdown sums equal the block's totals."""
+    prod_high = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKUHIGH"))
+    prod_low = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKULOW"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT R13 Rank Customer")
+    _so_line(db, product_id=prod_low.id, ordered=5, delivered=0, customer_id=cust.id, warehouse_id=wh.id)
+    _so_line(db, product_id=prod_high.id, ordered=20, delivered=0, customer_id=cust.id, warehouse_id=wh.id)
+    db.commit()
+
+    resp = client.get(BASE, params={"customer_ids": cust.id, "scope": "so"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [r["product_code"] for r in body["so_by_product"]] == [
+        prod_high.product_code, prod_low.product_code,
+    ], f"so_by_product must rank by outstanding_qty desc: {body['so_by_product']}"
+    assert sum(r["ordered_qty"] for r in body["so_by_product"]) == body["so"]["ordered_qty"]
+    assert sum(r["outstanding_qty"] for r in body["so_by_product"]) == body["so"]["outstanding_qty"]

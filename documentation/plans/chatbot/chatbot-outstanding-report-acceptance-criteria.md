@@ -32,7 +32,17 @@ customer name, and every sales order line and delivery order line AutoCount has 
 4. They type "1". Every matching sales order, one row per SO, lines rolled up: SO number,
    customer, location, ordered, transferred, outstanding, order date. Every row is sent; n8n
    chunks long messages as it does today. No "+N more".
-5. They type "Dealer A outstanding SRTWT7445". Customer filter by name, same report.
+5. REWRITTEN (R13, owner testing round 3, 13 Sep 2026 - "when we generate the outstanding
+   summary for customer and for product it is different, they should be the same"). They
+   type "outstanding report for Dealer A" - a CUSTOMER-ONLY ask, no product code at all.
+   The bot no longer falls to the legacy `so_outstanding` bucket for a customer-only ask
+   (D11/S4 point 2, retired): it asks the same scope question as step 2 (no scope word in
+   the message), and "3" runs the SAME report shape as step 3 - header `Product: all`,
+   both blocks, each with its own By location line, but `*_By customer_*` becomes
+   `*_By product_*` (R13's own words: "when we ask for customer, the by customer section
+   becomes by product section"), then the SAME two-option offer PLUS a third, `3. Both
+   lists` (R14) - answering "3" here returns the SO list then the DO list in one reply,
+   each under its own heading.
 6. A miss ("SRTWT9999 outstanding") gets the same header and a one-line "no open sales
    order" / "no pending delivery order" per scope, then the existing escalate offer.
 
@@ -369,6 +379,48 @@ resolution and the filter set in the console trace.
   bare. D17 stands: this is a PROMPT fix, no deterministic code changes. Evidence: a pytest
   assertion on the published addendum text; a console case for the exact live phrasing,
   expecting the DO block directly (`Location: BRW`, no scope question).
+- **AC-1152 [BE]** NEW (R13, owner testing round 3, 13 Sep 2026 - customer subject). Given
+  `customer_ids` (or `customer_query`) and NO `product_code`, then: `product_code` is
+  optional on the route (a request without it, holding a customer instead, is a 200, not a
+  422); the response's `product_code` is `null` and the header prints `Product: all`;
+  `so_by_product[]` / `do_by_product[]` are PRESENT (one row per product, `{product_code,
+  ordered_qty|do_qty, pending_qty}`, ranked per R10, tallying per R11); `so_by_customer[]`
+  and `do_by_customer[]` are ABSENT from the body entirely (not empty); `so_by_location[]` /
+  `do_by_location[]` stay present. Evidence: pytest seeding one customer against two
+  products.
+- **AC-1153 [BE]** NEW (R13, both subject). Given BOTH `product_code` AND `customer_ids`,
+  then only `so_by_location[]` / `do_by_location[]` are present - `so_by_customer[]`,
+  `do_by_customer[]`, `so_by_product[]` and `do_by_product[]` are ALL absent. Evidence:
+  pytest. A product-only ask (today's existing shape, unchanged) is the mirror case:
+  `so_by_customer[]`/`do_by_customer[]` present, `so_by_product[]`/`do_by_product[]`
+  absent.
+- **AC-1154 [BE]** NEW (R13, rows carry both). `so_rows[]` and `do_rows[]` ALWAYS carry both
+  `customer_name` and `product_code`, whatever the subject - fields, in order: SO Number,
+  Customer, Product, Location, Ordered, Transferred to DO, Outstanding, Order Date (SO); DO
+  Number, Customer, Product, Location, DO Qty, Delivered, Outstanding, DO Date (DO).
+  Evidence: pytest (route) + golden fixtures `outstanding-detail-so.txt` /
+  `outstanding-detail-do.txt` (presenter, both copies) pinning the `*Product:*` line's
+  position.
+- **AC-1119** (existing, unchanged in wording) - product exactness (case-insensitive, no
+  sibling expansion) applies WHENEVER a `product_code` is given, whether the ask is a
+  product subject or a both subject; it has nothing to check when the subject is
+  customer-only (there is no product to be exact about).
+- **AC-1155 [T]** NEW (R14, owner ruling, 13 Sep 2026). On the two-option detail offer, an
+  answer meaning BOTH (word or position 3) returns BOTH lists in one reply, SO list first
+  then DO list, each under its own heading; the offer text itself gains a THIRD line,
+  `3. Both lists`, whenever two scopes are on offer (a single-scope offer stays R9's one
+  sentence - unaffected). Evidence: golden fixture `outstanding-report-customer.txt`
+  (carries the three-line offer) + presenter tests (`_outstanding_detail(report, "both")`
+  renders both lists; the offer text itself) + a lane test that the answering pick actually
+  reaches the combined render.
+- **AC-1156 [BE]** NEW (R13, lane). An outstanding ask with a customer entity and NO product
+  entity reaches `crm_outstanding_report` with `customer_ids` set - the legacy
+  `so_outstanding`/`include_pipeline` bucket over `crm_order_management_orders_list` is no
+  longer reachable for ANY outstanding ask (D11). The scope question, the detail offer, the
+  carried filter set and the `sales_orders.outstanding` reveal-key gate behave identically to
+  the product-subject path. A customer ask that names NO outstanding/scope word at all stays
+  on the plain order lane, unchanged (regression lock - this is what R13 does NOT touch).
+  Evidence: pytest (`run_fetch` + a full turn arming the scope question) + a console case.
 
 ## Out of scope (backlog)
 
