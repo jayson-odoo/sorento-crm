@@ -353,14 +353,23 @@ export function annotationsByLine(
     for (const row of order.rows ?? []) {
       const proposal = (row.proposal ?? null) as BoardContribution | null;
       const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
-      if (!lineId) continue;
+      // NO PLANNING LINE, STILL A CHANGE (R3). An order nobody has adopted has no mirror
+      // line for the row to name, and dropping it here left the LIST silent about a change
+      // the grid still drew - `annotationsByCell` has always had a fallback of its own.
+      // The sales order and the line number are what both sides of that shape do carry.
+      const key = lineId ?? lineKeyOf(order.so_number, row.line_no);
       const annotation = annotationOf(row, order.so_number, proposal?.fulfilment_location ?? null);
-      const held = out.get(lineId);
+      const held = out.get(key);
       if (held) held.push(annotation);
-      else out.set(lineId, [annotation]);
+      else out.set(key, [annotation]);
     }
   }
   return out;
+}
+
+/** How a list row is addressed when it has no planning line of its own: `SO400875|2`. */
+export function lineKeyOf(soNumber: string, lineNo: number | null | undefined): string {
+  return `${soNumber}|${lineNo ?? ''}`;
 }
 
 /**

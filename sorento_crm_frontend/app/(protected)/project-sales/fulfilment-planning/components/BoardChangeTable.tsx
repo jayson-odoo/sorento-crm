@@ -8,6 +8,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -82,6 +83,13 @@ export function BoardChangeTable({
                 ? `What changed, ${annotation.soNumber} (Line ${annotation.lineNo})`
                 : `What changed, ${annotation.soNumber} (${annotation.itemCode})`}
             </DialogTitle>
+            {/* Radix points the dialog's own `aria-describedby` at a description it expects
+                to exist; without one the attribute resolves to nothing and a screen reader is
+                handed a dangling id (and the console a warning). One sentence, which is also
+                what a first-time reader needs to know about this list. */}
+            <DialogDescription>
+              Only the fields that moved, then the suggestion.
+            </DialogDescription>
           </DialogHeader>
           <DialogBody>
             <BoardChangeSummary annotation={annotation} />
