@@ -315,7 +315,7 @@ NEW_WORLDS: tuple[OwnerWorld, ...] = (
                 expect={
                     "answered": "product_pick",
                     "focus_products": ["SRTKS8091-B"],
-                    "open_question_gone": True,
+                    "open_question_kind": "product_pick",
                 },
             ),
             OwnerTurn(
