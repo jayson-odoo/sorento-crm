@@ -186,48 +186,55 @@ beforeEach(() => {
   );
 });
 
+/**
+ * Owner feedback, 13 September 2026 (Slice C board display, AC-C9/AC-C10): was the inline
+ * Was / Now table's own suite. The table is retired from the matrix cell; a changed line -
+ * the advanced one and both cancelled ones alike - shows the hazard icon instead, and the
+ * dialog it opens is where every fact this block used to read off the table now lives.
+ */
 describe('the changed cell', () => {
-  it('shows a Was / Now table for the changed line and for both closed ones', async () => {
+  it('shows the hazard icon, not the inline table, for the changed line and for both cancelled ones', async () => {
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
 
-    const advanced = await screen.findByTestId('board-change-pcr-381895-1');
-    expect(within(advanced).getByText('Was')).toBeInTheDocument();
-    expect(within(advanced).getByText('Now')).toBeInTheDocument();
-    expect(within(advanced).getByText('Qty')).toBeInTheDocument();
-    expect(within(advanced).getByText('Date')).toBeInTheDocument();
-    expect(within(advanced).getByText('Decision')).toBeInTheDocument();
-    expect(within(advanced).getByTestId('change-now-qty')).toHaveTextContent(
-      '25',
-    );
-
+    expect(await screen.findByTestId('board-change-icon-pcr-381895-1')).toBeInTheDocument();
     // A closed line has left the board, so it is annotated on the surviving cell of the same
-    // product on the same order rather than disappearing with its own cell.
-    expect(screen.getByTestId('board-change-pcr-381895-2')).toBeInTheDocument();
-    expect(screen.getByTestId('board-change-pcr-381895-3')).toBeInTheDocument();
+    // product on the same order rather than disappearing with its own cell - same as before,
+    // only the icon stands in for the table now.
+    expect(screen.getByTestId('board-change-icon-pcr-381895-2')).toBeInTheDocument();
+    expect(screen.getByTestId('board-change-icon-pcr-381895-3')).toBeInTheDocument();
+
+    expect(screen.queryByTestId('board-change-pcr-381895-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('board-change-pcr-381895-2')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('board-change-pcr-381895-3')).not.toBeInTheDocument();
   });
 
-  it('reads Cancelled in the Now column of a line the book closed', async () => {
+  it('reads Cancelled in the Now half of the Qty line for a line the book closed', async () => {
     renderPanel();
-    const closed = await screen.findByTestId('board-change-pcr-381895-2');
-    expect(within(closed).getByTestId('change-now-qty')).toHaveTextContent(
-      'Cancelled',
-    );
-    expect(within(closed).getByTestId('change-now-decision')).toHaveTextContent(
-      'Cancelled',
-    );
+    fireEvent.click(await screen.findByTestId('board-change-icon-pcr-381895-2'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+
+    expect(within(dialog).getByText('What changed, SO381895 (Line 2)')).toBeInTheDocument();
+    // pcr-381895-2 held 10 (`from.qty`); the book closed it, so the Now half reads Cancelled
+    // rather than a quantity nobody may act on.
+    expect(within(dialog).getByText('Qty 10 → Cancelled')).toBeInTheDocument();
   });
 
   it('says a transfer already moved for a cancelled line, and proposes no reversal', async () => {
     renderPanel();
-    const moved = await screen.findByTestId('board-change-moved-pcr-381895-2');
-    expect(moved).toHaveTextContent('10 moved BRW -> BRW-IB, line cancelled');
+    fireEvent.click(await screen.findByTestId('board-change-icon-pcr-381895-2'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+
+    expect(
+      within(dialog).getByText('10 moved BRW -> BRW-IB, line cancelled'),
+    ).toBeInTheDocument();
   });
 
-  it('never prints a retired reaction word, and does print the composed suggestion', async () => {
+  it('never prints a retired reaction word in the dialog, and does print the composed suggestion', async () => {
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
-    const printed = document.body.textContent ?? '';
+    fireEvent.click(await screen.findByTestId('board-change-icon-pcr-381895-1'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+    const printed = dialog.textContent ?? '';
     // Retired with the rule table (Slice C): a verb the row agreed with executed nothing.
     // Keep / Reduce / Release / Reallocate are now the SUGGESTION's own words, so they are
     // expected on screen - printed verbatim from the server's own sentence (AC-C1).
@@ -237,10 +244,11 @@ describe('the changed cell', () => {
     expect(printed).toContain('Buy 25 (was 10)');
   });
 
-  it('shows no table at all on a board opened without a batch', async () => {
+  it('shows no table and no icon at all on a board opened without a batch', async () => {
     renderPanel(null);
     await screen.findByTestId('fulfilment-board-matrix');
     expect(screen.queryByTestId('board-change-pcr-381895-1')).toBeNull();
+    expect(screen.queryByTestId('board-change-icon-pcr-381895-1')).toBeNull();
     expect(getPlanningChangeBatch).not.toHaveBeenCalled();
   });
 });

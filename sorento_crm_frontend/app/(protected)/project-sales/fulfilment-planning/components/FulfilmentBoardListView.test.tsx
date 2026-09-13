@@ -315,67 +315,18 @@ describe('FulfilmentBoardListView marks a row whose supply is already decided', 
 });
 
 /**
- * The list draws the SAME bar the grid does, off the same draft (PLAN section C).
- *
- * Two readings of one board that disagreed about a colour would be worse than one reading: the
- * planner would have to work out which of them was lying.
+ * DELETED, owner feedback 13 Sep (Slice C board display, AC-C13): this block ("FulfilmentBoard
+ * ListView agrees with the grid about the supply bar") pinned `data-testid="supply-bar"` /
+ * `data-decided` / `span[data-kind=...]` on the Suggested and Decided cells - exactly what
+ * AC-C13 retires ("the Suggested and Decided cells carry no progress bar"; see
+ * `FulfilmentBoardListView.test.tsx`'s own "thin rows" describe block below, which pins the
+ * bar's ABSENCE instead). The intent this block actually existed for - the list and the grid
+ * must never disagree about what was suggested and what was decided - is not lost: it is
+ * `describe('FulfilmentBoardListView says what was suggested and what was decided', ...)`
+ * below, which already asserts the same two states this block did ("BRW 43 (BRW)" faded /
+ * undecided, "Buy 43" solid / decided) as the rendered WORDS rather than as bar attributes,
+ * and needs no change for AC-C13 to land.
  */
-describe('FulfilmentBoardListView agrees with the grid about the supply bar', () => {
-  it('draws the proposal faded on an undecided row', async () => {
-    renderView({
-      contributions: [
-        contribution({
-          sources: [
-            { kind: 'reserve', rung: 'pool', qty: '43', location: 'BRW', reason: 'pool' },
-          ],
-        }),
-      ],
-    });
-
-    const bar = await screen.findByTestId('supply-bar');
-    expect(bar).toHaveAttribute('data-decided', 'false');
-    expect(bar.querySelector('span[data-kind="shared"]')).not.toBeNull();
-  });
-
-  it('draws the DECISION, solid, once the row is ticked in the draft', async () => {
-    renderView({
-      contributions: [
-        contribution({
-          sources: [
-            { kind: 'buy', rung: 'buy', qty: '43', reason: 'Nothing free at any location.' },
-            {
-              kind: 'reserve',
-              rung: 'pool',
-              qty: '0',
-              location: 'BRW',
-              warehouse_id: 'wh-brw',
-              reason: 'pool',
-            },
-          ],
-        }),
-      ],
-      draft: {
-        'so-1:line-10': {
-          verdict: 'amended',
-          reserve: [{ warehouse_id: 'wh-brw', location: 'BRW', qty: '43' }],
-          borrow: [],
-          buy_qty: '0',
-          reason: 'The pool can cover it',
-        },
-      },
-    });
-
-    // Two bars per row since AC-D4 split the column in two: Suggested first, Decided
-    // second. It is the DECIDED one that has to go solid.
-    const bars = await screen.findAllByTestId('supply-bar');
-    expect(bars).toHaveLength(2);
-    expect(bars[0]).toHaveAttribute('data-decided', 'false');
-    const bar = bars[1];
-    expect(bar).toHaveAttribute('data-decided', 'true');
-    expect(bar.querySelector('span[data-kind="shared"]')).not.toBeNull();
-    expect(bar.querySelector('span[data-kind="buy"]')).toBeNull();
-  });
-});
 
 /**
  * AC-D4: Suggested and Decided, side by side, in PLAN section 2's own words.
@@ -731,6 +682,60 @@ describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 
     ).toHaveLength(2);
 
     fireEvent.click(screen.getByTestId('board-list-collapse-all'));
+    await waitFor(() =>
+      expect(
+        screen.queryAllByRole('button', { name: 'Save decision' }),
+      ).toHaveLength(0),
+    );
+  });
+
+  /**
+   * The same unsaved-edit question every other way of closing an open row already asks
+   * (C5, `decisionRowExpansion.tsx`'s own `requestClose`/`AlertDialog`) - Collapse all is
+   * one more way to close a row, so it goes through the same guard rather than silently
+   * discarding a composition nobody asked to throw away.
+   */
+  it('Collapse all with one panel holding an unsaved edit asks once, via the existing confirm-discard prompt', async () => {
+    renderView({ contributions: twoRows() });
+    await screen.findByText('SO397450');
+
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    await screen.findAllByRole('button', { name: 'Save decision' });
+
+    // An edit nobody has saved, on ONE of the two open panels.
+    fireEvent.change(screen.getByPlaceholderText('In your own words'), {
+      target: { value: 'The group is short' },
+    });
+
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(
+      'Leave this decision unsaved?',
+    );
+    // Asked ONCE - not once per open row - and kept open until answered.
+    expect(screen.getAllByRole('alertdialog')).toHaveLength(1);
+    expect(
+      screen.getAllByRole('button', { name: 'Save decision' }),
+    ).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await waitFor(() =>
+      expect(
+        screen.queryAllByRole('button', { name: 'Save decision' }),
+      ).toHaveLength(0),
+    );
+  });
+
+  it('Collapse all with no dirty panel collapses silently, with no prompt', async () => {
+    renderView({ contributions: twoRows() });
+    await screen.findByText('SO397450');
+
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    await screen.findAllByRole('button', { name: 'Save decision' });
+
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     await waitFor(() =>
       expect(
         screen.queryAllByRole('button', { name: 'Save decision' }),

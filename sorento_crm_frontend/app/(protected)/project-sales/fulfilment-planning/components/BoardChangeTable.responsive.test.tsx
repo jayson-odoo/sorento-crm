@@ -1,22 +1,28 @@
 /**
- * The board's Was / Now table at 375px (`PLAN-scm-cs-planning-uat.md` part 3, AC-P3-2 / AC-P3-3).
+ * The board's change lightbox at 375px (owner feedback 13 Sep, Slice C board display,
+ * `documentation/plans/scm/scm-change-management-one-engine-acceptance-criteria.md` AC-C9 to
+ * AC-C14).
  *
- * Two things the plan's "structure, not words" ruling and the mobile design mandate both ask
- * for on this one component:
+ * Was the inline Was / Now table's own responsive suite (`PLAN-scm-cs-planning-uat.md` part 3,
+ * AC-P3-2 / AC-P3-3) - retired by AC-C9, which replaces that table with one amber hazard icon
+ * (`board-change-icon-<rowId>`) and moves everything the table used to say into the dialog
+ * AC-C10 opens on click (`board-change-dialog`). The same two guarantees the table had to
+ * carry now belong to the icon and the dialog instead:
  *
- * 1. The table never overflows its cell. `BoardChangeTable` sits inside a ~150px board cell
- *    on a phone as much as on a desktop, so its width has to come from the cell it is given,
- *    never from its own content - `w-full` + `table-fixed` on the table, percentage column
- *    widths, `truncate` on anything that can run long (the SO number, a decision sentence).
- *    jsdom does not lay out CSS, so this is a class-level check, not a measured one.
- * 2. The retired reaction vocabulary - Replan / Retire / Accept - never reaches the screen at
+ * 1. Neither ever overflows. The icon sits inside a ~150px board cell on a phone as much as
+ *    on a desktop, so it stays a fixed small glyph rather than sizing itself off its content;
+ *    the dialog it opens draws from a full-width, responsive shell with no fixed pixel width
+ *    anywhere in it, and truncates a long sentence with the full text in its `title`. jsdom
+ *    does not lay out CSS, so this is a class-level check, not a measured one (kept from the
+ *    original file's own disclaimer).
+ * 2. The retired reaction vocabulary - Replan / Retire / Accept - never reaches the dialog at
  *    any width, because a planner reads what the engine COMPOSED, not the name of a reaction
  *    the row took to itself (`boardChangeAnnotations.ts` module docstring, rule 1; AC-C1).
  *    Keep / Reduce / Release / Reallocate DO reach it: they are now the suggestion's own
  *    words, printed verbatim from the server's sentence.
  */
 import React from 'react';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BoardChangeTable } from './BoardChangeTable';
@@ -62,82 +68,84 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('the Was / Now table at 375px', () => {
-  it('draws from a full-width, table-fixed container rather than a fixed pixel width', () => {
+/** Opens the dialog the icon triggers, and hands back the dialog element (AC-C10). */
+function openDialog(rowId: string) {
+  fireEvent.click(screen.getByTestId(`board-change-icon-${rowId}`));
+  return screen.getByTestId('board-change-dialog');
+}
+
+describe('the change lightbox at 375px', () => {
+  it('opens a dialog that draws from a full-width, responsive container rather than a fixed pixel width', () => {
     render(<BoardChangeTable annotation={annotation()} />);
-    const container = screen.getByTestId('board-change-pcr-381895-1');
+    const dialog = openDialog('pcr-381895-1');
 
-    // The cell it is drawn inside sizes it; it must never size itself. `table-fixed` +
-    // `w-full` is what makes the column percentages (below) actually hold the layout,
-    // rather than the browser widening the table to fit its longest cell's content.
-    expect(container.className).toMatch(/\bw-full\b/);
-    expect(container.className).not.toMatch(/\bw-\[\d/);
-
-    const table = container.querySelector('table');
-    expect(table).not.toBeNull();
-    expect(table?.className).toMatch(/\btable-fixed\b/);
-    expect(table?.className).toMatch(/\bw-full\b/);
+    // The viewport sizes it; it must never size itself off a literal pixel value - the same
+    // rule the inline table's own container followed before AC-C9 replaced it with the icon.
+    expect(dialog.className).toMatch(/\b(w-full|max-w-)/);
+    expect(dialog.className).not.toMatch(/\bw-\[\d+px\]/);
   });
 
-  it('gives every column a percentage width, none of them a fixed pixel one', () => {
+  it('gives no part of the dialog a fixed pixel width', () => {
     render(<BoardChangeTable annotation={annotation()} />);
-    const table = screen.getByTestId('board-change-pcr-381895-1').querySelector('table');
-    const headers = Array.from(table?.querySelectorAll('thead th') ?? []);
-    expect(headers).toHaveLength(3);
-    for (const header of headers) {
-      expect(header.className).toMatch(/\bw-\[\d+%\]/);
-      expect(header.className).not.toMatch(/\bw-\[\d+px\]/);
+    const dialog = openDialog('pcr-381895-1');
+
+    for (const el of Array.from(dialog.querySelectorAll<HTMLElement>('*'))) {
+      expect(el.className).not.toMatch(/\b(w|min-w)-\[\d+px\]/);
     }
   });
 
-  it('truncates the long text a decision sentence and an SO number can carry, rather than widening the cell', () => {
+  it('truncates the long text a decision sentence and a suggestion line can carry, rather than widening the dialog', () => {
     render(
       <BoardChangeTable
         annotation={annotation({
-          soNumber: 'SO381895-A-VERY-LONG-DOCUMENT-NUMBER-THAT-SHOULD-NEVER-WIDEN-THE-CELL',
+          suggestionLines: [
+            'Reallocate PO-A 34 to SO420103 ORDER 50 at BRW-IB, a sentence long enough to run past any dialog width',
+          ],
         })}
       />,
     );
-    const container = screen.getByTestId('board-change-pcr-381895-1');
-    const soNumberEl = within(container).getByTitle('SO381895-A-VERY-LONG-DOCUMENT-NUMBER-THAT-SHOULD-NEVER-WIDEN-THE-CELL');
-    expect(soNumberEl.className).toMatch(/\btruncate\b/);
+    const dialog = openDialog('pcr-381895-1');
 
-    const decisionCell = screen.getByTestId('change-now-decision');
-    expect(decisionCell.className).toMatch(/\btruncate\b/);
+    // Decision 1 (`Buy 10`) and Decision 2 (the long borrow sentence in `annotation()`'s
+    // `now.decision`) both changed, so the dialog's own Decision line carries the long one.
+    const decisionLine = within(dialog).getByText(/^Decision /);
+    expect(decisionLine.className).toMatch(/\btruncate\b/);
+    expect(decisionLine.getAttribute('title')).toContain(
+      'Use BRW 5 from BRW, 10 from WH3',
+    );
+
+    const suggestionLine = within(dialog).getByTestId('board-change-suggestion-line');
+    expect(suggestionLine.className).toMatch(/\btruncate\b/);
+    expect(suggestionLine.getAttribute('title')).toContain(
+      'Reallocate PO-A 34 to SO420103 ORDER 50',
+    );
   });
 
-  it('shrinks to a 10px compact scale inside the board cell, never wrapping into a taller cell', () => {
-    render(<BoardChangeTable annotation={annotation()} compact />);
-    const container = screen.getByTestId('board-change-pcr-381895-1');
-    expect(container.className).toMatch(/text-\[10px\]/);
-  });
+  it('shrinks the icon to a compact size inside the board cell, without shrinking the dialog it opens', () => {
+    const { unmount } = render(<BoardChangeTable annotation={annotation()} compact />);
+    const compactIcon = screen.getByTestId('board-change-icon-pcr-381895-1');
+    const compactClass = compactIcon.className;
+    unmount();
 
-  it('never renders a retired reaction word, at 375px or otherwise', () => {
     render(<BoardChangeTable annotation={annotation()} />);
-    const printed = screen.getByTestId('board-change-pcr-381895-1').textContent ?? '';
+    const normalIcon = screen.getByTestId('board-change-icon-pcr-381895-1');
+    // The compact grid cell draws a visibly smaller icon than the list/non-compact reading.
+    expect(compactClass).not.toBe(normalIcon.className);
+
+    // Whichever icon opened it, the DIALOG itself is never the compact scale - it is a
+    // lightbox over the whole screen, not a board cell squeezed to ~150px.
+    const dialog = openDialog('pcr-381895-1');
+    expect(dialog.className).not.toMatch(/text-\[10px\]/);
+  });
+
+  it('never renders a retired reaction word inside the dialog, at 375px or otherwise', () => {
+    render(<BoardChangeTable annotation={annotation()} />);
+    const dialog = openDialog('pcr-381895-1');
+    const printed = dialog.textContent ?? '';
     for (const verb of ['Replan', 'Retire', 'Accept']) {
       expect(printed).not.toContain(verb);
     }
     // What it DOES print is the engine's own sentence for each component.
     expect(printed).toContain('Keep 10');
-  });
-
-  it('truncates every suggestion line rather than widening the cell it sits in', () => {
-    render(
-      <BoardChangeTable
-        annotation={annotation({
-          suggestionLines: [
-            'Reallocate PO-A 34 to SO420103 ORDER 50 at BRW-IB, a sentence long enough to run past any board cell',
-          ],
-        })}
-        compact
-      />,
-    );
-    const lines = screen.getAllByTestId('board-change-suggestion-line');
-    expect(lines).toHaveLength(1);
-    expect(lines[0].className).toMatch(/\btruncate\b/);
-    expect(lines[0].getAttribute('title')).toContain('Reallocate PO-A 34 to SO420103 ORDER 50');
-    // Still the 10px compact scale: the suggestion must not force a taller cell either.
-    expect(screen.getByTestId('board-change-pcr-381895-1').className).toMatch(/text-\[10px\]/);
   });
 });
