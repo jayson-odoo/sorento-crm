@@ -45,6 +45,7 @@ UNDEFINED = jsc.UNDEFINED
 # EMITS one on the merge arm and FOLDS every one it finds - the JS does, so the port must,
 # or the two disagree on a customer-visible string.
 EM_DASH = "\u2014"
+EN_DASH = "\u2013"
 
 
 @dataclass
@@ -107,20 +108,52 @@ def sanitize_em_dash(value: Any) -> Any:
     Dynamic text (LLM, CRM, RAG sourced) must never carry an em-dash to a customer. The
     walk is over the FINAL payload, so it covers `user_response`, `quick_reply` and every
     persisted `variables.*` string no matter which arm produced it.
+
+    THE EM DASH ONLY, here. `sanitize_dashes` folds the en dash as well and is what the
+    engine applies at the process boundary; this one may not, because six graded captures
+    carry a U+2013 in a field this function walks (`crossdomain-compose` s57-t0,
+    `build-result` exec-14001933 among them) and folding it would move every one of them.
     """
+    return _fold(value, (EM_DASH,))
+
+
+def sanitize_dashes(value: Any) -> Any:
+    """The same walk, folding the EN dash too - the PROCESS BOUNDARY's rule (S7b).
+
+    Applied where a turn leaves the CRM (the row it persists, the actions it hands the
+    caller, `reply.attachments_src`) rather than inside the tail, so no node output and
+    therefore no capture moves. It exists because the tail's fold covered only the SEALED
+    reply: the casual lane builds its `send_message` from the clarifier's raw words before
+    the tail runs (`engine._run_casual_lane`), so one turn carried two texts that differed
+    by one character - the customer would have been sent the em-dash one, and the console
+    printed BOTH bubbles because `console_service._customer_texts` de-duplicates by exact
+    equality. Pre-existing on main; the lane only made the clarifier arm common enough to
+    see it.
+    """
+    return _fold(value, (EM_DASH, EN_DASH))
+
+
+def _fold(value: Any, chars: tuple[str, ...]) -> Any:
+    """One walker, mutating in place, so the persisted copy and the returned one agree."""
     if isinstance(value, dict):
         for key, inner in value.items():
             if isinstance(inner, str):
-                value[key] = inner.replace(EM_DASH, "-")
+                value[key] = _folded(inner, chars)
             elif isinstance(inner, (dict, list)):
-                sanitize_em_dash(inner)
+                _fold(inner, chars)
     elif isinstance(value, list):
         for index, inner in enumerate(value):
             if isinstance(inner, str):
-                value[index] = inner.replace(EM_DASH, "-")
+                value[index] = _folded(inner, chars)
             elif isinstance(inner, (dict, list)):
-                sanitize_em_dash(inner)
+                _fold(inner, chars)
     return value
+
+
+def _folded(text: str, chars: tuple[str, ...]) -> str:
+    for char in chars:
+        text = text.replace(char, "-")
+    return text
 
 
 def _first(value: Any) -> Any:
@@ -340,12 +373,102 @@ def _offer_rides_on_roster(asked: Any, previous: Any) -> bool:
     return jsc.truthy(payload.get("team")) and len(jsc.array(asked.get("options"))) > 0
 
 
+def _rows_are_customers(rows: Any) -> bool:
+    """Is every row a CUSTOMER? The kind test `miss_suggest._attach_question` uses.
+
+    Said the same way in both places on purpose: a roster of customers is a
+    `customer_pick` and anything else is a `product_pick`, and the two composers must not
+    be able to disagree about which question the same rows are.
+    """
+    rows = [row for row in jsc.array(rows) if jsc.truthy(row)]
+    return bool(rows) and all(
+        jsc.lower_or_empty(jsc.get(row, "entity_type")) == "customer" for row in rows
+    )
+
+
+def _from_sources(sources: tuple[Any, ...], key: str) -> list[Any]:
+    """`key` off the FIRST source that carries it. The order of `sources` is the ruling.
+
+    A `require_specific` turn's candidates live on the RESULT OBJECT
+    (`outcome["central-exchange"]`) - the same object `is_disambig` reads `require_specific`
+    and `compatible_entities` off - and the `gate` producer is a different node that may
+    carry nothing on this arm. Read in that order rather than from one hard-coded place,
+    because which producer ran is exactly what differs between the lanes that reach here.
+    """
+    for source in sources:
+        rows = [row for row in jsc.array(jsc.get(source, key)) if isinstance(row, dict)]
+        if rows:
+            return rows
+    return []
+
+
+def _picker_rows(options: Any, sources: tuple[Any, ...]) -> list[dict[str, Any]]:
+    """The rows the "multiple matches" reply NUMBERED, in the order it numbered them.
+
+    Three sources, best first, because which one holds them depends on what else the turn
+    did:
+
+    * `last_result_set` - the indexed rows the tail itself built, and the shape the sealed
+      reply carries. Present on the owner's real turn.
+    * `specific_options` - exposed for exactly this correlation ("so a reader can correlate
+      line N to the Nth candidate's uuid"), flattened candidate by candidate the same way
+      `gate.run` flattens it into the numbered lines. It is the answer whenever the tail
+      skipped its own indexing, which a `manualResponse` turn does.
+    * `compatible_entities` - last, and only when NO numbered lines were flattened at all.
+      The gate's own comment warns this list is "not the picker's own render order", which
+      is why it cannot outrank the two above; where neither of those exists there is no
+      rendered order for it to contradict.
+    """
+    rows = [row for row in jsc.array(options) if isinstance(row, dict)]
+    if rows:
+        return rows
+    flattened = [
+        candidate
+        for option in _from_sources(sources, "specific_options")
+        for candidate in jsc.array(jsc.get(option, "candidates"))
+        if isinstance(candidate, dict)
+    ]
+    return flattened or _from_sources(sources, "compatible_entities")
+
+
+def _keep_beside(sources: tuple[Any, ...], rows: Any) -> list[dict[str, Any]]:
+    """Issue #708's siblings: what already resolved this turn, MINUS the rows on offer.
+
+    Empty on today's `require_specific` turns, and measurably so rather than by accident:
+    `gate.run` narrows `compatible_entities` to the picker's own candidates on exactly
+    that arm (`opt_uuids`), so "already resolved" and "on offer" are the same set and the
+    subtraction leaves nothing. It is written as the subtraction anyway because that is
+    the RULE - the same one `_attach_question` applies to the did-you-mean roster - and a
+    gate that later stops narrowing must not silently start dropping siblings.
+    """
+    offered = {
+        jsc.nullish_str(jsc.get(row, "uuid")).strip().lower()
+        for row in jsc.array(rows)
+        if jsc.truthy(row) and jsc.truthy(jsc.get(row, "uuid"))
+    }
+    return [
+        {
+            "raw": jsc.get(entity, "code"),
+            "hint": jsc.get(entity, "entity_type") or "product",
+            "canonical_code": jsc.get(entity, "code"),
+            "uuid": jsc.get(entity, "uuid") or None,
+            "current_message": True,
+            "confident": True,
+        }
+        for entity in _from_sources(sources, "compatible_entities")
+        if jsc.nullish_str(jsc.get(entity, "uuid")).strip().lower() not in offered
+    ]
+
+
 def _ask_for_turn(
     *,
     qf: Mapping[str, Any],
     gate: Any,
+    result_obj: Any,
     offer_open: bool,
     selection_context: Any,
+    born_context: Any,
+    reply_text: Any,
     options: Any,
     team_clarify_options: Any,
     roster_plan: Any,
@@ -362,6 +485,15 @@ def _ask_for_turn(
     one option, `expects: yes_no` (D5).
 
     `options` are frozen HERE, as the customer saw them, and `ask` numbers them from 1.
+
+    **`born_context` is the label THIS TURN earned, and it is a different question from
+    `selection_context`** (which may have been re-seated from the question the last turn
+    left open). Only the `disambiguation` arm consults it, and only because that arm is the
+    one whose rows come straight off `last_result_set`: on an ANSWERED turn those rows are
+    the answer's, so a carried label there would arm a roster the customer never saw. That
+    is B3 (turn 26b15a53-87a8-43be-8e55-5839b3ce3149), and it is the measured caller that
+    earns the distinction back after S6 dropped it as unused machinery. The carried case
+    stays where it belongs, on `_is_a_re_arm_of` / `_re_armed`.
     """
     from app.services.chatbot.dialogue import open_question as oq
 
@@ -412,10 +544,45 @@ def _ask_for_turn(
             domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
             payload=payload,
         )
-    if offer_open:
+    if jsc.nullish_str(born_context or "") == "disambiguation":
+        # THE "MULTIPLE MATCHES" PICKER, which had no arm at all until now (S7a). Owner,
+        # console 13 Sep: "incoming wc286" printed ten numbered products and the tail armed
+        # the ESCALATE OFFER instead, so the next "8" resolved against a one-row team
+        # roster and the incoming lookup ran with no product at all (turn
+        # 26b15a53-87a8-43be-8e55-5839b3ce3149). The did-you-mean lane freezes its own
+        # roster (`miss_suggest._attach_question`); this picker is composed in
+        # `lanes/business/gate.py`, which composes no question, so the tail is its only
+        # seat - the same fallback the four labels above are.
+        #
+        # BEFORE the offer arm, because a numbered list is what the customer is looking at
+        # and a question they can answer beats one they were never asked.
+        sources = (result_obj, gate)
+        rows = _picker_rows(options, sources)
+        if rows:
+            return oq.ask(
+                "customer_pick" if _rows_are_customers(rows) else "product_pick",
+                options=rows,
+                turn_no=turn_no,
+                domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+                payload={
+                    "domain": jsc.js_string(domain) if jsc.truthy(domain) else None,
+                    "keep": _keep_beside(sources, rows),
+                },
+            )
+    if offer_open and _FROZEN_ESCALATE_PREFIX in jsc.js_string(reply_text or ""):
         # ONE team, ONE option, answered yes or no - the escalate offer exactly as the
         # customer sees it. Two or more teams is the same kind with `expects: pick` (D5),
         # which is lane 2's fan-out and has no caller yet.
+        #
+        # THE REPLY HAS TO CARRY THE OFFER (S7a, second defect). `is_escalate_offer` is
+        # derived from `is_clarification` being false (`tail/outcome.py`), and
+        # `pickers.annotate_incoming` sets `is_clarification: False` on a numbered PICKER
+        # "for parity with the not-found require_specific branch" - so the flag said an
+        # offer was open on a turn whose reply ended at row 10 with no escalate sentence
+        # in it, and a yes/no the customer was never shown was persisted for their next
+        # message to answer. The frozen phrase is the same contract `offer_is_open` and
+        # `tail/compose` already hold, and by this line the text is final: the
+        # miss-company arm that appends the phrase has already run.
         return oq.ask(
             "team_pick",
             options=[{"idx": 1, "team": team, "label": team}] if jsc.truthy(team) else [],
@@ -1209,8 +1376,16 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     asked_here = _ask_for_turn(
         qf=qf,
         gate=gate,
+        # A `require_specific` picker's candidates ride the RESULT object, which is also
+        # where `is_disambig` read them; the `gate` producer may carry nothing on this arm.
+        result_obj=r_obj,
         offer_open=offer_open,
         selection_context=variables.get("selection_context"),
+        # The label THIS turn earned, beside the one the carries may have re-seated, and
+        # the composed reply, so the offer arm can check the customer was actually shown
+        # one. Both are final by here: every writer of `user_response` above has run.
+        born_context=selection_context,
+        reply_text=output.get("user_response"),
         options=last_result_set,
         team_clarify_options=turn_state.get("team_clarify_options"),
         roster_plan=variables.get("routing_roster_plan"),
