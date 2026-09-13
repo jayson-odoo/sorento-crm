@@ -97,6 +97,18 @@ def _safe_code(value: Any) -> str:
     return _CODE_NOISE.sub(" ", text).strip()[:PRODUCT_CODE_MAX_CHARS]
 
 
+# `resolve_gate._token_of`'s own product fold (`[-\s]+`), for COMPARING a resolved row's
+# canonical code with the code the customer typed. Both sides are folded because the
+# resolver's exact probe matches whitespace-insensitively and the token it was sent had its
+# dashes folded out on the way, so "SRTWB8004" typed, "SRTWB8004" stored and "srtwb 8004"
+# pasted are one code and must compare as one.
+_CODE_FOLD = re.compile(r"[-\s]+")
+
+
+def _fold_code(value: Any) -> str:
+    return _CODE_FOLD.sub("", jsc.js_string(value).strip().lower()) if jsc.truthy(value) else ""
+
+
 # WHAT A DRY RUN CANNOT KNOW, said on the preview rather than left to be inferred. The brand
 # comes from a resolver call and a dry run reaches no seam that writes OR reads (H37,
 # AC-1141), so the previewed assignee is drawn from the turn's team and company alone. Without
@@ -780,6 +792,45 @@ def _carried_brand(
     return jsc.get(resolved, "brand_code") if resolved is not None else None
 
 
+def _rows_this_turn_named(ctx: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The resolved rows that are FOR a code this turn actually named. Defence in depth.
+
+    The seam scopes its own answer to the tokens it asked about
+    (`escalation_services._product_tokens`), and this is the same property asserted where the
+    DECISION is made, because the seam is injectable: every test passes its own, n8n's own
+    resolve sub has a different idea of which entities to send, and the consequence of a row
+    that belongs to another code is not a wrong list - it is a brand, and through the brand a
+    person. The measured shape is an escalation turn that carries the PREVIOUS turn's product
+    (`current_message: false`, which #863's focus rules keep on the entity list) and types a
+    NEW code that does not exist: the carried row resolves exact, `resolved` is non-empty, the
+    did-you-mean the typed code needed is never armed and the assignment takes the carried
+    code's brand.
+
+    Matched by folded code, or by the uuid the entity carries (a pick freezes it, so the code
+    is not the only handle). With nothing to match against - a ctx carrying no product - the
+    rows stand: that is a caller with no claim to check, not a reason to drop an answer.
+    """
+    entities = _this_turn_products(ctx)
+    codes = set()
+    uuids = set()
+    for entity in entities:
+        for value in (jsc.get(entity, "canonical_code"), jsc.get(entity, "raw")):
+            folded = _fold_code(value)
+            if folded:
+                codes.add(folded)
+        pinned = jsc.get(entity, "uuid")
+        if jsc.truthy(pinned):
+            uuids.add(jsc.js_string(pinned))
+    if not codes and not uuids:
+        return list(rows)
+    return [
+        row
+        for row in rows
+        if _fold_code(jsc.get(row, "canonical_code")) in codes
+        or jsc.js_string(jsc.get(row, "uuid")) in uuids
+    ]
+
+
 def _brand_of(row: Any) -> str | None:
     """`display.brand.brand_code`, lowercased - `lanes/business/gate.py`'s own `_bc`.
 
@@ -832,7 +883,12 @@ def _resolve_product(
     except Exception:  # noqa: BLE001 - a brand nobody could resolve is not a failed turn
         logger.warning("chatbot: the escalation resolve did not run", exc_info=True)
         answer = None
-    resolved = [r for r in jsc.array(jsc.get(answer, "resolved")) if jsc.truthy(r)]
+    # The RESOLVED side is scoped to this turn's own codes (`_rows_this_turn_named`); the
+    # did-you-mean side deliberately is not, because a suggestion's whole point is that its
+    # code is NOT the one that was typed.
+    resolved = _rows_this_turn_named(
+        ctx, [r for r in jsc.array(jsc.get(answer, "resolved")) if jsc.truthy(r)]
+    )
     did_you_mean = [r for r in jsc.array(jsc.get(answer, "did_you_mean")) if jsc.truthy(r)]
     brands = list(dict.fromkeys(b for b in (_brand_of(r) for r in resolved) if b))
     code = jsc.get(resolved[0], "canonical_code") if len(resolved) == 1 else None
