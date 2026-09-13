@@ -411,3 +411,100 @@ class TestThePickResolvedOrderListStatesItsScope:
 # plan's L1-S3 scope); the outcome it protected - an open question survives a turn that
 # answers nothing new - is AC-1020's, owned by `dialogue/open_question.py` now, over the
 # five-key `open_question` slot, not a `variables` dict rebuilt from scratch each turn.
+
+
+# --------------------------------------------------------------------------- #
+# D10 (captain's ruling, 13 Sep 2026, restated review round 9): `_ask_for_turn`'s
+# `team_clarify` branch freezes the escalation's OWN resolved product code onto the
+# `team_pick` question's `payload`, so `escalation._resumed_team_pick` can tell the
+# request this clarify deferred apart from `focus.products` on an unrelated later turn.
+# No test drove `_ask_for_turn` directly before this (it is private and only reachable
+# through the ~15-key `compile_current_state` ladder), so this pins the one fact D10
+# depends on at the level it is actually decided: the freeze happens on the `team_clarify`
+# selection alone, never on the one-team `offer_open` ask (D5), which shares the SAME
+# `team_pick` kind and handler but has no code to freeze - a resumed answer to it must
+# never be misread as a D10 resumption (`escalation._resumed_team_pick`'s own
+# `expects != "yes_no"` guard is the other half of that same boundary).
+# --------------------------------------------------------------------------- #
+
+
+class TestAskForTurnFreezesTheProductCodeOnlyOnTheTeamClarify:
+    def _qf(self) -> dict:
+        return {"domain_hint": "master_products", "routing": {"suggested_team": "purchasing"}}
+
+    def test_the_team_clarify_ask_freezes_the_resolved_code_onto_its_payload(self) -> None:
+        from app.services.chatbot.tail.compile_state import _ask_for_turn
+
+        question = _ask_for_turn(
+            qf=self._qf(),
+            gate=None,
+            offer_open=False,
+            selection_context="team_clarify",
+            options=[],
+            team_clarify_options=[
+                {"team": "marketing_product", "label": "Marketing Product"},
+                {"team": "marketing_form", "label": "Marketing Form"},
+            ],
+            team_pick_product_code="SRTWB8004",
+            roster_plan=None,
+            companies=None,
+            turn_no=3,
+        )
+
+        assert question is not None and question["kind"] == "team_pick"
+        assert question["payload"]["product_code"] == "SRTWB8004", (
+            f"the team_clarify ask must freeze the escalation's own resolved code onto "
+            f"its payload, or a resumed answer has nothing for D10 to carry: {question!r}"
+        )
+
+    def test_no_resolved_product_freezes_none_not_an_absent_key(self) -> None:
+        """`escalation._resumed_team_pick` reads `jsc.get(payload, 'product_code')`, which
+        treats an absent key and an explicit `None` alike - but the KEY is always written
+        (the same rule `then.escalate`'s `team_word` follows), so a reader never has to
+        tell "nothing resolved" apart from "the field was never wired"."""
+        from app.services.chatbot.tail.compile_state import _ask_for_turn
+
+        question = _ask_for_turn(
+            qf=self._qf(),
+            gate=None,
+            offer_open=False,
+            selection_context="team_clarify",
+            options=[],
+            team_clarify_options=[{"team": "marketing_product", "label": "Marketing Product"}],
+            team_pick_product_code=None,
+            roster_plan=None,
+            companies=None,
+            turn_no=3,
+        )
+
+        assert "product_code" in question["payload"]
+        assert question["payload"]["product_code"] is None
+
+    def test_the_one_team_offer_open_ask_never_carries_a_product_code(self) -> None:
+        """D5's escalate offer shares the SAME `team_pick` kind and (once resumed) the
+        SAME `_team_pick` handler as the D2 multi-team clarify - which is exactly what
+        made the first D10 cut over-fire (review round 9). This branch must not freeze a
+        code at all, so `_resumed_team_pick`'s `expects != "yes_no"` guard is the only
+        thing standing between a stock turn's one-team offer and a carried brand D3
+        forbids."""
+        from app.services.chatbot.tail.compile_state import _ask_for_turn
+
+        question = _ask_for_turn(
+            qf={"domain_hint": "master_products", "routing": {"suggested_team": "marketing_product"}},
+            gate=None,
+            offer_open=True,
+            selection_context=None,
+            options=[],
+            team_clarify_options=[],
+            team_pick_product_code="SRTWB8004",
+            roster_plan=None,
+            companies=None,
+            turn_no=3,
+        )
+
+        assert question is not None and question["kind"] == "team_pick"
+        assert question.get("expects") == "yes_no"
+        assert "product_code" not in question["payload"], (
+            f"the one-team escalate offer must never carry a product_code, even when one "
+            f"was resolved - only the team_clarify branch (D2) is D10's: {question!r}"
+        )
