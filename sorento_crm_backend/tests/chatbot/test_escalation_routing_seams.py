@@ -564,12 +564,13 @@ def test_s5_round3_the_resolver_body_is_a_narrow_product_lookup_not_the_customer
 
 
 def test_s3_round3_dry_run_preview_names_the_landed_team_and_agent_never_the_inherited_pair() -> None:
-    """Security review round 3, item S3. `run(..., dry_run=True)`'s preview branch calls
-    `_preview_routing`, which decides the landed team through `_person_routing` same as a
-    live turn - but the customer-facing preview text (`ROUTED_TO_PIC_REPLY.format(team=
-    ...)`) and the comment it would send must still reflect the LANDED pair (AC-1129's own
-    rule), not the inherited `purchasing` / `general_enquiries` this fixture starts from,
-    and no seam may be reached at all (H37)."""
+    """Security review round 3, item S3, strengthened by the re-check. `run(...,
+    dry_run=True)`'s preview branch calls `_preview_routing`, which decides the landed
+    team through `_person_routing` same as a live turn - but the customer-facing preview
+    text (`ROUTED_TO_PIC_REPLY.format(team=...)`) and the comment it would send must
+    still reflect the LANDED pair (AC-1129's own rule), not the inherited `purchasing` /
+    `general_enquiries` this fixture starts from, and no WRITING seam may be reached at
+    all (H37) - `preview_assignee` is the one read this branch is allowed."""
     ctx = _ctx(
         routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
         parser_raw={"routing": {"suggested_team": "marketing_form", "suggested_agent": None}},
@@ -595,3 +596,131 @@ def test_s3_round3_dry_run_preview_names_the_landed_team_and_agent_never_the_inh
         assert comment["text"].startswith("Team: marketing_form\n"), (
             f"the preview comment must name the landed team too: {comment['text']!r}"
         )
+
+    # The body the READ-ONLY draw is asked to preview against must ALSO carry the landed
+    # pair, not the inherited one - the whole reason `_preview_routing` re-derives
+    # `_landed_item` before building it, rather than handing `preview_assignee` the
+    # turn's own inherited `context_item`.
+    services.preview_assignee.assert_called_once()
+    preview_body = services.preview_assignee.call_args[0][0]
+    assert preview_body["team_code"] == "marketing_form", preview_body
+    assert preview_body["agent_code"] == "marketing_form", preview_body
+    assert preview_body.get("brand_code") is None, preview_body
+
+
+def test_s7_round3_dry_run_trace_facts_carry_the_preview_note(
+    session_factory, system_settings_row, monkeypatch
+) -> None:
+    """Security review round 3, item S7 (the other half): the coder moved
+    `PREVIEW_BRAND_NOTE` off the dry-run actions and onto the `looked_up` trace record's
+    `facts` (`engine.py`'s own comment: "the console renders facts, and an action field
+    had no reader") - driven through the REAL engine and the REAL escalation lane (only
+    the parser is stubbed), because the fact is stamped by `engine.py`, not by
+    `escalation.run()` itself, and a lane-unit call has no trace to assert on at all."""
+    import json as _json
+
+    from sqlalchemy import text as sql_text
+
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.models.user import SystemSetting
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot import trace as trace_mod
+    from app.services.chatbot.contracts import Envelope
+    from app.services.chatbot.head import parser as parser_mod
+    from app.services.chatbot.lanes.escalation import PREVIEW_BRAND_NOTE
+
+    contact_id = "ZZT-esc-s7-dry-1"
+    db = session_factory()
+    db.execute(
+        sql_text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+        ),
+        {"cid": contact_id, "phone": "+60000000098", "sv": _json.dumps({"variables": {}})},
+    )
+    db.commit()
+
+    setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+    setting.chatbot_completed_lanes = ["out_of_scope"]
+    db.commit()
+
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
+        return parser_mod.ParserConfig(
+            system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+        )
+
+    escalation_qf = {
+        "message_type": "request_for_help",
+        "intent_hint": None,
+        "domain_hint": None,
+        "scope_intent": None,
+        "is_affirmative": None,
+        "user_goal": "wants marketing form",
+        "access_levels": [],
+        "broaden_axis": None,
+        "date_mode": None,
+        "date_filter_start": None,
+        "date_filter_end": None,
+        "match_mode": "and",
+        "demand_qty": None,
+        "entities": [],
+        "entity_op": "replace_combine",
+        "scope_exclusive": False,
+        "requested_attributes": [],
+        "contains_flyer": False,
+        "reference_positions": [],
+        "reference_target": None,
+        "person_mention": None,
+        "is_active": None,
+        "order_status": None,
+        "correction": False,
+        "routing": {"suggested_team": "marketing_form", "suggested_agent": None},
+        "escalation": {"is_escalation_confirmation": False, "company_pick": None},
+    }
+
+    def fake_parse(config, user_block):
+        return escalation_qf
+
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", fake_parse)
+    monkeypatch.setattr(
+        engine_mod,
+        "check_access",
+        lambda db, *, agent_code, contact_id, space_id: {
+            "allowed": True,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": None,
+            "all_attributes_allowed": None,
+        },
+    )
+    monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+
+    envelope = Envelope(
+        contact={"id": contact_id, "phone": "+60000000098", "custom_fields": []},
+        is_test=True,
+        message={
+            "event_type": "message.received",
+            "contact": {"id": contact_id},
+            "message": {
+                "messageId": "ZZT-esc-s7-dry-msg-1",
+                "contactId": contact_id,
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "message": {"type": "text", "text": "escalate to marketing form"},
+            },
+        },
+    )
+    assert envelope.dry_run is True
+
+    result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+    assert result.status == "done", result.error
+    assert result.branch_kind == "out_of_scope"
+
+    row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+    looked_up = next(r for r in trace_mod.stage_records(row.trace) if r["stage"] == "looked_up")
+    assert looked_up["facts"].get("preview_note") == PREVIEW_BRAND_NOTE, (
+        f"a dry run that assigned must stamp the preview note on the looked_up trace "
+        f"facts, not on the actions: {looked_up['facts']!r}"
+    )

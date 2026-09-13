@@ -316,32 +316,79 @@ def test_ac1127_companion_a_focus_domain_outside_the_family_never_resolves_the_c
 
 
 def test_ac1128_no_product_and_the_previous_team_differs_from_the_landed_one_carries_nothing() -> None:
-    """AC-1128 (journey step 6): a stock (warehouse) turn, then "escalate to marketing"
-    lands on `marketing_product` (AC-1113's open-offer half, or a direct pick) - the
-    previous team (`warehouse`) does not match the LANDED team, so brand stays None (the
-    whole tier-1 pool). Not a defect on today's code by itself (nothing carries a brand at
-    all yet), but pinned separately from AC-1127 so the two cannot be confused (plan: "make
-    the assertion hinge on the LANDED team")."""
+    """AC-1128 (journey step 6), rewritten after the reviewer's S6 kill test (security
+    review round 3 re-check): the ORIGINAL fixture used the same legacy
+    `prev_variables={"routing": ..., "routing_brand": ...}` shape B1 already retired for
+    AC-1127 - a real session can never hold those keys, and worse, it meant
+    `_carried_products(ctx)` read `focus.products` off a state with no `focus` key at all
+    and returned `[]` immediately, so `_carried_brand`'s landed-team GATE (`escalation.py`
+    ~791) was never even reached. The reviewer proved it by removing the gate outright and
+    finding nothing went red.
+
+    Rewritten on `_focus_previous_state`: a REAL carried product (`MWC7625-SH-S10`) off a
+    warehouse (`inventory`) previous turn, this turn's exact word `marketing_product`
+    landing there directly (a stock turn, then "ESCALATE TO MARKETING PRODUCT" - the
+    direct-pick half of journey step 6). `_carried_products` is now NON-EMPTY, so the gate
+    is what must say no: the previous team (`warehouse`) differs from the LANDED team
+    (`marketing_product`), so the resolver is never asked about the carried product and
+    the body's brand stays None."""
     ctx = _ctx(
         routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
         parser_raw={"routing": {"suggested_team": "marketing_product", "suggested_agent": None}},
         escalation={"is_escalation_confirmation": False, "company_pick": None},
         entities=[],
-        prev_variables={
-            "routing": {"suggested_team": "warehouse"},
-            "routing_brand": "sorento",
-        },
+        prev_variables=_focus_previous_state(product_code="MWC7625-SH-S10", domain="inventory"),
     )
     item = _item(team="warehouse")
-    services = _services(gate={"resolved": [], "did_you_mean": []})
+    services = _services(gate={"resolved": [_resolved_row("MWC7625-SH-S10", brand="mocha")], "did_you_mean": []})
 
     result = run(ctx, item, services=services)
 
+    services.resolve_and_gate.assert_not_called(), (
+        "the carried product must never reach the resolver once the landed team differs "
+        "from the team the conversation was carrying it on"
+    )
     assert result["arm"] == "human-intervention", result
     body = _next_assignee_body(services)
+    assert body["team_code"] == "marketing_product", body
     assert body.get("brand_code") is None, (
         f"the previous turn's team (warehouse) differs from the LANDED team "
         f"(marketing_product) - nothing must carry: {body!r}"
+    )
+
+
+def test_ac1128_companion_a_different_family_member_landing_also_carries_nothing() -> None:
+    """AC-1128 companion (reviewer, security review round 3 re-check, S6): the INSIDE-
+    FAMILY-BUT-DIFFERENT-MEMBER case. The previous turn's `focus.domains` was
+    `product_attachment` (a photo turn on `marketing_product`), and THIS turn names a
+    DIFFERENT exact member of the same family, `marketing_form` - a real catalogue word
+    always wins outright (R-c), so the ladder lands there directly, with no clarify. The
+    landed team (`marketing_form`) still differs from the carried team
+    (`marketing_product`), so the carry gate must say no even though both teams are in
+    the same family: the customer is very plausibly asking about a DIFFERENT product line
+    (forms, not the product they were just shown), and carrying the old product's brand
+    across would misname the pool for a team the customer never carried it on."""
+    ctx = _ctx(
+        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing_form", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[],
+        prev_variables=_focus_previous_state(product_code="MWC7625-SH-S10", domain="product_attachment"),
+    )
+    item = _item(team="marketing_product")
+    services = _services(gate={"resolved": [_resolved_row("MWC7625-SH-S10", brand="mocha")], "did_you_mean": []})
+
+    result = run(ctx, item, services=services)
+
+    services.resolve_and_gate.assert_not_called(), (
+        "a different member of the SAME family still fails the landed-team carry gate"
+    )
+    assert result["arm"] == "human-intervention", result
+    body = _next_assignee_body(services)
+    assert body["team_code"] == "marketing_form", body
+    assert body.get("brand_code") is None, (
+        f"marketing_form is not the team the conversation carried the product on, even "
+        f"though both are marketing teams: {body!r}"
     )
 
 

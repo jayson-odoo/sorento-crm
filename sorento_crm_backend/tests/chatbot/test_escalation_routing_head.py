@@ -466,10 +466,97 @@ def test_n7_a_resumed_deferred_escalation_pick_stays_on_the_escalation_lane() ->
     parse_block = suggest_follow_up(parse_block, parent_input)
     qf = parse_block["output"]
 
+    # N8: the message_type check above is a WEAKER signal than it looks - it survives
+    # `suggest_follow_up` here only because `_DEFERRED_PRODUCT_PICK`'s payload carries no
+    # "domain" key, so that function's own retype guard (`if jsc.truthy(o.get(
+    # "domain_hint"))`) never activates on this fixture at all, whichever way
+    # `_named_team_help` reads. The assertion that actually PROVES the resume is the
+    # branch one below, which reads `route.decide`'s `wants_escalation_or_help()` - and
+    # that predicate's FIRST clause is `escalation.is_escalation_confirmation is True`
+    # (set by `apply_open_question_outcome`'s `outcome.escalate` branch), independent of
+    # `message_type` entirely. A fixture WITH a domain on the payload would be a sharper
+    # test of the message_type half; this one is not it.
     assert qf["message_type"] == "request_for_help", (
         f"a resumed deferred escalation must survive suggest_follow_up too: {qf!r}"
     )
     branch, _tier = decide(_decide_ctx(qf))
     assert branch == "out_of_scope", (
         f"it must reach the escalation lane, not the business lane: {branch!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Security review round 3 re-check, B3: the member-offer ladder's plain-decline
+# arm must not swallow a named-team help request either.
+# --------------------------------------------------------------------------- #
+
+_OPEN_MEMBER_OFFER = {
+    "kind": "member_offer",
+    "options": [
+        {"uuid": "m1", "label": "Ali"},
+        {"uuid": "m2", "label": "Bee"},
+    ],
+    "expects": "yes_no",
+    "asked_at_turn": 1,
+    "asked_at": None,
+    "payload": {},
+}
+
+
+def test_b3_a_declined_member_offer_still_keeps_a_named_team_help_request() -> None:
+    """Security review round 3 re-check, item B3. Fixed by the coder's commit
+    `c8b948fe8` between the previous round and this one: the member-offer ladder's
+    plain-decline arm (`output_exchange.py` ~3187) had no `named_team_help` guard, unlike
+    its two siblings (the switch-word arm and `suggest_follow_up`'s own decline arm), and
+    Tier 1's retarget only saves an EXACT catalogue word - a family word like `marketing`
+    falls straight through it. "no, escalate to marketing" over an open member roster
+    came back `casual` with `escalation_declined: true` before the fix. GREEN now (the
+    guard `test_b3_..._companion` below pins the OTHER half - a plain "no" with no team
+    word still declines)."""
+    previous_state = {"open_question": dict(_OPEN_MEMBER_OFFER)}
+    parser_raw = _full_emission(
+        message_type="request_for_help",
+        is_affirmative=False,
+        entities=[],
+        routing={"suggested_team": "marketing", "suggested_agent": None},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="no, escalate to marketing",
+    )
+
+    qf = _post_process(parser_raw, previous_state, message="no, escalate to marketing")
+
+    assert qf["message_type"] == "request_for_help", (
+        f"a named-team help request must survive declining an open member offer: {qf!r}"
+    )
+    assert qf["escalation"].get("escalation_declined") is not True, (
+        f"declining the ROSTER is not declining the ESCALATION the customer asked for "
+        f"instead: {qf['escalation']!r}"
+    )
+    branch, _tier = decide(_decide_ctx(qf))
+    assert branch == "out_of_scope", (
+        f"it must reach the escalation lane, not be silently declined: {branch!r}"
+    )
+
+
+def test_b3_companion_a_plain_no_with_no_team_word_still_declines_the_member_offer() -> None:
+    """Security review round 3 re-check, B3 companion (guard): a bare "no", naming no
+    team at all, must still decline the member offer exactly as it did before the fix -
+    the fix narrows on `named_team_help`, it does not remove the decline arm."""
+    previous_state = {"open_question": dict(_OPEN_MEMBER_OFFER)}
+    parser_raw = _full_emission(
+        message_type="request_for_help",
+        is_affirmative=False,
+        entities=[],
+        routing={"suggested_team": None, "suggested_agent": None},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="no thanks",
+    )
+
+    qf = _post_process(parser_raw, previous_state, message="no thanks")
+
+    assert qf["message_type"] == "casual", (
+        f"a plain decline naming no team must still be casual: {qf!r}"
+    )
+    assert qf["escalation"].get("escalation_declined") is True, (
+        f"a plain decline must still say so deterministically: {qf['escalation']!r}"
     )
