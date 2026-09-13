@@ -162,13 +162,19 @@ def test_a_second_save_on_an_order_with_a_pending_batch_appends_to_it(api):
 
 def test_a_second_change_on_the_same_line_supersedes_the_pending_row():
     """Two successive edits to the SAME held line (qty 36 -> 60, then 60 -> 80) must leave
-    ONE live pending row - the newest - whose from/to reads the LATEST edit's own before/
-    after (60 -> 80, since `_change_and_batch` always diffs against the core line's value at
-    the moment it is called, which is already 60 by the second call), with the older row
-    (36 -> 60) marked `applied_state = 'superseded'`, reason "Replaced by a later change"
-    (R1, landed). The second edit's row lands in a FRESH batch (a line can only have one
-    live pending row at a time, so the open batch is not where the replacement goes) -
-    `batch_1.id != batch_2.id` is expected, not a defect.
+    ONE live pending row - the newest - with the older row (36 -> 60) marked
+    `applied_state = 'superseded'`, reason "Replaced by a later change" (R1, landed).
+
+    Under R1 (one open batch per order), the second edit's row lands in the SAME still-open
+    batch as the first - a superseded row is never deleted, so `batch_1.id == batch_2.id`
+    and that ONE batch now carries both rows. `_only_row` (exactly one row per batch) no
+    longer applies here; `_row_for_line` (the batch's row for THIS line) does.
+
+    S2 (Was reads the held state, landed): the LIVE row's `from_json` reads 36 - what the
+    active decision was actually taken against - never 60 (the now-superseded row's own
+    before value). `_change_and_batch` diffs against the core line's CURRENT value (60, by
+    the second call), which is exactly why the fold has to override `from_json` with the
+    held state rather than the raw diff's own "before".
 
     No `api` fixture parameter: this test builds its own `blank_session()` directly (it
     needs two successive `build_batch` calls against one hand-built world, not the HTTP
@@ -183,15 +189,17 @@ def test_a_second_change_on_the_same_line_supersedes_the_pending_row():
     with blank_session() as db:
         world = _held_reserve_world(db, qty="36")
         batch_1 = _change_and_batch(db, world, new_qty="60")
-        row_1 = _only_row(db, batch_1)
+        row_1 = _row_for_line(db, batch_1.id, world["line"].id)
         assert row_1.from_json["qty"] == "36", row_1.from_json
         assert row_1.to_json["qty"] == "60", row_1.to_json
 
         batch_2 = _change_and_batch(db, world, new_qty="80")
-        row_2 = _only_row(db, batch_2)
-        # Observed: `_change_and_batch` diffs from the core line's CURRENT value (60, after
-        # the first edit was written), so the newest row's from/to is 60 -> 80, not 36 -> 80.
-        assert row_2.from_json["qty"] == "60", row_2.from_json
+        row_2 = _row_for_line(db, batch_2.id, world["line"].id)
+        # S2: the live row's Was reads the HELD state (36), not the superseded row's own
+        # before value (60) - `_change_and_batch` itself diffs from the core line's CURRENT
+        # value (60, after the first edit was written), so 60 is what the raw diff would
+        # say without the fold's own override.
+        assert row_2.from_json["qty"] == "36", row_2.from_json
         assert row_2.to_json["qty"] == "80", row_2.to_json
 
         db.refresh(row_1)
@@ -207,7 +215,7 @@ def test_a_second_change_on_the_same_line_supersedes_the_pending_row():
 # --------------------------------------------------------------------------- #
 
 def _row_for_line(db, batch_id, project_line_id) -> PlanningChangeRow:
-    """The batch's own row for ONE line.
+    """The batch's own LIVE (pending) row for ONE line.
 
     R1 (one open batch per order) collapses a multi-save fixture like `_so400884_shape`
     into a SINGLE open batch carrying several pending rows - a later save on a line the
@@ -215,11 +223,18 @@ def _row_for_line(db, batch_id, project_line_id) -> PlanningChangeRow:
     (which asserts exactly one row per batch) no longer applies to it. This finds the row
     for the specific line a test means to decide, the same way a real board picks one row
     out of several pending on the same batch.
+
+    Filtered to `applied_state == 'pending'`: a line edited TWICE before either row is
+    applied (R1b) leaves its OLDER row in the same batch, `superseded` rather than deleted
+    (S2, the fold rule) - `.one()` without this filter finds both and raises
+    `MultipleResultsFound`. Every existing caller already wants the CURRENTLY live row, so
+    this is a strict narrowing, not a behaviour change for the single-row case.
     """
     return (
         db.query(PlanningChangeRow)
         .filter(PlanningChangeRow.batch_id == batch_id,
-                PlanningChangeRow.project_line_id == project_line_id)
+                PlanningChangeRow.project_line_id == project_line_id,
+                PlanningChangeRow.applied_state == "pending")
         .one()
     )
 
@@ -777,16 +792,20 @@ def test_a_replacement_rows_was_reads_the_held_state():
     value). `to_json` stays 80. The suggestion is composed against `held_json` (the frozen
     decision) and the new proposal, never against `from_json` - `compose_suggestion`'s own
     call (planning_change_service.py:1930) never reads `from_json` at all, so that half is
-    a guard, not a claim of red."""
+    a guard, not a claim of red.
+
+    Under R1, both `_change_and_batch` calls land in the SAME open batch (a superseded row
+    is never deleted) - `_row_for_line` (the batch's own row for this line), not `_only_row`
+    (exactly one row per batch, no longer true here)."""
     from tests._pg_fixture import blank_session
 
     with blank_session() as db:
         world = _held_reserve_world(db, qty="36")
         batch_1 = _change_and_batch(db, world, new_qty="60")
-        row_1 = _only_row(db, batch_1)
+        row_1 = _row_for_line(db, batch_1.id, world["line"].id)
 
         batch_2 = _change_and_batch(db, world, new_qty="80")
-        row_2 = _only_row(db, batch_2)
+        row_2 = _row_for_line(db, batch_2.id, world["line"].id)
 
         db.refresh(row_1)
         assert row_1.applied_state == "superseded", row_1.applied_state
