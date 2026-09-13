@@ -420,9 +420,18 @@ def _token_of(entity: Any) -> Any:
 def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
     """The `resolve-entity` httpRequest jsonBody, key for key.
 
-    `entity_pins` (H38) is OMITTED in AND mode and when nothing is pinned, which is what
-    the n8n expression's `Object.keys(_pins).length ? ... : ''` does. Sending it in AND
-    mode is a 400 by the route's own rule, so the omission is load-bearing, not tidiness.
+    `entity_pins` (H38) is omitted only when NOTHING IS PINNED, which is what the n8n
+    expression's `Object.keys(_pins).length ? ... : ''` does.
+
+    IT IS NO LONGER OMITTED IN AND MODE, and the mode was the whole defect (owner, console
+    13 Sep, turn 00c7c844). A bare pick emits `match_mode: "and"` by default, so the uuid
+    the customer had just chosen off a numbered roster was dropped from the request and the
+    resolver re-derived the bare token - and the product fold strips hyphens, so picking
+    `SRTWC286-SH-NEW` (row 10 of ten) resolved to FOUR products, its three
+    `SRTWC286-SH-NEW-*` siblings included, and the reply answered about all of them. Rows
+    8 and 9 worked only because their codes are nobody's prefix. A pin means "this token
+    IS this row"; the route now narrows a pinned token to it before the intersection
+    rather than refusing the pin.
 
     `dry_run` is the ONE key n8n's body does not have, and it is not a resolution input:
     it tells the endpoint to skip its `ai_assistant_usage_logs` row, which is the last
@@ -459,15 +468,14 @@ def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[s
     }
     if dry_run:
         body["dry_run"] = True
-    if jsc.js_string(match_mode).lower() != "and":
-        pins: dict[str, Any] = {}
-        for x in entities:
-            if jsc.truthy(x) and jsc.truthy(jsc.get(x, "uuid")):
-                token = _token_of(x)
-                if jsc.truthy(token):
-                    pins[token] = jsc.get(x, "uuid")
-        if pins:
-            body["entity_pins"] = pins
+    pins: dict[str, Any] = {}
+    for x in entities:
+        if jsc.truthy(x) and jsc.truthy(jsc.get(x, "uuid")):
+            token = _token_of(x)
+            if jsc.truthy(token):
+                pins[token] = jsc.get(x, "uuid")
+    if pins:
+        body["entity_pins"] = pins
     return body
 
 

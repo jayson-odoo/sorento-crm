@@ -1671,15 +1671,20 @@ def _resolve_input(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"match_mode must be one of {sorted(_ALLOWED_MATCH_MODES)}",
         )
-    # AND-mode intersection has no per-token view to narrow, so a pin there is
-    # silently meaningless - and worse, a zero-intersection AND request retries
-    # under `force_mode="or"` further down, where the pin would suddenly start
-    # applying. Reject up front rather than let that surprise happen.
-    if mode == "and" and entity_pins:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="entity_pins is not supported with match_mode='and'",
-        )
+    # AND-MODE PINS ARE HONOURED, and the reasoning that used to reject them is kept
+    # because half of it still holds. An AND intersection has no per-token candidate
+    # view to narrow - but A PIN IS A PER-TOKEN VIEW THE CALLER ALREADY HAS, and it is
+    # about the answer, so the narrowing lands on the intersection instead
+    # (`entity_resolver._apply_intersection_pins`): the pinned uuid's own entity type
+    # keeps exactly that row and every other type intersects as before. The rejection
+    # cost more than it saved: the chatbot dropped the pin rather than fail the turn,
+    # so a customer who had just picked `SRTWC286-SH-NEW` off a numbered roster was
+    # answered about its three `SRTWC286-SH-NEW-*` siblings too (owner, 13 Sep 2026).
+    #
+    # The second half of the old reasoning is now a property rather than a hazard: a
+    # zero-intersection AND request retries under `force_mode="or"` further down, and
+    # the pin applies there as well - the same pin, meaning the same thing, on both
+    # passes.
 
     # Treat literal strings "null" / "none" / "undefined" as empty so callers
     # that JSON-encode a missing query as the string "null" don't trip the
@@ -1813,6 +1818,7 @@ def _resolve_input(
                 toks,
                 allowed_entity_types=allowed,
                 domain_hint=hint,
+                entity_pins=entity_pins,
             ).as_dict()
         else:
             raw = resolve_references(
