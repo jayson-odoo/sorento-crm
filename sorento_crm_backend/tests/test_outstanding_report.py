@@ -23,6 +23,21 @@ AC-1115, REWRITTEN THREE TIMES:
   `pending_qty` = SUM over pending DOs; `do_qty` = SUM over every DO, pending and delivered;
   `delivered_qty` = the rest of it. `do_qty == delivered_qty + pending_qty` holds on the
   block and on every breakdown row.
+- R11 (owner testing round 3, 13 Sep 2026, SAME sitting as R6/R10, supersedes R6):
+  "the breakdown list should tally with whatever reported at the summary at the top" -
+  choosing option 1 (breakdowns list only names with outstanding above 0). R6's TWO
+  populations collapse back to ONE: `_outstanding_clause` alone, the same population
+  `do_count`/dates/`do_rows[]` already used. `do_qty` now sums OUTSTANDING DOs only (not
+  every DO), so `do_qty == pending_qty` and `delivered_qty` is always `0` given today's
+  schema (`order_lines.quantity` carries no delivered/outstanding split below the DO
+  header) - the field stays for shape parity, in case that ever changes. A name with
+  ONLY a delivered DO is ABSENT from both breakdowns, not printed with `pending_qty` 0.
+
+R10 (owner testing round 3, 13 Sep 2026, same sitting): "be it DO outstanding or SO
+outstanding, we need to rank by highest quantity at the top." Every `*_by_location`/
+`*_by_customer` array is sorted by the outstanding figure descending, ties by the total
+descending, then name ascending, in the ROUTE (the presenter is a dumb pass-through -
+pinned separately in `sorento_crm_mcp/tests/test_presenters_outstanding.py`).
 """
 from __future__ import annotations
 
@@ -392,24 +407,26 @@ def test_so_rows_roll_up_lines_per_so(client, db):
 # --------------------------------------------------------------------- AC-1115
 
 
-def test_do_block_totals_span_every_do_and_rows_stay_pending(client, db):
-    """R6, REWRITTEN AGAIN (owner testing round 3, 13 Sep 2026): "need to show the
-    delivered also, so the by location and by customer needs to be the DO qty (O/S:
-    {pending}) so DO qty minus pending should be those quantity delivered." `do_qty`
-    and `delivered_qty` are BACK on the BLOCK and on BOTH breakdowns, summed over
-    EVERY DO in scope - pending AND delivered - reversing R1's "pending DOs only"
-    ruling for the totals (R1's population rule survives only for `do_count` /
-    `do_date_min` / `do_date_max` / `do_rows[]`, which stay pending-DOs-only).
+def test_do_block_is_one_population_tallying_with_the_breakdowns(client, db):
+    """R11, REPLACES R6's two-population DO block (owner testing round 3, 13 Sep
+    2026): "the breakdown list should tally with whatever reported at the summary at
+    the top", choosing option 1 (breakdowns list only names with outstanding above
+    0). ONE population now, `_outstanding_clause` - the SAME population the block,
+    BOTH breakdowns, `do_count`, the dates AND `do_rows[]` all draw from. A delivered
+    DO contributes to NOTHING anywhere on this route, not even `do_qty` (R6's "every
+    DO in scope" is gone): `do_qty` = SUM `order_lines.quantity` over OUTSTANDING DOs
+    only, so it equals `pending_qty` and `delivered_qty` is always `0` - there is no
+    partial-delivery split below the DO header in this schema (`order_lines` carries
+    one `quantity`, no delivered/outstanding split), so "the part-delivered portion"
+    R11's wording allows for never actually occurs today; the field stays for shape
+    parity with the SO block and because the schema could grow one later.
 
-    One delivered DO (qty 5) and one pending DO (qty 7) for the SAME customer:
-    `do_qty` 12 (5+7), `delivered_qty` 5, `pending_qty` 7, `do_count` 1 (the pending
-    DO only), and `do_by_customer` carries ONE row for that customer: `do_qty` 12,
-    `pending_qty` 7. `do_rows[]` still lists the pending DO only (R1/R3 stand there).
-
-    A SECOND customer with only a DELIVERED DO (qty 9) must still appear in
-    `do_by_customer` - `do_qty` 9, `pending_qty` 0 - never elided (R6: "a name whose
-    pending is 0 is still printed", the presenter's job; the ROUTE must not drop the
-    row in the first place, or there is nothing left for the presenter to print)."""
+    One delivered DO (qty 5) and one outstanding DO (qty 7) for the SAME customer:
+    `do_qty` 7 (the outstanding DO only, NOT 12), `delivered_qty` 0, `pending_qty` 7,
+    `do_count` 1, `do_by_customer` = exactly one row for that customer (`do_qty` 7,
+    `pending_qty` 7). A SECOND customer with ONLY a delivered DO (qty 9) is ABSENT
+    from `do_by_customer` entirely - R6's "still printed with pending 0" is reversed:
+    a name with nothing outstanding is not a name on this block's population at all."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT DO Customer")
@@ -423,7 +440,7 @@ def test_do_block_totals_span_every_do_and_rows_stay_pending(client, db):
     )
     _do(
         db, product_id=prod.id, warehouse_id=wh.id, qty=7, customer_id=cust.id,
-        order_status_id=None, actual_delivery_date=None, number="ZZT-DO-PENDING",
+        order_status_id=None, actual_delivery_date=None, number="ZZT-DO-OUTSTANDING",
     )
     _do(
         db, product_id=prod.id, warehouse_id=wh.id, qty=9, customer_id=cust_delivered_only.id,
@@ -435,29 +452,22 @@ def test_do_block_totals_span_every_do_and_rows_stay_pending(client, db):
     resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "do"})
     assert resp.status_code == 200, resp.text
     do = resp.json()["do"]
-    assert do["do_qty"] == 21, f"do_qty must sum EVERY DO in scope (5+7+9): {do}"
-    assert do["delivered_qty"] == 14, f"delivered_qty must sum every delivered DO (5+9): {do}"
+    assert do["do_qty"] == 7, f"do_qty must be the OUTSTANDING DO only, not 5+7+9: {do}"
+    assert do["delivered_qty"] == 0, f"delivered_qty = do_qty - pending_qty = 0: {do}"
     assert do["pending_qty"] == 7
-    assert do["do_count"] == 1, "do_count stays PENDING DOs only (R1 survives here)"
+    assert do["do_count"] == 1
 
     rows = {r["do_number"]: r for r in resp.json()["do_rows"]}
-    assert set(rows) == {"ZZT-DO-PENDING"}, (
-        f"do_rows[] stays pending-DOs-only (R1/R3 survive here): {rows}"
-    )
-    pending_row = rows["ZZT-DO-PENDING"]
-    assert pending_row["pending_qty"] == 7
-    assert pending_row["do_qty"] == 7
-    assert pending_row["delivered_qty"] == 0
+    assert set(rows) == {"ZZT-DO-OUTSTANDING"}, rows
+    outstanding_row = rows["ZZT-DO-OUTSTANDING"]
+    assert outstanding_row["pending_qty"] == 7
+    assert outstanding_row["do_qty"] == 7
+    assert outstanding_row["delivered_qty"] == 0
 
     by_customer = {r["customer_name"]: r for r in resp.json()["do_by_customer"]}
-    assert by_customer["ZZT DO Customer"]["do_qty"] == 12, by_customer
-    assert by_customer["ZZT DO Customer"]["pending_qty"] == 7, by_customer
-    assert "ZZT DO Delivered Only" in by_customer, (
-        f"a customer with only a delivered DO must still appear in the breakdown: {by_customer}"
-    )
-    assert by_customer["ZZT DO Delivered Only"]["do_qty"] == 9, by_customer
-    assert by_customer["ZZT DO Delivered Only"]["pending_qty"] == 0, (
-        f"pending 0 is printed, never omitted or elided: {by_customer}"
+    assert by_customer == {"ZZT DO Customer": {"customer_name": "ZZT DO Customer", "do_qty": 7, "pending_qty": 7}}, (
+        f"a customer with only a delivered DO must be ABSENT, and the remaining "
+        f"customer's do_qty must equal its pending_qty (one population): {by_customer}"
     )
 
 
@@ -487,10 +497,12 @@ def test_a_sales_order_with_no_customer_echoes_null_not_the_string_none(client, 
 
 def test_breakdowns_sum_to_totals(client, db):
     """so_by_location/so_by_customer and do_by_location/do_by_customer each sum to
-    their block's totals. R6, REWRITTEN AGAIN: `do_qty` is back on the DO side too -
-    both breakdowns must sum to BOTH `do.do_qty` and `do.pending_qty`, over every DO
-    in scope (one delivered DO of qty 4 added at each location/customer alongside
-    the existing pending one, so `do_qty` and `pending_qty` genuinely differ)."""
+    their block's totals - R11's own tally identity ("the breakdown list should
+    tally with whatever reported at the summary at the top"): a delivered DO (qty 4)
+    is seeded alongside the outstanding ones at the SAME location/customer and must
+    contribute NOTHING to either sum - `do_qty` sums to the block's `do_qty` exactly
+    like `pending_qty` sums to `pending_qty` (one population, so the two identities
+    coincide numerically, which is itself the point)."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh1 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH1"))
     wh2 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH2"))
@@ -518,12 +530,126 @@ def test_breakdowns_sum_to_totals(client, db):
     assert sum(r["ordered_qty"] for r in body["so_by_customer"]) == body["so"]["ordered_qty"]
     assert sum(r["outstanding_qty"] for r in body["so_by_customer"]) == body["so"]["outstanding_qty"]
 
-    assert body["do"]["do_qty"] == 28, body["do"]  # 15 + 9 + 4
-    assert body["do"]["pending_qty"] == 24, body["do"]  # 15 + 9
+    assert body["do"]["do_qty"] == 24, body["do"]  # 15 + 9, the delivered 4 excluded entirely
+    assert body["do"]["pending_qty"] == 24, body["do"]
+    assert body["do"]["delivered_qty"] == 0, body["do"]
     assert sum(r["do_qty"] for r in body["do_by_location"]) == body["do"]["do_qty"], body["do_by_location"]
     assert sum(r["pending_qty"] for r in body["do_by_location"]) == body["do"]["pending_qty"], body["do_by_location"]
     assert sum(r["do_qty"] for r in body["do_by_customer"]) == body["do"]["do_qty"], body["do_by_customer"]
     assert sum(r["pending_qty"] for r in body["do_by_customer"]) == body["do"]["pending_qty"], body["do_by_customer"]
+
+
+# --------------------------------------------------------------------- R10 (owner
+# testing round 3, 13 Sep 2026): "be it DO outstanding or SO outstanding, we need to
+# rank by highest quantity at the top." Every `*_By location_*` / `*_By customer_*`
+# group, in both blocks, sorts by the bracketed outstanding quantity DESCENDING; ties
+# by the total (the first number) DESCENDING; further ties by name ASCENDING.
+# `Unassigned` (a NULL warehouse/customer) takes its place by its own numbers, never
+# pinned first or last. The route returns the arrays already sorted - the presenter
+# is a dumb pass-through (`sorento_crm_mcp/tests/test_presenters_outstanding.py`
+# pins that separately).
+
+
+def test_so_breakdowns_ranked_by_outstanding_desc_ties_by_total_then_name(client, db):
+    """Five warehouses and five customers, paired one-per-SO-line so the SAME rank
+    order is expected in BOTH breakdowns: one row clearly highest, two rows tied on
+    `outstanding_qty` at 10 but differing `ordered_qty` (15 vs 10 - the higher total
+    wins the tie), two more rows fully tied at (10, 10) broken only by name."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    rows = [
+        # (warehouse code, customer name, ordered, delivered) -> outstanding = ordered - delivered
+        ("ZZT-WH-HIGH", "ZZT Cust High", 20, 0),      # outstanding 20, total 20
+        ("ZZT-WH-TIEHI", "ZZT Cust TieHi", 15, 5),    # outstanding 10, total 15
+        ("ZZT-AAA-TIE", "ZZT AAA Tie", 10, 0),        # outstanding 10, total 10
+        ("ZZT-ZZZ-TIE", "ZZT ZZZ Tie", 10, 0),        # outstanding 10, total 10
+        ("ZZT-WH-LOW", "ZZT Cust Low", 5, 0),         # outstanding 5, total 5
+    ]
+    for wh_code, cust_name, ordered, delivered in rows:
+        wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=wh_code)
+        cust = customer(db, company_id=DEFAULT_COMPANY_ID, name=cust_name)
+        _so_line(db, product_id=prod.id, ordered=ordered, delivered=delivered, customer_id=cust.id, warehouse_id=wh.id)
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "so"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    expected_locations = ["ZZT-WH-HIGH", "ZZT-WH-TIEHI", "ZZT-AAA-TIE", "ZZT-ZZZ-TIE", "ZZT-WH-LOW"]
+    assert [r["code"] for r in body["so_by_location"]] == expected_locations, (
+        f"so_by_location must rank by outstanding_qty desc, tie by ordered_qty desc, "
+        f"then code asc: {body['so_by_location']}"
+    )
+    expected_customers = ["ZZT Cust High", "ZZT Cust TieHi", "ZZT AAA Tie", "ZZT ZZZ Tie", "ZZT Cust Low"]
+    assert [r["customer_name"] for r in body["so_by_customer"]] == expected_customers, (
+        f"so_by_customer must rank the same way: {body['so_by_customer']}"
+    )
+
+
+def test_do_breakdowns_ranked_by_outstanding_desc_then_name(client, db):
+    """The DO mirror, seeded with OUTSTANDING DOs only (no delivered ones) so the
+    ranking assertion holds regardless of how the DO block's population is defined
+    elsewhere (R11 makes `do_qty == pending_qty` for every outstanding-only row,
+    which this test deliberately does not disturb - the `do_qty` desc tie-break is
+    exercised by the SO test above instead, over the identical sort function)."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    rows = [
+        ("ZZT-DO-WH-HIGH", "ZZT DO Cust High", 20),
+        ("ZZT-DO-AAA-TIE", "ZZT DO AAA Tie", 10),
+        ("ZZT-DO-ZZZ-TIE", "ZZT DO ZZZ Tie", 10),
+        ("ZZT-DO-WH-LOW", "ZZT DO Cust Low", 5),
+    ]
+    for wh_code, cust_name, qty in rows:
+        wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=wh_code)
+        cust = customer(db, company_id=DEFAULT_COMPANY_ID, name=cust_name)
+        _do(db, product_id=prod.id, warehouse_id=wh.id, qty=qty, customer_id=cust.id)
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "do"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    expected_locations = ["ZZT-DO-WH-HIGH", "ZZT-DO-AAA-TIE", "ZZT-DO-ZZZ-TIE", "ZZT-DO-WH-LOW"]
+    assert [r["code"] for r in body["do_by_location"]] == expected_locations, (
+        f"do_by_location must rank by pending_qty desc, tie by name asc: {body['do_by_location']}"
+    )
+    expected_customers = ["ZZT DO Cust High", "ZZT DO AAA Tie", "ZZT DO ZZZ Tie", "ZZT DO Cust Low"]
+    assert [r["customer_name"] for r in body["do_by_customer"]] == expected_customers, (
+        f"do_by_customer must rank the same way: {body['do_by_customer']}"
+    )
+
+
+def test_unassigned_ranks_by_its_own_outstanding_qty_not_pinned(client, db):
+    """R10: "Unassigned takes its place by its numbers like any other name" - a NULL
+    warehouse and a NULL customer must sort into the MIDDLE of the ranking when
+    their own quantity says so, never forced to the top or the bottom."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    wh_a = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-WH-A")
+    wh_c = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-WH-C")
+    cust_a = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Cust A")
+    cust_b = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Cust B")
+
+    # Row A: named warehouse + named customer, outstanding 30 (highest).
+    _so_line(db, product_id=prod.id, ordered=30, delivered=0, customer_id=cust_a.id, warehouse_id=wh_a.id)
+    # Row B: NULL warehouse, named customer, outstanding 20 (middle) - tests Unassigned
+    # landing in the MIDDLE of so_by_location.
+    _so_line(db, product_id=prod.id, ordered=20, delivered=0, customer_id=cust_b.id, warehouse_id=None)
+    # Row C: named warehouse, NULL customer, outstanding 10 (lowest) - tests Unassigned
+    # landing at the BOTTOM of so_by_customer.
+    _so_line(db, product_id=prod.id, ordered=10, delivered=0, customer_id=None, warehouse_id=wh_c.id)
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "so"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert [r["code"] for r in body["so_by_location"]] == ["ZZT-WH-A", None, "ZZT-WH-C"], (
+        f"the NULL warehouse (outstanding 20) must rank BETWEEN the 30 and the 10, "
+        f"by its own number: {body['so_by_location']}"
+    )
+    assert [r["customer_name"] for r in body["so_by_customer"]] == ["ZZT Cust A", "ZZT Cust B", None], (
+        f"the NULL customer (outstanding 10) must rank LAST here, by its own number, "
+        f"not forced there structurally: {body['so_by_customer']}"
+    )
 
 
 # --------------------------------------------------------------------- AC-1117

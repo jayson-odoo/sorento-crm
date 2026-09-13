@@ -83,10 +83,18 @@ resolution and the filter set in the console trace.
   single-scope offer is one sentence, the numbered form is for TWO scopes only). Given
   scope DO only, the mirror (`Reply 1 for the delivery order list.`). Evidence: golden
   fixtures `outstanding-report-so.txt`, `outstanding-report-do.txt`.
-- **AC-1103 [T]** Every SO breakdown line reads `<name>: <ordered> (O/S: <outstanding>)` and
-  every DO breakdown line `<name>: <do_qty> (O/S: <pending>)`, with thousands separators, and NULL warehouse prints as
-  `Unassigned`. No line is ever elided; no "+N more" anywhere in the reply. Evidence: fixture
-  with 14 customers renders 14 lines.
+- **AC-1103 [T]**, REWRITTEN TWICE (R10 then R11, owner testing round 3, 13 Sep 2026) Every
+  SO breakdown line reads `<name>: <ordered> (O/S: <outstanding>)` and every DO breakdown
+  line `<name>: <do_qty> (O/S: <pending>)`, with thousands separators, and NULL warehouse
+  prints as `Unassigned`. No line is ever elided; no "+N more" anywhere in the reply. R10:
+  "be it DO outstanding or SO outstanding, we need to rank by highest quantity at the top" -
+  BOTH breakdowns in BOTH blocks are ordered by the bracketed figure DESCENDING, ties by the
+  leading figure DESCENDING, then name ASCENDING; `Unassigned` ranks by its own numbers like
+  any other name, never pinned first or last. R11: "the breakdown list should tally with
+  whatever reported at the summary at the top" - a DO breakdown line with `(O/S: 0)` can no
+  longer occur AT ALL (the DO block is one population now, AC-1115), so no golden sample
+  carries that line any more. Evidence: fixture with 14 customers renders 14 lines in ranked
+  order; a seeded tie on the backend suite.
 - **AC-1104 [T]** Every date prints `dd/mm/yyyy`; `Order date: all` when no window; a range
   prints `dd/mm/yyyy to dd/mm/yyyy`; a single day prints once. No word "oldest", "newest",
   "since". Evidence: fixture.
@@ -146,8 +154,8 @@ resolution and the filter set in the console trace.
 - **AC-1114 [BE]** `so_rows[]` is one row per SO: an SO with two live lines of the product
   (205 + 205) returns one row with `ordered_qty=410`, `location` = the distinct warehouse
   codes joined by `, `. Sorted by `order_date` asc then `so_number`. Evidence: pytest.
-- **AC-1115 [BE]**, REWRITTEN THREE TIMES (R1, then R3, then R6, owner testing rounds 1, 2
-  and 3, 13 Sep 2026: "most of the DO are delivered right so what's outstanding? I thought
+- **AC-1115 [BE]**, REWRITTEN THREE TIMES then SUPERSEDED BY AC-1150 (R1, then R3, then R6,
+  owner testing rounds 1, 2 and 3, 13 Sep 2026: "most of the DO are delivered right so what's
   outstanding means still got some pending quantity"; then "need to show delivered also,
   doesn't mean if it is 0 then we don't show, if it is 0 then we show 0, don't hide"; then
   "need to show the delivered also, so the by location and by customer needs to be the DO
@@ -167,15 +175,16 @@ resolution and the filter set in the console trace.
   `pending_qty=7`, `do_count=1`, `do_by_customer` carries that customer's `do_qty=12`/
   `pending_qty=7`, and `do_rows` lists the pending DO only with `do_qty=7`,
   `delivered_qty=0`; a SECOND customer with only a delivered DO (qty 9) still appears in
-  `do_by_customer` with `do_qty=9`, `pending_qty=0` - never elided.
-- **AC-1116 [BE]**, REWRITTEN AGAIN (R1 then R6) `so_by_location[]` / `so_by_customer[]`
-  carry `ordered_qty` and `outstanding_qty`; `do_by_location[]` / `do_by_customer[]` carry
-  BOTH `do_qty` and `pending_qty` (R6 brings `do_qty` back onto both breakdowns, reversing
-  R1's "no `do_qty`"); each filtered identically to its block's totals, and each group's
-  sums equal its block totals on BOTH figures. Evidence: pytest asserts equality for the SO
-  pair, and for the DO pair on both `do_qty` and `pending_qty` (a delivered DO seeded
-  alongside two pending ones, at each location and customer, so the two figures genuinely
-  differ).
+  `do_by_customer` with `do_qty=9`, `pending_qty=0` - never elided. THIS WHOLE PARAGRAPH IS
+  SUPERSEDED BY AC-1150: R11 collapses the two populations back to one, so a delivered-only
+  customer is now ABSENT from the breakdown rather than present with `pending_qty=0`, and
+  `do_qty` no longer sums every DO in scope. Kept for the commit history's sake.
+- **AC-1116 [BE]**, REWRITTEN AGAIN then SUPERSEDED BY AC-1150 (R1 then R6) `so_by_location[]`
+  / `so_by_customer[]` carry `ordered_qty` and `outstanding_qty` (UNCHANGED by R11 - the SO
+  side already tallies, live lines only); `do_by_location[]` / `do_by_customer[]` carried
+  BOTH `do_qty` and `pending_qty` summed over every DO in scope under R6 - AC-1150 keeps both
+  fields but changes the population both are summed over to outstanding DOs only, so the two
+  sums now coincide. Kept for the commit history's sake.
 - **AC-1117 [BE]**, REWRITTEN AGAIN (R1 then R6) `scope=so|do|both` (default `both`); a scope
   not requested is absent from the body (not empty). Response is declared on a
   `response_model` and a test asserts every field above is present (response_model drops
@@ -324,6 +333,42 @@ resolution and the filter set in the console trace.
   resolver reads `last_result_set` / `reference_positions`, never the rendered sentence.
   Evidence: golden fixture (presenter) + pytest (lane, "1" after an SO-only report still
   gives the SO detail).
+- **AC-1149 [BE]** NEW (R10, owner testing round 3, 13 Sep 2026 - "be it DO outstanding or SO
+  outstanding, we need to rank by highest quantity at the top"). The ROUTE returns
+  `so_by_location[]`, `so_by_customer[]`, `do_by_location[]` and `do_by_customer[]` already
+  sorted by the bracketed outstanding quantity DESCENDING; ties broken by the leading
+  (total) quantity DESCENDING; further ties broken by name ASCENDING (`code` for location,
+  `customer_name` for customer). `Unassigned` (a NULL name) ranks by its own quantities,
+  never pinned first or last. The presenter renders the arrays in the order given and never
+  re-sorts. Evidence: pytest seeding a clear highest, a tie broken by total, and a full tie
+  broken by name, for both SO breakdowns; a presenter test feeding an unsorted body and
+  asserting the rendered order equals the input order.
+- **AC-1150 [BE]** NEW (R11, owner testing round 3, 13 Sep 2026 - "the breakdown list should
+  tally with whatever reported at the summary at the top", choosing option 1: breakdowns
+  list only names with outstanding above 0). REPLACES R6's two-population DO block
+  (AC-1115/AC-1116/AC-1103) with ONE population, `_outstanding_clause`, the SAME population
+  `do_count`/the dates/`do_rows[]` already used: `do_qty` = SUM `order_lines.quantity` over
+  OUTSTANDING DOs only (not every DO in scope), `delivered_qty = do_qty - pending_qty`
+  (always `0` given today's schema - `order_lines` carries no per-line delivered/outstanding
+  split below the DO header). `do_by_location[]` / `do_by_customer[]` carry ONLY names that
+  appear on an outstanding DO; a name whose only DOs are delivered is ABSENT, not printed
+  with `pending_qty` 0. Invariants: `sum(breakdown.do_qty) == block.do_qty` and
+  `sum(breakdown.pending_qty) == block.pending_qty`, for both groups. Evidence: pytest seeds
+  a delivered DO (qty 5) and an outstanding DO (qty 7) on customer A plus a delivered-ONLY
+  DO on customer B; asserts `do_qty=7` (not 12), `delivered_qty=0`, `pending_qty=7`,
+  `do_count=1`, `do_by_customer` carries customer A only.
+- **AC-1151 [BE]** NEW (R12, parser gap found live, 13 Sep 2026 - `"Srtwc8518-SH dealer
+  delivery order outstanding how many at BRW?"` parsed `order_status: "outstanding"` (bare)
+  instead of `do_outstanding`, so the bot asked the scope question the message had already
+  answered). The parser prompt's vocabulary addendum carries an explicit example set for a
+  scope word embedded INSIDE a longer sentence, not just standalone - at minimum
+  `"... dealer delivery order outstanding how many at BRW" -> do_outstanding`, `"... sales
+  order outstanding for IB" -> so_outstanding`, `"outstanding both" -> outstanding_both` -
+  and states the rule in words: the document word (sales order / delivery order / both)
+  decides the scope wherever it sits in the message, not only when the message is otherwise
+  bare. D17 stands: this is a PROMPT fix, no deterministic code changes. Evidence: a pytest
+  assertion on the published addendum text; a console case for the exact live phrasing,
+  expecting the DO block directly (`Location: BRW`, no scope question).
 
 ## Out of scope (backlog)
 

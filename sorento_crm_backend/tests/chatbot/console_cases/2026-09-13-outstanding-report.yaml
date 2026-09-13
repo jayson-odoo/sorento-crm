@@ -195,3 +195,24 @@ cases:
           branch_kind: business_query
           reply_contains: ["Sales order outstanding", "Delivery order outstanding"]
           no_uuid: true
+
+  - name: R12 - a scope word embedded inside a longer sentence still decides the scope
+    # R12 (parser gap found live, 13 Sep 2026): the exact message below parsed
+    # `order_status: "outstanding"` (bare) instead of `do_outstanding` on prompt v15, so
+    # the bot asked the scope question the message had already answered. D17 stands -
+    # this is a PROMPT fix (`chatbot_parser_prompt.py`'s addendum), not deterministic
+    # code; this case is what proves the fix live, since pytest cannot exercise the
+    # parser's own reading of a sentence (see
+    # tests/chatbot/test_outstanding_lane.py::TestPromptTeachesScopeWordsInsideLongerSentences
+    # for the text-level pin instead).
+    # NEEDS AN OWNER CHECK before this case is run: "Srtwc8518-SH" is the plan's own
+    # example product code - replace it with one this tenant's `products` table actually
+    # holds if it does not resolve (see the header note above on real vs invented codes).
+    cold: true
+    turns:
+      - text: "Srtwc8518-SH dealer delivery order outstanding how many at BRW?"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Delivery order outstanding", "Location: BRW"]
+          reply_not_contains: ["Outstanding for which document?"]
+          no_uuid: true
