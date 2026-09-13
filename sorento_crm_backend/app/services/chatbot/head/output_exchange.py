@@ -1185,9 +1185,19 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
         o["message_type"] = "request_for_help"
         escalation = o.get("escalation") if isinstance(o.get("escalation"), dict) else {}
         o["escalation"] = {**escalation, "is_escalation_confirmation": True}
-        if outcome.routing:
-            routing = o.get("routing") if isinstance(o.get("routing"), dict) else {}
-            o["routing"] = {**routing, **{k: v for k, v in outcome.routing.items() if v}}
+        # `outcome.routing` IS NOT MERGED INTO THE EMISSION, and that is not an omission.
+        # The routing chain several hundred lines below reassigns `o["routing"]` wholesale
+        # from its own two nullish ladders, so anything written here was overwritten before
+        # any reader saw it - measured: no read of `o["routing"]` between this call site and
+        # that reassignment. What the merge did do was park whatever a handler had put on
+        # `outcome.routing` in the graded routing block on the way past, including the
+        # deferred escalation's remembered team word and the code the CUSTOMER typed.
+        #
+        # The two things that genuinely have to reach a reader travel by their own route:
+        # a `team_pick` answer's team is read off `outcome.routing` directly at the hoist
+        # (`team_clarify_pick`, which is why the handlers still write it), and the deferred
+        # escalation is read off the QUESTION's payload by the lane
+        # (`escalation._deferred_escalation`).
     if outcome.declined:
         o["is_affirmative"] = False
         escalation = o.get("escalation") if isinstance(o.get("escalation"), dict) else {}

@@ -240,7 +240,12 @@ def _product_pick(answer: dict, options: list, payload: dict) -> Outcome:
     # and no new session key (D5): the deferral is a payload, the same way `keep` is.
     deferred = payload.get("then")
     deferred = deferred.get("escalate") if isinstance(deferred, dict) else None
-    if isinstance(deferred, dict):
+    deferred = deferred if isinstance(deferred, dict) else {}
+    # A team to escalate TO is what makes this a deferred escalation: `then: {escalate: {}}`
+    # is a payload that names nowhere, and resuming on it would assign the turn to whatever
+    # the conversation happened to carry. Either remembered word will do - the word the
+    # customer typed, or the team the offer that was open was for.
+    if jsc.truthy(deferred.get("team_word")) or jsc.truthy(deferred.get("offer_team")):
         outcome.escalate = True
         outcome.outcome = f"{outcome.outcome} Resuming the escalation."
         # The team WORD the customer typed on the turn that was deferred, verbatim, for the
