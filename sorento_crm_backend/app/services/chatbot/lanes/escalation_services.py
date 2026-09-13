@@ -195,7 +195,7 @@ def _staff_lookup(db: Any):
 MISS_TOKEN_BLOCK_CAP = 5
 
 
-def _product_tokens(ctx: Any, body: dict[str, Any]) -> set[str]:
+def _product_tokens(ctx: Any, body: dict[str, Any]) -> list[str]:
     """The tokens THIS MESSAGE's product entities were sent to the resolver as.
 
     Taken from the REQUEST, not re-derived: `resolve_entity_body` maps `ctx.parse.output.
@@ -214,7 +214,7 @@ def _product_tokens(ctx: Any, body: dict[str, Any]) -> set[str]:
     rows = (entities or {}).get("entities") if isinstance(entities, dict) else None
     rows = rows if isinstance(rows, list) else []
     tokens = body.get("tokens") or []
-    wanted: set[str] = set()
+    wanted: list[str] = []
     for entity, token in zip(rows, tokens):
         if not isinstance(entity, dict):
             continue
@@ -223,13 +223,15 @@ def _product_tokens(ctx: Any, body: dict[str, Any]) -> set[str]:
         if entity.get("current_message") is not True:
             continue
         key = str(token or "").strip().lower()
-        if key:
-            wanted.add(key)
+        # Ordered and de-duplicated: the filter only needs membership, but the lane's own
+        # `query` is built from this list and should read in the order the customer typed.
+        if key and key not in wanted:
+            wanted.append(key)
     return wanted
 
 
 def _product_rows(
-    payload: Any, wanted_tokens: set[str] | None = None
+    payload: Any, wanted_tokens: list[str] | set[str] | None = None
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """`(resolved, did_you_mean)` out of one resolver payload. Pure.
 
@@ -321,6 +323,19 @@ def _resolve_and_gate(db: Any):
         resolver that drifts. The session is the lane's own, and it carries the contact's
         company scope (H56), which is the scope AC-1142 names.
 
+        **The body this lane sends is NOT the business lane's body.** Three keys are
+        overridden, because this lane reads exactly one field off the answer
+        (`display.brand.brand_code`) and pays for everything else:
+
+        * `understand_phrase: False` and `spec_fallback: False` - both put the customer's
+          message in front of a model (phrase understanding, then a spec search) to find
+          something a CODE would not match. An escalation turn's message is "ESCALATE TO
+          MARKETING FOR <code>", so what that would understand is the verb and the team word,
+          and any row it invented from them would then choose a brand, and through the brand a
+          person. Codes only, and a code that matches nothing becomes the did-you-mean offer.
+        * `query` - the product tokens, not the message. Same reason, plus it is the value the
+          resolver scores and logs.
+
         `sub-resolve-and-gate`'s gate is deliberately NOT run over the answer. The gate's
         job is to decide which entity types a DOMAIN serves and to build the roster axes for
         an offer; an escalation turn has no domain of its own and is not offering a roster,
@@ -341,6 +356,12 @@ def _resolve_and_gate(db: Any):
 
         body = resolve_entity_body(ctx)
         wanted = _product_tokens(ctx, body)
+        body = {
+            **body,
+            "query": " ".join(wanted),
+            "spec_fallback": False,
+            "understand_phrase": False,
+        }
         with db.begin_nested():
             payload = production_services(db).resolve_entity(body)
         resolved, did_you_mean = _product_rows(
