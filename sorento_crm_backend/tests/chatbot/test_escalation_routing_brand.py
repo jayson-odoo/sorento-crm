@@ -427,3 +427,192 @@ def test_ac1125_a_pick_on_a_family_word_deferral_asks_which_team_next() -> None:
         "marketing_promotion",
     ], result["pending"]
     services.next_assignee.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# Security review, S1 and its reply companion, S3. Written on the tester's
+# own branch after a merge of the coder's slices (head 9742167a8), so these are
+# RED against the shipped implementation, not against a stub. Topic: AC-1130
+# hardening (S1, item 1 and its reply companion, item 6) and the did-you-mean
+# cap (S3, item 3).
+# --------------------------------------------------------------------------- #
+
+
+def _malicious_raw() -> str:
+    """A 300 char typed code carrying a newline, a carriage return, a tab, and the frozen
+    offer open phrase (`output_exchange._OFFERED_ESCALATION_RE`) placed well past any
+    sane truncation point, padded to the full length with filler.
+
+    An attacker typing this as a product code is testing two things at once: whether the
+    PIC comment and the clarify reply stay one bounded line (S1), and whether the phrase
+    could ever reopen a stale offer on a LATER turn if this text ever reached a state's
+    `response` field (the legacy `offer_is_open` regex path, still read "during the
+    migration window").
+    """
+    prefix = "A" * 40 + "\n" + "B" * 40 + "\r" + "C" * 40 + "\t" + "D" * 40
+    phrase = "would you like me to escalate"
+    padded = prefix + " " + phrase + " "
+    raw = padded + "E" * (300 - len(padded))
+    assert len(raw) == 300
+    return raw
+
+
+def test_s1_pic_comment_product_line_is_bounded_and_never_reopens_a_stale_offer() -> None:
+    """Security review S1 (AC-1130 hardening), item 1. `_product_line` embeds the typed
+    code verbatim with no cap and no whitespace collapse (`escalation.py`'s own
+    `_product_line`), so a 300 char raw with control characters and the frozen offer
+    phrase reaches the PIC comment whole. RED until the coder bounds it to one line, at
+    most 100 chars of the typed text, and the phrase cannot survive to make
+    `offer_is_open` read a later turn's stale state as an open offer."""
+    from app.services.chatbot.head.output_exchange import offer_is_open
+
+    raw = _malicious_raw()
+    ctx = _ctx(
+        routing={"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}},
+        escalation={"is_escalation_confirmation": True, "company_pick": None},
+        entities=[{"raw": raw, "hint": "product", "confident": True, "canonical_code": None, "current_message": True}],
+    )
+    item = _item(team="customer_service")
+    services = _services(gate={"resolved": [_resolved_row("SRTWB8004", brand="sorento")], "did_you_mean": []})
+
+    result = run(ctx, item, services=services)
+
+    comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+    text = comment["text"]
+    assert text.count("Product: ") == 1, text
+    start = text.index("Product: ") + len("Product: ")
+    # `_product_line` ends its own line with exactly one trailing "\n"; the next real
+    # field starts with the SLA alert clock emoji, which is a safe fixed marker the
+    # malicious raw cannot contain.
+    end = text.index("⏰")
+    body = text[start:end]
+    if body.endswith("\n"):
+        body = body[:-1]
+    typed_part = body.split(" (picked ")[0]
+
+    assert "\n" not in typed_part and "\r" not in typed_part and "\t" not in typed_part, (
+        f"the comment's Product line must collapse whitespace to single spaces: {typed_part!r}"
+    )
+    assert len(typed_part) <= 100, (
+        f"the comment must carry at most 100 chars of the typed text: {len(typed_part)} chars"
+    )
+    assert "would you like me to escalate" not in text.lower(), (
+        f"the injected phrase must not survive a bounded comment: {text!r}"
+    )
+    assert offer_is_open({"response": text}) is False, (
+        "the comment text must never make a later turn's offer_is_open read True"
+    )
+
+
+def test_s1_companion_clarify_reply_is_bounded_and_never_reopens_a_stale_offer() -> None:
+    """Security review S1, item 6 (the reply half): `_product_pick_ask`'s
+    `lead = f"I could not find *{typed}*."` embeds the SAME raw typed code with no cap,
+    on the did-you-mean ask the customer receives when their code does not resolve.
+    RED for the same reason as the comment test above."""
+    from app.services.chatbot.head.output_exchange import offer_is_open
+
+    raw = _malicious_raw()
+    ctx = _ctx(
+        routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[{"raw": raw, "hint": "product", "confident": True, "canonical_code": None, "current_message": True}],
+    )
+    item = _item(team="warehouse")
+    did_you_mean = [_resolved_row("SRTWC6030-SH-BL", brand="sorento")]
+    services = _services(gate={"resolved": [], "did_you_mean": did_you_mean})
+
+    result = run(ctx, item, services=services)
+
+    assert result["arm"] == "product_pick", result
+    text = result["clarify"]["clarify_text"]
+    start = text.index("I could not find *") + len("I could not find *")
+    end = text.index("*.", start)
+    typed_in_lead = text[start:end]
+
+    assert "\n" not in typed_in_lead and "\r" not in typed_in_lead and "\t" not in typed_in_lead, (
+        f"the clarify reply must be single line where it names the typed code: {typed_in_lead!r}"
+    )
+    assert len(typed_in_lead) <= 100, (
+        f"the clarify reply must bound the typed text: {len(typed_in_lead)} chars"
+    )
+    assert "would you like me to escalate" not in text.lower(), (
+        f"the injected phrase must not survive a bounded clarify reply: {text!r}"
+    )
+    assert offer_is_open({"response": text}) is False, (
+        "the clarify reply must never make a later turn's offer_is_open read True"
+    )
+
+
+def _dym_row_for_token(code: str, *, for_raw: str, brand: str = "sorento") -> dict:
+    """A did-you-mean row tagged with the customer's own typed token, WITHOUT touching
+    the shared `_resolved_row` builder every other test in this file uses - so nothing
+    above can drift from a shape change made only for this fixture."""
+    row = _resolved_row(code, brand=brand)
+    row["for_raw"] = for_raw
+    return row
+
+
+def test_s3_five_unresolved_tokens_cap_did_you_mean_rows_per_token_and_overall() -> None:
+    """Security review S3 (AC-1124 cap). Five product codes in one message, each
+    resolving to 15 did-you-mean rows (75 total) - `_product_pick_ask` arms every row it
+    is handed with no cap at all today. RED until the coder applies the SAME two numbers
+    `lanes/business/miss_suggest.py` already applies to its own did-you-mean planner: at
+    most 3 rows per missed token (`_cap3`, ~line 60) and at most 5 tokens on one turn
+    (`d1s = d1s[:5]`, ~line 426) - so an escalation turn can offer at most 15 rows
+    whatever the resolver hands back, the same ceiling the business lane already holds
+    itself to."""
+    from app.services.chatbot.lanes.business.miss_suggest import _cap3
+
+    per_token_cap = len(_cap3(list(range(15))))
+    assert per_token_cap == 3, "miss_suggest.py's own per-token cap moved; re-read it"
+    token_cap = 5  # miss_suggest.py ~line 426: d1s = d1s[:5]
+
+    tokens = [f"ZZTTOKEN{i}" for i in range(1, 6)]
+    entities = [_product_entity(t) for t in tokens]
+    did_you_mean = [
+        _dym_row_for_token(f"{token}-C{n:02d}", for_raw=token)
+        for token in tokens
+        for n in range(1, 16)
+    ]
+    assert len(did_you_mean) == 75
+
+    ctx = _ctx(
+        routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=entities,
+    )
+    item = _item(team="warehouse")
+    services = _services(gate={"resolved": [], "did_you_mean": did_you_mean})
+
+    result = run(ctx, item, services=services)
+
+    assert result["arm"] == "product_pick", result
+    options = result["pending"]["options"]
+    assert len(options) <= per_token_cap * token_cap, (
+        f"at most {per_token_cap * token_cap} rows total, got {len(options)}"
+    )
+
+    by_token: dict[str, int] = {}
+    for opt in options:
+        code = opt.get("code") or ""
+        prefix = code.split("-C")[0]
+        by_token[prefix] = by_token.get(prefix, 0) + 1
+    assert set(by_token) <= set(tokens)
+    for token, count in by_token.items():
+        assert count <= per_token_cap, (
+            f"at most {per_token_cap} rows per token, {token} offered {count}: {by_token!r}"
+        )
+
+    send = next(a for a in result["actions"] if a["kind"] == "send_message")
+    if send.get("quick_replies"):
+        assert len(send["quick_replies"].split(", ")) == len(options), (
+            f"the quick replies must match the offered options count: {send!r}"
+        )
+    for opt in options:
+        assert opt["code"] in send["text"], (
+            f"every offered option must appear in the reply text: {opt['code']!r} missing "
+            f"from {send['text']!r}"
+        )
