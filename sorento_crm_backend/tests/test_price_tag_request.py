@@ -1287,8 +1287,10 @@ class TestSubmitCompleteness:
         err = exc_info.value
         assert err.status_code == 422
         assert err.detail["code"] == "SUBMIT_INCOMPLETE"
-        # The FE routes each key to the field it belongs to, so all three are named.
-        assert err.detail["detail"] == "debtor_name,needed_by_date,lines"
+        # needed_by_date is optional (D-P2b) - dropped from what "complete"
+        # requires. The FE routes each remaining key to the field it belongs
+        # to, so both are named.
+        assert err.detail["detail"] == "debtor_name,lines"
         assert "dealer" in err.detail["message"]
 
     def test_submit_names_only_what_is_missing(self, db: Session):
