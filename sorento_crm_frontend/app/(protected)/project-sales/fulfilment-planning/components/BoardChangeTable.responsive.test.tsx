@@ -159,4 +159,29 @@ describe('the change lightbox at 375px', () => {
     // What it DOES print is the engine's own sentence for each component.
     expect(printed).toContain('Keep 10');
   });
+
+  it('renders "Where it went" once Apply has run and recorded where a held share landed', () => {
+    render(
+      <BoardChangeTable
+        annotation={annotation({
+          whereItWent: ['Reallocate 202607-S0080 3 to pool'],
+        })}
+      />,
+    );
+    const dialog = openDialog('pcr-381895-1');
+
+    const where = within(dialog).getByTestId(
+      'board-change-where-pcr-381895-1',
+    );
+    expect(where).toHaveTextContent('Reallocate 202607-S0080 3 to pool');
+  });
+
+  it('renders no "Where it went" section on a row Apply has not written anything for', () => {
+    render(<BoardChangeTable annotation={annotation({ whereItWent: [] })} />);
+    const dialog = openDialog('pcr-381895-1');
+
+    expect(
+      within(dialog).queryByTestId('board-change-where-pcr-381895-1'),
+    ).not.toBeInTheDocument();
+  });
 });
