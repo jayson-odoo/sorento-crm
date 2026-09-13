@@ -90,13 +90,17 @@ she typed and the code she picked.
 - AC-1127 No product named this turn, previous turn's team == the team the ladder lands on:
   the previous product and brand are in the body. pytest (photo turn then "escalate to
   marketing").
-- AC-1128 No product named this turn, previous turn's team != the landed team: `brand_code`
-  null in the body. pytest (stock turn then "escalate to marketing" then pick Marketing
-  Product). This same-team gate does NOT apply when this turn resumed the lane's own
-  `team_pick` question (D10): the product that turn's escalation request named carries to
-  the landing regardless of the previous turn's team, because the question was the lane's
-  own deferral of that same request. pytest, live and dry (SRTWB8004 named, family word
-  asked, team picked).
+- AC-1128 The same-team gate, and the three shapes D10 (restated, review round 9)
+  distinguishes among them: a DIRECT pick with no question asked this turn carries nothing
+  (`focus.products` off an unrelated earlier turn, the gate's own case) - `brand_code` null
+  in the body, pytest (stock turn then "escalate to marketing" then pick Marketing
+  Product). A resumed `team_pick` (this turn answered the lane's OWN multi-team clarify)
+  whose escalation request named NO product also carries nothing - the gate is not
+  bypassed just because the question was the lane's own; D10 needs the frozen
+  `payload.product_code`, and a stock turn's "escalate to marketing" freezes none. A
+  resumed `team_pick` whose escalation request DID name a product carries THAT product
+  regardless of the previous turn's team (SRTWB8004 named, family word asked, team
+  picked) - pytest, live and dry, all three shapes.
 - AC-1129 The body's `team_code` is the team the ladder landed on and `agent_code` is that
   team's agent from the domain table, never the inherited pair. pytest with inherited
   purchasing/general_enquiries and landed marketing_product.
