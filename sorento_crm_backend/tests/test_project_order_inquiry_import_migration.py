@@ -260,11 +260,19 @@ class World:
 
     # -- the book AutoCount owns
 
-    def order(self, *, demand_class: str = "project", status: str = "open") -> SalesOrder:
+    def order(
+        self,
+        *,
+        demand_class: str = "project",
+        status: str = "open",
+        number: str | None = None,
+    ) -> SalesOrder:
         row = SalesOrder(
             id=_uid(),
             company_id=self.company_id,
-            so_number=f"{MARKER}-SO{_n():04d}",
+            # Nameable so two companies can hold the SAME sales order number, which is the
+            # whole of AC-S1-43.
+            so_number=number or f"{MARKER}-SO{_n():04d}",
             status=status,
             demand_class=demand_class,
             order_type=demand_class,
@@ -1388,6 +1396,135 @@ def test_closed_line_row_not_open_demand():
         # The state the view ignores, and the honest word for it: purchasing dealt with
         # this instruction and the goods went out.
         assert w.one_row().state == INQUIRY_ACTIONED
+
+
+# --------------------------------------------------------------------------- #
+# what a bad cell may not do (security review, 14 Sep)                         #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_row_with_no_quantity_is_skipped_and_frees_nothing():
+    """AC-S1-40 (security review N2). A quantity of zero is not an instruction, and a
+    NEGATIVE one must not hand capacity back to the line: charged to the ledger it would
+    let the row after it take more of the order than the order holds.
+
+    The three rows are deliberately in this order - take the whole line, then a negative,
+    then ask for the whole line again. The third row fits only if the second one gave
+    something back.
+    """
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="50")
+        data = sheet([
+            (order.so_number, w.product.product_code, 50, D_OCT,
+             w.warehouse.warehouse_code, ""),
+            (order.so_number, w.product.product_code, -50, D_OCT,
+             w.warehouse.warehouse_code, ""),
+            (order.so_number, w.product.product_code, 50, D_OCT,
+             w.warehouse.warehouse_code, "SECOND"),
+        ])
+        outcome = ImportOutcome(None, persist=False)
+
+        result = w.apply(data, outcome=outcome)
+
+        assert result["rows_raised"] == 1, result
+        assert outcome.count_of("invalid_quantity") == 1
+        assert outcome.processed == 3, outcome.breakdown()
+        assert [entry["reason"] for entry in result["line_not_found"]] == [
+            "qty_exceeds_ordered"
+        ], "the negative row handed the line's quantity back"
+
+
+def test_an_over_long_location_is_reported_not_raised():
+    """AC-S1-41 (security review N3). `order_inquiry_rows.stock_location` is 80 characters,
+    so a longer cell cannot be raised - and the line here has NO warehouse, which is exactly
+    the case that would otherwise match it and abort the whole job on the insert."""
+    with world() as w:
+        order = w.order()
+        w.line(order, warehouse=None, qty_ordered="50")
+        data = sheet([
+            (order.so_number, w.product.product_code, 10, D_OCT, "BRW-" + "X" * 120, ""),
+        ])
+
+        result = w.apply(data)
+
+        assert result["ok"] is True, "one bad cell must not fail the upload"
+        assert result["rows_raised"] == 0, result
+        assert w.rows() == []
+        assert [entry["reason"] for entry in result["line_not_found"]] == ["location_differs"]
+
+
+def test_an_upload_with_no_actor_is_refused(monkeypatch):
+    """AC-S1-42 (security review N1). Every row this raises is born acknowledged and every
+    link records who made it, so an upload with nobody to attribute it to would write a page
+    of decisions nobody can be asked about. The route always has an actor; this is the
+    direct caller's guard."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "external_api_key_act_as_user_id", None, raising=False)
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="50")
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = w.apply(data, actor=None)
+
+        assert result["ok"] is False, result
+        assert any("attribute" in problem for problem in result["problems"]), result
+        assert result["rows_raised"] == 0
+        assert w.rows() == []
+        assert set(result) == RESULT_KEYS, sorted(set(result) ^ RESULT_KEYS)
+
+
+def test_an_upload_touches_only_its_own_companys_order():
+    """AC-S1-43 (security review N6). Two companies, one sales order NUMBER.
+
+    The sheet carries numbers, not ids, and every lookup this importer makes is by number -
+    so the only thing standing between an upload and another company's order is the scope
+    the job runs under. Asserted rather than assumed.
+    """
+    with blank_session() as db:
+        srt = db.execute(
+            sa.text("select id from companies where code = 'SRT'")
+        ).scalar()
+        other = _uid()
+        db.execute(
+            sa.text(
+                "insert into companies (id, name, code, is_active) "
+                "values (:id, :name, :code, true)"
+            ),
+            {"id": other, "name": f"{MARKER} other company", "code": f"ZZTC{_n():04d}"},
+        )
+        number = f"{MARKER}-SHARED{_n():04d}"
+
+        with company_scope(db, frozenset({other})):
+            far = World(db, other)
+            far_order = far.order(number=number)
+            far_line = far.line(far_order, qty_ordered="50")
+
+        with company_scope(db, frozenset({srt})):
+            near = World(db, srt)
+            near_order = near.order(number=number)
+            near_line = near.line(near_order, qty_ordered="50")
+            result = near.apply(sheet([
+                (number, near.product.product_code, 30, D_OCT,
+                 near.warehouse.warehouse_code, ""),
+            ]))
+
+            assert result["rows_raised"] == 1, result
+            assert result["orders_adopted"] == 1
+            assert result["orders_stamped"] == 1
+            assert str(near.one_row().so_line_id) == str(near.mirror_of(near_line).id)
+            assert near_order.demand_origin == importer.SOURCE_SYSTEM
+
+        with company_scope(db, frozenset({other})):
+            assert far.mirror_of(far_line) is None, "the other company's order was adopted"
+            assert far.rows() == [], "a row was raised under the other company"
+            db.refresh(far_order)
+            assert far_order.demand_origin is None, "the other company's header was stamped"
 
 
 # --------------------------------------------------------------------------- #

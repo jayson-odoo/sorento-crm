@@ -100,12 +100,25 @@ _AUTOCOUNT_TRIGGER = "autocount linkage"
 #: a board-raised one without a new column.
 _MIGRATION_STAMP = "Migrated from order inquiry sheet"
 
+#: Why an upload with no actor is refused (AC-S1-42). Worded for the uploader, since it
+#: travels to the job page as the reason the job failed.
+NO_ACTOR_PROBLEM = (
+    "this upload has nobody to attribute it to, so nothing was raised: sign in and upload "
+    "again, or configure the act-as principal for an unattended run."
+)
+
 #: How an EARLIER version of this importer wrote a row's extra citations onto its note, and
 #: how `ProjectOrderInquiryService._cited_documents` still reads them back off the rows that
 #: carry one. Read-only from here: the migration resolves every citation itself and keeps the
 #: first on `cited_document`, so nothing writes this prefix any more - but the rows that
 #: already have it are on the live database and the walk must go on understanding them.
 ALSO_CITED_PREFIX = "Also cited on the form:"
+
+#: `order_inquiry_rows.stock_location` is `String(80)` and `warehouses.warehouse_code` is
+#: shorter still, so a longer cell names no warehouse this system could hold. Refused as a
+#: location that differs rather than carried into the insert, where it would abort the whole
+#: job over one bad cell (security review N3, 14 Sep).
+_MAX_LOCATION = 80
 
 #: The two target families, spelled once. `_purchase_side` answers in the same two words.
 _PO = "po_line_id"
@@ -316,6 +329,8 @@ def _match_row(
         return None, oc.NO_LINE_FOR_ITEM
 
     location = (row.location or "").strip().upper()
+    if len(location) > _MAX_LOCATION:
+        return None, oc.LOCATION_DIFFERS
     if location:
         # A line with no warehouse accepts any location (AC-S1-3): the book simply does not
         # state one, and the sheet is what carries it.
@@ -406,6 +421,12 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
             match.duplicate = True
             continue
         stated.add(key)
+        if _dec(row.qty) <= _ZERO:
+            # Never matched and never charged to the ledger (security review N2, 14 Sep):
+            # a negative cell would otherwise hand capacity BACK to the line and let a later
+            # row take more of it than the order holds.
+            match.code = oc.INVALID_QUANTITY
+            continue
         order = plan.orders.get(row.so_number)
         if order is None:
             match.code = oc.ORDER_NOT_FOUND
@@ -1124,17 +1145,19 @@ def apply(
     if not parsed.ok:
         return _empty(parsed)
 
-    plan = _plan(db, parsed)
     link_actor = _link_actor(actor)
-    if link_actor:
-        links, not_linkable = _pair(db, plan)
-    else:
-        # Every link records WHO made it, so an unattended upload with no actor raises the
-        # rows and leaves the documents to the worklist's own Auto-link button, under a real
-        # name. The citations are named rather than silently dropped.
-        links, not_linkable = {}, [
-            number for entry in plan.matches if entry.raisable for number in entry.cited
-        ]
+    if not link_actor:
+        # Every row this raises is born ACKNOWLEDGED and every link records who made it, so
+        # an upload with nobody to attribute it to would write a page of decisions no one
+        # can be asked about (security review N1, 14 Sep). The route always has an actor;
+        # this guards a direct caller. Refused whole rather than half-written.
+        refused = _empty(parsed)
+        refused["ok"] = False
+        refused["problems"] = list(parsed.problems) + [NO_ACTOR_PROBLEM]
+        return refused
+
+    plan = _plan(db, parsed)
+    links, not_linkable = _pair(db, plan)
 
     now = _now()
     stamped = _stamp_orders(plan)
@@ -1154,12 +1177,10 @@ def apply(
             outcome.unchanged(row=row.source_row, code=oc.RESTATES_AN_INSTALMENT,
                               identity=identity, value=row.so_number)
             continue
-        if match.code == oc.ORDER_NOT_FOUND:
-            outcome.skip(row=row.source_row, code=oc.ORDER_NOT_FOUND,
-                         identity=identity, value=row.so_number)
-            continue
-        if match.code == oc.ORDER_NOT_PLANNABLE:
-            outcome.skip(row=row.source_row, code=oc.ORDER_NOT_PLANNABLE,
+        if match.code:
+            # `order_not_found`, `order_not_plannable` or `invalid_quantity` - whichever
+            # refusal the plan reached first.
+            outcome.skip(row=row.source_row, code=match.code,
                          identity=identity, value=row.so_number)
             continue
         if match.reason:
