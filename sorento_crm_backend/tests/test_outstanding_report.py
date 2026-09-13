@@ -365,7 +365,7 @@ def test_customer_query_matches_name_not_debtor_code(client, db):
 def test_so_rows_roll_up_lines_per_so(client, db):
     """Two live lines on one SO (205 + 205) roll up to ONE `so_rows` entry with
     `ordered_qty=410` and the distinct warehouse codes joined by ', '. Rows are
-    sorted by `order_date` asc then `so_number`."""
+    sorted by `order_date` desc then `so_number`."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh_a = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-WHA")
     wh_b = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-WHB")
@@ -400,8 +400,8 @@ def test_so_rows_roll_up_lines_per_so(client, db):
     resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "so"})
     assert resp.status_code == 200, resp.text
     rows = resp.json()["so_rows"]
-    assert [r["so_number"] for r in rows] == ["ZZT-SO-EARLIER", "ZZT-SO-LATER"]
-    rolled = rows[1]
+    assert [r["so_number"] for r in rows] == ["ZZT-SO-LATER", "ZZT-SO-EARLIER"]
+    rolled = rows[0]
     assert rolled["ordered_qty"] == 410
     assert set(rolled["location"].split(", ")) == {"ZZT-WHA", "ZZT-WHB"}
 
