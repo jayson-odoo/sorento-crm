@@ -68,10 +68,15 @@ function plural(n: number, one: string, many: string): string {
  * A named list. Named rather than only counted: a count says there is a problem, the codes
  * say which one, and the list is what somebody acts on.
  *
- * `total` is separate from `items.length` and is NOT optional, because the backend caps every
- * one of these lists at 200. Heading the section with the length of what it happens to be
- * showing turns 15,787 missing sales orders into "(200)", which reads like a small, closed
+ * `total`, where a list HAS one, is separate from `items.length`: the backend caps every one
+ * of these lists at 200, and heading the section with the length of what it happens to be
+ * showing turns 15,787 rows with no line into "(200)", which reads like a small, closed
  * problem. The count is the truth; the chips are a sample of it.
+ *
+ * Omitted, the heading carries NO count (review finding 11, 14 Sep). Two of the three lists
+ * have only a capped sample to count - the server sends no total for them, and inventing one
+ * from the sample is the very misreading above. No count key was added for them either: a
+ * number nobody can act on is surface for nothing.
  */
 function ChipList({
   title,
@@ -82,18 +87,20 @@ function ChipList({
 }: {
   title: string;
   items: string[];
-  total: number;
+  total?: number;
   hint?: string;
   /** Caps how many chips show before the "+N more" tail. Most lists use `CHIP_LIMIT`; the
       no-matching-line list is denser text and asks for a taller cap (AC-S2-3). */
   limit?: number;
 }) {
   if (!items.length) return null;
-  const hidden = Math.max(total, items.length) - Math.min(items.length, limit);
+  const counted = Math.max(total ?? items.length, items.length);
+  const hidden = counted - Math.min(items.length, limit);
   return (
     <div className="rounded-lg border border-border p-3">
       <h4 className="text-xs font-semibold">
-        {title} ({fmtInt(Math.max(total, items.length))})
+        {title}
+        {total === undefined ? '' : ` (${fmtInt(counted)})`}
       </h4>
       <div className="mt-1.5 flex flex-wrap gap-1">
         {items.slice(0, limit).map((item, index) => (
@@ -121,12 +128,20 @@ function Problems({ problems }: { problems: string[] }) {
   return <ImportFeedbackSections errors={problems} />;
 }
 
-/** The reason codes AC-S1-23 defines, in words - the chip list is read by a person, not a
-    parser, so the code itself never reaches the screen. */
+/**
+ * The reason codes AC-S1-23 defines, in words - the chip list is read by a person, not a
+ * parser, so the code itself never reaches the screen.
+ *
+ * Word for word the sentences `import_outcome_codes.LABELS` prints on the job page for the
+ * same three codes (review finding 5, 14 Sep). They were paraphrased here, and two of the
+ * paraphrases were wrong about the rule: the match takes a CLOSED line as readily as an open
+ * one (D8), and the quantity it compares against is what the line ORDERED, not what is still
+ * outstanding. Somebody reading the preview and then the job page has to see one answer.
+ */
 const LINE_NOT_FOUND_REASON: Record<LineNotFoundReason, string> = {
-  no_line_for_item: 'no open line for this item',
-  location_differs: 'location differs',
-  qty_exceeds_ordered: 'quantity exceeds outstanding',
+  no_line_for_item: 'No sales order line for this item',
+  location_differs: 'No line for this item at that stock location',
+  qty_exceeds_ordered: 'Quantity exceeds what the line ordered',
 };
 
 /** `SO · item · qty · reason`, one per line (AC-S2-3). */
@@ -142,12 +157,18 @@ function InquirySummary({ data }: { data: OrderInquiryPreview }) {
   return (
     <div className="space-y-4">
       <div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
           <CountTile label="Rows" value={data.rows} />
           <CountTile label="Will raise" value={data.rows_raised} />
           <CountTile label="Already raised" value={data.rows_already_raised} />
           <CountTile label="No SO line" value={data.rows_line_not_found} />
-          <CountTile label="Documents found" value={data.links_written} />
+          {/* What Confirm does to the BOOK's neighbours, not only to the sheet: how many
+              planning records it opens (security review SF2, AC-S2-8). */}
+          <CountTile label="Orders adopted" value={data.orders_adopted} />
+          {/* Per ROW, not per document: a row linked to two documents is one row the book
+              answered for, and "Documents found" read as a count of documents (review
+              finding 6). */}
+          <CountTile label="Rows linked" value={data.links_written} />
           <CountTile label="Documents not found" value={data.documents_not_linkable.length} />
         </div>
         <p className="mt-1.5 text-2xs text-muted-foreground">
@@ -163,12 +184,10 @@ function InquirySummary({ data }: { data: OrderInquiryPreview }) {
       <ChipList
         title="Sales orders not in the CRM"
         items={data.sales_orders_not_found}
-        total={data.sales_orders_not_found.length}
       />
       <ChipList
         title="Documents we could not link"
         items={data.documents_not_linkable}
-        total={data.documents_not_linkable.length}
       />
       <ChipList
         title="Rows with no matching line"

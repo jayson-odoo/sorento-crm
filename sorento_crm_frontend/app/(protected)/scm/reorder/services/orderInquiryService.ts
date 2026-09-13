@@ -64,6 +64,10 @@ export interface OrderNotPlannable {
 export interface OrderInquiryPreview {
   ok: boolean;
   problems: string[];
+  /** Planning records this upload opens. 0 on a re-upload: the records already exist. */
+  orders_adopted: number;
+  /** Sales order headers that receive the origin / project-label stamp. */
+  orders_stamped: number;
   /** Sheet rows read, before matching. */
   rows: number;
   /** Rows raised as an order inquiry row (linked or not). */

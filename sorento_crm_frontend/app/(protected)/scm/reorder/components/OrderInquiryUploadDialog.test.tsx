@@ -82,6 +82,8 @@ function inquiryPreview(over: Partial<OrderInquiryPreview> = {}): OrderInquiryPr
   return {
     ok: true,
     problems: [],
+    orders_adopted: 9,
+    orders_stamped: 14,
     rows: 105,
     rows_raised: 71,
     rows_already_raised: 17,
@@ -426,11 +428,12 @@ describe('OrderInquiryUploadDialog - an unreadable file', () => {
 // ── 4. the order inquiry sheet ──────────────────────────────────────────────
 
 describe('OrderInquiryUploadDialog - the migration preview', () => {
-  it('renders six tiles from the preview', async () => {
-    // AC-S2-1. What the operator has to decide before Confirm, and nothing else: how many
-    // rows, how many will be raised, how many are already raised, how many found no line,
-    // and the two document counts. No tile for scheduled deliveries, matched lines, PO
-    // links or not-ordered - the sheet no longer means any of them.
+  it('renders seven tiles from the preview', async () => {
+    // AC-S2-1 and AC-S2-8. What the operator has to decide before Confirm, and nothing else:
+    // how many rows, how many will be raised, how many are already raised, how many found no
+    // line, how many PLANNING RECORDS this opens, how many rows get linked, and the
+    // documents it could not link. No tile for scheduled deliveries, matched lines, PO links
+    // or not-ordered - the sheet no longer means any of them.
     renderDialog();
     await choose('inquiry.xlsx');
 
@@ -438,9 +441,13 @@ describe('OrderInquiryUploadDialog - the migration preview', () => {
     expect(within(tile('Will raise')).getByText('71')).toBeInTheDocument();
     expect(within(tile('Already raised')).getByText('17')).toBeInTheDocument();
     expect(within(tile('No SO line')).getByText('12')).toBeInTheDocument();
-    expect(within(tile('Documents found')).getByText('62')).toBeInTheDocument();
+    expect(within(tile('Orders adopted')).getByText('9')).toBeInTheDocument();
+    // Per ROW, and labelled as one: 62 rows gained a link, which is not a count of
+    // documents (review finding 6, 14 Sep).
+    expect(within(tile('Rows linked')).getByText('62')).toBeInTheDocument();
     expect(within(tile('Documents not found')).getByText('1')).toBeInTheDocument();
-    expect(document.querySelectorAll('[data-slot="count-tile"]')).toHaveLength(6);
+    expect(document.querySelectorAll('[data-slot="count-tile"]')).toHaveLength(7);
+    expect(screen.queryByText('Documents found')).toBeNull();
     for (const retired of ['Matched', 'PO links', 'Not ordered yet', 'Scheduled deliveries']) {
       expect(screen.queryByText(retired)).toBeNull();
     }
@@ -465,18 +472,25 @@ describe('OrderInquiryUploadDialog - the migration preview', () => {
 
   it('names the sales orders the CRM does not hold, and the documents it could not link', async () => {
     // AC-S2-2. Named rather than only counted: the number says there is a problem, the list
-    // is what somebody acts on.
+    // is what somebody acts on - and NEITHER heading prints a count, because the server caps
+    // both lists at 200 and the length of a capped sample reads as a small closed problem
+    // (review finding 11, 14 Sep). Asserted by exact text: "(2)" beside the title would miss.
     renderDialog();
     await choose('inquiry.xlsx');
 
     expect(await screen.findByText('SO414033')).toBeInTheDocument();
     expect(screen.getByText('SO414034')).toBeInTheDocument();
     expect(screen.getByText('202606-S0024')).toBeInTheDocument();
+    expect(screen.getByText('Sales orders not in the CRM')).toBeInTheDocument();
+    expect(screen.getByText('Documents we could not link')).toBeInTheDocument();
   });
 
   it('formats line_not_found entries with the reason in words', async () => {
     // AC-S2-3. `SO · item · qty · reason`, and the reason in words - the chip is read by a
-    // person, so the code itself never reaches the screen.
+    // person, so the code itself never reaches the screen. The words are the ones
+    // `import_outcome_codes.LABELS` prints on the job page for the same codes (review
+    // finding 5, 14 Sep): the earlier paraphrases said "open line" and "outstanding", and
+    // this matcher takes a closed line and compares against what the line ORDERED.
     previewOrderInquiry.mockResolvedValue(
       inquiryPreview({
         rows_line_not_found: 3,
@@ -496,13 +510,15 @@ describe('OrderInquiryUploadDialog - the migration preview', () => {
     await choose('inquiry.xlsx');
 
     expect(
-      await screen.findByText('SO414040 · C-FH14 · 30 · location differs'),
+      await screen.findByText(
+        'SO414040 · C-FH14 · 30 · No line for this item at that stock location',
+      ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('SO414041 · M310-CR · 8 · no open line for this item'),
+      screen.getByText('SO414041 · M310-CR · 8 · No sales order line for this item'),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('SO414042 · MSK11C · 67 · quantity exceeds outstanding'),
+      screen.getByText('SO414042 · MSK11C · 67 · Quantity exceeds what the line ordered'),
     ).toBeInTheDocument();
     expect(screen.queryByText(/location_differs/)).toBeNull();
   });
