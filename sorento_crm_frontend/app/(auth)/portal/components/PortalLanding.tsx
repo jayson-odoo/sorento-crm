@@ -669,7 +669,7 @@ function SubmissionList({
                 around a bare "New" here reads as a second, stray "New" next
                 to a submission card's own status badge of the same word
                 (`PortalLanding.priceTag.test.tsx`). */}
-            <span className="block max-w-11 overflow-hidden whitespace-nowrap sm:max-w-none sm:inline">
+            <span className="block max-w-[31px] overflow-hidden whitespace-nowrap sm:max-w-none sm:inline">
               New {LANDING_LABELS[kind]}
             </span>
           </Link>
