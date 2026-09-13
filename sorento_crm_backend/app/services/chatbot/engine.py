@@ -1318,8 +1318,50 @@ def _resolve_open_question(
             for p in jsc.array(jsc.get(parser_raw, "reference_positions"))
             if isinstance(p, (int, float)) and int(p) >= 1
         ]
+        # Read for BOTH prompt contracts, and that is why it sits in this block rather than
+        # under the v1 comment above: the block runs whenever `answers_open_question` did not
+        # resolve the turn, which is every v1 emission and every v3 one that carried no answer.
+        #
+        # BOUNDED TO A TURN THAT SAID NOTHING ELSE, and that bound is not belt and braces - it
+        # is what stops a coincidence being read as an answer. Under the older prompt bodies
+        # `routing.suggested_team` was DERIVED FROM THE DOMAIN, so a plain stock question
+        # emitted `warehouse`; with a one-team warehouse offer open (the cross-domain escalate
+        # offer, `_arm_cross_domain_offer`), the slug would equal the option and the next
+        # ordinary question would have been read as accepting the offer. Measured: world
+        # 900000006's three stock turns, each `business_query` / `inventory` / one product
+        # entity, carrying `warehouse` - the chain stopped grading the moment the rung fired on
+        # turn 2. An ANSWER to "which team" carries no domain and no entity of its own (the
+        # console's "mrktg product": `casual`, domain null, entities []), so that is the test.
+        names_business_content = jsc.truthy(jsc.get(parser_raw, "domain_hint")) or any(
+            jsc.get(entity, "current_message") is True
+            for entity in jsc.array(jsc.get(parser_raw, "entities"))
+        )
+        team_pick_idx = (
+            None
+            if names_business_content
+            else open_question_mod.team_slug_pick(
+                question, jsc.get(jsc.get(parser_raw, "routing"), "suggested_team")
+            )
+        )
         if positions:
             answer = {**answer, "resolved": True, "picks": positions}
+        elif team_pick_idx is not None:
+            # THE TEAM THE PARSER READ, matched to the team the question OFFERED, by equality.
+            # Owner console pass, 13 Sep 2026: "mrktg product" answering a three-way marketing
+            # clarify. The parser did its job - `routing.suggested_team: "marketing_product"` -
+            # and nothing consumed it, so the turn fell through to `low_signal` and the bot
+            # said "Hi! How can I help today?" to an answer it had asked for. `origin/main`
+            # caught this in `output_exchange._team_clarify_pick`, which compared the
+            # customer's REPLY against the strings the ask had printed; #863 deleted that
+            # (AC-1032) and nothing picked the job up.
+            #
+            # This is not that reader rebuilt. The owner's standing rule is that the parser
+            # owns language and code owns structure, so the only test here is that the SLUG
+            # the parser emitted IS one of the slugs the question offered
+            # (`open_question.team_slug_pick`): no label matching, no regex, no similarity. A
+            # family word that equals no option stays unresolved and the lane's narrowing
+            # handles it, exactly as it does when the word arrives without a question open.
+            answer = {**answer, "resolved": True, "picks": [team_pick_idx]}
         elif (
             jsc.get(question, "expects") == "yes_no"
             or open_question_mod.escalation_offer_team(question) is not None

@@ -139,6 +139,38 @@ def ask(
     }
 
 
+def team_slug_pick(question: Any, team_slug: Any) -> int | None:
+    """The `idx` of the option whose OWN team IS this slug, or None. Equality, nothing else.
+
+    The parser does the language (owner's standing rule, restated 13 Sep 2026: no fuzzy or word
+    matching in code, ever). It reads "mrktg product" and emits
+    `routing.suggested_team: "marketing_product"`; this function's whole job is to notice that
+    the slug it emitted IS one of the teams the question offered, and to answer the question
+    with that option - the same outcome a numbered pick produces.
+
+    Both sides are normalised the way `escalation._catalogue_teams` normalises a team word
+    (lower, spaces and hyphens to underscores), so `Marketing Product` and `marketing-product`
+    are the same slug and nothing else is. A word that equals NO option - a family word like
+    "marketing", asked again - resolves nothing here and is left to the lane's own narrowing.
+    No label matching, no text, no similarity.
+    """
+    if not isinstance(question, dict) or question.get("kind") != "team_pick":
+        return None
+    wanted = _team_slug(team_slug)
+    if not wanted:
+        return None
+    for row in jsc.array(question.get("options")):
+        if not isinstance(row, dict):
+            continue
+        if _team_slug(row.get("team")) == wanted and isinstance(row.get("idx"), int):
+            return int(row["idx"])
+    return None
+
+
+def _team_slug(value: Any) -> str:
+    return jsc.nullish_str(value).strip().lower().replace(" ", "_").replace("-", "_")
+
+
 def escalation_offer_team(question: Any) -> Any:
     """The team a question's own reply OFFERED to escalate to, or None.
 
