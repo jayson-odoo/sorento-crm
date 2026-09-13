@@ -10,9 +10,11 @@ End-user documentation organised by department. The AI assistant is intended to 
 * `**[marketing/](./marketing/)**` - promotion upload, marketing-form upload.
 * `**[project-sales-admin/](./project-sales-admin/)**` - review submitted purchase requests / sponsorship forms and send them for approval.
 * `**[project-sales-manager/](./project-sales-manager/)**` - approve purchase requests / sponsorship forms via emailed token link, flow stock inquiries to purchasing.
-* `**[project-sales-rep/](./project-sales-rep/)**` - portal access (WhatsApp link + OTP) and how to file complaints / stock inquiries / purchase requests / sponsorship forms.
-* `**[system-management/](./system-management/)**` - admin/ops reference: operational logs and configuration tables (imports, integration logs, scheduled tasks, email/WhatsApp delivery, import column mappings), troubleshooting a failed notification, reading/retrying a chatbot turn trace, the chatbot's "last purchase cost" answer and the per-contact Field reveal that gates it, the chatbot's outstanding report (sales order backlog vs delivery order pending) and its own Field reveal gate, and the AutoCount integration contract.
-* `**[supply-chain/](./supply-chain/)**` - uploading the sales order book, purchase order book, Order Inquiry sheet and reorder-level listing that a reorder plan is built from; running a reorder plan and confirming decisions; printing the order summary sheet; deciding Buy vs Borrow on Fulfilment Planning.
+* `**[project-sales-rep/](./project-sales-rep/)**` - portal access (WhatsApp link + OTP) and how to file complaints / stock inquiries / purchase requests / sponsorship forms / price tag requests.
+* `**[system-management/](./system-management/)**` - admin/ops reference: operational logs and configuration tables (imports, integration logs, scheduled tasks, email/WhatsApp delivery, import column mappings), troubleshooting a failed notification, reading/retrying a chatbot turn trace, the chatbot's "last purchase cost" answer and the per-contact Field reveal that gates it, the chatbot's outstanding report (sales order backlog / delivery order pending) and its own Field reveal gate, and the AutoCount integration contract.
+* `**[user-management/](./user-management/)**` - manage users/roles/teams, and admin Settings pages including Portal Revisions (letting a dealer revise a submitted portal form instead of starting over).
+* `**[supply-chain/](./supply-chain/)**` - uploading the sales order book, purchase order book, Order Inquiry sheet and reorder-level listing that a reorder plan is built from; running a reorder plan and confirming decisions; printing the order summary sheet; deciding Buy vs Borrow on Fulfilment Planning; what happens when a sales order changes after planning (manual edit, book upload, or AutoCount) and how CS Confirms or Amends it.
+
 
 ## Conventions
 
@@ -35,9 +37,10 @@ UI labels (menu items, page titles, button text, dialog titles) are quoted **ver
 * ✅ Marketing - drafted (Promotion, Marketing Form).
 * ✅ Project Sales Admin - drafted (review PR, review Sponsorship Form).
 * ✅ Project Sales Manager - drafted (approve via email, flow stock inquiry).
-* ✅ Project Sales Rep - drafted (portal overview, submit via portal).
+* ✅ Project Sales Rep - drafted (portal overview: verify card, centred dashboard with Filter / Sort / view toggle including the List DataGrid, duplicate; submit via portal, including the sectioned Price Tag Request form, per-file AI extract, no line reorder, and Revise on a submitted request instead of post-submit edit).
 * ✅ System Management - drafted (operational data reference, troubleshoot failed notifications, chatbot turn trace + retry, chatbot "last purchase cost" answer + Field reveal gate, chatbot outstanding report (sales order backlog / delivery order pending) + its Field reveal gate, AutoCount integration contract, import column mappings).
-* ✅ Supply Chain - drafted (upload sales orders / purchase orders / order inquiry sheet / reorder levels; sales & purchase history uploads retired in favour of the AutoCount integration; run a reorder plan; print the order summary; Buy/borrow decisions on Fulfilment Planning, including the Local pill and the borrow-source Location table).
+* ✅ Supply Chain - drafted (upload sales orders / purchase orders / order inquiry sheet / reorder levels; sales & purchase history uploads retired in favour of the AutoCount integration; run a reorder plan; print the order summary; Buy/borrow decisions on Fulfilment Planning, including the Local pill and the borrow-source Location table; sales order changes after planning, the board's composed suggestion and Confirm/Amend).
+* ✅ User Management - drafted (Configure Portal Revisions, naming the Price Tag Request row).
 
 ## Source-of-truth notes
 

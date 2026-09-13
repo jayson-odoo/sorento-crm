@@ -32,7 +32,7 @@ The insert logic lives in module-level ``publish(session)`` so it can be called 
 alembic (e.g. to publish against the shared dev database without an ``alembic upgrade``).
 
 Revision ID: 514_chatbot_outstanding_vocab
-Revises: 514_merge_513_heads
+Revises: 515_planning_change_suggestion
 """
 import logging
 
@@ -43,7 +43,7 @@ from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
 revision = "514_chatbot_outstanding_vocab"
-down_revision = "514_merge_513_heads"
+down_revision = "515_planning_change_suggestion"
 branch_labels = None
 depends_on = None
 

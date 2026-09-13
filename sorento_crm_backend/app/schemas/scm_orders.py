@@ -10,7 +10,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- sales orders -----------------------------------------------------------
@@ -83,6 +83,33 @@ class SalesOrderLineLink(BaseModel):
     #: does not declare is dropped, so the badge here would say less than the identical
     #: badge on Order Inquiries.
     late_days: Optional[int] = None
+
+
+class SalesOrderLinePlanningChangeResult(BaseModel):
+    """What Apply wrote for this row alone (`planning_change_service.row_out`'s own
+    `result` key) - `executed_reallocations` says where a moved quantity actually went,
+    `released_documents` names one given back rather than moved. Both empty on a row
+    Apply has not touched yet."""
+
+    executed_reallocations: List[str] = Field(default_factory=list)
+    released_documents: List[str] = Field(default_factory=list)
+
+
+class SalesOrderLinePlanningChange(BaseModel):
+    """The latest planning-change row for THIS line, within the order's own newest batch.
+
+    A cancelled line leaves the fulfilment board entirely (a closed line has no cell), so
+    the board's own "Where it went" dialog is unreachable there right when CS needs it -
+    this is the SO detail screen's own seam onto the same fact. `applied_state` is
+    whatever the row's own is (pending, applied, failed, superseded), never filtered to
+    one value: a superseded row is still worth reading if it is the newest one the batch
+    carries for this line. `result` is `None` until Apply has run.
+    """
+
+    id: str
+    kind: str
+    applied_state: str
+    result: Optional[SalesOrderLinePlanningChangeResult] = None
 
 
 class SalesOrderLine(BaseModel):
@@ -173,6 +200,11 @@ class SalesOrderLine(BaseModel):
     #: covers it at all. The two are different answers - "nothing has been linked" against
     #: "nobody was told about this line" - and the column prints each in its own words.
     linked_to: Optional[List[SalesOrderLineLink]] = None
+    #: The latest planning-change row for this line, within the order's own newest batch
+    #: (`_line_planning_changes`) - `None` when no batch has ever named this line. Sent on
+    #: the SINGLE order read only, same gate as `order_inquiry` above: the list has no
+    #: column for it.
+    planning_change: Optional[SalesOrderLinePlanningChange] = None
 
 
 class SalesOrder(BaseModel):
@@ -291,7 +323,16 @@ class SalesOrderLineInput(BaseModel):
     #: being read as "delete this one, insert a new one".
     id: Optional[str] = None
     sku: str
-    qty_ordered: float = Field(..., gt=0)
+    #: `ge=0`, not `gt=0` - a held line settling to 0 on a manual edit is new vocabulary
+    #: this schema must accept (`documentation/plans/scm/PLAN-scm-change-management-one-
+    #: engine.md`, Slice A rule 5, "qty-to-zero as cancelled"): the service reads it as a
+    #: removal (`SalesOrderService._upsert_lines`/`_propagate_planning_change`), the same
+    #: as the line being dropped from the payload entirely, never as a `qty_down`. Shared
+    #: by `SalesOrderFormData` (create) too, but create is NOT left open at 0 - its own
+    #: `_lines_are_all_positive` field_validator below (review round, R-S4) enforces a
+    #: positive opening qty there instead of here, since a brand-new order has no line to
+    #: settle.
+    qty_ordered: float = Field(..., ge=0)
     #: Optional[str], read via `model_fields_set` (not `is not None`) in `_upsert_lines` -
     #: an omitted key leaves the line's stored override alone (falling back to the
     #: product's base UOM on read), while an explicit `null`/`""` clears the override.
@@ -323,6 +364,23 @@ class SalesOrderFormData(BaseModel):
     #: Who sold it. Optional - most manual creates name no agent - applied as given.
     sales_agent_id: Optional[str] = None
     lines: List[SalesOrderLineInput] = Field(..., min_length=1)
+
+    #: A brand-new order can never OPEN with a zero-qty line (review round, R-S4) - `0` is
+    #: new vocabulary only an EDIT reads as "settle this held line" (AC-A4); creating one
+    #: at 0 has no line to settle. `SalesOrderLineInput.qty_ordered` itself stays `ge=0` -
+    #: it is shared with `SalesOrderUpdate` - so the positive-on-create rule lives here,
+    #: on the smaller (create-only) schema, rather than splitting the shared line model.
+    @field_validator("lines")
+    @classmethod
+    def _lines_are_all_positive(
+        cls, lines: List[SalesOrderLineInput]
+    ) -> List[SalesOrderLineInput]:
+        for line in lines:
+            if line.qty_ordered <= 0:
+                raise ValueError(
+                    f"Line {line.sku}: qty_ordered must be greater than 0 on a new order"
+                )
+        return lines
 
 
 class SalesOrderUpdate(BaseModel):

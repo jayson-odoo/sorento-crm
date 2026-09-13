@@ -4,13 +4,14 @@
  * of the board, with the same `onDecide` write path the grid view uses.
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BoardContribution,
   BoardDecision,
   BoardDraft,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -64,6 +65,7 @@ function renderView(
     draft?: BoardDraft;
     onDecide?: (key: string, decision: BoardDecision | null) => void;
     onDecideMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+    annotations?: Map<string, BoardChangeAnnotation[]>;
   } = {},
 ) {
   const rows = overrides.contributions ?? [contribution()];
@@ -89,6 +91,7 @@ function renderView(
       draft={overrides.draft ?? {}}
       onDecide={onDecide}
       onDecideMany={onDecideMany}
+      annotations={overrides.annotations}
     />,
   );
   return { ...utils, onDecide, onDecideMany };
@@ -103,7 +106,9 @@ describe('FulfilmentBoardListView', () => {
     renderView();
 
     expect(await screen.findByText('SO397450')).toBeInTheDocument();
-    expect(screen.getByText('Line 10')).toBeInTheDocument();
+    // AC-C13 (owner feedback 13 Sep): the line number is folded beside the SO number as
+    // "(Line 10)", its own text node inside the same one-line cell - not a stacked "Line 10".
+    expect(screen.getByText('(Line 10)')).toBeInTheDocument();
     expect(screen.getByText('JEREMY')).toBeInTheDocument();
     expect(screen.getByText('Tuju Residences Sdn Bhd')).toBeInTheDocument();
     expect(screen.getByText('B2155-NL-BLUE')).toBeInTheDocument();
@@ -120,8 +125,8 @@ describe('FulfilmentBoardListView', () => {
 
     expect(await screen.findByText('SO397450')).toBeInTheDocument();
     expect(screen.getByText('SO397451')).toBeInTheDocument();
-    expect(screen.getByText('Line 10')).toBeInTheDocument();
-    expect(screen.getByText('Line 20')).toBeInTheDocument();
+    expect(screen.getByText('(Line 10)')).toBeInTheDocument();
+    expect(screen.getByText('(Line 20)')).toBeInTheDocument();
   });
 
   /** No revision number on the pill (R6): "Confirmed", full stop. */
@@ -243,6 +248,9 @@ describe('FulfilmentBoardListView', () => {
   });
 
   it('asks before it closes a row holding an unsaved edit (C5)', async () => {
+    // The coder's multi-open rework (8d7b06766): opening ANOTHER row never prompts any
+    // more - several rows are meant to be open together - only CLOSING a dirty one does.
+    // So row A's own gesture has to be a CLOSE (clicking A again), not opening B.
     renderView({
       contributions: [
         contribution(),
@@ -257,7 +265,8 @@ describe('FulfilmentBoardListView', () => {
       target: { value: 'The group is short' },
     });
 
-    fireEvent.click(screen.getAllByText('JEREMY')[1]);
+    // Close row A (click it again), not open row B.
+    fireEvent.click(screen.getAllByText('JEREMY')[0]);
 
     expect(await screen.findByRole('alertdialog')).toHaveTextContent(
       'Leave this decision unsaved?',
@@ -315,67 +324,18 @@ describe('FulfilmentBoardListView marks a row whose supply is already decided', 
 });
 
 /**
- * The list draws the SAME bar the grid does, off the same draft (PLAN section C).
- *
- * Two readings of one board that disagreed about a colour would be worse than one reading: the
- * planner would have to work out which of them was lying.
+ * DELETED, owner feedback 13 Sep (Slice C board display, AC-C13): this block ("FulfilmentBoard
+ * ListView agrees with the grid about the supply bar") pinned `data-testid="supply-bar"` /
+ * `data-decided` / `span[data-kind=...]` on the Suggested and Decided cells - exactly what
+ * AC-C13 retires ("the Suggested and Decided cells carry no progress bar"; see
+ * `FulfilmentBoardListView.test.tsx`'s own "thin rows" describe block below, which pins the
+ * bar's ABSENCE instead). The intent this block actually existed for - the list and the grid
+ * must never disagree about what was suggested and what was decided - is not lost: it is
+ * `describe('FulfilmentBoardListView says what was suggested and what was decided', ...)`
+ * below, which already asserts the same two states this block did ("BRW 43 (BRW)" faded /
+ * undecided, "Buy 43" solid / decided) as the rendered WORDS rather than as bar attributes,
+ * and needs no change for AC-C13 to land.
  */
-describe('FulfilmentBoardListView agrees with the grid about the supply bar', () => {
-  it('draws the proposal faded on an undecided row', async () => {
-    renderView({
-      contributions: [
-        contribution({
-          sources: [
-            { kind: 'reserve', rung: 'pool', qty: '43', location: 'BRW', reason: 'pool' },
-          ],
-        }),
-      ],
-    });
-
-    const bar = await screen.findByTestId('supply-bar');
-    expect(bar).toHaveAttribute('data-decided', 'false');
-    expect(bar.querySelector('span[data-kind="shared"]')).not.toBeNull();
-  });
-
-  it('draws the DECISION, solid, once the row is ticked in the draft', async () => {
-    renderView({
-      contributions: [
-        contribution({
-          sources: [
-            { kind: 'buy', rung: 'buy', qty: '43', reason: 'Nothing free at any location.' },
-            {
-              kind: 'reserve',
-              rung: 'pool',
-              qty: '0',
-              location: 'BRW',
-              warehouse_id: 'wh-brw',
-              reason: 'pool',
-            },
-          ],
-        }),
-      ],
-      draft: {
-        'so-1:line-10': {
-          verdict: 'amended',
-          reserve: [{ warehouse_id: 'wh-brw', location: 'BRW', qty: '43' }],
-          borrow: [],
-          buy_qty: '0',
-          reason: 'The pool can cover it',
-        },
-      },
-    });
-
-    // Two bars per row since AC-D4 split the column in two: Suggested first, Decided
-    // second. It is the DECIDED one that has to go solid.
-    const bars = await screen.findAllByTestId('supply-bar');
-    expect(bars).toHaveLength(2);
-    expect(bars[0]).toHaveAttribute('data-decided', 'false');
-    const bar = bars[1];
-    expect(bar).toHaveAttribute('data-decided', 'true');
-    expect(bar.querySelector('span[data-kind="shared"]')).not.toBeNull();
-    expect(bar.querySelector('span[data-kind="buy"]')).toBeNull();
-  });
-});
 
 /**
  * AC-D4: Suggested and Decided, side by side, in PLAN section 2's own words.
@@ -690,4 +650,246 @@ describe('FulfilmentBoardListView: the Local pill', () => {
     await screen.findByText('SO397450');
     expect(screen.queryByText('Local')).not.toBeInTheDocument();
   });
+});
+
+/**
+ * Owner feedback, 13 September 2026 (Slice C board display, AC-C12): the reorder-planning
+ * list's own Expand all / Collapse all (`app/(protected)/scm/reorder/components/
+ * PlanLinesGrid.tsx`, "Expand all"/"Collapse all" icon buttons beside its toolbar) is missing
+ * here, even though this list carries the same per-row expandable decision panel. RED: no
+ * such control exists on this screen today.
+ */
+describe('FulfilmentBoardListView: Expand all / Collapse all (owner feedback 13 Sep, AC-C12)', () => {
+  function twoRows() {
+    return [
+      contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 }),
+      contribution({
+        key: 'so-2:line-20',
+        sales_order_id: 'so-2',
+        line_id: 'core-line-20',
+        so_number: 'SO397451',
+        line_no: 20,
+      }),
+    ];
+  }
+
+  it('carries Expand all and Collapse all controls', async () => {
+    renderView({ contributions: twoRows() });
+    await screen.findByText('SO397450');
+
+    expect(screen.getByTestId('board-list-expand-all')).toBeInTheDocument();
+    expect(screen.getByTestId('board-list-collapse-all')).toBeInTheDocument();
+  });
+
+  it('Expand all opens every row’s decision panel; Collapse all closes them all', async () => {
+    renderView({ contributions: twoRows() });
+    await screen.findByText('SO397450');
+
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    expect(
+      await screen.findAllByRole('button', { name: 'Save decision' }),
+    ).toHaveLength(2);
+
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
+    await waitFor(() =>
+      expect(
+        screen.queryAllByRole('button', { name: 'Save decision' }),
+      ).toHaveLength(0),
+    );
+  });
+
+  /**
+   * The same unsaved-edit question every other way of closing an open row already asks
+   * (C5, `decisionRowExpansion.tsx`'s own `requestClose`/`AlertDialog`) - Collapse all is
+   * one more way to close a row, so it goes through the same guard rather than silently
+   * discarding a composition nobody asked to throw away.
+   */
+  it('Collapse all with one panel holding an unsaved edit asks once, via the existing confirm-discard prompt', async () => {
+    renderView({ contributions: twoRows() });
+    await screen.findByText('SO397450');
+
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    await screen.findAllByRole('button', { name: 'Save decision' });
+
+    // An edit nobody has saved, on ONE of the two open panels - both are open after Expand
+    // all, so the placeholder is no longer unique on the page.
+    fireEvent.change(screen.getAllByPlaceholderText('In your own words')[0], {
+      target: { value: 'The group is short' },
+    });
+
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(
+      'Leave this decision unsaved?',
+    );
+    // Asked ONCE - not once per open row (Radix hides the background from the accessibility
+    // tree while the modal is open, so what happens behind it is checked before and after,
+    // never while it is up).
+    expect(screen.getAllByRole('alertdialog')).toHaveLength(1);
+
+    // Keep editing: the question is answered "no", so BOTH panels stay open, untouched.
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getAllByRole('button', { name: 'Save decision' }),
+    ).toHaveLength(2);
+    expect(screen.getAllByPlaceholderText('In your own words')[0]).toHaveValue(
+      'The group is short',
+    );
+
+    // Collapse all again, and this time answer Discard.
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+    await waitFor(() =>
+      expect(
+        screen.queryAllByRole('button', { name: 'Save decision' }),
+      ).toHaveLength(0),
+    );
+  });
+
+  it('Collapse all with no dirty panel collapses silently, with no prompt', async () => {
+    renderView({ contributions: twoRows() });
+    await screen.findByText('SO397450');
+
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    await screen.findAllByRole('button', { name: 'Save decision' });
+
+    fireEvent.click(screen.getByTestId('board-list-collapse-all'));
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryAllByRole('button', { name: 'Save decision' }),
+      ).toHaveLength(0),
+    );
+  });
+});
+
+/**
+ * Owner feedback, 13 September 2026 (Slice C board display, AC-C13): a row today is TWO
+ * text lines tall - the Sales order cell split the SO number and "Line N" onto separate
+ * `div`s - and the Suggested / Decided cells each carried a `SupplyBar` (this file's own,
+ * now-deleted "agrees with the grid about the supply bar" describe block used to pin its
+ * presence). Built: the SO cell is `<span>SO397450</span> <span>(Line 10)</span>` in one
+ * flex row (AC-C13's own "SOxxx (Line 1)" wording, kept as two spans rather than one string
+ * since the SO number alone is still what `getByText('SO397450')` and search match - the
+ * file's other tests rely on the bare number staying its own text node) - so the cell's
+ * whole textContent reads "SO397450 (Line 10)" even though no SINGLE node holds that exact
+ * string, and "Line 10" without its parentheses is nowhere on the page at all.
+ */
+describe('FulfilmentBoardListView: thin rows (owner feedback 13 Sep, AC-C13)', () => {
+  it('reads the Sales order cell as "<SO> (Line <n>)" on one line', async () => {
+    renderView({
+      contributions: [contribution({ so_number: 'SO419772', line_no: 1 })],
+    });
+
+    const soNumber = await screen.findByText('SO419772');
+    expect(soNumber.parentElement?.textContent).toBe('SO419772 (Line 1)');
+    // "Line 1" without its parentheses is not its own text node anywhere on the page.
+    expect(screen.queryByText('Line 1')).not.toBeInTheDocument();
+  });
+
+  it('draws no progress bar in the Suggested or Decided cells', async () => {
+    renderView();
+    await screen.findByText('SO397450');
+
+    expect(screen.queryByTestId('supply-bar')).not.toBeInTheDocument();
+    expect(document.querySelector('[role="progressbar"]')).toBeNull();
+  });
+});
+
+/**
+ * R3 (captain's ruling, 13 Sep board-display round, scenario S5): a cancelled changed line
+ * has a home on the list - Outstanding 0, the change icon in the Outstanding column, a
+ * "Cancelled" verdict, and no quick-Save control (there is nothing left to decide FOR).
+ *
+ * `BoardContribution` carries no `cancelled` field yet (grepped `fulfilmentPlanning.types
+ * .ts` - absent), so this fixture adds it ad hoc; `BoardDecisionPill` has no branch for it
+ * either (only `unplannable` short-circuits), and `canQuickSave` (`_shared/lib/boardAmend
+ * .ts`) does not exclude a cancelled contribution - both are the genuine reds below. The
+ * change ICON itself is expected to already work: `changedFieldsOf` (`boardChangeAnnotations
+ * .ts`) returns a single `qty` field for a `closed: true` annotation, which
+ * `FulfilmentBoardListView`'s own `changeIcons` reads to place it in the 'outstanding'
+ * column - kept as an assertion here as a guard, not a claim of red.
+ */
+describe('FulfilmentBoardListView - a cancelled changed line (R3, S5)', () => {
+  const S5_LINE_ID = 'line-s5';
+  const S5_ROW_ID = 'row-s5';
+
+  function s5Annotation(): BoardChangeAnnotation {
+    return {
+      rowId: S5_ROW_ID,
+      soNumber: 'SO400884',
+      lineNo: 1,
+      itemCode: 'CB4702',
+      kind: 'cancelled',
+      closed: true,
+      was: { qty: '72', date: '2026-12-28', decision: 'Reserve 72 BRW-BB' },
+      now: { qty: null, date: null, decision: null },
+      suggestionLines: ['Release 72 to BRW-BB pool'],
+      lateDays: null,
+      shortfallQty: null,
+      productChangedFrom: null,
+      movedTransfer: null,
+      projectLineId: S5_LINE_ID,
+    };
+  }
+
+  function s5Contribution(): BoardContribution {
+    return {
+      ...contribution({
+        key: 'so-s5:line-1',
+        so_number: 'SO400884',
+        line_no: 1,
+        item_code: 'CB4702',
+        project_line_id: S5_LINE_ID,
+        qty: '0',
+        qty_outstanding: '0',
+        covered: false,
+        unplannable: false,
+        decision: null,
+      }),
+      // Not yet on `BoardContribution` - the field the board-side fix is expected to add
+      // (the captain's ruling names it `cancelled`; rename here if the coder picks a
+      // different key).
+      cancelled: true,
+    } as BoardContribution & { cancelled: boolean };
+  }
+
+  it('lists a cancelled changed line with Outstanding 0, a Cancelled verdict, the change icon, and no Save control', async () => {
+    renderView({
+      contributions: [s5Contribution()],
+      annotations: new Map([[S5_LINE_ID, [s5Annotation()]]]),
+    });
+
+    const row = (await screen.findByText('SO400884')).closest('tr') as HTMLElement;
+    expect(row).not.toBeNull();
+
+    // Outstanding qty column: 0.
+    expect(within(row).getByText('0')).toBeInTheDocument();
+
+    // The change icon, in the Outstanding column (`data-column="outstanding"`), per
+    // `changedFieldsOf`'s single `qty` field for a closed/cancelled annotation.
+    const icon = within(row).getByTestId(`board-change-icon-${S5_ROW_ID}`);
+    expect(icon).toHaveAttribute('data-column', 'outstanding');
+
+    // Verdict column: the plain word "Cancelled" - not "Suggested", which is what
+    // `BoardDecisionPill` falls through to today with no `cancelled` branch.
+    const pill = within(row).getByTestId('decision-pill-so-s5:line-1');
+    expect(pill.textContent).toBe('Cancelled');
+
+    // No quick-Save control: there is nothing left on this line to decide FOR.
+    expect(
+      within(row).queryByRole('button', { name: /Save SO400884 line 1 as suggested/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // "Counts a cancelled line in Confirm (N)" is a `confirmSummaryFor` unit test, not a list-
+  // view render test - `Confirm (N)` is not this component's own header, and `BoardDecided
+  // Marker` (the tick this file's other pattern would have reached for) answers a different
+  // question ("is this cell/row already covered by an active decision") that a cancelled,
+  // uncovered line does not touch either way. See `_shared/lib/fulfilmentBoard.test.ts`,
+  // `describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display round)')`.
 });

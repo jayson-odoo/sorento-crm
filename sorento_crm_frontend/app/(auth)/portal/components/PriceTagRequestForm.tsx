@@ -10,15 +10,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
-  ArrowDown,
-  ArrowUp,
   Check,
+  Copy,
   Download,
   FileText,
+  History,
   Loader2,
   MessageSquare,
+  PencilLine,
   Plus,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -38,9 +38,11 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { FormSection } from './FormSection';
+import { RevisionHistory } from './RevisionHistory';
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -49,7 +51,8 @@ import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
-import { portalBase } from '../lib/portal-paths';
+import { portalBase, portalDuplicatePath } from '../lib/portal-paths';
+import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
@@ -79,12 +82,12 @@ import {
   type AIExtractApplyPayload,
 } from './AIExtractDialog';
 import type { AIExtractedProductLine } from '../lib/portal-client';
-import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
-import { toPreviewItem, portalFetchBytes } from '../lib/portal-preview';
 import {
   uploadAttachment,
   getPriceTagDesign,
+  fetchSubmissionNeighbours,
   type PortalAttachment,
+  type PortalSubmissionNeighbours,
 } from '../lib/portal-client';
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -97,6 +100,10 @@ type AIMatchStatus = 'loading' | 'matched_product' | 'matched_set' | 'not_found'
 // ---------------------------------------------------------------------------
 // Draft line (client-side, before persisting)
 // ---------------------------------------------------------------------------
+
+// D-P1: the four sections, top to bottom, on both the edit form and the
+// read-only view.
+type SectionKey = 'customer' | 'sales_order' | 'price' | 'need_by';
 
 interface DraftLine {
   key: string; // client-side key for React
@@ -267,15 +274,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
-  // ---- AI extract sales order lines (D7) ----
+  // ---- AI extract sales order lines (D7, per-file per D-P3) ----
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
-  // Per-row match state for the CURRENT extraction, indexed the same as the
-  // dialog's own `result.products` - populated as each code resolves so the
-  // dialog can show "Not found" before Apply is even clicked (AC-S6-2), and
-  // read again by the apply handler so it never re-looks-up what this
+  // Set the moment a tile's own Extract action is tapped, so the dialog opens
+  // straight on that one file's results (D-P3) instead of the upload stage.
+  const [aiExtractFiles, setAiExtractFiles] = useState<File[] | undefined>(
+    undefined,
+  );
+  // Per-row match state for the CURRENT extraction, keyed by the row's own
+  // trimmed/lowercased product_code (review round 2) rather than its index -
+  // the dialog lets a row be removed before Apply (D-P4), which shortens the
+  // array Apply hands back without shortening an index-keyed lookup, so every
+  // match after the removed row read the wrong entry. A code is stable
+  // across that removal; an index is not. Populated as each code resolves so
+  // the dialog can show "Not found" before Apply is even clicked (AC-S6-2),
+  // and read again by the apply handler so it never re-looks-up what this
   // already knows.
-  const [aiMatchStatuses, setAiMatchStatuses] = useState<AIMatchStatus[]>([]);
-  const aiMatchesRef = useRef<(TagItemOption | null)[]>([]);
+  const [aiMatchStatuses, setAiMatchStatuses] = useState<Record<string, AIMatchStatus>>({});
+  const aiMatchesRef = useRef<Record<string, TagItemOption | null>>({});
+  const normalizeAiCode = (raw: string | null | undefined) => (raw ?? '').trim().toLowerCase();
 
   // ---- Proof review state ----
   const [changesNote, setChangesNote] = useState('');
@@ -285,9 +302,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
-  // ---- Read-only view: PO attachment preview + Download PDF (D19/S2) ----
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewIndex, setPreviewIndex] = useState(0);
+  // ---- Read-only view: Download PDF (D19/S2). The attachment preview
+  // modal is the read-only AttachmentDropzone's own (D-P5) - no separate
+  // state needed here anymore. ----
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [gearOpen, setGearOpen] = useState(false);
 
@@ -307,6 +324,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // the read-only page instead of the form.
   const isDraft = Boolean(request?.portal_draft_at);
   const isEditable = isNew || isDraft;
+  // R3-1: no post-submit Edit any more - a submitted request is read-only,
+  // and a change goes through the revision engine instead. `reviseMode` only
+  // ever turns on via the header gear's own Revise item (same hooks
+  // `SubmissionForm` reads for the legacy kinds), never from status/draft
+  // state directly, so Cancel puts the read view back with no round trip.
+  const [reviseMode, setReviseMode] = useState(false);
+  const [reviseReason, setReviseReason] = useState('');
+  const showEditForm = isEditable || reviseMode;
   const isProofReady = request?.status === 'proof_ready';
   // The design preview shows for longer than the approve/request-changes
   // actions do (D11/AC-S4-4): once approved the salesperson can still look
@@ -316,6 +341,146 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // The id to save/flush against: the route param when one exists, else
   // whatever a create call in THIS session already answered with.
   const effectiveId = requestId ?? createdRequestId ?? undefined;
+  // R3-1/AC-R7: same generic revision hooks SubmissionForm reads for the
+  // legacy kinds, rather than a second revise mechanism. Review round 3:
+  // the policy is read straight off the re-fetched request's own `revision`
+  // block (same as SubmissionForm's `detail?.revision`) rather than a
+  // SECOND GET through `useRevisionPolicy` - `_detail_body` already carries
+  // it on every `getRequest` response.
+  const revisionPolicy = request?.revision ?? null;
+  // R3-5: the one-line revision status, same wording SubmissionForm's own
+  // header line uses - review round 3 folds the price tag header into the
+  // SAME one muted truncating line, rather than its own separate blocked-
+  // reason sentence under a bold doc-number + colored pill.
+  const revisionStatusText = revisionPolicy
+    ? revisionPolicy.allowed
+      ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
+      : (revisionPolicy.blocked_reason ?? null)
+    : null;
+  const { revise, submitting: revising } = useReviseSubmission(
+    'price_tag_request',
+    effectiveId,
+  );
+  // AC-R7: same history hook/component SubmissionForm reads for the legacy
+  // kinds - the generic revision routes already serve price_tag_request
+  // (R3-1's ADAPTERS entry), this is just the FE surface catching up.
+  const revisionHistory = useRevisionHistory('price_tag_request', effectiveId);
+
+  // Portal record navigation (review round 3), same as SubmissionForm: same
+  // kind, newest first, token-scoped to the contact's own requests.
+  const [neighbours, setNeighbours] =
+    useState<PortalSubmissionNeighbours | null>(null);
+  useEffect(() => {
+    if (!requestId) {
+      setNeighbours(null);
+      return;
+    }
+    let cancelled = false;
+    fetchSubmissionNeighbours('price_tag_request', requestId)
+      .then((n) => {
+        if (!cancelled) setNeighbours(n);
+      })
+      .catch(() => {
+        if (!cancelled) setNeighbours(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requestId]);
+
+  // ---- Sections (D-P1): Customer open by default, everything else opens
+  // progressively as the form gains the value the next section needs. A rule
+  // fires once per section per form load; a section the user collapsed by
+  // hand (tracked in the same ref) is never reopened by a rule.
+  const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>({
+    customer: true,
+    sales_order: false,
+    price: false,
+    need_by: false,
+  });
+  const sectionSettledRef = useRef<Set<SectionKey>>(new Set());
+  // Whether the price mode reflects a real pick (a click, or a prefilled/
+  // loaded value) rather than just its 'list' default at mount - the default
+  // must not itself open Additional Information on a blank new form, and the
+  // Price section's own collapsed summary (AC-P9, review round 2) must stay
+  // empty until then too. Real state, not a ref: the summary has to re-render
+  // off it, and a ref mutation alone never does.
+  const [priceModeChosen, setPriceModeChosen] = useState(false);
+
+  const openSectionOnce = useCallback((key: SectionKey) => {
+    if (sectionSettledRef.current.has(key)) return;
+    sectionSettledRef.current.add(key);
+    setSectionOpen((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
+  }, []);
+
+  const toggleSection = useCallback((key: SectionKey, next: boolean) => {
+    sectionSettledRef.current.add(key);
+    setSectionOpen((prev) => ({ ...prev, [key]: next }));
+  }, []);
+
+  // Picking a customer opens Sales Order & Lines (AC-P3).
+  useEffect(() => {
+    if (debtorCode) openSectionOnce('sales_order');
+  }, [debtorCode, openSectionOnce]);
+
+  // The first line (AI or Add line) opens Price (AC-P7).
+  useEffect(() => {
+    if (lines.length > 0) openSectionOnce('price');
+  }, [lines.length, openSectionOnce]);
+
+  // A chosen price mode opens Additional Information (AC-P8); Selling only
+  // counts once it and a promotion are both there is not required - Selling
+  // alone is enough (D-P2, submit works with no promotion).
+  useEffect(() => {
+    if (!priceModeChosen) return;
+    if (priceMode === 'list' || priceMode === 'selling') {
+      openSectionOnce('need_by');
+    }
+  }, [priceMode, priceModeChosen, openSectionOnce]);
+
+  const selectedDebtorName = useMemo(
+    () => debtors.find((d) => d.code === debtorCode)?.name ?? null,
+    [debtors, debtorCode],
+  );
+  const selectedPromotionName = useMemo(
+    () => promotions.find((p) => p.id === promotionId)?.name ?? null,
+    [promotions, promotionId],
+  );
+  const fileCount = attachments.length + pendingFiles.length;
+
+  // Collapsed-header one-liners (AC-P9); empty sections show none.
+  const sectionSummaries: Record<SectionKey, string | null> = {
+    customer: selectedDebtorName,
+    sales_order:
+      lines.length > 0 || fileCount > 0
+        ? `${lines.length} line${lines.length === 1 ? '' : 's'}, ${fileCount} file${fileCount === 1 ? '' : 's'}`
+        : null,
+    price: !priceModeChosen
+      ? null
+      : priceMode === 'selling'
+        ? `Selling price${selectedPromotionName ? ` - ${selectedPromotionName}` : ''}`
+        : 'List price',
+    need_by:
+      neededByDate || notes.trim()
+        ? [neededByDate || null, notes.trim() ? 'notes' : null]
+            .filter(Boolean)
+            .join(' - ')
+        : null,
+  };
+
+  // Shared by the load effect and Cancel (D-P6): both put the form's field
+  // state back to what the loaded request itself says, so Cancel needs no
+  // round trip and Save + re-`getRequest` needs no separate mapping.
+  const applyRequestFieldsFrom = useCallback((data: PriceTagRequestDetail) => {
+    setDebtorCode(data.debtor_code ?? '');
+    setPromotionId(data.promotion_id ?? '');
+    setPriceMode(data.price_mode ?? 'list');
+    setPriceModeChosen(true);
+    setNeededByDate(data.needed_by_date ?? '');
+    setNotes(data.notes ?? '');
+    setLines(data.lines.map(lineToDraft));
+    setAttachments(data.attachments ?? []);
+  }, []);
 
   // ---- Load lookups ----
   useEffect(() => {
@@ -349,14 +514,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           return;
         }
         setRequest(data);
-        setDebtorCode(data.debtor_code ?? '');
-        setPromotionId(data.promotion_id ?? '');
-        setPriceMode(data.price_mode ?? 'list');
-        // Both are nullable on a draft (D48a): an empty input, not a crash.
-        setNeededByDate(data.needed_by_date ?? '');
-        setNotes(data.notes ?? '');
-        setLines(data.lines.map(lineToDraft));
-        setAttachments(data.attachments ?? []);
+        // A loaded request already has a real price mode, not the blank
+        // form's resting default - so a later mode click is free to act on
+        // it (AC-P8). Also open every section that already holds a value
+        // directly (AC-P11): a `setPriceMode('list')` here is a no-op when
+        // the mode was already 'list' at mount, so the reactive rule alone
+        // would never see it change and never fire.
+        applyRequestFieldsFrom(data);
+        if (data.debtor_code) openSectionOnce('sales_order');
+        if (data.lines.length > 0) openSectionOnce('price');
+        openSectionOnce('need_by');
       })
       .catch(() => {
         if (!cancelled) toast.error('Failed to load request');
@@ -367,7 +534,56 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [requestId, router]);
+    // router.back() only fires on a 404, and Next's router is stable across
+    // renders regardless; omitted so a fresh-object router mock cannot force
+    // an unrelated re-render into a refetch loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestId]);
+
+  // ---- Duplicate (D-D1): `?from=<id>` copies header fields + lines into a
+  // NEW draft. Attachments stay empty (Sales Order files are not copied);
+  // nothing is saved until Save draft / Submit. A source this contact does
+  // not own, or that no longer exists, falls back to a toast + empty form.
+  useEffect(() => {
+    if (!isNew || typeof window === 'undefined') return;
+    const fromId = new URL(window.location.href).searchParams.get('from');
+    if (!fromId || !fromId.trim()) return;
+    let cancelled = false;
+    getRequest(fromId.trim())
+      .then((data) => {
+        if (cancelled || !data) {
+          if (!cancelled) toast.error('Could not copy that submission.');
+          return;
+        }
+        setDebtorCode(data.debtor_code ?? '');
+        setPromotionId(data.promotion_id ?? '');
+        setPriceMode(data.price_mode ?? 'list');
+        setPriceModeChosen(true);
+        setNeededByDate(data.needed_by_date ?? '');
+        setNotes(data.notes ?? '');
+        // A duplicate's lines are new, unsaved rows with no identity of
+        // their own yet (nit, review round 2) - the source request's own
+        // line ids have no business surviving as this draft's React keys.
+        setLines(
+          data.lines.map((l) => ({
+            ...lineToDraft(l),
+            key: `dup-${Math.random().toString(36).slice(2, 10)}`,
+          })),
+        );
+        // AC-D3: Customer, Sales Order & Lines and Price open because they
+        // hold values; Additional Information opens too (same no-op-state
+        // reasoning as the load-existing-request effect above).
+        if (data.debtor_code) openSectionOnce('sales_order');
+        if (data.lines.length > 0) openSectionOnce('price');
+        openSectionOnce('need_by');
+      })
+      .catch(() => {
+        if (!cancelled) toast.error('Could not copy that submission.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew, openSectionOnce]);
 
   // ---- Debtor options ----
   const debtorOptions = useMemo<SearchableSelectOption[]>(
@@ -413,35 +629,29 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // uses - one call per code, which is fine for a sales order's page count.
   const handleAIExtracted = useCallback(
     (products: AIExtractedProductLine[]) => {
-      setAiMatchStatuses(products.map(() => 'loading'));
-      aiMatchesRef.current = products.map(() => null);
-      products.forEach((p, index) => {
-        const code = (p.product_code ?? '').trim();
+      const codes = products.map((p) => normalizeAiCode(p.product_code));
+      setAiMatchStatuses(Object.fromEntries(codes.map((code) => [code, 'loading'])));
+      aiMatchesRef.current = {};
+      products.forEach((p) => {
+        const code = normalizeAiCode(p.product_code);
         const lookup = code ? lookupTagItems(code) : Promise.resolve([]);
         lookup
           .then((items) => {
             const match =
-              items.find(
-                (i) => i.code.trim().toLowerCase() === code.toLowerCase(),
-              ) ?? null;
-            aiMatchesRef.current[index] = match;
-            setAiMatchStatuses((prev) => {
-              const next = [...prev];
-              next[index] = match
+              items.find((i) => i.code.trim().toLowerCase() === code) ?? null;
+            aiMatchesRef.current[code] = match;
+            setAiMatchStatuses((prev) => ({
+              ...prev,
+              [code]: match
                 ? match.kind === 'product_set'
                   ? 'matched_set'
                   : 'matched_product'
-                : 'not_found';
-              return next;
-            });
+                : 'not_found',
+            }));
           })
           .catch(() => {
-            aiMatchesRef.current[index] = null;
-            setAiMatchStatuses((prev) => {
-              const next = [...prev];
-              next[index] = 'not_found';
-              return next;
-            });
+            aiMatchesRef.current[code] = null;
+            setAiMatchStatuses((prev) => ({ ...prev, [code]: 'not_found' }));
           });
       });
     },
@@ -452,49 +662,83 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
    *  dialog only and is never stored (ADR 0008) - no field in `DraftLine`
    *  reads it. Reads the SAME matches `handleAIExtracted` already resolved,
    *  rather than looking every code up a second time. */
-  const handleAIExtractApply = useCallback((payload: AIExtractApplyPayload) => {
-    const matches = aiMatchesRef.current;
-    const newLines: DraftLine[] = [];
-    const notFoundCodes: string[] = [];
-    payload.productLines.forEach((p, index) => {
-      const match = matches[index];
-      const code = (p.product_code ?? '').trim();
-      if (!match) {
-        if (code) notFoundCodes.push(code);
-        return;
-      }
-      const qty = p.quantity != null ? Math.max(1, Math.round(p.quantity)) : 1;
-      newLines.push({
-        key: `draft-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
-        line_type: match.kind,
-        product_id: match.kind === 'product' ? match.id : null,
-        product_set_id: match.kind === 'product_set' ? match.id : null,
-        name: match.name || match.code,
-        code: match.code,
-        quantity: qty,
-        alternatives: [],
-        included_accessories: '',
-        remarks: p.notes ?? '',
-        guard_error: null,
+  const handleAIExtractApply = useCallback(
+    (payload: AIExtractApplyPayload) => {
+      const matches = aiMatchesRef.current;
+      const notFoundCodes: string[] = [];
+      // R3-7: a matched row whose product/set is already on the request -
+      // an existing line, or an earlier row in this SAME batch - merges
+      // into it (quantity summed, remarks joined) instead of adding a
+      // second line the server would refuse (DUPLICATE_LINE).
+      const merged: DraftLine[] = lines.map((l) => ({ ...l }));
+      let addedCount = 0;
+      let mergedCount = 0;
+      payload.productLines.forEach((p) => {
+        const code = (p.product_code ?? '').trim();
+        const match = matches[normalizeAiCode(code)];
+        if (!match) {
+          if (code) notFoundCodes.push(code);
+          return;
+        }
+        const qty = p.quantity != null ? Math.max(1, Math.round(p.quantity)) : 1;
+        const existingIndex = merged.findIndex((l) =>
+          match.kind === 'product'
+            ? l.product_id === match.id
+            : l.product_set_id === match.id,
+        );
+        if (existingIndex >= 0) {
+          const existing = merged[existingIndex];
+          merged[existingIndex] = {
+            ...existing,
+            quantity: existing.quantity + qty,
+            remarks: [existing.remarks, p.notes]
+              .filter((v) => v && v.trim())
+              .join('; '),
+          };
+          mergedCount += 1;
+          return;
+        }
+        merged.push({
+          key: `draft-${Date.now()}-${merged.length}-${Math.random().toString(36).slice(2, 8)}`,
+          line_type: match.kind,
+          product_id: match.kind === 'product' ? match.id : null,
+          product_set_id: match.kind === 'product_set' ? match.id : null,
+          name: match.name || match.code,
+          code: match.code,
+          quantity: qty,
+          alternatives: [],
+          included_accessories: '',
+          remarks: p.notes ?? '',
+          guard_error: null,
+        });
+        addedCount += 1;
       });
-    });
-    if (newLines.length > 0) {
-      setLines((prev) => [...prev, ...newLines]);
-      toast.success(
-        `Added ${newLines.length} line${newLines.length === 1 ? '' : 's'} from the sales order.`,
-      );
-    }
-    if (notFoundCodes.length > 0) {
-      toast.error(`Not found: ${notFoundCodes.join(', ')}`);
-    }
-    // The dialog's own alsoAttach checkbox (checked by default): the file(s)
-    // read for extraction join the SAME pending/flush path a Sales Order
-    // drop uses, so Save Draft/Submit upload them once - not here, and not
-    // twice.
-    if (payload.alsoAttach && payload.files.length > 0) {
-      setPendingFiles((prev) => [...prev, ...payload.files]);
-    }
-  }, []);
+      if (addedCount > 0 || mergedCount > 0) {
+        setLines(merged);
+        const parts: string[] = [];
+        if (addedCount > 0) {
+          parts.push(`${addedCount} line${addedCount === 1 ? '' : 's'}`);
+        }
+        if (mergedCount > 0) {
+          parts.push(
+            `${mergedCount} merged into existing line${mergedCount === 1 ? '' : 's'}`,
+          );
+        }
+        toast.success(`Added ${parts.join(', ')} from the sales order.`);
+      }
+      if (notFoundCodes.length > 0) {
+        toast.error(`Not found: ${notFoundCodes.join(', ')}`);
+      }
+      // The dialog's own alsoAttach checkbox (checked by default): the file(s)
+      // read for extraction join the SAME pending/flush path a Sales Order
+      // drop uses, so Save Draft/Submit upload them once - not here, and not
+      // twice.
+      if (payload.alsoAttach && payload.files.length > 0) {
+        setPendingFiles((prev) => [...prev, ...payload.files]);
+      }
+    },
+    [lines],
+  );
 
   // ---- Line management ----
   const addLine = useCallback(() => {
@@ -514,16 +758,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [],
   );
 
-  const moveLine = useCallback((index: number, direction: 'up' | 'down') => {
-    setLines((prev) => {
-      const next = [...prev];
-      const target = direction === 'up' ? index - 1 : index + 1;
-      if (target < 0 || target >= next.length) return prev;
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  }, []);
-
   // ---- One picker, both kinds (D47) ----
   // The chosen option decides the line's type; the payload the server reads is
   // unchanged, still line_type plus whichever of the two ids matches it.
@@ -541,6 +775,21 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       }
       const [kind, id] = option.value.split(':');
       const isSet = kind === 'product_set';
+      const code = (option.description ?? '').split(' - ').slice(1).join(' - ');
+      // R3-7: refuse a product/set already on another line, inline - the
+      // same guard the backend now enforces (DUPLICATE_LINE), so a save
+      // never round-trips just to be told this.
+      const duplicate = lines.some(
+        (l) =>
+          l.key !== key &&
+          (isSet ? l.product_set_id === id : l.product_id === id),
+      );
+      if (duplicate) {
+        updateLine(key, {
+          guard_error: `${code || option.label} is already on this request.`,
+        });
+        return;
+      }
       updateLine(key, {
         line_type: isSet ? 'product_set' : 'product',
         product_id: isSet ? null : id,
@@ -548,7 +797,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         name: option.label,
         // The description reads "Set - CODE" / "Product - CODE"; the code is what
         // the row shows, so it is stored without the word in front of it.
-        code: (option.description ?? '').split(' - ').slice(1).join(' - '),
+        code,
         // A set is priced and printed as one thing, so any OR choices typed
         // against a product line stop applying the moment it becomes a set.
         // Spread, not a key set to undefined, which would wipe it on a product.
@@ -556,7 +805,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         guard_error: null,
       });
     },
-    [updateLine],
+    [updateLine, lines],
   );
 
   // ---- What there is to save, and what Submit still needs (D48) ----
@@ -584,6 +833,27 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       remarks: l.remarks || null,
       product_class: null,
     }));
+
+  // AC-P10: a failed Submit opens the first offending section, top to bottom,
+  // so the inline error it just set is visible rather than sitting inside a
+  // section still collapsed from a moment ago. `toggleSection` (not
+  // `openSectionOnce`) because this must fire every time, even for a section
+  // the reader already closed by hand.
+  const openSectionForProblems = useCallback(
+    (
+      fields: { debtor?: string; neededBy?: string; lines?: string },
+      hasRowProblems: boolean,
+    ) => {
+      if (fields.debtor) {
+        toggleSection('customer', true);
+      } else if (fields.lines || hasRowProblems) {
+        toggleSection('sales_order', true);
+      } else if (fields.neededBy) {
+        toggleSection('need_by', true);
+      }
+    },
+    [toggleSection],
+  );
 
   /** The keys the form and the server both use to place a message. A server
    *  refusal answers with the same vocabulary (`line:<index>` for a row), so
@@ -613,22 +883,24 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           })),
         );
       }
+      openSectionForProblems(next, rows.size > 0);
       return Object.keys(next).length + rows.size;
     },
-    [],
+    [openSectionForProblems],
   );
 
-  /** Everything Submit can see wrong from here, reported at once. */
+  /** Everything Submit can see wrong from here, reported at once. Need by is
+   *  optional (D-P2b) - only a server refusal can still name it, until the
+   *  backend rule drops too. */
   const collectProblems = useCallback(() => {
     const next: { debtor?: string; neededBy?: string; lines?: string } = {};
     if (!debtorCode) next.debtor = MISSING_DEBTOR;
-    if (!neededByDate) next.neededBy = MISSING_DEADLINE;
     if (lines.length === 0) next.lines = MISSING_LINES;
     const emptyRows = lines
       .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
       .filter((index) => index >= 0);
     return { next, emptyRows };
-  }, [debtorCode, neededByDate, lines]);
+  }, [debtorCode, lines]);
 
   /** How many things the form is currently complaining about, for the one line
    *  above the actions. */
@@ -648,12 +920,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     });
   }, [debtorCode, neededByDate, lines.length]);
 
-  // Selling price only means something with a promotion behind it (D5):
-  // clearing the promotion while Selling is chosen flips the control back to
-  // List rather than leaving it pointed at a price that no longer resolves.
-  useEffect(() => {
-    if (!promotionId && priceMode === 'selling') setPriceMode('list');
-  }, [promotionId, priceMode]);
+  // D-P2 (owner ruling): Selling with no promotion is a valid end state now -
+  // clearing the promotion no longer flips the mode back to List. Switching
+  // TO List is the only thing that clears the promotion (in the button's own
+  // onClick below), so an emptied field never leaves a stale id behind.
 
   // ---- PO attachments: buffer pre-draft, flush once the draft exists ----
   //
@@ -726,6 +996,76 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
+  // ---- Revise (R3-1): sent through the portal revision engine, never the
+  // retired post-submit PUT. A reason is required; the same zero-line/
+  // set-guard/duplicate-product bar Submit runs is enforced server side
+  // inside the revise transaction (apply_lines), so a client-side pre-check
+  // here only saves a round trip on the one case that is free to check
+  // (zero lines) - the rest surfaces as the server's own sentence. ----
+  const handleSubmitRevision = useCallback(async () => {
+    if (!effectiveId) return;
+    if (!reviseReason.trim()) {
+      toast.error('Tell us what changed and why.');
+      return;
+    }
+    try {
+      const debtor = debtors.find((d) => d.code === debtorCode);
+      await revise({
+        reason: reviseReason.trim(),
+        expectedRevisionNo: request?.revision_no ?? 0,
+        fields: {
+          debtor_code: debtorCode || null,
+          debtor_name: debtorCode ? (debtor?.name ?? debtorCode) : null,
+          promotion_id: promotionId || null,
+          needed_by_date: neededByDate || null,
+          notes: notes || null,
+          price_mode: priceMode,
+        },
+        products: payloadLines(),
+      });
+      // Review round 3: a file added while composing the revision sat in
+      // `pendingFiles` with nowhere to flush to (the request already exists,
+      // so it never goes through `handleSaveDraft`'s create-then-flush path) -
+      // same call Save Draft / Submit already make, before the request the
+      // policy will re-check moves on to its post-revision status.
+      await flushPendingFiles(effectiveId);
+      const fresh = await getRequest(effectiveId);
+      if (fresh) {
+        setRequest(fresh);
+        applyRequestFieldsFrom(fresh);
+      }
+      // Review round 3: the lineage and the policy the header/gear read both
+      // changed under this revision - reload the one GET that changed
+      // (revisions), and `fresh.revision` (just re-fetched above) already IS
+      // the refreshed policy, so nothing else needs asking again.
+      revisionHistory.reload();
+      setReviseMode(false);
+      setReviseReason('');
+      toast.success('Revision sent');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to send revision');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveId, reviseReason, revise, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory]);
+
+  const handleCancelRevise = useCallback(async () => {
+    setReviseMode(false);
+    setReviseReason('');
+    setPendingFiles([]);
+    if (!effectiveId) return;
+    try {
+      const fresh = await getRequest(effectiveId);
+      if (fresh) {
+        setRequest(fresh);
+        applyRequestFieldsFrom(fresh);
+      }
+    } catch {
+      // The read view already fell back to the pre-revise `request` snapshot
+      // above; a failed re-fetch leaves that in place rather than erroring
+      // out of a Cancel, which is not a save the reader needs told about.
+    }
+  }, [effectiveId, applyRequestFieldsFrom]);
+
   // ---- Delete draft ----
   const handleDeleteDraft = useCallback(async () => {
     if (!requestId) return;
@@ -754,6 +1094,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           guard_error: emptyRows.includes(index) ? EMPTY_LINE : null,
         })),
       );
+      openSectionForProblems(next, emptyRows.length > 0);
       scrollToFirstProblem();
       return;
     }
@@ -768,7 +1109,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         debtor_code: debtorCode,
         debtor_name: debtor?.name ?? debtorCode,
         promotion_id: promotionId || null,
-        needed_by_date: neededByDate,
+        // Review round 2: an empty date input is '', not omitted - sent as
+        // null, same as the other two payload builders here, never as ''.
+        needed_by_date: neededByDate || null,
         notes: notes || null,
         price_mode: priceMode,
         lines: payloadLines(),
@@ -804,7 +1147,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectProblems, applyFieldErrors, effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
@@ -867,56 +1210,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // place for its read-only value (AC-S2-1). Proof-ready appends the proof
   // section beneath it (AC-S2-2); `RequestDetailView` no longer exists as a
   // separate layout.
-  if (request && !isEditable) {
-    const attachmentPreviewItems = attachments.map(toPreviewItem);
+  if (request && !showEditForm) {
+    // AC-R7: same tab shape SubmissionForm gives the legacy kinds - Revisions
+    // becomes its own tab once this type has revisions on (the generic
+    // revision routes already serve price_tag_request via R3-1's ADAPTERS
+    // entry; this is just the FE surface catching up).
+    const revisionsTabbed = revisionPolicy?.enabled === true;
 
-    return (
-      <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-          >
-            <ArrowLeft className="size-4 mr-1" /> Back
-          </Button>
-          {/* The gear (D19): Download PDF, disabled with a reason until a
-              completed export exists. The stub toast is gone. Controlled open
-              state so the menu closes itself once the download settles,
-              instead of sitting open with a stale item until an outside
-              click. */}
-          <DetailActionsMenu
-            ariaLabel="Price tag request actions"
-            open={gearOpen}
-            onOpenChange={setGearOpen}
-          >
-            <DropdownMenuItem
-              disabled={!request.has_completed_export || downloadingPdf}
-              onSelect={(event) => {
-                event.preventDefault();
-                void handleDownloadPdf();
-              }}
-            >
-              {downloadingPdf ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Download className="size-4" />
-              )}
-              <span className="flex flex-col items-start">
-                <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
-                {!request.has_completed_export && !downloadingPdf && (
-                  <span className="text-xs text-muted-foreground">
-                    No completed export yet
-                  </span>
-                )}
-              </span>
-            </DropdownMenuItem>
-          </DetailActionsMenu>
-        </div>
-
+    const detailsContent = (
+      <>
         <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-lg font-semibold">{request.doc_number}</h1>
+          {/* Review round 3: Status moves out of the header into a labeled
+              row here, same as the stock inquiry page - the header now
+              carries only the one muted truncating line (doc number,
+              revision status, neighbour counter). */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Status:</span>
             <span
               className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${priceTagStatusPillClass(request.status)}`}
             >
@@ -930,56 +1239,47 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </p>
         </div>
 
-        {/* Customer - same field, same position as the edit form, value swapped in. */}
-        <div className="space-y-1.5">
-          <Label>Customer</Label>
-          <p className="text-sm font-medium py-2">{request.debtor_name ?? '-'}</p>
-        </div>
+        {/* Same four sections as the edit form, same order, all open by
+            default (AC-P11) - headers still toggle, there is just no rule
+            here to reopen one a reader collapses. */}
+        <FormSection
+          title="Customer"
+          summary={sectionSummaries.customer}
+          open={sectionOpen.customer}
+          onOpenChange={(next) => toggleSection('customer', next)}
+        >
+          <div className="space-y-1.5">
+            <Label>Customer</Label>
+            <p className="text-sm font-medium py-2">
+              {request.debtor_name ?? '-'}
+            </p>
+          </div>
+        </FormSection>
 
-        {/* Promotion */}
-        <div className="space-y-1.5">
-          <Label>Promotion</Label>
-          <p className="text-sm font-medium py-2">
-            {request.promotion_name ?? '-'}
-          </p>
-        </div>
+        <FormSection
+          title="Sales Order & Lines"
+          summary={sectionSummaries.sales_order}
+          open={sectionOpen.sales_order}
+          onOpenChange={(next) => toggleSection('sales_order', next)}
+        >
+          {/* Sales Order - D-P5: the same dropzone the form uses, in
+              `readOnly` mode - same tiles, same ordering, same preview
+              modal, but no drop area, no paste, no remove, no per-tile
+              Extract. Nothing here is actionable until Edit is tapped. */}
+          <div className="space-y-1.5">
+            <Label>Sales Order</Label>
+            <AttachmentDropzone
+              kind="price_tag_request"
+              submissionId={request.id}
+              attachments={attachments}
+              onChange={() => {}}
+              readOnly
+            />
+          </div>
 
-        {/* Price mode (D5) */}
-        <div className="space-y-1.5">
-          <Label>Price</Label>
-          <p className="text-sm font-medium py-2">
-            {(request.price_mode ?? 'list') === 'selling'
-              ? 'Selling price'
-              : 'List price'}
-          </p>
-        </div>
-
-        {/* Need by date */}
-        <div className="space-y-1.5">
-          <Label>Need by</Label>
-          <p className="text-sm font-medium py-2">
-            {request.needed_by_date ?? '-'}
-          </p>
-        </div>
-
-        {/* Notes */}
-        <div className="space-y-1.5">
-          <Label>Notes</Label>
-          <p className="text-sm py-2">
-            {request.notes || (
-              <span className="text-muted-foreground">No notes.</span>
-            )}
-          </p>
-        </div>
-
-        {/* Lines: same table the edit form uses, cells read-only. */}
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-base">
-              Lines ({request.lines.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 px-4 pb-4">
+          {/* Lines: same table the edit form uses, cells read-only. */}
+          <div className="space-y-1.5">
+            <Label>Lines ({request.lines.length})</Label>
             {request.lines.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">
                 No lines.
@@ -1031,51 +1331,54 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 </table>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </FormSection>
 
-        {/* Sales Order - same section as the edit form's dropzone, without
-            upload controls: the files the salesperson attached, openable in
-            place. Always rendered, empty state when there are none, so a
-            reader never wonders whether the form has a Sales Order section at
-            all. */}
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-base">Sales Order</CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4 space-y-1">
-            {attachments.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                No sales order files attached.
+        <FormSection
+          title="Price"
+          summary={sectionSummaries.price}
+          open={sectionOpen.price}
+          onOpenChange={(next) => toggleSection('price', next)}
+        >
+          <div className="space-y-1.5">
+            <Label>Price</Label>
+            <p className="text-sm font-medium py-2">
+              {(request.price_mode ?? 'list') === 'selling'
+                ? 'Selling price'
+                : 'List price'}
+            </p>
+          </div>
+          {(request.price_mode ?? 'list') === 'selling' && (
+            <div className="space-y-1.5">
+              <Label>Promotion</Label>
+              <p className="text-sm font-medium py-2">
+                {request.promotion_name ?? '-'}
               </p>
-            ) : (
-              attachments.map((att, idx) => (
-                <button
-                  key={att.link_id}
-                  type="button"
-                  onClick={() => {
-                    setPreviewIndex(idx);
-                    setPreviewOpen(true);
-                  }}
-                  className="flex w-full items-center text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition-colors text-left"
-                >
-                  <FileText className="size-3.5 mr-2 text-muted-foreground shrink-0" />
-                  <span className="truncate" title={att.filename ?? undefined}>
-                    {att.filename || 'Attachment'}
-                  </span>
-                </button>
-              ))
-            )}
-          </CardContent>
-        </Card>
+            </div>
+          )}
+        </FormSection>
 
-        <AttachmentPreviewModal
-          open={previewOpen}
-          onOpenChange={setPreviewOpen}
-          items={attachmentPreviewItems}
-          startIndex={previewIndex}
-          fetchBytes={portalFetchBytes}
-        />
+        <FormSection
+          title="Additional Information"
+          summary={sectionSummaries.need_by}
+          open={sectionOpen.need_by}
+          onOpenChange={(next) => toggleSection('need_by', next)}
+        >
+          <div className="space-y-1.5">
+            <Label>Need by</Label>
+            <p className="text-sm font-medium py-2">
+              {request.needed_by_date ?? '-'}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Notes</Label>
+            <p className="text-sm py-2">
+              {request.notes || (
+                <span className="text-muted-foreground">No notes.</span>
+              )}
+            </p>
+          </div>
+        </FormSection>
 
         {/* Design preview appends beneath the same layout (AC-S2-2); nothing
             below here renders for a plain read-only status. It shows for
@@ -1156,6 +1459,146 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             </AlertDialog>
           </>
         )}
+      </>
+    );
+
+    const revisionHistoryCard = (
+      <RevisionHistory
+        entries={revisionHistory.entries}
+        loading={revisionHistory.loading}
+        error={revisionHistory.error}
+        currentAttachments={attachments}
+      />
+    );
+
+    return (
+      <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
+          >
+            <ArrowLeft className="size-4 mr-1" /> Back
+          </Button>
+          <div className="flex min-w-0 items-center gap-2">
+            {/* R3-5/review round 3: the SAME one muted truncating line the
+                legacy kinds' header carries - doc number, revision status
+                (budget or blocked reason), neighbour counter - beside the
+                gear rather than a separate bold heading + colored pill. */}
+            {(request.doc_number || revisionStatusText || neighbours) && (
+              <span className="min-w-0 truncate text-sm text-muted-foreground">
+                {request.doc_number}
+                {revisionStatusText && (
+                  <>
+                    {request.doc_number && <span aria-hidden> · </span>}
+                    <span className="text-xs text-muted-foreground/70">
+                      {revisionStatusText}
+                    </span>
+                  </>
+                )}
+                {neighbours && (
+                  <>
+                    {(request.doc_number || revisionStatusText) && (
+                      <span aria-hidden> · </span>
+                    )}
+                    <span className="text-xs text-muted-foreground/70">
+                      {neighbours.position} / {neighbours.total}
+                    </span>
+                  </>
+                )}
+              </span>
+            )}
+            {/* R3-1/AC-R7: no Edit after submit - a submitted request is
+                read-only exactly like a stock inquiry, and a change goes
+                through the revision engine instead. ONE gear: Duplicate,
+                Download PDF (disabled with a reason until a completed
+                export exists), and Revise when the policy allows it.
+                Controlled open state so the menu closes itself once the
+                download settles, instead of sitting open with a stale item
+                until an outside click. */}
+            <DetailActionsMenu
+              ariaLabel="Price tag request actions"
+              open={gearOpen}
+              onOpenChange={setGearOpen}
+            >
+              <DropdownMenuItem
+                disabled={!request.has_completed_export || downloadingPdf}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  void handleDownloadPdf();
+                }}
+              >
+                {downloadingPdf ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Download className="size-4" />
+                )}
+                <span className="flex flex-col items-start">
+                  <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
+                  {!request.has_completed_export && !downloadingPdf && (
+                    <span className="text-xs text-muted-foreground">
+                      No completed export yet
+                    </span>
+                  )}
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={(event) => {
+                  event.preventDefault();
+                  setGearOpen(false);
+                  router.push(portalDuplicatePath('price_tag_request', request.id, slug));
+                }}
+              >
+                <Copy className="size-4" />
+                Duplicate
+              </DropdownMenuItem>
+              {revisionPolicy?.allowed && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setGearOpen(false);
+                    setReviseMode(true);
+                    setReviseReason('');
+                  }}
+                >
+                  <PencilLine className="size-4" />
+                  Revise
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
+          </div>
+        </div>
+
+        {revisionsTabbed ? (
+          <Tabs defaultValue="details">
+            {/* Same underlined strip the office detail pages use, and the
+                same tab shape SubmissionForm gives the legacy kinds (AC-R7) -
+                a record's tabs look the same whichever side of the system,
+                and whichever portal form, you are on. */}
+            <TabsList variant="line" className="mb-5 w-full justify-start">
+              <TabsTrigger value="details">
+                <FileText />
+                <span>Details</span>
+              </TabsTrigger>
+              <TabsTrigger value="revisions">
+                <History />
+                <span>Revisions</span>
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="details" className="m-0 space-y-4">
+              {detailsContent}
+            </TabsContent>
+            <TabsContent value="revisions" className="m-0">
+              {revisionHistoryCard}
+            </TabsContent>
+          </Tabs>
+        ) : (
+          <>
+            {detailsContent}
+            {revisionHistoryCard}
+          </>
+        )}
       </div>
     );
   }
@@ -1163,161 +1606,144 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Edit / create form ----
   return (
     <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-      >
-        <ArrowLeft className="size-4 mr-1" /> Back
-      </Button>
-
-      <h1 className="text-lg font-semibold">
-        {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
-      </h1>
-
-      {/* Customer */}
-      <div
-        className="space-y-1.5"
-        {...(fieldErrors.debtor ? { 'data-error-anchor': 'debtor' } : {})}
-      >
-        <Label htmlFor="debtor">Customer *</Label>
-        {debtorsLoaded && debtorOptions.length === 0 ? (
-          <p
-            className="text-sm rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-            data-testid="no-debtors-notice"
-          >
-            No customers available. Your portal account is not linked to a
-            sales agent yet. Ask your Sorento contact to link it.
-          </p>
-        ) : (
-          <SearchableSelect
-            id="debtor"
-            value={debtorCode}
-            onChange={setDebtorCode}
-            options={debtorOptions}
-            placeholder="Select a dealer..."
-          />
-        )}
-        {fieldErrors.debtor && (
-          <p className="text-xs text-destructive">{fieldErrors.debtor}</p>
-        )}
-      </div>
-
-      {/* Promotion */}
-      <div className="space-y-1.5">
-        <Label htmlFor="promotion">Promotion</Label>
-        <SearchableSelect
-          id="promotion"
-          value={promotionId}
-          onChange={setPromotionId}
-          options={promotionOptions}
-          placeholder="Select a promotion (optional)..."
-          clearable
-        />
-      </div>
-
-      {/* Price mode (D5): List price by default, Selling price only once a
-          promotion is picked - it has nothing to sell against otherwise. */}
-      <div className="space-y-1.5">
-        <Label id="price-mode-label">Price</Label>
-        <div
-          role="radiogroup"
-          aria-labelledby="price-mode-label"
-          className="inline-flex items-center rounded-md border p-0.5"
-        >
-          <button
-            type="button"
-            role="radio"
-            aria-checked={priceMode === 'list'}
-            className={cn(
-              'rounded px-3 py-1.5 text-sm transition-colors',
-              priceMode === 'list'
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:bg-muted',
-            )}
-            onClick={() => setPriceMode('list')}
-          >
-            List price
-          </button>
-          {promotionId ? (
-            <button
-              type="button"
-              role="radio"
-              aria-checked={priceMode === 'selling'}
-              className={cn(
-                'rounded px-3 py-1.5 text-sm transition-colors',
-                priceMode === 'selling'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-muted',
-              )}
-              onClick={() => setPriceMode('selling')}
+      {reviseMode && request ? (
+        // R3-1: revise mode is the SAME header as the read view - the one
+        // muted truncating line (review round 3) - with Cancel / Submit
+        // revision where the gear's Revise item was, not a bare heading and
+        // a second action row at the bottom of the page.
+        <>
+          <div className="flex items-center justify-between gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
             >
-              Selling price
-            </button>
+              <ArrowLeft className="size-4 mr-1" /> Back
+            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={handleCancelRevise} disabled={revising}>
+                Cancel
+              </Button>
+              <Button onClick={handleSubmitRevision} disabled={revising}>
+                {revising && <Loader2 className="size-4 mr-1 animate-spin" />}
+                Submit revision
+              </Button>
+            </div>
+          </div>
+          {(request.doc_number || neighbours) && (
+            <span className="min-w-0 truncate text-sm text-muted-foreground">
+              {request.doc_number}
+              {neighbours && (
+                <>
+                  {request.doc_number && <span aria-hidden> · </span>}
+                  <span className="text-xs text-muted-foreground/70">
+                    {neighbours.position} / {neighbours.total}
+                  </span>
+                </>
+              )}
+            </span>
+          )}
+          {/* Review round 3: the reason field in a card matching the
+              FormSection rhythm (same border/padding), not a bare label +
+              textarea floating between the header and the sections. */}
+          <Card className="space-y-1.5 px-4 py-4">
+            <Label htmlFor="revision_reason">Reason</Label>
+            <Textarea
+              id="revision_reason"
+              value={reviseReason}
+              onChange={(e) => setReviseReason(e.target.value)}
+              placeholder="What changed, and why?"
+              rows={3}
+            />
+          </Card>
+        </>
+      ) : (
+        <>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
+          >
+            <ArrowLeft className="size-4 mr-1" /> Back
+          </Button>
+
+          <h1 className="text-lg font-semibold">
+            {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
+          </h1>
+        </>
+      )}
+
+      {/* Customer - open by default; picking one opens Sales Order & Lines
+          (AC-P3). */}
+      <FormSection
+        title="Customer"
+        summary={sectionSummaries.customer}
+        open={sectionOpen.customer}
+        onOpenChange={(next) => toggleSection('customer', next)}
+      >
+        <div
+          className="space-y-1.5"
+          {...(fieldErrors.debtor ? { 'data-error-anchor': 'debtor' } : {})}
+        >
+          <Label htmlFor="debtor">Customer *</Label>
+          {debtorsLoaded && debtorOptions.length === 0 ? (
+            <p
+              className="text-sm rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+              data-testid="no-debtors-notice"
+            >
+              No customers available. Your portal account is not linked to a
+              sales agent yet. Ask your Sorento contact to link it.
+            </p>
           ) : (
-            // A native `disabled` button fires no mouse/focus events in real
-            // browsers, so a Tooltip watching it never opens. The SPAN is the
-            // trigger instead - focusable and hoverable - and the button
-            // inside it is merely inert (aria-disabled, no-op click,
-            // pointer-events-none so hover always reaches the span).
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span tabIndex={0} className="inline-block">
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={false}
-                    aria-disabled="true"
-                    tabIndex={-1}
-                    onClick={(e) => e.preventDefault()}
-                    className="pointer-events-none cursor-not-allowed rounded px-3 py-1.5 text-sm text-muted-foreground opacity-50"
-                  >
-                    Selling price
-                  </button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>Select a promotion first</TooltipContent>
-            </Tooltip>
+            <SearchableSelect
+              id="debtor"
+              value={debtorCode}
+              onChange={setDebtorCode}
+              options={debtorOptions}
+              placeholder="Select a dealer..."
+            />
+          )}
+          {fieldErrors.debtor && (
+            <p className="text-xs text-destructive">{fieldErrors.debtor}</p>
           )}
         </div>
-      </div>
+      </FormSection>
 
-      {/* Need by date */}
-      <div
-        className="space-y-1.5"
-        {...(fieldErrors.neededBy ? { 'data-error-anchor': 'needed_by' } : {})}
+      {/* Sales Order & Lines - the AI extract / dropzone and the lines table
+          share one section (D-P1): the first line lands here from either one,
+          and opens Price (AC-P7). */}
+      <FormSection
+        title="Sales Order & Lines"
+        summary={sectionSummaries.sales_order}
+        open={sectionOpen.sales_order}
+        onOpenChange={(next) => toggleSection('sales_order', next)}
       >
-        <Label htmlFor="needed_by_date">Need by *</Label>
-        <Input
-          id="needed_by_date"
-          type="date"
-          value={neededByDate}
-          onChange={(e) => setNeededByDate(e.target.value)}
-          min={nextBusinessDay()}
-        />
-        {fieldErrors.neededBy && (
-          <p className="text-xs text-destructive">{fieldErrors.neededBy}</p>
-        )}
-      </div>
+        <div className="space-y-1.5">
+          <Label>Sales Order</Label>
+          {/* The shared portal dropzone (D2/D3): a file dropped before the draft
+              exists is buffered and shown here as pending; once the draft exists
+              (this request already has an id) a drop uploads immediately.
+              D-P3: the section-header "Extract lines with AI" button is gone -
+              each tile below carries its own Extract action, since one dropped
+              file among ten is the common case, not "extract everything". */}
+          <AttachmentDropzone
+            kind="price_tag_request"
+            submissionId={effectiveId ?? null}
+            attachments={attachments}
+            onChange={setAttachments}
+            disabled={saving || submitting || deleting}
+            pendingFiles={pendingFiles}
+            onPendingFilesChange={setPendingFiles}
+            placeholder="Drop the sales order here, paste a screenshot, or"
+            onExtract={(file) => {
+              setAiExtractFiles([file]);
+              setAiExtractOpen(true);
+            }}
+          />
+        </div>
 
-      {/* Notes */}
-      <div className="space-y-1.5">
-        <Label htmlFor="notes">Notes</Label>
-        <Textarea
-          id="notes"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Any additional notes..."
-          rows={3}
-        />
-      </div>
-
-      {/* Lines: one table, one Add button, one Item dropdown (D47) */}
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Lines</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 px-4 pb-4">
+        <div className="space-y-1.5">
+          <Label>Lines</Label>
           {lines.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">
               No lines yet.
@@ -1346,12 +1772,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       key={line.key}
                       line={line}
                       index={index}
-                      total={lines.length}
                       fetchItemOptions={fetchItemOptions}
                       onItemSelect={handleItemSelect}
                       onUpdate={updateLine}
                       onRemove={removeLine}
-                      onMove={moveLine}
                     />
                   ))}
                 </tbody>
@@ -1369,45 +1793,137 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <Button size="sm" variant="outline" onClick={addLine}>
             <Plus className="size-3.5 mr-1" /> Add line
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </FormSection>
 
-      {/* Sales Order upload */}
-      <Card>
-        <CardHeader className="py-3 px-4 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-          <CardTitle className="text-base">Sales Order</CardTitle>
-          {/* Always shown, not gated on an attachment already existing here
-             (review fix): the dialog takes the file itself and, with
-             alsoAttach checked, stores it into this same section - gating
-             on an attachment first meant dropping the file in TWICE. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setAiExtractOpen(true)}
+      {/* Price - mode first, promotion second (D-P2, owner ruling): Selling
+          is never disabled, and its optional Promotion picker lives here,
+          not in its own section. Choosing either mode opens Additional
+          Information (AC-P8). */}
+      <FormSection
+        title="Price"
+        titleId="price-section-title"
+        summary={sectionSummaries.price}
+        open={sectionOpen.price}
+        onOpenChange={(next) => toggleSection('price', next)}
+      >
+        <div className="space-y-1.5">
+          {/* No repeated "Price" label here - the section title already
+              says it (review round 1). */}
+          <div
+            role="radiogroup"
+            aria-labelledby="price-section-title"
+            className="inline-flex items-center rounded-md border p-0.5"
           >
-            <Sparkles className="size-3.5 mr-1" />
-            Extract lines with AI
-          </Button>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          {/* The shared portal dropzone (D2/D3): a file dropped before the draft
-              exists is buffered and shown here as pending; once the draft exists
-              (this request already has an id) a drop uploads immediately. */}
-          <AttachmentDropzone
-            kind="price_tag_request"
-            submissionId={effectiveId ?? null}
-            attachments={attachments}
-            onChange={setAttachments}
-            disabled={saving || submitting || deleting}
-            pendingFiles={pendingFiles}
-            onPendingFilesChange={setPendingFiles}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={priceMode === 'list'}
+              className={cn(
+                'rounded px-3 py-1.5 text-sm transition-colors',
+                priceMode === 'list'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+              onClick={() => {
+                setPriceModeChosen(true);
+                setPriceMode('list');
+                // Switching to List hides Promotion and clears it (D-P2).
+                setPromotionId('');
+                // Direct call (review round 2): `setPriceMode('list')` is a
+                // no-op on a fresh form (priceMode is already 'list'), so
+                // React bails out of re-rendering and the auto-open effect
+                // keyed on `priceMode` never reruns - Additional Information
+                // must still open on this click either way (AC-P8).
+                openSectionOnce('need_by');
+              }}
+            >
+              List price
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={priceMode === 'selling'}
+              className={cn(
+                'rounded px-3 py-1.5 text-sm transition-colors',
+                priceMode === 'selling'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+              onClick={() => {
+                setPriceModeChosen(true);
+                setPriceMode('selling');
+                openSectionOnce('need_by');
+              }}
+            >
+              Selling price
+            </button>
+          </div>
+        </div>
+
+        {priceMode === 'selling' && (
+          <div className="space-y-1.5">
+            <Label htmlFor="promotion">Promotion (optional)</Label>
+            <SearchableSelect
+              id="promotion"
+              value={promotionId}
+              onChange={setPromotionId}
+              options={promotionOptions}
+              placeholder="Select a promotion (optional)..."
+              clearable
+            />
+          </div>
+        )}
+      </FormSection>
+
+      {/* Additional Information - Need by and Notes, both optional
+          (D-P2b): neither blocks Submit. */}
+      <FormSection
+        title="Additional Information"
+        summary={sectionSummaries.need_by}
+        open={sectionOpen.need_by}
+        onOpenChange={(next) => toggleSection('need_by', next)}
+      >
+        <div
+          className="space-y-1.5"
+          {...(fieldErrors.neededBy
+            ? { 'data-error-anchor': 'needed_by' }
+            : {})}
+        >
+          <Label htmlFor="needed_by_date">Need by</Label>
+          <Input
+            id="needed_by_date"
+            type="date"
+            value={neededByDate}
+            onChange={(e) => setNeededByDate(e.target.value)}
+            min={nextBusinessDay()}
           />
-        </CardContent>
-      </Card>
+          {fieldErrors.neededBy && (
+            <p className="text-xs text-destructive">{fieldErrors.neededBy}</p>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="notes">Notes</Label>
+          <Textarea
+            id="notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Any additional notes..."
+            rows={3}
+          />
+        </div>
+      </FormSection>
 
       <AIExtractDialog
         open={aiExtractOpen}
-        onOpenChange={setAiExtractOpen}
+        onOpenChange={(next) => {
+          setAiExtractOpen(next);
+          // Cleared on close so the next tile's Extract starts fresh - a
+          // stale `initialFiles` would re-run extraction on the WRONG file
+          // the next time this dialog opens some other way.
+          if (!next) setAiExtractFiles(undefined);
+        }}
         kind="price_tag_request"
         // No header fields to mirror (D7 review push-back): Customer is a
         // select, not free text, and there is no sales order number field -
@@ -1416,9 +1932,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         fieldDefs={[]}
         onApply={handleAIExtractApply}
         onExtracted={handleAIExtracted}
-        renderRowStatus={(_p, index) => (
-          <AIMatchStatusLabel status={aiMatchStatuses[index]} />
+        renderRowStatus={(p) => (
+          <AIMatchStatusLabel status={aiMatchStatuses[normalizeAiCode(p.product_code)]} />
         )}
+        initialFiles={aiExtractFiles}
       />
 
       {/* One line saying how much is outstanding, above the button that found it */}
@@ -1437,35 +1954,41 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-        {/* Delete sits apart from Save and Submit, and asks first. */}
-        {!isNew && isDraft && (
+      {/* Actions - R3-1: a revision (reviseMode, never a draft or new form
+          here - see `showEditForm`) has its Cancel / Submit revision in the
+          header above, same spot the read view's Revise gear item sat - not
+          a second action row down here, and never Delete. Everything else
+          (a draft or a brand new form) keeps Save Draft / Submit. */}
+      {!reviseMode && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          {/* Delete sits apart from Save and Submit, and asks first. */}
+          {!isNew && isDraft && (
+            <Button
+              variant="outline"
+              className="text-destructive sm:mr-auto"
+              onClick={() => setShowDeleteDialog(true)}
+              disabled={saving || submitting || deleting}
+            >
+              <Trash2 className="size-4 mr-1" />
+              Delete Draft
+            </Button>
+          )}
           <Button
             variant="outline"
-            className="text-destructive sm:mr-auto"
-            onClick={() => setShowDeleteDialog(true)}
-            disabled={saving || submitting || deleting}
+            onClick={handleSaveDraft}
+            disabled={saving || submitting || !hasSomethingToSave}
           >
-            <Trash2 className="size-4 mr-1" />
-            Delete Draft
+            {saving && <Loader2 className="size-4 mr-1 animate-spin" />}
+            Save Draft
           </Button>
-        )}
-        <Button
-          variant="outline"
-          onClick={handleSaveDraft}
-          disabled={saving || submitting || !hasSomethingToSave}
-        >
-          {saving && <Loader2 className="size-4 mr-1 animate-spin" />}
-          Save Draft
-        </Button>
-        {/* Enabled whenever the form is idle (D48b): a disabled button with no
-            explanation is what sent the salesperson looking for the reason. */}
-        <Button onClick={handleSubmit} disabled={submitting || saving}>
-          {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
-          Submit
-        </Button>
-      </div>
+          {/* Enabled whenever the form is idle (D48b): a disabled button with no
+              explanation is what sent the salesperson looking for the reason. */}
+          <Button onClick={handleSubmit} disabled={submitting || saving}>
+            {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
+            Submit
+          </Button>
+        </div>
+      )}
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
@@ -1498,12 +2021,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 interface LineRowProps {
   line: DraftLine;
   index: number;
-  total: number;
   fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
   onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
-  onMove: (index: number, direction: 'up' | 'down') => void;
 }
 
 /**
@@ -1513,12 +2034,10 @@ interface LineRowProps {
 function LineRow({
   line,
   index,
-  total,
   fetchItemOptions,
   onItemSelect,
   onUpdate,
   onRemove,
-  onMove,
 }: LineRowProps) {
   const isSet = line.line_type === 'product_set';
   const picked = itemValue(line);
@@ -1573,28 +2092,6 @@ function LineRow({
         </td>
         <td className="px-2 py-2">
           <div className="flex items-center justify-end gap-0.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              disabled={index === 0}
-              onClick={() => onMove(index, 'up')}
-              title="Move up"
-              aria-label={`Move line ${index + 1} up`}
-            >
-              <ArrowUp className="size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              disabled={index === total - 1}
-              onClick={() => onMove(index, 'down')}
-              title="Move down"
-              aria-label={`Move line ${index + 1} down`}
-            >
-              <ArrowDown className="size-3.5" />
-            </Button>
             {/* No confirm: the row is unsaved form state, not a record. */}
             <Button
               variant="ghost"

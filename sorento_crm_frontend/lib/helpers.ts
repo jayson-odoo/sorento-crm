@@ -308,6 +308,12 @@ export function formatPromotionBoundaryInMalaysia(input: Date | string | number)
  * Format a UTC datetime (from API/DB) as date only in Malaysia timezone.
  * Pass naive UTC strings from the backend; they are parsed as UTC then displayed in Malaysia.
  */
+/**
+ * `04/09/2026` in Malaysia. For the `4 Sep` shape a SENTENCE needs, use `shortDay` in
+ * `app/(protected)/project-sales/_shared/lib/boardChangeAnnotations.ts`: it names the months
+ * itself, because `Intl`'s `en-GB` short form spells September "Sept" while the planning
+ * engine composes its own labels with "Sep", and the two sat two lines apart in one lightbox.
+ */
 export function formatDateInMalaysia(input: Date | string | number): string {
   const date = toUTCDate(input);
   if (Number.isNaN(date.getTime())) return '';

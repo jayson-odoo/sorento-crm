@@ -1,14 +1,20 @@
-"""One-off: recompute `proposal_json` for every PENDING `replan` row of every unapplied
-planning-change batch (19 August 2026 fix, `app/services/planning_change_service.py`'s
-`_proposal_for`).
+"""Bring PENDING planning-change rows up to the composed suggestion (Slice C).
 
-Before the fix, a `replan` row's proposal was built by a plain `FulfilmentBoardService.build()`
-call. When the line's ACTIVE decision still covers it (true for `advanced`/`qty_up`/`delayed`-
-turned-`release` rows - Apply is what excludes the line, and Apply has not run yet on a PENDING
-row), the board found it `covered` and handed back the FROZEN composition instead of running
-the ladder: one source, `trail: []`, no `rank_factors`. Existing pending rows built before the
-fix carry that slimmed-down proposal in the database and need a one-time recompute; every row
-built from here on gets the full contribution at build time.
+`documentation/plans/scm/PLAN-scm-change-management-one-engine.md`, Slice C: a row used to
+carry a reaction VERB (`suggested`/`why`) and, for some kinds, a proposal. It now carries
+`suggestion_json` - the ladder re-run at the line's new state, diffed against what the line
+holds, one sentence per component - and `composition_json`, pre-filled so Confirm posts it
+unchanged.
+
+A row raised BEFORE that deploy has neither, so the board shows its Was / Now table with no
+suggestion under it and Confirm has nothing to post. This recomputes both, plus the re-run
+they are derived from, for every row that can still be acted on: an unapplied batch, a
+`pending` row, no decision taken yet (a row somebody already confirmed or amended keeps the
+composition they decided - recomputing it would quietly replace a person's answer).
+
+Idempotent: it writes only where the recomputed value differs, so a second run reports
+everything unchanged. It reads TODAY's state - stock, placements, the ladder - which is
+what the board would show if the batch were raised now.
 
 Run with the target DATABASE_URL inline (never bare - see `sorento_crm_backend/CLAUDE.md`):
     DATABASE_URL=... venv/bin/python scripts/recompute_planning_change_proposals.py
@@ -23,8 +29,55 @@ from app.models.planning_change import (
     PlanningChangeBatch,
     PlanningChangeRow,
 )
+from app.models.product import Product
 from app.models.project_so import ProjectSalesOrder
-from app.services.planning_change_service import _json_safe, _proposal_for, _so_number
+from app.services.planning_change_service import (
+    _as_date,
+    _hot_selling_evidence,
+    _inquiry_rows_and_buy_actioned,
+    _is_immediate,
+    _placed_links,
+    _so_number,
+    compose_row_state,
+)
+
+
+def _facts_for(db, row: PlanningChangeRow, product_id: str | None) -> dict:
+    """The row's own stored facts, refreshed with everything the diff reads today.
+
+    The hot-selling verdict and what is on a document are re-measured rather than trusted:
+    a row raised weeks ago may have been placed on a purchase order since, and that is
+    exactly what decides whether its suggestion reallocates or releases.
+    """
+    facts = dict(row.facts_json or {})
+    from_json = row.from_json or {}
+    to_json = row.to_json or {}
+    new_date = _as_date(to_json.get("required_date")) or _as_date(
+        from_json.get("required_date")
+    )
+    dealer_where, project_where = _hot_selling_evidence(
+        db, {product_id} if product_id else set()
+    )
+    _inquiry_rows, buy_actioned = _inquiry_rows_and_buy_actioned(
+        db, str(row.project_line_id) if row.project_line_id else None
+    )
+    facts["dealer_hot_selling"] = {
+        "value": bool(product_id and product_id in dealer_where),
+        "where": dealer_where.get(product_id, []) if product_id else [],
+    }
+    facts["project_hot_selling"] = {
+        "value": bool(product_id and product_id in project_where),
+        "where": project_where.get(product_id, []) if product_id else [],
+    }
+    facts["buy_actioned"] = buy_actioned
+    facts["placed"] = _placed_links(
+        db, str(row.project_line_id) if row.project_line_id else None
+    )
+    facts["new_date"] = new_date.isoformat() if new_date else None
+    old_date = _as_date(from_json.get("required_date"))
+    facts["old_date"] = old_date.isoformat() if old_date else None
+    facts["immediate"] = _is_immediate(new_date)
+    return facts
 
 
 def main() -> None:
@@ -43,43 +96,64 @@ def main() -> None:
         board_cache: dict = {}
         touched = 0
         unchanged = 0
-        skipped_no_line = 0
+        skipped = 0
         for batch in batches:
             rows = (
                 db.query(PlanningChangeRow)
                 .filter(
                     PlanningChangeRow.batch_id == batch.id,
                     PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
-                    PlanningChangeRow.suggested == "replan",
+                    PlanningChangeRow.decision.is_(None),
                 )
                 .all()
             )
             for row in rows:
-                if not row.project_line_id or not row.core_line_id:
-                    skipped_no_line += 1
-                    continue
                 order = (
                     db.query(ProjectSalesOrder)
                     .filter(ProjectSalesOrder.id == row.project_sales_order_id)
                     .one_or_none()
                 )
                 if order is None:
-                    skipped_no_line += 1
+                    skipped += 1
                     continue
-                so_number = _so_number(order)
-                proposal = _proposal_for(
-                    db, board_cache, so_number, str(row.core_line_id), str(row.project_line_id)
+                product_id = None
+                if row.item_code:
+                    product_id = (
+                        db.query(Product.id)
+                        .filter(Product.product_code == row.item_code)
+                        .scalar()
+                    )
+                facts = _facts_for(db, row, str(product_id) if product_id else None)
+                proposal, suggestion, composition = compose_row_state(
+                    db,
+                    kind=row.kind,
+                    held=row.held_json,
+                    facts=facts,
+                    from_json=row.from_json or {},
+                    to_json=row.to_json or {},
+                    item_code=row.item_code,
+                    product_id=str(product_id) if product_id else None,
+                    project_line_id=str(row.project_line_id) if row.project_line_id else None,
+                    core_line_id=str(row.core_line_id) if row.core_line_id else None,
+                    so_number=_so_number(order),
+                    board_cache=board_cache,
                 )
-                new_proposal = _json_safe(proposal)
-                if new_proposal != row.proposal_json:
-                    row.proposal_json = new_proposal
-                    touched += 1
-                else:
+                if (
+                    proposal == row.proposal_json
+                    and suggestion == row.suggestion_json
+                    and composition == row.composition_json
+                ):
                     unchanged += 1
+                    continue
+                row.facts_json = facts
+                row.proposal_json = proposal
+                row.suggestion_json = suggestion
+                row.composition_json = composition
+                touched += 1
         db.commit()
         print(
-            f"batches examined: {len(batches)}, rows recomputed (changed): {touched}, "
-            f"rows unchanged: {unchanged}, rows skipped (no line): {skipped_no_line}"
+            f"batches examined: {len(batches)}, rows recomposed: {touched}, "
+            f"rows unchanged: {unchanged}, rows skipped (no order): {skipped}"
         )
     finally:
         db.close()

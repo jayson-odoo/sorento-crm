@@ -375,9 +375,13 @@ def _open_of(core: Optional[SalesOrderLine]) -> Decimal:
     """AC-B01: the core line's CURRENT open fulfilment quantity, floored at zero.
 
     Not the original customer quantity, and not a figure a downstream reader has already
-    netted: what is still owed, in the line's own UOM.
+    netted: what is still owed, in the line's own UOM. A CANCELLED line owes nothing (R2c,
+    13 Sep browser walk): `qty_ordered - qty_delivered` alone does not read zero for one
+    (the book rarely reverses a delivered quantity when it cancels a line), and this is the
+    single primitive the drift check (`_carry_snapshot_has_drifted`) and the board's own
+    queue both read - reading it here is the one place that fixes both.
     """
-    if core is None:
+    if core is None or (core.line_status or "open") == "cancelled":
         return _ZERO
     return max(_dec(core.qty_ordered) - _dec(core.qty_delivered), _ZERO)
 
@@ -1018,8 +1022,10 @@ class ProjectSupplyService:
     def proposal_for(self, order: ProjectSalesOrder) -> Dict[str, Any]:
         """The Supply composition section for one Project SO (J04).
 
-        Reads live facts, challenges an active revision that no longer matches them, and
-        proposes a composition per line with the reason beside every quantity.
+        Reads live facts and proposes a composition per line with the reason beside every
+        quantity. A drift between the active revision's frozen snapshot and today's facts is
+        no longer a signal of its own here (Slice E, one signal): the sheet reads what is
+        confirmed, unchanged, and a manual edit or re-run raises its own change batch instead.
 
         TWO readings of the stock, when the order has a covered line, because there are two
         different questions on the page and they net that line's hold differently:
@@ -1034,7 +1040,6 @@ class ProjectSupplyService:
         One extra fact read, and only for an order that has a covered line at all.
         """
         lines = self.lines_of(str(order.id))
-        self.challenge_if_drifted(order, lines=lines)
         decision = self.active_decision(str(order.id))
         frozen = self._frozen_by_line(decision)
         covered_ids = {
@@ -3907,90 +3912,6 @@ class ProjectSupplyService:
         self.db.flush()
         return True
 
-    def challenge_if_drifted(
-        self,
-        order: ProjectSalesOrder,
-        *,
-        lines: Optional[Sequence[ProjectSalesOrderLine]] = None,
-    ) -> Optional[str]:
-        """Compare the active revision's snapshots against live facts (PLAN 5.3).
-
-        A revision is a statement about quantities, links and dates that were true when CS
-        pressed Confirm. When one of them moves the revision is no longer a promise anybody
-        can keep, so it is flipped to `challenged` and the SO reads Needs CS review again -
-        rather than staying Confirmed against facts that have gone.
-        """
-        decision = self.active_decision(str(order.id))
-        if decision is None:
-            return None
-        rows = list(lines if lines is not None else self.lines_of(str(order.id)))
-        by_id = {str(line.id): line for line in rows}
-        core_ids = [
-            str(line.core_sales_order_line_id)
-            for line in rows
-            if line.core_sales_order_line_id
-        ]
-        cores = {
-            str(core.id): core
-            for core in (
-                self.db.query(SalesOrderLine)
-                .filter(SalesOrderLine.id.in_(core_ids))
-                .all()
-                if core_ids
-                else []
-            )
-        }
-
-        reason = None
-        snapshots = decision.line_snapshots or []
-        for snapshot in snapshots:
-            line = by_id.get(str(snapshot.get("project_line_id") or ""))
-            if line is None:
-                reason = "A line the confirmed revision covered is no longer on this sales order."
-                break
-            frozen_core = snapshot.get("core_line_id")
-            live_core = (
-                str(line.core_sales_order_line_id)
-                if line.core_sales_order_line_id
-                else None
-            )
-            if frozen_core is not None and str(frozen_core) != (live_core or ""):
-                reason = (
-                    f"Line {line.line_no} now points at a different AutoCount line than "
-                    "the confirmed revision did."
-                )
-                break
-            core = cores.get(live_core or "")
-            frozen_open = snapshot.get("open_qty")
-            if frozen_open is not None and _dec(frozen_open) != _open_of(core):
-                reason = (
-                    f"Line {line.line_no} is now open for "
-                    f"{qty_text(_open_of(core))}, and the confirmed revision was balanced "
-                    f"against {qty_text(_dec(frozen_open))}."
-                )
-                break
-            frozen_date = snapshot.get("required_date")
-            live_date = core.required_date if core is not None else None
-            if frozen_date is not None and str(frozen_date) != (
-                live_date.isoformat() if live_date else ""
-            ):
-                reason = f"Line {line.line_no}'s required date has changed."
-                break
-        # A revision covering FEWER lines than the order has is not drift: since 13.4 a
-        # confirmation covers the subset the planner chose, and the remainder is
-        # deliberately undecided. Counting the two sets and challenging on a mismatch
-        # would flip every partial decision to `challenged` the instant it was written.
-        # A line the revision DID cover and that has since gone is caught above, by name.
-        if reason is None:
-            return None
-
-        decision.state = DECISION_CHALLENGED
-        decision.superseded_at = datetime.utcnow()
-        decision.superseded_reason = reason
-        self._release_supply_borrow_holds(order, decision, reason=reason)
-        self.db.flush()
-        return reason
-
     def _release_supply_borrow_holds(
         self, order: ProjectSalesOrder, decision: SOSupplyDecision, *, reason: str
     ) -> None:
@@ -4109,21 +4030,15 @@ class ProjectSupplyService:
                 ),
                 code="supply_nothing_to_confirm",
             )
-        # What the order's OWN active revision already holds per line, read before the
-        # drift check below can flip it to `challenged` (PLAN-so-book-diff-replanning.md
-        # section 10, defect A). A resubmitted component this order already holds is not a
-        # new ask, challenged or not: the challenge is about the SNAPSHOT (dates/quantities
-        # having moved), not about whether the physical hold behind an unrelated component
-        # is still this order's own. `_check_line` credits it back so re-affirming a hold
-        # this order has held all along does not compete in the queue against itself, or
-        # lose to a rival that only appeared after the hold was taken.
+        # What the order's OWN active revision already holds per line. A resubmitted
+        # component this order already holds is not a new ask: `_check_line` credits it
+        # back so re-affirming a hold this order has held all along does not compete in
+        # the queue against itself, or lose to a rival that only appeared after the hold
+        # was taken. Slice E, one signal: a drift against the frozen snapshot is no longer
+        # read here at all - the change batch is the only thing that supersedes an active
+        # revision now, and `_write_decision` below finds this one still active and
+        # supersedes it in the same transaction the new composition is written in.
         carried_holds = self._frozen_by_line(self.active_decision(str(order.id)))
-        # The same drift check the sheet runs, BEFORE the active revision is read for the
-        # carry: a revision whose frozen facts have moved is challenged here exactly as it
-        # would be on the next read, so its snapshots and holds are not carried verbatim
-        # into a fresh revision stamped as confirmed now. Nothing is carried from a
-        # challenged revision; the lines it covered are undecided again.
-        self.challenge_if_drifted(order, lines=lines)
         self._lock_stock(payload_lines, lines)
 
         named = {str(entry.project_line_id) for entry in payload_lines}
@@ -4288,8 +4203,15 @@ class ProjectSupplyService:
         those are dropped from the new revision outright rather than carried.
 
         A snapshot for a line no longer on the order is not carried either: there is no
-        row to hold stock for, and the read-side drift check names exactly that case as a
-        challenge. Everything else comes across untouched.
+        row to hold stock for. Nor is one whose frozen link, open quantity or required
+        date has moved since the revision that covered it, or whose core line the book
+        CANCELLED (`_carry_snapshot_has_drifted`) - Slice E (one signal) judges that per
+        line, here, rather than flipping the whole decision to `challenged`: the lines
+        this confirmation DOES name still commit, and the drifted one is simply undecided
+        again, exactly as a line the revision never covered would be. A line whose PRODUCT
+        was renamed is carried, not excluded, its snapshot's identity patched to the live
+        product (R2, 13 Sep browser walk) - its demand did not change, only what it is
+        for. Everything else comes across untouched.
         """
         if previous is None:
             return []
@@ -4299,10 +4221,64 @@ class ProjectSupplyService:
             line_id = str(snapshot.get("project_line_id") or "")
             if not line_id or line_id in named or line_id not in by_id or line_id in uncover:
                 continue
+            fact = facts.get(line_id)
+            if self._carry_snapshot_has_drifted(by_id[line_id], snapshot, fact):
+                continue
+            # R2 (renamed product, 13 Sep browser walk): the line's own quantity is
+            # untouched, so it still carries - but never under a product that has left
+            # the order. Patched onto a COPY; `snapshot` is the previous revision's own
+            # stored dict and must read exactly as it was decided.
+            live_product = str(fact.product_id) if fact and fact.product_id else None
+            if live_product and str(snapshot.get("product_id") or "") != live_product:
+                snapshot = dict(snapshot)
+                snapshot["product_id"] = live_product
+                if fact.item_code:
+                    snapshot["item_code"] = fact.item_code
             out.append(
                 _CarriedLine(line=by_id[line_id], snapshot=snapshot, fact=facts[line_id])
             )
         return out
+
+    @staticmethod
+    def _carry_snapshot_has_drifted(
+        line: ProjectSalesOrderLine,
+        snapshot: Dict[str, Any],
+        fact: Optional[_LineFacts],
+    ) -> bool:
+        """Whether `line`'s live facts still match what `snapshot` froze - the per-line
+        check `_carried_lines` uses in place of the retired whole-decision `challenge_if_
+        drifted` flip.
+
+        R2/R2c (13 Sep browser walk, SO400884): a core line the book CANCELLED must never
+        be carried on the strength of the checks below alone. Caught explicitly rather
+        than relied on to fall out of the open-qty comparison - `_open_of` now floors a
+        cancelled line to zero, so most cancellations already disagree with a nonzero
+        frozen `open_qty`, but a line frozen at zero already (nothing left to fulfil when
+        it was confirmed) would not, and this line has genuinely left the book either way.
+
+        A RENAMED product is not this function's concern: the line's own demand has not
+        changed, only what it is for, and `_carried_lines` patches the carried snapshot's
+        identity to the live product rather than excluding the line here - excluding it
+        would read as the demand itself having gone, which is not what happened.
+        """
+        if fact is None:
+            return True
+        if fact.core is not None and (fact.core.line_status or "open") == "cancelled":
+            return True
+        frozen_core = snapshot.get("core_line_id")
+        live_core = (
+            str(line.core_sales_order_line_id) if line.core_sales_order_line_id else None
+        )
+        if frozen_core is not None and str(frozen_core) != (live_core or ""):
+            return True
+        frozen_open = snapshot.get("open_qty")
+        if frozen_open is not None and _dec(frozen_open) != fact.open_qty:
+            return True
+        frozen_date = snapshot.get("required_date")
+        live_date = fact.required_date.isoformat() if fact.required_date else ""
+        if frozen_date is not None and str(frozen_date) != live_date:
+            return True
+        return False
 
     def _lock_stock(
         self,
@@ -6285,6 +6261,27 @@ class ProjectSupplyService:
         # on the pile's own availability triple.
         order_backs: List[Dict[str, Any]] = []
         reference = order.autocount_doc_no or order.provisional_ref or ""
+        # AC-B2: "an ORDER_BACK row FOR THE DONOR" - a group borrow's hole is raised on the
+        # DONOR's own project line, not the asker's (which is what every OTHER row this
+        # method writes hangs off - the location-pile shortfall below has no single line to
+        # name it against). One batch query for every `donor_core_line_id` this
+        # confirmation's borrows name, rather than one lookup per component.
+        donor_core_line_ids = {
+            str(getattr(item, "donor_core_line_id", None))
+            for _line, entry, _fact in checked
+            for item in (entry.borrow or [])
+            if getattr(item, "donor_core_line_id", None) and _dec(item.qty) > _ZERO
+        }
+        donor_project_line_by_core: Dict[str, ProjectSalesOrderLine] = {}
+        if donor_core_line_ids:
+            for donor_line in (
+                self.db.query(ProjectSalesOrderLine)
+                .filter(
+                    ProjectSalesOrderLine.core_sales_order_line_id.in_(donor_core_line_ids)
+                )
+                .all()
+            ):
+                donor_project_line_by_core[str(donor_line.core_sales_order_line_id)] = donor_line
         for line, entry, fact in checked:
             for item in entry.borrow or []:
                 qty = _dec(item.qty)
@@ -6323,9 +6320,14 @@ class ProjectSupplyService:
                 code = warehouse.warehouse_code if warehouse else ""
                 line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
                 agent_text = f" (agent {donor_agent_code})" if donor_agent_code else ""
+                # The DONOR's own project line when it has one - AC-B2's "for the donor".
+                # Falls back to the asking line only for a donor core line with no project
+                # mirror (never adopted onto `projects.sales_orders`), which has nowhere
+                # else to hang the row and is the pre-existing behaviour for that edge case.
+                donor_line = donor_project_line_by_core.get(str(donor_core_line_id), line)
                 order_backs.append(
                     {
-                        "line": line,
+                        "line": donor_line,
                         "item_code": fact.item_code,
                         "qty": qty,
                         "required_date": (
@@ -6839,10 +6841,23 @@ class ProjectSupplyService:
         reserve_locations = self._reserve_ladder_locations(fact)
         by_id = {str(w.id): code for code, w in reserve_locations.items()}
         siblings = self._group_sibling_warehouses(fact)
+        unowned = self._unowned_holds(line)
         for item in entry.reserve or []:
             qty = _dec(item.qty)
             if qty <= _ZERO:
                 continue
+            # A hold this line already has that belongs to NO revision is this reserve,
+            # not a second one: a reallocation handed it over (Slice D, AC-D4) precisely so
+            # it would survive every future revision, and writing a fresh row beside it
+            # would hold the same physical units twice - the floor would read short by
+            # that quantity for everybody else, for good.
+            standing = unowned.get(str(item.warehouse_id), _ZERO)
+            if standing > _ZERO:
+                adopted = min(standing, qty)
+                unowned[str(item.warehouse_id)] = standing - adopted
+                qty -= adopted
+                if qty <= _ZERO:
+                    continue
             location = self._warehouse_of(fact, str(item.warehouse_id)) or by_id.get(
                 str(item.warehouse_id)
             )
@@ -6942,6 +6957,36 @@ class ProjectSupplyService:
                     confirmed_at=now,
                 )
             )
+
+    def _unowned_holds(self, line: ProjectSalesOrderLine) -> Dict[str, Decimal]:
+        """What this line already holds under NO revision, by warehouse.
+
+        A reallocation writes one (`planning_change_service._move_reserve`): a reserve
+        another order gave this line, deliberately tied to no decision so that superseding
+        one cannot make it read gone. Every later revision that names the same reserve is
+        naming THAT hold. Scoped to the reallocation's own `reason` prefix rather than to
+        `decision_id IS NULL` alone - `_hold_query`'s docstring is explicit that NULL also
+        covers every row written before Stage 1C, a much wider set this method has no
+        business summing, and a future backfill of THOSE rows must not silently change what
+        every confirm writes here.
+        """
+        rows = (
+            self.db.query(SOLineAllocation.warehouse_id, SOLineAllocation.qty)
+            .filter(
+                SOLineAllocation.so_line_id == line.id,
+                SOLineAllocation.decision_id.is_(None),
+                SOLineAllocation.confirmed_at.isnot(None),
+                SOLineAllocation.warehouse_id.isnot(None),
+                SOLineAllocation.source_type != ALLOC_SOURCE_ORDER,
+                SOLineAllocation.reason.like("Reallocated from %"),
+            )
+            .all()
+        )
+        held: Dict[str, Decimal] = {}
+        for warehouse_id, qty in rows:
+            key = str(warehouse_id)
+            held[key] = held.get(key, _ZERO) + _dec(qty)
+        return held
 
     def _carry_allocations(
         self,

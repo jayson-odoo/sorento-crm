@@ -257,16 +257,25 @@ export function FulfilmentBoardMatrix({
                           onUndoMany={onUndoMany}
                         />
                         {/* What the re-uploaded book did to the lines in this cell
-                            (AC-P3-2). A SIBLING of the button, never inside it: a table is
-                            not phrasing content, and nesting one in a button is invalid
-                            HTML the browser reflows out of it. */}
-                        {(
-                          annotations?.get(`${product.key}|${bucket.key}`) ?? []
-                        ).map((annotation) => (
-                          <div key={annotation.rowId} className="px-2 pb-1.5">
-                            <BoardChangeTable annotation={annotation} compact />
+                            (AC-P3-2), as ONE hazard icon per changed line beside the
+                            figure - the detail is a click away (AC-C9, owner feedback 13
+                            September 2026: the inline table was "abit too big"). A SIBLING
+                            of the button, never inside it: a button inside a button is
+                            invalid HTML the browser reflows out of it. */}
+                        {(annotations?.get(`${product.key}|${bucket.key}`) ?? []).length >
+                        0 ? (
+                          <div className="flex flex-wrap items-center gap-1 px-2 pb-1.5">
+                            {(
+                              annotations?.get(`${product.key}|${bucket.key}`) ?? []
+                            ).map((annotation) => (
+                              <BoardChangeTable
+                                key={annotation.rowId}
+                                annotation={annotation}
+                                compact
+                              />
+                            ))}
                           </div>
-                        ))}
+                        ) : null}
                       </div>
                     ) : null}
                   </td>

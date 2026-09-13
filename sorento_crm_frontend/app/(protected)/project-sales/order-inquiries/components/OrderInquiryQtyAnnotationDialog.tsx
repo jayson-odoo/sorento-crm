@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { ackStateOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
-import { BoardChangeTable } from '../../fulfilment-planning/components/BoardChangeTable';
+import { BoardChangeWasNowTable } from '../../fulfilment-planning/components/BoardChangeTable';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 
 /**
@@ -97,7 +97,7 @@ function ChangedSection({
       <h3 className="text-sm font-semibold">
         {row.changed_at ? `Changed ${formatDateInMalaysia(row.changed_at)}` : 'Changed'}
       </h3>
-      <BoardChangeTable
+      <BoardChangeWasNowTable
         omitDecision
         omitHeader
         annotation={{
@@ -112,6 +112,12 @@ function ChangedSection({
           closed: false,
           was: { qty: previous.qty, date: previous.date, decision: null },
           now: { qty: row.qty, date: row.delivery_date ?? null, decision: null },
+          // A settled amendment is not a planning change: it has no composed suggestion,
+          // nothing to be late or short against, and no product swap behind it.
+          suggestionLines: [],
+          lateDays: null,
+          shortfallQty: null,
+          productChangedFrom: null,
           movedTransfer: null,
           projectLineId: null,
         }}

@@ -1736,6 +1736,43 @@ describe('confirmSummaryFor: changed (C4)', () => {
 });
 
 /**
+ * R3 (captain's ruling, 13 Sep board-display round, scenario S5): a cancelled changed line
+ * (the book removed it; a pending 'cancelled' `PlanningChangeRow` is what will retire it)
+ * must count toward `toConfirm` when the board's Confirm(N) is pressed - it applies through
+ * the retire path same as any other decided line. `confirmSummaryFor` has no concept of
+ * `cancelled` at all today: an uncovered, undraft line - which is exactly what a cancelled
+ * contribution looks like without a new field naming it - hits the SAME "untouched, nobody
+ * saved it" skip (line ~627, `if (!contribution.covered && !decision) continue;`) an
+ * ordinary undecided line does, so it is silently left out of `toConfirm`.
+ */
+describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display round)', () => {
+  it('counts a cancelled line toward toConfirm, not as an ordinary untouched line', () => {
+    const board = buildBoard(
+      [line({ sales_order_id: 'so-s5', so_number: 'SO400884', line_no: 1, qty: '72' })],
+      { today: TODAY },
+    );
+    const base = board.cells[0].contributions[0];
+    const cancelled = {
+      ...base,
+      qty: '0',
+      qty_outstanding: '0',
+      covered: false,
+      decision: null,
+      // Not yet on `BoardContribution` (grepped `fulfilmentPlanning.types.ts` - absent) -
+      // the field the board-side fix is expected to add; rename if the coder picks a
+      // different key.
+      cancelled: true,
+    } as BoardContribution & { cancelled: boolean };
+
+    // No draft at all - a cancelled line's own retire is not something a planner "saves" the
+    // way an amend or an approval is; it is inherent to the row itself.
+    const summary = confirmSummaryFor([cancelled], {});
+
+    expect(summary.toConfirm).toBe(1);
+  });
+});
+
+/**
  * CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026 ruling, reverses R11): a board of five lines
  * where only three were saved reads "3 to confirm", not five - the untouched line stays off
  * the count exactly as it stays off the body.
