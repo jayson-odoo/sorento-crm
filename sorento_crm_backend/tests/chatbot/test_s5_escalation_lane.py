@@ -1489,43 +1489,12 @@ class TestPersonMentionEscalationRoutesByStaffLookup:
         )
         services.next_assignee.assert_not_called()
 
-    def test_an_unmapped_explicit_team_word_clarifies_rather_than_inheriting_the_prior_team(
-        self,
-    ) -> None:
-        """(c) No person_mention, routing null, the customer named a team in words the
-        parser did not map - clarify with the team list, NEVER silently inherit whatever
-        team the PREVIOUS turn happened to be routed to."""
-        from app.services.chatbot.lanes.escalation import run
-
-        ctx = _ctx(
-            routing={"suggested_team": None, "suggested_agent": None},
-            person_mention=None,
-            # The parser's own word for this message under the amended contract (R-a,
-            # console pass 4): "marketing" is not one of the eight catalogue teams, so it
-            # is exactly the "explicit but unmapped" word this test is named for.
-            parser_raw={"routing": {"suggested_team": "marketing", "suggested_agent": None}},
-            # Not an acceptance - nothing was offered. `_ctx`'s default escalation says
-            # confirmed, which the lane did not read until B1 (review of #706) and now
-            # reads first; an "acceptance" is assigned, so the default would grade nothing.
-            escalation={"is_escalation_confirmation": False, "company_pick": None},
-            prev_variables={
-                "routing": {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}
-            },
-            text="escalate to marketing",
-        )
-        item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
-        services = self._services_with_staff([])
-
-        result = run(ctx, item, services=services)
-
-        assert result["arm"] == "clarify", (
-            "an explicit-but-unmapped team ask with no person_mention must clarify, not "
-            f"silently inherit the previous turn's team: {result!r}"
-        )
-        assert not any(a["kind"] == "assign_conversation" for a in result["actions"])
-        services.next_assignee.assert_not_called(), (
-            "must never silently draw against the inherited prior team"
-        )
+    # `test_an_unmapped_explicit_team_word_clarifies_rather_than_inheriting_the_prior_team`
+    # is retired (owner ruling D2, 13 Sep 2026, PLAN-chatbot-escalation-routing.md): its
+    # fixture was an unmapped family word (marketing) with the previous turn already on one
+    # of that family's members (marketing_product) - exactly AC-1114's shape, which now
+    # assigns that member directly, no clarify.
+    # See test_escalation_routing_team.py::test_ac1114_a_family_word_when_the_previous_turn_already_sat_on_one_member_assigns_it.
 
     def test_the_owners_turn_asks_even_though_the_derived_routing_inherited_a_team(
         self,

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.services.chatbot.head.output_exchange import post_process, suggest_follow_up
 from app.services.chatbot.lanes.escalation import run
 from tests.chatbot.test_escalation_routing_brand import _next_assignee_body, _product_entity, _resolved_row
 from tests.chatbot.test_escalation_routing_head import (
@@ -33,7 +34,6 @@ from tests.chatbot.test_escalation_routing_head import (
     TURN_3_PARSER_RAW,
     TURN_3_PREVIOUS_STATE,
     _decide_ctx,
-    _post_process,
 )
 from tests.chatbot.test_s5_escalation_lane import _ctx, _item, _services
 
@@ -157,16 +157,32 @@ def test_ac1142_a_raising_resolver_degrades_instead_of_raising_out_of_run() -> N
 def _replay_turn(parser_raw: dict, previous_state: dict, *, message: str, lane_services) -> dict:
     """`engine.run_turn`'s own order for an escalation turn: the head decides the verb and
     the derived routing, `route.decide` sends a `request_for_help`-with-team turn to the
-    lane, and the lane decides team/brand. `_decide_ctx` and `_post_process` are the SAME
-    helpers `test_escalation_routing_head.py` uses, so a head-level regression there shows
-    up here as well rather than being masked by a second implementation of the wiring."""
-    qf = _post_process(parser_raw, previous_state, message=message)
+    lane, and the lane decides team/brand. `_decide_ctx` is the SAME helper
+    `test_escalation_routing_head.py` uses, so a head-level regression there shows up here
+    too rather than being masked by a second implementation of the wiring.
+
+    `_parser_raw` is stamped by `post_process` onto the BLOCK it returns
+    (`output["_parser_raw"] = parser_raw_snapshot` in `output_exchange.py`, where `output`
+    is the `{output: o}` wrapper, not `o` itself), and `suggest_follow_up` returns that same
+    block, mutated, with the sibling key intact. `test_escalation_routing_head.py`'s own
+    `_post_process` helper unwraps to `parse_block["output"]` for its callers' convenience
+    and so drops `_parser_raw` on the floor - fine for that file's assertions, which never
+    read it, but wrong here: `_replay_turn` needs the WHOLE block, so it calls `post_process`
+    and `suggest_follow_up` directly rather than going through that helper.
+    """
+    parent_input = {
+        "latest_user_message": message,
+        "contact_id": "ZZT-esc-head-1",
+        "previous_conversation_state": previous_state,
+    }
+    parse_block = post_process({"output": dict(parser_raw)}, {}, parent_input)
+    parse_block = suggest_follow_up(parse_block, parent_input)
+    qf = parse_block["output"]
     ctx = _decide_ctx(qf)
     # `_person_routing` reads `ctx.parse._parser_raw` for the pre-derivation team word
-    # (AC-815) - `_post_process` already stamps `_parser_raw` onto its OWN output dict, not
-    # onto the ctx `route.decide` was built from, so it is threaded across here exactly as
-    # `engine.py` threads `parse_block` onto `ctx["parse"]["_parser_raw"]`.
-    ctx["parse"]["_parser_raw"] = qf.get("_parser_raw")
+    # (AC-815), the same way `engine.build_ctx(parse=parse_block)` threads the WHOLE block
+    # (including its `_parser_raw` sibling key) onto `ctx["parse"]` in production.
+    ctx["parse"]["_parser_raw"] = parse_block.get("_parser_raw")
     item = {
         "allowed": True,
         "decision": "allow",
