@@ -3420,6 +3420,7 @@ def suggest_follow_up(item: dict, parent_input: dict) -> dict:
         and jsc.get(question, "kind") in PICKER_KINDS
     ):
         o = output["output"]
+        named_team_help = _named_team_help(output)
         has_entity_pick = jsc.is_array(o.get("entities")) and any(
             jsc.get(e, "current_message") is True for e in o["entities"]
         )
@@ -3430,13 +3431,19 @@ def suggest_follow_up(item: dict, parent_input: dict) -> dict:
             if not jsc.truthy(o.get("domain_hint")) and jsc.truthy(prior_domain):
                 o["domain_hint"] = prior_domain
                 o["domain_inherited_for_suggest"] = True
-            if jsc.truthy(o.get("domain_hint")) and not _named_team_help(output):
+            if jsc.truthy(o.get("domain_hint")) and not named_team_help:  # D1
                 o["message_type"] = "business_query"
         elif o.get("is_affirmative") is True:
             # plain "yes" on a suggest_offer = escalate, ALWAYS (never a pick)
             o["escalation"] = {"is_escalation_confirmation": True}
             o["entities"] = []
-        elif o.get("is_affirmative") is False:
+        elif o.get("is_affirmative") is False and not named_team_help:
+            # D1 again, the other direction: "no, escalate to marketing" over an open picker
+            # arrives `is_affirmative: false` and a team word, and the undecorated arm read
+            # only the first half - it answered "Escalation declined." to a message that
+            # asked for a named team. A help request that names a team is an escalation
+            # whatever the customer declined in the same breath; what they said no to was the
+            # picker, and the escalation is what they said instead.
             o["escalation"] = {"is_escalation_confirmation": False, "escalation_declined": True}
             o["message_type"] = "casual"
             o["entities"] = []
