@@ -21,7 +21,7 @@ import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { BoardChangeTable } from './BoardChangeTable';
-import { changedFieldsOf } from '../../_shared/lib/boardChangeAnnotations';
+import { changedFieldsOf, lineKeyOf } from '../../_shared/lib/boardChangeAnnotations';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
@@ -121,8 +121,13 @@ export function FulfilmentBoardListView({
       contribution: BoardContribution,
       column: 'required_date' | 'outstanding' | 'suggested',
     ) => {
+      // The planning line first, then the sales order and line number - the address a row on
+      // an order nobody has adopted carries instead (R3).
       const lineId = contribution.project_line_id;
-      const forLine = lineId ? annotations?.get(lineId) ?? [] : [];
+      const forLine =
+        (lineId ? annotations?.get(lineId) : undefined) ??
+        annotations?.get(lineKeyOf(contribution.so_number, contribution.line_no)) ??
+        [];
       return forLine
         .filter((annotation) => {
           const keys = changedFieldsOf(annotation).map((field) => field.key);
@@ -222,15 +227,24 @@ export function FulfilmentBoardListView({
           // Available included (C4). The figures ride on the CONTRIBUTION, netted of this
           // line's own quantity, so the list does not have to know which cell the line sits
           // in to quote the right pile.
-          expandedContent: (contribution: BoardContribution) => (
-            <BoardLineDecisionPanel
-              contribution={contribution}
-              decision={draft[contribution.key] ?? null}
-              locations={contribution.locations ?? []}
-              onDecide={(next) => onDecide(contribution.key, next)}
-              onDirtyChange={dirtySetterFor(contribution.key)}
-            />
-          ),
+          expandedContent: (contribution: BoardContribution) =>
+            // A cancelled line has no decision to take (R3): the book removed it, and
+            // Confirm retires it. The row still opens, and says that rather than offering
+            // controls that would compose supply for a quantity nobody is owed.
+            contribution.cancelled ? (
+              <p className="px-4 py-3 text-sm text-muted-foreground">
+                This line was removed from the sales order. Confirm retires it; there is
+                nothing left to decide for it.
+              </p>
+            ) : (
+              <BoardLineDecisionPanel
+                contribution={contribution}
+                decision={draft[contribution.key] ?? null}
+                locations={contribution.locations ?? []}
+                onDecide={(next) => onDecide(contribution.key, next)}
+                onDirtyChange={dirtySetterFor(contribution.key)}
+              />
+            ),
         },
       },
       {

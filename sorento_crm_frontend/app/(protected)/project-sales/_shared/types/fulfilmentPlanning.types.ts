@@ -1195,6 +1195,16 @@ export interface BoardContribution {
   fulfilment_warehouse_id?: string | null;
   /** The line states no location, so it cannot be planned and blocks its order (AC-FP16). */
   unplannable: boolean;
+  /**
+   * The BOOK closed this line, and a pending planning change is what will retire it (R3,
+   * scenario S5).
+   *
+   * It owes nothing - the board carries it at zero - but it is still on screen, because a
+   * line that vanished the moment it was cancelled would take its change with it and leave
+   * nobody anywhere to press Confirm. Nothing is decided FOR it: its apply is the retire
+   * path, which is why it counts toward Confirm (N) while carrying no decision of its own.
+   */
+  cancelled?: boolean;
   /** `sales_order_lines.priority`, when anybody stated one. Almost nobody does. */
   priority?: 'high' | 'medium' | 'low' | null;
   /**

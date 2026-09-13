@@ -582,6 +582,9 @@ export function plannedLineCount(
   return contributions.filter((contribution) => {
     if (contribution.sales_order_id !== salesOrderId) return false;
     if (contribution.unplannable) return false;
+    // A CANCELLED line posts nothing and is still one of the lines this press acts on (R3):
+    // its apply is the retire path, which needs no composition to build.
+    if (contribution.cancelled) return true;
     const built = lineFor(contribution, draft[contribution.key]);
     return built !== null && (typeof built !== 'string' || built === 'no_mirror');
   }).length;
@@ -619,6 +622,14 @@ export function confirmSummaryFor(
   const orderIds = new Set<string>();
   for (const contribution of contributions) {
     if (contribution.unplannable) continue;
+    // A CANCELLED line is decided BY THE BOOK (R3, scenario S5): the order it was on removed
+    // it, and Confirm retires it. Nobody saves a decision for it, so the untouched-line skip
+    // below would drop it from the count and the press would silently do one thing more than
+    // it said - which is the one thing the counter exists to stop.
+    if (contribution.cancelled) {
+      orderIds.add(contribution.sales_order_id);
+      continue;
+    }
     const decision = draft[contribution.key];
     // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided, not
     // agreed - it must not pull its order into the confirmable set on its own. `decision`

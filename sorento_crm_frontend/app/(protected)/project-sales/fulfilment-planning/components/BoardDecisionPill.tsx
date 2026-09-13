@@ -48,6 +48,10 @@ const VERDICT_PILL: Record<string, string> = {
   // S4/AC-4.4: the line was saved against a suggestion the engine no longer makes. Amber,
   // the same warning tone the rest of the board uses for "look at this before you trust it".
   stale: 'bg-amber-100 text-amber-800',
+  // R3, scenario S5: the BOOK removed this line. Slate rather than red - nothing went wrong,
+  // the customer simply does not want it - and not the grey "Suggested" wears, or the two
+  // states a planner has to tell apart would look the same.
+  cancelled: 'bg-slate-200 text-slate-700',
 };
 
 const VERDICT_LABEL: Record<string, string> = {
@@ -58,6 +62,7 @@ const VERDICT_LABEL: Record<string, string> = {
   // three times, which is not a question anybody asks of this column.
   confirmed: 'Confirmed',
   stale: 'Suggestion changed',
+  cancelled: 'Cancelled',
 };
 
 export function BoardDecisionPill({
@@ -92,7 +97,12 @@ export function BoardDecisionPill({
   // about it - reading "Suggestion changed" instead would say something happened that had
   // already been answered.
   let verdict: string;
-  if (covered) {
+  // CANCELLED WINS OVER EVERYTHING (R3). Whatever was decided for this line, and whoever
+  // decided it, the book has since removed the line: reading "Confirmed" or "Saved" over a
+  // quantity nobody is owed would be the board agreeing to supply it.
+  if (contribution.cancelled) {
+    verdict = 'cancelled';
+  } else if (covered) {
     verdict = 'confirmed';
   } else if (draftSource?.verdict === 'rejected') {
     verdict = 'rejected';
