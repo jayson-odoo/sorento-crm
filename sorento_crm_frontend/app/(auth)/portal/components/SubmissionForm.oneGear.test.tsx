@@ -160,14 +160,12 @@ describe('SubmissionForm - exactly one gear, holding Duplicate and Revise (R3-5,
   it('renders exactly one actions gear, not two', async () => {
     await renderWith();
 
-    // R3-5: the ONLY gear left is "<Kind> actions" (the header's own
-    // DetailActionsMenu) - the old standalone `ReviseAction variant="menu"`
-    // gear used the generic "Submission actions" label and must be gone.
+    // R3-5: exactly one gear, labelled "Submission actions" (aa3ff8e21
+    // settled on the generic label - draftRevision/revisingBanner's own
+    // suites already pin it, and a kind-specific label was this test's OWN
+    // mistake, not the implementation's).
     expect(
-      screen.queryByRole('button', { name: 'Submission actions' }),
-    ).toBeNull();
-    expect(
-      screen.getAllByRole('button', { name: 'Stock Inquiry actions' }),
+      screen.getAllByRole('button', { name: 'Submission actions' }),
     ).toHaveLength(1);
   });
 

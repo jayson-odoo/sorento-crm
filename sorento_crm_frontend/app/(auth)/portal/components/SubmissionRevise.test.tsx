@@ -184,6 +184,19 @@ async function clickRevise() {
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Revise' }));
 }
 
+/** Open the gear WITHOUT picking an item - for asserting what it does (or
+ *  does not) offer while blocked. R3-5: the gear itself is not conditional
+ *  on the revision policy - it holds Duplicate too, which is available
+ *  whatever the policy says - only the Revise item inside it is. */
+async function openGear() {
+  const gear = await screen.findByRole('button', { name: 'Submission actions' });
+  fireEvent.pointerDown(gear, { button: 0, pointerId: 1 });
+  fireEvent.pointerUp(gear, { button: 0, pointerId: 1 });
+  fireEvent.click(gear);
+  await screen.findByRole('menu');
+  return gear;
+}
+
 /** Open the composer and type a valid reason. */
 async function openComposer(reason = 'Customer moved the delivery date.') {
   await clickRevise();
@@ -208,7 +221,12 @@ describe('SubmissionForm - revise entry point', () => {
     expect(screen.getByLabelText(/what changed, and why\?/i)).toBeInTheDocument();
   });
 
-  it('renders one sentence and no action when the cap is used up', async () => {
+  // R3-5 (AC-R8): the gear itself holds every action, Duplicate included -
+  // it is not conditional on the revision policy, so it must stay even
+  // while blocked. Only the Revise ITEM inside it, and the sentence beside
+  // the form number, react to the policy. REPLACES the pre-R3-5 expectation
+  // (no gear at all when blocked) these three used to pin.
+  it('renders the blocked sentence and no Revise item when the cap is used up - the gear itself (Duplicate) stays', async () => {
     await renderRevisable({
       revision: policy({
         allowed: false,
@@ -218,12 +236,13 @@ describe('SubmissionForm - revise entry point', () => {
       }),
     });
 
-    expect(screen.queryByRole('button', { name: 'Revise' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Submission actions' })).toBeNull();
+    await openGear();
+    expect(screen.queryByRole('menuitem', { name: 'Revise' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toBeInTheDocument();
     expect(screen.getByText('You have used all 3 revisions.')).toBeInTheDocument();
   });
 
-  it('renders one sentence and no action when the type is disabled', async () => {
+  it('renders the blocked sentence and no Revise item when the type is disabled - the gear itself (Duplicate) stays', async () => {
     await renderRevisable({
       revision: policy({
         enabled: false,
@@ -234,12 +253,13 @@ describe('SubmissionForm - revise entry point', () => {
       }),
     });
 
-    expect(screen.queryByRole('button', { name: 'Revise' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Submission actions' })).toBeNull();
+    await openGear();
+    expect(screen.queryByRole('menuitem', { name: 'Revise' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toBeInTheDocument();
     expect(screen.getByText('This form cannot be revised.')).toBeInTheDocument();
   });
 
-  it('renders one sentence and no action on a terminal status', async () => {
+  it('renders the blocked sentence and no Revise item on a terminal status - the gear itself (Duplicate) stays', async () => {
     await renderRevisable({
       status: 'closed',
       revision: policy({
@@ -248,8 +268,9 @@ describe('SubmissionForm - revise entry point', () => {
       }),
     });
 
-    expect(screen.queryByRole('button', { name: 'Revise' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Submission actions' })).toBeNull();
+    await openGear();
+    expect(screen.queryByRole('menuitem', { name: 'Revise' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toBeInTheDocument();
     expect(
       screen.getByText('This stock inquiry is closed and can no longer be revised.'),
     ).toBeInTheDocument();

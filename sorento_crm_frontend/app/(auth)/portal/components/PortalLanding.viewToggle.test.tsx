@@ -17,9 +17,21 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { PortalSubmissionSummary } from '../lib/portal-client';
+
+// List view mounts the shared DataGrid, whose column-preferences hook
+// (`useListingColumnPreferences`) calls `useQueryClient()` - a bare
+// `render()` with no provider throws "No QueryClient set" the moment List
+// view is reached.
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return rtlRender(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
+}
 
 const push = vi.fn();
 const replace = vi.fn();
@@ -28,6 +40,9 @@ let searchParams = new URLSearchParams('');
 vi.mock('next/navigation', () => ({
   useRouter: () => router,
   useSearchParams: () => searchParams,
+  // The shared DataGrid (components/ui/data-grid.tsx:258) calls usePathname
+  // unconditionally - omitting it throws under List view, which renders it.
+  usePathname: () => '/portal',
 }));
 
 vi.mock('../lib/portal-client', async (importOriginal) => {
