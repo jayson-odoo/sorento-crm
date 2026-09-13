@@ -1293,7 +1293,11 @@ class TestSubmitCompleteness:
         assert err.detail["detail"] == "debtor_name,lines"
         assert "dealer" in err.detail["message"]
 
-    def test_submit_names_only_what_is_missing(self, db: Session):
+    def test_a_request_with_no_needed_by_date_is_complete(self, db: Session):
+        """D-P2b: needed_by_date is optional and no longer part of what
+        "complete" requires - a debtor plus one line is enough, so this no
+        longer raises (was test_submit_names_only_what_is_missing, which
+        asserted the opposite under the retired r7 rule)."""
         contact = _make_contact(db)
         product = _make_product(db, class_label="Kitchen Sink")
         req = PriceTagRequestService.create_request(
@@ -1307,10 +1311,7 @@ class TestSubmitCompleteness:
         )
         db.flush()
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.validate_submittable(req)
-
-        assert exc_info.value.detail["detail"] == "needed_by_date"
+        PriceTagRequestService.validate_submittable(req)
 
     def test_submit_refuses_a_request_with_no_lines(self, db: Session):
         contact = _make_contact(db)
