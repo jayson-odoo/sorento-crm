@@ -96,10 +96,10 @@ cases:
             - "Product: SRTWT7445"
             - "01/01/2026 to 31/12/2026"
             - "Sales order outstanding"
-            - "Delivery order pending"
+            - "Delivery order outstanding"
             - "1. Sales order list"
             - "2. Delivery order list"
-          reply_not_contains: ["SRTWT7445-"]
+          reply_not_contains: ["SRTWT7445-", "Delivery order pending"]
           no_uuid: true
           pending_kind: outstanding_detail
 
@@ -128,6 +128,70 @@ cases:
       - text: "SRTWT02 outstanding both"
         expect:
           branch_kind: business_query
-          reply_contains: ["Product: SRTWT02", "No open sales order", "No pending delivery order"]
-          reply_not_contains: ["SRTWT02-", "SRTWT7445"]
+          reply_contains: ["Product: SRTWT02", "No open sales order", "No outstanding delivery order"]
+          reply_not_contains: ["SRTWT02-", "SRTWT7445", "No pending delivery order"]
+          no_uuid: true
+
+  - name: D17 - parser-driven word answers to the open scope/detail questions, and a new ask mid-offer
+    # D17 (owner design ruling, 13 Sep 2026): deterministic code no longer reads words -
+    # the PARSER reads "all" / "DO list" / "SO list" against the open question's OWN
+    # option labels (surfaced in the text the engine sends it, see
+    # `tests/chatbot/test_outstanding_lane.py::TestParserContextCarriesTheOpenQuestionsOptions`)
+    # and emits `reference_positions`; the head only ever maps that position to a row.
+    # This is the ONLY place that behaviour is graded - there is no LLM in pytest.
+    # NEEDS AN OWNER CHECK before this case is run: "hanlim" below stands in for a real,
+    # short customer name/token this tenant's `customers` table actually resolves
+    # uniquely (the header note above explains why a partial name can land on a picker
+    # instead) - replace it with one verified against the live database, the way
+    # FULLSHUN was verified above.
+    cold: true
+    turns:
+      # 1. A fresh report, both scopes.
+      - text: "SRTWT7445 outstanding both"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sales order outstanding", "Delivery order outstanding"]
+          no_uuid: true
+          pending_kind: outstanding_detail
+
+      # 2. Word answer to the DETAIL offer (parser-resolved, no number typed).
+      - text: "DO list"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["DO Number:", "DO Qty:", "Delivered:", "Outstanding:", "DO Date:"]
+          reply_not_contains: ["Transporter", "Lorry Plate"]
+          no_uuid: true
+
+      # 3. The detail offer is STICKY (R2) - a second word pick still resolves, this
+      # time to the OTHER option.
+      - text: "SO list"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SO Number:", "Ordered:", "Transferred to DO:", "Outstanding:"]
+          no_uuid: true
+
+      # 4. A NEW ASK carrying a customer name must never be read as a word answer to
+      # the still-open detail offer, even though "delivery" is one of its synonyms -
+      # this is the exact regression D17 replaces the retired word-table fix for.
+      # Expect the ordinary order-list answer for the named customer, not a detail
+      # re-run and not the offer re-printed.
+      - text: "delivery to hanlim"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["Sales order list", "Delivery order list", "Outstanding for which document?"]
+          no_uuid: true
+
+      # 5. A fresh scope question, answered by a WORD meaning "both" the owner's own
+      # smoke test used ("all" fell through before D16/D17).
+      - text: "SRTWT7445 outstanding"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Outstanding for which document?", "1. Sales orders", "2. Delivery orders", "3. Both"]
+          pending_kind: outstanding_scope
+          no_uuid: true
+
+      - text: "everything"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sales order outstanding", "Delivery order outstanding"]
           no_uuid: true

@@ -14,6 +14,8 @@
     "order_date_max": "2026-08-28"
   },
   "do": {
+    "do_qty": 700,
+    "delivered_qty": 60,
     "pending_qty": 640,
     "do_count": 3,
     "do_date_min": "2026-02-03",
@@ -29,10 +31,10 @@
     {"customer_name": "Dealer C Hardware", "ordered_qty": 700, "outstanding_qty": 700}
   ],
   "do_by_location": [
-    {"code": "BRW-IB", "pending_qty": 640}
+    {"code": "BRW-IB", "do_qty": 700, "pending_qty": 640}
   ],
   "do_by_customer": [
-    {"customer_name": "Dealer A Sdn Bhd", "pending_qty": 640}
+    {"customer_name": "Dealer A Sdn Bhd", "do_qty": 700, "pending_qty": 640}
   ],
   "so_rows": [
     {

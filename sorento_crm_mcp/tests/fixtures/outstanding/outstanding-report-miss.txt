@@ -6,5 +6,5 @@ Order date: all
 *Sales order outstanding*
 No open sales order.
 
-*Delivery order pending*
-No pending delivery order.
+*Delivery order outstanding*
+No outstanding delivery order.

@@ -63,7 +63,7 @@ def _miss_report() -> dict:
             "so_count": 0, "order_date_min": None, "order_date_max": None,
         },
         "do": {
-            "pending_qty": 0,
+            "do_qty": 0, "delivered_qty": 0, "pending_qty": 0,
             "do_count": 0, "do_date_min": None, "do_date_max": None,
         },
         "so_by_location": [], "so_by_customer": [],
@@ -80,51 +80,104 @@ def test_report_both_scopes_byte_equal_to_golden():
     assert _outstanding_report(_MOCK) == _golden("outstanding-report-both.txt")
 
 
-def test_report_so_scope_only_omits_do_block_and_option_2():
+def test_report_so_scope_only_omits_do_block_and_uses_single_line_offer():
+    """R9 (owner testing round 3, 13 Sep 2026): with only ONE scope on offer the
+    reply ends with a single sentence, not a numbered list - `1. Sales order list`
+    becomes `Reply 1 for the sales order list.`; the numbered form stays for TWO
+    scopes (`test_report_both_scopes_byte_equal_to_golden`)."""
     so_only = copy.deepcopy(_MOCK)
     so_only["do"] = None
     rendered = _outstanding_report(so_only)
     assert rendered == _golden("outstanding-report-so.txt")
+    assert "Delivery order outstanding" not in rendered
     assert "Delivery order pending" not in rendered
     assert "2. Delivery order list" not in rendered
-    assert rendered.rstrip().endswith("1. Sales order list")
+    assert "1. Sales order list" not in rendered
+    assert rendered.rstrip().endswith("Reply 1 for the sales order list.")
 
 
-def test_report_do_scope_only_omits_so_block_and_renumbers_option_1():
+def test_report_do_scope_only_omits_so_block_and_uses_single_line_offer():
+    """R9: the DO-only mirror of the above."""
     do_only = copy.deepcopy(_MOCK)
     do_only["so"] = None
     rendered = _outstanding_report(do_only)
     assert rendered == _golden("outstanding-report-do.txt")
     assert "Sales order outstanding" not in rendered
-    assert rendered.rstrip().endswith("1. Delivery order list")
+    assert "1. Delivery order list" not in rendered
+    assert rendered.rstrip().endswith("Reply 1 for the delivery order list.")
 
 
 # --------------------------------------------------------------------------
-# R1 (owner ruling, 13 Sep 2026): "Delivery order pending" covers ONLY DOs that
-# still have pending quantity - "most of the DO are delivered right so what's
-# outstanding? I thought outstanding means still got some pending quantity."
-# The DO block drops `DO qty:` / `Delivered:` entirely; every number left in the
-# block (the totals AND the two breakdowns) is a pending-only figure, so the
-# `(O/S: ...)` bracket - which existed to show pending ALONGSIDE a bigger total -
-# has nothing left to disambiguate and is dropped too: `name: pending`, no bracket.
+# R6 (owner testing round 3, 13 Sep 2026): "need to show the delivered also, so
+# the by location and by customer needs to be the DO qty (O/S: {pending}) so DO
+# qty minus pending should be those quantity delivered." `DO qty:` / `Delivered:`
+# are BACK on the block, and both breakdowns regain the `(O/S: ...)` bracket
+# (`name: do_qty (O/S: pending)`), over EVERY DO in scope - pending and
+# delivered - which is what R1 (13 Sep, round 1) had dropped. R7 (round 3, same
+# day) renames the block title to `Delivery order outstanding` and the `Pending:`
+# line to `Outstanding:`, and reorders the four totals to
+# `Delivery orders` / `DO qty` / `Delivered` / `Outstanding` / `DO date range`.
 # --------------------------------------------------------------------------
 
 
-def test_do_block_never_prints_do_qty_or_delivered_lines():
+def test_do_block_prints_do_qty_delivered_and_outstanding_lines():
     rendered = _outstanding_report(_MOCK)
-    assert "DO qty:" not in rendered, rendered
-    assert "Delivered:" not in rendered, rendered
-    assert "Pending: 640" in rendered, rendered
+    assert "*Delivery order outstanding*" in rendered, rendered
+    assert "Delivery order pending" not in rendered, rendered
     assert "Delivery orders: 3" in rendered, rendered
+    assert "DO qty: 700" in rendered, rendered
+    assert "Delivered: 60" in rendered, rendered
+    assert "Outstanding: 640" in rendered, rendered
+    assert "Pending:" not in rendered, rendered
 
 
-def test_do_breakdown_lines_have_no_bracket_every_number_is_pending():
+def test_do_block_lines_print_in_the_r7_order():
+    """`Delivery orders`, `DO qty`, `Delivered`, `Outstanding`, `DO date range` -
+    in that order, immediately after the block title."""
     rendered = _outstanding_report(_MOCK)
-    assert "BRW-IB: 640\n" in rendered, rendered
-    assert "Dealer A Sdn Bhd: 640\n" in rendered or rendered.endswith("Dealer A Sdn Bhd: 640"), rendered
-    assert "(O/S:" not in rendered.split("*Delivery order pending*")[1].split(
-        "Reply with a number"
-    )[0], rendered
+    block = rendered.split("*Delivery order outstanding*\n", 1)[1]
+    lines = block.splitlines()[:5]
+    assert lines == [
+        "Delivery orders: 3",
+        "DO qty: 700",
+        "Delivered: 60",
+        "Outstanding: 640",
+        "DO date range: 03/02/2026 to 30/08/2026",
+    ], lines
+
+
+def test_do_breakdown_lines_carry_do_qty_with_the_outstanding_bracket():
+    rendered = _outstanding_report(_MOCK)
+    assert "BRW-IB: 700 (O/S: 640)" in rendered, rendered
+    assert "Dealer A Sdn Bhd: 700 (O/S: 640)" in rendered, rendered
+
+
+def test_do_breakdown_line_pending_zero_still_prints_the_bracket():
+    """R6: "a name whose pending is 0 is still printed as `(O/S: 0)`" - a
+    location/customer that is only ever delivered must not be elided."""
+    report = copy.deepcopy(_MOCK)
+    report["do_by_location"] = report["do_by_location"] + [
+        {"code": "MWH-IB", "do_qty": 20, "pending_qty": 0},
+    ]
+    report["do_by_customer"] = report["do_by_customer"] + [
+        {"customer_name": "Dealer Delivered Only", "do_qty": 50, "pending_qty": 0},
+    ]
+    rendered = _outstanding_report(report)
+    assert "MWH-IB: 20 (O/S: 0)" in rendered, rendered
+    assert "Dealer Delivered Only: 50 (O/S: 0)" in rendered, rendered
+
+
+def test_do_breakdowns_sum_to_both_do_qty_and_outstanding_block_totals():
+    """AC-1116: the breakdown sums must equal the block on BOTH figures now that
+    `do_qty` is back alongside `pending_qty`."""
+    rendered = _outstanding_report(_MOCK)
+    assert rendered  # sanity - the real arithmetic check lives in the backend suite
+    location_do_qty = sum(row["do_qty"] for row in _MOCK["do_by_location"])
+    location_pending = sum(row["pending_qty"] for row in _MOCK["do_by_location"])
+    customer_do_qty = sum(row["do_qty"] for row in _MOCK["do_by_customer"])
+    customer_pending = sum(row["pending_qty"] for row in _MOCK["do_by_customer"])
+    assert location_do_qty == _MOCK["do"]["do_qty"] == customer_do_qty
+    assert location_pending == _MOCK["do"]["pending_qty"] == customer_pending
 
 
 # --------------------------------------------------------------------------
@@ -163,10 +216,10 @@ def test_null_customer_prints_unassigned_in_both_blocks():
     report["so_by_customer"] = [
         {"customer_name": None, "ordered_qty": 178, "outstanding_qty": 178},
     ]
-    report["do_by_customer"] = [{"customer_name": None, "pending_qty": 640}]
+    report["do_by_customer"] = [{"customer_name": None, "do_qty": 640, "pending_qty": 640}]
     rendered = _outstanding_report(report)
     assert "Unassigned: 178 (O/S: 178)" in rendered, rendered
-    assert "Unassigned: 640" in rendered, rendered
+    assert "Unassigned: 640 (O/S: 640)" in rendered, rendered
     assert "None" not in rendered, rendered
 
 
@@ -294,7 +347,7 @@ def test_so_refused_line_sits_between_the_header_and_the_do_block():
     assert "Sales order figures are not enabled for your account." in lines, rendered
     refusal_at = lines.index("Sales order figures are not enabled for your account.")
     header_at = next(i for i, line in enumerate(lines) if line.startswith("Order date:"))
-    block_at = lines.index("*Delivery order pending*")
+    block_at = lines.index("*Delivery order outstanding*")
     assert header_at < refusal_at < block_at, rendered
 
 
@@ -331,31 +384,21 @@ def test_detail_do_list_byte_equal_to_golden():
 
 
 def test_detail_do_list_shows_delivered_even_when_zero():
-    """R3, REWRITTEN (owner testing round 2, 13 Sep 2026): "need to show delivered
-    also, doesn't mean if it is 0 then we don't show, if it is 0 then we show 0,
-    don't hide." The DO detail row is `DO Number`, `Customer`, `Location`, `DO Qty`,
-    `Delivered`, `Pending`, `DO Date` - `DO Qty` and `Delivered` are BACK (R1 had
-    dropped them), and `Delivered` prints `0` rather than being omitted. The BLOCK
-    above the list (Pending / Delivery orders / DO date range / breakdowns) is
-    UNCHANGED by this - it still covers pending DOs only (R1 stands there)."""
+    """R3 (owner testing round 2, 13 Sep 2026): "need to show delivered also,
+    doesn't mean if it is 0 then we don't show, if it is 0 then we show 0, don't
+    hide." R7 (round 3), RENAMED: the row label `Pending` becomes `Outstanding`
+    (the JSON field stays `pending_qty` - presentation only). The DO detail row
+    is `DO Number`, `Customer`, `Location`, `DO Qty`, `Delivered`, `Outstanding`,
+    `DO Date`, and `Delivered` prints `0` rather than being omitted."""
     rendered = _outstanding_detail(_MOCK, "do")
     assert "*DO Qty:* 640" in rendered, rendered
     assert "*Delivered:* 0" in rendered, rendered
-    assert "*Pending:* 640" in rendered, rendered
+    assert "*Outstanding:* 640" in rendered, rendered
+    assert "*Pending:*" not in rendered, rendered
     fields = [line.split(":*")[0].lstrip("*") for line in rendered.splitlines() if line.startswith("*")]
-    assert fields == ["Customer", "Location", "DO Qty", "Delivered", "Pending", "DO Date"], (
-        f"field order must be Customer, Location, DO Qty, Delivered, Pending, DO Date: {rendered!r}"
+    assert fields == ["Customer", "Location", "DO Qty", "Delivered", "Outstanding", "DO Date"], (
+        f"field order must be Customer, Location, DO Qty, Delivered, Outstanding, DO Date: {rendered!r}"
     )
-
-
-def test_do_block_and_breakdowns_stay_pending_only_despite_row_level_do_qty():
-    """R3 is a `do_rows[]`-only change - the block totals and the two breakdowns must
-    still show ONLY the pending figure, unaffected by DO Qty/Delivered coming back on
-    the rows."""
-    rendered = _outstanding_report(_MOCK)
-    assert "DO qty:" not in rendered, rendered
-    assert "Delivered:" not in rendered, rendered
-    assert "Pending: 640" in rendered, rendered
 
 
 def test_detail_so_list_every_row_renders_numbered():
@@ -382,7 +425,8 @@ def test_miss_prints_block_titles_and_one_line_per_scope_under_the_same_header()
     rendered = _outstanding_report(_miss_report())
     assert rendered == _golden("outstanding-report-miss.txt")
     assert "*Sales order outstanding*\nNo open sales order." in rendered
-    assert "*Delivery order pending*\nNo pending delivery order." in rendered
+    assert "*Delivery order outstanding*\nNo outstanding delivery order." in rendered
+    assert "No pending delivery order." not in rendered
     # the presenter stops there - the escalate offer is the lane's job, not this function's
     assert "Reply with a number for detail" not in rendered
     assert "escalat" not in rendered.lower()
@@ -391,13 +435,15 @@ def test_miss_prints_block_titles_and_one_line_per_scope_under_the_same_header()
 def test_partial_miss_keeps_the_hit_scopes_offer():
     """One scope empty, the other not: the empty block prints its OWN title plus the
     one miss line (never the omitted-block treatment AC-1102 uses for a scope that
-    was never asked), the hit block prints in full, and only the hit scope is offered."""
+    was never asked), the hit block prints in full, and only the hit scope is offered -
+    as the R9 single-line sentence, since only one scope survives to be offered."""
     report = copy.deepcopy(_MOCK)
     report["do"]["do_count"] = 0
     rendered = _outstanding_report(report)
-    assert "*Delivery order pending*\nNo pending delivery order." in rendered
+    assert "*Delivery order outstanding*\nNo outstanding delivery order." in rendered
     assert "Sales order outstanding" in rendered
-    assert "1. Sales order list" in rendered
+    assert "Reply 1 for the sales order list." in rendered
+    assert "1. Sales order list" not in rendered
     assert "Delivery order list" not in rendered
     # the empty scope keeps its title but not its breakdown body
     assert "DO qty:" not in rendered

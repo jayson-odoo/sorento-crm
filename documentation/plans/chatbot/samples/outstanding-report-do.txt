@@ -3,14 +3,15 @@ Customer: all
 Location: IB (BRW-IB, MWH-IB)
 Order date: 01/01/2026 to 31/12/2026
 
-*Delivery order pending*
-Pending: 640
+*Delivery order outstanding*
 Delivery orders: 3
+DO qty: 700
+Delivered: 60
+Outstanding: 640
 DO date range: 03/02/2026 to 30/08/2026
 *_By location_*
-BRW-IB: 640
+BRW-IB: 700 (O/S: 640)
 *_By customer_*
-Dealer A Sdn Bhd: 640
+Dealer A Sdn Bhd: 700 (O/S: 640)
 
-Reply with a number for detail:
-1. Delivery order list
+Reply 1 for the delivery order list.

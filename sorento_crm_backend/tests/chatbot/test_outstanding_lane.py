@@ -298,13 +298,20 @@ def _run_turn(
     matches: dict[str, dict[str, Any]] | None = None,
     mcp_response: Any = None,
     real_resolver: bool = False,
+    capture_user_block: list[str] | None = None,
 ):
     """One real `engine.run_turn`, business lane on, parser/access/resolver/MCP faked.
 
     `real_resolver=True` leaves the RESOLVER alone (the real
     `business_services.production_services`, which reads the seeded `products` table
     through `POST /api/v1/system/references/resolve` in process) - the only way to grade
-    which product code a typed token actually lands on (AC-1119, reviewer N5)."""
+    which product code a typed token actually lands on (AC-1119, reviewer N5).
+
+    `capture_user_block`, given a list, has this turn's `user_block` (the text the
+    engine actually sends to `parser.parse`) appended to it - D17 (owner design ruling,
+    13 Sep 2026): the parser is meant to read the open question's OWN option labels off
+    this text, so a test asserting on what the parser was actually shown reads this list
+    rather than guessing at an internal builder's name."""
     _enable_business_lane(session_factory)
     monkeypatch.setattr(
         engine_mod,
@@ -326,7 +333,13 @@ def _run_turn(
         )
 
     monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
-    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: qf)
+
+    def _fake_parse(config, user_block):
+        if capture_user_block is not None:
+            capture_user_block.append(user_block)
+        return qf
+
+    monkeypatch.setattr(parser_mod, "parse", _fake_parse)
 
     call, captured = _capturing_mcp(mcp_response)
     if real_resolver:
@@ -368,16 +381,17 @@ REPORT_HIT = {
         "order_date_min": "2026-01-01", "order_date_max": "2026-01-01",
     },
     "do": {
-        # R1 (owner ruling, 13 Sep 2026): the DO block is pending DOs only, so the route
-        # no longer returns `do_qty` / `delivered_qty` at all - a double that still
-        # carried them would be claiming a wire shape production does not produce.
-        "pending_qty": 7, "do_count": 1,
+        # R6 (owner testing round 3, 13 Sep 2026): `do_qty` / `delivered_qty` are BACK
+        # on the block (over EVERY DO in scope, pending and delivered) - a double that
+        # still omitted them would be claiming a wire shape production no longer
+        # produces. `do_qty=10` here is one delivered DO of 3 plus this pending one of 7.
+        "do_qty": 10, "delivered_qty": 3, "pending_qty": 7, "do_count": 1,
         "do_date_min": "2026-02-03", "do_date_max": "2026-02-03",
     },
     "so_by_location": [{"code": "BRW-IB", "ordered_qty": 10, "outstanding_qty": 7}],
     "so_by_customer": [{"customer_name": CUSTOMER_NAME, "ordered_qty": 10, "outstanding_qty": 7}],
-    "do_by_location": [{"code": "BRW-IB", "pending_qty": 7}],
-    "do_by_customer": [{"customer_name": CUSTOMER_NAME, "pending_qty": 7}],
+    "do_by_location": [{"code": "BRW-IB", "do_qty": 10, "pending_qty": 7}],
+    "do_by_customer": [{"customer_name": CUSTOMER_NAME, "do_qty": 10, "pending_qty": 7}],
     "so_rows": [
         {
             "so_number": "SO1", "customer_name": CUSTOMER_NAME, "location": "BRW-IB",
@@ -387,7 +401,7 @@ REPORT_HIT = {
     "do_rows": [
         {
             "do_number": "DO1", "customer_name": CUSTOMER_NAME, "location": "BRW-IB",
-            "pending_qty": 7, "do_date": "2026-02-03",
+            "do_qty": 7, "delivered_qty": 0, "pending_qty": 7, "do_date": "2026-02-03",
         }
     ],
 }
@@ -401,7 +415,7 @@ REPORT_MISS = {
         "order_date_min": None, "order_date_max": None,
     },
     "do": {
-        "pending_qty": 0, "do_count": 0,
+        "do_qty": 0, "delivered_qty": 0, "pending_qty": 0, "do_count": 0,
         "do_date_min": None, "do_date_max": None,
     },
     "so_by_location": [], "so_by_customer": [], "do_by_location": [], "do_by_customer": [],
@@ -976,12 +990,12 @@ class TestFieldRevealGateBeforeFetch:
         lines = reply.splitlines()
         refusal_at = lines.index("Sales order figures are not enabled for your account.")
         header_at = [i for i, line in enumerate(lines) if line.startswith("Order date:")]
-        do_block_at = [i for i, line in enumerate(lines) if line == "*Delivery order pending*"]
+        do_block_at = [i for i, line in enumerate(lines) if line == "*Delivery order outstanding*"]
         assert header_at and refusal_at > header_at[0], (
             f"the refusal must come after the header's four lines: {reply!r}"
         )
         assert do_block_at and refusal_at < do_block_at[0], (
-            f"the refusal must come before the Delivery order pending block: {reply!r}"
+            f"the refusal must come before the Delivery order outstanding block: {reply!r}"
         )
 
 
@@ -1294,38 +1308,33 @@ class TestScopeAnswerRunsReportWithCarriedFilters:
 
 
 # --------------------------------------------------------------------------- #
-# D16 / AC-1144 (owner testing round 2, 13 Sep 2026) - scope WORD answers
+# D17 (owner design ruling, 13 Sep 2026) - REPLACES R4/R5/R8 as briefed, and
+# RETIRES D16's word tables. "Deterministic code never reads words; the parser
+# (LLM) reads the answer and the head maps a POSITION to an option." A word
+# answer ("all", "DO list", "delivery to hanlim") is now resolved upstream, in
+# the PARSER - untestable by pytest (there is no LLM in this suite) and
+# verified instead by the console run
+# (`tests/chatbot/console_cases/2026-09-13-outstanding-report.yaml`). What
+# pytest CAN and must still pin: the deterministic head resolves ONLY
+# `reference_positions` (+ the `order_status` enum for a scope word in a FRESH
+# ask, unrelated to this pending), the retired word table is actually gone, and
+# a turn that also names its own entity is a new ask even if it carries a
+# stray `reference_positions` (defensive - the parser is told never to emit
+# both, the head still guards structurally).
 # --------------------------------------------------------------------------- #
 
 
-class TestScopeWordAnswers:
-    """The owner typed "all" against the scope question and got it re-asked - a WORD
-    answer must resolve the SAME way a numbered one does, with no number in the
-    message at all: "sales"/"sales order"/"SO" -> 1 (so); "delivery"/"delivery
-    order"/"DO" -> 2 (do); "both"/"all"/"everything" -> 3 (both), case-insensitive,
-    filler words ("the", "list", "please") tolerated. The parser emits NO
-    `reference_positions` for a bare word like this (there is no number to find), so
-    a resolver keyed only on `reference_positions` cannot see it at all - the same
-    shape the real turn that prompted this ruling had."""
+class TestScopeAnswerByPositionOnly:
+    """D17 point 4's own words: "Unit tests that previously fed the words `all` /
+    `DO list` through the head now feed `reference_positions: [3]` / `[2]` with an
+    open pending and assert the same outcomes." These exercise the SAME resolver
+    `test_reply_2_picks_do_scope_and_restores_filters` already covers for one
+    position; parametrized here over all three so a regression on any one of them
+    cannot slip past this class alone."""
 
-    @pytest.mark.parametrize(
-        "text_body,expected_scope",
-        [
-            ("sales", "so"),
-            ("sales order", "so"),
-            ("SO", "so"),
-            ("the sales order please", "so"),
-            ("delivery", "do"),
-            ("delivery order", "do"),
-            ("DO", "do"),
-            ("the delivery order list", "do"),
-            ("both", "both"),
-            ("all", "both"),
-            ("everything", "both"),
-        ],
-    )
-    def test_scope_word_resolves_without_a_number(
-        self, session_factory, monkeypatch, text_body: str, expected_scope: str
+    @pytest.mark.parametrize("position,expected_scope", [(1, "so"), (2, "do"), (3, "both")])
+    def test_scope_position_resolves_to_the_stored_option(
+        self, session_factory, monkeypatch, position: int, expected_scope: str
     ) -> None:
         _seed_open_outstanding_scope(session_factory)
         _result, captured = _run_turn(
@@ -1333,24 +1342,66 @@ class TestScopeWordAnswers:
             monkeypatch,
             qf=_parser_output(
                 message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[],
+                reference_positions=[position],
             ),
-            text_body=text_body,
-            msg_id=f"ZZT-outstanding-scope-word-{abs(hash(text_body))}",
+            text_body=str(position),
+            msg_id=f"ZZT-outstanding-scope-position-{position}",
             attributes=["sales_orders.outstanding"],
             matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
             mcp_response=REPORT_HIT,
         )
-        assert captured, (
-            f"{text_body!r} must resolve the scope question without a number - no tool "
-            f"was called at all (the question was re-asked instead)"
-        )
+        assert captured, f"position {position} must resolve the scope question"
         name, args = captured[0]
-        assert name == "crm_outstanding_report", (text_body, name, args)
+        assert name == "crm_outstanding_report", (position, name, args)
         assert args.get("scope") == expected_scope, (
-            f"{text_body!r} must resolve to scope={expected_scope!r}: {args}"
+            f"position {position} must resolve to scope={expected_scope!r}: {args}"
         )
-        assert args.get("product_code") == PRODUCT_CODE, (text_body, args)
+        assert args.get("product_code") == PRODUCT_CODE, (position, args)
+
+
+class TestScopeQuestionGuardsAgainstAStrayPositionWithAnEntity:
+    def test_customer_entity_alongside_a_stray_position_is_a_new_ask_not_an_answer(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """D17 point 3, measured as a genuine gap in TODAY's code: `_apply_outstanding_
+        pending`'s new-ask guard only ever checks `names_product` (entities hinted
+        "product") before falling through to `_outstanding_scope_pick`, which reads
+        `reference_positions` alone. A turn that names a CUSTOMER and ALSO carries a
+        `reference_positions` (the parser is told never to emit this combination, but
+        the head must guard defensively anyway, D17 point 3) is read as answering the
+        open scope question with the carried product/customer/location intact - never
+        as the new ask it actually is. This is the deterministic-side guard the
+        original "delivery to hanlim" regression needs; the word-matching half of that
+        regression is retired with D16 and re-verified live by the console case."""
+        _seed_open_outstanding_scope(session_factory)
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", intent_hint="check_order", domain_hint="order",
+                entities=[
+                    {
+                        "raw": "hanlim", "hint": "customer", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+                reference_positions=[2],
+            ),
+            text_body="delivery to hanlim",
+            msg_id="ZZT-outstanding-scope-new-ask-guard-1",
+            attributes=["sales_orders.outstanding"],
+            matches={"hanlim": {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}},
+        )
+        assert captured, "the new ask must still be answered, not swallowed"
+        name, _args = captured[0]
+        assert name != "crm_outstanding_report", (
+            f"a turn naming a customer is a NEW ask, never an answer to the open scope "
+            f"question, however many reference_positions ride along with it: {name}"
+        )
+        reply = (_result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" not in reply, (
+            f"the open scope question must be DROPPED by the new ask, never re-asked: {reply!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1487,10 +1538,10 @@ class TestTotalMissEscalates:
         )
         reply = (result.reply or {}).get("text") or ""
         assert "*Sales order outstanding*\nNo open sales order." in reply, reply
-        assert "*Delivery order pending*\nNo pending delivery order." in reply, reply
+        assert "*Delivery order outstanding*\nNo outstanding delivery order." in reply, reply
         offer_at = reply.index("Would you like me to escalate")
         assert reply.index("No open sales order.") < offer_at, reply
-        assert reply.index("No pending delivery order.") < offer_at, reply
+        assert reply.index("No outstanding delivery order.") < offer_at, reply
         assert reply.startswith(f"Product: {PRODUCT_CODE}"), (
             f"the report's own header opens the miss, not the generic one: {reply!r}"
         )
@@ -1901,77 +1952,74 @@ class TestDetailOfferIsSticky:
 
 
 # --------------------------------------------------------------------------- #
-# D16 / AC-1145 (owner testing round 2, 13 Sep 2026) - detail-offer WORD answers
+# D17 (owner design ruling, 13 Sep 2026) - RETIRES D16's detail-offer word
+# table. The parser resolves "DO list" / "SO list" / "delivery to hanlim" now;
+# the head only ever maps a POSITION. Live behaviour (word -> position) is the
+# console case's job (`2026-09-13-outstanding-report.yaml`); pytest keeps the
+# deterministic, position-only half.
 # --------------------------------------------------------------------------- #
 
 
-class TestDetailWordAnswers:
-    """The owner typed "DO list" and fell through to the generic order lane (a full
-    DO list with transporter fields) - a WORD answer must resolve against whichever
-    options are ACTUALLY on offer: "sales order list"/"SO list"/"SO"/"sales" -> the
-    Sales order list option; "DO list"/"delivery order list"/"DO"/"delivery" -> the
-    Delivery order list option. A word naming a scope that is NOT offered re-prints
-    the SAME offer rather than falling through to a different lane."""
-
-    def test_do_list_word_after_a_both_scope_report_gives_the_do_detail(
+class TestDetailAnswerByPositionOnly:
+    def test_position_1_after_an_so_only_report_still_gives_the_so_list(
         self, session_factory, monkeypatch
     ) -> None:
-        _seed_open_outstanding_detail(session_factory)
+        """R9 (owner testing round 3, 13 Sep 2026): a single-scope report's offer is
+        now rendered as ONE sentence (`Reply 1 for the sales order list.`), not a
+        numbered list - `test_report_so_scope_only_omits_do_block_and_uses_single_line_
+        offer` (presenter suite) pins the TEXT change. This is the regression guard on
+        the other side: the deterministic resolver must still accept "1" against a
+        single-option offer exactly as it did against a two-option one - unaffected by
+        how the offer reads, because it only ever reads `last_result_set` /
+        `reference_positions`, never the rendered sentence."""
+        _seed_contact(
+            session_factory,
+            variables={
+                "message_type": "business_query",
+                "domain_hint": "order",
+                "entities": [],
+                "selection_context": "outstanding_detail",
+                "last_result_set": [
+                    {"idx": 1, "label": "Sales order list", "value": "so"},
+                ],
+                "outstanding_filters": {
+                    "product_code": PRODUCT_CODE,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [],
+                    "warehouse_codes": [],
+                },
+                "pending": {"kind": "outstanding_detail"},
+            },
+        )
         _result, captured = _run_turn(
             session_factory,
             monkeypatch,
             qf=_parser_output(
                 message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[],
+                reference_positions=[1],
             ),
-            text_body="DO list",
-            msg_id="ZZT-outstanding-detail-word-do-1",
+            text_body="1",
+            msg_id="ZZT-outstanding-detail-position-so-only-1",
             attributes=["sales_orders.outstanding"],
             matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
             mcp_response=REPORT_HIT,
         )
-        assert captured, "'DO list' must resolve the offer without a number"
+        assert captured, "'1' must still resolve the single-option offer"
         name, args = captured[0]
         assert name == "crm_outstanding_report", (name, args)
-        assert args.get("detail") == "do", f"'DO list' must give the DO detail: {args}"
-        assert args.get("product_code") == PRODUCT_CODE, (
-            f"the SAME carried filters, not re-parsed: {args}"
-        )
+        assert args.get("detail") == "so", f"'1' must give the SO detail: {args}"
 
-    def test_so_list_word_after_a_both_scope_report_gives_the_so_detail(
+    def test_position_not_on_offer_reprints_rather_than_falling_through(
         self, session_factory, monkeypatch
     ) -> None:
-        _seed_open_outstanding_detail(session_factory)
-        _result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[],
-            ),
-            text_body="SO list",
-            msg_id="ZZT-outstanding-detail-word-so-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured, "'SO list' must resolve the offer without a number"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (name, args)
-        assert args.get("detail") == "so", f"'SO list' must give the SO detail: {args}"
-
-    def test_do_list_word_after_an_so_only_report_reprints_the_offer(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Only "1 Sales order list" is on offer (the DO block was empty) - "DO list"
-        names a scope that was never offered, so it must NOT resolve as a pick at
-        all (no tool call) and must NOT fall into the generic order lane; the SAME
-        offer is re-printed instead. Measured today: the word is not recognised as
-        anything at all, `message_type: casual` routes to `low_signal`, which is not
-        in `chatbot_completed_lanes` (["business_query"]), so the turn DELEGATES and
-        comes back with an empty reply - `result.status == "delegated"`,
-        `result.branch_kind == "low_signal"` - a third, silent way this reads as
-        "not recognised", beyond the re-ask or the generic-lane shapes."""
+        """Only option 1 is on offer (the DO block was empty) - position 2 names
+        nothing stored, so it must NOT resolve as a pick (no tool call) and must NOT
+        fall into the generic order lane; the SAME offer is re-printed instead. This
+        is the structural half of what used to be `test_do_list_word_after_an_so_
+        only_report_reprints_the_offer` (D16, retired) - the WORD "DO list" no longer
+        reaches this function at all under D17, but an out-of-range POSITION still
+        must re-ask rather than silently drop through."""
         _seed_contact(
             session_factory,
             variables={
@@ -1997,14 +2045,14 @@ class TestDetailWordAnswers:
             monkeypatch,
             qf=_parser_output(
                 message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[],
+                reference_positions=[2],
             ),
-            text_body="DO list",
-            msg_id="ZZT-outstanding-detail-word-unoffered-1",
+            text_body="2",
+            msg_id="ZZT-outstanding-detail-position-unoffered-1",
             attributes=["sales_orders.outstanding"],
         )
         assert captured == [], (
-            f"'DO list' names a scope that was never offered - it must not run any "
+            f"position 2 names a scope that was never offered - it must not run any "
             f"report at all: {captured}"
         )
         reply = (result.reply or {}).get("text") or ""
@@ -2013,7 +2061,7 @@ class TestDetailWordAnswers:
             f"order lane: {reply!r}"
         )
         assert "Transporter" not in reply and "Lorry Plate" not in reply, (
-            f"'DO list' must never fall into the generic order-list lane: {reply!r}"
+            f"an unoffered position must never fall into the generic order-list lane: {reply!r}"
         )
 
 
@@ -2152,4 +2200,136 @@ class TestOutstandingFiltersDoNotOutliveTheAnsweringTurn:
         assert "outstanding_filters" not in stored, (
             f"outstanding_filters must not survive past the one turn that answers "
             f"an open scope/detail ask: {stored}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# D17 (owner design ruling, 13 Sep 2026) - the parser reads words, the head only
+# ever maps a POSITION. Three more things this ruling pins in pytest: the open
+# question's own option labels reach the text the engine sends to the parser,
+# the retired D16 word table is actually GONE, and the prompt itself carries the
+# new instruction (the live word-to-position behaviour is verified by the
+# console case, `tests/chatbot/console_cases/2026-09-13-outstanding-report.yaml`,
+# not by pytest - there is no LLM in this suite).
+# --------------------------------------------------------------------------- #
+
+
+class TestParserContextCarriesTheOpenQuestionsOptions:
+    """D17 point 1: "the parser prompt carries the open question's numbered
+    options, the same way `last_result_set` / `selection_context` are surfaced to
+    the parser today" - today that surfacing is `head/parser.py::build_user_block`'s
+    `pending_kind` fact line (`engine.py:1205-1209`), the ONE per-turn fact about an
+    open ask this text carries. `capture_user_block` (`_run_turn`'s own new kwarg,
+    this file's addition) reads the ACTUAL text handed to `parser.parse`, so these
+    tests do not have to guess an internal builder's parameter name."""
+
+    def test_open_scope_question_surfaces_its_option_labels_to_the_parser(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_scope(session_factory)
+        blocks: list[str] = []
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-parser-context-scope-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+            capture_user_block=blocks,
+        )
+        assert blocks, "the turn must have reached the parser at all"
+        user_block = blocks[0]
+        for label in ("Sales orders", "Delivery orders", "Both"):
+            assert label in user_block, (
+                f"the open scope question's own option {label!r} must reach the text "
+                f"handed to the parser, so it can read a word answer against what was "
+                f"actually offered: {user_block!r}"
+            )
+
+    def test_open_detail_offer_surfaces_its_option_labels_to_the_parser(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_detail(session_factory)
+        blocks: list[str] = []
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-parser-context-detail-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+            capture_user_block=blocks,
+        )
+        assert blocks, "the turn must have reached the parser at all"
+        user_block = blocks[0]
+        assert "Sales order list" in user_block, user_block
+        assert "Delivery order list" in user_block, user_block
+
+    def test_no_open_question_carries_no_options(self, session_factory, monkeypatch) -> None:
+        """A turn with no open outstanding ask must carry no option text at all - the
+        labels are the OPEN question's own, never a standing roster. Passes already
+        (nothing surfaces options today); kept as the contract's other half, so a
+        later change that always attaches the last-seen options cannot regress past
+        this class unnoticed."""
+        _seed_contact(session_factory, variables={})
+        blocks: list[str] = []
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="outstanding"),
+            text_body="SRTWT7445 outstanding",
+            msg_id="ZZT-outstanding-parser-context-none-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            capture_user_block=blocks,
+        )
+        assert blocks, "the turn must have reached the parser at all"
+        user_block = blocks[0]
+        assert "Sales orders" not in user_block, user_block
+        assert "Delivery orders" not in user_block, user_block
+
+
+class TestOutstandingWordTableIsRetired:
+    def test_output_exchange_carries_no_outstanding_word_table(self) -> None:
+        """D17 point 2: "No `_OUTSTANDING_WORD_VALUES`, no filler list, no word cap."
+        Measured today: the table (and its `_outstanding_word_pick` reader) is still
+        in `head/output_exchange.py` from D16 - this fails until it is removed."""
+        from app.services.chatbot.head import output_exchange
+
+        assert not hasattr(output_exchange, "_OUTSTANDING_WORD_VALUES"), (
+            "the D16 word table must be gone under D17 - the parser resolves words, "
+            "the head only ever maps a position"
+        )
+        assert not hasattr(output_exchange, "_outstanding_word_pick"), (
+            "the D16 word-reading function must be gone alongside its table"
+        )
+
+
+class TestParserPromptTeachesOpenQuestionAnswers:
+    def test_prompt_instructs_reference_positions_for_an_open_question_answer(self) -> None:
+        """D17 point 1's instruction text, in substance (this file's own choice of
+        exact wording - the addendum's phrasing is the coder's to write): the parser
+        must emit the open question's position for a numbered OR worded answer, and
+        must treat a message naming something new as not an answer at all."""
+        from app.services import chatbot_parser_prompt as prompt_mod
+
+        addendum = prompt_mod.GROWTH_R1_ADDENDUM
+        assert "reference_positions" in addendum, (
+            "the addendum must instruct the parser to emit reference_positions for an "
+            "open numbered question, whether the answer is a number or a word naming "
+            "an option"
+        )
+        assert "not an answer" in addendum.lower() or "new ask" in addendum.lower(), (
+            "the addendum must say that a message naming something new (a product, a "
+            "customer, an order, another topic) is NOT an answer to the open question"
         )

@@ -1,6 +1,6 @@
 # PLAN - Chatbot outstanding report: SO backlog and DO pending, one shape, four filters
 
-Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) sits on origin/main and ships WITHOUT #847. S1 to S4 built; Phase 3 PASSED (reviewer + security reviewer + console run 5, six of six journey turns green); PR open. Owner testing round 1, 13 Sep 2026 (R1, R2) implemented. Owner testing round 2, 13 Sep 2026 (R3, D16/AC-1144/AC-1145) - RED tests written in `test/chatbot-outstanding-red`, not yet implemented.
+Status: APPROVED by owner 12 Sep 2026 on the lavish page; lane `feat/chatbot-outstanding-report` (worktree `.claude/worktrees/chatbot-outstanding-report`, test DB `sorento_osr_ci`) sits on origin/main and ships WITHOUT #847. S1 to S4 built; Phase 3 PASSED (reviewer + security reviewer + console run 5, six of six journey turns green); PR open. Owner testing round 1, 13 Sep 2026 (R1, R2) implemented. Owner testing round 2, 13 Sep 2026 (R3, D16/AC-1144/AC-1145) implemented, then SUPERSEDED. Owner testing round 3, 13 Sep 2026 (R6, R7, R9, and design ruling D17 which retires D16's word tables) - RED tests written in `test/chatbot-outstanding-red`, not yet implemented.
 UAC: `chatbot-outstanding-report-acceptance-criteria.md` (AC-11xx).
 Base: stacked on `feat/chatbot-focus` (lane 1 of `PLAN-chatbot-focus-multi-domain.md`,
 issue #847), because the scope question and the detail pick are open-question kinds that
@@ -29,7 +29,7 @@ Three defects and one missing definition, all measured (UAC "Measured"):
 
 | # | Ruling |
 |---|---|
-| D1 | Two named numbers. Block titles are `Sales order outstanding` and `Delivery order pending`. The bare word never appears as a heading. |
+| D1 | Two named numbers. Block titles are `Sales order outstanding` and `Delivery order outstanding` (RENAMED, R7, owner testing round 3, 13 Sep 2026 - was `Delivery order pending` until R6 brought a `Delivered` figure back into the block, at which point "pending" stopped being the right word for the whole block). The bare word never appears as a heading. |
 | D2 | Missing scope word → ONE numbered question (Sales orders / Delivery orders / Both). Scope words in the message bind without asking. On main this is `selection_context = "outstanding_scope"` + `pending.kind = "outstanding_scope"` + a 3-row `last_result_set`, one-turn life like `team_clarify` (see "S4 on main"). |
 | D3 | No date in the message = all dates, printed as `Order date: all`. A parsed window filters SO on `sales_orders.order_date` and DO on `orders.order_date`. No date question in this lane (trigger in UAC backlog). |
 | D4 | Cancelled quantity is never shown and never summed. |
@@ -37,7 +37,7 @@ Three defects and one missing definition, all measured (UAC "Measured"):
 | D6 | Grain: totals sum lines; the list is one row per SO with lines rolled up; the DO list one row per PENDING DO ONLY (REWRITTEN, R1, 13 Sep). By location and By customer are printed INSIDE each block: SO figures under the SO block, DO figures under the DO block (owner markup, 12 Sep). |
 | D7 | Customer filter by `customer_name` only. Debtor code is not an input and not printed. |
 | D8 | Reply is `Label: value` lines, no `.` separators, exact date ranges (`dd/mm/yyyy to dd/mm/yyyy`), no "oldest", no "+N more". Every row is sent; n8n chunks long messages already. |
-| D9 | RULED on the lavish page 12 Sep: SO breakdown lines read `name: ordered (O/S: outstanding)`, the suffix shape the stock answer already uses (`presenters.py:1259-1287`). DO breakdown lines READ `name: pending`, no bracket (REWRITTEN, R1, 13 Sep: `do_qty` is gone, so there is nothing left for the bracket to disambiguate pending from). Sub-headings print `*_By location_*` / `*_By customer_*` (bold italic; WhatsApp has no underline). |
+| D9 | RULED on the lavish page 12 Sep: SO breakdown lines read `name: ordered (O/S: outstanding)`, the suffix shape the stock answer already uses (`presenters.py:1259-1287`). DO breakdown lines READ `name: pending`, no bracket (REWRITTEN, R1, 13 Sep: `do_qty` is gone, so there is nothing left for the bracket to disambiguate pending from) - REWRITTEN AGAIN (R6, owner testing round 3, 13 Sep 2026): the bracket is BACK, `name: do_qty (O/S: pending)`, over EVERY DO in scope (pending and delivered); a name whose pending is 0 still prints `(O/S: 0)`, never elided. Sub-headings print `*_By location_*` / `*_By customer_*` (bold italic; WhatsApp has no underline). |
 | D10 | Detail is offered as a numbered reply (`1. Sales order list`, `2. Delivery order list`). CHANGED 13 Sep (captain, main mechanism): the answering turn re-runs the SAME tool call with the stored filter set plus `detail=so|do`; the session keeps the filters, never the rows (so_rows can be hundreds of SOs and session variables are not a cache). One GET, same numbers. |
 | D11 | The chatbot stops calling the `so_outstanding` bucket for outstanding asks. That bucket and `include_pipeline` stay for their other readers; repairing them is backlog (trigger in UAC). |
 | D13 | Access (owner ruling on the lavish page): every `order_enquiries` contact sees DO figures, as today. SO figures are gated per contact by ONE field-reveal key `sales_orders.outstanding` on Contacts > Access (same table and screen as `purchase_orders.placed`, which already gates a whole answer family: `answer.py:936, 1113-1122`). Default deny. Without the key the scope question is never asked (scope is DO) and an explicit SO ask prints `Sales order figures are not enabled for your account.` then the DO block. Checked before any fetch. No new table, no new agent. |
@@ -45,9 +45,17 @@ Three defects and one missing definition, all measured (UAC "Measured"):
 | R1 | **REWRITTEN, owner testing round 1, 13 Sep 2026.** "Delivery order pending" means DOs that still have pending quantity, nothing else - "most of the DO are delivered right so what's outstanding? I thought outstanding means still got some pending quantity." The DO block and its two breakdowns cover ONLY DOs matching `_outstanding_clause`; `do_qty` and `delivered_qty` are GONE from the block and both breakdowns - there is nothing left to disambiguate a pending figure from, so the breakdown lines drop their `(O/S: ...)` bracket too (`name: pending`, no bracket). See "The reply" and "Backend contract" below for the new shape. PARTIALLY SUPERSEDED by R3: `do_rows[]` regains `do_qty`/`delivered_qty` on the ROW only. |
 | R2 | **NEW, owner testing round 1, 13 Sep 2026.** The detail offer is STICKY: after "1" (SO list), typing "2" must give the DO list - today `pending.kind = "outstanding_detail"` is consumed by the first pick (`tail/compile_state.py::_offer_carry`'s own one-turn exclusion for it), so a second pick falls into the generic order lane. Rule: the offer stays open across picks and casual turns until a NEW ASK (a message carrying a product code or a domain word) or a topic change - the SAME carry condition `suggest_offer` / the tier offer already use, copied with its justification (`_offer_carry`), never `member_offer`'s TTL. |
 | R3 | **NEW, owner testing round 2, 13 Sep 2026.** DO detail rows show the delivered quantity even when it is zero - "need to show delivered also, doesn't mean if it is 0 then we don't show, if it is 0 then we show 0, don't hide." `do_rows[]` regains `do_qty` (the DO's line quantity for the product) and `delivered_qty` (`do_qty` minus `pending_qty`, `0` for a pending DO today) - ROWS ONLY, the block and both breakdowns stay pending-only (R1 stands there). |
-| D16 | **NEW, owner testing round 2, 13 Sep 2026.** Word answers, no number required. On `outstanding_scope`: "sales"/"sales order"/"SO" -> 1, "delivery"/"delivery order"/"DO" -> 2, "both"/"all"/"everything" -> 3 (case-insensitive, filler words like "the"/"list"/"please" tolerated) - the owner typed "all" and got the question re-asked. On `outstanding_detail`: "sales order list"/"SO list"/"SO"/"sales" -> the Sales order list option, "DO list"/"delivery order list"/"DO"/"delivery" -> the Delivery order list option, matched against WHICHEVER options are actually on offer (a word for a scope not offered re-prints the offer, never silently drops through) - the owner typed "DO list" after an SO-only report and fell into the generic order lane (a full DO list with transporter fields). A product code or a domain word is still a new ask, unchanged (R2/AC-1143). |
+| D16 | **owner testing round 2, 13 Sep 2026 - SUPERSEDED by D17.** Word answers, no number required, read by a fixed word table in the deterministic head (`_OUTSTANDING_WORD_VALUES`). On `outstanding_scope`: "sales"/"sales order"/"SO" -> 1, "delivery"/"delivery order"/"DO" -> 2, "both"/"all"/"everything" -> 3. On `outstanding_detail`: matched against WHICHEVER options are actually on offer. The word table itself is what caused the "delivery to hanlim" regression (see D17) - "delivery" matched the DO-list word even though the message named a customer, not an answer - and is retired rather than patched again. |
+| R6 | **NEW, owner testing round 3, 13 Sep 2026.** "need to show the delivered also, so the by location and by customer needs to be the DO qty (O/S: {pending}) so DO qty minus pending should be those quantity delivered." `do_qty` / `delivered_qty` come BACK onto the `do` block and onto BOTH breakdowns (`do_by_location[]` / `do_by_customer[]`), summed over EVERY DO in scope - pending AND delivered - reversing R1's "gone from the block and breakdowns" for these two fields only. R1's population rule survives for `do_count` / `do_date_min` / `do_date_max` / `do_rows[]`, which stay pending-DOs-only. The breakdown line regains its bracket (D9, above): `name: do_qty (O/S: pending)`, and a name whose pending is 0 (a location/customer that is only ever delivered) still prints `(O/S: 0)`, never elided. |
+| R7 | **NEW, owner testing round 3, 13 Sep 2026, same sitting as R6.** Both blocks use the SAME line order, and the DO block says "outstanding", never "pending" - block title `Delivery order outstanding` (D1, above); SO block order becomes `Sales orders`, `Ordered`, `Transferred to DO`, `Outstanding`, `Order date range`; DO block prints FIVE value lines in order `Delivery orders`, `DO qty`, `Delivered`, `Outstanding`, `DO date range` (`Delivered` is back, printed even at 0; `Outstanding` replaces the `Pending` label - the JSON field stays `pending_qty`, this is presentation only). `Delivery orders` stays the count of DOs still outstanding (`do_count`, pending only). The miss line becomes `No outstanding delivery order.`; the DO detail row label `*Pending:*` becomes `*Outstanding:*` (row fields: DO Number, Customer, Location, DO Qty, Delivered, Outstanding, DO Date). The scope question option 2 and the detail offer's `2. Delivery order list` are unchanged in wording. |
+| R9 | **NEW, owner testing round 3, 13 Sep 2026.** A report with only ONE scope offers detail as a single sentence, not a numbered list: `Reply 1 for the sales order list.` (SO-only) / `Reply 1 for the delivery order list.` (DO-only). The numbered form (`1. Sales order list` / `2. Delivery order list`) stays for TWO scopes. "1" still picks either way - this is a presentation change only, the deterministic resolver is unaffected. |
+| D17 | **Design ruling, owner + captain, 13 Sep 2026 - REPLACES R4, R5 and R8 as previously briefed, and RETIRES D16.** Deterministic code never reads words; the PARSER (LLM) reads the customer's answer and the head only ever maps a POSITION to a stored option. When `pending.kind` is `outstanding_scope` or `outstanding_detail`, the text the engine sends the parser (`head/parser.py::build_user_block`, the same per-turn-fact path that already states "the assistant is waiting for a `{pending_kind}` reply") carries the open question's own numbered option labels, and the prompt (migration 514's published text, `chatbot_parser_prompt.py`) instructs: emit `reference_positions` for the position the message answers, by number or by words naming an option; a message that asks something new (a product, a customer, an order, another topic) is NOT an answer. `_OUTSTANDING_WORD_VALUES` / `_outstanding_word_pick` are deleted from `head/output_exchange.py` - there is no filler list and no word cap to maintain, because the head never reads a word again. The R8 regression ("delivery to hanlim" read as a DO-list pick because "delivery" matched the word table) is retired along with the table that caused it, and re-verified live by a console case rather than a pytest word list, because only the real parser reads words. New-ask precedence stays structural in the head, defensively: a turn naming its own entity is a new ask even if it also carries a stray `reference_positions` (the parser is told never to emit both). |
 
 ## The reply (contract for Phase 1)
+
+REWRITTEN (R6/R7, owner testing round 3, 13 Sep 2026) - both blocks share the SAME line
+order, the DO block gets its `Delivered` line back and says "outstanding" rather than
+"pending", and its breakdowns regain the `(O/S: ...)` bracket over EVERY DO in scope:
 
 ```
 Product: SRTWT7445
@@ -56,10 +64,10 @@ Location: IB (BRW-IB, MWH-IB)
 Order date: 01/01/2026 to 31/12/2026
 
 *Sales order outstanding*
+Sales orders: 12
 Ordered: 2,411
 Transferred to DO: 0
 Outstanding: 2,411
-Sales orders: 12
 Order date range: 05/01/2026 to 28/08/2026
 *_By location_*
 BRW-IB: 1,200 (O/S: 1,200)
@@ -69,19 +77,25 @@ Dealer A Sdn Bhd: 900 (O/S: 900)
 Dealer B Trading: 811 (O/S: 811)
 Dealer C Hardware: 700 (O/S: 700)
 
-*Delivery order pending*
-Pending: 640
+*Delivery order outstanding*
 Delivery orders: 3
+DO qty: 700
+Delivered: 60
+Outstanding: 640
 DO date range: 03/02/2026 to 30/08/2026
 *_By location_*
-BRW-IB: 640
+BRW-IB: 700 (O/S: 640)
 *_By customer_*
-Dealer A Sdn Bhd: 640
+Dealer A Sdn Bhd: 700 (O/S: 640)
 
 Reply with a number for detail:
 1. Sales order list
 2. Delivery order list
 ```
+
+R9 (same sitting): with only ONE scope on offer, the closing line is a single sentence
+rather than a numbered list - `Reply 1 for the sales order list.` / `Reply 1 for the
+delivery order list.` - "1" still picks either way.
 
 Scope question (D2):
 
@@ -105,11 +119,11 @@ Detail, SO list (D6, D10), one item per SO:
 *Order Date:* 20/12/2024
 ```
 
-Detail, DO list (D6, D10), one item per PENDING DO only, fields REWRITTEN TWICE (R1 then
-R3, owner testing rounds 1 and 2, 13 Sep): R1 dropped `DO Qty` / `Delivered`; R3 brought
-them BACK on the ROW ONLY (the block above stays pending-only) because the owner wants
-`Delivered` shown even when it is `0` - "doesn't mean if it is 0 then we don't show, if
-it is 0 then we show 0, don't hide":
+Detail, DO list (D6, D10), one item per PENDING DO only, fields REWRITTEN THREE TIMES (R1,
+R3, then R7): R1 dropped `DO Qty` / `Delivered`; R3 brought them BACK on the ROW ONLY (the
+block above stays pending-only) because the owner wants `Delivered` shown even when it is
+`0`; R7 renames the row's `Pending` label to `Outstanding` (presentation only - the JSON
+field stays `pending_qty`):
 
 ```
 1. *DO Number:* DO220456
@@ -117,13 +131,15 @@ it is 0 then we show 0, don't hide":
 *Location:* BRW-IB
 *DO Qty:* 640
 *Delivered:* 0
-*Pending:* 640
+*Outstanding:* 640
 *DO Date:* 03/02/2026
 ```
 
 D10 is ALSO sticky now (R2, 13 Sep): the offer this reply ends with stays open across
 picks and casual turns until a new ask or a topic change, not just the one turn that
-answers it.
+answers it. D17 (13 Sep, same round as R6/R7): a WORD answer to either open question ("all",
+"DO list") is resolved by the PARSER against these option labels, never by the deterministic
+head - see "S4 on main" point 4/5 and D17's own row in Decisions, above.
 
 ## Backend contract
 
@@ -147,16 +163,16 @@ Response (`OutstandingReportResponse`, every field declared):
   "order_date_from": "2026-01-01" | null, "order_date_to": ... | null,
   "so": { "ordered_qty", "transferred_qty", "outstanding_qty", "so_count",
           "order_date_min", "order_date_max" },              # absent when scope=do
-  "do": { "pending_qty", "do_count",
-          "do_date_min", "do_date_max" },                    # absent when scope=so; REWRITTEN R1 - no do_qty/delivered_qty
+  "do": { "do_qty", "delivered_qty", "pending_qty", "do_count",
+          "do_date_min", "do_date_max" },                    # absent when scope=so; do_qty/delivered_qty BACK (R6)
   "so_by_location": [ { "code": "BRW-IB" | null, "ordered_qty", "outstanding_qty" } ],
   "so_by_customer": [ { "customer_name", "ordered_qty", "outstanding_qty" } ],
-  "do_by_location": [ { "code" | null, "pending_qty" } ],
-  "do_by_customer": [ { "customer_name", "pending_qty" } ],
+  "do_by_location": [ { "code" | null, "do_qty", "pending_qty" } ],     # do_qty BACK (R6)
+  "do_by_customer": [ { "customer_name", "do_qty", "pending_qty" } ],   # do_qty BACK (R6)
   "so_rows": [ { "so_number", "customer_name", "location", "ordered_qty",
                  "transferred_qty", "outstanding_qty", "order_date" } ],
   "do_rows": [ { "do_number", "customer_name", "location",
-                 "pending_qty", "do_date" } ]                 # REWRITTEN R1 - no do_qty/delivered_qty
+                 "do_qty", "delivered_qty", "pending_qty", "do_date" } ]
 }
 ```
 
@@ -166,20 +182,37 @@ qty_delivered > 0` joined to the product and the optional filters. `ordered_qty 
 qty_ordered`, `transferred_qty = SUM qty_delivered`, `outstanding_qty = SUM (qty_ordered -
 qty_delivered)`. The identity is then arithmetic, not luck.
 
-DO population, REWRITTEN (R1, owner testing 13 Sep 2026, supersedes the captain's 12 Sep
-ruling below): the block, its breakdowns and `do_rows[]` cover ONLY DOs matching
-`OrderService._outstanding_clause` (`order_service.py:67-93`) - a DELIVERED DO (matching
-`_delivered_clause`) contributes to NOTHING on this route, not even a total. `pending_qty =
-SUM order_lines.quantity` for the product over pending DOs in the window, location from
-`order_lines.warehouse_id`. There is no `do_qty` / `delivered_qty` identity to hold any more
-because there is nothing left to add: `pending_qty` is the only quantity on the DO side.
+DO population, REWRITTEN THREE TIMES:
+
+- R1 (owner testing round 1, 13 Sep 2026, superseded the captain's 12 Sep ruling): the
+  block, its breakdowns and `do_rows[]` cover ONLY DOs matching `OrderService._outstanding_
+  clause` (`order_service.py:67-93`) - a DELIVERED DO contributes to NOTHING, not even a
+  total. `do_qty`/`delivered_qty` gone entirely.
+- R3 (owner testing round 2, 13 Sep 2026): `do_rows[]` regains `do_qty`/`delivered_qty` -
+  ROWS ONLY, `delivered_qty` is always `0` there by construction (a delivered DO is not in
+  the pending population `do_rows[]` draws from).
+- R6, REWRITTEN AGAIN (owner testing round 3, 13 Sep 2026): "need to show the delivered
+  also, so the by location and by customer needs to be the DO qty (O/S: {pending}) so DO
+  qty minus pending should be those quantity delivered." `do_qty`/`delivered_qty` come BACK
+  onto the BLOCK and onto BOTH breakdowns too - summed over EVERY DO in scope, pending and
+  delivered, joined to the product and the optional filters (NOT `_outstanding_clause`
+  filtered for this pair of fields). `do_count` / `do_date_min` / `do_date_max` / `do_rows[]`
+  keep R1's population (`_outstanding_clause`, pending DOs only) - a delivered DO is never
+  counted, never dates the window, and never gets a row. `pending_qty = SUM order_lines.
+  quantity` over pending DOs only (unchanged since R1); `do_qty = SUM order_lines.quantity`
+  over every DO in scope; `delivered_qty = do_qty - pending_qty`. The identity
+  `do_qty == delivered_qty + pending_qty` holds on the block and on every breakdown row, by
+  construction, the same way the SO identity does.
 
 <details><summary>Superseded 12 Sep wording, kept for the commit history's sake</summary>
 
 `do_qty = delivered_qty + pending_qty` over every DO (pending and delivered) in the window,
 so the DO block carried the same identity as the SO block. The owner's own testing (R1)
 found this reads as "outstanding" including DOs that are actually delivered, which is not
-what "outstanding" means to him.
+what "outstanding" means to him - R6 (round 3) brought the identity back for the TOTALS
+while keeping R1's population rule for the DO COUNT (there ARE still DOs that read as
+outstanding on their own, R1 stands there; the owner's round-3 ask was for the delivered
+figure ALONGSIDE it, not instead of it).
 
 </details>
 

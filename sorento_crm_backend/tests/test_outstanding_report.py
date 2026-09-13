@@ -9,16 +9,20 @@ route over HTTP and must fail with 404 (route not found) until the coder wires i
 an import error, not a fixture bug. Postgres only (`tests/_pg_fixture.py`), every row seeded
 here; CI's database has none.
 
-AC-1115, REWRITTEN (owner ruling, 13 Sep 2026, R1): "most of the DO are delivered right so
-what's outstanding? I thought outstanding means still got some pending quantity." The `do`
-block covers ONLY DOs matching `_outstanding_clause` (`order_service.py:67-93`) - a DELIVERED
-DO contributes to nothing on this route at all, not even a total. `pending_qty` = SUM
-`order_lines.quantity` for the product over pending DOs, `do_count` counts pending DOs only,
-`do_date_min/max` is the order_date range over pending DOs only, and `do_rows[]` lists pending
-DOs only. `do_qty` and `delivered_qty` are GONE from the block, from `do_by_location[]` /
-`do_by_customer[]`, and from `do_rows[]` - there is nothing left to disambiguate a pending
-figure from, so no field carries the word "delivered" or the bare "do_qty" anywhere in this
-response.
+AC-1115, REWRITTEN THREE TIMES:
+- R1 (owner testing round 1, 13 Sep 2026): "most of the DO are delivered right so what's
+  outstanding? I thought outstanding means still got some pending quantity." Dropped
+  `do_qty`/`delivered_qty` from the block and both breakdowns; every figure became pending-only.
+- R3 (owner testing round 2, 13 Sep 2026): "need to show delivered also... if it is 0 then we
+  show 0, don't hide." Brought `do_qty`/`delivered_qty` back on `do_rows[]` ONLY.
+- R6 (owner testing round 3, 13 Sep 2026): "need to show the delivered also, so the by
+  location and by customer needs to be the DO qty (O/S: {pending})." Brings `do_qty` /
+  `delivered_qty` back on the BLOCK too, and `do_qty` back on BOTH breakdowns, summed over
+  EVERY DO in scope (pending AND delivered) - R1's population rule now survives only for
+  `do_count` / `do_date_min` / `do_date_max` / `do_rows[]`, which stay pending-DOs-only.
+  `pending_qty` = SUM over pending DOs; `do_qty` = SUM over every DO, pending and delivered;
+  `delivered_qty` = the rest of it. `do_qty == delivered_qty + pending_qty` holds on the
+  block and on every breakdown row.
 """
 from __future__ import annotations
 
@@ -387,23 +391,28 @@ def test_so_rows_roll_up_lines_per_so(client, db):
 # --------------------------------------------------------------------- AC-1115
 
 
-def test_do_block_covers_pending_dos_only(client, db):
-    """R1: "most of the DO are delivered right so what's outstanding? I thought
-    outstanding means still got some pending quantity." The `do` block and its
-    breakdowns cover ONLY DOs matching `_outstanding_clause` - a delivered DO
-    contributes to NOTHING there, not even a total. One delivered DO (qty 5) and one
-    pending DO (qty 7) for the same product: pending 7, count 1, `do_rows` lists the
-    pending DO only.
+def test_do_block_totals_span_every_do_and_rows_stay_pending(client, db):
+    """R6, REWRITTEN AGAIN (owner testing round 3, 13 Sep 2026): "need to show the
+    delivered also, so the by location and by customer needs to be the DO qty (O/S:
+    {pending}) so DO qty minus pending should be those quantity delivered." `do_qty`
+    and `delivered_qty` are BACK on the BLOCK and on BOTH breakdowns, summed over
+    EVERY DO in scope - pending AND delivered - reversing R1's "pending DOs only"
+    ruling for the totals (R1's population rule survives only for `do_count` /
+    `do_date_min` / `do_date_max` / `do_rows[]`, which stay pending-DOs-only).
 
-    R3, REWRITTEN (owner testing round 2, 13 Sep 2026): "need to show delivered
-    also, doesn't mean if it is 0 then we don't show, if it is 0 then we show 0,
-    don't hide." `do_rows[]` REGAINS `do_qty` / `delivered_qty` per row (rows only -
-    the `do` block and the two breakdowns stay pending-only, R1 stands there): `do_qty`
-    is the DO's line quantity for the product, `delivered_qty = do_qty - pending_qty`
-    (0 for a pending DO, since a delivered DO is excluded from this route entirely)."""
+    One delivered DO (qty 5) and one pending DO (qty 7) for the SAME customer:
+    `do_qty` 12 (5+7), `delivered_qty` 5, `pending_qty` 7, `do_count` 1 (the pending
+    DO only), and `do_by_customer` carries ONE row for that customer: `do_qty` 12,
+    `pending_qty` 7. `do_rows[]` still lists the pending DO only (R1/R3 stand there).
+
+    A SECOND customer with only a DELIVERED DO (qty 9) must still appear in
+    `do_by_customer` - `do_qty` 9, `pending_qty` 0 - never elided (R6: "a name whose
+    pending is 0 is still printed", the presenter's job; the ROUTE must not drop the
+    row in the first place, or there is nothing left for the presenter to print)."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT DO Customer")
+    cust_delivered_only = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT DO Delivered Only")
     delivered_status = _delivered_status(db)
 
     _do(
@@ -415,31 +424,40 @@ def test_do_block_covers_pending_dos_only(client, db):
         db, product_id=prod.id, warehouse_id=wh.id, qty=7, customer_id=cust.id,
         order_status_id=None, actual_delivery_date=None, number="ZZT-DO-PENDING",
     )
+    _do(
+        db, product_id=prod.id, warehouse_id=wh.id, qty=9, customer_id=cust_delivered_only.id,
+        order_status_id=delivered_status.id, actual_delivery_date=date(2026, 3, 2),
+        number="ZZT-DO-DELIVERED-ONLY",
+    )
     db.commit()
 
     resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "do"})
     assert resp.status_code == 200, resp.text
     do = resp.json()["do"]
+    assert do["do_qty"] == 21, f"do_qty must sum EVERY DO in scope (5+7+9): {do}"
+    assert do["delivered_qty"] == 14, f"delivered_qty must sum every delivered DO (5+9): {do}"
     assert do["pending_qty"] == 7
-    assert do["do_count"] == 1
-    assert "do_qty" not in do, "the BLOCK stays pending-only (R1)"
-    assert "delivered_qty" not in do, "the BLOCK stays pending-only (R1)"
+    assert do["do_count"] == 1, "do_count stays PENDING DOs only (R1 survives here)"
 
     rows = {r["do_number"]: r for r in resp.json()["do_rows"]}
     assert set(rows) == {"ZZT-DO-PENDING"}, (
-        f"a delivered DO must not appear in do_rows at all: {rows}"
+        f"do_rows[] stays pending-DOs-only (R1/R3 survive here): {rows}"
     )
     pending_row = rows["ZZT-DO-PENDING"]
     assert pending_row["pending_qty"] == 7
-    assert pending_row["do_qty"] == 7, (
-        f"R3: do_rows[].do_qty is back, and equals the pending qty for a pending DO: {pending_row}"
-    )
-    assert pending_row["delivered_qty"] == 0, (
-        f"R3: delivered_qty prints 0 rather than being omitted: {pending_row}"
-    )
+    assert pending_row["do_qty"] == 7
+    assert pending_row["delivered_qty"] == 0
 
-    for row in resp.json()["do_by_location"] + resp.json()["do_by_customer"]:
-        assert "do_qty" not in row, f"the BREAKDOWNS stay pending-only (R1): {row}"
+    by_customer = {r["customer_name"]: r for r in resp.json()["do_by_customer"]}
+    assert by_customer["ZZT DO Customer"]["do_qty"] == 12, by_customer
+    assert by_customer["ZZT DO Customer"]["pending_qty"] == 7, by_customer
+    assert "ZZT DO Delivered Only" in by_customer, (
+        f"a customer with only a delivered DO must still appear in the breakdown: {by_customer}"
+    )
+    assert by_customer["ZZT DO Delivered Only"]["do_qty"] == 9, by_customer
+    assert by_customer["ZZT DO Delivered Only"]["pending_qty"] == 0, (
+        f"pending 0 is printed, never omitted or elided: {by_customer}"
+    )
 
 
 def test_a_sales_order_with_no_customer_echoes_null_not_the_string_none(client, db):
@@ -468,18 +486,26 @@ def test_a_sales_order_with_no_customer_echoes_null_not_the_string_none(client, 
 
 def test_breakdowns_sum_to_totals(client, db):
     """so_by_location/so_by_customer and do_by_location/do_by_customer each sum to
-    their block's totals. R1: the DO side sums `pending_qty` only - `do_qty` no
-    longer exists anywhere in the response."""
+    their block's totals. R6, REWRITTEN AGAIN: `do_qty` is back on the DO side too -
+    both breakdowns must sum to BOTH `do.do_qty` and `do.pending_qty`, over every DO
+    in scope (one delivered DO of qty 4 added at each location/customer alongside
+    the existing pending one, so `do_qty` and `pending_qty` genuinely differ)."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh1 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH1"))
     wh2 = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH2"))
     cust1 = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Cust One")
     cust2 = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Cust Two")
+    delivered_status = _delivered_status(db)
 
     _so_line(db, product_id=prod.id, ordered=10, delivered=2, customer_id=cust1.id, warehouse_id=wh1.id)
     _so_line(db, product_id=prod.id, ordered=6, delivered=1, customer_id=cust2.id, warehouse_id=wh2.id)
     _do(db, product_id=prod.id, warehouse_id=wh1.id, qty=15, customer_id=cust1.id)
     _do(db, product_id=prod.id, warehouse_id=wh2.id, qty=9, customer_id=cust2.id)
+    _do(
+        db, product_id=prod.id, warehouse_id=wh1.id, qty=4, customer_id=cust1.id,
+        order_status_id=delivered_status.id, actual_delivery_date=date(2026, 3, 1),
+        number="ZZT-DO-BREAKDOWN-DELIVERED",
+    )
     db.commit()
 
     resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "both"})
@@ -491,11 +517,12 @@ def test_breakdowns_sum_to_totals(client, db):
     assert sum(r["ordered_qty"] for r in body["so_by_customer"]) == body["so"]["ordered_qty"]
     assert sum(r["outstanding_qty"] for r in body["so_by_customer"]) == body["so"]["outstanding_qty"]
 
-    assert sum(r["pending_qty"] for r in body["do_by_location"]) == body["do"]["pending_qty"]
-    assert sum(r["pending_qty"] for r in body["do_by_customer"]) == body["do"]["pending_qty"]
-    assert "do_qty" not in body["do"]
-    assert all("do_qty" not in r for r in body["do_by_location"])
-    assert all("do_qty" not in r for r in body["do_by_customer"])
+    assert body["do"]["do_qty"] == 28, body["do"]  # 15 + 9 + 4
+    assert body["do"]["pending_qty"] == 24, body["do"]  # 15 + 9
+    assert sum(r["do_qty"] for r in body["do_by_location"]) == body["do"]["do_qty"], body["do_by_location"]
+    assert sum(r["pending_qty"] for r in body["do_by_location"]) == body["do"]["pending_qty"], body["do_by_location"]
+    assert sum(r["do_qty"] for r in body["do_by_customer"]) == body["do"]["do_qty"], body["do_by_customer"]
+    assert sum(r["pending_qty"] for r in body["do_by_customer"]) == body["do"]["pending_qty"], body["do_by_customer"]
 
 
 # --------------------------------------------------------------------- AC-1117
@@ -504,10 +531,11 @@ def test_breakdowns_sum_to_totals(client, db):
 def test_scope_omits_block_and_response_model_keeps_every_field(client, db):
     """A scope not asked for is ABSENT from the body (not an empty dict); `scope=both`
     (default) keeps every field the plan's contract declares - a `response_model`
-    silently drops any undeclared one. R1: `do.do_qty` / `do.delivered_qty` are no
-    longer part of the BLOCK's contract, and neither breakdown carries them either.
-    R3, REWRITTEN: `do_rows[]` is the one place they come BACK - every row must carry
-    both, `delivered_qty` present even when it is `0`, never omitted."""
+    silently drops any undeclared one. R6, REWRITTEN AGAIN (owner testing round 3, 13
+    Sep 2026): `do.do_qty` / `do.delivered_qty` are BACK on the BLOCK's contract, and
+    BOTH breakdowns (`do_by_location[]` / `do_by_customer[]`) carry `do_qty` alongside
+    `pending_qty` too - R1's "gone from the block and both breakdowns" is reversed for
+    these two fields. `do_rows[]` already carried both since R3 and is unaffected."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Field Customer")
@@ -536,17 +564,15 @@ def test_scope_omits_block_and_response_model_keeps_every_field(client, db):
         assert key in body, f"missing field: {key}"
     for key in ("ordered_qty", "transferred_qty", "outstanding_qty", "so_count", "order_date_min", "order_date_max"):
         assert key in body["so"], f"missing so.{key}"
-    for key in ("pending_qty", "do_count", "do_date_min", "do_date_max"):
-        assert key in body["do"], f"missing do.{key}"
-    for key in ("do_qty", "delivered_qty"):
-        assert key not in body["do"], f"R1 dropped do.{key} - it must not be on the wire"
+    for key in ("do_qty", "delivered_qty", "pending_qty", "do_count", "do_date_min", "do_date_max"):
+        assert key in body["do"], f"R6: do.{key} must be on the wire again"
     for row in body["do_by_location"] + body["do_by_customer"]:
-        assert "do_qty" not in row and "delivered_qty" not in row, (
-            f"R1 dropped do_qty/delivered_qty from both breakdowns: {row}"
+        assert "do_qty" in row and "pending_qty" in row, (
+            f"R6 brought do_qty BACK onto both breakdowns, alongside pending_qty: {row}"
         )
     for row in body["do_rows"]:
         assert "do_qty" in row and "delivered_qty" in row, (
-            f"R3 brought do_qty/delivered_qty BACK on do_rows[] specifically: {row}"
+            f"R3 brought do_qty/delivered_qty onto do_rows[] specifically: {row}"
         )
         assert row["delivered_qty"] == 0, (
             f"R3: delivered_qty must be present as 0, never omitted, for a pending DO: {row}"
