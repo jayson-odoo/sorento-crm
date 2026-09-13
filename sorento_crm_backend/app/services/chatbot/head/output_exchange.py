@@ -1244,27 +1244,53 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # entity that survives is the SUBJECT of the question being answered; a turn that
     # named a product of its own is a NEW ask and returned above, never here.
     #
-    # R17 (owner round 5, 13 Sep 2026) puts a REFINEMENT on the same footing: the filter
-    # it named belongs to the OFFER, not to the conversation. Its own entities travel on
-    # `outstanding_refinement_entities` (offer-scoped, read by `run_fetch`'s location
-    # resolver) and never enter this list, because this list is what the session
-    # persists: R15 left an UNRESOLVED `{"raw": "BRW", "hint": "warehouse"}` behind, the
-    # next unrelated ask merged it back in on its own axis, and the resolver searched the
-    # warehouse word as a customer token - one real family became seven in the picker
-    # (live trace, contact 437264483). The offer dies, its location dies with it.
-    o["entities"] = (
+    # R17 (owner round 5, 13 Sep 2026) puts a REFINEMENT on the same footing, for the
+    # entities THE REFINEMENT ITSELF named: that filter belongs to the OFFER, not to the
+    # conversation. Those travel on `outstanding_refinement_entities` (offer-scoped, read
+    # by `run_fetch`'s location resolver) and never enter this list, because this list is
+    # what the session persists: R15 left an UNRESOLVED `{"raw": "BRW", "hint":
+    # "warehouse"}` behind, the next unrelated ask merged it back in on its own axis, and
+    # the resolver searched the warehouse word as a customer token - one real family
+    # became seven in the picker (live trace, contact 437264483). The offer dies, its
+    # location dies with it.
+    #
+    # What a refinement KEEPS is the conversation's own carried entities - the customer
+    # or product this question has been about all along, which the executor merged back
+    # in between the two passes. They are the subject, not this turn's filter, and R19
+    # needs the customer among them: the re-asked question has to print the name of the
+    # customer it is about (`Customer: <name>`), and on a turn that resolved nothing of
+    # its own the carried entity is the only place that name exists.
+    refinement_keys = {
+        _ce_key(e) for e in jsc.array(o.get("outstanding_refinement_entities")) if jsc.truthy(e)
+    }
+    carried_entities = (
         [
-            {
-                "raw": product_code,
-                "hint": "product",
-                "canonical_code": product_code,
-                "current_message": True,
-                "confident": True,
-            }
+            e
+            for e in jsc.array(o.get("entities"))
+            if jsc.truthy(e) and _ce_key(e) not in refinement_keys
         ]
-        if product_code
+        if refining
         else []
     )
+    has_carried_product = any(
+        jsc.lower_or_empty(jsc.get(e, "hint")) == "product" for e in carried_entities
+    )
+    o["entities"] = [
+        *carried_entities,
+        *(
+            [
+                {
+                    "raw": product_code,
+                    "hint": "product",
+                    "canonical_code": product_code,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ]
+            if product_code and not has_carried_product
+            else []
+        ),
+    ]
     # N2: the carried window is a DEFAULT, not an override. It used to be assigned
     # unconditionally, so a pick that narrowed the window ("2, but only 2026") was
     # answered over the previous question's dates.

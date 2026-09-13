@@ -111,16 +111,30 @@ def _customer_echo(
     The CHATBOT filters by `customer_ids` (the resolved entity), never by
     `customer_query`, so echoing the query alone printed `Customer: all` over figures
     that were filtered to one customer. The names are read back and joined by ", ";
-    `customer_query` stays the echo when no ids were given (n8n's own path)."""
+    `customer_query` stays the echo when no ids were given (n8n's own path).
+
+    AC-1163 (R19, owner ruling, 13 Sep 2026): DISTINCT names, in the order the ids
+    arrived. One company keeps one `customers` row per ledger, so a resolved family is
+    routinely several ids with the SAME name - a live FULLSHUN ask printed "FULLSHUN
+    SANITARYWARE SDN BHD" five times among fourteen. First-seen order, not
+    `ORDER BY customer_name`: the ids arrive in the order the resolver ranked them, and
+    alphabetical sorting put a name the ledger happens to prefix with `*` at the front
+    of a list whose first entry the reader takes as the main account. Nothing else about
+    a name is touched - the asterisk and the `[A/C III]` suffix are the ledger's own
+    data, and the owner turned down grouping them into a family with a count."""
     if customer_ids:
-        names = [
-            row[0]
-            for row in db.query(Customer.customer_name)
+        name_by_id = {
+            row[0]: row[1]
+            for row in db.query(Customer.id, Customer.customer_name)
             .filter(Customer.id.in_(customer_ids))
-            .order_by(Customer.customer_name)
             .all()
-            if row[0]
-        ]
+            if row[1]
+        }
+        names: list[str] = []
+        for customer_id in customer_ids:
+            name = name_by_id.get(customer_id)
+            if name and name not in names:
+                names.append(name)
         if names:
             return ", ".join(names)
     return customer_query

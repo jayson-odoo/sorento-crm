@@ -92,6 +92,10 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
         "date_filter_start": semantic_input.get("date_filter_start"),
         "date_filter_end": semantic_input.get("date_filter_end"),
         "customer_ids": customer_ids,
+        # R19: the NAMES behind those ids, for the question's own `Customer:` line. The
+        # ids are uuids and never reach a screen; the names are worked out once, in
+        # `run_fetch`, from whatever resolved the customer this turn.
+        "customer_names": semantic_input.get("outstanding_customer_names") or [],
         "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
         # AC-1132 (review round, 13 Sep 2026): the TOKEN travels with the codes, so the
         # answering turn prints the same `Location: IB (BRW-IB, MWH-IB)` header the
@@ -107,45 +111,65 @@ def _outstanding_scope_ask(entities: Any, semantic_input: dict[str, Any]) -> dic
 
 
 def _outstanding_scope_filter_lines(filters: dict[str, Any]) -> list[str]:
-    """The question's own "what am I about to search" lines, in the REPORT's wording
-    (`sorento_crm_mcp.presenters._outstanding_report`'s header: `Product:` /
-    `Location:` / `Order date:`, dd/mm/yyyy).
+    """The scope question's header: the SAME four lines the report prints, in the same
+    order and the same words (`sorento_crm_mcp.presenters._outstanding_report`, the
+    `Product:` / `Customer:` / `Location:` / `Order date:` block), one writer for every
+    scope question - the first ask, R15's refinement re-ask, an out-of-range re-ask and
+    the ask resumed after a customer picker (R16).
 
-    Written here rather than imported because the header the report prints is rendered
-    MCP-side and the backend container does not carry that package - so the rule is
-    that the WORDING follows the presenter and nothing else is invented. A line is
-    printed only for a filter that is actually set: the presenter prints `all` for the
-    rest because a report has to say what it counted, whereas this is a question, and
-    `Customer: all` above "which document?" is three words of noise. The customer ids
-    are uuids, which never reach a customer's screen (R13), so there is no customer
-    line at all.
+    R19 (owner ruling, 13 Sep 2026): EVERY line prints, every time, `all` where the
+    filter was not given. The previous rule here printed only the filters that were set,
+    which read fine until a customer picked one off a picker and got back `Product:
+    SRTKT39SS` and nothing else: "i have chosen the customer already ... what about the
+    customer, sometimes i might even have dates, location filters, they should be stated
+    down in this message also." A question about to search is owed the same statement of
+    scope the answer gets.
 
-    R15: this is what makes a REFINED question legible - "i want to see this month
-    only" comes back as the same question with `Order date: 01/09/2026 to 30/09/2026`
-    under it, so the customer can see the narrowing landed.
+    The wording is the presenter's and is duplicated here, for the reason
+    `_outstanding_offer_block` already records about the offer text: the report's header
+    is rendered MCP-side and the backend container does not carry that package. The rule
+    is the same one - this copy FOLLOWS the presenter and invents nothing - and both
+    copies are pinned by tests that assert the exact bytes.
+
+    The `Customer:` line prints NAMES (`filters["customer_names"]`), never the resolved
+    ids: they are uuids, and a uuid never reaches a customer's screen. Distinct names,
+    first-seen order - AC-1163's rule, the same one the route's own `_customer_echo`
+    applies to the report header, because one company routinely holds several ledger
+    rows and printing each one is how "FULLSHUN SANITARYWARE SDN BHD" appeared five
+    times in one header.
     """
-    lines: list[str] = []
     product_code = jsc.js_string(filters.get("product_code") or "").strip()
-    if product_code:
-        lines.append(f"Product: {product_code}")
+
+    names: list[str] = []
+    for raw_name in jsc.array(filters.get("customer_names")):
+        name = jsc.js_string(raw_name or "").strip()
+        if name and name not in names:
+            names.append(name)
+
     codes = [jsc.js_string(c) for c in jsc.array(filters.get("warehouse_codes")) if jsc.truthy(c)]
     token = jsc.js_string(filters.get("location_token") or "").strip()
     if codes:
         # The presenter's own rule: an exact code prints alone (brackets would only
         # repeat it), a word that resolved to several codes names them.
-        lines.append(
-            f"Location: {token} ({', '.join(codes)})"
-            if token and [token] != codes
-            else f"Location: {token or ', '.join(codes)}"
+        location = (
+            f"{token} ({', '.join(codes)})" if token and [token] != codes else token or ", ".join(codes)
         )
+    else:
+        location = "all"
+
     start = _outstanding_ddmmyyyy(filters.get("date_filter_start"))
     end = _outstanding_ddmmyyyy(filters.get("date_filter_end"))
-    if start or end:
-        if start and end:
-            lines.append(f"Order date: {start}" if start == end else f"Order date: {start} to {end}")
-        else:
-            lines.append(f"Order date: {start or end}")
-    return lines
+    if start and end:
+        order_date = start if start == end else f"{start} to {end}"
+    else:
+        order_date = start or end or "all"
+
+    return [
+        f"Product: {product_code or 'all'}",
+        f"Customer: {', '.join(names) if names else 'all'}",
+        f"Location: {location}",
+        f"Order date: {order_date}",
+    ]
 
 
 def _outstanding_ddmmyyyy(value: Any) -> str:
@@ -164,11 +188,10 @@ def _outstanding_scope_ask_from_filters(filters: dict[str, Any]) -> dict[str, An
     through one code path - see that function's own docstring. `filters` is either
     freshly parsed (the first ask) or carried forward unchanged (an out-of-range
     re-ask, AC-1132)."""
-    # R13: the subject line names the PRODUCT when there is one, and is omitted entirely
-    # when the subject is a customer - the ids on the filter set are uuids, which never
-    # reach a customer's screen, and `Product: ` with nothing after it was what the owner
-    # read on a customer-only ask. R15 puts the rest of the filter set on the same
-    # footing: whatever this question is about to search for, in the report's own words.
+    # R19: the report's own four header lines, always all four - see
+    # `_outstanding_scope_filter_lines`. (R13 dropped the `Product:` line on a
+    # customer-only ask because it printed empty; the answer to that is a value on every
+    # line, `all` included, not a missing line.)
     header = "".join(f"{line}\n" for line in _outstanding_scope_filter_lines(filters))
     text = (
         header + "Outstanding for which document?\n"
@@ -714,6 +737,55 @@ def run_fetch(
                 semantic_input["outstanding_location_token"] = parse_output.get(
                     "outstanding_carried_location_token"
                 )
+
+        # -- R19: the NAMES for the question's own `Customer:` line ------------ #
+        # Worked out once, here, and stored on both filter builders. The ids are uuids
+        # and a uuid never reaches a customer's screen, so the question has to carry the
+        # names the resolution already produced - this turn's, when the gate resolved a
+        # customer, and otherwise the ones the CARRIED entities still hold (an answering
+        # or refining turn resolves nothing of its own; the report's own header is built
+        # from the ids by the route, which has the `customers` table to read).
+        # The WORD the customer saw for each resolved customer, by uuid: a pick's own
+        # roster label, or the token they typed. Read off the raw parsed entities, the
+        # same way the location word above is.
+        typed_customer_labels: dict[str, str] = {}
+        for e in jsc.array(parse_output.get("entities")):
+            if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "customer":
+                continue
+            uid = jsc.js_string(e.get("uuid") or "")
+            label = jsc.js_string(e.get("raw") or "").strip()
+            if uid and label and uid not in typed_customer_labels:
+                typed_customer_labels[uid] = label
+
+        def _customer_line_name(uid: str, resolved_name: Any, code: Any) -> str:
+            # The resolver's own NAME wins; failing that the label on the customer's own
+            # screen; the code is the last resort and is usually a DEBTOR CODE, which D7
+            # says is never printed - a picked customer's `canonical_code` is exactly
+            # that ("300-H070"), which is what this order exists to keep off the line.
+            return (
+                jsc.js_string(resolved_name or "").strip()
+                or typed_customer_labels.get(uid, "")
+                or jsc.js_string(code or "").strip()
+            )
+
+        customer_names: list[str] = []
+        for e in jsc.array(entities):
+            if not isinstance(e, dict) or e.get("entity_type") != "customer":
+                continue
+            name = _customer_line_name(
+                jsc.js_string(e.get("uuid") or ""), e.get("display_name"), e.get("code")
+            )
+            if name and name not in customer_names:
+                customer_names.append(name)
+        if not customer_names:
+            # Nothing resolved this turn (an answering or refining turn): the carried
+            # entities still hold the label, and their `canonical_code` is the debtor
+            # code again, so the same order applies.
+            for uid, label in typed_customer_labels.items():
+                if label not in customer_names:
+                    customer_names.append(label)
+        if customer_names:
+            semantic_input["outstanding_customer_names"] = customer_names
 
         # -- D13: the sales_orders.outstanding field-reveal gate, before any fetch -- #
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
