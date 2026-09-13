@@ -1,5 +1,5 @@
 /* -------------------------------------------------------------------------------------
- * Spec visibility policy - PLAN-spec-visibility-policy, slice S1 (Phase 1, MOCKED).
+ * Spec visibility policy - PLAN-spec-visibility-policy, slice S2 (wired to the backend).
  *
  * Which product spec keys (Thickness, Material, ...) the chatbot may reveal to a
  * contact. One row per tier - contact override > merged market segments > global
@@ -8,12 +8,14 @@
  * policy; nothing else in the app should build the URL or the body by hand.
  *
  * ===================================================================================
- * API CONTRACT (S2 builds the routes below; every function here is a MOCK until then)
+ * API CONTRACT
  * ===================================================================================
  *
- * Permission: reads/writes `user_management.contacts.view` / `.edit` (field-reveal
- * precedent) - no new permission slug. Every route lives under the `user_management`
- * module guard, mounted at `/api/v1/user-management/spec-visibility`.
+ * Permission: reads `user_management.contacts.view`, writes `user_management.
+ * contacts.edit` (field-reveal precedent) - no new permission slug. Mounted at the
+ * TOP LEVEL rather than through the `user_management` router's own inclusion, so
+ * `/effective` can accept X-API-Key (its module gate is `require_module_enabled_
+ * with_api_key("base")`, not the JWT-only one `user_management.router` carries).
  *
  * --- The policy shape every route returns -------------------------------------------
  *
@@ -48,7 +50,7 @@
  *   For the default tier `override` is always present and equals `effective` - the
  *   default row always exists (seeded: excludes `thickness` + `board_thickness`).
  *
- * --- Routes (S2) -----------------------------------------------------------------------
+ * --- Routes ----------------------------------------------------------------------------
  *
  *   GET  /api/v1/user-management/spec-visibility/effective?contact_id=&space_id=
  *          -> Policy   (api-key allowed; the resolved policy for one contact)
@@ -73,101 +75,10 @@
  *          The active registry keys, sorted by label, for the picker. A separate
  *          route (not the products list) so a contacts admin does not need
  *          `master_data.products.view` to open this card.
- *
- * ===================================================================================
- * MOCK ADAPTER (this slice only - swapped for the routes above in S2)
- * ===================================================================================
- *
- * A module-level store keyed by scope, seeded with the plan's default policy
- * (excludes Thickness + Drainer board / countertop thickness) and the Project
- * segment's empty Hide list, so Save / Remove round-trip on the page without a
- * backend. Retail and untagged contacts have no seeded row, so they read straight
- * through to the default - the real merge-across-segments-for-one-contact rule
- * (UAC AC-9) is server-only and arrives with S2; this mock only resolves "this
- * tier's own row, else the default", which is all a single scope's own card needs.
  * -------------------------------------------------------------------------------- */
 
-/** Registry key -> human label. Mirrors `product_spec_registry.spec_key` (S2 reads the
- * real table; this list is the mock's stand-in for `GET /spec-visibility/keys`). */
-const SPEC_VISIBILITY_KEYS: SpecKeyRef[] = [
-  { key: 'board_thickness', label: 'Drainer board / countertop thickness' },
-  { key: 'finish_colour', label: 'Finish or colour' },
-  { key: 'has_drainer_board', label: 'Has a drainer board' },
-  { key: 'height', label: 'Height' },
-  { key: 'length', label: 'Length' },
-  { key: 'material', label: 'Material' },
-  { key: 'bowl_count', label: 'Number of bowls' },
-  { key: 'steel_grade', label: 'Steel grade' },
-  { key: 'surface_texture', label: 'Surface texture' },
-  { key: 'thickness', label: 'Thickness' },
-  { key: 'width', label: 'Width' },
-]; // already sorted by label, as the real `GET /keys` promises
-
-/** Display name for a segment badge/dialog title until the real row carries one. */
-const MOCK_SEGMENT_NAMES: Record<string, string> = {
-  retail: 'Retail',
-  project: 'Project',
-};
-
-function segmentLabel(code: string): string {
-  return MOCK_SEGMENT_NAMES[code] ?? code.charAt(0).toUpperCase() + code.slice(1);
-}
-
-type MockRow = { spec_keys: string[] | null; excluded_spec_keys: string[] | null };
-
-const DEFAULT_ROW: MockRow = { spec_keys: null, excluded_spec_keys: ['thickness', 'board_thickness'] };
-
-/** Seeded rows. Contacts start with none - a contact override is created only on Save. */
-const mockStore = new Map<string, MockRow>([
-  ['default', DEFAULT_ROW],
-  ['segment:project', { spec_keys: null, excluded_spec_keys: [] }],
-]);
-
-function storeKey(scope: SpecVisibilityScope): string {
-  switch (scope.kind) {
-    case 'contact':
-      return `contact:${scope.contactId}`;
-    case 'segment':
-      return `segment:${scope.segmentCode}`;
-    default:
-      return 'default';
-  }
-}
-
-function sourceFor(scope: SpecVisibilityScope): SpecVisibilitySource {
-  return scope.kind === 'segment' ? 'segment' : scope.kind === 'contact' ? 'contact' : 'default';
-}
-
-function sourceLabelFor(scope: SpecVisibilityScope): string | null {
-  return scope.kind === 'segment' ? segmentLabel(scope.segmentCode) : null;
-}
-
-function toRefs(keys: string[]): SpecKeyRef[] {
-  return SPEC_VISIBILITY_KEYS.filter((k) => keys.includes(k.key));
-}
-
-/** The registry keys a policy actually hides - what the chatbot consumes (UAC AC-10). */
-function hiddenKeys(row: MockRow): string[] {
-  if (row.excluded_spec_keys !== null) {
-    const registryKeys = new Set(SPEC_VISIBILITY_KEYS.map((k) => k.key));
-    return row.excluded_spec_keys.filter((key) => registryKeys.has(key));
-  }
-  if (row.spec_keys !== null) {
-    const shown = new Set(row.spec_keys);
-    return SPEC_VISIBILITY_KEYS.filter((k) => !shown.has(k.key)).map((k) => k.key);
-  }
-  return []; // both null never happens: the 422 guard below refuses that write
-}
-
-function buildPolicy(row: MockRow, source: SpecVisibilitySource, sourceLabel: string | null): SpecVisibilityPolicy {
-  return {
-    specs: row.spec_keys !== null ? toRefs(row.spec_keys) : null,
-    excluded_specs: row.excluded_spec_keys !== null ? toRefs(row.excluded_spec_keys) : null,
-    hidden: toRefs(hiddenKeys(row)),
-    source,
-    source_label: sourceLabel,
-  };
-}
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 
 /** All three answer tiers. */
 export type SpecVisibilitySource = 'contact' | 'segment' | 'default';
@@ -224,7 +135,7 @@ export function specVisibilityScopeKey(scope: SpecVisibilityScope): string[] {
   }
 }
 
-/** The path the three verbs call in S2. Kept next to the key so the two cannot drift. */
+/** The path the three verbs call. Kept next to the key so the two cannot drift. */
 export function specVisibilityScopePath(scope: SpecVisibilityScope): string {
   switch (scope.kind) {
     case 'contact':
@@ -239,40 +150,26 @@ export function specVisibilityScopePath(scope: SpecVisibilityScope): string {
 export async function getSpecVisibility(
   scope: SpecVisibilityScope,
 ): Promise<SpecVisibilityPolicyResponse> {
-  // MOCK (Phase 1): S2 replaces this body with
-  //   const response = await apiFetch(specVisibilityScopePath(scope));
-  //   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load spec visibility'));
-  //   return response.json();
-  const key = storeKey(scope);
-  const ownRow = mockStore.get(key);
-  const defaultRow = mockStore.get('default')!;
-  const effectiveRow = ownRow ?? defaultRow;
-  const effectiveSource = ownRow ? sourceFor(scope) : 'default';
-  const effectiveLabel = ownRow ? sourceLabelFor(scope) : null;
-  const effective = buildPolicy(effectiveRow, effectiveSource, effectiveLabel);
-  const override =
-    scope.kind === 'default'
-      ? effective
-      : ownRow
-        ? buildPolicy(ownRow, sourceFor(scope), sourceLabelFor(scope))
-        : null;
-  return { effective, override };
+  const response = await apiFetch(specVisibilityScopePath(scope));
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load spec visibility'));
+  }
+  return response.json();
 }
 
 export async function saveSpecVisibility(
   scope: SpecVisibilityScope,
   input: SpecVisibilityInput,
 ): Promise<SpecVisibilityPolicyResponse> {
-  // MOCK (Phase 1): S2 replaces this body with the PUT call documented above.
-  if (input.spec_keys !== null && input.excluded_spec_keys !== null) {
-    throw new Error('Pick specs to show or to hide, not both.');
+  const response = await apiFetch(specVisibilityScopePath(scope), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save spec visibility'));
   }
-  const registryKeys = new Set(SPEC_VISIBILITY_KEYS.map((k) => k.key));
-  for (const key of input.spec_keys ?? input.excluded_spec_keys ?? []) {
-    if (!registryKeys.has(key)) throw new Error(`Unknown spec key: ${key}`);
-  }
-  mockStore.set(storeKey(scope), { spec_keys: input.spec_keys, excluded_spec_keys: input.excluded_spec_keys });
-  return getSpecVisibility(scope);
+  return response.json();
 }
 
 export async function deleteSpecVisibility(
@@ -283,16 +180,17 @@ export async function deleteSpecVisibility(
   if (scope.kind === 'default') {
     throw new Error('The default spec visibility policy cannot be removed');
   }
-  const key = storeKey(scope);
-  if (!mockStore.has(key)) {
-    throw new Error('This tier has no override to remove');
+  const response = await apiFetch(specVisibilityScopePath(scope), { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to remove spec visibility'));
   }
-  mockStore.delete(key);
-  return getSpecVisibility(scope);
+  return response.json();
 }
 
 export async function getSpecVisibilityKeys(): Promise<SpecKeyRef[]> {
-  // MOCK (Phase 1): S2 replaces this body with a fetch of
-  //   GET /api/v1/user-management/spec-visibility/keys
-  return SPEC_VISIBILITY_KEYS;
+  const response = await apiFetch('/api/v1/user-management/spec-visibility/keys');
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load spec keys'));
+  }
+  return response.json();
 }

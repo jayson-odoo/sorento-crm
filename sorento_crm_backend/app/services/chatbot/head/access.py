@@ -95,6 +95,37 @@ def _granted_field_reveal_keys(db: Session, *, contact_id: str, space_id: str | 
         return []
 
 
+def _hidden_spec_keys(db: Session, *, contact_id: str, space_id: str | None) -> list[str]:
+    """This contact's hidden spec keys, sorted (PLAN-spec-visibility-policy.md
+    "Chatbot seam"). Resolved once per turn, the SAME contact resolution field
+    reveals use (the NULL-workspace fallback) - but unlike field reveals, this
+    FAILS CLOSED TO THE DEFAULT POLICY, never to `[]`: a spec question always
+    gets an answer, so an unresolvable contact gets the default's hidden set
+    rather than "nothing hidden".
+    """
+    from app.services.spec_visibility import (
+        active_registry_rows,
+        default_policy,
+        hidden_keys,
+        resolve_policy,
+    )
+
+    try:
+        resolved = _resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_id, space_id=space_id
+        )
+        policy = resolve_policy(db, resolved, space_id) if resolved is not None else default_policy(db)
+        registry_keys = {key for key, _label in active_registry_rows(db)}
+        return sorted(hidden_keys(policy, registry_keys))
+    except Exception:  # noqa: BLE001 - a lookup failure must fail closed to the default policy
+        logger.warning("chatbot: spec visibility lookup failed for %s", contact_id, exc_info=True)
+        try:
+            registry_keys = {key for key, _label in active_registry_rows(db)}
+            return sorted(hidden_keys(default_policy(db), registry_keys))
+        except Exception:  # noqa: BLE001 - the registry itself is unreachable
+            return []
+
+
 def check_access(
     db: Session,
     *,
@@ -102,7 +133,8 @@ def check_access(
     contact_id: str,
     space_id: str | None,
 ) -> dict[str, Any]:
-    """`ctx.access`: `{allowed, decision, agent_name, attributes, all_attributes_allowed}`.
+    """`ctx.access`: `{allowed, decision, agent_name, attributes,
+    all_attributes_allowed, hidden_spec_keys}`.
 
     `attributes` is this contact's granted field-reveal keys (`[]` when none) and
     `all_attributes_allowed` is always `False`: nothing here is an "everything"
@@ -125,6 +157,7 @@ def check_access(
         "agent_name": decision.agent_name,
         "attributes": _granted_field_reveal_keys(db, contact_id=contact_id, space_id=space_id),
         "all_attributes_allowed": False,
+        "hidden_spec_keys": _hidden_spec_keys(db, contact_id=contact_id, space_id=space_id),
     }
 
 

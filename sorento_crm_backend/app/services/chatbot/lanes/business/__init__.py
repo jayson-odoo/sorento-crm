@@ -433,6 +433,25 @@ def run_fetch(
                     "dropped": sorted(dropped),
                 },
             )
+        # AC-17 (PLAN-spec-visibility-policy.md "Chatbot seam"), beside `reveals`:
+        # which spec keys this contact has hidden, and which of them the
+        # envelope actually carried (and so were dropped by the projection
+        # above) - `spec_vocabulary` is the same map `_project_product_specs`
+        # reads, so "dropped" names exactly what changed on THIS envelope
+        # rather than the contact's whole hidden set.
+        access = trigger.get("access") if isinstance(trigger.get("access"), dict) else {}
+        hidden_raw = access.get("hidden_spec_keys")
+        hidden_list = sorted(hidden_raw) if isinstance(hidden_raw, list) else []
+        if hidden_list:
+            vocab = envelope.get("spec_vocabulary") if isinstance(envelope, dict) else None
+            vocab_keys = set(vocab.keys()) if isinstance(vocab, dict) else set()
+            trace.add(
+                "spec_visibility",
+                {
+                    "hidden": hidden_list,
+                    "dropped": sorted(k for k in hidden_list if k in vocab_keys),
+                },
+            )
     item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
     return {
         "kind": "result",

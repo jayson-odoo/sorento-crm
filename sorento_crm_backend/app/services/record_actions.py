@@ -715,6 +715,22 @@ def _remove_stock_visibility_policy(db: Session, payload: dict):
     return delete_policy(db, access_type_code=_entity_id(payload))
 
 
+def _remove_spec_visibility_policy(db: Session, payload: dict):
+    from app.services.error_handler import handle_validation_error
+    from app.services.spec_visibility import delete_policy
+
+    # The scope is the entity: a contact override or a market-segment policy. The
+    # kind travels in the payload because the two are different columns, not
+    # different ids - same convention as `_remove_stock_visibility_policy`. The
+    # default tier has no DELETE route and is refused here the same way.
+    scope_kind = str(payload.get("scope_kind") or "")
+    if scope_kind == "contact":
+        return delete_policy(db, contact_id=_entity_id(payload))
+    if scope_kind == "segment":
+        return delete_policy(db, segment_code=_entity_id(payload))
+    raise handle_validation_error("The default spec visibility policy cannot be removed.")
+
+
 def _remove_signin_background(db: Session, payload: dict):
     from app.services.signin_background import clear_signin_background
 
@@ -891,6 +907,19 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="inventory.stock.edit",
         label="Remove stock visibility",
+    )
+)
+
+register(
+    FormAction(
+        key="spec_visibility_policy.remove",
+        entity_types=("spec_visibility_policy",),
+        execute=_remove_spec_visibility_policy,
+        # Reversible: the tier falls back to the policy above it and the card can
+        # write the override again from what is still on screen.
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.contacts.edit",
+        label="Remove spec visibility",
     )
 )
 

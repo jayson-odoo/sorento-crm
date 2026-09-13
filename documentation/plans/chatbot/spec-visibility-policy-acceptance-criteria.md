@@ -58,7 +58,7 @@ portal and the staff UI are untouched.
 ## Phase 2 (BE, tests red first)
 
 - **AC-8 [BE]** Migration `510_spec_visibility_policies` (`down_revision =
-  "509_merge_508_summary_exclwh"`, re-parented at PR time) creates
+  "ptag_0006_revisions"`, re-parented at PR time) creates
   `spec_visibility_policies`: `id`, `contact_id` FK `respond_contacts.id` CASCADE nullable,
   `segment_code` FK `market_segments.code` ON UPDATE/DELETE CASCADE nullable, `spec_keys`
   ARRAY(Text) nullable, `excluded_spec_keys` ARRAY(Text) nullable, timestamps; CHECK
@@ -91,6 +91,10 @@ portal and the staff UI are untouched.
   `source_label`. `response_model` declares every field (field-drop test).
 - **AC-13 [BE routes]** `excluded_spec_keys: []` round-trips as `[]` (nothing hidden at that
   tier). DELETE on a tier that inherits returns 404; the audit log records PUT and DELETE.
+- **AC-13b [BE routes]** The record action key `spec_visibility_policy.remove` (registered in
+  `app/services/record_actions.py` like `stock_visibility_policy.remove`) deletes the
+  contact-tier row and the segment-tier row when run for each, refuses the default tier, and
+  writes the same audit row the DELETE route writes.
 - **AC-14 [BE chatbot]** `check_access` adds `hidden_spec_keys` (sorted list) to
   `ctx.access`, resolved once per turn with the same contact resolution as field reveals.
 - **AC-15 [BE chatbot]** `_project_product_specs` drops every `spec:<key>` field whose key

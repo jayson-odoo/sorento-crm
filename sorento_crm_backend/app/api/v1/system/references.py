@@ -1358,6 +1358,18 @@ class ResolveReferenceRequest(BaseModel):
             "picker. Only used when `spec_fallback` is true."
         ),
     )
+    hidden_spec_keys: list[str] | None = Field(
+        default=None,
+        description=(
+            "PLAN-spec-visibility-policy.md AC-18: registry keys this contact may "
+            "not be told about (`ctx.access.hidden_spec_keys`). Dropped from the "
+            "derived spec search inputs BEFORE ranking - so a hidden key never "
+            "decides which product wins - and stripped from every candidate's "
+            "`specifications` / `matched_specs` before the response is built, so "
+            "the value cannot leak through even when the product's OWN stored "
+            "values carry it. Only used when `spec_fallback` is true."
+        ),
+    )
     free_terms: list[str] | None = Field(
         default=None,
         description=(
@@ -2441,7 +2453,29 @@ def resolve_reference_post(
             int((time.monotonic() - started) * 1000) if understanding is not None else None
         )
 
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): a hidden key
+        # neither RANKS the catalog (dropped from `specs` before `search_specs`
+        # runs) nor PRINTS (stripped from every candidate below) - the second
+        # half is needed even though the first already ran, because a
+        # candidate's `specifications` is the product's OWN full stored values,
+        # independent of what was searched for.
+        hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
+        if hidden_spec_keys:
+            specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
+
         found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms)
+        if hidden_spec_keys:
+            for candidate in found.get("candidates") or []:
+                spec_values = candidate.get("specifications")
+                if isinstance(spec_values, dict):
+                    candidate["specifications"] = {
+                        k: v for k, v in spec_values.items() if k not in hidden_spec_keys
+                    }
+                matched_specs = candidate.get("matched_specs")
+                if isinstance(matched_specs, list):
+                    candidate["matched_specs"] = [
+                        k for k in matched_specs if k not in hidden_spec_keys
+                    ]
         result["spec_candidates"] = found["candidates"]
         result["floor_missed"] = found["floor_missed"]
 

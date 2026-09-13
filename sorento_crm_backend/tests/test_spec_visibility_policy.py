@@ -56,12 +56,24 @@ def db():
 @pytest.fixture
 def client(db, monkeypatch):
     """A staff caller holding both contacts permissions, on the SAME session the
-    assertions read."""
+    assertions read.
+
+    A real `users` row, not a bare uuid dict: `FormActionService.dispatch` (the
+    pending-actions engine, AC-13b) inserts `sla_form_actions.requested_by_id`
+    with an FK to `users.id`, the same reason `tests/test_record_actions_s6b.py`'s
+    own `client` fixture seeds one.
+    """
+    from app.models.user import User
 
     def _override_db():
         yield db
 
-    principal = {"id": str(uuid.uuid4()), "email": "zzt-spec-visibility@test.com"}
+    actor_row = User(
+        id=str(uuid.uuid4()), email="zzt-spec-visibility@test.com", name="ZZT Spec Visibility"
+    )
+    db.add(actor_row)
+    db.flush()
+    principal = {"id": actor_row.id, "email": actor_row.email}
     app.dependency_overrides[get_db] = _override_db
     app.dependency_overrides[get_current_user] = lambda: principal
     app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
@@ -172,7 +184,15 @@ def test_migration_510_creates_table_checks_and_seeds(db):
     """AC-8: the table, both CHECKs (one tier, one rule), and the two seeded rows -
     the default (`excluded_spec_keys = ['thickness', 'board_thickness']`) and the
     `project` segment (`excluded_spec_keys = []`), the latter only because a
-    `project` segment row exists. Downgrade drops the table."""
+    `project` segment row exists. Downgrade drops the table.
+
+    `create_all` and the migration are two independent descriptions of the same
+    table (see `test_stock_visibility_policy.py::test_migration_builds_the_table_the_model_expects`),
+    and only one of them runs in production - `blank_session` already built
+    `spec_visibility_policies` from the ORM model, so it is dropped first and the
+    real `upgrade()` run in its place; a CHECK that only exists on the model would
+    otherwise never be exercised here.
+    """
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from sqlalchemy import text as sa_text
@@ -182,6 +202,7 @@ def test_migration_510_creates_table_checks_and_seeds(db):
     contact = _contact(db)
     db.flush()
 
+    db.execute(sa_text("DROP TABLE spec_visibility_policies"))
     module = _load_migration(_MIGRATION, "migration_510_spec_visibility_policies")
     context = MigrationContext.configure(db.connection())
     with Operations.context(context):
@@ -588,6 +609,7 @@ def test_put_and_delete_write_audit_rows(client, db):
     from app.services.audit_service import _audit_entity_type, register_audit_listeners
 
     register_audit_listeners()
+    _spec_key(db, "thickness", "Thickness")
     contact = _contact(db)
     db.flush()
 
@@ -612,3 +634,157 @@ def test_put_and_delete_write_audit_rows(client, db):
     actions = [entry.action for entry in entries]
     assert "CREATE" in actions
     assert "DELETE" in actions
+
+
+# ============================================================ AC-13b pending action
+
+
+def _park_action(client_http, *, action_key: str, entity_type: str, entity_id: str, payload=None):
+    return client_http.post(
+        "/api/v1/pending-actions",
+        json={
+            "action_key": action_key,
+            "entity_type": entity_type,
+            "entity_id": str(entity_id),
+            "payload": payload or {},
+        },
+    )
+
+
+def _lapse_action(db, action_id: str) -> None:
+    """Move the window into the past without waiting out its real length."""
+    from datetime import datetime, timedelta
+
+    from app.models.sla import SlaFormAction
+
+    db.query(SlaFormAction).filter(SlaFormAction.id == action_id).update(
+        {"commit_at": datetime.utcnow() - timedelta(seconds=1)},
+        synchronize_session=False,
+    )
+    db.commit()
+
+
+def _commit_action(client_http, db, *, entity_type: str, entity_id: str, action_id: str):
+    """Lapse the window and let the lazy commit on GET apply it, as a poll would -
+    same technique as `tests/test_record_actions_s6b.py::_commit_now`."""
+    _lapse_action(db, action_id)
+    return client_http.get(
+        "/api/v1/pending-actions/current",
+        params={"entity_type": entity_type, "entity_id": str(entity_id)},
+    )
+
+
+def test_pending_action_spec_visibility_policy_remove_deletes_override_row(client, db):
+    """AC-13b: the record action key `spec_visibility_policy.remove` (registered in
+    `app/services/record_actions.py` like `stock_visibility_policy.remove`) deletes
+    the contact-tier row and the segment-tier row when run for each, refuses the
+    default tier, and writes the same audit row the DELETE route writes.
+
+    Must fail TODAY with the "Unknown action" refusal - the key is not registered
+    yet. The park call is made BEFORE any `SpecVisibilityPolicy` row is seeded (and
+    before that model is even imported) on purpose: `_record_action` checks the key
+    before anything else, so this is the first thing to break, ahead of the model/
+    table that also do not exist yet - the red reason stays pinned to the actual
+    gap named in this AC rather than to whichever gap happens to be seeded first.
+    """
+    # -- contact tier ------------------------------------------------------
+    contact = _contact(db)
+
+    parked = _park_action(
+        client,
+        action_key="spec_visibility_policy.remove",
+        entity_type="spec_visibility_policy",
+        entity_id=contact.id,
+        payload={"scope_kind": "contact"},
+    )
+    assert parked.status_code == 202, parked.text
+
+    # Everything below only runs once the action key above is registered - by then
+    # the model it needs exists too.
+    from app.models.access import SpecVisibilityPolicy
+    from app.models.audit import AuditLog
+    from app.services.audit_service import register_audit_listeners
+
+    register_audit_listeners()
+    contact_row = _policy_row(
+        db, contact=contact, spec_keys=None, excluded_spec_keys=["thickness"]
+    )
+    db.commit()
+
+    committed = _commit_action(
+        client,
+        db,
+        entity_type="spec_visibility_policy",
+        entity_id=contact.id,
+        action_id=parked.json()["id"],
+    )
+    assert committed.json()["last_outcome"]["status"] == "committed", committed.json()
+    db.expire_all()
+    assert (
+        db.query(SpecVisibilityPolicy)
+        .filter(SpecVisibilityPolicy.id == contact_row.id)
+        .first()
+        is None
+    )
+
+    # -- segment tier --------------------------------------------------------
+    segment = _segment(db, unique_code("seg")[:20].lower(), "ZZT Segment")
+    segment_row = _policy_row(
+        db, segment=segment, spec_keys=None, excluded_spec_keys=["material"]
+    )
+    db.commit()
+
+    parked_segment = _park_action(
+        client,
+        action_key="spec_visibility_policy.remove",
+        entity_type="spec_visibility_policy",
+        entity_id=segment.code,
+        payload={"scope_kind": "segment"},
+    )
+    assert parked_segment.status_code == 202, parked_segment.text
+
+    committed_segment = _commit_action(
+        client,
+        db,
+        entity_type="spec_visibility_policy",
+        entity_id=segment.code,
+        action_id=parked_segment.json()["id"],
+    )
+    assert committed_segment.json()["last_outcome"]["status"] == "committed", committed_segment.json()
+    db.expire_all()
+    assert (
+        db.query(SpecVisibilityPolicy)
+        .filter(SpecVisibilityPolicy.id == segment_row.id)
+        .first()
+        is None
+    )
+
+    # -- the default tier is the floor of the chain and has no DELETE route -- the
+    # refusal is raised inside `execute`, at COMMIT time, same as every other
+    # record action (D7: the button parks unconditionally, the server applies -
+    # or fails - the action when the window lapses), so parking itself still
+    # accepts and the refusal shows up as a FAILED `last_outcome`.
+    parked_default = _park_action(
+        client,
+        action_key="spec_visibility_policy.remove",
+        entity_type="spec_visibility_policy",
+        entity_id="default",
+        payload={"scope_kind": "default"},
+    )
+    assert parked_default.status_code == 202, parked_default.text
+
+    committed_default = _commit_action(
+        client,
+        db,
+        entity_type="spec_visibility_policy",
+        entity_id="default",
+        action_id=parked_default.json()["id"],
+    )
+    assert committed_default.json()["last_outcome"]["status"] == "failed", committed_default.json()
+
+    entries = (
+        db.query(AuditLog)
+        .filter(AuditLog.entity_id.in_([str(contact_row.id), str(segment_row.id)]))
+        .all()
+    )
+    assert "DELETE" in [entry.action for entry in entries]

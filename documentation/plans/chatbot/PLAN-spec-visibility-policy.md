@@ -1,6 +1,6 @@
 # PLAN: spec visibility policy (which product spec keys a contact may see)
 
-Status: Approved 13 Sep 2026 (owner, lavish markup: approved as written); S1 building
+Status: Approved 13 Sep 2026 (owner, lavish markup: approved as written); S1 verified, S2 wiring
 Lane: `.claude/worktrees/spec-visibility`, branch `feat/spec-visibility-policy`, base `origin/main`
 UAC: `spec-visibility-policy-acceptance-criteria.md` (alongside)
 Sibling: `scripts/load_kitchen_sink_thickness.py` (branch `chore/sink-thickness-loader`) creates the
@@ -50,14 +50,14 @@ omits those keys for that contact and says "not available" on a direct ask.
 | Question | Decision |
 |---|---|
 | Tier axis | Contact override > merged market segments > global default. Owner's call (13 Sep): retail/project is the vocabulary; access types stay for promotions/attachments/stock. |
-| Storage | New table `spec_visibility_policies` (migration 510), columns per AC-8. Keys stored as registry `spec_key` text, validated against the active registry on write; a key later removed from the registry is ignored on read. |
+| Storage | New table `spec_visibility_policies` (migration `510_spec_visibility_policies`, `down_revision = "ptag_0006_revisions"`, origin/main head when the lane was cut; re-parent at PR time), columns per AC-8. Keys stored as registry `spec_key` text, validated against the active registry on write; a key later removed from the registry is ignored on read. |
 | Default | Ships closed: default row hides `thickness` + `board_thickness`; `project` row hides nothing; retail and untagged inherit the default. Seeded in the migration, editable afterwards (staff-owned, never seed-repaired). |
 | Merge | Same as stock: intersection of Show-only lists, union of Hide lists, both carried; label = first segment name by sort order among the deciding rows. |
 | Resolution output | `SpecPolicy(spec_keys, excluded_spec_keys, source, source_label)` + `hidden_keys(policy, registry_keys) -> frozenset`. The chatbot only ever consumes the hidden set. |
 | Chatbot seam | `check_access` adds `hidden_spec_keys` to `ctx.access` (one resolution per turn, same contact lookup as field reveals, fail closed to the default policy). `_project_product_specs(e, req_attrs, hidden)` drops hidden `spec:<key>` fields and vocabulary entries first, then runs unchanged. Hidden + asked = one `spec_hidden:<key>` miss line "not available". Trace `spec_visibility`. |
 | Spec fallback | `resolve_entity` body carries `hidden_spec_keys`; the resolve route filters extracted specs and candidate summaries. Free-term ranking stays. |
 | Customer wording | "not available" on a direct ask (owner's call); lists omit silently, same posture as restricted fields. |
-| Routes | `app/api/v1/user_management/spec_visibility.py` mounted at `/api/v1/user-management/spec-visibility` (contact-side admin, not inventory). Perms reuse `user_management.contacts.view` / `.edit` (field reveals precedent). `GET /keys` serves the picker so a contacts admin does not need `master_data.products.view`. |
+| Routes | `app/api/v1/user_management/spec_visibility.py` mounted at `/api/v1/user-management/spec-visibility` directly in `app/api/v1/__init__.py` with `require_module_enabled_with_api_key("base")`, NOT through `user_management.router`: that router's module gate depends on `get_current_user` and 401s any X-API-Key caller before `/effective` runs (measured in S2). Perms reuse `user_management.contacts.view` / `.edit` (field reveals precedent). `GET /keys` serves the picker so a contacts admin does not need `master_data.products.view`. |
 | PUT body | `{spec_keys: list|null, excluded_spec_keys: list|null}`, both required-nullable, never both non-null (422 `Pick specs to show or to hide, not both.`). |
 | Card | New `components/spec-visibility/SpecVisibilitySection.tsx`, a sibling of the stock card, not a generalisation of it: no mode, no hide-zero, no presets, one picker, plus the "Hidden today:" line. Two cards sharing a `scope` prop convention is the reuse; a shared "policy card" abstraction waits for a third. |
 | Placement | Contact page under Stock visibility (full-width cell); market segment admin page per segment; Settings > Spec visibility beside Stock visibility. Access tab untouched. |

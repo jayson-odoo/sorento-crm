@@ -248,6 +248,16 @@ _BARE_MEMBER_OFFER_TYPES = ("product", "customer")
 _BARE_REPLY_WORD_RE = re.compile(r"[a-z0-9]+")
 
 
+def _hidden_spec_keys_from_ctx(ctx: dict[str, Any]) -> list[str]:
+    """`ctx.access.hidden_spec_keys`, the same key `check_access` sets (PLAN-
+    spec-visibility-policy.md "Spec fallback"). `[]` when access was never
+    resolved this turn - the resolve route treats an absent/empty list as
+    inert, so this is never a widening default."""
+    access = jsc.get(ctx, "access")
+    hidden = jsc.get(access, "hidden_spec_keys") if jsc.truthy(access) else None
+    return list(hidden) if jsc.is_array(hidden) else []
+
+
 def resolve_bare_reply_under_member_offer(
     parser: dict[str, Any],
     *,
@@ -322,6 +332,10 @@ def resolve_bare_reply_under_member_offer(
         "limit": 15,
         "spec_fallback": True,
         "understand_phrase": True,
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): this contact's
+        # hidden keys ride along so the resolve route can neither rank on one nor
+        # print it in a candidate's specifications.
+        "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
     }
     if dry_run:
         body["dry_run"] = True
@@ -456,6 +470,9 @@ def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[s
         "limit": 15,
         "spec_fallback": True,
         "understand_phrase": True,
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): see the sibling
+        # body builder above for the reasoning.
+        "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
     }
     if dry_run:
         body["dry_run"] = True

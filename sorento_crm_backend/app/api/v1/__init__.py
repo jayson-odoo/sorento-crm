@@ -134,6 +134,21 @@ api_router.include_router(
     tags=["user-management"],
     dependencies=[Depends(require_module_enabled("base"))],
 )
+# Spec visibility policy (PLAN-spec-visibility-policy.md): contact-side admin,
+# so it sits under user-management rather than inventory, but mounted at the
+# TOP LEVEL rather than through `user_management.router` - that router's own
+# module gate is the JWT-only `require_module_enabled`, and `GET .../effective`
+# (AC-11) is an n8n preflight convenience that must accept X-API-Key, same as
+# `inventory.stock-visibility`'s own `/effective`. Every route inside still
+# reuses `user_management.contacts.view` / `.edit` - no new permission slug.
+from app.api.v1.user_management import spec_visibility as spec_visibility_module
+
+api_router.include_router(
+    spec_visibility_module.router,
+    prefix="/user-management/spec-visibility",
+    tags=["spec-visibility"],
+    dependencies=[Depends(require_module_enabled_with_api_key("base"))],
+)
 # Integration management (AC-AC-08). JWT only -- deliberately NOT X-API-Key:
 # an integration must not be able to mint credentials for itself or enumerate
 # the other integrations, or a compromise of one caller escalates to all of them.

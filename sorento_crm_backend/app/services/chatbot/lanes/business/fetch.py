@@ -1145,7 +1145,9 @@ def _tokens(norm: str) -> set[str]:
     return set(norm.split())
 
 
-def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
+def _project_product_specs(
+    e: dict[str, Any], req_attrs: list[Any], hidden_spec_keys: list[Any] | None = None
+) -> None:
     """A1 (AC-901/AC-902): the product spec projection, product envelopes ONLY.
 
     A SEPARATE branch from the clearance/incoming projection above - deliberately
@@ -1182,13 +1184,33 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
          items loop.)
     An item with no spec hit for any asked word keeps its base fields only - byte
     identity with the no-attribute path's own field set.
+
+    `hidden_spec_keys` (PLAN-spec-visibility-policy.md "Chatbot seam", AC-15/AC-16):
+    every `spec:<key>` field whose key is hidden is dropped BEFORE either branch
+    above runs - before the "Specs:" summary is built and before asked-word
+    matching - and hidden keys are removed from the vocabulary used for matching
+    too, so a hidden key can never register a hit. An asked word naming a hidden
+    key (exact key/label, or every asked token contained in it - the same rule as
+    an ordinary hit) produces ONE `spec_hidden:<key>` miss, "<label>: not
+    available", instead of the ordinary "not recorded" line - and instead of, not
+    in addition to it.
     """
+    hidden = frozenset(str(k) for k in (hidden_spec_keys or []))
     vocab_raw = e.get("spec_vocabulary")
     vocab: dict[str, str] = vocab_raw if isinstance(vocab_raw, dict) else {}
-    # (spec_key, label, norm_key, norm_label) per registry row, registry order kept
+    # (spec_key, label, norm_key, norm_label) per registry row, registry order kept.
+    # Hidden keys are excluded here - "removed from the vocabulary used for
+    # matching" - and kept in a SEPARATE list below, only for naming the "not
+    # available" line's label.
     vocab_rows: list[tuple[str, str, str, str]] = [
         (str(key), str(label), _normalize_spec_word(key), _normalize_spec_word(label))
         for key, label in vocab.items()
+        if str(key) not in hidden
+    ]
+    hidden_vocab_rows: list[tuple[str, str, str, str]] = [
+        (str(key), str(label), _normalize_spec_word(key), _normalize_spec_word(label))
+        for key, label in vocab.items()
+        if str(key) in hidden
     ]
 
     def vocab_label_for(norm: str) -> str | None:
@@ -1201,6 +1223,18 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         for _k, label, nk, nl in vocab_rows:
             if toks and (toks <= _tokens(nk) or toks <= _tokens(nl)):
                 return label
+        return None
+
+    def hidden_ref_for(norm: str) -> tuple[str, str] | None:
+        """`(registry key, label)` when the asked word names a HIDDEN key - same
+        matching rule as `vocab_label_for`, over the hidden-only rows."""
+        for k, label, nk, nl in hidden_vocab_rows:
+            if norm in (nk, nl):
+                return (k, label)
+        toks = _tokens(norm)
+        for k, label, nk, nl in hidden_vocab_rows:
+            if toks and (toks <= _tokens(nk) or toks <= _tokens(nl)):
+                return (k, label)
         return None
 
     # The normalised word AND the word the customer actually typed, PAIRED (review, nit
@@ -1219,7 +1253,17 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
             asked.append((norm, text))
             seen_norms.add(norm)
 
-    missed_codes: dict[str, list[str]] = {norm: [] for norm, _ in asked}
+    # Asked words that name a HIDDEN key, resolved once (not per item): a
+    # `spec_hidden:<key>` miss instead of the ordinary flow, never both.
+    hidden_asks: dict[str, tuple[str, str]] = {}
+    for norm, _asked_word in asked:
+        ref = hidden_ref_for(norm)
+        if ref is not None:
+            hidden_asks[norm] = ref
+
+    missed_codes: dict[str, list[str]] = {
+        norm: [] for norm, _ in asked if norm not in hidden_asks
+    }
 
     for it in e.get("items") or []:
         if not jsc.truthy(it) or not isinstance(jsc.get(it, "fields"), list):
@@ -1235,10 +1279,14 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
             for f in fields
             if not (isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX))
         ]
+        # Hidden keys are dropped HERE, before either branch below runs - the
+        # "Specs:" summary and the asked-word matching both read `spec_fields`.
         spec_fields = [
             f
             for f in fields
-            if isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX)
+            if isinstance(f, dict)
+            and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX)
+            and jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):] not in hidden
         ]
 
         if not asked:
@@ -1262,6 +1310,12 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         matched: list[dict[str, Any]] = []
         seen_field_ids: set[int] = {id(f) for f in kept_base}
         for norm, _asked_word in asked:
+            if norm in hidden_asks:
+                # Handled once, after the items loop, as a `spec_hidden:` miss -
+                # never matched (the field is already gone from `spec_fields`
+                # above) and never counted towards the ordinary "not recorded"
+                # miss either.
+                continue
             # 1. spec keys: an exact key/label match AND every key whose key or label
             #    tokens contain every asked token - ALL of them, in registry order
             toks = _tokens(norm)
@@ -1281,9 +1335,13 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
                 missed_codes[norm].append(jsc.js_string(code))
         it["fields"] = kept_base + matched
 
-    # 3. one miss line per asked word, rendered ONCE after the items
+    # 3. one miss line per asked word, rendered ONCE after the items - ordinary
+    # "not recorded" misses first, then one `spec_hidden:` "not available" line
+    # per asked word naming a hidden key (AC-16).
     misses: list[dict[str, Any]] = []
     for norm, asked_word in asked:
+        if norm in hidden_asks:
+            continue
         codes = missed_codes.get(norm) or []
         if not codes:
             continue
@@ -1292,6 +1350,12 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         extra = len(codes) - _MISS_CODES_CAP
         value = f"not recorded for {listed}" + (f" (+{extra} more)" if extra > 0 else "")
         misses.append({"key": f"spec_miss:{norm}", "label": label, "value": value})
+    for norm, _asked_word in asked:
+        ref = hidden_asks.get(norm)
+        if ref is None:
+            continue
+        key, label = ref
+        misses.append({"key": f"spec_hidden:{key}", "label": label, "value": "not available"})
     if misses:
         e["spec_misses"] = misses
 
@@ -1305,6 +1369,10 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     """
     ctx = ctx if isinstance(ctx, dict) else {}
     e = _extract_envelope(result)
+    # Read once, for both the restricted-field drop below and the spec-visibility
+    # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one
+    # `ctx.access`, two consumers.
+    access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
 
     # -- restricted-field drop (A2/A5/A6, general rule) ---------------------- #
     # A presenter marks a field or summary item RESTRICTED by putting its key in
@@ -1320,7 +1388,6 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # restricted field is ever dropped for the chatbot.
     restricted = e.get("restricted_fields")
     if isinstance(restricted, dict) and restricted:
-        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
 
@@ -1400,7 +1467,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # product with zero derived specs (no `spec_vocabulary` at all) still gets the
     # plain today's-four-fields answer rather than being skipped by accident.
     if jsc.js_string(e.get("result_type") or "") == "products":
-        _project_product_specs(e, req_attrs)
+        hidden_raw = access_ctx.get("hidden_spec_keys")
+        hidden_spec_keys = hidden_raw if isinstance(hidden_raw, list) else []
+        _project_product_specs(e, req_attrs, hidden_spec_keys)
 
     # H46: CONTAINS the sentinel, not IS it. `contracts.is_timeline` is the one declaration
     # (S6a put it there for exactly this consumer); re-deriving it here is what let a
