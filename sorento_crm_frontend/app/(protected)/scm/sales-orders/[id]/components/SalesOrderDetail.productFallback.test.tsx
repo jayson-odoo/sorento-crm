@@ -1,7 +1,9 @@
 /**
- * `productFallbackFor` - the pure function `SalesOrderDetail.tsx` resolves the Product
- * cell's `SearchableSelect selectedOption` from (coder, 2420ee00f, "a picked product stays
- * picked on the sales order line").
+ * `productFallbackFor` - the pure function the Product cell's `SearchableSelect
+ * selectedOption` resolves from (coder, 2420ee00f, "a picked product stays picked on the
+ * sales order line"; moved into its own module at 6c6f5643d - exporting it from
+ * `SalesOrderDetail.tsx` disabled Fast Refresh for the whole screen, which is what made
+ * Save look dead after any file change).
  *
  * A sibling file, not a block inside `SalesOrderDetail.test.tsx`: the function is pure and
  * exported precisely so the rule it encodes can be read and tested on its own, without the
@@ -15,7 +17,7 @@
  * row's own product when the draft still names it; else `undefined`.
  */
 import { describe, it, expect } from 'vitest';
-import { productFallbackFor } from './SalesOrderDetail';
+import { productFallbackFor } from './salesOrderLineDraft';
 
 describe('productFallbackFor', () => {
   // THE REGRESSION (13 September 2026, browser, twice: keyboard and a direct click): the

@@ -2014,11 +2014,9 @@ describe('SalesOrderDetail - R4: qty 0 on an existing line, never on a new one',
     });
   });
 
-  // Owner to confirm: Add line's own shape (a new row with product / qty / date, the
-  // create modal's row control reused) is not yet ruled on - this test can be dropped once
-  // it is. Written against the CURRENT best guess (a button named "Add line"), so it reds
-  // on the button's absence rather than silently passing on a feature nobody built yet.
-  it('still refuses qty 0 on a new line (owner to confirm the Add line shape)', async () => {
+  // Add line's shape (a new row with product / qty / date, the create modal's row control
+  // reused) is confirmed - owner said keep.
+  it('still refuses qty 0 on a new line', async () => {
     renderTwoLines();
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     openTab('Lines');
@@ -2108,11 +2106,9 @@ describe('SalesOrderDetail - R4: footer totals exclude a cancelled line', () => 
   });
 });
 
-describe('SalesOrderDetail - R4: Add line on the edit screen (owner to confirm)', () => {
-  // Owner to confirm: whether Add line reuses the create modal's own row control, and its
-  // exact field set (product / qty / date). Written against the current best-guess shape
-  // so it reds on "no such control exists yet" rather than passing by accident - drop or
-  // rewrite once the owner rules on the real shape.
+describe('SalesOrderDetail - R4: Add line on the edit screen', () => {
+  // Add line reuses the create modal's own row control (product / qty / date) - confirmed,
+  // owner said keep.
   it('offers Add line in edit mode, appending an editable row', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
