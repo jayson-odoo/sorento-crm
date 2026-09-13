@@ -33,7 +33,7 @@ seeded here, never a borrowed row.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
@@ -945,4 +945,107 @@ def test_a_multi_order_upload_reports_every_batch_it_wrote_into(api):
     )
     assert pending[str(core_so_b.id)] != pending[str(core_so_a.id)], (
         "order B's own fresh batch must be a DIFFERENT id from order A's existing one"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The open-batch lookup and the resolver pick deterministically on a
+# created_at tie (`id.desc()` as the second `order_by` key, both call sites)
+# --------------------------------------------------------------------------- #
+
+def test_the_open_batch_lookup_and_the_resolver_pick_deterministically_on_a_created_at_tie(api):
+    """Two unapplied batches for the SAME order, born the same sub-second (a real hazard:
+    two saves inside one request, or a scratch-schema clock with low resolution), each with
+    its own pending row for a DIFFERENT line. `created_at.desc()` alone cannot order them -
+    `id.desc()` is the deterministic second key BOTH call sites use
+    (`pending_batch_id_by_sales_order`, ~1246, and `build_batch`'s own open-batch lookup,
+    ~956) so a caller reading straight after a write never picks a different "newest" than
+    `build_batch` itself just chose as primary.
+
+    (a) `pending_batch_id_by_sales_order` must return the HIGHER id of the tied pair.
+
+    (b) A genuine new manual edit (line 3, untouched by either hand-seeded row) must APPEND
+    into that SAME higher-id batch (`build_batch`'s own lookup has to resolve the tie the
+    same way), and the fold step (R1 review round, "a line has at most one live pending row
+    across every open batch") absorbs the LOWER-id batch's pending row into it - leaving
+    exactly ONE open batch for the order, now carrying all three pending rows (line 1 via
+    the fold, line 2 hand-seeded on the primary from the start, line 3 the new edit).
+
+    Guarded (verified by hand, not asserted in code - see the commit message): temporarily
+    dropping `PlanningChangeBatch.id.desc()` from both `order_by` clauses turns (a) red
+    (`pending_batch_id_by_sales_order` returns whichever tied row Postgres happens to list
+    first, not deterministically the higher id) - confirmed, then reverted.
+    """
+    shape = _four_line_world(api)
+    db = shape["world"].db
+    order = shape["order"]
+    world = shape["world"]
+    core_so = shape["core_so"]
+
+    tie_time = datetime(2026, 1, 1, 12, 0, 0)
+    batch_low_id = "00000000-0000-0000-0000-000000000001"
+    batch_high_id = "00000000-0000-0000-0000-000000000002"
+
+    batch_low = PlanningChangeBatch(
+        id=batch_low_id, created_by=world.actor, company_id=world.company_id,
+        created_at=tie_time,
+    )
+    batch_high = PlanningChangeBatch(
+        id=batch_high_id, created_by=world.actor, company_id=world.company_id,
+        created_at=tie_time,
+    )
+    db.add_all([batch_low, batch_high])
+    db.flush()
+
+    row_low = PlanningChangeRow(
+        id=str(uuid.uuid4()), batch_id=batch_low.id, company_id=world.company_id,
+        project_sales_order_id=order.id, project_line_id=shape["plan_lines"][0].id,
+        core_line_id=shape["core_lines"][0].id, line_no=1,
+        item_code=world.product.product_code, kind="qty_up",
+        from_json={"qty": "36"}, to_json={"qty": "40"},
+        facts_json={}, applied_state="pending",
+    )
+    row_high = PlanningChangeRow(
+        id=str(uuid.uuid4()), batch_id=batch_high.id, company_id=world.company_id,
+        project_sales_order_id=order.id, project_line_id=shape["plan_lines"][1].id,
+        core_line_id=shape["core_lines"][1].id, line_no=2,
+        item_code=world.product.product_code, kind="qty_up",
+        from_json={"qty": "50"}, to_json={"qty": "55"},
+        facts_json={}, applied_state="pending",
+    )
+    db.add_all([row_low, row_high])
+    db.commit()
+
+    # (a) The lookup used by the board, the SCM sales-orders list and the fulfilment-
+    # planning list must all pick the SAME batch on this tie - the higher id.
+    pending = planning_change_service.pending_batch_id_by_sales_order(db, [str(core_so.id)])
+    assert pending.get(str(core_so.id)) == batch_high_id, (
+        f"expected the tie-break to pick the higher id ({batch_high_id}), got {pending}"
+    )
+
+    # (b) A genuine new edit on the untouched third line must land in that SAME batch, and
+    # the fold must absorb the lower-id batch's pending row into it.
+    new_batch = _edit_qty(db, shape, 2, "25")  # line 3
+    assert str(new_batch.id) == batch_high_id, (
+        f"the new edit's own row must append into the tie-break's winner "
+        f"({batch_high_id}), landed in {new_batch.id} instead"
+    )
+
+    open_batches = _open_batches_for_order(db, order.id)
+    assert len(open_batches) == 1, [str(b.id) for b in open_batches]
+    assert str(open_batches[0].id) == batch_high_id, str(open_batches[0].id)
+
+    pending_rows = (
+        db.query(PlanningChangeRow)
+        .filter(PlanningChangeRow.batch_id == batch_high_id,
+                PlanningChangeRow.applied_state == "pending")
+        .all()
+    )
+    assert len(pending_rows) == 3, [r.project_line_id for r in pending_rows]
+
+    db.refresh(row_low)
+    assert row_low.batch_id == batch_high_id or row_low.applied_state == "superseded", (
+        f"the lower-id batch's stray row must be folded into the primary ({batch_high_id}) "
+        f"or superseded, not left pending in a batch of its own "
+        f"(batch_id={row_low.batch_id!r}, applied_state={row_low.applied_state!r})"
     )
