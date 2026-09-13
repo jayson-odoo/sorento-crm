@@ -859,6 +859,32 @@ def _carry_ctx(ctx: dict[str, Any], products: list[dict[str, Any]]) -> dict[str,
     return {**ctx, "parse": parse}
 
 
+def _resumed_team_pick(ctx: dict[str, Any]) -> bool:
+    """D10: true when THIS turn resolved the lane's OWN team question, not a fresh one.
+
+    Owner ruling D10 (captain's console re-pass, 13 Sep 2026): "escalate to marketing about
+    water tap of SRTWB8004" resolves the product (D6), then asks which marketing team (D2)
+    - and the reply that answers THAT question is a deferral of the SAME escalation, not a
+    turn about something else. The D3 same-team gate exists for a product left over from an
+    unrelated earlier turn; it must not also swallow the product THIS escalation request
+    itself named, just because the team question it triggered happened to land on a
+    different team than the one the conversation was carrying before.
+
+    Same pattern as `_deferred_escalation` below - two structured signals, no new session
+    key: the question THIS message answered (`ctx.parse._answered.handler`, the engine's
+    own record from the `answered` stage) and the PREVIOUS turn's persisted
+    `open_question.kind` both have to say `team_pick`. The handler alone is not enough - a
+    stale `_answered` record naming `team_pick` with nothing actually open would be a false
+    positive - so the previous question's own kind is read too, the same defence
+    `_deferred_escalation` applies to its own `product_pick` handler.
+    """
+    answered = jsc.get(jsc.get(ctx, "parse"), "_answered")
+    if not isinstance(answered, dict) or jsc.get(answered, "handler") != "team_pick":
+        return False
+    question = jsc.get(_prev_variables(ctx), "open_question")
+    return jsc.get(question, "kind") == "team_pick"
+
+
 def _carried_brand(
     ctx: dict[str, Any],
     context_item: dict[str, Any],
@@ -875,6 +901,11 @@ def _carried_brand(
     carries `mocha` and asks nothing; a stock turn on warehouse then the same message
     carries nothing, so the whole tier-1 pool is drawn from.
 
+    **Except when this turn RESUMED the lane's own team question (D10,
+    `_resumed_team_pick`)**: the product the escalation request named carries to the
+    landing regardless of the previous turn's team, because the team question was the
+    lane's own deferral of that same request, not a new turn about something else.
+
     The BRAND is resolved rather than read from the session, because the session does not
     hold one: the five keys carry what the conversation is ABOUT (`focus.products`), and the
     brand is a fact about that product which the resolver owns. One extra call, on this rung
@@ -885,7 +916,9 @@ def _carried_brand(
     regardless, but a caller reading `_resolve_product`'s own contract should not have to
     know that to trust the flag was not silently dropped one call down.
     """
-    if jsc.nullish_str(landed).strip().lower() != jsc.nullish_str(_carried_team(ctx)).strip().lower():
+    if not _resumed_team_pick(ctx) and (
+        jsc.nullish_str(landed).strip().lower() != jsc.nullish_str(_carried_team(ctx)).strip().lower()
+    ):
         return None, None
     products = _carried_products(ctx)
     if not products:
