@@ -429,6 +429,39 @@ The Was / Now table itself survives in one place, `BoardChangeWasNowTable`, for 
 Inquiries worklist lightbox: a settled amendment, two values, no suggestion and no board
 behind it, already inside a dialog of its own. No backend field was added for any of this.
 
+### H. SO400884 browser walk rulings (captain, 13 September 2026)
+
+**R1. One open batch per order.** `build_batch` for an order that already has an unapplied
+batch with a PENDING row appends its rows to that batch instead of minting a new one, so
+`pending_batch_id_by_sales_order` always has exactly one candidate; a new row for a line the
+open batch already has a pending row for supersedes the older one in place (`applied_state
+= superseded`, reason "Replaced by a later change") and lands in a FRESH batch instead,
+since the two rows cannot coexist as one pending row. **Not committed yet**: implemented
+against its own two acceptance tests (`tests/scm/test_planning_change_one_open_batch.py
+::test_a_second_save_on_an_order_with_a_pending_batch_appends_to_it` and `::test_a_second_
+change_on_the_same_line_supersedes_the_pending_row`, both pass), but the same append rule
+for a DIFFERENT line regresses a pre-existing green test (`tests/scm/test_planning_change_
+diff_parity.py::test_re_adding_the_same_product_after_a_cancellation_creates_a_new_open_
+line` - a cancel-then-readd across two manual-edit saves expects two separate single-row
+batches) and conflicts with this same file's own `_so400884_shape` fixture (three separate
+`build_batch` calls for three DIFFERENT lines of one order, each read back via `_only_row`,
+which asserts exactly one row per batch - R1's append merges all three into one). Held
+uncommitted pending a scope ruling: `test_a_second_save`'s cross-line append and the other
+two's assumption of separate batches per differing line cannot both hold under one rule as
+currently written.
+
+**R3. A cancelled line with a pending change row has a home on the board.**
+`FulfilmentBoardService._cancelled_pending_change_rows` reads it separately from
+`_demand_rows`'s own `is_open_demand()` predicate (shared with the netting engine and the
+worklist, neither of which wants a cancelled line back) and appends it to `contributions`
+alone - never to the rows the ladder walks or `_standings` totals. Every field the ladder
+would have filled stays at `_Row`'s own zero default; `qty`/`qty_outstanding` read zero;
+`_contribution` gains two fields, `cancelled: true` and `pending_change_batch_id`. The row
+drops off the board again once that row applies. `_apply_one_order`'s own `confirm_result`
+fallback (built when a press retires a line and composes nothing else) had `lines_decided`
+and `lines_undecided` swapped - a RETIRED line is a decided line, only a REPLANNED one is
+genuinely undecided.
+
 ## Slice E contract (captain, 13 September 2026, issue #860, AC-E1/AC-E2; AC-X1, issue #854)
 
 1. `challenge_if_drifted` (`project_supply_service.py`) loses every caller and is deleted
@@ -470,6 +503,21 @@ behind it, already inside a dialog of its own. No backend field was added for an
    than the single literal slug, so `purchasing_manager` and `purchasing_executive` are
    notified alongside `purchasing` itself; a role that merely contains the word elsewhere in
    its slug is not matched (prefix, not substring).
+5. **R2 (SO400884 browser walk, 13 September 2026): a changed line is never carried into a
+   fresh revision.** `_open_of` (AC-B01's own open-quantity primitive) now floors a
+   `line_status="cancelled"` core line to zero - it used to read `qty_ordered -
+   qty_delivered` alone, so a cancelled line with an undelivered quantity still read as
+   owing it, everywhere the drift check and the board queue both read this figure.
+   `_carry_snapshot_has_drifted` now excludes a cancelled core line explicitly (open_qty
+   alone did not always disagree with the frozen snapshot); a RENAMED product is not the
+   same defect - the line's own demand did not change, only what it is for - so
+   `_carried_lines` patches the carried snapshot's `product_id`/`item_code` to the live
+   product on a copy instead of excluding the line. `_apply_one_order`'s `undecided_
+   changed_line_ids` was built only from the batch being applied, so a pending row for a
+   changed line sitting in a DIFFERENT, still-unapplied batch of the same order was
+   invisible to it; widened to look across every unapplied batch of the order, excluding
+   `cancelled` and `product_changed` rows from that uncover set for the same reason they
+   are handled above.
 
 **Two pre-existing tests reported, not touched (captain's own instruction - no test edits;
 these predate this slice and are not among the tester's rewrites):**
