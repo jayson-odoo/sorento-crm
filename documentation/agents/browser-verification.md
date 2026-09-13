@@ -113,3 +113,18 @@ exactly like the page went blank rather than like a click that landed on the wro
   `none`, press Escape and re-check before assuming the click never fired.
 - Never read a nav-only snapshot as "no request fired" - it can mean a stray menu is open and
   the page underneath is inert, not that the interaction was a no-op.
+
+## Never keyboard-type into a native date input (added 2026-09-13, walk attempt 6)
+
+Typing into a native `<input type="date">` crashed the session's own headless Chromium twice
+in one walk. Set the value through the native setter instead, then fire the events React
+listens for:
+
+```
+eval Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '2026-11-20')
+```
+
+then dispatch `input` and `change` on the same element - never `fill` or a keystroke sequence
+against a `type="date"` field. If a session's Chromium dies anyway, kill only THAT session's
+Chrome PID pair (its own `agent-browser-chrome-<uuid>` user-data-dir), never the shared
+daemon - reopen a browser under the same session name and log in again.
