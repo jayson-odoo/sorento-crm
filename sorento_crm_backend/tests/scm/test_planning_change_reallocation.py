@@ -51,6 +51,7 @@ from app.services.scm.outstanding_diff import CLOSED, DATE_MOVED, QTY_CHANGED, C
 
 from tests._pg_fixture import blank_session
 from tests.test_planning_changes import (  # noqa: F401  (api is the fixture)
+    BASE,
     api,
     _classification,
     _confirm,
@@ -1666,3 +1667,68 @@ def test_a_freed_document_lands_on_survivor_waiting_row_and_pool_three_way(api):
     released = (fresh.result_json or {}).get("released_documents") or []
     assert len(executed) == 3, fresh.result_json
     assert released == [], fresh.result_json
+
+
+def test_the_wire_carries_the_cancelled_rows_reallocation_result_and_null_for_pending(api):
+    """R1: `row_out()` (`planning_change_service.py` ~2231-2256) builds the wire dict for
+    one row and never mentions `result_json` at all - confirmed by direct read (attempt 7
+    browser walk) while trying to read a just-applied cancelled row's reallocation result
+    off `GET .../planning-changes/{batch_id}` and finding no such key anywhere in the
+    response. `PlanningChangeRow.result_json` is documented on the model itself as "what
+    Apply wrote for this row alone ... read back beside `applied_reason` on the batch page
+    after Apply" - so the wire needs a `result` key carrying it, `None` before Apply runs
+    (nothing has been written yet) and the row's own `result_json` (with its
+    `executed_reallocations`/`released_documents` sentences, per
+    `test_a_cancelled_lines_placed_quantity_with_no_same_order_taker_follows_rule_6`) once
+    Apply has. `response_model` silently drops an undeclared field, so this is asserted on
+    the actual wire response, not the ORM row."""
+    world, core_so, core_line, order, line, po, po_line = _wholly_placed_buy_world(api)
+    db = world.db
+    client = api[0]
+
+    other_so = _core_so(db, world.company_id)
+    other_line_core = _core_line(db, other_so, world.product, world.own_wh, qty_ordered="50",
+                                  required_date=date(2027, 2, 1))
+    other_order = _project_so(db, world.project, so_id=other_so.id,
+                               autocount_doc_no=other_so.so_number)
+    other_project_line = _project_line(db, other_order, line_no=1, product=world.product,
+                                        core_line=other_line_core)
+    db.commit()
+    _confirm(client, other_order.id, {"lines": [
+        _line_payload(other_project_line.id, buy_qty="50", buy_reason="Nothing free elsewhere."),
+    ]})
+
+    batch = _cancel_the_line(db, world, core_so, core_line)
+    row = _only_row(db, batch)
+    assert row.kind == "cancelled", row.kind
+
+    pending_detail = client.get(f"{BASE}/planning-changes/{batch.id}")
+    assert pending_detail.status_code == 200, pending_detail.text
+    pending_orders = pending_detail.json()["orders"]
+    pending_row = next(o for o in pending_orders if o["project_sales_order_id"] == str(order.id))
+    pending_wire_row = pending_row["rows"][0]
+    assert pending_wire_row["result"] is None, pending_wire_row
+
+    put = client.put(
+        f"{BASE}/planning-changes/{batch.id}/rows/{row.id}", json={"decision": "confirm"},
+    )
+    assert put.status_code == 200, put.text
+
+    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    assert apply_response.status_code == 200, apply_response.text
+    assert apply_response.json()["failed_orders"] == [], apply_response.json()
+
+    applied_detail = client.get(f"{BASE}/planning-changes/{batch.id}")
+    assert applied_detail.status_code == 200, applied_detail.text
+    applied_orders = applied_detail.json()["orders"]
+    applied_row = next(o for o in applied_orders if o["project_sales_order_id"] == str(order.id))
+    applied_wire_row = applied_row["rows"][0]
+
+    result = applied_wire_row["result"]
+    assert result is not None, applied_wire_row
+    executed = result.get("executed_reallocations") or []
+    assert any(
+        po.po_number in item and "34" in item and f"{other_so.so_number} ORDER" in item
+        for item in executed
+    ), result
+    assert result.get("released_documents") == [], result
