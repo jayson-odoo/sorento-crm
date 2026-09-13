@@ -52,13 +52,15 @@ vi.mock('../lib/price-tag-request-service', () => ({
 // Same generic hooks `SubmissionForm` already reads for the legacy kinds
 // (`app/(auth)/portal/hooks/useRevisions.ts`) - R3-1 has `PriceTagRequestForm`
 // reuse them rather than a second revise mechanism (plan D-P1/"R3-1").
-const { revisePolicyMock, reviseMock } = vi.hoisted(() => ({
+const { revisePolicyMock, reviseMock, revisionHistoryMock } = vi.hoisted(() => ({
   revisePolicyMock: vi.fn(),
   reviseMock: vi.fn(),
+  revisionHistoryMock: vi.fn(),
 }));
 vi.mock('../hooks/useRevisions', () => ({
   useRevisionPolicy: revisePolicyMock,
   useReviseSubmission: () => ({ revise: reviseMock, submitting: false }),
+  useRevisionHistory: revisionHistoryMock,
 }));
 
 vi.mock('@/components/common/AttachmentPreviewModal', () => ({
@@ -158,6 +160,12 @@ beforeEach(() => {
     revision: ALLOWED_POLICY,
     revision_no: 1,
   });
+  revisionHistoryMock.mockReturnValue({
+    entries: [],
+    loading: false,
+    error: null,
+    reload: vi.fn(),
+  });
 });
 
 describe('PriceTagRequestForm - no Edit after submit (R3-1, AC-R7)', () => {
@@ -235,5 +243,70 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
       expect(screen.queryByRole('button', { name: 'Submit revision' })).toBeNull(),
     );
     expect(screen.getByText('PT-202609-0001')).toBeInTheDocument();
+  });
+});
+
+describe('PriceTagRequestForm - Revisions tab (AC-R7 second half)', () => {
+  it('a saved request with an enabled policy shows a Revisions tab listing the history rows', async () => {
+    revisePolicyMock.mockReturnValue({ policy: ALLOWED_POLICY, loading: false });
+    revisionHistoryMock.mockReturnValue({
+      entries: [
+        {
+          id: 'rev-0',
+          version_no: 0,
+          revision_no: 0,
+          kind: 'original',
+          label: 'Original',
+          reason: null,
+          submitted_at: '2026-09-01T00:00:00Z',
+          submitted_by: 'ZZT Dealer',
+          is_reconstructed: false,
+          snapshot: {},
+          snapshot_fields: [],
+          attachments: [],
+          invalidated: null,
+          voided_stage_code: null,
+          voided_assignee_name: null,
+          voided_stages: [],
+          changes: [],
+        },
+        {
+          id: 'rev-1',
+          version_no: 1,
+          revision_no: 1,
+          kind: 'revision',
+          label: 'Revision 1',
+          reason: 'Dealer changed their mind',
+          submitted_at: '2026-09-05T00:00:00Z',
+          submitted_by: 'ZZT Dealer',
+          is_reconstructed: false,
+          snapshot: {},
+          snapshot_fields: [],
+          attachments: [],
+          invalidated: null,
+          voided_stage_code: null,
+          voided_assignee_name: null,
+          voided_stages: [],
+          changes: [],
+        },
+      ],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    });
+    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'new', portal_draft_at: null }));
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+
+    const revisionsTab = screen.getByRole('tab', { name: /Revisions/ });
+    // Radix Tabs' default `activationMode="automatic"` switches on FOCUS,
+    // which a bare `fireEvent.click` does not synthesize in jsdom.
+    revisionsTab.focus();
+    fireEvent.click(revisionsTab);
+    await waitFor(() => expect(revisionsTab).toHaveAttribute('data-state', 'active'));
+
+    expect(await screen.findByText('Original')).toBeInTheDocument();
+    expect(screen.getByText('Revision 1')).toBeInTheDocument();
   });
 });

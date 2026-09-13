@@ -183,3 +183,41 @@ describe('PortalLanding - Price Tag Request in the type dropdown', () => {
     expect(screen.queryByText('Price Tag Requests')).toBeNull();
   });
 });
+
+describe('PortalLanding - price tag card shows the revision badge/chip too (AC-R7)', () => {
+  // Same mechanism `PortalLanding.revBadge.test.tsx` already pins for the
+  // legacy kinds - the card reads `row.revision_no`/`row.has_revision_draft`
+  // with no kind-specific branch, so a price_tag_request row must behave
+  // identically once the settings row for it is enabled.
+  it('shows the "Rev N" badge for a revised price tag request', async () => {
+    searchParams = new URLSearchParams('type=price_tag_request');
+    mockContact(['price_tag_request']);
+    (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...PRICE_TAG_ROW, revision_no: 1, last_revised_at: '2026-09-01T00:00:00Z' },
+    ]);
+
+    render(<PortalLanding slug="darren" />);
+
+    await screen.findByText('PT-202608-0001');
+    expect(screen.getByText('Rev 1')).toBeInTheDocument();
+  });
+
+  it('shows the Revising chip when has_revision_draft is true', async () => {
+    searchParams = new URLSearchParams('type=price_tag_request');
+    mockContact(['price_tag_request']);
+    (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        ...PRICE_TAG_ROW,
+        revision_no: 1,
+        last_revised_at: '2026-09-01T00:00:00Z',
+        has_revision_draft: true,
+      },
+    ]);
+
+    render(<PortalLanding slug="darren" />);
+
+    await screen.findByText('PT-202608-0001');
+    const chip = screen.getByTestId('revising-chip');
+    expect(chip).toHaveTextContent('Revising');
+  });
+});

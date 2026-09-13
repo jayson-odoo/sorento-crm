@@ -197,10 +197,31 @@ class TestAttachmentRoutesRefuseWhenNotEditable:
     def test_attachment_routes_allowed_while_a_revision_draft_exists(self, client):
         """R3-1: a submitted, non-draft request regains attachment writes while
         the contact has an in-progress revision draft for it - the revision
-        engine's own draft, not ``portal_draft_at``."""
-        from app.models.portal import PortalRevisionDraft
+        engine's own draft, not ``portal_draft_at``.
+
+        The gate (``_require_editable``) re-checks the LIVE revision policy
+        (gap C fix, 97912eef4), not just the draft row's existence - so the
+        policy has to actually allow a revision here: global revisions on,
+        and a ``price_tag_request`` config row enabled with ``new`` among its
+        allowed statuses (the request's own status), same seeding
+        ``test_portal_price_tag_revise.py`` uses.
+        """
+        from app.models.portal import PortalRevisionConfig, PortalRevisionDraft
+        from app.models.user import SystemSetting
 
         c, db = client
+        db.add(SystemSetting(id=str(uuid.uuid4()), portal_revisions_enabled=True, portal_max_revisions=2))
+        db.add(
+            PortalRevisionConfig(
+                id=str(uuid.uuid4()),
+                source_entity_type="price_tag_request",
+                is_enabled=True,
+                max_revisions=None,
+                allowed_statuses=["new", "changes_requested"],
+                restart_stage_code=None,
+            )
+        )
+        db.commit()
         contact = _contact(db)
         token = _token(db, contact)
 
