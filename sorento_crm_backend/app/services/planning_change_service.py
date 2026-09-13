@@ -94,9 +94,10 @@ from app.models.project_so import (
     SOSupplyDecision,
 )
 from app.models.projects import Project
-from app.models.scm import ItemClassification, OrderLinkClaim
+from app.models.scm import ItemClassification
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.scm import order_link_service
 from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE, TIMELY_SPO, qty_text
 from app.services.scm.outstanding_diff import (
     ADDED,
@@ -3038,6 +3039,12 @@ def _unclaim_shares(
         .order_by(OrderInquiryLink.linked_at.asc())
         .all()
     )
+    # Every link this call may remove, known upfront (same reason `_remove_links` computes
+    # its own `going` before its loop): a link deleted earlier in THIS loop has not been
+    # flushed yet, so the claim guard below has to exclude the whole batch, not only the
+    # one link presently being handled, or it would see an about-to-be-deleted sibling as
+    # still "surviving" and refuse to free a claim nothing will be left to reference.
+    going = {str(link.id) for link in links}
     touched: Dict[str, OrderInquiryRow] = {}
     for link in links:
         remaining = wanted.get(str(link.po_line_id), _ZERO)
@@ -3046,31 +3053,24 @@ def _unclaim_shares(
         qty = _dec(link.qty)
         owner = db.get(OrderInquiryRow, link.row_id)
         if qty <= remaining:
-            # The audit claim this link wrote (`source = "order_inquiry"`, held by
-            # `order_link_service.delete_own_claim`/`_remove_links`) goes with it, same
-            # guard as `_remove_links`: only when no OTHER surviving link leans on the
-            # same claim - two links on one document share it. Without this, a line's
+            # The audit claim this link wrote goes with it (S3, review round: the shared
+            # guard - only when no OTHER surviving link leans on the same claim, since two
+            # links on one document share it - now lives in ONE place,
+            # `order_link_service.free_claim_if_orphaned`, alongside `_remove_links`
+            # [`project_order_inquiry_service.py`]'s own call). Without this, a line's
             # placement re-dealt through THIS seam (rule 6, a cancelled row with no
             # same-order survivor) left the claim behind forever, since only `_remove_
             # links`'s own call sites used to free it.
-            if link.claim_id:
-                claim = (
-                    db.query(OrderLinkClaim)
-                    .filter(
-                        OrderLinkClaim.id == link.claim_id,
-                        OrderLinkClaim.source == "order_inquiry",
-                    )
-                    .first()
-                )
-                if claim is not None and not (
-                    db.query(OrderInquiryLink)
-                    .filter(
-                        OrderInquiryLink.claim_id == claim.id,
-                        OrderInquiryLink.id != link.id,
-                    )
-                    .first()
-                ):
-                    db.delete(claim)
+            #
+            # UNLIKE `_remove_links`, this does not write an "Unlinked from ..." note on
+            # `owner` nor clear its `actioned_by`/`actioned_at`: `owner` is not being given
+            # up on, it is a still-live row the confirm settled IN PLACE (rule 7's later
+            # date, or an ordinary reduce) that simply needs sourcing again for what this
+            # took off it - the story belongs to where the quantity WENT (the waiting
+            # row's own "Found: ..." note, or the pool row's), not to the row giving it up,
+            # which a person never asked anything of and `refresh_link_state` below already
+            # reads back to its live truth rather than a history entry.
+            order_link_service.free_claim_if_orphaned(db, link.claim_id, excluding=going)
             db.delete(link)
             wanted[str(link.po_line_id)] = remaining - qty
         else:

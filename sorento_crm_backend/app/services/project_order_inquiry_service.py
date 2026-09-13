@@ -64,7 +64,6 @@ from app.services.product_companion_service import (
     bundled_with_item_codes_map as _bundled_with_item_codes_map,
     resolve_bundled_item_codes as _resolve_bundled_item_codes,
 )
-from app.models.scm import OrderLinkClaim
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     ACK_AWAITING,
@@ -5686,28 +5685,12 @@ class ProjectOrderInquiryService:
             # item) and would have taken down the claim behind a SIBLING link on the same
             # document - a row linked to two lines of one purchase order lost both claims
             # when one line was given back. The link records which claim it wrote, so this
-            # removes exactly that one and nothing else.
-            if link.claim_id:
-                claim = (
-                    self.db.query(OrderLinkClaim)
-                    .filter(
-                        OrderLinkClaim.id == link.claim_id,
-                        OrderLinkClaim.source == "order_inquiry",
-                    )
-                    .first()
-                )
-                # Only when no OTHER surviving link leans on the same claim: two links on
-                # one document share the one claim, because the claim's identity is the
-                # document and not the line.
-                if claim is not None and not (
-                    self.db.query(OrderInquiryLink)
-                    .filter(
-                        OrderInquiryLink.claim_id == claim.id,
-                        OrderInquiryLink.id.notin_(list(going)),
-                    )
-                    .first()
-                ):
-                    self.db.delete(claim)
+            # removes exactly that one and nothing else (S3, review round: the shared
+            # guard lives in `order_link_service.free_claim_if_orphaned`, alongside
+            # `_unclaim_shares` [`planning_change_service.py`]'s own call).
+            order_link_service.free_claim_if_orphaned(
+                self.db, link.claim_id, excluding=going
+            )
             self.db.delete(link)
         self.db.flush()
         self._invalidate_link_cache()
