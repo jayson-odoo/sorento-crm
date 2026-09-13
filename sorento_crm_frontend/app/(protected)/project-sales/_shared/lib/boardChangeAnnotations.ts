@@ -48,6 +48,20 @@ export interface BoardChangeSide {
   decision: string | null;
 }
 
+/**
+ * One field the book moved, ready to print as `Qty 234 -> 334` (AC-C10).
+ *
+ * Display text on both sides, resolved here rather than in the dialog: the board, the
+ * lightbox and the column the icon sits in all read this one list, so what counts as
+ * "changed" cannot come to mean two things on one screen.
+ */
+export interface BoardChangeField {
+  key: 'qty' | 'date' | 'decision';
+  label: string;
+  from: string;
+  to: string;
+}
+
 /** What one changed line reads on its cell. */
 export interface BoardChangeAnnotation {
   /** The batch row this came from - the id a decision is PUT against. */
@@ -77,6 +91,59 @@ export interface BoardChangeAnnotation {
   movedTransfer: string | null;
   /** Which line the change is about, when the batch knows it. Used to match a cell's lines. */
   projectLineId: string | null;
+}
+
+/**
+ * `4 Sep` - a date in a sentence a person reads, the same shape the engine's own labels use.
+ *
+ * The months are named here rather than left to `Intl`, whose `en-GB` short form spells
+ * September "Sept": the server composes "Buy 134 for 15 Mar" with this vocabulary, and a
+ * lightbox that spelled the same month differently two lines apart would read as two
+ * different facts.
+ */
+const SHORT_MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+export function shortDay(value: string | null | undefined): string {
+  if (!value) return '';
+  const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getUTCDate()} ${SHORT_MONTHS[date.getUTCMonth()]}`;
+}
+
+/**
+ * ONLY what moved (owner feedback, 13 September 2026), of the three fields the retired
+ * Was / Now table printed unconditionally.
+ *
+ * A field whose two sides are equal is not a change, and printing it as one is the clutter
+ * that feedback was about. ONE source for two readers: the lightbox prints these lines, and
+ * the list puts the change icon in the column each key names, so the two cannot come to
+ * disagree about what moved.
+ *
+ * A cancelled line reads `Cancelled` on the Now side of every field it stated, because that
+ * IS what changed about it - not a blank, which a reader would take for "unknown".
+ */
+export function changedFieldsOf(
+  annotation: Pick<BoardChangeAnnotation, 'was' | 'now' | 'closed'>,
+): BoardChangeField[] {
+  const { was, now, closed } = annotation;
+  const out: BoardChangeField[] = [];
+  const push = (key: BoardChangeField['key'], label: string, from: string, to: string) => {
+    if (!from && !to) return;
+    if (from === to) return;
+    out.push({ key, label, from: from || 'Not stated', to: to || 'Not stated' });
+  };
+  push('qty', 'Qty', was.qty ?? '', closed ? 'Cancelled' : now.qty ?? '');
+  push('date', 'Date', shortDay(was.date), closed ? 'Cancelled' : shortDay(now.date));
+  push(
+    'decision',
+    'Decision',
+    was.decision ?? '',
+    closed ? 'Cancelled' : now.decision ?? '',
+  );
+  return out;
 }
 
 /** How the matrix keys a cell: the row's key (item code, or an id on a pivoted axis). */
@@ -170,6 +237,16 @@ export function annotationOf(
   const proposal = (row.proposal ?? null) as BoardContribution | null;
   const location = ownLocation ?? proposal?.fulfilment_location ?? null;
   const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
+  const was: BoardChangeSide = {
+    qty: row.from?.qty ?? null,
+    date: row.from?.required_date ?? null,
+    decision: decisionWords(heldParts(row.held), location),
+  };
+  const now: BoardChangeSide = {
+    qty: closed ? null : row.to?.qty ?? null,
+    date: closed ? null : row.to?.required_date ?? null,
+    decision: closed ? null : decisionWords(proposedParts(row), location),
+  };
   return {
     rowId: row.id,
     soNumber,
@@ -177,16 +254,8 @@ export function annotationOf(
     itemCode: row.item_code,
     kind: row.kind,
     closed,
-    was: {
-      qty: row.from?.qty ?? null,
-      date: row.from?.required_date ?? null,
-      decision: decisionWords(heldParts(row.held), location),
-    },
-    now: {
-      qty: closed ? null : row.to?.qty ?? null,
-      date: closed ? null : row.to?.required_date ?? null,
-      decision: closed ? null : decisionWords(proposedParts(row), location),
-    },
+    was,
+    now,
     suggestionLines: suggestionLinesOf(row),
     lateDays: row.suggestion?.late_days ?? null,
     shortfallQty: row.suggestion?.shortfall_qty ?? null,
@@ -254,6 +323,31 @@ export function annotationsByCell(
       const held = out.get(key);
       if (held) held.push(annotation);
       else out.set(key, [annotation]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Every annotation the LIST should draw, keyed by the planning line it is about.
+ *
+ * The grid keys by cell because a cell is where a product and a date meet; the list keys by
+ * line because a row IS one line. Same annotations, same `annotationOf` - the two readings
+ * of the board never build the change twice.
+ */
+export function annotationsByLine(
+  batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined,
+): Map<string, BoardChangeAnnotation[]> {
+  const out = new Map<string, BoardChangeAnnotation[]>();
+  for (const order of batch?.orders ?? []) {
+    for (const row of order.rows ?? []) {
+      const proposal = (row.proposal ?? null) as BoardContribution | null;
+      const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
+      if (!lineId) continue;
+      const annotation = annotationOf(row, order.so_number, proposal?.fulfilment_location ?? null);
+      const held = out.get(lineId);
+      if (held) held.push(annotation);
+      else out.set(lineId, [annotation]);
     }
   }
   return out;
