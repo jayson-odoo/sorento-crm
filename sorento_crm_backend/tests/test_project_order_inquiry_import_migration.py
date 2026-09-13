@@ -160,6 +160,26 @@ def sheet(rows, *, name: str = "Sheet1", headers=HEADERS) -> bytes:
     return buffer.getvalue()
 
 
+def book(**tabs) -> bytes:
+    """Several tabs of one workbook: `book(JAN_26=[row], ROLLUP=[row])`.
+
+    The customer's own shape - a month tab, a roll-up tab covering that month and a dated
+    snapshot - which is the only way to state the same delivery twice (AC-S1-38).
+    """
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    workbook.remove(workbook.active)
+    for name, rows in tabs.items():
+        tab = workbook.create_sheet(title=name)
+        tab.append(list(HEADERS))
+        for row in rows:
+            tab.append(list(row))
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 # --------------------------------------------------------------------------- #
 # the world                                                                    #
 # --------------------------------------------------------------------------- #
@@ -675,6 +695,35 @@ def test_verb_from_date_cell():
 
         assert result["rows_raised"] == 2, result
         assert sorted(row.verb for row in w.rows()) == sorted([IV_ORDER_BACK, IV_ORDER])
+
+
+def test_identical_rows_across_tabs_raise_once():
+    """AC-S1-38 (D7). One instruction written on two tabs is ONE instruction.
+
+    The customer keeps a month tab, a roll-up tab covering that month and a dated working
+    snapshot in one book, so the same delivery is written out two and three times by
+    design. Both rows are still accounted for - the second rides on `unchanged` with its
+    own code - and, crucially, the restatement does NOT take the line's quantity from the
+    row it restates: 30 and 30 against a 50 line is one row of 30, not one row and one
+    `qty_exceeds_ordered`.
+    """
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="50")
+        stated = (order.so_number, w.product.product_code, 30, D_OCT,
+                  w.warehouse.warehouse_code, "")
+        outcome = ImportOutcome(None, persist=False)
+
+        result = w.apply(book(JAN26=[stated], ROLLUP=[stated]), outcome=outcome)
+
+        assert result["rows"] == 2, "the file's own row count keeps both"
+        assert result["rows_raised"] == 1, result
+        assert len(w.rows()) == 1
+        assert result["rows_line_not_found"] == 0, "the restatement took the line's quantity"
+        assert outcome.processed == 2, outcome.breakdown()
+        assert outcome.count_of("restates_an_instalment") == 1
+        assert outcome.successful == 2, "a restatement is not a skip - its quantity is raised"
+        assert [entry["code"] for entry in outcome.breakdown()["skipped"]] == []
 
 
 # --------------------------------------------------------------------------- #
@@ -1209,7 +1258,7 @@ def test_adopt_for_migration_mirrors_every_line_and_keeps_one_refusal():
         with pytest.raises(AppException) as refused:
             ProjectSOAdoptionService(w.db).adopt_for_migration(str(retail.id), w.actor)
 
-        assert refused.value.code == "sales_order_not_project_class"
+        assert refused.value.detail["code"] == "sales_order_not_project_class"
 
 
 def test_closed_received_po_line_links():

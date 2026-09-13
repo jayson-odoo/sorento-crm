@@ -66,7 +66,7 @@ from app.services.project_label_rules import apply_project_label, label_from_inq
 from app.services.project_order_inquiry_reader import OrderInquiryResult, read_order_inquiry
 from app.services.scm import order_link_service, spo_supply
 from app.services.scm import upload_validation as val
-from app.services.scm.demand import PROJECT_CLASS
+from app.services.scm.demand import COVERED, PROJECT_CLASS, qty_of
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 logger = logging.getLogger(__name__)
@@ -141,12 +141,16 @@ class _Match:
     code: Optional[str] = None
     #: The matched line's mirror already carries a non-cancelled row, so this one is skipped.
     already_raised: bool = False
+    #: An earlier row of this same upload says exactly this, on this tab or another (D7).
+    duplicate: bool = False
     #: The documents the sheet's remark names, in the order the operator wrote them.
     cited: Tuple[str, ...] = ()
 
     @property
     def raisable(self) -> bool:
-        return self.core_line is not None and not self.already_raised
+        return (
+            self.core_line is not None and not self.already_raised and not self.duplicate
+        )
 
 
 @dataclass
@@ -202,6 +206,39 @@ def _lines_of(db: Session, order_ids: set) -> Dict[str, List[tuple]]:
             (line, str(code), (location or "").strip().upper())
         )
     return held
+
+
+def _is_open_demand(line: SalesOrderLine) -> bool:
+    """`is_open_demand()` against a line already fetched (AC-S1-29).
+
+    The SQL predicate every demand reader shares, restated over the object rather than the
+    column, because the answer is needed for a line this service is holding. Both columns
+    are NOT NULL with defaults, so the two readings cannot diverge on a NULL.
+    """
+    return (
+        line.line_status == "open"
+        and line.purchasing_status != COVERED
+        and qty_of(line) > 0
+    )
+
+
+def _restates(row) -> tuple:
+    """What makes two sheet rows the SAME instruction (D7, AC-S1-38).
+
+    The customer keeps one book with a month tab, a roll-up tab covering that month and a
+    dated working snapshot, so the same delivery is written out two and three times by
+    design. Identical on all six fields is a restatement of one instruction, not a second
+    one; anything that differs - a quantity, a date, a location, the remark - is the sheet
+    splitting the line, which AC-S1-2 says it may.
+    """
+    return (
+        (row.so_number or "").strip(),
+        (row.item_code or "").strip(),
+        _dec(row.qty),
+        row.delivery_date,
+        (row.location or "").strip().upper(),
+        (getattr(row, "remark", "") or "").strip().upper(),
+    )
 
 
 def _cited_from(po_numbers: Sequence[str]) -> Tuple[str, ...]:
@@ -328,9 +365,19 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     #: How much of each line this FILE has already spoken for, in file order.
     taken: Dict[str, Decimal] = {}
 
+    #: Every instruction this file has already stated, whichever tab stated it.
+    stated: set = set()
+
     for match in plan.matches:
         row = match.row
         match.cited = _cited_from(row.po_numbers)
+        key = _restates(row)
+        if key in stated:
+            # Counted, never matched: a restatement must not take the line's quantity from
+            # the row it restates, or the second tab would read `qty_exceeds_ordered`.
+            match.duplicate = True
+            continue
+        stated.add(key)
         order = plan.orders.get(row.so_number)
         if order is None:
             match.code = oc.ORDER_NOT_FOUND
@@ -923,6 +970,32 @@ class _Raiser:
         return entry
 
 
+def _close_history(rows: Sequence[Any], actor: Optional[str], now: datetime) -> None:
+    """A row against a line that is no longer owed is HISTORY, so it is actioned (AC-S1-29).
+
+    `scm.committed_v`'s project leg counts every `raised` / `partly_linked` inquiry row that
+    carries no supply decision, and it does NOT look at the line's status (migration 424
+    removed that condition on purpose). So a migrated row against a delivered line would be
+    counted as live project demand and the plan would buy the goods again.
+
+    `actioned` is the truthful state rather than a trick to dodge the view: purchasing dealt
+    with this instruction, and the goods went out. It is set AFTER `refresh_link_state` so
+    `po_ref` / `spo_ref` / `po_line_id` are derived from the links first - that function
+    leaves an actioned row's state alone, which is exactly why the order matters - and the
+    links stay visible on the worklist through `links_for_rows`.
+
+    A row on a still-open line keeps whatever its links make it.
+    """
+    from app.models.project_so import INQUIRY_ACTIONED
+
+    for row in rows:
+        row.state = INQUIRY_ACTIONED
+        # The uploader, when a person queued this. Never blanked: `_write_link` may already
+        # have written the act-as principal on an unattended run, and NULL says less.
+        row.actioned_by = actor or row.actioned_by
+        row.actioned_at = now
+
+
 def apply(
     db: Session,
     file_data: bytes,
@@ -962,11 +1035,19 @@ def apply(
     raiser = _Raiser(db, actor, now)
     service = None
     linked: List[Any] = []
+    history: List[Any] = []
     raised = 0
 
     for index, match in enumerate(plan.matches):
         row = match.row
         identity = _identity(row)
+        if match.duplicate:
+            # Nothing is skipped: this row's quantity IS the instruction that was raised,
+            # written out twice by a book that restates itself across tabs (D7). Reported as
+            # a skip it would read as loss.
+            outcome.unchanged(row=row.source_row, code=oc.RESTATES_AN_INSTALMENT,
+                              identity=identity, value=row.so_number)
+            continue
         if match.code == oc.ORDER_NOT_FOUND:
             outcome.skip(row=row.source_row, code=oc.ORDER_NOT_FOUND,
                          identity=identity, value=row.so_number)
@@ -997,6 +1078,8 @@ def apply(
         outcome.success(row=row.source_row, code=oc.CREATED, identity=identity,
                         value=row.so_number, entity_type="order_inquiry_row",
                         entity_id=entry.id)
+        if not _is_open_demand(match.core_line):
+            history.append(entry)
 
         held = links.get(index)
         if not held:
@@ -1024,5 +1107,6 @@ def apply(
         # derivation for the whole inquiry on every row of a sheet that names it.
         service.refresh_link_state(linked)
 
+    _close_history(history, actor, now)
     db.flush()
     return _result(plan, links, not_linkable, rows_raised=raised)
