@@ -1,6 +1,6 @@
 # PLAN - Chatbot escalation routing: verb, team and brand from one source each
 
-Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477 (S9 comment fix on top); two owner console passes since, each finding one defect, each fixed with the tester's real-shape tests merged: the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), and the miss lane's combined did-you-mean plus escalate offer (b6e108634). S1 to S6, three review rounds, the tester's five rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. See "Found on the console pass" for both root causes, which are #863's. Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
+Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477 (S9 comment fix on top); THREE owner console passes since, each finding one defect, each fixed with the tester's real-shape tests merged - the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), the miss lane's combined did-you-mean plus escalate offer (b6e108634), and a pick dropping the non-product entity it had kept (bd815fcc8). S1 to S6, three review rounds, the tester's seven rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. All three console root causes are #863's - see "Found on the console pass". Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
 UAC: `chatbot-escalation-routing-acceptance-criteria.md` (AC-11xx).
 Predecessors: `PLAN-chatbot-focus-multi-domain.md` (lane 1, the dialogue state this lane's open questions live in), `PLAN-chatbot-turn-engine.md` S5 (the escalation lane port, hazards H26 / H27 / H37).
 Issue: #865 (13 Sep 2026).
@@ -172,6 +172,21 @@ deferrals ride `then.escalate`, so the lane's own - which always writes the `tea
 included - is told from the miss lane's offer by MEMBERSHIP of that key, not by its truthiness.
 Both halves are #863's: the five-key session dropped the legacy readers that used to catch a
 yes, and the miss ladder never recorded what its own copy promised.
+
+**Third pass (bd815fcc8), and the one the report blamed on the fix above.** "photo for
+srtwc60630-sh" offered three codes and KEPT the attachment type the customer had already named
+(`payload.keep = [Product Photos]`, issue #708); picking 1 scoped the turn to the product alone,
+so the gate answered "'product_attachment' requires [attachment_type] but none resolved" and the
+bot asked for the type it had just been told. Cause: `head/output_exchange.
+apply_open_question_outcome` built the turn's scope from `focus.products` + `focus.customer` only,
+so `outcome.keep` had NO READER - `_product_pick` folds the product-shaped keeps into the focus
+and `_is_product` drops the rest, and the focus has no slot that could hold an attachment type.
+Every kept entity now joins the scope, de-duplicated by hint and code.
+
+Measured as #863's, not this lane's: `_product_pick`'s outcome is byte-identical with and without
+the `then` key the pass above added, and the three picks an hour earlier on the same install
+carried only the product too (their `keep` was empty, which is why this was the first turn to
+expose it). It is issue #708's other half - the keep list was only ever honoured for products.
 
 ### Not built, with the reason
 
