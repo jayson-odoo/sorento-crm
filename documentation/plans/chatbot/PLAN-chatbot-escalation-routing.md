@@ -1,6 +1,6 @@
 # PLAN - Chatbot escalation routing: verb, team and brand from one source each
 
-Status: READY 13 Sep at 727a0df13 (`feat/chatbot-focus` merged in at the pre-PR gate, one hand-resolved conflict in `head/output_exchange.py`): S1 to S6, three review rounds (security, reviewer, reviewer re-check) with the tester's rounds folded in, reviewer and security verdicts READY, guide written. Single alembic head `517_chatbot_session_5key` (this lane adds no migration). Console pass pending (stack slot: owner's call); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4). Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863).
+Status: READY 13 Sep at 36e24e928 (`feat/chatbot-focus` merged in at the pre-PR gate, one hand-resolved conflict in `head/output_exchange.py`): S1 to S6, three review rounds (security, reviewer, reviewer re-check) and the owner console pass, with the tester's rounds folded in; reviewer and security verdicts READY, guide written. Single alembic head `517_chatbot_session_5key` (this lane adds no migration). The console pass found one defect and it is fixed (see "Found on the console pass"); a re-pass on the stack is the owner's call. PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4). Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863).
 UAC: `chatbot-escalation-routing-acceptance-criteria.md` (AC-11xx).
 Predecessors: `PLAN-chatbot-focus-multi-domain.md` (lane 1, the dialogue state this lane's open questions live in), `PLAN-chatbot-turn-engine.md` S5 (the escalation lane port, hazards H26 / H27 / H37).
 Issue: #865 (13 Sep 2026).
@@ -128,6 +128,33 @@ CRM-written session.
 same measured reason: every key that block writes is dropped before the session is written, so
 the change would alter a value no later turn reads inside a block 224 `compile-current-state`
 captures grade. The trigger to revisit: any of those keys returning to `SESSION_VAR_KEYS`.
+
+### Found on the console pass (13 Sep 2026, owner, stack at d49a8f929)
+
+Journey step 5 failed end to end: "photo for SRTWB8004" offered the Marketing Product team,
+"yes" was answered, and the conversation was assigned to CUSTOMER SERVICE.
+
+**Root cause is #863's, not this lane's, and it is wider than this journey: a YES OR NO ANSWER
+WAS NOT BEING RESOLVED AT ALL under the promoted parser.** `engine._resolve_open_question` reads
+`answers_open_question`, a prompt-v3 key, and production runs v1; the v1 fallback beside it only
+reads `reference_positions`, which a bare yes does not carry; and the legacy reader that used to
+catch it (`_team_clarify_pick`, keyed on `pending.kind` / `selection_context`) went with the
+five-key session. So `dialogue/open_question._team_pick`'s yes arm - which returns exactly the
+offered team - was unreachable, the head's routing chain fell to its hard default, and the lane
+assigned what it was handed. Measured on the two persisted turns; neither the D7 clamp (an offer
+IS open, so the flag stands) nor the S2 reorder (no team word) reaches it, and the fix needed no
+change in the lane.
+
+**Fixed in `engine.py`'s v1 fallback** (this lane, because the two are stacked): a question whose
+`expects` is `yes_no` is answered by the parser's own `is_affirmative` boolean, positions still
+winning. That also means the question is CONSUMED, where before it stayed open after being
+answered. Every yes/no offer is affected, not just this journey step: flag it on #863 if the two
+lanes are ever split.
+
+A second, narrower gap fell out of the same audit and is fixed beside it: the family-word
+narrowing read the team THIS turn inherited as a stand-in for the previous turn's, which on a
+five-key session is the hard default. It reads the carried DOMAIN re-derived
+(`escalation._carried_team`, already D3's source) instead.
 
 ### Not built, with the reason
 
