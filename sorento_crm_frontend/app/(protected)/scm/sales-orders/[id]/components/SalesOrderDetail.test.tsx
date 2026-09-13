@@ -1724,6 +1724,46 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     expect(within(row).getAllByText('-').length).toBeGreaterThanOrEqual(1);
     expect(within(row).queryByText('Not recorded')).not.toBeInTheDocument();
   });
+
+  /**
+   * Slice D: an applied cancellation leaves the fulfilment board (a closed line has no
+   * cell), so `BoardChangeTable`'s own "Where it went" list is unreachable there. The line
+   * is still ON this order, so this screen reads the same fact off `planning_change`
+   * instead of the plain, static `saved_stale` badge - which otherwise reads "Suggestion
+   * changed" for a line the book has actually CLOSED, not merely re-suggested.
+   */
+  it('opens the What-changed dialog with where a cancelled, applied line went, instead of the plain "Suggestion changed" badge', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        line_status: 'cancelled',
+        supply_saved: [{ kind: 'buy', qty: '3', source_location: null, rung: null }],
+        saved_stale: true,
+        planning_change: {
+          id: 'pcr-so1-l-planned',
+          kind: 'cancelled',
+          applied_state: 'applied',
+          result: {
+            executed_reallocations: ['Reallocate 202607-S0080 3 to pool'],
+            released_documents: [],
+          },
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('Suggestion changed')).not.toBeInTheDocument();
+
+    const icon = within(row).getByTestId('board-change-icon-pcr-so1-l-planned');
+    fireEvent.click(icon);
+
+    const dialog = screen.getByTestId('board-change-dialog');
+    expect(dialog).toHaveTextContent('Cancelled');
+    expect(dialog).toHaveTextContent('Reallocate 202607-S0080 3 to pool');
+  });
 });
 
 /**
