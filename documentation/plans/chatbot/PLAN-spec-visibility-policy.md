@@ -1,6 +1,6 @@
 # PLAN: spec visibility policy (which product spec keys a contact may see)
 
-Status: Approved 13 Sep 2026 (owner, lavish markup: approved as written); S1 verified, S2 wiring
+Status: PR open 14 Sep 2026 (all slices done, reviewed, verified); awaiting merge
 Lane: `.claude/worktrees/spec-visibility`, branch `feat/spec-visibility-policy`, base `origin/main`
 UAC: `spec-visibility-policy-acceptance-criteria.md` (alongside)
 Sibling: `scripts/load_kitchen_sink_thickness.py` (branch `chore/sink-thickness-loader`) creates the
