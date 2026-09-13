@@ -32,10 +32,11 @@ seeded here, never a borrowed row.
 """
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from decimal import Decimal
 
-from app.models.planning_change import PlanningChangeRow
+from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 from app.models.project_so import SOLineAllocation
 from app.services import planning_change_service
 from app.services.project_fulfilment_board_service import FulfilmentBoardService
@@ -582,3 +583,347 @@ def test_confirm_all_counts_and_applies_the_cancelled_row(api):
     row = _only_row(db, batch)
     db.refresh(row)
     assert row.applied_state == "applied", row.applied_state
+
+
+# --------------------------------------------------------------------------- #
+# R1 review round: the one-open-batch invariant fails with commits between
+# saves - the shape production actually runs in (each Save is its own request,
+# its own commit), which `_so400884_shape`'s own three build_batch calls
+# already exercise correctly (each Save block there ends in `db.commit()` too)
+# but apparently not the ORDER of edits the reviewer's own reproduction used:
+# two DIFFERENT lines each getting their own fresh open batch, then a THIRD
+# save landing on a line already pending in the FIRST of those two batches.
+# Reviewer's suspects: `created_at.desc()` sub-second ties or company scoping
+# in the open-batch lookup (~934-966), and the supersede at ~1057-1072 only
+# looking inside the ONE batch id that lookup picked - never every open batch
+# the order might already (wrongly) have.
+# --------------------------------------------------------------------------- #
+
+def _four_line_world(api):
+    """Four held Reserve lines on one order, no edits yet - what these R1 reproduction
+    tests build their own saves on top of."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    qtys = ["36", "50", "20", "60"]
+    required = date(2026, 12, 28)
+    core_lines: list = []
+    plan_lines: list = []
+    for i, qty in enumerate(qtys, start=1):
+        cl = _core_line(db, core_so, world.product, world.own_wh, qty_ordered=qty,
+                         required_date=required)
+        pl = _project_line(db, order, line_no=i, product=world.product, core_line=cl)
+        core_lines.append(cl)
+        plan_lines.append(pl)
+    db.commit()
+    _stock(db, world.product, world.own_wh, on_hand=str(sum(Decimal(q) for q in qtys)))
+    _confirm(client, order.id, {"lines": [
+        _line_payload(pl.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": qty}])
+        for pl, qty in zip(plan_lines, qtys)
+    ]})
+    return {
+        "world": world, "order": order, "core_so": core_so,
+        "core_lines": core_lines, "plan_lines": plan_lines, "required": required,
+    }
+
+
+def _edit_qty(db, shape, line_index, new_qty):
+    """Edits ONE line's qty (write-first) and runs build_batch + commit - ONE Save, the
+    same shape a manual SO edit produces, `db.commit()` immediately after like production
+    (never batching several edits into one uncommitted transaction, which is what let the
+    earlier fixtures pass without ever exercising the commit boundary between saves)."""
+    core_so = shape["core_so"]
+    core_line = shape["core_lines"][line_index]
+    world = shape["world"]
+    old_qty = float(core_line.qty_ordered)
+    core_line.qty_ordered = Decimal(str(new_qty))
+    db.flush()
+    before = Line(doc_number=core_so.so_number, item_code=world.product.product_code,
+                  location=world.own_wh.warehouse_code, qty=old_qty,
+                  required_date=shape["required"], row_ref=str(core_line.id))
+    after = Line(doc_number=core_so.so_number, item_code=world.product.product_code,
+                 location=world.own_wh.warehouse_code, qty=float(new_qty),
+                 required_date=shape["required"], row_ref=str(core_line.id))
+    change = Change(QTY_CHANGED, core_so.so_number, world.product.product_code,
+                     world.own_wh.warehouse_code, before=before, after=after)
+    batch = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[change]),
+        applied_line_ids={id(change): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    return batch
+
+
+def _open_batches_for_order(db, order_id):
+    return (
+        db.query(PlanningChangeBatch)
+        .join(PlanningChangeRow, PlanningChangeRow.batch_id == PlanningChangeBatch.id)
+        .filter(PlanningChangeRow.project_sales_order_id == order_id,
+                PlanningChangeBatch.applied_at.is_(None),
+                PlanningChangeRow.applied_state == "pending")
+        .distinct()
+        .all()
+    )
+
+
+def test_saves_with_commits_between_them_share_one_open_batch(api):
+    """Reviewer's own reproduction: three manual edits on three DIFFERENT lines, a commit
+    after each (production's own shape - `_edit_qty` commits every call), must leave
+    exactly ONE unapplied batch for the order, carrying all three pending rows."""
+    shape = _four_line_world(api)
+    db = shape["world"].db
+    order = shape["order"]
+    core_so = shape["core_so"]
+
+    batch_a = _edit_qty(db, shape, 3, "80")  # line 4
+    batch_b = _edit_qty(db, shape, 1, "70")  # line 2
+    batch_c = _edit_qty(db, shape, 0, "40")  # line 1
+
+    open_batches = _open_batches_for_order(db, order.id)
+    assert len(open_batches) == 1, [str(b.id) for b in open_batches]
+    assert batch_a.id == batch_b.id == batch_c.id, (batch_a.id, batch_b.id, batch_c.id)
+
+    rows = (
+        db.query(PlanningChangeRow)
+        .filter(PlanningChangeRow.batch_id == open_batches[0].id,
+                PlanningChangeRow.applied_state == "pending")
+        .all()
+    )
+    assert len(rows) == 3, [r.project_line_id for r in rows]
+
+    pending = planning_change_service.pending_batch_id_by_sales_order(db, [str(core_so.id)])
+    assert pending.get(str(core_so.id)) == str(open_batches[0].id), pending
+
+
+def test_a_line_has_at_most_one_live_pending_row_across_every_open_batch(api):
+    """Line 4 edited, committed, line 2 edited, committed, line 4 edited AGAIN, committed:
+    across EVERY unapplied batch of the order, line 4 has exactly one pending row, and the
+    older one reads superseded 'Replaced by a later change'. An existing STRAY second open
+    batch (seeded by hand with its own pending row for line 2, simulating a pre-fix or
+    otherwise-drifted state) is folded by the next save: its pending row ends in the one
+    open batch or superseded - never left pending in a batch the board's `pending_batch_id_
+    by_sales_order` cannot show (it only ever returns ONE candidate)."""
+    shape = _four_line_world(api)
+    db = shape["world"].db
+    order = shape["order"]
+    world = shape["world"]
+
+    _edit_qty(db, shape, 3, "80")  # line 4
+    _edit_qty(db, shape, 1, "70")  # line 2
+    _edit_qty(db, shape, 3, "90")  # line 4 again
+
+    stray_batch = PlanningChangeBatch(
+        id=str(uuid.uuid4()), created_by=world.actor, company_id=world.company_id,
+    )
+    db.add(stray_batch)
+    db.flush()
+    stray_row = PlanningChangeRow(
+        id=str(uuid.uuid4()), batch_id=stray_batch.id, company_id=world.company_id,
+        project_sales_order_id=order.id, project_line_id=shape["plan_lines"][1].id,
+        core_line_id=shape["core_lines"][1].id, line_no=2,
+        item_code=world.product.product_code, kind="qty_up",
+        from_json={"qty": "50"}, to_json={"qty": "999"},
+        facts_json={}, applied_state="pending",
+    )
+    db.add(stray_row)
+    db.commit()
+
+    # A fourth save (line 3, untouched so far) is what runs build_batch's open-batch
+    # resolution again and is expected to fold the stray batch in.
+    _edit_qty(db, shape, 2, "25")
+
+    line4_id = str(shape["plan_lines"][3].id)
+    live_pending_for_line4 = (
+        db.query(PlanningChangeRow)
+        .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+        .filter(PlanningChangeRow.project_line_id == line4_id,
+                PlanningChangeBatch.applied_at.is_(None),
+                PlanningChangeRow.applied_state == "pending")
+        .all()
+    )
+    assert len(live_pending_for_line4) == 1, [
+        (str(r.batch_id), r.applied_state) for r in live_pending_for_line4
+    ]
+
+    rows_for_line4 = (
+        db.query(PlanningChangeRow)
+        .filter(PlanningChangeRow.project_line_id == line4_id)
+        .order_by(PlanningChangeRow.created_at)
+        .all()
+    )
+    assert len(rows_for_line4) == 2, [r.applied_state for r in rows_for_line4]
+    assert rows_for_line4[0].applied_state == "superseded", rows_for_line4[0].applied_state
+    assert rows_for_line4[0].applied_reason == "Replaced by a later change"
+    assert rows_for_line4[1].applied_state == "pending", rows_for_line4[1].applied_state
+
+    open_batches = _open_batches_for_order(db, order.id)
+    assert len(open_batches) == 1, [str(b.id) for b in open_batches]
+
+    db.refresh(stray_row)
+    assert stray_row.applied_state == "superseded" or stray_row.batch_id == open_batches[0].id, (
+        f"the stray batch's own pending row for line 2 must end in the one open batch "
+        f"({open_batches[0].id}) or superseded, not left pending in a batch of its own "
+        f"(applied_state={stray_row.applied_state!r}, batch_id={stray_row.batch_id!r})"
+    )
+
+
+def test_a_replacement_rows_was_reads_the_held_state():
+    """S2: 36 -> 60, then 60 -> 80. The LIVE (non-superseded) row's `from_json` - the "Was"
+    the board and the change dialog print - must read 36, what the active decision was
+    actually taken against, never 60 (the now-superseded intermediate row's own before
+    value). `to_json` stays 80. The suggestion is composed against `held_json` (the frozen
+    decision) and the new proposal, never against `from_json` - `compose_suggestion`'s own
+    call (planning_change_service.py:1930) never reads `from_json` at all, so that half is
+    a guard, not a claim of red."""
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        world = _held_reserve_world(db, qty="36")
+        batch_1 = _change_and_batch(db, world, new_qty="60")
+        row_1 = _only_row(db, batch_1)
+
+        batch_2 = _change_and_batch(db, world, new_qty="80")
+        row_2 = _only_row(db, batch_2)
+
+        db.refresh(row_1)
+        assert row_1.applied_state == "superseded", row_1.applied_state
+
+        assert row_2.from_json["qty"] == "36", (
+            f"the live row's Was must read 36 (what the active decision was taken against), "
+            f"not {row_2.from_json['qty']!r} (the superseded row's own before value)"
+        )
+        assert row_2.to_json["qty"] == "80", row_2.to_json
+
+        # Guard, not a claim of red (compose_suggestion never reads from_json - see
+        # planning_change_service.py:1930): the suggestion is composed against the frozen
+        # held state and the new proposal regardless of what from_json says.
+        assert row_2.suggestion_json is not None
+        assert row_2.suggestion_json.get("components"), row_2.suggestion_json
+
+
+def test_a_multi_order_upload_reports_every_batch_it_wrote_into(api):
+    """S1: a two-order SO book diff where order A already has an open batch (one prior
+    Save) and order B has none. `build_batch`'s own return value is a single `Optional
+    [PlanningChangeBatch]` (`planning_change_service.py`'s signature, unchanged by R1) -
+    for a diff spanning an order that APPENDS to its existing open batch and an order that
+    gets a FRESH one, `result_batch = result_batch or existing` (the R1 diff) means
+    `result_batch` is set from `kept_rows` (order B's fresh batch) FIRST and never
+    overwritten, so order A's own (appended-into) batch id is silently dropped from what
+    the caller of `build_batch` itself gets back.
+
+    DOCUMENTED CHOICE: asserted here against `pending_batch_id_by_sales_order` instead of
+    `build_batch`'s own return value - that helper, not the return value, is what every
+    real caller (the fulfilment board's `_standings`, the SCM sales orders list) actually
+    uses to learn an order's open batch, including for orders `build_batch`'s single-object
+    return never named at all (a multi-order upload has always resolved every order's own
+    batch this way, one query, after the write - see `pending_batch_id_by_sales_order`'s
+    own docstring). If DB state is right, the caller can always re-read it; only the
+    single-object return is structurally unable to report SEVERAL orders' worth of batches
+    from ONE `build_batch` call.
+    """
+    client, world = api
+    db = world.db
+
+    # Order A: one line, held, with an EXISTING open batch from a prior Save.
+    core_so_a = _core_so(db, world.company_id)
+    order_a = _project_so(db, world.project, so_id=core_so_a.id,
+                           autocount_doc_no=core_so_a.so_number)
+    line_a = _core_line(db, core_so_a, world.product, world.own_wh, qty_ordered="40",
+                         required_date=date(2026, 12, 28))
+    plan_a = _project_line(db, order_a, line_no=1, product=world.product, core_line=line_a)
+    db.commit()
+    _stock(db, world.product, world.own_wh, on_hand="40")
+    _confirm(client, order_a.id, {"lines": [
+        _line_payload(plan_a.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "40"}]),
+    ]})
+    line_a.qty_ordered = Decimal("55")
+    db.flush()
+    first_edit = Change(
+        QTY_CHANGED, core_so_a.so_number, world.product.product_code,
+        world.own_wh.warehouse_code,
+        before=Line(doc_number=core_so_a.so_number, item_code=world.product.product_code,
+                    location=world.own_wh.warehouse_code, qty=40.0,
+                    required_date=date(2026, 12, 28), row_ref=str(line_a.id)),
+        after=Line(doc_number=core_so_a.so_number, item_code=world.product.product_code,
+                   location=world.own_wh.warehouse_code, qty=55.0,
+                   required_date=date(2026, 12, 28), row_ref=str(line_a.id)),
+    )
+    original_batch_a = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so_a.so_number,), changes=[first_edit]),
+        applied_line_ids={id(first_edit): str(line_a.id)},
+        order_ids={core_so_a.so_number: str(core_so_a.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    assert original_batch_a is not None
+
+    # Order B: a second, wholly separate held line - no batch yet. Its OWN warehouse, so
+    # its stock pool cannot interact with order A's in any way this test has to reason
+    # about (no shared `uq_stock_product_id_warehouse_id` row, no pool-netting nuance).
+    from tests.test_planning_changes import _warehouse
+
+    warehouse_b = _warehouse(db, "ZZT-B-" + str(uuid.uuid4())[:8])
+    core_so_b = _core_so(db, world.company_id)
+    order_b = _project_so(db, world.project, so_id=core_so_b.id,
+                           autocount_doc_no=core_so_b.so_number)
+    line_b = _core_line(db, core_so_b, world.product, warehouse_b, qty_ordered="20",
+                         required_date=date(2026, 12, 28))
+    plan_b = _project_line(db, order_b, line_no=1, product=world.product, core_line=line_b)
+    db.commit()
+    _stock(db, world.product, warehouse_b, on_hand="20")
+    _confirm(client, order_b.id, {"lines": [
+        _line_payload(plan_b.id, reserve=[{"warehouse_id": warehouse_b.id, "qty": "20"}]),
+    ]})
+
+    # ONE upload/diff naming BOTH orders: order A's SECOND edit (a line its open batch has
+    # not seen - line_a's row already lives there from the first edit, but this is a
+    # different situation from a same-line replacement) and order B's FIRST edit.
+    line_a.qty_ordered = Decimal("70")
+    db.flush()
+    second_edit_a = Change(
+        QTY_CHANGED, core_so_a.so_number, world.product.product_code,
+        world.own_wh.warehouse_code,
+        before=Line(doc_number=core_so_a.so_number, item_code=world.product.product_code,
+                    location=world.own_wh.warehouse_code, qty=55.0,
+                    required_date=date(2026, 12, 28), row_ref=str(line_a.id)),
+        after=Line(doc_number=core_so_a.so_number, item_code=world.product.product_code,
+                   location=world.own_wh.warehouse_code, qty=70.0,
+                   required_date=date(2026, 12, 28), row_ref=str(line_a.id)),
+    )
+    line_b.qty_ordered = Decimal("35")
+    db.flush()
+    edit_b = Change(
+        QTY_CHANGED, core_so_b.so_number, world.product.product_code,
+        warehouse_b.warehouse_code,
+        before=Line(doc_number=core_so_b.so_number, item_code=world.product.product_code,
+                    location=warehouse_b.warehouse_code, qty=20.0,
+                    required_date=date(2026, 12, 28), row_ref=str(line_b.id)),
+        after=Line(doc_number=core_so_b.so_number, item_code=world.product.product_code,
+                   location=warehouse_b.warehouse_code, qty=35.0,
+                   required_date=date(2026, 12, 28), row_ref=str(line_b.id)),
+    )
+    planning_change_service.build_batch(
+        db,
+        Diff(scope_documents=(core_so_a.so_number, core_so_b.so_number),
+             changes=[second_edit_a, edit_b]),
+        applied_line_ids={id(second_edit_a): str(line_a.id), id(edit_b): str(line_b.id)},
+        order_ids={core_so_a.so_number: str(core_so_a.id), core_so_b.so_number: str(core_so_b.id)},
+        actor=world.actor, import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+
+    pending = planning_change_service.pending_batch_id_by_sales_order(
+        db, [str(core_so_a.id), str(core_so_b.id)],
+    )
+    assert str(core_so_a.id) in pending, pending
+    assert str(core_so_b.id) in pending, pending
+    assert pending[str(core_so_a.id)] == str(original_batch_a.id), (
+        f"order A's second edit must land in its EXISTING open batch "
+        f"({original_batch_a.id}), not a batch the caller lost track of: {pending}"
+    )
+    assert pending[str(core_so_b.id)] != pending[str(core_so_a.id)], (
+        "order B's own fresh batch must be a DIFFERENT id from order A's existing one"
+    )
