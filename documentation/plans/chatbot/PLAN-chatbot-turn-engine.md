@@ -155,11 +155,16 @@ records instead of sends, exactly as today. **D14 also means no shared-resource 
 `chatbot.turns`, takes no place in the queue a live message from that contact waits on, and
 does not appear on the failed-contacts list, in Chat History or behind the Retry button
 (H57). **A dry run returns every action it would have
-taken, flagged `dry_run`, with preview placeholders where a side effect would have supplied
-the value** (AC-507): the lane still reaches no seam, so where a real run would have read an
-id off `next-assignee` the preview carries `null` plus `preview: true`, and where it would
-have read a timestamp off `sla_create` the rendered text carries `<preview>`. Anything not
-behind a seam - a fixed sentence, or one interpolating state the turn already resolved -
+taken, flagged `dry_run`, with preview placeholders where a WRITING side effect would have
+supplied the value** (AC-507, amended by owner ruling D9, `PLAN-chatbot-escalation-routing.md`):
+the lane reaches no WRITING seam, but it DOES reach the READ seams - the resolver and the
+assignee preview - because the owner tests from the console, and the console only ever runs
+dry. So where a real run would have drawn an id off `next-assignee` the preview carries
+`null` plus `preview: true`, and where it would have read a timestamp off `sla_create` the
+rendered text carries `<preview>`; but the brand in the routed-to-PIC copy, and the did-you-
+mean arm for an unresolved code, come off the SAME resolver call a live turn makes, not off
+a placeholder. Anything not behind a writing seam - a fixed sentence, one interpolating
+state the turn already resolved, or the routing decision and brand a read seam supplied -
 carries its real value on both. The shape, the order and the key set are therefore identical
 live and dry, which is what lets the executor render ONE set of expressions against both.
 

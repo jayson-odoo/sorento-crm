@@ -33,16 +33,23 @@ this lane, which seals none).
 ## `chat-turn-out_of_scope.dry-run.json`
 
 A test-run envelope (`test_run_id` set). **All four actions, same order, same keys** as the
-live turn (AC-507), and every action's `dry_run` is `true`. D14 / H37 still holds
-underneath: no seam is reached, so no assignee is picked, no cursor moves and no SLA row is
-written. What a seam would have returned is stood in for instead, so the executor can render
-one set of expressions against both files:
+live turn (AC-507), and every action's `dry_run` is `true`. D14 / H37 still holds for the
+WRITING seams only, amended by owner ruling D9 (`PLAN-chatbot-escalation-routing.md`): no
+assignee is DRAWN and no SLA row is written, but the resolver and the assignee preview ARE
+reached - the owner tests exactly this from the console, and the console only ever runs dry.
+This sample names no product and no person (`entities: []`, `person_mention: null`), so there
+is nothing for the resolver to resolve; `respond_user_id` stays `null` here because no
+`preview_assignee` seam answered for this fixture, not because the seam was skipped. What a
+WRITING seam would have returned is stood in for instead, so the executor can render one set
+of expressions against both files:
 
 * `assign_conversation.respond_user_id` is `null`, with `preview: true` beside it;
 * `add_comment.mention_user_ids` is `[]`, `preview: true`, and the three SLA timestamps in
-  its text read `<preview>`;
-* both `send_message` texts are REAL - neither depends on a seam (one is fixed, the other
-  interpolates the team the ladder resolved before any seam was reached);
+  its text read `<preview>` (`sla_create` is a WRITE and is never reached);
+* both `send_message` texts are REAL - the second one interpolates the team the ladder
+  resolved, and on a turn that also resolved a brand it would carry D8's ` handling <brand>`
+  fragment off the SAME resolver call a live turn makes, never a placeholder (not applicable
+  to this fixture, which names no product);
 * both `send_message.quick_replies` are `null` (the pin above) and `result_set` is `[]`.
 
 `assign_conversation` is always present here even though a live run omits it when the contact
