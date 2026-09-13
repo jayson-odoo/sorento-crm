@@ -110,7 +110,7 @@ def ai_extract(
     total = 0
     for f in files:
         ext = _ext(f.filename, f.content_type)
-        if ext and ext not in _ALLOWED_EXTS:
+        if ext not in _ALLOWED_EXTS:
             raise handle_validation_error(
                 f"Unsupported file type: {f.filename}. Allowed: "
                 f"{', '.join(sorted(_ALLOWED_EXTS))}."

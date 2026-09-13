@@ -137,6 +137,10 @@ class PriceTagRequest(Base, CompanyScopedMixin):
         onupdate=func.now(),
         nullable=False,
     )
+    # Portal submission revisions (R3-1, migration ptag_0006_revisions), denormalized
+    # the same way StockInquiry / PurchaseRequestHeader carry their own pair.
+    revision_no = Column(Integer, nullable=False, server_default="0", default=0)
+    last_revised_at = Column(DateTime(timezone=False), nullable=True)
 
     lines = relationship(
         "PriceTagRequestLine",

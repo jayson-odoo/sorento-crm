@@ -713,6 +713,49 @@ def _check_kind(kind: str) -> str:
 _ATTACHMENT_ONLY_KINDS = ("price_tag_request",)
 
 
+def _check_revisable_kind(kind: str) -> str:
+    """Kinds the REVISION routes accept - every registered RevisionAdapter.
+    As of R3-1 that is SUPPORTED_TYPES' three original kinds plus
+    price_tag_request (own dedicated router, sharing this generic revision
+    plumbing the same way the attachment routes already do above)."""
+    from app.services.portal_revision_service import ADAPTERS
+
+    k = (kind or "").strip().lower()
+    if k not in SUPPORTED_TYPES and k not in ADAPTERS:
+        raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+    return k
+
+
+def _require_revisable_ownership(
+    db: Session, token: PortalToken, kind: str, submission_id: str
+) -> None:
+    """Ownership check for a revision route, dispatched the same way the
+    attachment routes already widen for price_tag_request: its own dedicated
+    router's ownership check, not PortalService's generic CRUD."""
+    if kind == "price_tag_request":
+        from app.api.v1.public.portal_price_tag import _require_own_request
+
+        _require_own_request(db, token, submission_id)
+    else:
+        PortalService(db).get_submission(token, kind, submission_id)
+
+
+def _revision_submission_detail(
+    db: Session, token: PortalToken, kind: str, submission_id: str
+) -> dict:
+    """The submission body a revision route hands back, dispatched the same
+    way ownership is: price_tag_request's own detail body (already carries
+    attachments, revision, revision_draft), the generic one otherwise."""
+    if kind == "price_tag_request":
+        from app.api.v1.public.portal_price_tag import _detail_body, _require_own_request
+
+        row = _require_own_request(db, token, submission_id)
+        return _detail_body(db, row)
+    detail = PortalService(db).get_submission(token, kind, submission_id)
+    detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
+    return detail
+
+
 def _check_attachment_kind(kind: str) -> str:
     k = (kind or "").strip().lower()
     if k not in SUPPORTED_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
@@ -736,7 +779,13 @@ def _require_price_tag_request_visible(db: Session, contact_id: str) -> None:
         )
 
 
-def _require_own_price_tag_request(db: Session, token: PortalToken, submission_id: str) -> None:
+def _require_own_price_tag_request(
+    db: Session,
+    token: PortalToken,
+    submission_id: str,
+    *,
+    require_editable: bool = False,
+) -> None:
     """The contact's own price tag request, or a 404 - mirrors
     ``_require_own_request`` in portal_price_tag.py. The attachment routes check
     ownership here instead of ``PortalService.get_submission``, which does not
@@ -746,6 +795,11 @@ def _require_own_price_tag_request(db: Session, token: PortalToken, submission_i
     .id`` is a UUID column, and a malformed value (not just a wrong-but-valid
     one) has to answer the same 404 a genuinely missing row would, not a 500
     from Postgres refusing to compare a UUID column to garbage.
+
+    ``require_editable``: the two ATTACHMENT WRITES (upload, delete) pass this
+    so a locked request (review round 2) refuses them with the same 409
+    ``_require_editable`` gives the header PUT - reading attachments (list,
+    download) does not, since viewing a locked request's files is still fine.
     """
     from app.models.price_tag import PriceTagRequest
 
@@ -754,6 +808,10 @@ def _require_own_price_tag_request(db: Session, token: PortalToken, submission_i
     row = db.query(PriceTagRequest).filter(PriceTagRequest.id == submission_id).first()
     if row is None or str(row.contact_id) != str(token.contact_id):
         raise handle_not_found("Price tag request", submission_id)
+    if require_editable:
+        from app.api.v1.public.portal_price_tag import _require_editable
+
+        _require_editable(row, db)
 
 
 @router.get("/submissions")
@@ -890,8 +948,8 @@ def portal_list_revisions(
     """
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_kind(kind)
-    PortalService(db).get_submission(token, k, submission_id)
+    k = _check_revisable_kind(kind)
+    _require_revisable_ownership(db, token, k, submission_id)
     return {"items": PortalRevisionService(db).list_revisions(k, submission_id)}
 
 
@@ -913,7 +971,7 @@ def portal_revise_submission(
     """
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_kind(kind)
+    k = _check_revisable_kind(kind)
     body = dict(payload.fields or {})
     if payload.products is not None:
         body["products"] = payload.products
@@ -925,8 +983,7 @@ def portal_revise_submission(
         payload.reason,
         payload.expected_revision_no,
     )
-    submission = PortalService(db).get_submission(token, k, submission_id)
-    submission["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
+    submission = _revision_submission_detail(db, token, k, submission_id)
     submission["revision"] = result["policy"]
     return {
         "submission": submission,
@@ -957,7 +1014,7 @@ def portal_save_revision_draft(
     """Save (or update) an in-progress revision, without sending it."""
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_kind(kind)
+    k = _check_revisable_kind(kind)
     body = dict(payload.fields or {})
     if payload.products is not None:
         body["products"] = payload.products
@@ -981,7 +1038,7 @@ def portal_discard_revision_draft(
     """Discard the in-progress revision, if any. Idempotent."""
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_kind(kind)
+    k = _check_revisable_kind(kind)
     service = PortalRevisionService(db)
     service.fetch_owned(token, k, submission_id)  # ownership: 403/404 as elsewhere
     service.discard_draft(k, submission_id)
@@ -1005,8 +1062,20 @@ def portal_submission_neighbours(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Prev/next over the contact's OWN submissions of the same kind (UAC G1/G2)."""
-    return PortalService(db).get_neighbours(token, _check_kind(kind), submission_id)
+    """Prev/next over the contact's OWN submissions of the same kind (UAC G1/G2).
+
+    ``_check_revisable_kind`` (not ``_check_kind``): review round 3 - the
+    price tag header wants the same counter the legacy kinds' view page
+    shows, so this route widens the same way the revision routes already do
+    for that kind, dispatching to its own dedicated router's neighbours
+    query rather than ``PortalService``, which does not know about it.
+    """
+    k = _check_revisable_kind(kind)
+    if k == "price_tag_request":
+        from app.api.v1.public.portal_price_tag import price_tag_neighbours
+
+        return price_tag_neighbours(db, token, submission_id)
+    return PortalService(db).get_neighbours(token, k, submission_id)
 
 
 @router.post("/submissions/{kind}")
@@ -1319,7 +1388,7 @@ async def portal_upload_attachment(
     portal = PortalService(db)
     k = _check_attachment_kind(kind)
     if k == "price_tag_request":
-        _require_own_price_tag_request(db, token, submission_id)
+        _require_own_price_tag_request(db, token, submission_id, require_editable=True)
     else:
         portal.get_submission(token, k, submission_id)  # ownership check
     attachment_type = portal.get_portal_attachment_type()
@@ -1433,7 +1502,7 @@ def portal_delete_attachment(
         if not owns:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
     elif raw_kind == "price_tag_request":
-        _require_own_price_tag_request(db, token, link.entity_id)
+        _require_own_price_tag_request(db, token, link.entity_id, require_editable=True)
     else:
         portal.get_submission(token, raw_kind, link.entity_id)
 

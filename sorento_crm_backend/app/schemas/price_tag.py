@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +96,13 @@ class PriceTagRequestCreate(BaseModel):
     price_mode: Literal["list", "selling"] = "list"
     lines: list[PriceTagRequestLineCreate] = Field(default_factory=list)
 
+    # Review round 2: the date input clears to "", not omission - Optional[date]
+    # rejects that outright with a 422 instead of treating it as "no date".
+    @field_validator("needed_by_date", mode="before")
+    @classmethod
+    def _blank_needed_by_is_none(cls, v):
+        return None if v == "" else v
+
 
 class PriceTagRequestUpdate(BaseModel):
     """A draft edit. ``lines`` omitted leaves the lines alone; ``lines`` given
@@ -114,6 +121,12 @@ class PriceTagRequestUpdate(BaseModel):
     # now a 422, same as any other unknown price_mode value.
     price_mode: Literal["list", "selling"] = "list"
     lines: Optional[list[PriceTagRequestLineCreate]] = None
+
+    # Review round 2: same "" -> None coercion as PriceTagRequestCreate.
+    @field_validator("needed_by_date", mode="before")
+    @classmethod
+    def _blank_needed_by_is_none(cls, v):
+        return None if v == "" else v
 
 
 class PriceTagRequestAttachment(BaseModel):
@@ -167,6 +180,10 @@ class PriceTagRequestResponse(BaseModel):
     assigned_to_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    # R3-1: the revise composer's stale-write guard sends this straight back
+    # as `expected_revision_no`, and the header line reads it too.
+    revision_no: int = 0
+    last_revised_at: Optional[datetime] = None
     lines: list[PriceTagRequestLineResponse] = []
 
     # Resolved, not stored. Filled by
@@ -196,6 +213,13 @@ class PriceTagRequestResponse(BaseModel):
     # (PLAN-price-tag-feedback-r2 S2).
     has_completed_export: bool = False
 
+    # D-P6/AC-B6: whether a post-submit edit is currently allowed - True for
+    # a draft, or a submitted request at New / Changes requested; False at
+    # every other status. Filled by ``response_with_resolved_lines`` for the
+    # same reason as the fields above it. The FE Edit button reads this,
+    # never the status list.
+    is_editable: bool = False
+
 
 class PriceTagRequestListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -224,6 +248,12 @@ class PriceTagRequestListItem(BaseModel):
     # list as New, and a schema drops what it does not declare just as silently
     # as a response_model does.
     portal_draft_at: Optional[datetime] = None
+    # R3-1/AC-R5: the same revision fields the legacy kinds' own summaries
+    # carry - the portal card badge and the settings-driven Revisions tab
+    # both read these instead of a second round trip.
+    revision_no: int = 0
+    last_revised_at: Optional[datetime] = None
+    has_revision_draft: bool = False
 
 
 # ---------------------------------------------------------------------------

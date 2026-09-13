@@ -1483,6 +1483,20 @@ class PortalService:
                 "remark",
                 "additional_remark",
             )
+        if kind == "price_tag_request":
+            # price_tag_request has its own dedicated router/service
+            # (portal_price_tag.py, not this class's generic CRUD) - this
+            # branch exists ONLY so the revision engine's `build_snapshot` /
+            # `revise()._apply_payload` (both keyed on this ONE list, UAC J2)
+            # know the header fields for this type too.
+            return (
+                "debtor_code",
+                "debtor_name",
+                "promotion_id",
+                "needed_by_date",
+                "notes",
+                "price_mode",
+            )
         return (
             "customer_name",
             "pic",
@@ -1521,6 +1535,8 @@ class PortalService:
             return ("complaint_date",)
         if kind in ("purchase_request", "sponsorship_form"):
             return ("expected_delivery_date", "expected_po_date")
+        if kind == "price_tag_request":
+            return ("needed_by_date",)
         return ()
 
     @staticmethod

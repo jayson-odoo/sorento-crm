@@ -40,7 +40,16 @@ CONFIG_KEYS = {
     "restart_stage_code",
 }
 
-PORTAL_TYPES = {"complaint", "stock_inquiry", "purchase_request", "sponsorship_form"}
+# AC-R6: price_tag_request is a fifth GRANTABLE_PORTAL_FORM_TYPES row (the
+# route lists placeholders from that tuple, not the narrower SUPPORTED_TYPES
+# the generic submissions CRUD uses - see app/api/v1/forms/revision_configs.py).
+PORTAL_TYPES = {
+    "complaint",
+    "stock_inquiry",
+    "purchase_request",
+    "sponsorship_form",
+    "price_tag_request",
+}
 
 
 @pytest.fixture
