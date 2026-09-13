@@ -291,6 +291,95 @@ class TestTheRemainingHandlers:
 
 
 # --------------------------------------------------------------------------- #
+# D19: sticky roster. A pick does NOT consume its roster (owner 13 Sep 2026,
+# restoring ruling K rule 1 / 7 Sep deviation 5, superseding AC-1014's close-on-answer
+# clause). `resolve()` gains a fourth signal on a roster kind: `payload.offer` is the
+# one-team escalate offer that a pick's own rerun produced, RIDING on the roster
+# question instead of replacing it. A number still re-picks the frozen roster (rule 1);
+# `yes`/`no` answer the offer (rule 3).
+# --------------------------------------------------------------------------- #
+
+
+class TestStickyRoster:
+    def test_expects_includes_pick_or_yes_no(self) -> None:
+        from app.services.chatbot.contracts import OPEN_QUESTION_EXPECTS
+
+        assert "pick_or_yes_no" in OPEN_QUESTION_EXPECTS, (
+            f"OPEN_QUESTION_EXPECTS is {OPEN_QUESTION_EXPECTS}, missing 'pick_or_yes_no' "
+            "(D19 rule 5)"
+        )
+
+    def test_a_number_on_a_roster_carrying_an_offer_re_picks(self) -> None:
+        """Rule 1: a number re-picks the frozen roster, offer or no offer."""
+        options = _rows("SRTWC8517", "SRTKS6091", "SRTKS8091")
+        offer = {"team": "purchasing", "domain": "inventory", "options": [
+            {"idx": 1, "team": "purchasing", "label": "purchasing"}
+        ]}
+
+        outcome = oq.resolve(
+            "product_pick", _answer(resolved=True, picks=[2]), options, {"offer": offer}
+        )
+
+        assert outcome.handler == "product_pick"
+        assert outcome.resolved is True
+        assert [r["label"] for r in outcome.picked] == ["SRTKS6091"]
+        assert outcome.focus["products"][0]["canonical_code"] == "SRTKS6091"
+
+    def test_yes_on_a_roster_carrying_an_offer_escalates(self) -> None:
+        """Rule 3: 'yes' with no picks answers the offer, not the roster."""
+        options = _rows("SRTWC8517", "SRTKS6091", "SRTKS8091")
+        offer = {"team": "purchasing", "domain": "inventory", "options": [
+            {"idx": 1, "team": "purchasing", "label": "purchasing"}
+        ]}
+
+        outcome = oq.resolve(
+            "product_pick", _answer(resolved=True, yes_no="yes"), options, {"offer": offer}
+        )
+
+        assert outcome.escalate is True
+        assert outcome.routing["suggested_team"] == "purchasing"
+        assert outcome.handler == "team_pick"
+
+    def test_no_on_a_roster_carrying_an_offer_declines(self) -> None:
+        """Rule 3: 'no' declines the offer without touching the roster's own handler."""
+        options = _rows("SRTWC8517", "SRTKS6091", "SRTKS8091")
+        offer = {"team": "purchasing", "domain": "inventory", "options": [
+            {"idx": 1, "team": "purchasing", "label": "purchasing"}
+        ]}
+
+        outcome = oq.resolve(
+            "product_pick", _answer(resolved=True, yes_no="no"), options, {"offer": offer}
+        )
+
+        assert outcome.declined is True
+        assert outcome.escalate is False
+
+    def test_yes_on_a_roster_with_no_offer_resolves_nothing(self) -> None:
+        """A plain roster with no offer riding it must not treat 'yes' as an escalation -
+        there is nothing offered to accept."""
+        options = _rows("SRTWC8517", "SRTKS6091")
+
+        outcome = oq.resolve("product_pick", _answer(resolved=True, yes_no="yes"), options, {})
+
+        assert outcome.resolved is False
+        assert outcome.escalate is False
+        assert outcome.outcome == "No offered row was named."
+
+    def test_tier_pick_second_number_re_picks(self) -> None:
+        """Rule 1 applies to every roster kind, not only product_pick."""
+        options = [
+            {"idx": 1, "tier": "office", "label": "Office"},
+            {"idx": 2, "tier": "dealer", "label": "Dealer"},
+        ]
+
+        first = oq.resolve("tier_pick", _answer(resolved=True, picks=[1]), options, {})
+        second = oq.resolve("tier_pick", _answer(resolved=True, picks=[2]), options, {})
+
+        assert first.tiers == ["office"]
+        assert second.tiers == ["dealer"]
+
+
+# --------------------------------------------------------------------------- #
 # The mirror
 # --------------------------------------------------------------------------- #
 
