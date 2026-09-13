@@ -74,11 +74,19 @@ class OutstandingSORow(BaseModel):
 
 
 class OutstandingDORow(BaseModel):
-    """One PENDING delivery order (see `OutstandingDOBlock`)."""
+    """One PENDING delivery order (see `OutstandingDOBlock`).
+
+    R3 (owner ruling, 13 Sep 2026): a ROW states all three quantities - `do_qty`, then
+    `delivered_qty`, which is `0` here by construction and is PRINTED as 0 rather than
+    omitted ("if it is 0 then we show 0, don't hide"), then `pending_qty`. The block and
+    the breakdowns above the list stay pending-only.
+    """
 
     do_number: str
     customer_name: Optional[str] = None
     location: Optional[str] = None
+    do_qty: int
+    delivered_qty: int
     pending_qty: int
     do_date: Optional[date] = None
 

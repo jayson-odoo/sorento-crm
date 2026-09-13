@@ -400,11 +400,20 @@ def _fill_do(
         {"customer_name": v["customer_name"], "pending_qty": _qty(v["pending_qty"])}
         for v in by_customer.values()
     ]
+    # R3 (owner testing round 2, 13 Sep 2026): "need to show delivered also, doesn't
+    # mean if it is 0 then we don't show, if it is 0 then we show 0, don't hide." The
+    # ROWS carry `do_qty` and `delivered_qty` again - only the rows: the block and the
+    # two breakdowns stay pending-only (R1). `do_qty` is this DO's line quantity for the
+    # product and `delivered_qty` is the rest of it, which is 0 by construction here
+    # because a delivered DO is not in the population at all - and 0 is PRINTED, which
+    # is the whole point of the ruling.
     do_rows = [
         {
             "do_number": v["do_number"],
             "customer_name": v["customer_name"],
             "location": ", ".join(sorted(v["_locations"])) if v["_locations"] else None,
+            "do_qty": _qty(v["pending_qty"]),
+            "delivered_qty": 0,
             "pending_qty": _qty(v["pending_qty"]),
             "do_date": v["order_date"],
         }

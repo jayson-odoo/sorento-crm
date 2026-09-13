@@ -1891,10 +1891,16 @@ _OUTSTANDING_SO_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("Outstanding", "outstanding_qty", "qty"),
     ("Order Date", "order_date", "date"),
 )
+#: R3 (owner ruling, 13 Sep 2026): a DETAIL ROW states all three quantities, and
+#: `Delivered` prints its 0 rather than being hidden. The BLOCK above the list is
+#: pending-only (R1) - these are two different readers' questions: the block answers
+#: "how much is still coming", the row answers "what is this DO".
 _OUTSTANDING_DO_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("DO Number", "do_number", "text"),
     ("Customer", "customer_name", "label"),
     ("Location", "location", "label"),
+    ("DO Qty", "do_qty", "qty"),
+    ("Delivered", "delivered_qty", "qty"),
     ("Pending", "pending_qty", "qty"),
     ("DO Date", "do_date", "date"),
 )
