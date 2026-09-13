@@ -84,6 +84,20 @@ TURN_1_PARSER_RAW = {
     "escalation": {"is_escalation_confirmation": False, "company_pick": None},
 }
 
+# Security review round 4 audit: `pending` / `routing` / `routing_brand` /
+# `routing_company` below are LEGACY keys a real five-key session can never hold
+# (`contracts.SESSION_VAR_KEYS`) - the SAME class of shape B1's kill test found masking a
+# defect in the old AC-1127 fixture. Here they are legitimate rather than a mistake: this
+# dict is `documentation/plans/chatbot/evidence/escalation-routing-real-turns.json`'s own
+# `previous_state_excerpt` for the 11 Sep 12:55 turn, byte-for-byte, which the plan's own
+# note says is what the CONSOLE actually showed for that historical turn - and AC-1144's
+# whole point is replaying the real capture, not a synthesised one. Killed by hand for
+# AC-1101 (stripped every legacy key except `open_question` and `response`, reran): the
+# result was byte-identical, because neither `_post_process` nor `suggest_follow_up`
+# reads `pending` / `routing_brand` / `routing_company` for the arms these tests exercise
+# - only `open_question` (added here on top of the real excerpt, since the excerpt
+# predates the picker being persisted that way - see the comment below) and `response`
+# (read by `offer_is_open`'s legacy regex fallback) matter to this file's assertions.
 TURN_1_PREVIOUS_STATE = {
     "pending": None,
     "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
@@ -187,6 +201,12 @@ TURN_3_PARSER_RAW = _full_emission(
     escalation={"is_escalation_confirmation": True, "company_pick": None},
 )
 
+# Security review round 4 audit: same legitimacy as `TURN_1_PREVIOUS_STATE` above - this
+# is the evidence file's own `previous_state_excerpt` for the 11 Sep 12:56 turn, verbatim.
+# Killed by hand for AC-1103 and AC-1104 (stripped every legacy key, reran both): both
+# results were byte-identical, since `offer_is_open` reads only `open_question` /
+# `response` and neither AC touches team narrowing (where a fake `routing` key would
+# actually matter - see `test_escalation_routing_team.py`'s AC-1113/1114/1115 audit).
 TURN_3_PREVIOUS_STATE = {
     "pending": None,
     "routing": {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
@@ -269,10 +289,13 @@ def test_s2_round3_a_declined_picker_offer_still_keeps_a_named_team_help_request
     "no" over an open picker (`is_affirmative is False`) - does not: it unconditionally
     sets `message_type = "casual"` and clears the entities. A help request that ALSO
     names a team ("no, escalate to marketing") must stay `request_for_help` (D1) rather
-    than being read as a plain decline of the picker."""
+    than being read as a plain decline of the picker.
+
+    Security review round 4 audit: this fixture used to also carry `pending` and
+    `routing` keys alongside `open_question` - a shape a real five-key session cannot
+    hold. Killed by hand (removed both, reran): byte-identical result, since neither key
+    is read anywhere in `suggest_follow_up`'s decline arm or `_named_team_help`."""
     previous_state = {
-        "pending": None,
-        "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
         "open_question": {
             "kind": "product_pick",
             "options": [

@@ -127,9 +127,15 @@ def test_ac1113_a_family_word_over_an_open_offer_for_one_of_its_members_assigns_
     """AC-1113 (journey step 5): an open one-team `team_pick` offer for `marketing_product`
     plus the family word `marketing` assigns `marketing_product` directly - no question.
     RED today: `_person_routing`'s family branch (`len(matched) > 1`) always clarifies,
-    with no read of what offer is open."""
+    with no read of what offer is open.
+
+    Security review round 4 audit: this fixture used to also carry a `routing` key
+    alongside `open_question` in `prev` - a shape a real five-key session can never hold
+    (`contracts.SESSION_VAR_KEYS`). Killed by hand (removed the key, reran): the result
+    was byte-identical, because `_offered_team` reads the question's own `payload.team`,
+    never `prev.routing` - so the key was inert, not masking anything, and is dropped
+    here rather than kept as a stray legacy shape."""
     prev = {
-        "routing": {"suggested_team": "customer_service"},
         "open_question": {
             "kind": "team_pick",
             "options": [{"team": "marketing_product", "label": "Marketing Product"}],
@@ -158,14 +164,90 @@ def test_ac1113_a_family_word_over_an_open_offer_for_one_of_its_members_assigns_
 
 def test_ac1114_a_family_word_when_the_previous_turn_already_sat_on_one_member_assigns_it() -> None:
     """AC-1114 (journey step 4): the previous turn already sat on `marketing_product` (a
-    photo turn), so `marketing` narrows to it with no question. RED today: the family
-    branch always clarifies."""
-    ctx = _ctx(
-        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
-        parser_raw={"routing": {"suggested_team": "marketing", "suggested_agent": None}},
-        escalation={"is_escalation_confirmation": False, "company_pick": None},
+    photo turn), so `marketing` narrows to it with no question.
+
+    Security review round 4 audit, rewritten onto the REAL five-key chain. The ORIGINAL
+    fixture set `ctx.routing=` directly to `marketing_product` as a stand-in for "what the
+    previous turn carried" - a testing convention several sibling ACs use legitimately,
+    but here it asserted something about the DERIVE CHAIN's own correctness (does a real
+    session's `focus.domains` actually re-derive to `marketing_product`?) while bypassing
+    the derive chain entirely, so it passed for the wrong reason: the console finding
+    (`test_escalation_routing_seams.py::test_console_finding_*`) proved that chain falls
+    to the hard default `customer_service` on a real session with no legacy `routing` key
+    to inherit from. Rewritten to run the real head (`post_process` / `suggest_follow_up`)
+    against a genuine `focus.domains: ["product_attachment"]` previous state, with NO open
+    question at all (this is the bare-family-word half, not an offer answer), then
+    `route.decide` and the real lane. RED for the same reason the console finding is:
+    `_previous_team`'s fallback to the derived `team` inherits nothing real."""
+    from app.services.chatbot.contracts import SESSION_VAR_KEYS
+    from app.services.chatbot.engine import _resolve_open_question
+    from app.services.chatbot.head.output_exchange import post_process, suggest_follow_up
+    from app.services.chatbot.head.route import decide
+    from tests.chatbot.test_escalation_routing_head import _full_emission
+
+    previous_state = {
+        "focus": {
+            "domains": {
+                "value": ["product_attachment"],
+                "set_at_turn": 3,
+                "set_at": None,
+                "source": "reuse",
+            },
+            "products": {
+                "value": [
+                    {
+                        "raw": "MWC7625-SH-S10",
+                        "hint": "product",
+                        "canonical_code": "MWC7625-SH-S10",
+                        "current_message": False,
+                        "confident": True,
+                    }
+                ],
+                "set_at_turn": 3,
+                "set_at": None,
+                "source": "reuse",
+            },
+        },
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
+    }
+    assert set(previous_state) <= set(SESSION_VAR_KEYS), sorted(previous_state)
+
+    parser_raw = _full_emission(
+        message_type="request_for_help",
+        is_affirmative=None,
+        entities=[],
+        routing={"suggested_team": "marketing", "suggested_agent": None},
+        escalation={"is_escalation_confirmation": True, "company_pick": None},
+        user_goal="escalate to marketing",
     )
-    item = _item(team="marketing_product")
+    answered = _resolve_open_question(
+        previous_state, parser_raw=parser_raw, emits_v3=False, referenced_result_set=None, turn_no=4
+    )
+    parent_input = {
+        "latest_user_message": "escalate to marketing",
+        "contact_id": "ZZT-esc-team-ac1114",
+        "previous_conversation_state": previous_state,
+        "parser_emits_v3": False,
+        "_answered": answered,
+        "turn_no": 4,
+    }
+    parse_block = post_process({"output": dict(parser_raw)}, {}, parent_input)
+    parse_block = suggest_follow_up(parse_block, parent_input)
+    qf = parse_block["output"]
+
+    ctx = {
+        "contact": {"id": "ZZT-esc-team-ac1114", "phone": "+60123450099", "custom_fields": []},
+        "text": {"message": {"messageId": "m1", "message": {"type": "text", "text": "escalate to marketing"}}},
+        "session": {"session_vars": {"variables": previous_state}},
+        "parse": {"output": qf, "_parser_raw": parse_block.get("_parser_raw")},
+        "access": {"allowed": True, "decision": "allow"},
+        "media": None,
+    }
+    branch, _tier = decide(ctx)
+    assert branch == "out_of_scope", branch
+    item = _item(branch_kind=branch)
     services = _services()
 
     result = run(ctx, item, services=services)
@@ -173,16 +255,23 @@ def test_ac1114_a_family_word_when_the_previous_turn_already_sat_on_one_member_a
     assert result["arm"] == "human-intervention", (
         f"the previous turn's own team already narrows the family - no question: {result!r}"
     )
-    assert _comment_text(result).startswith("Team: marketing_product\n"), _comment_text(result)
+    services.next_assignee.assert_called_once()
+    body = services.next_assignee.call_args[0][0]
+    assert body["team_code"] == "marketing_product", body
 
 
 def test_ac1115_a_family_word_over_an_offer_outside_the_family_asks_over_the_family_only() -> None:
     """AC-1115: an open offer for `warehouse` (outside the `marketing` family) plus the
     family word must still ask, over the family only - never the offered team, never the
     whole catalogue. Not a defect on today's code (the family branch always asks with no
-    read of the offer), so this is a guard against the D2 rewrite narrowing wrongly."""
+    read of the offer), so this is a guard against the D2 rewrite narrowing wrongly.
+
+    Security review round 4 audit: same cleanup as AC-1113 - a `routing` key alongside
+    `open_question` in `prev` is a shape a real session cannot hold. Killed by hand:
+    identical result with it removed, since `_narrow_family`'s fallback
+    (`_previous_team`) reads `ctx`'s own `routing=` param (set explicitly below) when
+    `prev.routing` is absent, landing on the SAME "warehouse" value either way."""
     prev = {
-        "routing": {"suggested_team": "warehouse"},
         "open_question": {
             "kind": "team_pick",
             "options": [{"team": "warehouse", "label": "Warehouse"}],
