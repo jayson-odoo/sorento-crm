@@ -1520,6 +1520,22 @@ def _send_message(text: str, dry_run: bool) -> dict[str, Any]:
     }
 
 
+def _agent_code(ctx: dict[str, Any], context_item: dict[str, Any]) -> Any:
+    """The agent this assignment is made under: the LANDED team's, else the inherited one.
+
+    One reader, two writers of the same fact - the round-robin body and the SLA row - so the
+    draw and the audit row cannot name different agents. `_landed_item` sets `agent_code`
+    when the ladder moved the turn off the team it inherited; reading
+    `routing.suggested_agent` unconditionally is what put `order_enquiries` on a
+    marketing_product assignment (AC-1129).
+    """
+    landed = jsc.get(context_item, "agent_code")
+    if jsc.truthy(landed):
+        return landed
+    output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    return jsc.get(jsc.get(output, "routing"), "suggested_agent")
+
+
 def _next_assignee_body(ctx: dict[str, Any], context_item: dict[str, Any]) -> dict[str, Any]:
     """`get-round-robin-assignee`'s JSON body, key for key.
 
@@ -1527,17 +1543,8 @@ def _next_assignee_body(ctx: dict[str, Any], context_item: dict[str, Any]) -> di
     literals so a change to them is a change to this file and shows up in a diff.
     """
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
-    # `agent_code` is the LANDED team's own agent when the ladder moved the turn off the
-    # inherited team (`_landed_item`), and the turn's inherited agent otherwise. Reading
-    # `routing.suggested_agent` unconditionally is what put `order_enquiries` on a
-    # marketing_product assignment (AC-1129).
-    agent_code = jsc.get(context_item, "agent_code")
     return {
-        "agent_code": (
-            agent_code
-            if jsc.truthy(agent_code)
-            else jsc.get(jsc.get(output, "routing"), "suggested_agent")
-        ),
+        "agent_code": _agent_code(ctx, context_item),
         "team_code": jsc.get(context_item, "team"),
         "contact_phone_number": jsc.get(jsc.get(ctx, "contact"), "phone"),
         "policy_code": NEXT_ASSIGNEE_POLICY_CODE,
@@ -1569,7 +1576,11 @@ def _sla_body(
     return {
         "assigned_to_id": jsc.get(assignee, "assignee_id") or "",
         "contact_phone_number": jsc.get(jsc.get(ctx, "contact"), "phone") or "",
-        "agent_code": jsc.get(jsc.get(output, "routing"), "suggested_agent") or "",
+        # THE SAME agent the draw was made with (AC-1129, review nit N2). This row is the
+        # audit row an operator reads beside the assignment, so naming the inherited
+        # `order_enquiries` here while the draw used marketing_product's own
+        # `general_enquiries` would make the two records of one decision disagree.
+        "agent_code": _agent_code(ctx, context_item) or "",
         "team_set_code": prefer("team_set_code", jsc.get(context_item, "team") or ""),
         "brand_code": prefer("brand_code", jsc.get(context_item, "brand_code") or None),
         "company_id": prefer("company_id", jsc.get(context_item, "company_id") or None),
