@@ -261,19 +261,19 @@ def _product_rows(
 
     **The OFFER side carries the business lane's own caps**, because AC-1124 says these are
     "the business lane's did-you-mean rows" and a numbered list nobody can read is not an
-    offer. `lanes/business/miss_suggest._cap3` is three candidates per token and
+    offer. `lanes/business/miss_suggest.dym_rows_per_token` is three candidates per token and
     `_dym_plan`'s `d1s = d1s[:5]` is five token blocks, so the resolver's 15 matches per
     token over several tokens (75 rows on a five-token message) become at most 15 numbered
-    lines, in the resolver's own ranking. `_cap3` is imported rather than re-spelled so the
-    number cannot drift from the lane it is copied from; the block cap is a constant here
-    beside it, with its source named, because `_dym_plan` holds it as a literal inside a
-    500-line planner this lane does not run.
+    lines, in the resolver's own ranking. The per-token cap is IMPORTED rather than
+    re-spelled so the number cannot drift from the lane it is copied from; the block cap is a
+    constant here beside it, with its source named, because `_dym_plan` holds it as a literal
+    inside a 500-line planner this lane does not run.
 
     The RESOLVED side is not capped: it decides the brand, and "exactly one row" is the
     test the lane makes on it (`escalation._resolve_product`), so dropping a row there would
     change a routing decision rather than shorten a list.
     """
-    from app.services.chatbot.lanes.business.miss_suggest import _cap3
+    from app.services.chatbot.lanes.business.miss_suggest import dym_rows_per_token
 
     resolved: dict[str, dict[str, Any]] = {}
     offers: dict[str, dict[str, Any]] = {}
@@ -306,7 +306,7 @@ def _product_rows(
                 offers[str(code)] = row
                 block.append(row)
         if block:
-            blocks.append(_cap3(block))
+            blocks.append(dym_rows_per_token(block))
     did_you_mean = [row for block in blocks[:MISS_TOKEN_BLOCK_CAP] for row in block]
     return list(resolved.values()), did_you_mean
 

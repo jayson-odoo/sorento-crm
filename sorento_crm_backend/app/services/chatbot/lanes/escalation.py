@@ -802,6 +802,7 @@ def _resolve_product(
     services: Any,
     *,
     offer_did_you_mean: bool = True,
+    dry_run: bool = False,
 ) -> dict[str, Any] | None:
     """The product this turn named, resolved through the business lane's own resolver.
 
@@ -843,7 +844,7 @@ def _resolve_product(
     # the same three codes in it.
     ask = None
     if offer_did_you_mean and not resolved and did_you_mean and _deferred_team_word(ctx) is None:
-        ask = _product_pick_ask(ctx, context_item, did_you_mean)
+        ask = _product_pick_ask(ctx, context_item, did_you_mean, dry_run=dry_run)
     return {
         # One row is the answer. Several rows that agree on a brand still name it - that is
         # a code twin across companies, and both twins route to the same brand's member.
@@ -857,7 +858,11 @@ def _resolve_product(
 
 
 def _product_pick_ask(
-    ctx: dict[str, Any], context_item: dict[str, Any], rows: list[dict[str, Any]]
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """The did-you-mean rows, armed as the ONE open question, with the escalation deferred.
 
@@ -878,11 +883,17 @@ def _product_pick_ask(
     from app.services.chatbot.dialogue import open_question as oq
 
     options = []
-    for index, row in enumerate(rows, start=1):
+    for row in rows:
         code = jsc.get(row, "canonical_code")
+        # A ROW WITH NO CODE IS NOT AN OPTION. `jsc.js_string(None)` is the string "null", so
+        # a codeless row printed as `3. null` and a tap on it resolved to nothing - the same
+        # UUID-leak guard `miss_suggest.human_label` applies for the same reason. Numbered
+        # AFTER the filter, so the printed numbers have no gaps.
+        if not jsc.truthy(code):
+            continue
         options.append(
             {
-                "idx": index,
+                "idx": len(options) + 1,
                 "uuid": jsc.get(row, "uuid"),
                 "code": code,
                 "label": jsc.js_string(code),
@@ -921,7 +932,12 @@ def _product_pick_ask(
             "clarify_text": text,
             "open_question": question,
         },
-        "actions": _clarify_actions(text, options=labels, dry_run=False),
+        # `dry_run` is THREADED, not assumed: every other action this lane builds carries
+        # the turn's own flag, and the executor keys on it to decide whether a message
+        # actually leaves. Today this arm is only reachable live (`run()` returns from its
+        # preview branch before the resolve), which is exactly why hardcoding False here
+        # would be a trap for whoever makes it reachable.
+        "actions": _clarify_actions(text, options=labels, dry_run=dry_run),
         "pending": question,
     }
 
@@ -938,7 +954,12 @@ def _typed_product_code(ctx: dict[str, Any]) -> Any:
     if not products:
         return None
     first = products[0]
-    code = _safe_code(jsc.get(first, "canonical_code") or jsc.get(first, "raw"))
+    # `raw` FIRST (AC-1130: "the raw code the customer typed"). `canonical_code` is the
+    # parser's own correction of it - on the 11 Sep turn the customer typed
+    # `SRTWC60630-SH` and a corrected code would hide exactly the typo the PIC needs to see
+    # to recognise the message. The correction is still named on the line: the PICKED code
+    # is the other half of it (`_product_line`).
+    code = _safe_code(jsc.get(first, "raw") or jsc.get(first, "canonical_code"))
     return code or None
 
 

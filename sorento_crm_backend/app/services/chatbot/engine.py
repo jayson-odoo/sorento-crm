@@ -1682,7 +1682,12 @@ def _run_stages(  # noqa: PLR0915
     # what answering it decided, and the lane the outcome names.
     parse_block["_open_question_before"] = open_question_before
     parse_block["_answered"] = answered_entry
-    parse_block["_lane_override"] = lane_override
+    # `_lane_override` IS NOT WRITTEN. It was the lane an outcome names
+    # (`_lane_for_outcome`), put on the parse block for a reader that never arrived: nothing
+    # in the backend, the console or the frontend reads it - the routing consequence travels
+    # as `message_type` / `escalation` through `route.decide`, and the value itself is on the
+    # trace below (`facts.lane`), which is where an operator reads it. `lane_override` is
+    # still computed for exactly that line.
 
     turn_trace.record(
         "answered",
