@@ -354,7 +354,9 @@ def test_customer_query_matches_name_not_debtor_code(client, db):
     body = resp.json()
     assert body["so"]["ordered_qty"] == 10
     assert body["so"]["so_count"] == 1
-    assert {row["customer_name"] for row in body["so_by_customer"]} == {"Dealer A Sdn Bhd"}
+    # R13: product AND customer named is the BOTH subject, whose only breakdown is by
+    # location - the filter is graded on the rows, which carry the customer either way.
+    assert {row["customer_name"] for row in body["so_rows"]} == {"Dealer A Sdn Bhd"}
 
 
 # --------------------------------------------------------------------- AC-1114
@@ -792,7 +794,9 @@ def test_customer_ids_filters_report(client, db):
     assert body["so"]["ordered_qty"] == 10, (
         f"customer_ids must filter the report the same way customer_query does: {body}"
     )
-    assert {row["customer_name"] for row in body["so_by_customer"]} == {"ZZT Customer Ids Match"}
+    # R13: the BOTH subject carries by_location only, so the rows are where the filtered
+    # customer is read back (they always carry `customer_name`).
+    assert {row["customer_name"] for row in body["so_rows"]} == {"ZZT Customer Ids Match"}
 
 
 def test_customer_ids_echo_the_resolved_names_in_the_header(client, db):

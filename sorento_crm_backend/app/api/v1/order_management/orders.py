@@ -1388,7 +1388,14 @@ outstanding_report_router = APIRouter()
 
 @outstanding_report_router.get("/outstanding-report", response_model=OutstandingReportResponse)
 async def get_outstanding_report(
-    product_code: str = Query(..., description="Exact product code, case-insensitive (AC-1119). No sibling-code expansion."),
+    product_code: Optional[str] = Query(
+        None,
+        description=(
+            "Exact product code, case-insensitive (AC-1119). No sibling-code expansion. "
+            "OPTIONAL since R13: the report's subject may be a customer instead, or both - "
+            "but at least one of product_code / customer_ids / customer_query is required."
+        ),
+    ),
     scope: str = Query(
         "both",
         description="Which block(s) to compute: so | do | both (default both).",
@@ -1466,6 +1473,18 @@ async def get_outstanding_report(
     from app.services.error_handler import AppException
     from app.services.outstanding_report_service import outstanding_report
 
+    # R13: the SUBJECT is a product, a customer, or both - but never nothing. An
+    # unfiltered report would sum every open sales order line in the company, which is
+    # not an answer to any question a customer can ask.
+    if not (product_code or "").strip() and not customer_ids and not (customer_query or "").strip():
+        raise AppException(
+            422,
+            "This report needs a subject: give at least one of product_code, customer_ids "
+            "or customer_query",
+            detail="product_code, customer_ids, customer_query",
+            code="subject_required",
+        )
+
     scope = (scope or "both").strip().lower()
     if scope not in ("so", "do", "both"):
         raise AppException(
@@ -1508,10 +1527,13 @@ async def get_outstanding_report(
     )
     validated = OutstandingReportResponse(**data)
     body = validated.model_dump(mode="json")
-    if data.get("so") is None:
-        body.pop("so", None)
-    if data.get("do") is None:
-        body.pop("do", None)
+    for key in (
+        "so", "do",
+        # R13: a breakdown group the subject does not want is ABSENT, not empty.
+        "so_by_customer", "so_by_product", "do_by_customer", "do_by_product",
+    ):
+        if data.get(key) is None:
+            body.pop(key, None)
     if detail in ("so", "do"):
         body["detail"] = detail
     # Echo-only, same contract as `detail` above: read by the MCP presenter

@@ -1773,7 +1773,40 @@ def _outstanding_location_header(token: Any, codes: Any) -> str:
     return f"{token} ({', '.join(str(c) for c in resolved)})"
 
 
-def _outstanding_so_block(so: dict, by_location: list, by_customer: list) -> str:
+def _outstanding_group(rows: list, *, name_key: str, total_key: str, outstanding_key: str) -> list[str]:
+    """One breakdown group's lines, `name: total (O/S: outstanding)`, in the order given.
+
+    R10: the ROUTE ranks them (outstanding desc, total desc, name asc) and this prints
+    them as they arrive - one sort, in the place that knows the numbers, so the reply and
+    any later reader agree. R13: the same renderer serves By location, By customer and By
+    product, because the owner's ruling is that the three read identically and only the
+    subject decides which of them the reader needs.
+    """
+    return [
+        f"{_outstanding_label(row.get(name_key))}: "
+        f"{_outstanding_fmt_int(row.get(total_key))} "
+        f"(O/S: {_outstanding_fmt_int(row.get(outstanding_key))})"
+        for row in rows
+    ]
+
+
+def _outstanding_second_group(report: dict, prefix: str) -> tuple[str, list]:
+    """Which group follows By location, and its rows (R13): `*_By customer_*` for a
+    product subject, `*_By product_*` for a customer subject, neither when the report was
+    asked about both (the route sends only the group the reader needs, and sends the other
+    as no key at all)."""
+    by_customer = report.get(f"{prefix}_by_customer")
+    if by_customer is not None:
+        return "customer_name", by_customer
+    by_product = report.get(f"{prefix}_by_product")
+    if by_product is not None:
+        return "product_code", by_product
+    return "", []
+
+
+def _outstanding_so_block(
+    so: dict, by_location: list, second_rows: list, second_key: str
+) -> str:
     lines = [
         "*Sales order outstanding*",
         # R7 (owner testing round 3, 13 Sep 2026): the COUNT opens both blocks, then the
@@ -1786,23 +1819,25 @@ def _outstanding_so_block(so: dict, by_location: list, by_customer: list) -> str
         f"Order date range: {_outstanding_date_range(so.get('order_date_min'), so.get('order_date_max'))}",
         "*_By location_*",
     ]
-    for row in by_location:
-        lines.append(
-            f"{_outstanding_label(row.get('code'))}: "
-            f"{_outstanding_fmt_int(row.get('ordered_qty'))} "
-            f"(O/S: {_outstanding_fmt_int(row.get('outstanding_qty'))})"
+    lines.extend(
+        _outstanding_group(
+            by_location, name_key="code", total_key="ordered_qty", outstanding_key="outstanding_qty"
         )
-    lines.append("*_By customer_*")
-    for row in by_customer:
-        lines.append(
-            f"{_outstanding_label(row.get('customer_name'))}: "
-            f"{_outstanding_fmt_int(row.get('ordered_qty'))} "
-            f"(O/S: {_outstanding_fmt_int(row.get('outstanding_qty'))})"
+    )
+    if second_key:
+        lines.append("*_By customer_*" if second_key == "customer_name" else "*_By product_*")
+        lines.extend(
+            _outstanding_group(
+                second_rows, name_key=second_key, total_key="ordered_qty",
+                outstanding_key="outstanding_qty",
+            )
         )
     return "\n".join(lines)
 
 
-def _outstanding_do_block(do: dict, by_location: list, by_customer: list) -> str:
+def _outstanding_do_block(
+    do: dict, by_location: list, second_rows: list, second_key: str
+) -> str:
     """R6/R7 (owner testing round 3, 13 Sep 2026): the DO block says OUTSTANDING, never
     "pending", and states the delivered figure beside it - "need to show the delivered
     also, so the by location and by customer needs to be the DO qty (O/S: {pending}) so
@@ -1822,18 +1857,17 @@ def _outstanding_do_block(do: dict, by_location: list, by_customer: list) -> str
         f"DO date range: {_outstanding_date_range(do.get('do_date_min'), do.get('do_date_max'))}",
         "*_By location_*",
     ]
-    for row in by_location:
-        lines.append(
-            f"{_outstanding_label(row.get('code'))}: "
-            f"{_outstanding_fmt_int(row.get('do_qty'))} "
-            f"(O/S: {_outstanding_fmt_int(row.get('pending_qty'))})"
+    lines.extend(
+        _outstanding_group(
+            by_location, name_key="code", total_key="do_qty", outstanding_key="pending_qty"
         )
-    lines.append("*_By customer_*")
-    for row in by_customer:
-        lines.append(
-            f"{_outstanding_label(row.get('customer_name'))}: "
-            f"{_outstanding_fmt_int(row.get('do_qty'))} "
-            f"(O/S: {_outstanding_fmt_int(row.get('pending_qty'))})"
+    )
+    if second_key:
+        lines.append("*_By customer_*" if second_key == "customer_name" else "*_By product_*")
+        lines.extend(
+            _outstanding_group(
+                second_rows, name_key=second_key, total_key="do_qty", outstanding_key="pending_qty"
+            )
         )
     return "\n".join(lines)
 
@@ -1843,7 +1877,9 @@ def _outstanding_report(report: dict) -> str:
     reply (contract for Phase 1)"). See the module-level note above for the
     `report` shape."""
     lines = [
-        f"Product: {report.get('product_code')}",
+        # R13: `all` when no product was named, the same word the other header lines use
+        # for "every one of them" - a customer-subject report is about all their products.
+        f"Product: {report.get('product_code') if _filled(report.get('product_code')) else 'all'}",
         f"Customer: {report.get('customer_name') if _filled(report.get('customer_name')) else 'all'}",
         f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
         f"Order date: {_outstanding_date_range(report.get('order_date_from'), report.get('order_date_to'))}",
@@ -1857,9 +1893,10 @@ def _outstanding_report(report: dict) -> str:
         if not so.get("so_count"):
             blocks.append("*Sales order outstanding*\nNo open sales order.")
         else:
+            so_second_key, so_second_rows = _outstanding_second_group(report, "so")
             blocks.append(
                 _outstanding_so_block(
-                    so, report.get("so_by_location") or [], report.get("so_by_customer") or []
+                    so, report.get("so_by_location") or [], so_second_rows or [], so_second_key
                 )
             )
             offer.append("Sales order list")
@@ -1869,9 +1906,10 @@ def _outstanding_report(report: dict) -> str:
         if not do.get("do_count"):
             blocks.append("*Delivery order outstanding*\nNo outstanding delivery order.")
         else:
+            do_second_key, do_second_rows = _outstanding_second_group(report, "do")
             blocks.append(
                 _outstanding_do_block(
-                    do, report.get("do_by_location") or [], report.get("do_by_customer") or []
+                    do, report.get("do_by_location") or [], do_second_rows or [], do_second_key
                 )
             )
             offer.append("Delivery order list")
@@ -1902,6 +1940,9 @@ def _outstanding_report(report: dict) -> str:
 _OUTSTANDING_SO_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("SO Number", "so_number", "text"),
     ("Customer", "customer_name", "label"),
+    # R13: a row names both axes, so a customer-subject list says which product each row
+    # is for and a product-subject list still reads the same way.
+    ("Product", "product_code", "label"),
     ("Location", "location", "label"),
     ("Ordered", "ordered_qty", "qty"),
     ("Transferred to DO", "transferred_qty", "qty"),
@@ -1915,6 +1956,7 @@ _OUTSTANDING_SO_FIELDS: tuple[tuple[str, str, str], ...] = (
 _OUTSTANDING_DO_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("DO Number", "do_number", "text"),
     ("Customer", "customer_name", "label"),
+    ("Product", "product_code", "label"),
     ("Location", "location", "label"),
     ("DO Qty", "do_qty", "qty"),
     ("Delivered", "delivered_qty", "qty"),
@@ -1950,6 +1992,9 @@ def _outstanding_envelope(report: dict) -> dict:
             or (isinstance(do, dict) and do.get("do_count"))
         ),
     }
+
+
+_OUTSTANDING_BOTH_HEADINGS = {"so": "*Sales order list*", "do": "*Delivery order list*"}
 
 
 def _outstanding_detail(report: dict, scope: str) -> str:

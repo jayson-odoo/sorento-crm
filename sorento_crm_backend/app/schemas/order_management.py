@@ -76,9 +76,27 @@ class OutstandingDOCustomerRow(BaseModel):
     pending_qty: int
 
 
+class OutstandingSOProductRow(BaseModel):
+    """R13: the By product group, for a CUSTOMER-subject report - "when we ask for
+    customer, the by customer section becomes by product section"."""
+
+    product_code: Optional[str] = None
+    ordered_qty: int
+    outstanding_qty: int
+
+
+class OutstandingDOProductRow(BaseModel):
+    """As `OutstandingSOProductRow`, on the DO side."""
+
+    product_code: Optional[str] = None
+    do_qty: int
+    pending_qty: int
+
+
 class OutstandingSORow(BaseModel):
     so_number: str
     customer_name: Optional[str] = None
+    product_code: Optional[str] = None
     location: Optional[str] = None
     ordered_qty: int
     transferred_qty: int
@@ -97,6 +115,7 @@ class OutstandingDORow(BaseModel):
 
     do_number: str
     customer_name: Optional[str] = None
+    product_code: Optional[str] = None
     location: Optional[str] = None
     do_qty: int
     delivered_qty: int
@@ -119,7 +138,8 @@ class OutstandingReportResponse(BaseModel):
     field missing here would vanish from the body with no error anywhere.
     """
 
-    product_code: str
+    # R13: the SUBJECT may be a customer alone, so the product echo is nullable.
+    product_code: Optional[str] = None
     customer_name: Optional[str] = None
     warehouse_codes: List[str] = []
     order_date_from: Optional[date] = None
@@ -127,8 +147,14 @@ class OutstandingReportResponse(BaseModel):
     so: Optional[OutstandingSOBlock] = None
     do: Optional[OutstandingDOBlock] = None
     so_by_location: List[OutstandingSOLocationRow] = []
-    so_by_customer: List[OutstandingSOCustomerRow] = []
+    # R13: which breakdown groups exist depends on the SUBJECT (product -> by_customer,
+    # customer -> by_product, both -> neither). A group the subject does not want is
+    # `None` here and the route strips the key, the same way it strips an unasked scope:
+    # "nobody" and "not asked" are different answers.
+    so_by_customer: Optional[List[OutstandingSOCustomerRow]] = None
+    so_by_product: Optional[List[OutstandingSOProductRow]] = None
     do_by_location: List[OutstandingDOLocationRow] = []
-    do_by_customer: List[OutstandingDOCustomerRow] = []
+    do_by_customer: Optional[List[OutstandingDOCustomerRow]] = None
+    do_by_product: Optional[List[OutstandingDOProductRow]] = None
     so_rows: List[OutstandingSORow] = []
     do_rows: List[OutstandingDORow] = []

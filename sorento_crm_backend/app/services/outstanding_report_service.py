@@ -129,7 +129,7 @@ def _customer_echo(
 def outstanding_report(
     db: Session,
     *,
-    product_code: str,
+    product_code: Optional[str] = None,
     scope: str = "both",
     customer_query: Optional[str] = None,
     customer_ids: Optional[list[str]] = None,
@@ -137,15 +137,31 @@ def outstanding_report(
     order_date_from: DateLike = None,
     order_date_to: DateLike = None,
 ) -> dict:
-    product = _resolve_product(db, product_code)
-    if product is None:
+    """R13 (owner ruling, 13 Sep 2026): the report's SUBJECT is a product, a customer, or
+    both - "when we generate the outstanding summary for customer and for product it is
+    different, they should be the same ... when we ask for customer, the by customer
+    section becomes by product section."
+
+    One summary shape, and the subject only decides which breakdown the reader needs:
+
+    * product -> By location + By customer (who is waiting for this product)
+    * customer -> By location + By product (what this customer is waiting for)
+    * both     -> By location only (the other two would each have one row, naming
+                  back what the question already said)
+
+    A group the subject does not want is `None` here and ABSENT from the response, never
+    an empty list: "nobody" and "not asked" are different answers.
+    """
+    product = _resolve_product(db, product_code) if (product_code or "").strip() else None
+    if (product_code or "").strip() and product is None:
         raise handle_not_found("Product", product_code)
 
     warehouse_ids = resolve_warehouse_ids(db, warehouse_codes)
     customer_ids = [str(c).strip() for c in (customer_ids or []) if str(c).strip()] or None
+    has_customer = bool(customer_ids) or bool((customer_query or "").strip())
 
     result: dict = {
-        "product_code": product.product_code,
+        "product_code": product.product_code if product is not None else None,
         "customer_name": _customer_echo(db, customer_query, customer_ids),
         "warehouse_codes": [str(c).strip() for c in (warehouse_codes or []) if str(c).strip()],
         "order_date_from": _as_date(order_date_from),
@@ -153,9 +169,11 @@ def outstanding_report(
         "so": None,
         "do": None,
         "so_by_location": [],
-        "so_by_customer": [],
+        "so_by_customer": None if (has_customer or product is None) else [],
+        "so_by_product": [] if (has_customer and product is None) else None,
         "do_by_location": [],
-        "do_by_customer": [],
+        "do_by_customer": None if (has_customer or product is None) else [],
+        "do_by_product": [] if (has_customer and product is None) else None,
         "so_rows": [],
         "do_rows": [],
     }
@@ -198,19 +216,24 @@ def _fill_so(
             SalesOrder.order_date,
             Customer.customer_name,
             Warehouse.warehouse_code,
+            Product.product_code,
             SalesOrderLine.qty_ordered,
             SalesOrderLine.qty_delivered,
         )
         .join(SalesOrderLine, SalesOrderLine.sales_order_id == SalesOrder.id)
+        .join(Product, Product.id == SalesOrderLine.product_id)
         .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
         .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
         .filter(
             SalesOrder.status == "open",
             SalesOrderLine.line_status == "open",
-            SalesOrderLine.product_id == product.id,
             (SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered) > 0,
         )
     )
+    # R13: the product is the subject only when one was named; a customer-subject ask
+    # spans every product that customer is waiting for.
+    if product is not None:
+        q = q.filter(SalesOrderLine.product_id == product.id)
     if customer_query:
         q = q.filter(
             Customer.customer_name.ilike(
@@ -231,6 +254,7 @@ def _fill_so(
     dates: list[date] = []
     by_location: dict = {}
     by_customer: dict = {}
+    by_product: dict = {}
     per_so: dict = {}
 
     for r in q.all():
@@ -255,12 +279,19 @@ def _fill_so(
         cust["ordered_qty"] += ordered
         cust["outstanding_qty"] += ordered - delivered
 
+        prod_row = by_product.setdefault(
+            r.product_code,
+            {"product_code": r.product_code, "ordered_qty": Decimal(0), "outstanding_qty": Decimal(0)},
+        )
+        prod_row["ordered_qty"] += ordered
+        prod_row["outstanding_qty"] += ordered - delivered
+
         so_acc = per_so.setdefault(
             r.so_id,
             {
                 "so_number": r.so_number, "customer_name": r.customer_name, "order_date": r.order_date,
                 "ordered_qty": Decimal(0), "transferred_qty": Decimal(0), "outstanding_qty": Decimal(0),
-                "_locations": set(),
+                "_locations": set(), "_products": set(),
             },
         )
         so_acc["ordered_qty"] += ordered
@@ -268,6 +299,8 @@ def _fill_so(
         so_acc["outstanding_qty"] += ordered - delivered
         if r.warehouse_code:
             so_acc["_locations"].add(r.warehouse_code)
+        if r.product_code:
+            so_acc["_products"].add(r.product_code)
 
     result["so"] = {
         "ordered_qty": _qty(ordered_total),
@@ -288,23 +321,39 @@ def _fill_so(
         ],
         outstanding_key="outstanding_qty", total_key="ordered_qty", name_key="code",
     )
-    result["so_by_customer"] = _rank(
-        [
-            {
-                "customer_name": v["customer_name"],
-                "ordered_qty": _qty(v["ordered_qty"]),
-                "outstanding_qty": _qty(v["outstanding_qty"]),
-            }
-            for v in by_customer.values()
-        ],
-        outstanding_key="outstanding_qty", total_key="ordered_qty", name_key="customer_name",
-    )
+    if result.get("so_by_customer") is not None:
+        result["so_by_customer"] = _rank(
+            [
+                {
+                    "customer_name": v["customer_name"],
+                    "ordered_qty": _qty(v["ordered_qty"]),
+                    "outstanding_qty": _qty(v["outstanding_qty"]),
+                }
+                for v in by_customer.values()
+            ],
+            outstanding_key="outstanding_qty", total_key="ordered_qty", name_key="customer_name",
+        )
+    if result.get("so_by_product") is not None:
+        result["so_by_product"] = _rank(
+            [
+                {
+                    "product_code": v["product_code"],
+                    "ordered_qty": _qty(v["ordered_qty"]),
+                    "outstanding_qty": _qty(v["outstanding_qty"]),
+                }
+                for v in by_product.values()
+            ],
+            outstanding_key="outstanding_qty", total_key="ordered_qty", name_key="product_code",
+        )
     # AC-1114: one row per SO, lines rolled up; distinct warehouse codes joined
     # by ", "; sorted by order_date asc then so_number.
     so_rows = [
         {
             "so_number": v["so_number"],
             "customer_name": v["customer_name"],
+            # R13: a row always names BOTH axes, whatever the subject - an SO with two
+            # products under a customer-subject ask says which ones.
+            "product_code": ", ".join(sorted(v["_products"])) if v["_products"] else None,
             "location": ", ".join(sorted(v["_locations"])) if v["_locations"] else None,
             "ordered_qty": _qty(v["ordered_qty"]),
             "transferred_qty": _qty(v["transferred_qty"]),
@@ -355,13 +404,18 @@ def _fill_do(
             Order.order_date,
             Customer.customer_name,
             Warehouse.warehouse_code,
+            Product.product_code,
             OrderLine.quantity,
         )
         .join(OrderLine, OrderLine.order_id == Order.id)
+        .join(Product, Product.id == OrderLine.product_id)
         .outerjoin(Customer, Customer.id == Order.customer_id)
         .outerjoin(Warehouse, Warehouse.id == OrderLine.warehouse_id)
-        .filter(Order.deleted_at.is_(None), OrderLine.product_id == product.id)
+        .filter(Order.deleted_at.is_(None))
     )
+    # R13: as on the SO side - the product narrows only when one was named.
+    if product is not None:
+        q = q.filter(OrderLine.product_id == product.id)
     # `None` means no delivered status is configured at all, so every DO is outstanding
     # and no filter is needed (`_outstanding_clause`'s own docstring).
     if outstanding_clause is not None:
@@ -386,6 +440,7 @@ def _fill_do(
     dates: list[date] = []
     by_location: dict = {}
     by_customer: dict = {}
+    by_product: dict = {}
     per_do: dict = {}
 
     for r in q.all():
@@ -407,6 +462,13 @@ def _fill_do(
         cust["do_qty"] += qty
         cust["pending_qty"] += qty
 
+        prod_row = by_product.setdefault(
+            r.product_code,
+            {"product_code": r.product_code, "do_qty": Decimal(0), "pending_qty": Decimal(0)},
+        )
+        prod_row["do_qty"] += qty
+        prod_row["pending_qty"] += qty
+
         if r.order_date:
             dates.append(r.order_date)
 
@@ -415,12 +477,14 @@ def _fill_do(
             {
                 "do_number": r.order_number, "customer_name": r.customer_name, "order_date": r.order_date,
                 "pending_qty": Decimal(0),
-                "_locations": set(),
+                "_locations": set(), "_products": set(),
             },
         )
         do_acc["pending_qty"] += qty
         if r.warehouse_code:
             do_acc["_locations"].add(r.warehouse_code)
+        if r.product_code:
+            do_acc["_products"].add(r.product_code)
 
     result["do"] = {
         "do_qty": _qty(do_qty_total),
@@ -441,17 +505,30 @@ def _fill_do(
         ],
         outstanding_key="pending_qty", total_key="do_qty", name_key="code",
     )
-    result["do_by_customer"] = _rank(
-        [
-            {
-                "customer_name": v["customer_name"],
-                "do_qty": _qty(v["do_qty"]),
-                "pending_qty": _qty(v["pending_qty"]),
-            }
-            for v in by_customer.values()
-        ],
-        outstanding_key="pending_qty", total_key="do_qty", name_key="customer_name",
-    )
+    if result.get("do_by_customer") is not None:
+        result["do_by_customer"] = _rank(
+            [
+                {
+                    "customer_name": v["customer_name"],
+                    "do_qty": _qty(v["do_qty"]),
+                    "pending_qty": _qty(v["pending_qty"]),
+                }
+                for v in by_customer.values()
+            ],
+            outstanding_key="pending_qty", total_key="do_qty", name_key="customer_name",
+        )
+    if result.get("do_by_product") is not None:
+        result["do_by_product"] = _rank(
+            [
+                {
+                    "product_code": v["product_code"],
+                    "do_qty": _qty(v["do_qty"]),
+                    "pending_qty": _qty(v["pending_qty"]),
+                }
+                for v in by_product.values()
+            ],
+            outstanding_key="pending_qty", total_key="do_qty", name_key="product_code",
+        )
     # R3 (owner testing round 2, 13 Sep 2026): "need to show delivered also, doesn't
     # mean if it is 0 then we don't show, if it is 0 then we show 0, don't hide." The
     # ROWS carry `do_qty` and `delivered_qty` again - only the rows: the block and the
@@ -463,6 +540,7 @@ def _fill_do(
         {
             "do_number": v["do_number"],
             "customer_name": v["customer_name"],
+            "product_code": ", ".join(sorted(v["_products"])) if v["_products"] else None,
             "location": ", ".join(sorted(v["_locations"])) if v["_locations"] else None,
             "do_qty": _qty(v["pending_qty"]),
             "delivered_qty": 0,
