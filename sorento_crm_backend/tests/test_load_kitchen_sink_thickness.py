@@ -18,9 +18,12 @@ from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
 from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_registry import seed_spec_registry
 from scripts.load_kitchen_sink_thickness import (
+    RowResult,
     SteelGradeParseError,
     ThicknessParseError,
+    dedupe_rows,
     finish_labels_by_row,
+    normalise_sheet_code,
     parse_steel_grade,
     parse_thickness_text,
     run,
@@ -154,6 +157,49 @@ def test_finish_groups_by_contiguous_fill_colour():
 
 
 # --------------------------------------------------------------------------- #
+# codes
+# --------------------------------------------------------------------------- #
+def test_normalise_sheet_code_strips_parenthetical_and_upcases():
+    assert normalise_sheet_code(" srtks1025-bl (new) ") == "SRTKS1025-BL"
+
+
+# --------------------------------------------------------------------------- #
+# dedupe_rows - same rule whether the duplicate is on one sheet or two
+# --------------------------------------------------------------------------- #
+def test_dedupe_rows_writes_an_identical_duplicate_once():
+    rows = [
+        RowResult(sheet="Sorento", row=2, code="SRTKS1", entries={"thickness": 0.8}),
+        RowResult(sheet="Cabana", row=5, code="SRTKS1", entries={"thickness": 0.8}),
+    ]
+    to_write, origin, conflicts = dedupe_rows(rows)
+    assert to_write == {"SRTKS1": {"thickness": 0.8}}
+    assert origin == {"SRTKS1": ("Sorento", 2)}
+    assert conflicts == []
+
+
+def test_dedupe_rows_skips_and_reports_a_conflicting_duplicate():
+    rows = [
+        RowResult(sheet="Sorento", row=2, code="SRTKS1", entries={"thickness": 0.8}),
+        RowResult(sheet="Cabana", row=5, code="SRTKS1", entries={"thickness": 0.9}),
+    ]
+    to_write, origin, conflicts = dedupe_rows(rows)
+    assert to_write == {}
+    assert origin == {}
+    assert conflicts == [("SRTKS1", [("Sorento", 2), ("Cabana", 5)])]
+
+
+def test_dedupe_rows_ignores_blank_and_parse_failure_rows():
+    rows = [
+        RowResult(sheet="Sorento", row=2, code="SRTKS1", blank=True),
+        RowResult(sheet="Sorento", row=3, code="SRTKS2", parse_failure="bad"),
+    ]
+    to_write, origin, conflicts = dedupe_rows(rows)
+    assert to_write == {}
+    assert origin == {}
+    assert conflicts == []
+
+
+# --------------------------------------------------------------------------- #
 # DB round trip - the loader's apply path, against a real Postgres schema
 # --------------------------------------------------------------------------- #
 def _spec_for(db, code: str) -> ProductSpecifications:
@@ -229,3 +275,39 @@ def test_dry_run_writes_nothing(db, tmp_path):
         .first()
         is None
     )
+
+
+def test_apply_reports_unmatched_code_with_near_variants_and_writes_nothing_for_it(db, tmp_path):
+    """A code with no exact catalog match is reported unmatched, with the close
+    catalog matches that DO exist (`product_code LIKE '<code>%'`) printed beside
+    it, and nothing is written for it - the matched code on the same sheet still
+    writes normally."""
+    _product(db, "SRTKS0003")
+    seed_spec_registry(db)
+
+    xlsx_path = tmp_path / "kitchen_sink_thickness_unmatched.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Iborn"
+    ws.append(["Model Code ", "Thickness ", "Material", "Finish"])
+    ws.append(["SRTKS0003", "SUS201", "面板3mm, 盆胆 0.8mm", "NANO GRAIN"])
+    # A truncated code: no exact catalog match, but SRTKS0003 starts with it.
+    ws.append(["SRTKS000", "SUS201", "0.9mm", None])
+    wb.save(str(xlsx_path))
+
+    report = run(db, str(xlsx_path), apply=True)
+
+    sheet_report = next(s for s in report["sheets"] if s.sheet == "Iborn")
+    assert sheet_report.written == 1
+    assert sheet_report.unmatched == ["SRTKS000"]
+    assert "SRTKS0003" in sheet_report.unmatched_near["SRTKS000"]
+
+    assert (
+        db.query(ProductSpecifications)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(Product.product_code == "SRTKS000")
+        .first()
+        is None
+    )
+    matched_spec = _spec_for(db, "SRTKS0003")
+    assert matched_spec.values["thickness"]["value"] == 0.8
