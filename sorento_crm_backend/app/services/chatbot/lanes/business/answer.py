@@ -3269,6 +3269,41 @@ def _quick_reply(values: list) -> str:
     return ",".join(jsc.js_string(v).replace(",", "") for v in values)
 
 
+def offer_escalation_team(*, parser: Any, gate: Any) -> str:
+    """The team SLUG a suggest offer's escalation names. One derivation, two readers.
+
+    Issue #9's rule, unchanged: the resolved entity's company team first, so the offer text,
+    the not-found text and the actual escalation cannot name three different teams in one
+    turn; then the parser's own routing; then the hard default.
+
+    It is a function rather than a line inside `build_suggest_offer` because the QUESTION the
+    lane arms has to record the same team the COPY promised (`miss_suggest._attach_question`),
+    and two spellings of that is how the reply and the routing come to disagree - which is
+    exactly the defect this exists for: the offer said "escalate to marketing product team",
+    the state remembered no team at all, and the yes was assigned to customer_service.
+    """
+    company_team = jsc.get(gate, "company_team") if jsc.truthy(gate) else None
+    if not jsc.truthy(company_team):
+        routing = jsc.get(parser, "routing") if jsc.truthy(parser) else None
+        company_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
+    return jsc.js_string(company_team) if jsc.truthy(company_team) else "customer_service"
+
+
+def offer_named_escalation(item: Any) -> bool:
+    """Did the offer this item composed actually put the escalate button on the wire?
+
+    Read off `suggest_quick_reply`, the field the customer's buttons are rendered from, so
+    the answer cannot be yes for a reply that never offered it. Several arms compose the
+    offer and only some append `_YES` (a date-axis CS order offer does not), so this is a
+    read of what was composed rather than a rule about which arm ran.
+    """
+    replies = jsc.get(item, "suggest_quick_reply") if jsc.truthy(item) else None
+    if not isinstance(replies, str) or not replies:
+        return False
+    wanted = _quick_reply([_YES])
+    return any(part.strip() == wanted for part in replies.split(","))
+
+
 def build_suggest_offer(
     item: dict[str, Any] | None,
     *,
@@ -3304,12 +3339,9 @@ def build_suggest_offer(
     out["suggest_offer"] = False
 
     # #9: prefer the resolved entity's company team, so the offer text, the not-found text
-    # and the actual escalation cannot name three different teams in one turn.
-    company_team = jsc.get(g, "company_team")
-    if not jsc.truthy(company_team):
-        routing = jsc.get(q, "routing")
-        company_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
-    team = _pretty_team(company_team if jsc.truthy(company_team) else "customer_service")
+    # and the actual escalation cannot name three different teams in one turn. ONE derivation,
+    # shared with the question this lane arms (`offer_escalation_team`).
+    team = _pretty_team(offer_escalation_team(parser=q, gate=g))
 
     def mk_offer(cands: Any) -> Any:
         """id = this turn's identity (stamped onto the picked entity as its dym slot, giving

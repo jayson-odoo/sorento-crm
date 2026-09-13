@@ -139,6 +139,27 @@ def ask(
     }
 
 
+def escalation_offer_team(question: Any) -> Any:
+    """The team a question's own reply OFFERED to escalate to, or None.
+
+    `payload.then.escalate.offer_team`, the one key both deferred escalations write: the miss
+    lane's combined offer ("reply with a code, or shall I escalate to X?") and the escalation
+    lane's did-you-mean. A question without it is answered by a pick and nothing else, which
+    is every other picker.
+
+    Public because the ENGINE has to know the shape of the ANSWER before a handler can be
+    chosen - a yes is not a pick, so a question that offered an escalation has to be allowed
+    to resolve on a yes or no - and payload vocabulary belongs to this module.
+    """
+    if not isinstance(question, dict):
+        return None
+    payload = question.get("payload")
+    then = payload.get("then") if isinstance(payload, dict) else None
+    escalate = then.get("escalate") if isinstance(then, dict) else None
+    team = escalate.get("offer_team") if isinstance(escalate, dict) else None
+    return team if jsc.truthy(team) else None
+
+
 def same_question(a: Any, b: Any) -> bool:
     """Is this the same question the previous turn left open, or a fresh one?
 
@@ -213,6 +234,39 @@ def resolve(
 def _product_pick(answer: dict, options: list, payload: dict) -> Outcome:
     picked = _rows_for(answer.get("picks"), options)
     if not picked:
+        # THE OFFER THIS QUESTION ALSO MADE (D6's other half). The miss lane's combined reply
+        # offers the codes AND an escalation - "reply with a code to continue, or would you
+        # like me to escalate to marketing product team?" with a Yes escalate button - so a
+        # yes IS an answer to it, to the team the copy named. Without this the yes answered
+        # nothing and the turn fell through to the escalation lane with no team, which
+        # assigned the chain's hard default (console pass, 13 Sep 2026: offered Marketing
+        # Product, got Customer Service).
+        #
+        # No `team_pick` follows, and that is the difference from the lane's own deferral:
+        # WE named the team, not the customer, so there is no family to narrow. The product
+        # stays unresolved - they escalated INSTEAD of picking - so the brand is whatever the
+        # escalation lane's own carry finds, which on this shape is none.
+        offer_team = escalation_offer_team({"payload": payload})
+        if jsc.truthy(offer_team) and answer.get("yes_no") == "yes":
+            return Outcome(
+                handler="product_pick",
+                outcome=f"The customer accepted the escalation to {offer_team}.",
+                resolved=True,
+                escalate=True,
+                # `suggested_team` is what the head's own hoist reads to make this turn a
+                # `request_for_help` routed to that team (the same field `_team_pick`'s yes
+                # arm sets), so no second path is needed to carry it.
+                routing={"suggested_team": offer_team},
+            )
+        if jsc.truthy(offer_team) and answer.get("yes_no") == "no":
+            # The existing decline shape, the same one `_team_pick` uses: the question is
+            # answered (so it is cleared) and nobody is escalated.
+            return Outcome(
+                handler="product_pick",
+                outcome="The customer declined the escalation.",
+                resolved=True,
+                declined=True,
+            )
         return Outcome(handler="product_pick", outcome="No offered row was named.")
     entities = [_entity_of(row, "product") for row in picked]
     # ISSUE #708. `payload.keep` is the scope that already resolved on the turn the
@@ -241,11 +295,22 @@ def _product_pick(answer: dict, options: list, payload: dict) -> Outcome:
     deferred = payload.get("then")
     deferred = deferred.get("escalate") if isinstance(deferred, dict) else None
     deferred = deferred if isinstance(deferred, dict) else {}
-    # A team to escalate TO is what makes this a deferred escalation: `then: {escalate: {}}`
-    # is a payload that names nowhere, and resuming on it would assign the turn to whatever
-    # the conversation happened to carry. Either remembered word will do - the word the
-    # customer typed, or the team the offer that was open was for.
-    if jsc.truthy(deferred.get("team_word")) or jsc.truthy(deferred.get("offer_team")):
+    # TWO DIFFERENT DEFERRALS RIDE THIS ONE KEY, and a PICK only resumes one of them.
+    #
+    # * The escalation lane's own (`escalation._product_pick_ask`): the customer asked for a
+    #   person AND named a code that does not exist, so the rows went out first and the pick
+    #   is the rest of that escalation. It always writes `team_word` - the word they used,
+    #   null when they named no team - so the KEY's presence is what says "this deferral is
+    #   the lane's". Membership, not truthiness: a bare "escalate SRTWC60630-SH" names no
+    #   team and still has to resume on the pick.
+    # * The miss lane's combined offer: "reply with a code to continue, OR shall I escalate to
+    #   marketing product team?". Picking a CODE there is the opposite of escalating - it is
+    #   the product answer the customer came for - so a pick must NOT escalate. Only the yes
+    #   arm above accepts that offer, and it is keyed on `offer_team`, which is the only thing
+    #   that payload carries.
+    #
+    # `then: {escalate: {}}` names nothing and resumes nothing either way (review nit N3).
+    if "team_word" in deferred:
         outcome.escalate = True
         outcome.outcome = f"{outcome.outcome} Resuming the escalation."
         # The team WORD the customer typed on the turn that was deferred, verbatim, for the

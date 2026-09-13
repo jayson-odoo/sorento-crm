@@ -1320,9 +1320,10 @@ def _resolve_open_question(
         ]
         if positions:
             answer = {**answer, "resolved": True, "picks": positions}
-        elif jsc.get(question, "expects") == "yes_no" and isinstance(
-            jsc.get(parser_raw, "is_affirmative"), bool
-        ):
+        elif (
+            jsc.get(question, "expects") == "yes_no"
+            or open_question_mod.escalation_offer_team(question) is not None
+        ) and isinstance(jsc.get(parser_raw, "is_affirmative"), bool):
             # THE OTHER HALF OF THE v1 PATH, and without it a yes was not an answer at all.
             # Owner console pass, 13 Sep 2026, journey step 5: "photo for SRTWB8004" left a
             # one-team `team_pick` open (`expects: yes_no`, `options[0].team:
@@ -1339,6 +1340,13 @@ def _resolve_open_question(
             # words (D11), and it is the same signal the post-processor's own offer arms
             # already trust for a bare yes. A question that expects yes or no is answered by
             # it; positions still win, because a numbered reply to a one-team offer is a pick.
+            #
+            # A PICKER THAT ALSO OFFERED AN ESCALATION is answered the same way, and that is
+            # the second half of the same console finding: the miss lane's combined reply
+            # offers three codes and an escalation in one breath, so its question `expects` a
+            # pick and yet a yes is a real answer to it - to the team the copy named, which
+            # the question now records (`open_question.escalation_offer_team`). A picker with
+            # no such offer is untouched: a yes there still resolves nothing.
             answer = {
                 **answer,
                 "resolved": True,

@@ -1350,17 +1350,42 @@ def _attach_question(
         )
         else "product_pick"
     )
+    payload: dict[str, Any] = {
+        "domain": jsc.js_string(domain) if jsc.truthy(domain) else None,
+        "keep": keep,
+        "offer_id": offer.get("id"),
+        "picked": list(jsc.array(offer.get("picked"))),
+    }
+    # THE TEAM THE REPLY JUST PROMISED, recorded where the answer will be resolved. The
+    # combined offer says two things in one breath - "reply with a code, OR would you like me
+    # to escalate to marketing product team?" - and it put a "Yes escalate" button on the
+    # wire, but the question it armed remembered only the codes. So the yes arrived as an
+    # answer to nothing (`answered: resolved False`), fell through to the escalation lane with
+    # no team word, and was assigned to the chain's hard default: the owner was offered
+    # Marketing Product and got Customer Service (console pass, 13 Sep 2026).
+    #
+    # `then.escalate` is the SAME payload key the escalation lane's own deferral uses
+    # (`escalation._deferred_escalation`, `_offered_team`), so the two kinds of deferred
+    # escalation are one mechanism and not two. `team_word` is deliberately absent: the
+    # customer named no team here - WE did - so there is no family to narrow and no question
+    # to ask. Written only when the offer really was made (`offer_named_escalation` reads the
+    # composed buttons), because a picker with no escalate button must keep answering only to
+    # a pick.
+    from app.services.chatbot.lanes.business.answer import (
+        offer_escalation_team,
+        offer_named_escalation,
+    )
+
+    if offer_named_escalation(item):
+        payload["then"] = {
+            "escalate": {"offer_team": offer_escalation_team(parser=parser, gate=gate)}
+        }
     item["open_question"] = open_question_mod.ask(
         kind,
         options=rows,
         turn_no=0,
         domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
-        payload={
-            "domain": jsc.js_string(domain) if jsc.truthy(domain) else None,
-            "keep": keep,
-            "offer_id": offer.get("id"),
-            "picked": list(jsc.array(offer.get("picked"))),
-        },
+        payload=payload,
     )
     return item
 
