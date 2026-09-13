@@ -1393,14 +1393,21 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
 # --------------------------------------------------------------------------- #
 
 
-_SO_LIST_OFFER_RE = re.compile(r"(?m)^\d+\.\s*Sales order list\s*$")
-_DO_LIST_OFFER_RE = re.compile(r"(?m)^\d+\.\s*Delivery order list\s*$")
+#: Both shapes the presenter writes: the numbered line when TWO scopes are offered, and
+#: R9's single sentence when only one is (`Reply 1 for the sales order list.`). One
+#: pattern per scope, so a reader here cannot drift from what the customer can see.
+_SO_LIST_OFFER_RE = re.compile(
+    r"(?m)^\d+\.\s*Sales order list\s*$|^Reply \d+ for the sales order list\.$"
+)
+_DO_LIST_OFFER_RE = re.compile(
+    r"(?m)^\d+\.\s*Delivery order list\s*$|^Reply \d+ for the delivery order list\.$"
+)
 
 
 def _outstanding_offer_from_text(text: str) -> list[dict[str, Any]]:
     """The same offer, read off ALREADY-RENDERED text (production: `present_response`
     rendered this server-side, so there is no `so`/`do` block left to inspect here) -
-    the two option lines the S1 presenter itself writes are the only source of truth
+    the option lines the S1 presenter itself writes are the only source of truth
     left, and reusing them can never disagree with what the customer is looking at."""
     rows: list[dict[str, Any]] = []
     if _SO_LIST_OFFER_RE.search(text):

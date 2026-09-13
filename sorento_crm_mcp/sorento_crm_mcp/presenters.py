@@ -1886,7 +1886,12 @@ def _outstanding_report(report: dict) -> str:
         text += "\n\n" + SO_NOT_ENABLED_MESSAGE
     if blocks:
         text += "\n\n" + "\n\n".join(blocks)
-    if offer:
+    if len(offer) == 1:
+        # R9 (owner testing round 3, 13 Sep 2026): one option is a sentence, not a list -
+        # a numbered list of one asks the reader to choose from a single thing. The
+        # position is still 1, so the pick resolves exactly as it does for two.
+        text += f"\n\nReply 1 for the {offer[0].lower()}."
+    elif offer:
         options = "\n".join(f"{i + 1}. {label}" for i, label in enumerate(offer))
         text += "\n\n" + "Reply with a number for detail:\n" + options
     return text
