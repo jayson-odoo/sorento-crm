@@ -1766,6 +1766,113 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
 });
 
 /**
+ * `runConfirmAll` rebuilds `psoIdBySalesOrder` from the REFETCHED board only. `adopt` itself
+ * already returns the id the server just created - it is the whole reason the mutation
+ * resolves with a body rather than `void` - but that return value is discarded, and if the
+ * refetch still reports `project_sales_order_id: null` for the order (an eventually-consistent
+ * read, or a mirror the refetch's own cache has not caught up on yet), the order is silently
+ * left out of the batch: `if (!psoId) continue`, then `if (orders.length === 0) return` ends
+ * the press having posted nothing and rendered nothing.
+ */
+describe('FulfilmentBoardPanel: Confirm posts against the id adopt itself returned', () => {
+  /** One order, one saved-but-cancelled line, never adopted - the refetch keeps saying so. */
+  function boardStillNull() {
+    const built = boardOf([
+      demand({
+        sales_order_id: 'so-419851',
+        so_number: 'SO419851',
+        line_no: 9,
+        item_code: 'WESERP10B',
+        qty: '0',
+        project_line_id: 'pl-9',
+      }),
+    ]);
+    return allSaved(
+      withContribution(
+        {
+          ...built,
+          orders: built.orders.map((order) => ({
+            ...order,
+            project_sales_order_id: null,
+            pending_change_batch_id: 'b-1',
+          })),
+        },
+        () => true,
+        (entry) => ({
+          ...entry,
+          cancelled: true,
+          covered: false,
+          unplannable: false,
+          qty: '0',
+          qty_outstanding: '0',
+        }),
+      ),
+    );
+  }
+
+  async function openConfirmDialog() {
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+  }
+
+  it('posts against the id the adopt call returned, even though the refetched board still names none', async () => {
+    // The refetch (`board.refetch()`, `mockResolvedValue` covers every call) is the SAME
+    // board: `project_sales_order_id` is still null, exactly the eventually-consistent read
+    // that leaves the real bug room to bite.
+    getPlanningBoard.mockResolvedValue(boardStillNull());
+    adoptSalesOrder.mockResolvedValue({
+      project_sales_order_id: 'pso-1',
+      so_number: 'SO419851',
+      review_state: 'needs_cs_review',
+      already_adopted: true,
+    });
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-1', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(['SO419851']);
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(adoptSalesOrder).toHaveBeenCalledWith('so-419851'),
+    );
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      { orders: { pso_id: string; batch_id: string | null; lines: { project_line_id: string }[] }[] },
+    ];
+    expect(body.orders).toEqual([
+      expect.objectContaining({
+        pso_id: 'pso-1',
+        batch_id: 'b-1',
+        lines: expect.arrayContaining([
+          expect.objectContaining({ project_line_id: 'pl-9' }),
+        ]),
+      }),
+    ]);
+  });
+
+  it('names the sales order in the result, rather than ending the press with nothing shown', async () => {
+    getPlanningBoard.mockResolvedValue(boardStillNull());
+    adoptSalesOrder.mockRejectedValue(
+      new Error('Another planning record already holds SO419851.'),
+    );
+
+    renderPanel(['SO419851']);
+    expect(screen.queryByText(/SO419851/)).not.toBeInTheDocument();
+
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(adoptSalesOrder).toHaveBeenCalledWith('so-419851'),
+    );
+    expect(await screen.findByText(/SO419851/)).toBeInTheDocument();
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * Searching the board (the captain: "i need the search here also btw").
  *
  * The board is ONE already-fetched payload, so this filters the product ROWS in the browser: it
