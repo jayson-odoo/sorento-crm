@@ -73,7 +73,7 @@ from app.models.project_so import (
 )
 from app.models.sales_agent import SalesAgent
 from app.models.user import User
-from app.services import planning_change_service, project_line_draft_service
+from app.services import project_line_draft_service
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     LADDER_VERSION,
@@ -619,11 +619,23 @@ class FulfilmentBoardService:
         policy_name, weights, class_weights, is_preview = self._policy(preview_policy)
 
         rows = self._demand_rows(numbers)
+        # ONE query for both the adopted record and the pending-batch id, per order
+        # (query-count guard, `test_a_board_of_76_lines_does_not_scale_its_query_count_
+        # with_the_line_count`): `_standings` used to run these as two separate reads, and
+        # a bare `_cancelled_pending_change_rows` call below ran its own join every build
+        # whether or not anything was ever pending. Read once here instead.
+        adopted_by_so, pending_by_so = self._order_plan_status(numbers)
         # R3 (13 Sep browser walk): a cancelled line with a still-PENDING change row, read
         # separately from ordinary demand and added to `contributions` alone, below - never
         # to `rows` itself, so it takes no part in bucketing, ranking or the ladder walk
-        # (`_allocate`) that follows, and no part of `_standings`' totals either.
-        cancelled_rows = self._cancelled_pending_change_rows(numbers)
+        # (`_allocate`) that follows, and no part of `_standings`' totals either. Skipped
+        # entirely when NO selected order has a pending batch at all: its own predicate
+        # already requires one (`PlanningChangeBatch.applied_at IS NULL AND PlanningChangeRow
+        # .applied_state == pending`, exactly what `pending_by_so` above just answered), so
+        # an empty `pending_by_so` guarantees this would find nothing either.
+        cancelled_rows = (
+            self._cancelled_pending_change_rows(numbers) if pending_by_so else []
+        )
         # S3 (`PLAN-local-supplier-oi-routing.md`): ONE call for the whole board, never per
         # line - `test_buy_origin_computed_once_per_board_build` pins this.
         self._buy_origin = buy_origin_by_product(
@@ -743,7 +755,7 @@ class FulfilmentBoardService:
                 [self._contribution(row) for row in rows]
                 + [self._contribution(row) for row in cancelled_rows]
             ),
-            "orders": self._standings(rows),
+            "orders": self._standings(rows, adopted_by_so, pending_by_so),
             # SELECTION-scoped totals, counted over every contributing line before any window
             # is applied - never over the cells on screen.
             #
@@ -4819,13 +4831,29 @@ class FulfilmentBoardService:
         future = [key for key in dated if date.fromisoformat(key) >= as_of]
         return date.fromisoformat(future[0] if future else dated[0])
 
-    def _standings(self, rows: Sequence[_Row]) -> List[Dict[str, Any]]:
+    def _standings(
+        self,
+        rows: Sequence[_Row],
+        adopted_by_so: Optional[Dict[str, str]] = None,
+        pending_by_so: Optional[Dict[str, str]] = None,
+    ) -> List[Dict[str, Any]]:
         """Per order: how much of it is on this board, and how much of it can never be decided.
 
         `decided_count` is 0 from the server, always: the verdicts live in the board's client
         draft (13.4), and the screen recomputes this from the draft it holds. It is carried
         so the shape is the one the frontend already reads, not because the server knows.
+
+        `adopted_by_so` / `pending_by_so` are `_order_plan_status`'s own read, taken by the
+        caller BEFORE this runs (query-count guard: this used to run two of its own queries
+        here, and a bare board build's own line count must not swing on how many orders it
+        names). `None` reads as "nobody has adopted the sales order at all" and "no batch
+        is pending" respectively, never merely because no single line carried a mirror
+        (attempt 6, 13 Sep 2026: `project_sales_order_id` used to come from `setdefault`'s
+        FIRST `_Row`, whose own addressing - `_mirror_addressing`, per LINE, or
+        `_cancelled_pending_change_rows` - could easily carry none at all).
         """
+        adopted_by_so = adopted_by_so or {}
+        pending_by_so = pending_by_so or {}
         by_order: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             standing = by_order.setdefault(
@@ -4836,44 +4864,68 @@ class FulfilmentBoardService:
                     #: (`POST /sales-orders/{pso_id}/confirm`). Set below, off the ORDER's
                     #: own adoption record - NULL only when nobody has adopted the sales
                     #: order at all, never merely because no single line carried a mirror.
-                    "project_sales_order_id": None,
+                    "project_sales_order_id": adopted_by_so.get(row.sales_order_id),
                     "so_number": row.so_number,
                     "customer_name": row.customer_name,
                     "line_count": 0,
                     "decided_count": 0,
                     "unplannable_count": 0,
-                    "pending_change_batch_id": None,
+                    "pending_change_batch_id": pending_by_so.get(row.sales_order_id),
                 },
             )
             standing["line_count"] += 1
             if row.unplannable:
                 standing["unplannable_count"] += 1
-        # Attempt 6 (13 Sep 2026): an adopted order whose OPEN lines all lack a mirror
-        # (an AutoCount re-ingest that closed the old mirrored lines and inserted new
-        # ones nobody mirrored yet) used to read `project_sales_order_id` null here,
-        # because it came from `setdefault`'s FIRST `_Row` - one whose own addressing
-        # (`_mirror_addressing`, per LINE) or `_cancelled_pending_change_rows`
-        # construction never carried it either. The order is adopted or it is not,
-        # independent of which of its lines happen to have a mirror today - read straight
-        # off `projects.sales_orders` by `so_id`, the same partial-unique record
-        # `_mirror_addressing` itself is scoped to, so it can never disagree with what a
-        # line-level read would have said when one WAS available.
-        adopted_by_so = dict(
-            self.db.query(ProjectSalesOrder.so_id, ProjectSalesOrder.id)
-            .filter(ProjectSalesOrder.so_id.in_(list(by_order)))
-            .all()
-        ) if by_order else {}
-        for sales_order_id, standing in by_order.items():
-            pso_id = adopted_by_so.get(sales_order_id)
-            if pso_id is not None:
-                standing["project_sales_order_id"] = str(pso_id)
-        # AC-B1: the newest pending planning-change batch per order, keyed the same way
-        # the SCM Sales Orders list and the fulfilment-planning list are - one query, one
-        # rule, so the board never has to be TOLD `?batch=` to draw a change it already
-        # knows about (`PLAN-scm-board-picks-up-pending-change.md`).
-        pending_by_so = planning_change_service.pending_batch_id_by_sales_order(
-            self.db, list(by_order),
-        )
-        for sales_order_id, standing in by_order.items():
-            standing["pending_change_batch_id"] = pending_by_so.get(sales_order_id)
         return sorted(by_order.values(), key=lambda s: s["so_number"] or "")
+
+    def _order_plan_status(
+        self, so_numbers: Sequence[str]
+    ) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """Per selected order (by core `sales_orders.id`): its adoption record, and its
+        newest PENDING planning-change batch - ONE query for both (query-count guard,
+        `test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count`),
+        where `_standings` used to run two, and `_cancelled_pending_change_rows` a third
+        of its own regardless of whether anything was ever pending.
+
+        Both OUTER joins, from `ProjectSalesOrder` (the adoption record): an order with NO
+        pending-change row at all still needs to answer `project_sales_order_id`, and one
+        with rows but none of them PENDING still needs to answer `None` for the batch, not
+        be excluded from the read entirely. Absent from `adopted_by_so` means nobody has
+        adopted that order; absent from `pending_by_so` means nothing is pending for it -
+        neither is ever a `None` value, so a caller uses `.get(so_id)`.
+        """
+        if not so_numbers:
+            return {}, {}
+        from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+        from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+
+        rows = (
+            self.db.query(
+                SalesOrder.id, ProjectSalesOrder.id,
+                PlanningChangeBatch.id, PlanningChangeBatch.created_at,
+            )
+            .join(ProjectSalesOrder, ProjectSalesOrder.so_id == SalesOrder.id)
+            .outerjoin(
+                PlanningChangeRow,
+                PlanningChangeRow.project_sales_order_id == ProjectSalesOrder.id,
+            )
+            .outerjoin(
+                PlanningChangeBatch,
+                (PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+                & (PlanningChangeBatch.applied_at.is_(None))
+                & (PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING),
+            )
+            .filter(SalesOrder.so_number.in_(list(so_numbers)))
+            # The NEWEST pending batch wins, same tie-break as `pending_batch_id_by_
+            # sales_order`: rows arrive newest-batch-first, so the first one seen per
+            # order in the loop below is kept and a later, older one never overwrites it.
+            .order_by(PlanningChangeBatch.created_at.desc(), PlanningChangeBatch.id.desc())
+            .all()
+        )
+        adopted_by_so: Dict[str, str] = {}
+        pending_by_so: Dict[str, str] = {}
+        for so_id, pso_id, batch_id, _created_at in rows:
+            adopted_by_so[str(so_id)] = str(pso_id)
+            if batch_id:
+                pending_by_so.setdefault(str(so_id), str(batch_id))
+        return adopted_by_so, pending_by_so
