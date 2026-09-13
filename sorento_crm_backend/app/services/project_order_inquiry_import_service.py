@@ -238,6 +238,12 @@ def _restates(row) -> tuple:
         row.delivery_date,
         (row.location or "").strip().upper(),
         (getattr(row, "remark", "") or "").strip().upper(),
+        # The documents parsed out of the remark, and whether the date cell said ORDER BACK
+        # (review findings 2 and 3, 14 Sep). Two rows can carry the same remark TEXT and
+        # still not cite the same documents - the PO NO column feeds the same parse - and
+        # ORDER BACK is a different instruction from a dated one, not a restatement of it.
+        tuple(row.po_numbers or ()),
+        bool(getattr(row, "order_back", False)),
     )
 
 
@@ -278,7 +284,10 @@ def _rank_for(row) -> Callable[[tuple], tuple]:
 
 
 def _match_row(
-    row, candidates: List[tuple], taken: Dict[str, Decimal]
+    row,
+    candidates: List[tuple],
+    taken: Dict[str, Decimal],
+    already_raised: set,
 ) -> Tuple[Optional[tuple], Optional[str]]:
     """The line for one sheet row, or the FIRST filter that refused it.
 
@@ -289,6 +298,11 @@ def _match_row(
     The quantity test is against what the line ORDERED, less what EARLIER rows of this same
     file already took of it: the sheet may split one line across several rows (AC-S1-2), and
     the importer never splits one itself.
+
+    A row that lands on a line whose mirror ALREADY carries an inquiry takes nothing from
+    that ledger (review finding 9, 14 Sep): it is skipped rather than raised, so charging
+    its quantity to the line would push the NEXT row of the same file onto
+    `qty_exceeds_ordered` for a quantity nobody used.
     """
     wanted_item = (row.item_code or "").strip()
     same_item = [c for c in candidates if c[1] == wanted_item]
@@ -314,15 +328,20 @@ def _match_row(
         return None, oc.QTY_EXCEEDS_ORDERED
 
     found = sorted(fits, key=_rank_for(row))[0]
-    taken[str(found[0].id)] = taken.get(str(found[0].id), _ZERO) + qty
+    if str(found[0].id) not in already_raised:
+        taken[str(found[0].id)] = taken.get(str(found[0].id), _ZERO) + qty
     return found, None
 
 
-def _already_raised(db: Session, core_lines: List[SalesOrderLine]) -> set:
+def _already_raised(db: Session, core_lines: Sequence[SalesOrderLine]) -> set:
     """The core lines whose MIRROR already carries a non-cancelled order inquiry row (D2).
 
-    Read off the state BEFORE this upload, once, so two rows of the same file may both land
-    on one line while a re-upload of that file raises nothing.
+    Read off the state BEFORE this upload, once, and for every line the named orders carry
+    rather than only the matched ones, because the matcher consults it as it goes: the
+    answer decides whether a matched line's quantity is charged to this file's ledger.
+
+    Two rows of the same file may still both land on one line - nothing here changes as the
+    file is read - while a re-upload of that file raises nothing.
     """
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow, ProjectSalesOrderLine
 
@@ -362,6 +381,9 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     refused = {entry["so_number"] for entry in plan.orders_not_plannable}
 
     lines = _lines_of(db, {str(order.id) for order in plan.orders.values()})
+    raised_already = _already_raised(
+        db, [held[0] for group in lines.values() for held in group]
+    )
     #: How much of each line this FILE has already spoken for, in file order.
     taken: Dict[str, Decimal] = {}
 
@@ -385,16 +407,12 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
         if row.so_number in refused:
             match.code = oc.ORDER_NOT_PLANNABLE
             continue
-        found, match.reason = _match_row(row, lines.get(str(order.id)) or [], taken)
+        found, match.reason = _match_row(
+            row, lines.get(str(order.id)) or [], taken, raised_already
+        )
         if found is not None:
             match.core_line, match.line_location = found[0], found[2] or None
-
-    skipped = _already_raised(
-        db, [m.core_line for m in plan.matches if m.core_line is not None]
-    )
-    for match in plan.matches:
-        if match.core_line is not None and str(match.core_line.id) in skipped:
-            match.already_raised = True
+            match.already_raised = str(found[0].id) in raised_already
     return plan
 
 
@@ -435,7 +453,14 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
     for allocation, supplier in (
         db.query(SPOAllocation, Supplier.supplier_name)
         .outerjoin(Supplier, Supplier.id == SPOAllocation.supplier_id)
-        .filter(SPOAllocation.id.in_(wanted))
+        .filter(
+            SPOAllocation.id.in_(wanted),
+            # The same visibility test `_purchase_side` and `_chain_allocations` apply
+            # (review finding 1, 14 Sep): a line AutoCount stopped naming, and that never
+            # received anything, is not a document a link may land on - and an old claim can
+            # still point at one.
+            *spo_supply.visible_line_clauses(),
+        )
         .all()
     ):
         facts[str(allocation.id)] = {
