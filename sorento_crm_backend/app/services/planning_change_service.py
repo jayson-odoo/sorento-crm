@@ -4100,8 +4100,11 @@ def _apply_one_order(
             "review_state": supply._review_state(order) or "needs_cs_review",
             "inquiry_rows_created": 0,
             "exceptions": [],
-            "lines_decided": 0,
-            "lines_undecided": replanned + retired,
+            # A RETIRED line is decided - the book cancelled it and this apply carried
+            # that out, a done deal same as a composed one (R3, 13 Sep browser walk); a
+            # REPLANNED line is the genuinely undecided one, back on the board for CS.
+            "lines_decided": retired,
+            "lines_undecided": replanned,
             "transfers_written": 0,
             "transfers_failed": 0,
         }

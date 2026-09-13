@@ -392,6 +392,12 @@ class _Row:
         "decision", "draft", "item_flags", "order_inquiry", "lent_to",
         "unit_qty", "unit_line_count",
         "outside_planning",
+        #: R3 (13 Sep browser walk): the book CANCELLED this line and it still has a
+        #: PENDING change row nobody has decided on yet - `is_open_demand()` (`_demand_
+        #: rows`) already dropped it out of ordinary demand, so this pair is what carries
+        #: it back onto the board instead, read-only and at zero (`_cancelled_pending_
+        #: change_rows`). `False`/`None` for every ordinary row.
+        "cancelled", "pending_change_batch_id",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -613,6 +619,11 @@ class FulfilmentBoardService:
         policy_name, weights, class_weights, is_preview = self._policy(preview_policy)
 
         rows = self._demand_rows(numbers)
+        # R3 (13 Sep browser walk): a cancelled line with a still-PENDING change row, read
+        # separately from ordinary demand and added to `contributions` alone, below - never
+        # to `rows` itself, so it takes no part in bucketing, ranking or the ladder walk
+        # (`_allocate`) that follows, and no part of `_standings`' totals either.
+        cancelled_rows = self._cancelled_pending_change_rows(numbers)
         # S3 (`PLAN-local-supplier-oi-routing.md`): ONE call for the whole board, never per
         # line - `test_buy_origin_computed_once_per_board_build` pins this.
         self._buy_origin = buy_origin_by_product(
@@ -728,7 +739,10 @@ class FulfilmentBoardService:
             # every bucket (`served`, above), so a line outside the window carries a real
             # proposal here even though no cell on screen shows it - Approve all, the strip and
             # the List view read this list, never `cells`, for exactly that reason.
-            "contributions": [self._contribution(row) for row in rows],
+            "contributions": (
+                [self._contribution(row) for row in rows]
+                + [self._contribution(row) for row in cancelled_rows]
+            ),
             "orders": self._standings(rows),
             # SELECTION-scoped totals, counted over every contributing line before any window
             # is applied - never over the cells on screen.
@@ -1383,6 +1397,73 @@ class FulfilmentBoardService:
             row.order_inquiry = inquiries.get(str(line.id))
             row.lent_to = lent.get(str(line.id), [])
             rows.append(row)
+        return rows
+
+    def _cancelled_pending_change_rows(self, so_numbers: Sequence[str]) -> List[_Row]:
+        """R3 (13 Sep browser walk): a line the book CANCELLED still has a home on the
+        board while its `cancelled` change row is still PENDING.
+
+        `is_open_demand()` (`_demand_rows`) rightly drops a cancelled line out of ordinary
+        demand - there is nothing left to plan for it - but CS still has to SEE and decide
+        that row, and `_demand_rows`' own query is where it would otherwise vanish without
+        a trace between the book upload and the next Confirm. Read separately rather than
+        folded into `_demand_rows`'s shared predicate (`is_open_demand()` is read by the
+        netting engine and the worklist too, and neither of those wants a cancelled line
+        back): every field the ladder would have filled stays at `_Row`'s own zero default
+        (no walk runs for it, `qty` is forced to zero), and `_contribution` prints it
+        read-only - `cancelled: true`, the batch it is pending in, nothing to compose.
+        Absent again the moment that row applies (`applied_state` stops being `pending`).
+        """
+        if not so_numbers:
+            return []
+        from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+        from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+
+        records = (
+            self.db.query(SalesOrderLine, SalesOrder, ProjectSalesOrderLine, PlanningChangeRow)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
+            .join(
+                PlanningChangeRow,
+                PlanningChangeRow.project_line_id == ProjectSalesOrderLine.id,
+            )
+            .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+            .filter(
+                SalesOrder.so_number.in_(list(so_numbers)),
+                SalesOrder.status == "open",
+                SalesOrder.demand_class == "project",
+                SalesOrderLine.line_status == "cancelled",
+                PlanningChangeRow.kind == "cancelled",
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+                PlanningChangeBatch.applied_at.is_(None),
+            )
+            .all()
+        )
+        if not records:
+            return []
+        rows: List[_Row] = []
+        for core_line, order, project_line, change_row in records:
+            rows.append(
+                _Row(
+                    line_id=str(core_line.id),
+                    sales_order_id=str(order.id),
+                    so_number=order.so_number,
+                    line_no=change_row.line_no,
+                    item_code=change_row.item_code,
+                    product_id=str(core_line.product_id) if core_line.product_id else None,
+                    project_line_id=str(project_line.id),
+                    qty=_ZERO,
+                    qty_ordered=core_line.qty_ordered,
+                    qty_delivered=core_line.qty_delivered,
+                    required_date=core_line.required_date,
+                    bucket_key=NO_DATE_BUCKET,
+                    cancelled=True,
+                    pending_change_batch_id=str(change_row.batch_id),
+                )
+            )
         return rows
 
     def _lent_from(self, core_line_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
@@ -4600,6 +4681,12 @@ class FulfilmentBoardService:
             # S3 (`PLAN-local-supplier-oi-routing.md`): whether this line's product is
             # bought locally, computed once for the whole board (never per line).
             "buy_origin": self._buy_origin.get(str(row.product_id)) if row.product_id else None,
+            # R3 (13 Sep browser walk): the book CANCELLED this line and a change row for
+            # it is still PENDING - `false`/`null` for every ordinary row, which is every
+            # row `_demand_rows` itself ever builds (`_cancelled_pending_change_rows` is
+            # the only writer of a truthy pair, and it never runs the ladder for one).
+            "cancelled": bool(row.cancelled),
+            "pending_change_batch_id": row.pending_change_batch_id,
         }
 
     def _buckets(
