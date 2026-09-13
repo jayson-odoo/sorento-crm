@@ -1148,11 +1148,23 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:
         ) from exc
 
 
-def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
+def apply_open_question_outcome(
+    o: dict, question: dict, outcome: Any, *, named_team_help: bool = False
+) -> None:
     """The handler's outcome, written into the emission the rest of the turn reads.
 
     ONE place, so the seven handlers stay pure and only this function knows the `qf`
     vocabulary. Nothing here is reached until prompt v3 is promoted (see the call site).
+
+    `named_team_help` is D1's boolean, passed in from `_post_process` rather than re-derived
+    (it is the SAME turn and the same two signals, and two derivations of one fact is how
+    they come to disagree). The two arms below are the thirteenth and fourteenth writers of
+    `message_type = "business_query"` on this turn: `engine._resolve_open_question` runs
+    whatever the parser typed the message, so "ESCALATE TO MARKETING SRTWCY8840-SH" over an
+    open picker resolves as a pick AND asks for a person - and without the guard the pick
+    retyped it `business_query` and the escalation was lost exactly as the suggest-pick arm
+    lost it on 11 Sep. The PICK still applies: the product the customer named becomes this
+    turn's scope, which is what the escalation lane resolves the brand from.
     """
     if not outcome.resolved:
         return
@@ -1167,7 +1179,8 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
         o["entities"] = entities
         o["entity_op"] = "replace"
         o["scope_exclusive"] = False
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         # CONSUMED. The positions were an answer to OUR question, so they must not also
         # mint entities off whatever roster happens to be in `last_result_set`.
         o["reference_positions"] = []
@@ -1178,7 +1191,8 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
     if outcome.tiers:
         o["access_levels"] = list(outcome.tiers)
         o["domain_hint"] = "promotion"
-        o["message_type"] = "business_query"
+        if not named_team_help:  # D1
+            o["message_type"] = "business_query"
         o["reference_positions"] = []
         o["reference_target"] = None
     if outcome.escalate:
@@ -2237,7 +2251,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     answered = parent_input.get("_answered") or {}
     open_question = answered.get("question")
     if answered.get("outcome") is not None and open_question:
-        apply_open_question_outcome(o, open_question, answered["outcome"])
+        apply_open_question_outcome(
+            o, open_question, answered["outcome"], named_team_help=named_team_help
+        )
 
     # -- THE FOCUS RULES (AC-1005) -------------------------------------------------------- #
     # ONE call, in the position the blocks it replaced occupied: after every writer of
