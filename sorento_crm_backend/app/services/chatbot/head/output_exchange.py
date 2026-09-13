@@ -1314,8 +1314,10 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         not stale_outstanding_ask_open
         and jsc.js_string(o.get("order_status") or "").strip() == "outstanding"
         and jsc.js_string(o.get("domain_hint") or "") == "order"
+        # R13: a SUBJECT, which is a product or a customer - the report takes either, so
+        # the question that precedes it is asked for either.
         and any(
-            jsc.js_string(jsc.get(e, "hint") or "") == "product"
+            jsc.js_string(jsc.get(e, "hint") or "") in ("product", "customer")
             for e in jsc.array(o.get("entities"))
         )
     ):

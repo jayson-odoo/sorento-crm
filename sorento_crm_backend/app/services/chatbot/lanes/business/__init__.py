@@ -539,15 +539,23 @@ def run_fetch(
     tool_item = pick.items[0]["json"]
     tool_name = jsc.js_string(tool_item.get("name") or "")
 
-    # S4 point 2 (PLAN-chatbot-outstanding-report.md): domain "order" + a resolved
-    # product + an outstanding order_status picks the report over the plain
-    # order-list tool `tool_filter` would otherwise have chosen. No product means
-    # the ask is customer/date-only, which the existing so_outstanding bucket over
-    # `crm_order_management_orders_list` already answers - untouched.
+    # S4 point 2 (PLAN-chatbot-outstanding-report.md), REWRITTEN by R13 (owner ruling,
+    # 13 Sep 2026): domain "order" + an outstanding `order_status` picks the report over
+    # the plain order-list tool `tool_filter` would otherwise have chosen. A PRODUCT is no
+    # longer required - a customer is subject enough ("when we generate the outstanding
+    # summary for customer and for product it is different, they should be the same"), and
+    # the legacy `so_outstanding` bucket is no longer reachable for an outstanding ask at
+    # all. What is still required is a SUBJECT: with neither a product nor a customer
+    # resolved there is nothing to report on, and the plain order lane keeps that ask.
     order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
+    has_customer = (
+        any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities)
+        if isinstance(entities, list)
+        else False
+    )
     if (
         domain == "order"
-        and has_product
+        and (has_product or has_customer)
         and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
     ):
         tool_name = "crm_outstanding_report"
@@ -649,13 +657,12 @@ def run_fetch(
         semantic_input["outstanding_scope"] = scope
         semantic_input["outstanding_so_refused"] = so_refused
     elif tool_name in fetch_mod.ORDER_TOOLS and order_status_raw == "so_outstanding":
-        # S2 (security review, 13 Sep 2026): a customer-only ask ("outstanding SO
-        # for BUIMACO", no product) picks the LEGACY bucket over the plain
-        # order-list tool - the branch above never runs (it requires
-        # `has_product`) - and that bucket serves the same per-SO outstanding
-        # quantities D13 gates on `crm_outstanding_report`. Closed the same way:
-        # without the grant, redirect to `outstanding` (the DO bucket) rather
-        # than call the SO bucket at all, and prefix the reply
+        # S2 (security review, 13 Sep 2026), narrowed by R13: the LEGACY bucket now only
+        # catches an `so_outstanding` ask with NO subject at all (no product and no
+        # customer) - every ask with one goes to the report above. The redirect stays for
+        # exactly that remainder, because the bucket serves the same per-SO outstanding
+        # quantities D13 gates: without the grant, redirect to `outstanding` (the DO
+        # bucket) rather than call the SO bucket, and prefix the reply
         # (`output_structurer`'s generic path reads `so_bucket_refused`).
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")

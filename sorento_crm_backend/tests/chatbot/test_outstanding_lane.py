@@ -851,22 +851,22 @@ class TestToolPick:
             f"crm_outstanding_report, not {name!r} (S4 point 2)"
         )
 
-    def test_outstanding_without_product_keeps_order_list(self, session_factory) -> None:
-        """S4 point 2's own carve-out: no product -> the existing order-list path,
-        untouched (a customer-only ask keeps today's so_outstanding bucket)."""
+    def test_outstanding_without_a_subject_keeps_order_list(self, session_factory) -> None:
+        """S4 point 2's carve-out, REWRITTEN by R13 (13 Sep 2026): a customer IS a
+        subject now and reaches the report (`TestCustomerOnlyOutstandingAskReachesThe
+        Report`). What still keeps the plain order-list path is an outstanding ask with
+        NO subject at all - no product and no customer - because there is nothing for
+        the report to be about."""
         from app.services.chatbot.lanes.business import run_fetch
 
         call, captured = _capturing_mcp()
-        payload = self._payload(
-            order_status="so_outstanding",
-            entities=[{"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}],
-        )
+        payload = self._payload(order_status="so_outstanding", entities=[])
         run_fetch(payload, services=FetchServices(mcp_call=call))
         assert captured, "no MCP tool was ever called"
         name, _args = captured[0]
         assert name == "crm_order_management_orders_list", (
-            f"a customer-only outstanding ask (no product) must keep today's order-list "
-            f"tool, not {name!r}"
+            f"an outstanding ask with no subject must keep today's order-list tool, "
+            f"not {name!r}"
         )
 
 
@@ -2181,13 +2181,17 @@ class TestDetailAnswerByPositionOnly:
 
 
 class TestNoSoKeyCustomerOnlySoAskFallsToDoBucket:
-    """A customer-only ask ("outstanding SO for Dealer A", no product) never reaches
-    the outstanding-report override above (it requires a resolved product) and picks
-    the LEGACY `crm_order_management_orders_list?order_status=so_outstanding` bucket
-    instead - the SAME per-SO outstanding quantities D13 gates on `crm_outstanding_
-    report`. Without `sales_orders.outstanding`, the lane must redirect to
-    `order_status=outstanding` (the DO bucket), never call the SO bucket, strip
-    `include_pipeline`, and prefix the reply."""
+    """The D13 gate on a customer-only SO ask ("outstanding SO for Dealer A", no
+    product), REWRITTEN for R13 (owner ruling, 13 Sep 2026).
+
+    S2 (security review, 13 Sep 2026) pinned this against the LEGACY
+    `crm_order_management_orders_list?order_status=so_outstanding` bucket, because a
+    customer-only ask could not reach the report at all then. R13 retires that
+    carve-out: the ask now goes to `crm_outstanding_report` with `customer_ids`, and
+    the SAME gate applies there, before any fetch - scope forced to `do`, the refusal
+    line in the reply, no SO figure computed. The property under test is unchanged
+    (without the grant, no per-SO outstanding quantity reaches the customer); only the
+    tool it is enforced on has moved, which is the point of R13."""
 
     def test_no_so_key_customer_only_so_ask_falls_to_do_bucket(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
@@ -2214,14 +2218,17 @@ class TestNoSoKeyCustomerOnlySoAskFallsToDoBucket:
                 "intro": "Here are the results.",
             },
         )
-        assert captured, "the DO bucket must still be fetched, never nothing"
+        assert captured, "the DO half must still be fetched, never nothing"
         name, args = captured[0]
-        assert name == "crm_order_management_orders_list", name
-        assert args.get("order_status") == "outstanding", (
-            f"without the grant, so_outstanding must redirect to the DO bucket: {args}"
+        assert name == "crm_outstanding_report", (
+            f"R13: a customer-only outstanding ask reaches the report now: {name}"
         )
+        assert args.get("scope") == "do", (
+            f"without the grant the SO scope is refused before any fetch: {args}"
+        )
+        assert args.get("customer_ids") == [CUSTOMER_UUID], args
         assert "include_pipeline" not in args, (
-            f"include_pipeline (carries so_outstanding_qty) must be stripped: {args}"
+            f"include_pipeline (carries so_outstanding_qty) must never ride along: {args}"
         )
         reply = (result.reply or {}).get("text") or ""
         assert "Sales order figures are not enabled for your account." in reply, reply
@@ -2247,12 +2254,13 @@ class TestNoSoKeyCustomerOnlySoAskFallsToDoBucket:
             matches={CUSTOMER_NAME: {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}},
             mcp_response={"data": [], "has_result": False},
         )
-        assert captured, "the SO bucket must still be fetched"
+        assert captured, "the SO half must still be fetched"
         name, args = captured[0]
-        assert name == "crm_order_management_orders_list", name
-        assert args.get("order_status") == "so_outstanding", (
-            f"with the grant, so_outstanding must reach the tool unredirected: {args}"
+        assert name == "crm_outstanding_report", name
+        assert args.get("scope") == "so", (
+            f"with the grant, the SO scope reaches the report unredirected: {args}"
         )
+        assert args.get("customer_ids") == [CUSTOMER_UUID], args
 
 
 # --------------------------------------------------------------------------- #
