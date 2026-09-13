@@ -329,7 +329,7 @@ def _resolve_and_gate(db: Any):
         resolver that drifts. The session is the lane's own, and it carries the contact's
         company scope (H56), which is the scope AC-1142 names.
 
-        **The body this lane sends is NOT the business lane's body.** Three keys are
+        **The body this lane sends is NOT the business lane's body.** Four keys are
         overridden, because this lane reads exactly one field off the answer
         (`display.brand.brand_code`) and pays for everything else:
 
@@ -341,6 +341,22 @@ def _resolve_and_gate(db: Any):
           person. Codes only, and a code that matches nothing becomes the did-you-mean offer.
         * `query` - the product tokens, not the message. Same reason, plus it is the value the
           resolver scores and logs.
+        * `match_mode: "or"` (finding 7, owner console re-pass, 13 Sep 2026, prompt v16).
+          `resolve_entity_body`'s own default is `parse_output.match_mode or "and"`, so
+          every lane call arrived in AND mode with a REAL escalation ctx - and AND mode has
+          no exact tier at all: `references.py`'s AND path returns
+          `{"intersection": [...], "by_entity_type": {...}}`, every row stamped
+          `match_tier="and"` (`_and_probe_product`'s own note, "there is no exact tier on
+          that path"), which has no `resolutions` key for `_product_rows` to read at all -
+          so `resolved` and `did_you_mean` came back empty for every code, exact match or
+          not, and `_carried_brand` / `_resolve_product` both saw `None` regardless of D10.
+          Measured on the stack DB, scoped: SRTWB8004 under AND resolved nothing; under OR,
+          `resolutions[0].matches` carries the one exact SORENTO row. AND's cross-token
+          intersection is for compound phrases ("bidet seat cover for SRTWC60630-SH" as one
+          claim); this lane sends ONLY product code tokens and reads ONE fact per token
+          (`_product_tokens` already scopes the read that way), which is exactly OR's
+          per-token view - so OR is not a workaround, it is the mode this lane's own body
+          shape was always asking for.
 
         `sub-resolve-and-gate`'s gate is deliberately NOT run over the answer. The gate's
         job is to decide which entity types a DOMAIN serves and to build the roster axes for
@@ -367,6 +383,7 @@ def _resolve_and_gate(db: Any):
             "query": " ".join(wanted),
             "spec_fallback": False,
             "understand_phrase": False,
+            "match_mode": "or",
         }
         with db.begin_nested():
             payload = production_services(db).resolve_entity(body)
