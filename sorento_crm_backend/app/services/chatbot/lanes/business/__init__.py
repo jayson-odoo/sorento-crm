@@ -104,9 +104,14 @@ def _outstanding_scope_ask_from_filters(filters: dict[str, Any]) -> dict[str, An
     through one code path - see that function's own docstring. `filters` is either
     freshly parsed (the first ask) or carried forward unchanged (an out-of-range
     re-ask, AC-1132)."""
+    # R13: the subject line names the PRODUCT when there is one, and is omitted entirely
+    # when the subject is a customer - the ids on the filter set are uuids, which never
+    # reach a customer's screen, and `Product: ` with nothing after it was what the owner
+    # read on a customer-only ask.
+    product_code = jsc.js_string(filters.get("product_code") or "").strip()
     text = (
-        f"Product: {jsc.js_string(filters.get('product_code') or '')}\n"
-        "Outstanding for which document?\n"
+        (f"Product: {product_code}\n" if product_code else "")
+        + "Outstanding for which document?\n"
         "1. Sales orders (not yet transferred to DO)\n"
         "2. Delivery orders (not yet delivered)\n"
         "3. Both"
