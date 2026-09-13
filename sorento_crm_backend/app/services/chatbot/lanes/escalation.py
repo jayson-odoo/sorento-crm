@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
@@ -596,23 +597,37 @@ def run(
     if dry_run:
         # Production dry run, no injected seam: the bundle - and with it the READS D9
         # calls for (the resolver, the assignee preview) - only exists inside the TURN's
-        # own unit of work (H56), the same one the live branch below opens. Fails soft:
-        # no session factory, a session that will not open, or a bundle build that raises
-        # still returns the full preview shape with every read left at None, because a
-        # dry run must never fail a turn over the extra detail it is trying to show
-        # (AC-1142's own rule, extended to the preview side of it).
+        # own unit of work (H56), the same one the live branch below opens.
+        #
+        # The `try` is narrowed to SESSION-OPEN AND BUNDLE-BUILD only (reviewer S2): no
+        # session factory, a session that will not open, or a bundle build that raises are
+        # infrastructure failures with nothing to resolve against, so those fail soft into
+        # a preview with every read at None (AC-1142's own rule, extended to the preview
+        # side of it). A crash INSIDE `_human_intervention` - the ladder itself - is not
+        # one of those: every seam it calls already fails soft on its own
+        # (`_resolve_product`, `_carried_brand`, the `preview_assignee` call), so anything
+        # that still reaches this far and raises is a genuine lane defect, and swallowing
+        # it here would have shown the owner a brand-less preview instead of the crash the
+        # console needs to see.
         from app.services.chatbot.lanes import escalation_services
 
+        stack = ExitStack()
         try:
             if session_factory is None:
                 raise RuntimeError("no session factory for a production dry run")
-            with escalation_services.production_session(session_factory) as db:
-                return _human_intervention(
-                    ctx, context_item, team, escalation_services.build(db), result, dry_run=True
-                )
-        except Exception:  # noqa: BLE001 - a preview is never worth failing a test turn for
+            db = stack.enter_context(escalation_services.production_session(session_factory))
+            bundle = escalation_services.build(db)
+        except Exception:  # noqa: BLE001 - opening the unit of work is not the ladder
             logger.warning("chatbot: dry-run routing preview did not run", exc_info=True)
+            stack.close()
             return _human_intervention(ctx, context_item, team, None, result, dry_run=True)
+
+        # UNGUARDED from here: the session stays open only for this one call, closed (and
+        # rolled back on the way out of an exception, same as the live branch's own `with`)
+        # by the stack whether `_human_intervention` returns or raises - but a raise is
+        # never caught here, so a genuine lane crash surfaces as one.
+        with stack:
+            return _human_intervention(ctx, context_item, team, bundle, result, dry_run=True)
 
     # No injected seam and not a dry run, so this is a genuine production write: the
     # session is opened HERE, off the TURN's own factory (so it carries the contact's
@@ -691,7 +706,9 @@ def _human_intervention(
     # current product carries, but only from a turn that was already on the team this
     # escalation lands on.
     carried, carried_name = (
-        _carried_brand(ctx, context_item, services, landed) if product is None else (None, None)
+        _carried_brand(ctx, context_item, services, landed, dry_run=dry_run)
+        if product is None
+        else (None, None)
     )
     landed_item = _landed_item(
         context_item,
@@ -843,7 +860,12 @@ def _carry_ctx(ctx: dict[str, Any], products: list[dict[str, Any]]) -> dict[str,
 
 
 def _carried_brand(
-    ctx: dict[str, Any], context_item: dict[str, Any], services: Any, landed: Any
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    services: Any,
+    landed: Any,
+    *,
+    dry_run: bool = False,
 ) -> tuple[str | None, str | None]:
     """D3: the brand of the product the conversation is about, or None. One extra resolve.
 
@@ -857,6 +879,11 @@ def _carried_brand(
     hold one: the five keys carry what the conversation is ABOUT (`focus.products`), and the
     brand is a fact about that product which the resolver owns. One extra call, on this rung
     only, through the same seam and therefore the same savepoint as the main one.
+
+    `dry_run` is threaded through to `_resolve_product` for the same reason the main call
+    carries it (D9): this rung's `offer_did_you_mean=False` already keeps its `ask` at None
+    regardless, but a caller reading `_resolve_product`'s own contract should not have to
+    know that to trust the flag was not silently dropped one call down.
     """
     if jsc.nullish_str(landed).strip().lower() != jsc.nullish_str(_carried_team(ctx)).strip().lower():
         return None, None
@@ -866,7 +893,11 @@ def _carried_brand(
     # NO did-you-mean on this rung: the customer did not type this code on this turn, so a
     # picker about it would answer a question nobody asked. A miss simply carries no brand.
     resolved = _resolve_product(
-        _carry_ctx(ctx, products), context_item, services, offer_did_you_mean=False
+        _carry_ctx(ctx, products),
+        context_item,
+        services,
+        offer_did_you_mean=False,
+        dry_run=dry_run,
     )
     if resolved is None:
         return None, None
@@ -1090,9 +1121,11 @@ def _product_pick_ask(
         },
         # `dry_run` is THREADED, not assumed: every other action this lane builds carries
         # the turn's own flag, and the executor keys on it to decide whether a message
-        # actually leaves. Today this arm is only reachable live (`run()` returns from its
-        # preview branch before the resolve), which is exactly why hardcoding False here
-        # would be a trap for whoever makes it reachable.
+        # actually leaves. This arm runs on BOTH paths under D9 - a dry run resolves the
+        # product exactly like a live turn, so an unknown code arms this same did-you-mean
+        # ask from the console too (`test_d9_dry_run_did_you_mean_returns_the_product_pick_
+        # ask_flagged_dry_run`), which is exactly why hardcoding False here would have been
+        # a defect rather than a simplification.
         "actions": _clarify_actions(text, options=labels, dry_run=dry_run),
         "pending": question,
     }

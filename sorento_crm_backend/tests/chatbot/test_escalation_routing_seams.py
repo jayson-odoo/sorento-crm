@@ -740,13 +740,16 @@ def test_s5_round3_the_resolver_body_is_a_narrow_product_lookup_not_the_customer
 
 
 def test_s3_round3_dry_run_preview_names_the_landed_team_and_agent_never_the_inherited_pair() -> None:
-    """Security review round 3, item S3, strengthened by the re-check. `run(...,
-    dry_run=True)`'s preview branch calls `_preview_routing`, which decides the landed
-    team through `_person_routing` same as a live turn - but the customer-facing preview
-    text (`ROUTED_TO_PIC_REPLY.format(team=...)`) and the comment it would send must
-    still reflect the LANDED pair (AC-1129's own rule), not the inherited `purchasing` /
-    `general_enquiries` this fixture starts from, and no WRITING seam may be reached at
-    all (H37) - `preview_assignee` is the one read this branch is allowed."""
+    """Security review round 3, item S3, strengthened by the re-check; wording updated for
+    D9's unification of the dry and live branches into `_human_intervention` itself (the
+    separate `_preview_routing` this docstring used to name is retired). `run(...,
+    dry_run=True)` decides the landed team through `_person_routing` same as a live turn -
+    but the customer-facing preview text (`ROUTED_TO_PIC_REPLY.format(team=...)`) and the
+    comment it would send must still reflect the LANDED pair (AC-1129's own rule), not the
+    inherited `purchasing` / `general_enquiries` this fixture starts from, and no WRITING
+    seam may be reached at all (H37) - `preview_assignee` is the one read this branch is
+    allowed (this fixture names no product, so `resolve_and_gate` is never reached either,
+    D9's own rule for a turn with nothing to resolve)."""
     ctx = _ctx(
         routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
         parser_raw={"routing": {"suggested_team": "marketing_form", "suggested_agent": None}},
@@ -774,7 +777,7 @@ def test_s3_round3_dry_run_preview_names_the_landed_team_and_agent_never_the_inh
         )
 
     # The body the READ-ONLY draw is asked to preview against must ALSO carry the landed
-    # pair, not the inherited one - the whole reason `_preview_routing` re-derives
+    # pair, not the inherited one - the whole reason `_human_intervention` re-derives
     # `_landed_item` before building it, rather than handing `preview_assignee` the
     # turn's own inherited `context_item`.
     services.preview_assignee.assert_called_once()
