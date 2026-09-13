@@ -1493,16 +1493,16 @@ class SalesOrderService:
         Matched by `id` when the payload carries one (the FE does not send it today, but a
         future caller - or n8n - might); otherwise by SKU, first-unmatched-row-wins when a
         SKU repeats within the order. A payload line that matches nothing existing is a new
-        line. An existing line that nothing in the payload claims is removed - unless doing
-        so would orphan an SO<->PO `OrderLinkClaim`, or a project sales-order line that
-        reconciled to it is either AUTHORED (a project SO with `project_id` set, or a status
-        other than `adopted` - its lines are its own record of what was committed) or has a
-        dependent row of its own (an allocation, a claim, an Order Inquiry row, a draft
-        finding, a divergence line - proof that planning already happened on it), in which
-        case the whole update is refused with a 409 rather than silently orphaning that link.
-        A reconciled mirror line that is neither of those - an ADOPTION mirror
-        (`project_id` NULL, `status = 'adopted'`) with nothing hanging off it, i.e. an
-        addressing shim nobody has used yet - is pruned in the same transaction instead:
+        line. An existing line that nothing in the payload claims is removed. The whole
+        update is refused with a 409 only when a project sales-order line reconciled to it
+        is AUTHORED (a project SO with `project_id` set, or a status other than `adopted` -
+        its lines are its own record of what was committed, not this order's to retire
+        unilaterally). Every OTHER dependent - an allocation, an SO<->PO `OrderLinkClaim`,
+        an Order Inquiry row, a draft finding, a divergence line - no longer refuses the
+        removal (review round, second re-walk): the line CANCELS instead, below. A
+        reconciled mirror line that is neither AUTHORED nor carries any dependent - an
+        ADOPTION mirror (`project_id` NULL, `status = 'adopted'`) with nothing hanging off
+        it, i.e. an addressing shim nobody has used yet - is pruned in the same transaction:
         see `app.services.project_so_adoption_service` module docstring for why the mirror
         carries no facts of its own, and `mirror_missing_lines` there re-adds a pruned line
         on the next re-sync.
@@ -1515,17 +1515,20 @@ class SalesOrderService:
         not in that list on purpose - it is what the source document charged, and rewriting
         it from an edited price would replace the invoice with our own arithmetic.
 
-        A removed line still gets special treatment when its mirror project line has an
-        Order Inquiry row or is a component of the order's ACTIVE held decision
+        A removed line still gets special treatment when it carries ANY dependent of its
+        own - an Order Inquiry row, a component of the order's ACTIVE held decision, an
+        `SOLineAllocation`, a draft finding, an allocation claim, a divergence line, or an
+        SO<->PO `OrderLinkClaim`
         (`documentation/plans/scm/PLAN-scm-change-management-one-engine.md`, Slice A rule
-        5): an inquiry row or a held decision is exactly the "already planned" fact the
-        FIVE-table dependent check above used to fold an inquiry row into, refusing the
-        whole update on it - but a removal is never refused for that reason any more (rule
-        5, "removal is never refused because an inquiry row exists"). Instead the CORE line
-        is set `line_status = "cancelled"` rather than deleted, so the mirror line, its
-        inquiry row and the `PlanningChangeRow.core_line_id` this raises all survive; a line
-        that clears the dependent check with NEITHER an inquiry row NOR a held component is
-        deleted exactly as before.
+        5, widened on the second re-walk): each of those is proof planning or procurement
+        arithmetic already happened on this line, and a removal is never refused for
+        carrying any of them - the FIVE-table check above that used to raise a 409 off a
+        dependent now feeds this CANCEL decision instead. The CORE line is set
+        `line_status = "cancelled"` rather than deleted, so the mirror line, its inquiry
+        row, its claim, its placed PO/SPO link and the `PlanningChangeRow.core_line_id`
+        this raises all survive; the placed components a cancelled line still holds are
+        released or reallocated when the resulting change row applies (Slice D). A line
+        that carries none of the above is deleted exactly as before.
 
         Returns `_LineUpsertResult`: `matched` carries `(line, old_qty_ordered,
         old_required_date, old_item_code, old_location)` per MATCHED existing line - its
@@ -1654,15 +1657,11 @@ class SalesOrderService:
         removed_before: list[dict] = []
         if removed:
             removed_ids = [l.id for l in removed]
-            # Three EXISTS subqueries, not five - `OrderInquiryRow` moved OUT of this check
-            # (Slice A rule 5): an inquiry row alone no longer refuses the removal, it earns
-            # the CANCEL treatment below instead. `SOLineAllocation` is split out on its own
-            # (review round, R-S2): confirming a decision (even a pure Buy) always writes
-            # the line ITS OWN `SOLineAllocation` row, so a held line always has one - that
-            # one alone is bypassed for a held-or-inquired line, never the other three (a
-            # draft finding, an ALLOCATION CLAIM, a divergence line), each of which is proof
-            # of planning arithmetic a cancel-in-place cannot safely leave dangling
-            # regardless of whether this line is also held.
+            # Three EXISTS subqueries feeding the CANCEL decision below, not a 409 (review
+            # round, second re-walk: ANY dependent - a draft finding, an allocation claim,
+            # a divergence line, an `OrderLinkClaim`, an `SOLineAllocation`, an Order
+            # Inquiry row - takes the cancel path, never a refusal; the ONLY refusal left is
+            # project authorship, checked separately below).
             has_other_dependents = or_(
                 exists().where(SODraftFinding.line_id == ProjectSalesOrderLine.id),
                 exists().where(AllocationClaim.so_line_id == ProjectSalesOrderLine.id),
@@ -1694,38 +1693,38 @@ class SalesOrderService:
                 .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(removed_ids))
                 .all()
             )
+            # `so_line_id` on `OrderLinkClaim` is the CORE line id (same id space as
+            # `removed_ids`), not a mirror id - checked against every removed line, not
+            # just the ones with a project mirror, so a claim made before the order was
+            # ever adopted still cancels its line rather than deleting it out from under
+            # the claim.
+            claimed_core_ids = {
+                so_line_id
+                for (so_line_id,) in self.db.query(OrderLinkClaim.so_line_id)
+                .filter(OrderLinkClaim.so_line_id.in_(removed_ids))
+                .all()
+            }
             prunable_mirror_line_ids: list[str] = []
             cancel_core_ids: set[str] = set()
+            covered_core_ids: set[str] = set()
             frozen_by_pso: dict[str, dict] = {}
             for referrer in referrers:
                 is_authored = (
                     referrer.project_id is not None or referrer.status != SO_STATUS_ADOPTED
                 )
                 if is_authored:
+                    # The ONLY refusal left (review round, second re-walk): a mirror
+                    # reconciled to an AUTHORED project sales order is that project's own
+                    # record of what was committed, not this order's to retire
+                    # unilaterally. Every other dependent below cancels instead.
                     raise AppException(
                         409,
                         f"Cannot remove a line reconciled to project sales order "
                         f"{referrer.provisional_ref}",
                         code="SO_LINE_LINKED_TO_PROJECT",
                     )
-                if referrer.has_other_dependents:
-                    # Unconditional - a draft finding, an allocation claim (another
-                    # project's, say) or a divergence line blocks whether or not this
-                    # line is ALSO held (R-S2): only `SOLineAllocation` is the decision's
-                    # own bookkeeping a held line is expected to carry.
-                    raise AppException(
-                        409,
-                        "Cannot remove a line that fulfilment planning has already "
-                        f"allocated (project sales order {referrer.provisional_ref})",
-                        code="SO_LINE_LINKED_TO_PROJECT",
-                    )
-                # Held-or-inquiry is asked BEFORE `has_allocation`: confirming a decision
-                # (even a pure Buy) writes the line its own `SOLineAllocation` row
-                # (`ProjectSupplyService._write_decision_lines`'s `buy > 0` branch), so a
-                # held line always has one - checking `has_allocation` first would 409 the
-                # exact removal Slice A rule 5 says must be accepted. A line with NEITHER a
-                # held component nor an inquiry row still answers to the unchanged
-                # allocation / claim checks.
+                if referrer.core_sales_order_line_id:
+                    covered_core_ids.add(referrer.core_sales_order_line_id)
                 pso_id = str(referrer.pso_id)
                 if pso_id not in frozen_by_pso:
                     from app.services.project_supply_service import ProjectSupplyService
@@ -1735,36 +1734,36 @@ class SalesOrderService:
                         supply.active_decision(pso_id)
                     )
                 is_held = str(referrer.id) in frozen_by_pso[pso_id]
-                if referrer.has_inquiry or is_held:
-                    # Held, or already asked purchasing for it - the mirror line, its
-                    # inquiry row and the change row this removal raises must all survive
-                    # (Slice A rule 5), so the CORE line is cancelled rather than deleted
-                    # and its mirror is left alone entirely (not eligible for pruning).
+                has_claim = referrer.core_sales_order_line_id in claimed_core_ids
+                # ANY dependent - held, inquired, already allocated, a draft finding, an
+                # allocation claim, a divergence line, or an SO<->PO claim - cancels the
+                # line in place: the mirror line, its inquiry row, its claim, its placed
+                # PO/SPO link and the change row this removal raises all survive, and the
+                # placed components are released or reallocated when that row applies
+                # (Slice D). Not eligible for pruning either way once it carries any of
+                # these.
+                if (
+                    referrer.has_inquiry
+                    or is_held
+                    or referrer.has_allocation
+                    or referrer.has_other_dependents
+                    or has_claim
+                ):
                     if referrer.core_sales_order_line_id:
                         cancel_core_ids.add(referrer.core_sales_order_line_id)
                     continue
-                if referrer.has_allocation:
-                    raise AppException(
-                        409,
-                        "Cannot remove a line that fulfilment planning has already "
-                        f"allocated (project sales order {referrer.provisional_ref})",
-                        code="SO_LINE_LINKED_TO_PROJECT",
-                    )
-                # Adopted, project_id NULL, nothing hanging off it and nothing held or
-                # inquired - an addressing shim nobody has used, pruned rather than
-                # blocking the removal.
+                # Adopted, project_id NULL, nothing hanging off it and nothing held,
+                # inquired, allocated or claimed - an addressing shim nobody has used,
+                # pruned rather than blocking the removal.
                 prunable_mirror_line_ids.append(referrer.id)
-            claim = (
-                self.db.query(OrderLinkClaim)
-                .filter(OrderLinkClaim.so_line_id.in_(removed_ids))
-                .first()
-            )
-            if claim:
-                raise AppException(
-                    409,
-                    f"Cannot remove a line claimed by purchase order {claim.po_number}",
-                    code="SO_LINE_LINKED_TO_CLAIM",
-                )
+            # A removed core line with NO project mirror at all (never adopted) but still
+            # named by an `OrderLinkClaim` - an order-level or item-level claim written
+            # before the SO ever reconciled to a project - cancels too, for the same
+            # reason: the claim survives to be re-dealt at apply, never silently dropped
+            # by a hard delete.
+            for claimed_id in claimed_core_ids:
+                if claimed_id not in covered_core_ids:
+                    cancel_core_ids.add(claimed_id)
             if prunable_mirror_line_ids:
                 # ORM `delete()` per row, not a bulk `Query.delete()`: the latter bypasses
                 # the identity map, so an object already loaded this session (as `referrers`

@@ -94,7 +94,7 @@ from app.models.project_so import (
     SOSupplyDecision,
 )
 from app.models.projects import Project
-from app.models.scm import ItemClassification
+from app.models.scm import ItemClassification, OrderLinkClaim
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE, TIMELY_SPO, qty_text
@@ -3491,7 +3491,13 @@ def _execute_reallocations(
 
     rows = [
         r for r in live_rows
-        if r.decision in ("confirm", "amend") and _moving_components(r)
+        # `kind != "cancelled"` (review round, second re-walk): `set_row_decision` lets a
+        # cancelled row be marked "confirm" too (the board pre-marks every changed line it
+        # shows), which would otherwise pass the `decision in (...)` test below the moment
+        # its suggestion carries a moving component - a cancelled line's own placement is
+        # `_shift_links_off_retired_lines`'s to settle (same-order survivor first), never
+        # this general cross-order cascade, or the same link is processed twice.
+        if r.decision in ("confirm", "amend") and r.kind != "cancelled" and _moving_components(r)
     ]
     if not rows:
         return {}
@@ -3699,7 +3705,7 @@ def _shift_links_off_retired_lines(
     order: ProjectSalesOrder,
     cancelled_row_ids: Sequence[str],
     actor: Optional[str],
-) -> int:
+) -> Dict[str, Dict[str, List[str]]]:
     """A closed line's placements move to the row that still needs them (AC-P3-6).
 
     The captain, 25 August 2026: "PO / SPO allocated to the 0 lines shift to the 25 line".
@@ -3726,14 +3732,20 @@ def _shift_links_off_retired_lines(
     returns them). Read off the line instead, an old cancelled row that still carried links
     would have its documents re-dealt by a change that was never about it.
 
-    Returns how many placements moved.
+    Returns, per closed line's `project_line_id` (D5, the same shape `_execute_reallocations`
+    reports in on a confirmed row's `result_json`): `executed_reallocations` for a placement
+    that found a same-order survivor, `released_documents` for whatever none of them could
+    take (review round, second re-walk: a cancelled line's own placed PO/SPO is settled HERE,
+    same-order-survivor-first, never by the general cross-order cascade `_execute_
+    reallocations` runs for a confirmed row - that would double-process the same link this
+    function already resolved one way or the other).
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     service = ProjectOrderInquiryService(db)
     row_ids = [str(row_id) for row_id in cancelled_row_ids if row_id]
     if not row_ids:
-        return 0
+        return {}
 
     cancelled_rows = (
         db.query(OrderInquiryRow)
@@ -3744,7 +3756,7 @@ def _shift_links_off_retired_lines(
         .all()
     )
     if not cancelled_rows:
-        return 0
+        return {}
 
     # The product each retired line named, and every line of this order, so a survivor is
     # found by PRODUCT rather than by item code (two codes can spell one product).
@@ -3777,13 +3789,16 @@ def _shift_links_off_retired_lines(
         if product_id:
             survivors_by_product[product_id].append(row)
 
-    moved = 0
+    done: Dict[str, Dict[str, List[str]]] = defaultdict(
+        lambda: {"executed_reallocations": [], "released_documents": []}
+    )
     who = _user_name(db, actor)
     touched: List[OrderInquiryRow] = []
     for cancelled in cancelled_rows:
         links = service._links_of(cancelled.id)
         if not links:
             continue
+        line_key = str(cancelled.so_line_id) if cancelled.so_line_id else None
         product_id = product_by_line.get(str(cancelled.so_line_id))
         candidates = survivors_by_product.get(product_id or "", [])
         for link in links:
@@ -3826,11 +3841,19 @@ def _shift_links_off_retired_lines(
                 taker.note = _took_note(taker.note, take, link.document, who)
                 if taker not in touched:
                     touched.append(taker)
-                moved += 1
+                if line_key:
+                    done[line_key]["executed_reallocations"].append(
+                        f"Reallocate {link.document or 'the document'} {qty_text(take)} to "
+                        f"{_row_target_words(db, taker, take)}"
+                    )
             if not repointed:
                 # Whatever the survivors did not take goes back to the cascade, and the
                 # part they DID take now lives on links of their own - so the original is
                 # removed either way, and the purchase-order line is free for its balance.
+                if line_key and remaining > _ZERO:
+                    done[line_key]["released_documents"].append(
+                        link.document or "the document"
+                    )
                 service._remove_links(cancelled, [link])
         if cancelled not in touched:
             touched.append(cancelled)
@@ -3838,7 +3861,7 @@ def _shift_links_off_retired_lines(
     if touched:
         service.refresh_link_state(touched)
         db.flush()
-    return moved
+    return {key: val for key, val in done.items() if any(val.values())}
 
 
 def _notify_purchasing(
@@ -4261,9 +4284,10 @@ def _apply_one_order(
     # NOW the closed lines' placements move to the surviving row of the same product on the
     # same order (AC-P3-6). After the confirm, so the survivor already carries its new
     # quantity and has the headroom to take them; the rows themselves were cancelled above.
+    shifted_by_line: Dict[str, Dict[str, List[str]]] = {}
     if cancelled_row_ids:
         db.flush()
-        _shift_links_off_retired_lines(db, order, cancelled_row_ids, actor)
+        shifted_by_line = _shift_links_off_retired_lines(db, order, cancelled_row_ids, actor)
 
     # NOW the cascade, once every document this order already owns has found its own row.
     # Whatever headroom is still open after the shift is what genuinely needs a stranger's
@@ -4283,6 +4307,22 @@ def _apply_one_order(
             db, order, so_number, live, document_links, pool_cache,
             batch_line_ids, actor,
         )
+
+    # The CORE-line `OrderLinkClaim` a placed PO/SPO wrote (`_upsert_lines`'s removal check
+    # used to refuse on this; review round, second re-walk: it now survives the save and is
+    # resolved here) is retired once its line is fully cancelled - the pairing it recorded
+    # has nothing left to pair. Neither the shift above nor `_execute_reallocations`
+    # touches this table (both only ever move the `OrderInquiryLink`), so it is explicit.
+    cancelled_core_line_ids = [
+        r.core_line_id for r in live if r.kind == "cancelled" and r.core_line_id
+    ]
+    if cancelled_core_line_ids:
+        for claim in (
+            db.query(OrderLinkClaim)
+            .filter(OrderLinkClaim.so_line_id.in_(cancelled_core_line_ids))
+            .all()
+        ):
+            db.delete(claim)
 
     # What the suggestion warned about, recorded on what it decided (rule 8).
     if revised:
@@ -4346,6 +4386,12 @@ def _apply_one_order(
                 "released": _released_reserve(r.held_json),
                 "back_on_board": True,
             }
+            # WHERE A PLACED PO/SPO ACTUALLY WENT (D5): `_shift_links_off_retired_lines`
+            # is what settled it (same-order survivor first, review round second re-walk),
+            # keyed by `project_line_id` there since a cancelled row has no board_link of
+            # its own composition to key against.
+            if r.project_line_id:
+                r.result_json.update(shifted_by_line.get(str(r.project_line_id)) or {})
         else:
             r.result_json = {"board_link": r.board_link}
 
