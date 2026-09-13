@@ -106,6 +106,19 @@ CHAT_QUEUE = "chat"
 WORKER_POLL_INTERVAL_SECONDS = 0.25
 
 
+def _fold_dashes(value: Any) -> Any:
+    """THE PROCESS BOUNDARY's dash rule, in one place (S7b).
+
+    Imported lazily-by-module rather than at the top so `engine` keeps its import shape;
+    the walk itself lives beside the tail's own fold so the two rules are read together
+    (`tail/compile_state.sanitize_dashes`, which explains why the tail's may not fold the
+    en dash and this one must).
+    """
+    from app.services.chatbot.tail.compile_state import sanitize_dashes
+
+    return sanitize_dashes(value)
+
+
 class TurnResult:
     """What the endpoint serialises. A plain object so the route stays a thin adapter."""
 
@@ -133,6 +146,13 @@ class TurnResult:
             self.actions = []
         if self.duplicate is None:
             self.duplicate = False
+        # THE LAST THING BEFORE THE WORDS LEAVE (S7b). Ten constructors build this object
+        # and each lane composes its own `send_message`; the tail's own fold reaches the
+        # SEALED reply only, so the casual lane's action carried the clarifier's raw text
+        # and the customer would have been sent an em dash. One seat, mutating in place,
+        # so the row `_close_turn` wrote from the same objects agrees with it.
+        _fold_dashes(self.reply)
+        _fold_dashes(self.actions)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -738,6 +758,10 @@ def _close_turn(
 ) -> None:
     """Write the turn's outcome. FIRST terminal write wins.
 
+    The row is the other half of S7b's boundary and it is the half the CONSOLE reads
+    (`console_service._customer_texts`), so it is folded here rather than left to whichever
+    result object happens to be built afterwards.
+
     Not tidiness: a failure inside the tail closes the row itself (`failed` at
     `remembered`, where it really stopped) and then RE-RAISES, and the lane handler that
     called it catches that same exception and closes again (`failed` at `replied`). The
@@ -778,7 +802,7 @@ def _close_turn(
     # delivery replays this, and n8n's `build-ctx` / `route-turn` re-emitters would throw
     # on a null. It is also what S2b's Retry reads. Written HERE, at close, which is what
     # bounds the guarantee - see `_duplicate_result`.
-    row.response = trace_mod.cap_document(response)
+    row.response = trace_mod.cap_document(_fold_dashes(response))
     row.finished_at = _now()
     db.commit()
 
@@ -3225,6 +3249,9 @@ class CompleteResult:
         if self.actions is None:
             self.actions = []
         self.is_test = bool(self.is_test)
+        # The `/complete` half of the same boundary (S7b).
+        _fold_dashes(self.reply)
+        _fold_dashes(self.actions)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -3251,7 +3278,12 @@ def _attachments_src(answer: Any) -> Any:
     """
     fragment = jsc.get(answer, "outcome_fragment")
     source = jsc.get(fragment, "central-exchange") if isinstance(fragment, dict) else None
-    return _clean_attachments(source)
+    # FOLDED HERE TOO (S7b). This value rides on the sealed reply as
+    # `reply.attachments_src` and carries the lane's RAW `response` string, which is how
+    # the em dash the tail had already folded out of `reply.text` came back on the same
+    # object. Folded at the source rather than left to the boundary walk alone, so the two
+    # copies of one sentence cannot differ even for a reader that never reaches the row.
+    return _fold_dashes(_clean_attachments(source))
 
 
 def _clean_attachments(source: Any) -> Any:
