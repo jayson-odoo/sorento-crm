@@ -3470,6 +3470,7 @@ def _execute_reallocations(
     pool_cache: Dict[str, Optional[str]],
     exclude_line_ids: Sequence[str],
     actor: Optional[str],
+    already_shifted_line_ids: Sequence[str] = (),
 ) -> Dict[str, Dict[str, List[str]]]:
     """Every `reallocate` and `release` of document quantity the confirmed suggestion
     named, carried out (Slice D).
@@ -3489,15 +3490,22 @@ def _execute_reallocations(
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
+    already_shifted = {str(line_id) for line_id in already_shifted_line_ids}
     rows = [
         r for r in live_rows
-        # `kind != "cancelled"` (review round, second re-walk): `set_row_decision` lets a
-        # cancelled row be marked "confirm" too (the board pre-marks every changed line it
-        # shows), which would otherwise pass the `decision in (...)` test below the moment
-        # its suggestion carries a moving component - a cancelled line's own placement is
-        # `_shift_links_off_retired_lines`'s to settle (same-order survivor first), never
-        # this general cross-order cascade, or the same link is processed twice.
-        if r.decision in ("confirm", "amend") and r.kind != "cancelled" and _moving_components(r)
+        if _moving_components(r) and (
+            (r.decision in ("confirm", "amend") and r.kind != "cancelled")
+            # `kind == "cancelled"` (review round, second re-walk, rule 6): a removed
+            # line's placed PO/SPO with NO same-order survivor rides this SAME general
+            # cascade a confirmed row's freed document already gets (cross-order waiting
+            # row, else pool) - `set_row_decision` lets a cancelled row be marked "confirm"
+            # too (the board pre-marks every changed line it shows), so `kind` is checked
+            # explicitly rather than trusting `decision` alone. `already_shifted_line_ids`
+            # is `_shift_links_off_retired_lines`'s own report of which lines IT already
+            # settled (same-order survivor found, whole or partial) - excluded here so the
+            # same link is never processed by both.
+            or (r.kind == "cancelled" and str(r.project_line_id) not in already_shifted)
+        )
     ]
     if not rows:
         return {}
@@ -3734,11 +3742,18 @@ def _shift_links_off_retired_lines(
 
     Returns, per closed line's `project_line_id` (D5, the same shape `_execute_reallocations`
     reports in on a confirmed row's `result_json`): `executed_reallocations` for a placement
-    that found a same-order survivor, `released_documents` for whatever none of them could
-    take (review round, second re-walk: a cancelled line's own placed PO/SPO is settled HERE,
-    same-order-survivor-first, never by the general cross-order cascade `_execute_
-    reallocations` runs for a confirmed row - that would double-process the same link this
-    function already resolved one way or the other).
+    a same-order survivor took (whole or partial), `released_documents` for the remainder of
+    a PARTIAL take that no survivor could absorb. SAME-ORDER-SURVIVOR IS TRIED FIRST, always
+    (AC-P3-6's own priority) - but a line whose link no same-order survivor touches AT ALL is
+    left entirely alone here (no key in the returned dict) rather than unlinked: rule 6 (review
+    round, second re-walk) says its placement still has to go SOMEWHERE, cross-order, the same
+    way a confirmed row's freed document would - `_apply_one_order` reads the ABSENCE of a
+    line's key here as "still needs settling" and routes it to `_execute_reallocations`'s own
+    cascade instead. A PARTIAL same-order take keeps the OLDER behavior for its leftover
+    (unlinked, given back to the ordinary reorder pass) unchanged, since that leg is already
+    proven by `test_a_survivor_with_partial_headroom_splits_the_retired_links_qty_across_
+    survivor_and_cascade` and rule 6's cross-order/pool cascade was never asked to reach a
+    PARTIAL remainder, only a placement with no same-order taker at all.
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
@@ -3846,15 +3861,23 @@ def _shift_links_off_retired_lines(
                         f"Reallocate {link.document or 'the document'} {qty_text(take)} to "
                         f"{_row_target_words(db, taker, take)}"
                     )
-            if not repointed:
-                # Whatever the survivors did not take goes back to the cascade, and the
-                # part they DID take now lives on links of their own - so the original is
-                # removed either way, and the purchase-order line is free for its balance.
-                if line_key and remaining > _ZERO:
+            if not repointed and remaining < whole:
+                # A same-order survivor took SOME of it - whatever it did not take goes
+                # back to the cascade the ordinary way (unlinked here, free for the next
+                # raised row's own re-run to notice), and the part it DID take now lives on
+                # a link of its own - so the original is removed either way, and the
+                # purchase-order line is free for its balance.
+                if line_key:
                     done[line_key]["released_documents"].append(
                         link.document or "the document"
                     )
                 service._remove_links(cancelled, [link])
+            # else (not repointed and remaining == whole): NO same-order survivor took
+            # anything - the link is left exactly as it stands, untouched, for
+            # `_execute_reallocations` to settle through rule 6's own cascade (a cross-order
+            # waiting row, else the pool - review round, second re-walk). `line_key`'s
+            # ABSENCE from this function's return is what tells `_apply_one_order` to route
+            # it there instead of treating it as already resolved.
         if cancelled not in touched:
             touched.append(cancelled)
 
@@ -4306,6 +4329,7 @@ def _apply_one_order(
         reallocated = _execute_reallocations(
             db, order, so_number, live, document_links, pool_cache,
             batch_line_ids, actor,
+            already_shifted_line_ids=shifted_by_line.keys(),
         )
 
     # What the suggestion warned about, recorded on what it decided (rule 8).
@@ -4371,11 +4395,15 @@ def _apply_one_order(
                 "back_on_board": True,
             }
             # WHERE A PLACED PO/SPO ACTUALLY WENT (D5): `_shift_links_off_retired_lines`
-            # is what settled it (same-order survivor first, review round second re-walk),
-            # keyed by `project_line_id` there since a cancelled row has no board_link of
-            # its own composition to key against.
+            # settles it when a same-order survivor exists (keyed by `project_line_id`
+            # there, since a cancelled row has no board_link of its own composition to key
+            # against); `_execute_reallocations` settles whatever it left untouched (rule 6,
+            # review round second re-walk - no same-order taker, so the cross-order/pool
+            # cascade runs instead, keyed by `r.id` there like a confirmed row). A row is
+            # only ever handled by one or the other, never both, so merging both is safe.
             if r.project_line_id:
                 r.result_json.update(shifted_by_line.get(str(r.project_line_id)) or {})
+            r.result_json.update(reallocated.get(str(r.id)) or {})
         else:
             r.result_json = {"board_link": r.board_link}
 
