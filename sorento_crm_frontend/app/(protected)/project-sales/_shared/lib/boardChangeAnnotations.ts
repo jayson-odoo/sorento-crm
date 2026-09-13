@@ -98,6 +98,15 @@ export interface BoardChangeAnnotation {
   productChangedFrom: string | null;
   /** `10 moved BRW -> BRW-IB, line cancelled` (AC-P3-9), or null. */
   movedTransfer: string | null;
+  /**
+   * WHERE THE HELD QUANTITY ACTUALLY WENT once Apply ran (Slice D): the server's own
+   * executed sentences first, then the documents it gave back to purchasing. Empty on every
+   * row Apply has not written yet, which is what keeps the section off a pending row.
+   *
+   * Optional on the TYPE and never optional in practice: `annotationOf` always fills it,
+   * and the callers that hand-build an annotation predate the field.
+   */
+  whereItWent?: string[];
   /** Which line the change is about, when the batch knows it. Used to match a cell's lines. */
   projectLineId: string | null;
 }
@@ -295,6 +304,25 @@ function proposedParts(row: PlanningChangeRow): SupplyPart[] {
   return heldParts(row.held);
 }
 
+/**
+ * What Apply DID, in the order a person asks it in: what moved, then what was given back.
+ *
+ * The executed sentences are the server's own words, printed verbatim for the same reason the
+ * suggestion is - only the engine knows which document covered what, and re-phrasing here
+ * could only drift from the record. A released document is a bare document number in the
+ * result, so it is the one thing given a sentence around it.
+ */
+function whereItWentOf(row: PlanningChangeRow): string[] {
+  const result = row.result;
+  if (!result) return [];
+  return [
+    ...(result.executed_reallocations ?? []),
+    ...(result.released_documents ?? []).map(
+      (document) => `Released ${document} for purchasing`,
+    ),
+  ];
+}
+
 /** The sentences the engine composed for this row, in its own order. */
 function suggestionLinesOf(row: PlanningChangeRow): string[] {
   return (row.suggestion?.components ?? [])
@@ -341,6 +369,7 @@ export function annotationOf(
     productChangedFrom:
       row.kind === 'product_changed' ? row.from?.item_code ?? null : null,
     movedTransfer: row.moved_transfer ?? null,
+    whereItWent: whereItWentOf(row),
     projectLineId: lineId,
   };
 }

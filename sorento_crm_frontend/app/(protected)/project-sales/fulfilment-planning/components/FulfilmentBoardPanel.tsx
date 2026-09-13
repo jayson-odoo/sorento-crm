@@ -921,19 +921,38 @@ export function FulfilmentBoardPanel({
           continue;
         }
         const lines = confirmLinesFor(contributions, salesOrderId, draft);
-        if (lines.length > 0) {
-          // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders
-          // on two different pending batches each answer their own.
-          // The batches the screen LOADED first (it was opened on one), and the BOARD'S own
-          // statement of the newest pending batch for this order second (AC-B1). Same fact,
-          // two sources: a board reached without `?batch=` loads no batch rows at all, and
-          // sending `null` there confirmed the lines while leaving the change Pending.
-          const orderBatchId =
-            (soNumber ? batchIdBySoNumber.get(soNumber) : undefined) ??
-            standing?.pending_change_batch_id ??
-            null;
-          orders.push({ pso_id: psoId, lines, batch_id: orderBatchId });
+        // DECIDED, AND NOT ONE LINE OF IT COULD BE BUILT. Every line was left out for a
+        // reason `unpostableDecidedFor` already knows (no mirror on the planning record, a
+        // Reserve at a warehouse the board cannot address, a discontinued Buy with no
+        // reason), so the order sends nothing - and said nothing, because a press whose
+        // `orders` came out empty with an empty `skipped` never set `batchResults` at all.
+        // It is reported beside every other order's outcome instead, in the wording the
+        // notice above the block already uses for the lines themselves.
+        if (lines.length === 0) {
+          const blocked = unpostableDecidedFor(contributions, salesOrderId, draft);
+          const everyLineOffTheRecord =
+            blocked.length > 0 && blocked.every((entry) => entry.reason === 'no_mirror');
+          skipped.push({
+            pso_id: psoId,
+            so_number: soNumber,
+            ok: false,
+            error: everyLineOffTheRecord
+              ? 'is not on the planning record yet, so nothing was posted for it. Re-sync the sales order, then confirm again.'
+              : 'had no line this confirmation could post, so nothing was posted for it. The notices above name each line and why.',
+          } as BoardBatchResult);
+          continue;
         }
+        // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders on
+        // two different pending batches each answer their own. The batches the screen LOADED
+        // first (it was opened on one), and the BOARD'S own statement of the newest pending
+        // batch for this order second (AC-B1). Same fact, two sources: a board reached
+        // without `?batch=` loads no batch rows at all, and sending `null` there confirmed
+        // the lines while leaving the change Pending.
+        const orderBatchId =
+          (soNumber ? batchIdBySoNumber.get(soNumber) : undefined) ??
+          standing?.pending_change_batch_id ??
+          null;
+        orders.push({ pso_id: psoId, lines, batch_id: orderBatchId });
       }
       if (orders.length === 0) {
         if (skipped.length > 0) setBatchResults(skipped);

@@ -119,6 +119,7 @@ export function BoardChangeSummary({
   annotation: BoardChangeAnnotation;
 }) {
   const fields = changedFieldsOf(annotation);
+  const whereItWent = annotation.whereItWent ?? [];
   return (
     <div className="space-y-3 text-sm">
       {fields.length > 0 ? (
@@ -179,6 +180,34 @@ export function BoardChangeSummary({
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {/* WHERE IT WENT, once Apply has run (Slice D). After the suggestion, because it
+          answers the question the suggestion raises - the held quantity had to go somewhere,
+          and a planner who reads "Reallocate 202607-S0080 3 to pool" here stops hunting for
+          it on another screen. Absent entirely on a row Apply has not written: a heading
+          over an empty list is a question, not an answer. */}
+      {whereItWent.length > 0 ? (
+        <div
+          data-testid={`board-change-where-${annotation.rowId}`}
+          className="space-y-1"
+        >
+          <p className="text-muted-foreground">Where it went</p>
+          <ul className="space-y-1 font-medium">
+            {whereItWent.map((line, index) => (
+              <li
+                // Two documents can legitimately carry the same sentence, so the position is
+                // the only honest key - the same reason the suggestion list uses one.
+                key={`${index}-${line}`}
+                data-testid="board-change-where-line"
+                className="truncate"
+                title={line}
+              >
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       {/* Kept, but landing after the date the customer now asks for (S12, AC-C6). Said in
