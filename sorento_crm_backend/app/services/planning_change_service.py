@@ -931,10 +931,43 @@ def build_batch(
     for e in entries:
         by_order[str(e["order"].id)].append(e)
 
+    # R1 (one open batch per order, 13 Sep browser walk): an order still carrying an
+    # UNAPPLIED batch with a PENDING row is mid-review - a second Save, or this same
+    # upload naming the order again, is not a second change to review, it is more of the
+    # first one. Newest wins where an order somehow has more than one candidate (there
+    # should only ever be one - this IS the invariant), matching `pending_batch_id_by_
+    # sales_order`'s own "newest wins" rule.
+    open_batch_id_by_order: Dict[str, str] = {}
+    if by_order:
+        for pso_id_found, batch_id_found in (
+            db.query(PlanningChangeRow.project_sales_order_id, PlanningChangeBatch.id)
+            .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+            .filter(
+                PlanningChangeRow.project_sales_order_id.in_(list(by_order.keys())),
+                PlanningChangeBatch.applied_at.is_(None),
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+            )
+            .order_by(PlanningChangeBatch.created_at.desc())
+            .all()
+        ):
+            open_batch_id_by_order.setdefault(str(pso_id_found), str(batch_id_found))
+    open_batches_by_id: Dict[str, PlanningChangeBatch] = {}
+    if open_batch_id_by_order:
+        open_batches_by_id = {
+            str(b.id): b
+            for b in db.query(PlanningChangeBatch)
+            .filter(PlanningChangeBatch.id.in_(set(open_batch_id_by_order.values())))
+            .all()
+        }
+
     # The id is generated here, not left to the column default, so a kept `PlanningChangeRow`
     # can carry `batch_id` before the batch itself is ever added to the session - the empty
     # case (1,307 of 1,308 changed lines on the 10 Sep live measurement) is the COMMON path
     # under the held-or-inquiry gate, so it must not pay for an INSERT it then has to DELETE.
+    # An order with an open batch never lands a row here - it is redirected below - but a
+    # multi-order upload spanning some orders with one and some without still needs a fresh
+    # batch for the ones that don't (the simplest resolution of that case: each order's rows
+    # go to ITS OWN open batch if it has one, and every other order shares this new one).
     batch = PlanningChangeBatch(
         id=str(uuid.uuid4()),
         import_job_id=import_job_id,
@@ -951,10 +984,33 @@ def build_batch(
         str(e["project_line"].id) for e in entries if e.get("project_line") is not None
     ]
 
+    # Which lines an order's open batch ALREADY has a pending row for, so a row for one of
+    # THEM (a second edit of the SAME line) is told apart below from a row for a line the
+    # open batch has never seen (which simply joins it).
+    open_pending_lines_by_batch: Dict[str, Dict[str, PlanningChangeRow]] = {}
+    if open_batches_by_id:
+        for r in (
+            db.query(PlanningChangeRow)
+            .filter(
+                PlanningChangeRow.batch_id.in_(list(open_batches_by_id.keys())),
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+                PlanningChangeRow.project_line_id.isnot(None),
+            )
+            .all()
+        ):
+            open_pending_lines_by_batch.setdefault(str(r.batch_id), {})[
+                str(r.project_line_id)
+            ] = r
+
     kept_orders: set = set()
     kept_rows: List[PlanningChangeRow] = []
+    # Rows appended into an order's EXISTING open batch, keyed by that batch's id, so its
+    # counts are settled against it rather than against the fresh one.
+    kept_rows_by_existing_batch: Dict[str, List[PlanningChangeRow]] = defaultdict(list)
     for pso_id, group in by_order.items():
         order = group[0]["order"]
+        open_batch_id = open_batch_id_by_order.get(pso_id)
+        pending_lines = open_pending_lines_by_batch.get(open_batch_id or "", {})
         active_decision = supply.active_decision(pso_id)
         latest_decision = supply.latest_decision(pso_id)
         revision_no = (
@@ -973,6 +1029,9 @@ def build_batch(
             else False
         )
         for e in group:
+            # Built against the FRESH batch first - `_build_row` only needs a `batch.id`
+            # to stamp; which batch this row actually lands in is decided below, once its
+            # own `project_line_id` is known.
             row = _build_row(
                 db,
                 batch,
@@ -995,20 +1054,60 @@ def build_batch(
                 # batch entirely - not a row worth counting.
                 continue
             kept_orders.add(pso_id)
+            older = pending_lines.get(str(row.project_line_id)) if row.project_line_id else None
+            if open_batch_id and older is None:
+                # R1: a line the order's open batch has not seen yet joins it (same batch
+                # id returned) rather than raising a second batch for the order to review.
+                row.batch_id = open_batch_id
+                kept_rows_by_existing_batch[open_batch_id].append(row)
+                continue
+            if older is not None:
+                # R1's other half: a later change to a line the open batch ALREADY has a
+                # pending row for is not a second opinion beside the first, it replaces
+                # it - superseded in place, reason stated, and the FRESH row below carries
+                # the line forward into a new batch (the open batch's own row for this
+                # line is no longer pending, so `pending_batch_id_by_sales_order` reads
+                # only the new one for the order - still exactly one candidate).
+                older.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
+                older.applied_reason = "Replaced by a later change"
             kept_rows.append(row)
 
-    if not kept_rows:
+    if not kept_rows and not kept_rows_by_existing_batch:
         # Every changed line on this upload/edit failed the held-or-inquiry gate: there is
         # nothing to re-decide, so no batch is ever written for the pill to point at.
         return None
 
-    batch.order_count = len(kept_orders)
-    batch.line_count = len(kept_rows)
-    db.add(batch)
-    for row in kept_rows:
-        db.add(row)
+    if kept_rows:
+        batch.order_count = len({str(r.project_sales_order_id) for r in kept_rows})
+        batch.line_count = len(kept_rows)
+        db.add(batch)
+        for row in kept_rows:
+            db.add(row)
+
+    result_batch = batch if kept_rows else None
+    for existing_id, new_rows in kept_rows_by_existing_batch.items():
+        existing = open_batches_by_id[existing_id]
+        for row in new_rows:
+            db.add(row)
+        db.flush()
+        # An append-only record of everything this batch has ever carried, superseded
+        # rows included - the same reason a batch is never deleted.
+        existing.line_count = (
+            db.query(PlanningChangeRow)
+            .filter(PlanningChangeRow.batch_id == existing.id)
+            .count()
+        )
+        existing.order_count = len({
+            str(pso_id)
+            for (pso_id,) in db.query(PlanningChangeRow.project_sales_order_id)
+            .filter(PlanningChangeRow.batch_id == existing.id)
+            .distinct()
+            .all()
+        })
+        result_batch = result_batch or existing
+
     db.flush()
-    return batch
+    return result_batch
 
 
 def pending_batch_id_by_sales_order(
