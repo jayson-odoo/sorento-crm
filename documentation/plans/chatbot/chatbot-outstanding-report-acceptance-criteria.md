@@ -448,6 +448,41 @@ resolution and the filter set in the console trace.
   own text names the new window (`Order date: <range>`, the report's own date-range format) so
   the customer sees what changed. Evidence: pytest,
   `test_a_date_only_turn_under_the_scope_question_reasks_with_the_new_window`.
+- **AC-1159 [BE]** NEW (R16, owner round 5, 13 Sep 2026, live-trace bug: "outstanding dealer
+  quantity for hanlim" hit an ambiguous CUSTOMER picker, and picking "1" replayed the OLD
+  per-product order summary via `crm_order_management_orders_list` instead of the outstanding
+  scope question). A numbered pick that resolves an ambiguous-customer picker OPENED BY AN
+  OUTSTANDING ASK - `entity_op: "reuse"` (or the parser's equivalent "picked, named nothing
+  new" verdict) against a `disambiguation` roster - resumes the interrupted ask as the SAME
+  `outstanding_scope` question, stamped for the JUST-PICKED customer (`outstanding_filters
+  ["customer_ids"] == [<picked uuid>]`), never a fetch of `crm_order_management_orders_list`.
+  Answering that re-armed question then runs `crm_outstanding_report` for the picked customer
+  (no product, the answered scope, no warehouse leaked in from the picker's own family list).
+  Evidence: pytest, `tests/chatbot/test_outstanding_lane.py::
+  TestOwnerRoundFivePickerAndOfferScope::test_a_customer_pick_after_an_outstanding_ask_arms_
+  the_scope_question`, `test_a_pick_then_a_scope_answer_runs_the_report_for_the_picked_
+  customer`.
+- **AC-1160 [BE]** NEW (R17, owner round 5, 13 Sep 2026). A refinement's filter (R15,
+  `outstanding_filters`) dies with the offer it refined - already true for a NEW ask
+  (`outstanding_pending_dropped`, AC-1143) - and so does the RAW ENTITY that carried it: the
+  persisted session `entities` must not keep an unresolved `hint: "warehouse"` entity (no
+  uuid) alive past the refinement turn that named it. That stale entity is the channel round
+  5's leak used - the parser read it back on a LATER, unrelated ask and it got searched as a
+  customer token, inflating one real family into seven. A brand-new outstanding ask that
+  names its own subject must start from a clean `outstanding_filters` (no inherited
+  `warehouse_codes`, no `location_token`, no dates) exactly as AC-1143 already requires, and
+  this clean start extends to a customer-only new ask, not only a product one. Evidence:
+  pytest, `TestOwnerRoundFivePickerAndOfferScope::
+  test_a_refinement_location_dies_with_the_offer`.
+- **AC-1161 [BE]** NEW (R18, owner round 5, 13 Sep 2026, measured on the prod copy:
+  `customers.customer_name ilike '%hanlim%'` = one real family, `ilike 'STOCK
+  TRANSFER%BRW%'` = a second, unrelated family, both fed into the SAME picker). A
+  warehouse-hinted entity is never a customer token: `gate.py`'s "AMBIGUOUS CUSTOMER" picker
+  (the "Which customer do you mean?" block) must list only the families the CUSTOMER word
+  itself matched - a co-travelling `hint: "warehouse"` entity, however it resolved, never
+  becomes a line in that picker or counts toward "N different companies". Evidence: pytest,
+  `TestOwnerRoundFivePickerAndOfferScope::test_a_warehouse_word_never_enters_the_customer_
+  picker` (direct `gate.run_gate` call, `test_last_cost_gate.py`'s own pattern).
 
 ## Out of scope (backlog)
 

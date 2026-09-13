@@ -3125,3 +3125,353 @@ class TestDateNarrowingUnderAnOpenOffer:
             assert args.get("product_code") != PRODUCT_CODE, (
                 f"the OLD product's offer must not answer for the new one: {captured}"
             )
+
+
+# --------------------------------------------------------------------------- #
+# Owner round 5 (13 Sep 2026, lane stack, prompt v22): a live turn (`outstanding
+# dealer quantity for hanlim`, contact 437264483) hit an ambiguous CUSTOMER picker
+# (7 families: HANLIM TRADING SDN BHD (SRT) plus six "STOCK TRANSFER - BRW TO ..."
+# companies), and picking "1" replayed the OLD per-product order summary via
+# `crm_order_management_orders_list` instead of the outstanding scope question. Trace:
+# the "1" turn's derived entities carried the resolved HANLIM customer PLUS an
+# UNRESOLVED `{"raw": "BRW", "hint": "warehouse", "current_message": false}` entity left
+# over from the PRIOR turn's "only BRW" refinement (R15) - the channel through which a
+# warehouse WORD got searched as a customer token and inflated 1 real family to 7.
+#
+# R16/R17/R18 (owner rulings, 13 Sep 2026), AC-1159/AC-1160/AC-1161.
+# --------------------------------------------------------------------------- #
+
+
+HANLIM_UUID_1 = "11111111-1111-1111-1111-111111111111"
+HANLIM_UUID_2 = "22222222-2222-2222-2222-222222222222"
+HANLIM_CODE_1 = "300-H070"
+HANLIM_CODE_2 = "300-H071"
+
+
+def _seed_open_outstanding_customer_pick(session_factory) -> None:
+    """The state after an outstanding ask ("outstanding dealer quantity for hanlim")
+    hit an ambiguous CUSTOMER picker, in the REAL "did-you-mean" shape a customer
+    picker persists (`selection_context`/`last_result_set` re-seated from
+    `picker_last_result_set`/`picker_selection_context`, `tests/chatbot/
+    test_pass4_item2_last_month_keeps_customer_scope.py::_seed_prior_disambiguation_
+    state`'s own convention) rather than a hand-invented shape.
+
+    `pending` here is this file's OWN proposed name for the signal R16 needs and does
+    not exist yet - "the outstanding ask this picker interrupted" - modelled on the
+    SAME `pending` dict the scope/detail offers already use (`kind` + whatever the
+    kind needs), so a coder wiring R16 has one mechanism to extend, not two. This
+    file does not assert anything about `pending` BEFORE the pick (that is this
+    seed's own choice, not a contract); only what R16 says must be true AFTER it.
+    """
+    roster = [
+        {
+            "idx": 1, "label": "HANLIM TRADING SDN BHD (SRT)", "uuid": HANLIM_UUID_1,
+            "product": HANLIM_CODE_1, "entity_type": "customer",
+        },
+        {
+            "idx": 2, "label": "HANLIM TRADING (JB) SDN BHD (SRT)", "uuid": HANLIM_UUID_2,
+            "product": HANLIM_CODE_2, "entity_type": "customer",
+        },
+    ]
+    _seed_contact(
+        session_factory,
+        variables={
+            "message_type": "business_query",
+            "domain_hint": "order",
+            "entities": [],
+            "selection_context": "disambiguation",
+            "last_result_set": roster,
+            "picker_last_result_set": roster,
+            "picker_selection_context": "disambiguation",
+            "picker_domain": "order",
+            "outstanding_filters": {
+                "product_code": None,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [],
+                "warehouse_codes": [],
+                "location_token": None,
+            },
+            "pending": {"kind": "outstanding_customer_pick", "order_status": "outstanding"},
+        },
+    )
+
+
+class TestOwnerRoundFivePickerAndOfferScope:
+    def test_a_customer_pick_after_an_outstanding_ask_arms_the_scope_question(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """AC-1159/R16: picking the customer that resolved an ambiguous-customer
+        picker, opened by an OUTSTANDING ask, must arm the scope question for the
+        picked customer - never fetch `crm_order_management_orders_list` (today's
+        actual gap, and the owner's own trace)."""
+        _seed_open_outstanding_customer_pick(session_factory)
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1], reference_target="dym", entity_op="reuse",
+                order_status=None,
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-round5-pick-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured == [], (
+            f"the pick must arm the scope question, never fetch the plain order list: "
+            f"{captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" in reply, reply
+        assert "1. Sales orders (not yet transferred to DO)" in reply, reply
+        assert "2. Delivery orders (not yet delivered)" in reply, reply
+        assert "3. Both" in reply, reply
+
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
+            f"the picker's own outstanding ask must be resumed as the scope question, "
+            f"not left in whatever pending kind the picker itself used: {stored.get('pending')!r}"
+        )
+        assert stored.get("outstanding_filters", {}).get("customer_ids") == [HANLIM_UUID_1], (
+            f"the CUSTOMER JUST PICKED (position 1) must be the stored subject: "
+            f"{stored.get('outstanding_filters')}"
+        )
+
+    def test_a_pick_then_a_scope_answer_runs_the_report_for_the_picked_customer(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """AC-1159/R16, continued: answering the re-armed scope question with "3"
+        (both) must run the report for the customer picked in the PRIOR turn - no
+        product, `scope=both`, no warehouse (the picker's own family list is not a
+        location filter)."""
+        _seed_open_outstanding_customer_pick(session_factory)
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1], reference_target="dym", entity_op="reuse",
+                order_status=None,
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-round5-pick-2a",
+            attributes=["sales_orders.outstanding"],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[3],
+            ),
+            text_body="3",
+            msg_id="ZZT-outstanding-round5-pick-2b",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the scope answer must run the report in the same turn"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", name
+        assert args.get("customer_ids") == [HANLIM_UUID_1], (
+            f"the customer picked two turns ago must be the report's subject: {args}"
+        )
+        assert args.get("scope") == "both", args
+        assert not args.get("warehouse_codes"), (
+            f"the customer picker's family list must not leak in as a location filter: {args}"
+        )
+        _result_unused = result
+
+    def test_a_refinement_location_dies_with_the_offer(self, session_factory, monkeypatch) -> None:
+        """AC-1160/R17: after the "only BRW" refinement (R15) narrows an open detail
+        offer by location, the raw warehouse entity that carried the narrowing must
+        NOT survive in the persisted session `entities` past that turn - that is the
+        channel the owner's round-5 leak used (a stale, unresolved `hint: "warehouse"`
+        entity read back by the parser on a LATER, unrelated ask and searched as a
+        customer token). The refinement's OWN filter set (`outstanding_filters`,
+        checked below) is meant to carry the location - `entities` is not.
+
+        Then, on a fresh outstanding ask naming its OWN subject (a customer, no
+        product, no location), `outstanding_filters` must start CLEAN - no
+        `warehouse_codes` from the earlier refinement, no `location_token`, no dates -
+        and the resolver must never be asked to resolve "BRW" as a customer for a
+        message that never mentions it."""
+        from app.models.inventory import Warehouse
+
+        db = session_factory()
+        db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW", warehouse_name="BRW", is_active=True))
+        db.commit()
+        _seed_open_outstanding_detail(
+            session_factory,
+            filters={
+                "product_code": None,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [CUSTOMER_UUID],
+                "warehouse_codes": [],
+                "location_token": None,
+                "scope": "both",
+            },
+            rows=[
+                {"idx": 1, "label": "Sales order list", "value": "so"},
+                {"idx": 2, "label": "Delivery order list", "value": "do"},
+                {"idx": 3, "label": "Both lists", "value": "both"},
+            ],
+        )
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", intent_hint=None, domain_hint=None,
+                entity_op="replace_combine",
+                entities=[
+                    {
+                        "raw": "BRW", "hint": "warehouse", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+                reference_positions=[],
+            ),
+            text_body="only BRW",
+            msg_id="ZZT-outstanding-round5-refine-1",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+        )
+        stored_after_refine = _session_of(session_factory)["variables"]
+        leaked = [
+            e
+            for e in (stored_after_refine.get("entities") or [])
+            if str((e or {}).get("hint") or "").lower() == "warehouse" and not (e or {}).get("uuid")
+        ]
+        assert leaked == [], (
+            f"a refinement's location entity must not outlive the offer in the "
+            f"persisted session `entities` - this is the leak the round-5 trace "
+            f"found: {leaked!r}"
+        )
+
+        # A brand-new ask, its own subject, no scope/location word about the earlier
+        # refinement at all.
+        hanlim_uuid = "44444444-4444-4444-4444-444444444444"
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", intent_hint="check_order", domain_hint="order",
+                entity_op="replace_combine",
+                order_status="outstanding",
+                entities=[
+                    {
+                        "raw": "hanlim", "hint": "customer", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+                reference_positions=[],
+            ),
+            text_body="outstanding dealer quantity for hanlim",
+            msg_id="ZZT-outstanding-round5-new-ask-1",
+            attributes=["sales_orders.outstanding"],
+            matches={"hanlim": {"uuid": hanlim_uuid, "entity_type": "customer", "canonical_code": "300-H070"}},
+        )
+        assert captured == [], (
+            f"a customer-only outstanding ask arms the scope question, it does not "
+            f"fetch: {captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" in reply, reply
+        stored = _session_of(session_factory)["variables"]
+        filters_out = stored.get("outstanding_filters") or {}
+        assert filters_out.get("warehouse_codes") == [], (
+            f"a new ask's filter set must not inherit the earlier refinement's "
+            f"location: {filters_out}"
+        )
+        assert filters_out.get("location_token") is None, filters_out
+        assert filters_out.get("customer_ids") == [hanlim_uuid], filters_out
+        assert filters_out.get("date_filter_start") is None, filters_out
+        assert filters_out.get("date_filter_end") is None, filters_out
+
+    def test_a_warehouse_word_never_enters_the_customer_picker(self) -> None:
+        """AC-1161/R18, at the gate level (`test_last_cost_gate.py`'s own
+        `gate_mod.run_gate` direct-call pattern - the picker's construction is a pure
+        function of `parser` + `resolver`, no session/engine machinery needed to grade
+        it). Reproduces the round-5 trace's actual defect: the resolver, asked to
+        resolve BOTH the ambiguous "hanlim" customer word AND a co-travelling
+        `hint: "warehouse"` token "BRW", answered "BRW" with a CUSTOMER-type match too
+        (the real bug measured on the prod copy: `customers.customer_name ilike
+        '%hanlim%'` = one real family, `ilike 'STOCK TRANSFER%BRW%'` = a second,
+        unrelated family - both fed into `gate.py`'s "AMBIGUOUS CUSTOMER" picker,
+        which today keys ONLY on the resolved `entity_type`, never on which raw token
+        or parser hint it came from). R18 says a warehouse-hinted token is never a
+        customer candidate - the picker must list only the family "hanlim" itself
+        matched.
+
+        If a fix instead makes the RESOLVER never mis-type "BRW" in the first place,
+        this same fixture (a resolver that already returns a customer-type match for
+        it) stops being reachable in production but stays a valid GATE-level regression
+        guard for the rule R18 states - the docstring says so rather than deleting the
+        test, per the brief's "if the resolver seam ... cannot express X, assert on Y
+        and say so" allowance.
+        """
+        resolver = {
+            "tokens": ["hanlim", "BRW"],
+            "resolutions": [
+                {
+                    "token": "hanlim",
+                    "matches": [
+                        {
+                            "entity_type": "customer",
+                            "canonical_code": HANLIM_CODE_1,
+                            "uuid": HANLIM_UUID_1,
+                            "company_code": "SRT",
+                            "display": {"customer_name": "HANLIM TRADING SDN BHD"},
+                        },
+                        {
+                            "entity_type": "customer",
+                            "canonical_code": HANLIM_CODE_2,
+                            "uuid": HANLIM_UUID_2,
+                            "company_code": "SRT",
+                            "display": {"customer_name": "HANLIM TRADING (JB) SDN BHD"},
+                        },
+                    ],
+                },
+                {
+                    "token": "BRW",
+                    "matches": [
+                        {
+                            "entity_type": "customer",
+                            "canonical_code": "300-ST01",
+                            "uuid": "33333333-3333-3333-3333-333333333333",
+                            "company_code": "SRT",
+                            "display": {"customer_name": "STOCK TRANSFER - BRW TO SORENTO"},
+                        },
+                    ],
+                },
+            ],
+        }
+        parser = {
+            "domain_hint": "order",
+            "order_status": "outstanding",
+            "entities": [
+                {
+                    "raw": "hanlim", "hint": "customer", "canonical_code": None,
+                    "current_message": True, "confident": True,
+                },
+                {
+                    "raw": "BRW", "hint": "warehouse", "canonical_code": None,
+                    "current_message": False, "confident": True,
+                },
+            ],
+            "reference_positions": [],
+        }
+        out = gate_mod.run_gate({}, parser=parser, resolver=resolver)
+        assert out.get("gate_passed") is False, out
+        assert "2 different companies" in (out.get("gate_reason") or ""), (
+            f"the warehouse-hinted token must never inflate the customer count: "
+            f"{out.get('gate_reason')!r}"
+        )
+        clarification = out.get("gate_clarification") or ""
+        assert "STOCK TRANSFER" not in clarification.upper(), (
+            f"a warehouse token resolved (however wrongly) as a customer must never "
+            f"become a line in the customer picker: {clarification!r}"
+        )
+        assert "HANLIM TRADING SDN BHD" in clarification, clarification
+        assert "HANLIM TRADING (JB) SDN BHD" in clarification, clarification
