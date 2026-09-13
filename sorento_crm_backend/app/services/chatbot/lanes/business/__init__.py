@@ -149,9 +149,16 @@ def _outstanding_detail_reoffer(filters: dict[str, Any], rows: list[dict[str, An
 
     The option lines are the stored rows themselves, never rebuilt from a scope guess, so
     the customer reads back exactly the list they replied to."""
-    text = "Reply with a number for detail:\n" + "\n".join(
-        f"{jsc.js_string(row.get('idx'))}. {jsc.js_string(row.get('label'))}" for row in rows
-    )
+    # AC-1102: the SAME text the customer is already looking at, kept verbatim from the
+    # turn that offered it (`fetch._outstanding_offer_block`). Re-rendering it here is
+    # what produced two wordings for one offer: a single-scope report offers R9's one
+    # sentence and the re-print answered with the numbered form. The rebuild below is the
+    # fallback for a filter set stored before the text was carried.
+    text = jsc.js_string(filters.get("offer_text") or "").strip()
+    if not text:
+        text = "Reply with a number for detail:\n" + "\n".join(
+            f"{jsc.js_string(row.get('idx'))}. {jsc.js_string(row.get('label'))}" for row in rows
+        )
     structured: dict[str, Any] = {
         "response": text,
         "outstanding_ask": {

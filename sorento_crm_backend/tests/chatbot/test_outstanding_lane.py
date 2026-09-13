@@ -1897,6 +1897,52 @@ class TestDetailOfferIsSticky:
         stored = _session_of(session_factory)["variables"]
         assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", stored.get("pending")
 
+    def test_the_reprint_uses_the_same_offer_form_the_report_used(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Seen on the restarted stack, 13 Sep 2026: an SO-only report offers its detail
+        as R9's single sentence (`Reply 1 for the sales order list.`), and the re-print
+        then answered with the NUMBERED form - two different wordings for the same offer,
+        one after the other, in the same conversation. The re-print must be the SAME text
+        the customer was already shown."""
+        _seed_contact(session_factory, variables={})
+        so_only = {**REPORT_HIT, "do": None, "do_by_location": [], "do_by_customer": [], "do_rows": []}
+        result1, captured1 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="so_outstanding"),
+            text_body="SRTWT7445 sales order outstanding",
+            msg_id="ZZT-outstanding-reprint-form-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=so_only,
+        )
+        assert captured1, "the report must run"
+        reply1 = (result1.reply or {}).get("text") or ""
+        assert "Reply 1 for the sales order list." in reply1, (
+            f"the report itself must use R9's single-line offer: {reply1!r}"
+        )
+
+        result2, captured2 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], user_goal="saying something else",
+            ),
+            text_body="hmm",
+            msg_id="ZZT-outstanding-reprint-form-2",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured2 == [], f"a re-print fetches nothing: {captured2}"
+        reply2 = (result2.reply or {}).get("text") or ""
+        assert "Reply 1 for the sales order list." in reply2, (
+            f"the re-print must use the SAME offer form the report used: {reply2!r}"
+        )
+        assert "Reply with a number for detail:" not in reply2, (
+            f"the numbered form is for TWO options; this offer has one: {reply2!r}"
+        )
+
     def test_detail_offer_drops_on_a_new_ask(self, session_factory, monkeypatch) -> None:
         """A product code after the report is a NEW ASK, not a pick against the old
         offer: a fresh report for the NEW product runs, and the old offer is gone -

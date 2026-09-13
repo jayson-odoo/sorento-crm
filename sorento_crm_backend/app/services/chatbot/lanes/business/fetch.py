@@ -1446,6 +1446,27 @@ def outstanding_product_code(entities: Any, semantic_input: Any) -> Any:
     return None
 
 
+#: The offer BLOCK the presenter appended, in either form: R9's single sentence, or the
+#: numbered list and every option line under it, to the end of the reply.
+_OFFER_BLOCK_RE = re.compile(
+    r"(?ms)^(?:Reply \d+ for the .+? list\.|Reply with a number for detail:\n(?:\d+\..*\n?)+)\s*\Z"
+)
+
+
+def _outstanding_offer_block(text: str) -> str:
+    """The exact bytes of the offer the customer was shown, or "".
+
+    Kept VERBATIM rather than re-rendered (AC-1102, 13 Sep 2026): the offer's wording is
+    the MCP presenter's, the backend container cannot import that module, and a second
+    renderer here drifted from it the first time the presenter's wording changed - a
+    single-scope report offered `Reply 1 for the sales order list.` and its own re-print
+    answered with the numbered form, two wordings for one offer in one conversation.
+    Storing what was rendered is the only copy that cannot disagree with itself.
+    """
+    match = _OFFER_BLOCK_RE.search(text or "")
+    return match.group(0).strip() if match else ""
+
+
 def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
     """The SAME `outstanding_filters` shape `business/__init__.py::_outstanding_filters_from`
     builds for the scope-question ask - the detail offer carries the identical filter
@@ -1510,7 +1531,10 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         {
             "kind": "outstanding_detail",
             "last_result_set": offer,
-            "filters": _outstanding_filters_from_ctx(ctx),
+            # NOT a filter: the offer's own text, carried in the same bag because it
+            # travels to exactly the same place and is needed by exactly the same turn -
+            # the one that re-prints an offer the customer has not answered yet.
+            "filters": {**_outstanding_filters_from_ctx(ctx), "offer_text": _outstanding_offer_block(text)},
         }
         if offer
         else None
