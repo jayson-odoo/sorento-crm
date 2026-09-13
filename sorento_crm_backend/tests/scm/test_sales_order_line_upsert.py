@@ -529,3 +529,39 @@ def test_editing_a_line_with_an_unknown_warehouse_code_is_a_404(db, world):
     db.expire_all()
     row = db.get(SalesOrderLine, line.id)
     assert row.warehouse_id is None, "the refused write must not half-apply"
+
+
+def test_editing_a_core_lines_product_updates_the_adopted_mirrors_product_too(db, world):
+    """R5: an id-matched edit that swaps the SKU (the line id is kept) must move the
+    ADOPTED mirror's own `product_id` too - left disagreeing, the mirror would keep
+    naming the OLD product forever against the core line it reconciles to."""
+    so, line = _uploaded_order(db, world)
+    project_so = ProjectSalesOrder(
+        id=_u(), project_id=None, provisional_ref=unique_code(MARKER), status=SO_STATUS_DRAFT,
+    )
+    db.add(project_so)
+    db.flush()
+    mirror_line = ProjectSalesOrderLine(
+        id=_u(), project_sales_order_id=project_so.id, core_sales_order_line_id=line.id,
+        line_no=1, product_id=world["product_a"].id, qty=10,
+    )
+    db.add(mirror_line)
+    db.flush()
+
+    SalesOrderService(db).update(
+        so.id,
+        SalesOrderUpdate(lines=[{
+            "id": line.id, "sku": world["product_b"].product_code, "qty_ordered": 10,
+            "uom": "",
+        }]),
+        user_id=None,
+    )
+
+    db.expire_all()
+    refreshed_core = db.get(SalesOrderLine, line.id)
+    assert refreshed_core.product_id == world["product_b"].id
+
+    refreshed_mirror = db.get(ProjectSalesOrderLine, mirror_line.id)
+    assert refreshed_mirror.product_id == world["product_b"].id, (
+        "the mirror must name the SAME product as the core line it reconciles to"
+    )

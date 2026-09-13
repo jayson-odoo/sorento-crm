@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.database import engine
 
+from app.models.order import Customer
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.project_so import (
     INQUIRY_CANCELLED,
@@ -47,6 +48,7 @@ from app.models.project_so import (
     OrderInquiryLink,
     OrderInquiryRow,
 )
+from app.models.sales_agent import SalesAgent
 from app.models.stock_transfer import TRANSFER_MOVED, StockTransfer
 from app.services import planning_change_service, project_seed_service
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
@@ -54,6 +56,7 @@ from app.services.scm.outstanding_diff import (
     CLOSED,
     DATE_AND_QTY_CHANGED,
     DATE_MOVED,
+    PRODUCT_CHANGED,
     QTY_CHANGED,
     Change,
     Diff,
@@ -1663,3 +1666,193 @@ def test_committed_v_counts_the_part_of_the_new_quantity_nobody_has_bought(api):
     assert Decimal(str(committed)) == Decimal("15"), (
         "the part of the new quantity nobody has bought is exactly what is left to buy"
     )
+
+
+# ---------------------------------------------------------------------------
+# The board route carries cancelled and non-open change rows on the wire
+# ---------------------------------------------------------------------------
+
+
+def _cancelled_line_fixture(api):
+    """Two lines of one order, both confirmed as Buy; line 2 is then CANCELLED (the real
+    SCM removal path's own `line_status`, never `closed`) and its own `cancelled` change
+    row stays PENDING (never applied) - the exact shape `_cancelled_pending_change_rows`
+    reads (`SalesOrderLine.line_status == "cancelled"`, `PlanningChangeRow.kind ==
+    "cancelled"`, batch unapplied).
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                        required_date=WAS_1)
+    core_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                        required_date=WAS_2)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    line_1 = _project_line(db, order, line_no=1, product=world.product, core_line=core_1)
+    line_2 = _project_line(db, order, line_no=2, product=world.product, core_line=core_2)
+    db.commit()
+
+    response = _confirm(client, order.id, [
+        _line_payload(line_1.id, buy_qty="10"),
+        _line_payload(line_2.id, buy_qty="10"),
+    ])
+    assert response.status_code == 200, response.text
+
+    core_2.line_status = "cancelled"
+    line_2.qty = Decimal("0")
+    db.commit()
+
+    change = _change(CLOSED, core_2, so_number=core_so.so_number, old_date=WAS_2,
+                     new_date=None, old_qty="10", new_qty="0")
+    batch = _build(world, [change], core_so, [str(core_2.id)])
+    assert batch is not None
+    return {
+        "client": client, "world": world, "order": order, "core_so": core_so,
+        "batch": batch, "core_1": core_1, "core_2": core_2, "line_1": line_1,
+        "line_2": line_2,
+    }
+
+
+def test_the_boards_contribution_wire_carries_cancelled_and_its_batch_id(api):
+    """R1: the board ROUTE (not the service) for an order with a pending cancelled row.
+
+    The service already builds `cancelled` / `pending_change_batch_id` into the
+    contribution dict (`_contribution` in `project_fulfilment_board_service.py`) - the
+    wire never gets them because `BoardContribution` (`app/schemas/project_board.py`)
+    does not declare either field, and `response_model` drops what a schema does not
+    name (`project_response_model_drops_undeclared_fields`).
+    """
+    fixture = _cancelled_line_fixture(api)
+    client = fixture["client"]
+    core_so = fixture["core_so"]
+    core_1, core_2 = fixture["core_1"], fixture["core_2"]
+    batch = fixture["batch"]
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    contributions = body["contributions"]
+
+    cancelled = [c for c in contributions if c["line_id"] == str(core_2.id)]
+    assert len(cancelled) == 1, contributions
+    assert cancelled[0]["cancelled"] is True, cancelled[0]
+    assert cancelled[0]["pending_change_batch_id"] == str(batch.id), cancelled[0]
+
+    ordinary = [c for c in contributions if c["line_id"] == str(core_1.id)]
+    assert len(ordinary) == 1, contributions
+    assert ordinary[0]["cancelled"] is False, ordinary[0]
+
+
+def test_the_boards_cancelled_contribution_carries_location_and_customer_fields(api):
+    """R2: same wire contribution, its location/customer/agent fields.
+
+    `_cancelled_pending_change_rows` builds its `_Row` with `warehouse_id`,
+    `customer_id`, `customer_name` and `agent_code` all left unset - so today
+    `unplannable` reads True (`_Row.unplannable` has no location) and the customer/agent
+    fields read None, even though the order itself names all four.
+    """
+    fixture = _cancelled_line_fixture(api)
+    client = fixture["client"]
+    world = fixture["world"]
+    core_so = fixture["core_so"]
+    core_2 = fixture["core_2"]
+
+    customer = Customer(
+        id=_uid(), company_id=world.company_id, customer_code=f"ZZT-{_uid()[:8]}",
+        customer_name=f"{MARKER} customer",
+    )
+    agent = SalesAgent(id=_uid(), sales_agent=f"ZZT-{_uid()[:8]}")
+    world.db.add_all([customer, agent])
+    world.db.flush()
+    core_so.customer_id = customer.id
+    core_so.sales_agent_id = agent.id
+    world.db.commit()
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    contributions = response.json()["contributions"]
+    cancelled = [c for c in contributions if c["line_id"] == str(core_2.id)]
+    assert len(cancelled) == 1, contributions
+    row = cancelled[0]
+
+    assert row["unplannable"] is False, row
+    assert row["fulfilment_location"] == world.own_wh.warehouse_code, row
+    assert row["customer_name"] == customer.customer_name, row
+    assert row["customer_id"] == str(customer.id), row
+    assert row["agent_code"] == agent.sales_agent, row
+
+
+def test_a_pending_product_changed_row_on_a_closed_and_delivered_line_still_appears_on_the_board(
+    api,
+):
+    """R3: a `product_changed` row whose core line ended up fully delivered and closed
+    (qty_ordered 1, qty_delivered 1) must still surface on the board while its change is
+    PENDING, exactly the way a `cancelled` row does - `_cancelled_pending_change_rows`
+    filters `PlanningChangeRow.kind == "cancelled"` only, so a `product_changed` row is
+    absent from `contributions` today even though nobody has decided it yet.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    old_product = world.product
+    new_product = _product(db)
+    core_line = _core_line(
+        db, core_so, old_product, world.own_wh, qty_ordered="1",
+        required_date=WAS_1,
+    )
+    order = _project_so(db, world.project, so_id=core_so.id,
+                         autocount_doc_no=core_so.so_number)
+    project_line = _project_line(db, order, line_no=1, product=old_product,
+                                  core_line=core_line)
+    db.commit()
+
+    # Held (the gate `build_batch` requires - AC-G1), then delivered/closed and the
+    # product swapped, which is the shape the book upload itself produces for a fully
+    # fulfilled line whose item code changed on a later revision.
+    response = _confirm(client, order.id, [
+        _line_payload(project_line.id, buy_qty="1", buy_reason="ZZT no stock anywhere"),
+    ])
+    assert response.status_code == 200, response.text
+
+    core_line.qty_delivered = Decimal("1")
+    core_line.line_status = "closed"
+    core_line.product_id = new_product.id
+    db.commit()
+
+    change = Change(
+        PRODUCT_CHANGED, core_so.so_number, new_product.product_code,
+        world.own_wh.warehouse_code,
+        before=Line(doc_number=core_so.so_number, item_code=old_product.product_code,
+                    location=world.own_wh.warehouse_code, qty=1.0, required_date=WAS_1,
+                    row_ref=str(core_line.id)),
+        after=Line(doc_number=core_so.so_number, item_code=new_product.product_code,
+                   location=world.own_wh.warehouse_code, qty=1.0, required_date=WAS_1,
+                   row_ref=str(core_line.id)),
+    )
+    batch = _build(world, [change], core_so, [str(core_line.id)])
+
+    from app.models.planning_change import PlanningChangeRow
+
+    change_row = (
+        db.query(PlanningChangeRow).filter(PlanningChangeRow.batch_id == batch.id).one()
+    )
+    assert change_row.kind == "product_changed", change_row.kind
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    contributions = response.json()["contributions"]
+
+    matches = [
+        c for c in contributions if c.get("pending_change_batch_id") == str(batch.id)
+    ]
+    assert len(matches) == 1, contributions
+    assert matches[0]["line_no"] == project_line.line_no, matches[0]
+    assert matches[0]["qty"] == "0", matches[0]
+

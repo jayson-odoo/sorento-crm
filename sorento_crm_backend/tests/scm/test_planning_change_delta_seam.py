@@ -656,3 +656,54 @@ def test_qty_up_covered_by_a_step_3_supply_borrow_composes_and_confirms():
         assert linked_row.so_line_id == world["line"].id, (
             "the placement link should move to THIS line, not stay on nobody's row"
         )
+
+
+def test_an_amended_reserve_posted_with_no_location_key_reads_back_carrying_one():
+    """R4: an amend posted through the DECISION ROUTE (`PUT .../rows/{row_id}`) with a
+    Reserve component `{"warehouse_id": <BRW id>, "qty": ...}` - no `location` key, the
+    shape `ConfirmReserveComponent` accepts.
+
+    `_validate_composition_shape` DOES backfill `location` onto the stored `composition_
+    json` (measured: `fresh.composition_json["reserve"][0]["location"]` already reads
+    "ZZTBRW-...") - the gap is on the WIRE. `app/schemas/planning_change.py`'s own
+    `PlanningChangeRow.composition` is typed `Optional[ConfirmLine]`, the SAME schema the
+    route accepts as INPUT (`ConfirmReserveComponent`: `warehouse_id` + `qty` only, no
+    `location` field) - so the route's response coerces the stored dict back through the
+    input shape and drops the location it just wrote, and a reader of the route's own
+    response (never the row directly off the database) gets a KeyError.
+
+    The composition must add up to the row's own `open_qty` (`_validate_composition_
+    shape`'s 422 otherwise) - measured directly as the qty_up's WHOLE new quantity (149),
+    not the 15-unit increment over what was already held, so the whole 149 is reserved at
+    the one location rather than split across a kept 134 and a new 15.
+    """
+    from tests.test_planning_changes import BASE, _client, _restore
+
+    with blank_session() as db:
+        world = _held_reserve_world(db, qty="134")
+        batch = _change_and_batch(db, world, new_qty="149")
+        row = _only_row(db, batch)
+
+        client, originals = _client(db, world["actor"])
+        try:
+            response = client.put(
+                f"{BASE}/planning-changes/{batch.id}/rows/{row.id}",
+                json={
+                    "decision": "amend",
+                    "composition": {
+                        "project_line_id": str(world["line"].id),
+                        "reserve": [
+                            {"warehouse_id": str(world["own"].id), "qty": "149"}
+                        ],
+                    },
+                },
+            )
+        finally:
+            _restore(originals)
+        assert response.status_code == 200, response.text
+
+        wire_composition = response.json()["composition"]
+        assert wire_composition["reserve"][0]["location"] == world["own"].warehouse_code, (
+            wire_composition
+        )
+
