@@ -1404,25 +1404,29 @@ class FulfilmentBoardService:
         CLOSED OUT - cancelled, or otherwise no longer open demand - still has a home on
         the board while a change row about it is still PENDING.
 
-        `is_open_demand()` (`_demand_rows`) rightly drops such a line out of ordinary
-        demand - there is nothing left to plan for it - but CS still has to SEE and decide
-        the row, and `_demand_rows`' own query is where it would otherwise vanish without
-        a trace between the book upload and the next Confirm. NOT scoped to `kind ==
-        "cancelled"` alone: a `product_changed` row on a line since fully delivered (closed,
+        PURE BOOK STATUS (S2, review round): `line_status != 'open' OR demand_qty() <= 0`,
+        deliberately NOT `~is_open_demand()`. `is_open_demand()` also requires
+        `purchasing_status != 'covered'`, and a covered-but-still-open, still-owed line is
+        a PERSON's ruling ("no purchase needed") - never "the book closed this line". That
+        line belongs in ordinary demand (`_demand_rows` excludes it correctly, via
+        `is_open_demand()`), and must NOT also read as a non-open row here: the two
+        predicates are deliberately NOT exact complements, this one and `is_open_demand()`
+        agree on every OTHER case (closed line status, or nothing left owed), and diverge
+        only on `purchasing_status == 'covered'`. NOT scoped to `kind == "cancelled"`
+        alone: a `product_changed` row on a line since fully delivered (closed,
         `qty_delivered == qty_ordered`, an honest drift - see `_carry_snapshot_has_drifted`)
-        is just as invisible to `_demand_rows` and just as undecided, so the same predicate
-        that already excludes it from ordinary demand (`~is_open_demand()`) is what admits
-        it here, whatever kind its own pending row carries. Read separately rather than
-        folded into `_demand_rows`'s shared predicate (`is_open_demand()` is read by the
-        netting engine and the worklist too, and neither of those wants a closed-out line
-        back): the ladder never runs for one (`qty` is forced to zero, `qty_delivered` is
-        read straight off the core line, UNCHANGED by a product change - the delivered
-        figure is a fact about the OLD product, not something this read invents), and
-        `_contribution` prints it read-only - the batch it is pending in, nothing to
-        compose. `cancelled` is true only when the row's own `kind` actually is
-        "cancelled" (R3): a product change is a different verdict and must not wear the
-        same pill. Absent again the moment that row applies (`applied_state` stops being
-        `pending`).
+        is just as invisible to `_demand_rows` and just as undecided, so the same book-
+        status predicate admits it here too, whatever kind its own pending row carries.
+        Read separately rather than folded into `_demand_rows`'s shared predicate
+        (`is_open_demand()` is read by the netting engine and the worklist too, and
+        neither of those wants a closed-out line back): the ladder never runs for one
+        (`qty` is forced to zero, `qty_delivered` is read straight off the core line,
+        UNCHANGED by a product change - the delivered figure is a fact about the OLD
+        product, not something this read invents), and `_contribution` prints it read-only
+        - the batch it is pending in, nothing to compose. `cancelled` is true only when the
+        row's own `kind` actually is "cancelled" (R3): a product change is a different
+        verdict and must not wear the same pill. Absent again the moment that row applies
+        (`applied_state` stops being `pending`).
         """
         if not so_numbers:
             return []
@@ -1450,7 +1454,7 @@ class FulfilmentBoardService:
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status == "open",
                 SalesOrder.demand_class == "project",
-                ~is_open_demand(),
+                (SalesOrderLine.line_status != "open") | (demand_qty() <= 0),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
                 PlanningChangeBatch.applied_at.is_(None),
             )
@@ -1475,6 +1479,10 @@ class FulfilmentBoardService:
                     customer_name=customers.get(customer_id or ""),
                     agent_code=agent.sales_agent if agent else None,
                     agent_label=agent.person_label if agent else None,
+                    # Same field `_demand_rows` sets, same reason (nit, review round): the
+                    # cell's stock table reads the whole warehouse-suffix group off this,
+                    # and a non-open row is shown beside ordinary demand on the same board.
+                    agent_location_group=agent.location_group if agent else None,
                     line_no=change_row.line_no,
                     item_code=change_row.item_code,
                     product_id=str(core_line.product_id) if core_line.product_id else None,
