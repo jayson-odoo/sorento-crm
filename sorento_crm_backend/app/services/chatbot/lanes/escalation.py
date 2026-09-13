@@ -71,8 +71,16 @@ OUT_OF_SCOPE_REPLY = (
 # copy (the raw slug `customer_service` was reaching WhatsApp).
 ROUTED_TO_PIC_REPLY = (
     "This inquiry has been routed to the respective person-in-charge (PIC) from {team} "
-    "team. We will get back to you soon. Thanks for your patience."
+    "team{brand}. We will get back to you soon. Thanks for your patience."
 )
+
+# Owner ruling D8 (console pass, 13 Sep 2026): the marketing teams are split by BRAND among
+# their members, so "from marketing product team" alone does not tell the dealer which of them
+# is picking it up, and the brand is the one fact that does. The fragment is EMPTY for every
+# other team and for a turn that resolved no brand, which is what keeps the sentence every
+# other escalation sends byte-identical (`test_assignment_actions_in_order` grades it whole).
+BRAND_NAMED_TEAMS = ("marketing_product", "marketing_promotion")
+ROUTED_TO_PIC_BRAND = " handling {brand}"
 
 # `Call 'sub-add-comment-respond'`'s `comment`, and the timezone its DateTime conversion
 # uses. Asia/Kuala_Lumpur is +08:00 with no DST, so a fixed offset is the whole rule.
@@ -682,16 +690,28 @@ def _human_intervention(
     # D3, and it runs ONLY when this turn named no product of its own: the conversation's
     # current product carries, but only from a turn that was already on the team this
     # escalation lands on.
-    carried = _carried_brand(ctx, context_item, services, landed) if product is None else None
+    carried, carried_name = (
+        _carried_brand(ctx, context_item, services, landed) if product is None else (None, None)
+    )
+    landed_item = _landed_item(
+        context_item,
+        ctx=ctx,
+        team=team,
+        landed=landed,
+        product=product,
+        carried=carried,
+        carried_name=carried_name,
+    )
     actions = _assign(
         ctx,
-        _landed_item(
-            context_item, ctx=ctx, team=team, landed=landed, product=product, carried=carried
-        ),
+        landed_item,
         landed,
         services,
         assignee=assignee,
         product_line=_product_line(ctx, product),
+        # OFF THE LANDED ITEM, the same object `_next_assignee_body` reads `brand_code` from,
+        # so the copy and the draw cannot disagree about the brand (D8).
+        brand_name=jsc.get(landed_item, "brand_name"),
     )
     return {**result, "actions": actions, "pending": None}
 
@@ -778,7 +798,7 @@ def _carry_ctx(ctx: dict[str, Any], products: list[dict[str, Any]]) -> dict[str,
 
 def _carried_brand(
     ctx: dict[str, Any], context_item: dict[str, Any], services: Any, landed: Any
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """D3: the brand of the product the conversation is about, or None. One extra resolve.
 
     The rule is the owner's (D3) and the discriminator is the LANDED team: the previous
@@ -793,16 +813,18 @@ def _carried_brand(
     only, through the same seam and therefore the same savepoint as the main one.
     """
     if jsc.nullish_str(landed).strip().lower() != jsc.nullish_str(_carried_team(ctx)).strip().lower():
-        return None
+        return None, None
     products = _carried_products(ctx)
     if not products:
-        return None
+        return None, None
     # NO did-you-mean on this rung: the customer did not type this code on this turn, so a
     # picker about it would answer a question nobody asked. A miss simply carries no brand.
     resolved = _resolve_product(
         _carry_ctx(ctx, products), context_item, services, offer_did_you_mean=False
     )
-    return jsc.get(resolved, "brand_code") if resolved is not None else None
+    if resolved is None:
+        return None, None
+    return jsc.get(resolved, "brand_code"), jsc.get(resolved, "brand_name")
 
 
 def _rows_this_turn_named(ctx: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -842,6 +864,21 @@ def _rows_this_turn_named(ctx: dict[str, Any], rows: list[dict[str, Any]]) -> li
         if _fold_code(jsc.get(row, "canonical_code")) in codes
         or jsc.js_string(jsc.get(row, "uuid")) in uuids
     ]
+
+
+def _brand_name_of(row: Any) -> str | None:
+    """`display.brand.brand_name`, verbatim - the catalogue's own spelling of the brand.
+
+    The DISPLAY name, for customer copy, beside `_brand_of`'s routing CODE. It comes off the
+    same resolved row (`references.py` stamps `{brand_id, brand_code, brand_name}` from
+    `brands`), so no lookup and no second seam: the copy can only ever name the brand the
+    draw was made with. Not title-cased or otherwise rewritten here - "NO LOGO" and
+    "American Standard" are the catalogue's spelling and re-casing them would rewrite it at
+    the customer (the same rule `tail/compile_state._VERBATIM_KEYS` states for brand).
+    """
+    brand = jsc.get(jsc.get(row, "display"), "brand")
+    name = jsc.get(brand, "brand_name") if isinstance(brand, dict) else None
+    return jsc.js_string(name).strip() if jsc.truthy(name) else None
 
 
 def _brand_of(row: Any) -> str | None:
@@ -904,6 +941,7 @@ def _resolve_product(
     )
     did_you_mean = [r for r in jsc.array(jsc.get(answer, "did_you_mean")) if jsc.truthy(r)]
     brands = list(dict.fromkeys(b for b in (_brand_of(r) for r in resolved) if b))
+    names = list(dict.fromkeys(n for n in (_brand_name_of(r) for r in resolved) if n))
     code = jsc.get(resolved[0], "canonical_code") if len(resolved) == 1 else None
     # D6: DID-YOU-MEAN FIRST, then which team. Nothing is assigned on this turn - the rows
     # go out and the escalation is remembered on the question they are frozen onto.
@@ -919,6 +957,9 @@ def _resolve_product(
         # a code twin across companies, and both twins route to the same brand's member.
         # Several that disagree name none: a guess there picks a person for the wrong brand.
         "brand_code": brands[0] if len(brands) == 1 else None,
+        # The display name travels with the code and is kept only when the CODE is
+        # unambiguous, so the copy cannot name one brand while the draw uses another.
+        "brand_name": names[0] if (len(brands) == 1 and len(names) == 1) else None,
         "code": code,
         "ask": ask,
         "resolved": resolved,
@@ -1122,6 +1163,7 @@ def _landed_item(
     landed: Any,
     product: dict[str, Any] | None,
     carried: str | None = None,
+    carried_name: str | None = None,
 ) -> dict[str, Any]:
     """The item the assignment is built from: the LANDED team's axes, never the inherited.
 
@@ -1148,6 +1190,11 @@ def _landed_item(
         item = {
             **item,
             "brand_code": product["brand_code"],
+            # DISPLAY ONLY, and only when this turn resolved the brand itself: the customer
+            # copy reads it (D8) and nothing else does. An axis that supplies a code without a
+            # name - the legacy same-team carry, a stated brand - leaves it None and the copy
+            # stays as it was, because printing the CODE is what D8 says not to do.
+            "brand_name": product.get("brand_name"),
             "routing_source": (
                 "resolved_product" if product["brand_code"] else item.get("routing_source")
             ),
@@ -1156,7 +1203,12 @@ def _landed_item(
         # D3's carry, judged against the landed team (`_carried_brand`). Below this turn's
         # own product and above the legacy axes, which is the precedence the plan's steps
         # 1 to 3 describe.
-        item = {**item, "brand_code": carried, "routing_source": "carried_product"}
+        item = {
+            **item,
+            "brand_code": carried,
+            "brand_name": carried_name,
+            "routing_source": "carried_product",
+        }
     return item
 
 
@@ -1632,6 +1684,7 @@ def _assign(
     *,
     assignee: Any = None,
     product_line: str = "",
+    brand_name: Any = None,
 ) -> list[dict[str, Any]]:
     """Draw an assignee, start the SLA clock, and build the four actions in live's order.
 
@@ -1663,6 +1716,7 @@ def _assign(
         dry_run=False,
         preview=False,
         product_line=product_line,
+        brand_name=brand_name,
     )
 
 
@@ -1676,6 +1730,7 @@ def _assignment_actions(
     dry_run: bool,
     preview: bool,
     product_line: str = "",
+    brand_name: Any = None,
 ) -> list[dict[str, Any]]:
     """The four actions, in the order the live graph performs them.
 
@@ -1701,7 +1756,9 @@ def _assignment_actions(
         actions.append(action)
     comment: dict[str, Any] = {
         "kind": "add_comment",
-        "text": _comment_text(ctx, team, sla, product_line=product_line),
+        "text": _comment_text(
+            ctx, team, sla, product_line=product_line, brand_name=brand_name
+        ),
         # The RESPOND user id, not the CRM one, and exactly one of them: the executor maps
         # this to `sub-add-comment-respond`'s `user_id`, which is what respond.io needs to
         # turn a comment into a mention. `assign_conversation` above carries the same id.
@@ -1711,8 +1768,28 @@ def _assignment_actions(
     if preview:
         comment["preview"] = True
     actions.append(comment)
-    actions.append(_send_message(ROUTED_TO_PIC_REPLY.format(team=_pretty_team(team)), dry_run))
+    actions.append(
+        _send_message(
+            ROUTED_TO_PIC_REPLY.format(
+                team=_pretty_team(team), brand=_brand_fragment(team, brand_name)
+            ),
+            dry_run,
+        )
+    )
     return actions
+
+
+def _brand_fragment(team: Any, brand_name: Any) -> str:
+    """" handling Sorento", or "" - owner ruling D8.
+
+    TWO conditions, both required: the landed team is one whose members are split by brand
+    (`BRAND_NAMED_TEAMS`), and this turn actually resolved a brand NAME to print. Everything
+    else gets the empty string, which is the sentence every escalation has always sent.
+    """
+    if jsc.nullish_str(team).strip().lower() not in BRAND_NAMED_TEAMS:
+        return ""
+    name = jsc.js_string(brand_name).strip() if jsc.truthy(brand_name) else ""
+    return ROUTED_TO_PIC_BRAND.format(brand=name) if name else ""
 
 
 def _clarify_actions(text: Any, *, options: list[str], dry_run: bool) -> list[dict[str, Any]]:
@@ -1884,7 +1961,7 @@ def _input_message(ctx: dict[str, Any]) -> str:
 
 
 def _comment_text(
-    ctx: dict[str, Any], team: Any, sla: Any, *, product_line: str = ""
+    ctx: dict[str, Any], team: Any, sla: Any, *, product_line: str = "", brand_name: Any = None
 ) -> str:
     """`Call 'sub-add-comment-respond'`'s `comment`, byte for byte.
 
@@ -1908,7 +1985,10 @@ def _comment_text(
         space_id=_space_id(ctx), contact_id=jsc.js_string(contact_id), message_id=jsc.js_string(message_id)
     )
     return (
-        f"Team: {jsc.js_string(team)}\n"
+        # The SAME fragment the customer copy carries (D8), so the note the PIC reads and the
+        # sentence the dealer reads name the same brand or neither does. The slug stays first,
+        # which is what the PIC searches the CRM by.
+        f"Team: {jsc.js_string(team)}{_brand_fragment(team, brand_name)}\n"
         # AC-1130, and the ONE addition to the ported body: the code the customer named.
         # Empty on a turn that named no product, so the comment every other escalation turn
         # writes is byte-identical to the n8n one it replaced.
