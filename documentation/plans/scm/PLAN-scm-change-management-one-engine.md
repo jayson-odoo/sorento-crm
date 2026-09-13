@@ -435,55 +435,60 @@ behind it, already inside a dialog of its own. No backend field was added for an
 an unapplied batch with a PENDING row appends its rows to that batch instead of minting a
 new one, so `pending_batch_id_by_sales_order` always has exactly one candidate; a new row
 for a line the open batch already has a pending row for supersedes the older one in place
-(`applied_state = superseded`, reason "Replaced by a later change") and lands in a FRESH
-batch instead, since the two rows cannot coexist as one pending row. Passes its own two
-acceptance tests (`tests/scm/test_planning_change_one_open_batch.py::test_a_second_save_
-on_an_order_with_a_pending_batch_appends_to_it` and `::test_a_second_change_on_the_same_
-line_supersedes_the_pending_row`). The same append rule for a DIFFERENT line regresses a
-pre-existing test built on the old one-batch-per-save assumption (`tests/scm/test_planning_
-change_diff_parity.py::test_re_adding_the_same_product_after_a_cancellation_creates_a_new_
-open_line`) and this same file's own `_so400884_shape` fixture (three separate `build_batch`
-calls for three DIFFERENT lines of one order, read back via `_only_row`, which asserts
-exactly one row per batch) - both are being rewritten to R1 by the tester rather than R1
-being narrowed, per the captain's ruling (13 September 2026): the old assumption, not R1, is
-what was wrong.
+(`applied_state = superseded`, reason "Replaced by a later change") and the REPLACEMENT
+row lands in that SAME open batch, not a fresh one - one open batch per order, always, no
+exception for a same-line replacement (captain's ruling, R1 review round, second pass: an
+earlier draft of this rule routed a same-line replacement to a fresh batch, which was
+wrong). The same append rule for a DIFFERENT line regresses a pre-existing test built on
+the old one-batch-per-save assumption (`tests/scm/test_planning_change_diff_parity.py::
+test_re_adding_the_same_product_after_a_cancellation_creates_a_new_open_line`) and this
+same file's own `_so400884_shape` fixture (three separate `build_batch` calls for three
+DIFFERENT lines of one order, read back via `_only_row`, which asserts exactly one row per
+batch) - both are being rewritten to R1 by the tester rather than R1 being narrowed, per
+the captain's ruling (13 September 2026): the old assumption, not R1, is what was wrong.
 
-**R1 review round (13 September 2026):** three gaps found by an R1-shaped browser walk with
-commits between each Save, closed in `build_batch` and `pending_batch_id_by_sales_order`:
+**R1 review round (13 September 2026, two passes):** gaps found by an R1-shaped browser walk
+with commits between each Save, closed in `build_batch` and `pending_batch_id_by_sales_order`:
 
-- **Fold.** The append/supersede rule above only settles the batch THIS call touches; it left
-  an order that had picked up a stray second open batch (e.g. a hand-seeded row, or an earlier
-  call that ran before the fold existed) with a pending row stranded in a batch nobody was
-  looking at any more, so a line could read pending in two open batches at once and
-  `pending_batch_id_by_sales_order` could miss one entirely. Every `build_batch` call now
-  folds, per order it touched: whichever batch the call designates PRIMARY (the existing open
-  batch it appended into, or the fresh batch a supersede/new order used) absorbs every OTHER
-  unapplied batch of that order still carrying a pending row - moved in if the line is new to
-  the primary, superseded in place if the primary already has that line - restoring "at most
-  one live pending row per line, across every open batch of the order" as an invariant every
-  call re-establishes, not just an initial condition. `tests/scm/test_planning_change_one_
-  open_batch.py::test_a_line_has_at_most_one_live_pending_row_across_every_open_batch` is the
-  acceptance test.
 - **Was reads the held state.** A replacement row's `from_json` ("Was" on the board and the
   change dialog) now carries forward the superseded row's own `from_json` rather than
   recomputing against the immediately-preceding edit's before value, so a chain of edits (e.g.
   qty 36 -> 60 -> 80) always reads Was against 36, the state the active decision was actually
   taken against, not 60. `::test_a_replacement_rows_was_reads_the_held_state` is the
-  acceptance test. This directly contradicts the older `::test_a_second_change_on_the_same_
-  line_supersedes_the_pending_row`'s `from_json == "60"` assertion for the mechanically
-  identical setup; that assertion is now stale against this ruling and is flagged to the
-  tester rather than edited by the coder (lane rule: tests are tester-owned).
+  acceptance test.
 - **Per-order resolver.** `pending_batch_id_by_sales_order`'s "newest wins" ordering now
   breaks a `created_at` tie with `id.desc()`, matching the identical tie-break added to
   `build_batch`'s own open-batch lookup, so a caller reading straight after a write and
   `build_batch` itself never disagree on which batch is "newest" for an order born the same
-  sub-second. `::test_a_multi_order_upload_reports_every_batch_it_wrote_into` (S1) still fails
-  after this fix: its "order A" scenario reuses the SAME core line across its first and second
-  edit, which per R1's own confirmed same-line-supersede rule must land in a fresh batch, but
-  the test's docstring frames it as "a different situation from a same-line replacement" and
-  asserts equality with the original batch - a test-authoring conflict (likely an accidental
-  line reuse where a genuinely different second line was intended), flagged to the tester
-  rather than edited.
+  sub-second.
+- **Same-line replacement stays in the open batch (second-pass ruling).** The first pass of
+  this round routed a same-line replacement to a fresh batch (reasoning: "the two rows cannot
+  coexist as one pending row"); the captain overruled this on review of `::test_a_multi_
+  order_upload_reports_every_batch_it_wrote_into` (S1) - nothing about R1 sends a same-line
+  replacement to a fresh batch, one open batch per order, always. `build_batch` now supersedes
+  the older row in place AND appends the replacement into that SAME open batch. S1 now passes
+  with no test edit.
+- **Fold, now a pure safety net.** With same-line replacements no longer able to strand a
+  second open batch as part of normal operation, the per-order fold step (whichever batch a
+  call designates PRIMARY absorbs every OTHER unapplied batch of the order still carrying a
+  pending row) only ever has work to do for a batch this call did NOT itself write to - a
+  hand-seeded row, or a leftover from before this rule existed. `::test_a_line_has_at_most_
+  one_live_pending_row_across_every_open_batch` (which seeds exactly that stray-batch shape)
+  is still the acceptance test.
+- **`_only_row` structural conflict, found implementing the second-pass ruling, flagged not
+  fixed.** `_only_row` (`tests/scm/test_planning_change_delta_seam.py`, imported by the
+  one-open-batch suite) asserts a batch holds EXACTLY one row, unfiltered by `applied_state`.
+  Once a same-line replacement stays in the SAME batch as the row it superseded, any test that
+  edits one line twice and then calls `_only_row` on the second batch sees TWO rows (superseded
+  + live) and fails on the helper's own assertion, before ever reaching its own assertions.
+  This now breaks BOTH `::test_a_second_change_on_the_same_line_supersedes_the_pending_row`
+  (already flagged stale on its `from_json == "60"` assertion) and `::test_a_replacement_
+  rows_was_reads_the_held_state` (not previously flagged - this one asserted `"36"`, matching
+  the ruling, but never reaches that assertion because `_only_row` raises first). Both are
+  tester-owned; the coder did not edit either. The existing `_row_for_line` helper in the same
+  file (added for the multi-pending-row shape `_so400884_shape` produces) already resolves one
+  line's row out of several on a batch and is a candidate replacement for `_only_row` at these
+  two call sites, but that choice belongs to the tester.
 
 **R3. A cancelled line with a pending change row has a home on the board.**
 `FulfilmentBoardService._cancelled_pending_change_rows` reads it separately from
