@@ -1127,7 +1127,14 @@ def test_console_finding2_no_over_the_miss_lane_offer_declines_with_no_actions()
     """Console pass finding 2, item 3 (guard): "no" over the same offer must clear the
     question and decline - the pre-existing `offered_escalation and is_decline` arm in
     `output_exchange.py` already produces the canned "Escalation declined." copy and a
-    TAG_ONLY branch with no lane call at all. Confirmed green today."""
+    TAG_ONLY branch with no lane call at all. Confirmed green today.
+
+    N13 (security review round 5): the emission's `escalation_declined` key alone cannot
+    tell "the OPEN-QUESTION HANDLER resolved this as a decline" from "the question was
+    left unresolved and a SEPARATE, unrelated arm happened to produce the same copy" - the
+    two are different mechanisms that could drift apart silently. Asserted directly on
+    `answered["outcome"]` (`dialogue.open_question._product_pick`'s own return value)
+    as well: `resolved` and `declined` both true, `escalate` false."""
     parser_raw = _full_emission(
         message_type="casual",
         is_affirmative=False,
@@ -1138,6 +1145,11 @@ def test_console_finding2_no_over_the_miss_lane_offer_declines_with_no_actions()
 
     answered, qf, branch, ctx = _run_miss_lane_turn(parser_raw, text="no")
 
+    outcome = answered.get("outcome")
+    assert outcome is not None and outcome.resolved is True and outcome.declined is True, (
+        f"the HANDLER itself must resolve this as a decline, not leave it unresolved: {outcome!r}"
+    )
+    assert outcome.escalate is False, outcome
     assert qf["escalation"].get("escalation_declined") is True, qf["escalation"]
     assert branch != "out_of_scope", (
         f"a decline must never reach the escalation lane: {branch!r}"

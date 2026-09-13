@@ -990,3 +990,68 @@ def test_console_finding2_the_miss_lane_persists_the_team_it_offered_to_escalate
         f"the reply offered marketing_product by name - the persisted payload must say so, "
         f"or a later 'yes' has no team to resume onto: {payload!r}"
     )
+
+
+def test_console_finding2_the_miss_lane_never_persists_a_team_the_offer_did_not_actually_put_on_the_wire() -> None:
+    """Console pass finding 2, S10 (reviewer re-check of `b6e108634`): the mirror of the
+    payload test above. `miss_suggest._attach_question` guards `then.escalate` on
+    `answer.offer_named_escalation(item)` - a read of `item["suggest_quick_reply"]`, the
+    field the customer's buttons actually render from - because several arms compose the
+    "...or would you like me to escalate to {team} team?" SENTENCE and only some of them
+    also put the "Yes, escalate" BUTTON on the wire. `lanes/business/answer.py` ~4052 is
+    the real negative shape: a date-axis offer to a `customer_service` / `order_enquiries`
+    routing composes the sentence but sets `suggest_quick_reply` to the bare date values,
+    with no `_YES` / `_NO` appended at all - so a "yes" there answers nothing, and the
+    persisted question must carry no `then` key to resume onto.
+
+    Guard, confirmed by hand (security review round 5): forcing `offer_named_escalation`
+    to always return `True` left this test failing (and every OTHER test in this file
+    green), proving the gate was previously unexercised by any red test - this is that
+    missing negative case, not a defect in the shipped code."""
+    from app.services.chatbot.lanes.business.miss_suggest import _attach_question
+
+    item = {
+        "suggest_offer": True,
+        "suggest_selection_context": "suggest_offer",
+        "suggest_response": (
+            "No delivery on 2026-08-01. This customer has delivery on 2026-08-15. "
+            "Reply with a date to continue, or would you like me to escalate to "
+            "customer service team?"
+        ),
+        # The real negative shape (`answer.py` ~4052): `axis == "date" and is_cs_order`
+        # drops `_YES` / `_NO` from the wire entirely - bare date values only.
+        "suggest_quick_reply": "2026-08-01,2026-08-15",
+        "suggest_last_result_set": [
+            {
+                "idx": 1,
+                "label": "2026-08-01",
+                "value": "2026-08-01",
+                "product": "2026-08-01",
+                "display": "2026-08-01",
+                "order_number": "SO-1001",
+            },
+            {
+                "idx": 2,
+                "label": "2026-08-15",
+                "value": "2026-08-15",
+                "product": "2026-08-15",
+                "display": "2026-08-15",
+                "order_number": "SO-1002",
+            },
+        ],
+        "dym_offer": {"id": "date-offer-1", "candidates": [], "picked": []},
+    }
+    gate = {"compatible_entities": []}
+    parser = {
+        "domain_hint": "order",
+        "routing": {"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+    }
+
+    result = _attach_question(item, parser=parser, gate=gate)
+
+    payload = result["open_question"]["payload"]
+    assert "then" not in payload, (
+        f"the composed reply never put the escalate button on the wire - the persisted "
+        f"payload must carry no `then` key at all, not an offer nobody was actually shown: "
+        f"{payload!r}"
+    )
