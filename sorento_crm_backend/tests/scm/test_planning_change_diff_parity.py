@@ -944,3 +944,57 @@ def test_applying_the_cancelled_row_frees_the_po_link(api):
         result_json.get("released_documents") or []
     )
     assert moved, f"expected the freed PO quantity's move recorded on the row: {result_json}"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer's finding: the existing allocation-claim removal test also freezes
+# a full Buy, so it never isolates the `has_other_dependents or has_claim`
+# disjunct in the cancel condition (sales_order_service.py ~1749) from
+# `is_held` - drop that whole clause and `is_held` alone still keeps it
+# green. This test is genuinely undecided (no held decision, no inquiry row)
+# with ONE dependent, so it can ONLY pass through has_other_dependents.
+# --------------------------------------------------------------------------- #
+
+def test_an_undecided_line_with_a_dependent_is_cancelled_on_removal_never_hard_deleted(api):
+    """A project-linked (adopted-mirror) core line with NO held decision and NO inquiry row,
+    but ONE dependent - another project's `AllocationClaim` on its mirror line, the cheapest
+    to seed (a `SODraftFinding` trips the same `has_other_dependents` disjunct). Removed via
+    `SalesOrderService.update` must still accept (200) and CANCEL the core line, never hard-
+    delete it - the dependent survives the save untouched.
+
+    Deliberately NOT `_freeze_with_a_full_buy`, NOT an order-inquiry row: `is_held` and
+    `referrer.has_inquiry` are both false here, so this is the ONE test in the file that
+    isolates `has_other_dependents` (via the claim) from every other disjunct in the cancel
+    condition - see the commit message for the by-hand guard verification (drop `has_other_
+    dependents or has_claim` from that condition and this goes red: hard-deleted, not
+    cancelled)."""
+    world, project = api
+    db = world.db
+    core_so, core_line, _held_product, order, mirror_line = _adopted_line(world, qty_ordered=72)
+
+    claim_product = _product(db)
+    claim = AllocationClaim(
+        id=_uid(), from_project_id=project.id, to_project_id=project.id,
+        so_line_id=mirror_line.id, product_id=claim_product.id, qty=Decimal("5"),
+    )
+    db.add(claim)
+    db.commit()
+
+    result = SalesOrderService(db).update(
+        core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor,
+    )
+
+    lines_by_id = {str(ln["id"]): ln for ln in result["lines"]}
+    assert str(core_line.id) in lines_by_id, "kept, not hard-deleted"
+    assert lines_by_id[str(core_line.id)]["line_status"] == "cancelled", (
+        lines_by_id[str(core_line.id)]
+    )
+
+    db.expire_all()
+    reloaded = db.get(SalesOrderLine, core_line.id)
+    assert reloaded is not None, "kept, not deleted"
+    assert reloaded.line_status == "cancelled", reloaded.line_status
+
+    assert (
+        db.query(AllocationClaim).filter(AllocationClaim.id == claim.id).count() == 1
+    ), "the dependent must survive the save"
