@@ -1153,12 +1153,11 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
     });
-    const tree = (
+    const { rerender } = render(
       <QueryClientProvider client={client}>
         <FulfilmentPlanningClient />
-      </QueryClientProvider>
+      </QueryClientProvider>,
     );
-    const { rerender } = render(tree);
 
     await screen.findByText('Planning 1 sales orders together');
     await waitFor(() =>
@@ -1167,9 +1166,16 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
 
     getPlanningBoard.mockClear();
     // The SAME route, a DIFFERENT order and batch - what clicking a second "Changed" link
-    // does, without ever unmounting this screen.
+    // does, without ever unmounting this screen. A FRESH element, not the same object
+    // reference rerendered: React bails out of a rerender with an identical element and
+    // never re-reads `useSearchParams`, which would hide the very bug this test exists to
+    // catch (the coder proved this with a probe).
     currentSearchParams = new URLSearchParams('orders=SO100002&batch=batch-2');
-    rerender(tree);
+    rerender(
+      <QueryClientProvider client={client}>
+        <FulfilmentPlanningClient />
+      </QueryClientProvider>,
+    );
 
     await waitFor(() =>
       expect(getPlanningBoard).toHaveBeenCalledWith(['SO100002'], 'week', false, {}),
