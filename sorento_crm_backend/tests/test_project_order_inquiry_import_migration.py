@@ -1395,7 +1395,19 @@ def test_closed_line_row_not_open_demand():
         assert snapshot() == before
         # The state the view ignores, and the honest word for it: purchasing dealt with
         # this instruction and the goods went out.
-        assert w.one_row().state == INQUIRY_ACTIONED
+        #
+        # Read by THIS test's own item code rather than through `one_row()`. This is the one
+        # case on the real database (`pg_session`, for the view), where the tables are not
+        # empty - a browser run against the same lane database leaves rows of its own, and an
+        # assertion that says "the only row there is" would then be measuring somebody else's
+        # upload.
+        mine = (
+            w.db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.item_code == w.product.product_code)
+            .all()
+        )
+        assert len(mine) == 1, [row.item_code for row in mine]
+        assert mine[0].state == INQUIRY_ACTIONED
 
 
 # --------------------------------------------------------------------------- #
