@@ -97,6 +97,12 @@ def _safe_code(value: Any) -> str:
     return _CODE_NOISE.sub(" ", text).strip()[:PRODUCT_CODE_MAX_CHARS]
 
 
+# WHAT A DRY RUN CANNOT KNOW, said on the preview rather than left to be inferred. The brand
+# comes from a resolver call and a dry run reaches no seam that writes OR reads (H37,
+# AC-1141), so the previewed assignee is drawn from the turn's team and company alone. Without
+# the note the console shows a blank brand beside a correct team and reads as a routing defect.
+PREVIEW_BRAND_NOTE = "brand resolved on live turns only"
+
 # `get-round-robin-assignee`'s body has these two frozen, as literals in the JSON.
 NEXT_ASSIGNEE_POLICY_CODE = "NORMAL"
 NEXT_ASSIGNEE_TIER = 1
@@ -1473,14 +1479,22 @@ def _preview_routing(
 
     def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any]:
         routed = _person_routing(ctx, context_item, team, bundle)
-        if routed is not None:
-            # A named person IS the assignee, and a clarify assigns nobody. Either way
-            # there is no rotation to preview.
-            return routed, routed.get("assignee")
+        if routed is not None and routed["kind"] == "clarify":
+            return routed, None  # a clarify assigns nobody, so there is no draw to preview
+        if routed is not None and routed.get("assignee") is not None:
+            return routed, routed["assignee"]  # a named person IS the assignee
         seam = getattr(bundle, "preview_assignee", None)
         if seam is None:
-            return None, None
-        return None, seam({**_next_assignee_body(ctx, context_item), "preview": True})
+            return routed, None
+        # THE LANDED TEAM'S OWN POOL, which is the whole point of previewing the routing: a
+        # named team is the common escalation, and drawing the preview from `context_item`
+        # showed the inherited team's pool (and its agent) beside a customer copy naming the
+        # landed one. The brand is NOT resolved here - a dry run reaches no seam (AC-1141) -
+        # so the body carries none and the actions say so (`PREVIEW_BRAND_NOTE`).
+        landed = routed["team"] if routed is not None else team
+        item = _landed_item(context_item, ctx=ctx, team=team, landed=landed, product=None)
+        body = {**_next_assignee_body(ctx, item), "team_code": landed, "preview": True}
+        return routed, seam(body)
 
     try:
         if services is not None:
@@ -1572,6 +1586,7 @@ def _assignment_actions(
         }
         if preview:
             action["preview"] = True
+            action["preview_note"] = PREVIEW_BRAND_NOTE
         actions.append(action)
     comment: dict[str, Any] = {
         "kind": "add_comment",
@@ -1584,6 +1599,7 @@ def _assignment_actions(
     }
     if preview:
         comment["preview"] = True
+        comment["preview_note"] = PREVIEW_BRAND_NOTE
     actions.append(comment)
     actions.append(_send_message(ROUTED_TO_PIC_REPLY.format(team=_pretty_team(team)), dry_run))
     return actions
