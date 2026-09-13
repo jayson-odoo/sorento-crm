@@ -280,3 +280,28 @@ information.` and `Warning: Missing \`Description\` or \`aria-describedby={undef
 - `11-console-another-one-v15-1280.png` - "another one" clears focus + open_question under v15.
 - `12-console-stock-question-clarifier-v15-1280.png` - "stock?" asks for the missing filter.
 - `13-console-375.png` - Chatbot Console at 375px.
+
+### Recheck 2026-09-13 on `dac7e946b` - the v13 "another one" is PRE-EXISTING, not a regression
+
+Measured, not argued: `origin/main`'s own `output_exchange.post_process`, run on the exact
+v13 emission this stack's console turn recorded for "another one" (`entity_op: "reuse"`,
+`entities: [{raw: SRTWT2635, current_message: false}]`, `domain_hint: inventory`,
+`intent_hint: check_stock`, no `topic_reset` key) with the 34-key previous state main would
+have held, keeps the product: `entities: ["SRTWT2635"]`, `entity_op_applied: "reuse"`, no
+`entities_dropped_on_topic_change`. This branch, same emission on the five-key state, gives
+the identical three values. No behaviour moved.
+
+The mechanism is owner ruling K rule 2's third condition,
+`topic.changed(prev_domain, this domain)`: "another one" after a stock question is
+`inventory` -> `inventory`, so it is False and K2 never fired for this shape on main either.
+Its second condition would not have been met anyway - the v1 parser RE-EMITS the product, so
+`ce_is_carried` is False for it and it reads as this turn's own.
+
+No graded capture covers it, which is why nothing caught it on either side: searching all 26
+node directories of the corpus (2,717 files mention "another") finds ZERO captures whose
+message is a bare "another one" / "another" / "别的" / "other one". The phrase never occurred
+in the captured window.
+
+So under the promoted v1 prompt a same-domain "another one" has always re-answered the
+previous product, and only prompt v3's `topic_reset` clears it (screenshot 11). That is a
+PROMOTION decision for the owner, not a lane defect, and no code changed for it.
