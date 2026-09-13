@@ -4289,3 +4289,213 @@ class TestAllOnTheCustomerPickerKeepsTheQuestion:
             f"a plain (non-outstanding) ask must keep today's behaviour unchanged: {name}"
         )
         assert set(args.get("customer_ids") or []) == {c1.id, c2.id, c3.id}, args
+
+
+# --------------------------------------------------------------------------- #
+# Owner round 9 (13 Sep 2026, live): with a single-scope detail offer open
+# (`Reply 1 for the delivery order list.`), the owner typed `hi`, `hi`, `no`,
+# `stop` - every one re-printed the offer. "wud i can't reset now?". Trace:
+# `no` / `stop` parsed `message_type: "casual"`, `is_affirmative: false`,
+# `reference_positions: []`, `entity_op: "reuse"`; `hi` / `hmm` parsed casual
+# with `is_affirmative: null`. AC-1143(c)'s re-print (`_apply_outstanding_
+# pending`'s arm 3) fires on EVERY non-answer with no exit except a new ask -
+# `is_affirmative` is never read there at all today (measured: a decline and an
+# unreadable turn take the exact same re-print arm).
+#
+# R22 (owner ruling, 13 Sep 2026):
+# (a) A DECLINE (`is_affirmative: false`, no positions, no entity) under an open
+#     `outstanding_detail` offer or `outstanding_scope` question CLOSES it:
+#     pending dropped, `outstanding_filters` gone, nothing fetched, a non-empty
+#     reply that is not the offer.
+# (b) The re-print happens AT MOST ONCE per offer: a SECOND consecutive
+#     unreadable turn (casual, `is_affirmative: null`, no positions, no entity,
+#     no refinement) closes the offer the same way, and that turn gets its
+#     normal reply. A pick or an R15 refinement still works after the first
+#     re-print - unaffected by (b), since neither is "unreadable" at all.
+# AC-1167 (decline closes it), AC-1168 (second unreadable turn closes it).
+# --------------------------------------------------------------------------- #
+
+
+class TestOpenOfferCanBeLeft:
+    """AC-1168/R22(b) guard "a pick still works after one re-print" is NOT a new
+    method here - `TestDetailOfferIsSticky::test_detail_offer_survives_a_casual_turn`
+    already runs exactly that shape (a casual "thanks" under the open detail offer,
+    then a "2" pick that must still resolve against it) and stays green through this
+    round unmodified, per the brief's "name it instead of duplicating"."""
+
+    def test_no_under_the_detail_offer_closes_it(self, session_factory, monkeypatch) -> None:
+        """AC-1167/R22(a). Measured today: "no" re-prints the SAME offer text
+        unchanged and leaves `pending`/`outstanding_filters` exactly as they were -
+        `is_affirmative` is never read by the re-print arm at all."""
+        _seed_open_outstanding_detail(session_factory)
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", is_affirmative=False, reference_positions=[],
+                entities=[], domain_hint=None, entity_op="reuse",
+            ),
+            text_body="no",
+            msg_id="ZZT-outstanding-r22-no-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured == [], (
+            f"a decline fetches nothing - it closes the offer, it does not answer it: "
+            f"{captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Sales order list" not in reply, reply
+        assert "Delivery order list" not in reply, reply
+        assert "Reply 1 for" not in reply, reply
+        assert reply.strip() != "", "a decline must still get SOME acknowledgement"
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
+            f"the offer must be closed, not left open: {stored.get('pending')!r}"
+        )
+        assert "outstanding_filters" not in stored, (
+            f"the carried filter set dies with the closed offer: {stored.get('outstanding_filters')!r}"
+        )
+
+    def test_stop_under_the_scope_question_closes_it(self, session_factory, monkeypatch) -> None:
+        """AC-1167/R22(a), the scope-question half. Same measured gap: "stop" today
+        re-prints "Outstanding for which document?" unchanged."""
+        _seed_open_outstanding_scope(session_factory)
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", is_affirmative=False, reference_positions=[],
+                entities=[], domain_hint=None, entity_op="reuse",
+            ),
+            text_body="stop",
+            msg_id="ZZT-outstanding-r22-stop-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured == [], (
+            f"a decline fetches nothing, neither the report nor the plain order list: "
+            f"{captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" not in reply, reply
+        assert reply.strip() != "", "a decline must still get SOME acknowledgement"
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") != "outstanding_scope", (
+            f"the question must be closed, not left open: {stored.get('pending')!r}"
+        )
+        assert "outstanding_filters" not in stored, (
+            f"the carried filter set dies with the closed question: {stored.get('outstanding_filters')!r}"
+        )
+
+    def test_a_second_unreadable_turn_closes_the_offer(self, session_factory, monkeypatch) -> None:
+        """AC-1168/R22(b). Measured today: BOTH "hmm" and the follow-up "hi" print the
+        identical re-armed offer, forever - there is no exit at all short of a new ask.
+        The FIRST unreadable turn still re-prints (existing, unchanged behaviour); the
+        SECOND one closes the offer instead, so the customer's own "hi" finally gets an
+        ordinary reply rather than a third copy of a list they never asked to see
+        again."""
+        _seed_open_outstanding_detail(session_factory)
+        result1, captured1 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], user_goal="saying something else",
+            ),
+            text_body="hmm",
+            msg_id="ZZT-outstanding-r22-second-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured1 == [], captured1
+        reply1 = (result1.reply or {}).get("text") or ""
+        assert "Sales order list" in reply1 and "Delivery order list" in reply1, (
+            f"the FIRST unreadable turn must still re-print the offer, unchanged: {reply1!r}"
+        )
+
+        result2, captured2 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], user_goal="saying hi",
+            ),
+            text_body="hi",
+            msg_id="ZZT-outstanding-r22-second-2",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured2 == [], captured2
+        reply2 = (result2.reply or {}).get("text") or ""
+        assert "Sales order list" not in reply2, (
+            f"a SECOND unreadable turn must close the offer, not print a third copy "
+            f"of it: {reply2!r}"
+        )
+        assert "Delivery order list" not in reply2, reply2
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
+            f"the offer must be closed after the second unreadable turn: {stored.get('pending')!r}"
+        )
+
+        result3, captured3 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-r22-second-3",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert not (
+            captured3 and captured3[0][0] == "crm_outstanding_report" and captured3[0][1].get("detail")
+        ), (
+            f"the offer is gone, so a bare '1' must not resolve as its detail pick "
+            f"any more - whatever the generic order lane does with it is not this "
+            f"test's concern: {captured3}"
+        )
+        _result3_unused = result3
+
+    def test_a_refinement_after_one_reprint_still_works(self, session_factory, monkeypatch) -> None:
+        """AC-1168/R22(b) guard: "hmm" (the first, still-re-printing unreadable turn)
+        followed by an R15 date refinement must still re-run the report with the new
+        window - measured GREEN today, and must stay green once R22(b) lands (a
+        refinement is answered, never counted as a second unreadable turn)."""
+        _seed_open_outstanding_detail(session_factory)
+        _result1, captured1 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], user_goal="saying something else",
+            ),
+            text_body="hmm",
+            msg_id="ZZT-outstanding-r22-refine-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured1 == [], captured1
+
+        result2, captured2 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], entity_op="reuse", broaden_axis="date",
+                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
+                user_goal="trying to see this month only",
+            ),
+            text_body="i want to see this month only",
+            msg_id="ZZT-outstanding-r22-refine-2",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+        )
+        assert captured2, "the refinement after one re-print must still run the report"
+        name2, args2 = captured2[0]
+        assert name2 == "crm_outstanding_report", (name2, args2)
+        assert args2.get("order_date_from") == "2026-09-01", args2
+        assert args2.get("order_date_to") == "2026-09-30", args2
+        reply2 = (result2.reply or {}).get("text") or ""
+        assert "detail" not in captured2[0][1], (
+            f"a refinement re-runs the report, not a detail pick: {captured2[0][1]}"
+        )
+        _reply2_unused = reply2

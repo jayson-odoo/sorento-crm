@@ -563,6 +563,31 @@ resolution and the filter set in the console trace.
   runs_the_report_for_every_family`, `test_all_on_the_customer_picker_under_a_
   plain_ask_still_lists_every_family` (regression guard: a non-outstanding ask
   keeps today's behaviour).
+- **AC-1167 [BE]** NEW (R22(a), owner round 9, 13 Sep 2026, live trace: with a
+  single-scope detail offer open, "hi", "hi", "no", "stop" all re-printed the
+  offer - "wud i can't reset now?"). `is_affirmative` is never read by the
+  re-print arm (`_apply_outstanding_pending`'s "answered nothing" branch,
+  AC-1143(c)) at all today - a decline and an unreadable turn take the identical
+  path. A DECLINE (`is_affirmative: false`, no positions, no entity) under an
+  open `outstanding_detail` offer or `outstanding_scope` question CLOSES it:
+  pending dropped, `outstanding_filters` gone, nothing fetched, a non-empty
+  reply that is not the offer (wording is the coder's, from the existing
+  decline copy - `Escalation declined` is the closest existing string and is
+  escalation-specific, so this file asserts on ABSENCE of the offer plus a
+  non-empty reply, never on new prose). Evidence: pytest, `tests/chatbot/
+  test_outstanding_lane.py::TestOpenOfferCanBeLeft` - `test_no_under_the_
+  detail_offer_closes_it`, `test_stop_under_the_scope_question_closes_it`.
+- **AC-1168 [BE]** NEW (R22(b), owner round 9, 13 Sep 2026, same live trace).
+  The re-print happens AT MOST ONCE per offer: a SECOND consecutive unreadable
+  turn (casual, `is_affirmative: null`, no positions, no entity, no refinement)
+  closes the offer the same way as a decline, and that turn gets its own
+  normal reply (a greeting for "hi", right once the offer is gone). A pick or
+  an R15 refinement still works after the first re-print, unaffected by the
+  count - measured GREEN today and pinned as a guard so it stays green.
+  Evidence: pytest, `TestOpenOfferCanBeLeft::test_a_second_unreadable_turn_
+  closes_the_offer`, `test_a_refinement_after_one_reprint_still_works` (guard);
+  `TestDetailOfferIsSticky::test_detail_offer_survives_a_casual_turn` (existing,
+  unmodified - already pins "one unreadable turn, then a pick still works").
 
 ## Out of scope (backlog)
 
