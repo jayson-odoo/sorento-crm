@@ -1975,15 +1975,21 @@ def _offer_carry(
     prev_set = jsc.get(prev, "last_result_set")
     if not jsc.truthy(prev_ctx) or not jsc.is_array(prev_set) or len(prev_set) == 0:
         return None
-    if prev_ctx in ("outstanding_scope", "outstanding_detail"):
-        # S4 points 4/5 (PLAN-chatbot-outstanding-report.md): ONE-TURN LIFE, same
-        # exclusion as `team_clarify` right below and for the same reason - answered
-        # on the very next turn or not at all (`head/output_exchange.py::
-        # _apply_outstanding_pending` already resolved it, or dropped it because this
-        # turn brought its own question). `topic.changed` cannot bound it either: a
-        # bare "SRTWC999" carries the SAME domain_hint ("order") as the ask it answers,
-        # so an un-excluded carry would keep re-arming a pending the customer's new
-        # product question already moved past.
+    if prev_ctx == "outstanding_scope":
+        # S4 point 4 (PLAN-chatbot-outstanding-report.md): ONE-TURN LIFE, same exclusion
+        # as `team_clarify` right below and for the same reason - a QUESTION, answered on
+        # the very next turn or not at all (`head/output_exchange.py::
+        # _apply_outstanding_pending` already resolved it, or dropped it because this turn
+        # brought its own question).
+        return None
+    if prev_ctx == "outstanding_detail" and jsc.truthy(jsc.get(qf, "outstanding_pending_dropped")):
+        # AC-1143 (owner ruling, 13 Sep 2026): the detail offer is a ROSTER the customer
+        # can still see, so it carries like `suggest_offer` and the tier menu - but
+        # `topic.changed` cannot bound it on its own, because a bare "SRTWC999" carries
+        # the SAME domain_hint ("order") as the ask it answers. The head already decides
+        # that case and records it: `_apply_outstanding_pending` stamps
+        # `outstanding_pending_dropped` on a turn that brought its own product or domain.
+        # A new ask therefore closes the offer here too, and nothing else does.
         return None
     if prev_ctx == "team_clarify":
         # THE ONE LABEL THAT IS NEVER CARRIED (review of #713, blocker B1). Every other

@@ -142,6 +142,45 @@ def _outstanding_scope_ask_from_filters(filters: dict[str, Any]) -> dict[str, An
     }
 
 
+def _outstanding_detail_reoffer(filters: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """AC-1143(c): an out-of-range number against an OPEN detail offer re-prints that
+    offer, fetches nothing, and leaves it open - the same `structured` shape (and so the
+    same one code path in `tail/compile_state.py`) the scope question's own re-ask uses.
+
+    The option lines are the stored rows themselves, never rebuilt from a scope guess, so
+    the customer reads back exactly the list they replied to."""
+    text = "Reply with a number for detail:\n" + "\n".join(
+        f"{jsc.js_string(row.get('idx'))}. {jsc.js_string(row.get('label'))}" for row in rows
+    )
+    structured: dict[str, Any] = {
+        "response": text,
+        "outstanding_ask": {
+            "kind": "outstanding_detail",
+            "last_result_set": [dict(row) for row in rows],
+            "filters": filters,
+        },
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
 def handles(branch_kind: str | None) -> bool:
     """Does the business lane own this arm?"""
     return branch_kind in ENTRY_BY_BRANCH_KIND
@@ -178,7 +217,9 @@ def run_until_exit(
     # (via the ENGINE's normal `_exit_kind == "continue"` path) is where the flag is
     # actually read and the SAME question gets re-armed.
     parse_output_peek = ((ctx.get("parse") or {}).get("output")) or {}
-    if isinstance(parse_output_peek.get("outstanding_reask_filters"), dict):
+    if isinstance(parse_output_peek.get("outstanding_reask_filters"), dict) or isinstance(
+        parse_output_peek.get("outstanding_detail_reask"), dict
+    ):
         return {
             "delegate": DELEGATE,
             "payload": {"gate": {}, "tier_gate": None, "ctx": ctx, "_exit_kind": "continue"},
@@ -393,6 +434,13 @@ def run_fetch(
     # resolution (this turn re-typed no product at all, so there is nothing there to
     # resolve) - the same reason the tier-ask arm below short-circuits before any
     # tool pick.
+    # ── AC-1143(c): re-print the SAME detail offer, fetch nothing ─────────────
+    detail_reask = parse_output.get("outstanding_detail_reask")
+    if isinstance(detail_reask, dict):
+        reoffer_rows = [r for r in jsc.array(detail_reask.get("rows")) if isinstance(r, dict)]
+        if reoffer_rows:
+            return _outstanding_detail_reoffer(detail_reask.get("filters") or {}, reoffer_rows)
+
     reask_filters = parse_output.get("outstanding_reask_filters")
     if isinstance(reask_filters, dict):
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
@@ -509,19 +557,26 @@ def run_fetch(
         # `SRTWT7445-LV-GM`. Picked here rather than in the shared gate: this is the
         # report's own contract (exact code, no sibling expansion), and every other
         # domain keeps the family it deliberately widened to.
-        typed_codes = {
-            jsc.js_string(e.get("raw") or "").strip().casefold()
-            for e in jsc.array(parse_output.get("entities"))
-            if isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "product"
-        }
-        typed_codes.discard("")
-        for e in jsc.array(entities):
-            if not isinstance(e, dict) or e.get("entity_type") != "product":
-                continue
-            code = e.get("code") or e.get("canonical_code")
-            if jsc.truthy(code) and jsc.js_string(code).strip().casefold() in typed_codes:
-                semantic_input["outstanding_product_code"] = jsc.js_string(code)
-                break
+        # D10: an ANSWERING turn ("1"/"2"/a scope word) carries the product the offer was
+        # made about, and that wins outright - re-resolving the carried token is what let a
+        # family sibling or another product in the resolver's scope take its place.
+        carried_code = parse_output.get("outstanding_carried_product_code")
+        if jsc.truthy(carried_code):
+            semantic_input["outstanding_product_code"] = jsc.js_string(carried_code)
+        else:
+            typed_codes = {
+                jsc.js_string(e.get("raw") or "").strip().casefold()
+                for e in jsc.array(parse_output.get("entities"))
+                if isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "product"
+            }
+            typed_codes.discard("")
+            for e in jsc.array(entities):
+                if not isinstance(e, dict) or e.get("entity_type") != "product":
+                    continue
+                code = e.get("code") or e.get("canonical_code")
+                if jsc.truthy(code) and jsc.js_string(code).strip().casefold() in typed_codes:
+                    semantic_input["outstanding_product_code"] = jsc.js_string(code)
+                    break
 
         # -- S4c (D5, AC-1133 pipeline half): the location word, before any fetch -- #
         # Read off the RAW parsed entities (`parse_output`), never the gated

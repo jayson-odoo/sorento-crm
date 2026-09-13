@@ -1065,6 +1065,7 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     names_own_dates = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))
 
     own_question = bool(named_entities) or jsc.truthy(o.get("domain_hint"))
+    has_positions = bool(jsc.array(o.get("reference_positions")))
     # N2 (re-review, 13 Sep 2026): a SCOPE WORD sets `picked`, so "sales order
     # outstanding for SRTWC8517" typed while a scope question about another product was
     # open looked like an answer and inherited the old product, customer and location. A
@@ -1074,6 +1075,18 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # The new-ask decision is made ONCE, on the first pass: by the second the fields it
     # reads are this function's OWN output (the domain it stamped, the picked row's
     # label written over the entities), so re-deciding could only ever undo the answer.
+    if (
+        not already_applied
+        and kind == "outstanding_detail"
+        and picked is None
+        and not has_positions
+        and not own_question
+    ):
+        # AC-1143(b): a casual turn in between ("thanks") is neither an answer to the
+        # offer nor a new ask, so the turn is left exactly as the parser emitted it and
+        # the offer simply carries (`tail/compile_state.py::_offer_carry`). Rewriting it
+        # into the carried outstanding ask would answer a question nobody asked.
+        return
     if not already_applied and (
         names_product or (own_question and (kind == "outstanding_detail" or picked is None))
     ):
@@ -1130,6 +1143,12 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # named, so that gate silently dropped the carried customer and location whenever
     # the model hinted "Both" as one. A turn that genuinely names a different subject
     # names a PRODUCT, and that turn is a new ask and has already returned above.
+    # D10: the answering turn re-runs the SAME call with the STORED filter set, so the
+    # product is the one the offer was made about - never a re-resolution of the carried
+    # token, which can land on a family sibling (AC-1119) or on whatever else the resolver
+    # has in scope. A turn that typed its own product is a new ask and never reaches here.
+    if product_code:
+        o["outstanding_carried_product_code"] = product_code
     o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
     o["outstanding_carried_warehouse_codes"] = filters.get("warehouse_codes") or []
     o["outstanding_carried_location_token"] = filters.get("location_token")
@@ -1152,10 +1171,16 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
         o["order_status"] = "so_outstanding" if picked == "so" else "do_outstanding"
         o["outstanding_detail_pick"] = picked
     else:
-        # Out of range: re-run the report (not the detail list) with the carried
-        # filters, same as a fresh outstanding ask - there is no "detail re-ask" text,
-        # the report itself re-offers whichever scopes still have rows.
-        o["order_status"] = "outstanding_both"
+        # AC-1143(c): the number named no option ("3" against a two-option offer). The
+        # offer is RE-PRINTED and nothing is fetched - it used to re-run the whole
+        # report, which answers a question the customer did not ask and charges a read
+        # for a typo. `run_fetch` reads these rows directly, the way the scope question's
+        # own out-of-range re-ask does, because this turn typed no product to resolve.
+        o["outstanding_detail_reask"] = {
+            "filters": filters,
+            "rows": [dict(row) for row in jsc.array(jsc.get(prev_state, "last_result_set"))
+                     if jsc.truthy(row)],
+        }
 
 
 def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
