@@ -41,9 +41,9 @@ After verifying you land on the dashboard. It shows:
 
   The tab marked with a star is the one the dashboard opens on. Use the **"{Type} is your default tab"** button to set the current tab as your default.
 * A toolbar row above your list of submissions, left to right:
-  * **Filter** - opens a popover with one dropdown per field the current tab's cards carry (for example Status, Customer, Product, Project, Need by, Created). Picking a value narrows the list; the Filter button shows a count badge while any filter is active, and **Clear all** resets it.
-  * **Sort** - opens a menu of the same fields, each with **Ascending** / **Descending**. The default is Created, newest first.
-  * A view toggle (List view / Board view, shown as icons) - Board view shows submissions as cards, List view shows one compact line per submission. Your choice is remembered on this device and stays even when you switch tabs.
+  * **Filter** - opens a popover with one field per thing the current tab's cards carry (for example Status, Customer, Product, Project, Need by, Created). Status and text fields (Customer, Product, Project...) are dropdown selects listing the values actually present; **Created** and **Need by** are two date fields side by side instead (From / To). Picking a value narrows the list; the Filter button shows a count badge while any filter is active, and **Clear all** resets it.
+  * **Sort** (Cards view only) - opens a menu listing each field once. The field you're sorted by shows an up or down arrow; tap it again to flip direction; tap a different field to sort by that one instead (dates start newest first, text starts A to Z). In List view, sorting is done by tapping a column header instead, so the Sort button isn't shown.
+  * A view toggle (List view / Board view, shown as icons) - **Cards** is the default. Board/Cards view shows submissions as cards; List view shows them as a table with a column per field (Form Number, Status, the tab's own fields, Need by for Price Tag Request, Created) - tap a column header to sort by it, and tap any row to open it. Your choice is remembered on this device and stays even when you switch tabs.
   * **New {Type}** - opens the submission form for the active tab (e.g. *New Complaint* → `/portal/complaint/new`).
 * A list of your existing submissions. Each card (or row, in List view) shows:
   * Status pill: **Draft**, **New**, **Submitted**, **Pending**, **Pending project sales**, **Pending purchasing**, **Pending approval**, **Approved**, **Rejected**, **Responded**, **Updated**, **Completed**.

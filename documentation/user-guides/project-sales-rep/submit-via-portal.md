@@ -71,7 +71,7 @@ You don't have to start from scratch. From the dashboard, long-press (or right-c
 Price Tag Request is only shown on the **Submission type** combobox if your account has been granted it. Its form opens as four sections, top to bottom, instead of the Header / Items / Attachments shape above:
 
 1. **Customer** - open by default. Pick a customer; this opens **Sales Order & Lines** automatically.
-2. **Sales Order & Lines** - drop the sales order file (or **Choose file** / **Paste from clipboard**). Each attached file shows as its own thumbnail with an **Extract with AI from <filename>** action. Tap it to open the AI Extract dialog straight on that file's results table; remove any row you don't want with its own remove control before clicking **Confirm and prefill**, which appends the remaining rows as lines. **Add line** stays available for typing a row in by hand. The moment a first line lands, **Price** opens automatically.
+2. **Sales Order & Lines** - drop the sales order file (or **Choose file** / **Paste from clipboard**). Each attached file shows as its own thumbnail with an **Extract with AI from <filename>** action. Tap it to open the AI Extract dialog straight on that file's results table; remove any row you don't want with its own remove control before clicking **Confirm and prefill**, which appends the remaining rows as lines - if the file listed the same product more than once, those rows are merged into one line with the quantities summed. **Add line** stays available for typing a row in by hand, but the same product can't be added twice: picking a product already on the request shows *"<product code> is already on this request."* instead of adding a second line. Lines have no reorder arrows - they stay in the order you added them. The moment a first line lands, **Price** opens automatically.
 3. **Price** - choose **List price** or **Selling price**. Choosing either opens **Additional Information**. Choosing **Selling price** also reveals a **Promotion** picker inside this same section, labelled optional - leave it blank if there's no promotion to link.
 4. **Additional Information** - **Need by** and **Notes**, both optional; neither one blocks Submit.
 
@@ -79,14 +79,24 @@ A section you collapse stays collapsed - it only reopens automatically the first
 
 Click **Save Draft** or **Submit** as usual once you're done (see above).
 
-### Viewing and editing a submitted price tag request
+### Viewing a submitted price tag request
 
-Once submitted, the request shows the same four sections read-only, all open, with the Sales Order thumbnails still tappable to preview.
+Once submitted, the request shows the same four sections read-only, all open, with the Sales Order thumbnails still tappable to preview. **A submitted price tag request can't be edited directly** - the same rule as a stock inquiry. Draft requests are the exception: a draft stays fully editable until you submit it.
 
-* While the status is **New** or **Changes requested**, an **Edit** button shows in the header. Tapping it swaps every value for its input in place (same sections, same order) and the header shows **Save** / **Cancel** instead. Clicking **Save** writes your changes and returns to the read-only view **without** changing the status or restarting review.
-* At **Designing** or **Design ready**, there is no Edit button - use **Request Changes** instead, as before.
-* At **Approved** or **Ready**, nothing can be edited.
-* Attachments can only be added or removed while the request is editable (New, Changes requested, or still a draft) - on any other status the Sales Order thumbnails are preview-only.
+The header (same line as the form number, muted, e.g. *"PT-202609-0007 · 3 of 3 revisions left · 1/3"*) carries a single gear holding every action for the request: **Duplicate**, **Download PDF**, and **Revise** when your company allows it.
+
+If you need to change something after submitting, use **Revise** instead:
+
+1. Open the request and tap the gear, then **Revise**.
+2. Fill in the **Reason** field - what changed, and why.
+3. The sections unlock the same way the New form does; make your changes.
+4. Tap **Submit revision**. The office stops work on the current version and picks up your revision instead.
+
+**Revise** only shows up when your company has turned on Portal Revisions for Price Tag Requests, and only while the request is at a status your admin has allowed (typically **New** or **Changes requested**) and you haven't used up your allowed revisions. When it's not available, the gear shows no Revise item and a line next to the form number explains why (for example *"This form cannot be revised."*).
+
+Every past version is kept on the **Revisions** tab of the request: the original, then each revision in order, with the reason you gave, what changed field by field, and the files attached at that point in time. A request that's been revised also shows a **Rev {n}** badge on its card / row on the dashboard.
+
+Attachments can only be added or removed on a draft, or while you're revising - once a revision is submitted (or on any status Revise isn't offered for) the Sales Order thumbnails are preview-only.
 
 ## How you'll be notified
 
