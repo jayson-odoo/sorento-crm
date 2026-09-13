@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from app.services.chatbot.lanes.escalation import run
 from tests.chatbot.test_s5_escalation_lane import _ctx, _item, _services
 
@@ -1057,22 +1059,49 @@ def test_console_finding2_the_miss_lane_never_persists_a_team_the_offer_did_not_
     )
 
 
+
 # --------------------------------------------------------------------------- #
-# D10, owner ruling (console pass, 13 Sep 2026, finding 6): a `team_pick` THIS TURN
-# ANSWERED carries the product the escalation named, even when the previous turn's own
-# team (re-derived off `focus.domains`, `_carried_team`) differs from the team the pick
-# just landed on - the D3 same-team gate is for a product left over from an UNRELATED
-# earlier turn, and a team question the lane itself asked on a turn that named the
-# product is a deferral of that SAME escalation, not a fresh one.
+# D10, owner ruling (console pass, 13 Sep 2026, finding 6), NARROWED by reviewer round 9
+# (finding measured on the stack DB, 13 Sep 2026): a `team_pick` THIS TURN ANSWERED
+# carries the product the escalation named, even when the previous turn's own team
+# (re-derived off `focus.domains`, `_carried_team`) differs from the team the pick just
+# landed on - the D3 same-team gate is for a product left over from an UNRELATED earlier
+# turn, and a team question the lane itself asked on a turn that named the product is a
+# deferral of that SAME escalation, not a fresh one.
+#
+# Round 9 found the first cut too wide: `_resumed_team_pick` (c500b4398) fires off
+# `_answered.handler == "team_pick"` plus the previous `open_question.kind == "team_pick"`
+# ALONE, with no read of `expects` or the payload - so a bare "yes" to the ONE-team
+# escalate offer (`expects: yes_no`) ALSO skips the D3 gate and reaches back into
+# `focus.products`, carrying whatever the conversation happened to be about (measured: a
+# stock turn on MWC7625-SH-S10/mocha, `focus.domains: [inventory]`, then a plain "ESCALATE
+# TO MARKETING" the customer accepted with "yes" - carried MOCHA onto a team the
+# escalation itself never named a product for).
+#
+# The narrowed contract (this round): the carry is now a RESOLVE OF THE QUESTION'S OWN
+# PAYLOAD, not a re-read of `focus.products`. At ask time, `tail/compile_state.
+# _ask_for_turn`'s `team_clarify` branch freezes the escalation's OWN resolved product
+# code onto the `team_pick` question - `payload.product_code` - from a new clarify item
+# field `clarify_product_code` (None/absent when the escalation resolved no product). On
+# resume, the carry fires only when ALL of:
+#
+#     ctx.parse._answered.handler == "team_pick"
+#     AND the previous open_question.kind == "team_pick"
+#     AND the previous open_question.expects == "pick"    (the multi-team ask, D2's own
+#                                                            ladder - never the plain
+#                                                            one-team yes/no offer)
+#     AND payload.product_code is truthy
+#
+# and it then resolves THAT code through `resolve_and_gate`, never `focus.products` at
+# all. Everything else - a fresh team_pick with no `_answered` record, an `_answered` for
+# a DIFFERENT open question, a multi-team pick whose OWN payload named no product - still
+# falls through to the unchanged D3 same-team gate.
 #
 # Turn A (finding 6): "esclate to marketing about water tap of SRTWB8004" - the parser
-# resolved SRTWB8004 (`focus.products`) and the domain `master_products` (-> team
-# `purchasing`, `focus.domains`), then the family word "marketing" armed a three-way
-# `team_pick` (marketing_product / marketing_form / marketing_promotion), payload
-# `{"team": "purchasing", "domain": "master_products"}`.
-# Turn B: "marketing product" resolves that `team_pick` (`ctx.parse._answered.handler ==
-# "team_pick"`), landing `marketing_product` - a team OUTSIDE the carried team
-# (`purchasing`), so the D3 gate alone would drop SRTWB8004's brand.
+# resolved SRTWB8004, then the family word "marketing" armed a three-way `team_pick`
+# (marketing_product / marketing_form / marketing_promotion), `expects: pick`, payload
+# `{"team": "purchasing", "domain": "master_products", "product_code": "SRTWB8004"}`.
+# Turn B: "marketing product" resolves that `team_pick`, landing `marketing_product`.
 # --------------------------------------------------------------------------- #
 
 
@@ -1088,46 +1117,73 @@ def _resolved_row_with_brand_name(
     }
 
 
-def _resumed_team_pick_ctx(*, entities: list | None = None) -> dict:
-    """Turn B's ctx: the finding 6 shape, `_focus_previous_state` plus the open
-    `team_pick` question it left, plus the engine's own `_answered` record for a turn
-    that resolved it by naming one of the offered teams (`open_question.team_slug_pick`,
-    `outcome.handler == "team_pick"`, `outcome.escalate is True`)."""
-    prev = _focus_previous_state(product_code="SRTWB8004", domain="master_products")
+def _resumed_team_pick_ctx(
+    *,
+    entities: list | None = None,
+    expects: str = "pick",
+    payload_product_code: str | None = "SRTWB8004",
+    focus_product_code: str | None = "SRTWB8004",
+    focus_domain: str | None = "master_products",
+    team_options: list | None = None,
+    landed_team: str = "marketing_product",
+) -> dict:
+    """Turn B's ctx: the finding 6 shape (a `team_pick` open, `_answered` recording that
+    THIS turn resolved it), parametrised over the axes round 9 narrowed the gate to.
+    `focus_product_code`/`focus_domain` are what the CONVERSATION was carrying
+    (`focus.products`/`focus.domains`, the D3 axes) - under the narrowed contract these no
+    longer decide the carry on their own; `payload_product_code` (the question's OWN
+    frozen code) and `expects` (`pick` vs `yes_no`) are what do."""
+    options = team_options or [
+        {"idx": 1, "team": "marketing_product", "label": "Marketing Product"},
+        {"idx": 2, "team": "marketing_form", "label": "Marketing Form"},
+        {"idx": 3, "team": "marketing_promotion", "label": "Marketing Promotion"},
+    ]
+    payload = {"team": "purchasing", "domain": focus_domain}
+    if payload_product_code is not None:
+        payload["product_code"] = payload_product_code
+    prev = _focus_previous_state(product_code=focus_product_code, domain=focus_domain)
     prev["open_question"] = {
         "kind": "team_pick",
-        "options": [
-            {"idx": 1, "team": "marketing_product", "label": "Marketing Product"},
-            {"idx": 2, "team": "marketing_form", "label": "Marketing Form"},
-            {"idx": 3, "team": "marketing_promotion", "label": "Marketing Promotion"},
-        ],
-        "expects": "pick",
+        "options": options,
+        "expects": expects,
         "asked_at_turn": 3,
         "asked_at": None,
-        "payload": {"team": "purchasing", "domain": "master_products"},
+        "payload": payload,
     }
     ctx = _ctx(
-        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        routing={"suggested_team": landed_team, "suggested_agent": "general_enquiries"},
         escalation={"is_escalation_confirmation": False, "company_pick": None},
         entities=entities or [],
         prev_variables=prev,
     )
+    answer = (
+        {"resolved": True, "picks": [1]}
+        if expects == "pick"
+        else {"resolved": True, "yes_no": "yes"}
+    )
     ctx["parse"]["_answered"] = {
-        "before": {"kind": "team_pick", "expects": "pick", "options": 3, "quoted": False},
-        "answer": {"resolved": True, "picks": [1]},
+        "before": {"kind": "team_pick", "expects": expects, "options": len(options), "quoted": False},
+        "answer": answer,
         "after": {"escalate": True, "declined": False, "lane": "escalation"},
         "handler": "team_pick",
-        "outcome": "Routed to marketing_product.",
+        "outcome": f"Routed to {landed_team}.",
     }
     return ctx
 
 
-def test_d10_a_resumed_team_pick_carries_the_named_product_over_the_previous_teams_gate() -> None:
-    """D10, live. RED today: `_carried_brand`'s gate compares the landed team
-    (`marketing_product`) against `_carried_team(ctx)` (`purchasing`, derived off the
-    carried `focus.domains`) unconditionally and returns `(None, None)` on the mismatch -
-    `resolve_and_gate` is never called and the body's `brand_code` stays `None`."""
-    ctx = _resumed_team_pick_ctx()
+def test_d10_a_resumed_multi_team_pick_carries_the_products_own_frozen_code_over_the_previous_teams_gate() -> None:
+    """D10, narrowed (live). RED on c500b4398: `_carried_brand` still reads
+    `_carried_products(ctx)` (`focus.products`) for the resumed-pick carry, never
+    `open_question.payload.product_code` - so today's code cannot be told apart from a
+    world where the seam is asked about the wrong code. The call-args assertion below is
+    what the narrowing has to make true: `resolve_and_gate` is asked about the code the
+    QUESTION ITSELF froze. The previous state's OWN `focus.products` deliberately names a
+    DIFFERENT code (`ZZTOLDFOCUS01`) than the question's frozen `payload.product_code`
+    (`SRTWB8004`) - the two axes the round-9 narrowing tells apart - so a mechanism that
+    still reads `focus.products` sends the seam the WRONG code and both assertions below
+    catch it, rather than passing by coincidence because the fixture happened to reuse one
+    code for both."""
+    ctx = _resumed_team_pick_ctx(focus_product_code="ZZTOLDFOCUS01")
     item = _item(team="purchasing")
     services = _services(
         gate={
@@ -1141,18 +1197,26 @@ def test_d10_a_resumed_team_pick_carries_the_named_product_over_the_previous_tea
     result = run(ctx, item, services=services)
 
     services.resolve_and_gate.assert_called_once()
-    called_with = str(services.resolve_and_gate.call_args)
-    assert "SRTWB8004" in called_with, (
-        f"the seam must be asked to resolve the carried code, not called with an empty "
-        f"turn: {called_with}"
+    # The literal string "SRTWB8004" also sits, unrelated, inside the ctx's own
+    # `open_question.payload.product_code` (it rides along on every call because
+    # `_carry_ctx` shallow-copies `ctx` rather than stripping the session) - so the check
+    # has to be the ACTUAL ENTITY the seam was asked to resolve, not a substring match
+    # over the whole call repr.
+    resolved_ctx = services.resolve_and_gate.call_args[0][0]
+    resolved_codes = {
+        e.get("canonical_code") or e.get("raw")
+        for e in resolved_ctx["parse"]["output"]["entities"]
+    }
+    assert resolved_codes == {"SRTWB8004"}, (
+        f"the seam must be asked to resolve the code the question's OWN payload froze, "
+        f"not the stale ZZTOLDFOCUS01 `focus.products` was still carrying: {resolved_codes!r}"
     )
     assert result["arm"] == "human-intervention", result
     assert result["pending"] is None
     body = _next_assignee_body(services)
     assert body["team_code"] == "marketing_product", body
     assert body["brand_code"] == "sorento", (
-        f"a team_pick THIS TURN resolved must carry the product it was answering about, "
-        f"regardless of the previous turn's own team: {body!r}"
+        f"a resumed multi-team pick must carry the code its own payload froze: {body!r}"
     )
     second_send = result["actions"][-1]
     assert second_send["kind"] == "send_message"
@@ -1160,10 +1224,10 @@ def test_d10_a_resumed_team_pick_carries_the_named_product_over_the_previous_tea
 
 
 def test_d10_dry_run_the_resumed_carry_reaches_the_preview_and_the_same_copy() -> None:
-    """D10, dry run (D9's own rule: every READ in the ladder, including this one, runs on
-    a dry run exactly as it does live). RED for the same reason as the live test - the
-    gate drops the carry before the dry-run preview or copy ever see a brand."""
-    ctx = _resumed_team_pick_ctx()
+    """D10, narrowed, dry run (D9's own rule: every READ in the ladder, including this
+    one, runs on a dry run exactly as it does live). Same code-mismatch fixture as the
+    live test above, for the same reason."""
+    ctx = _resumed_team_pick_ctx(focus_product_code="ZZTOLDFOCUS01")
     item = _item(team="purchasing")
     services = _services(
         gate={
@@ -1177,6 +1241,12 @@ def test_d10_dry_run_the_resumed_carry_reaches_the_preview_and_the_same_copy() -
     result = run(ctx, item, services=services, dry_run=True)
 
     services.resolve_and_gate.assert_called_once()
+    resolved_ctx = services.resolve_and_gate.call_args[0][0]
+    resolved_codes = {
+        e.get("canonical_code") or e.get("raw")
+        for e in resolved_ctx["parse"]["output"]["entities"]
+    }
+    assert resolved_codes == {"SRTWB8004"}, resolved_codes
     services.next_assignee.assert_not_called()
     services.sla_create.assert_not_called()
 
@@ -1193,15 +1263,92 @@ def test_d10_dry_run_the_resumed_carry_reaches_the_preview_and_the_same_copy() -
     assert preview_body.get("preview") is True, preview_body
 
 
+def test_d10_narrow_a_one_team_yes_no_offer_never_carries_even_when_resumed() -> None:
+    """Reviewer round 9, measured: the multi-team `team_pick` (`expects: pick`) is the
+    lane's own ask about WHICH marketing team - a reply to it defers the SAME escalation
+    request (D10). The plain one-team escalate offer (`expects: yes_no`, the bare "shall I
+    escalate to X" accept/decline) is a DIFFERENT question, with no product_code on its
+    own payload; answering IT with a yes must never smuggle in whatever the conversation
+    was carrying (a stock turn on MWC7625-SH-S10/mocha, domain `inventory`) just because
+    `_answered.handler` also reads `team_pick`. RED on c500b4398: today's
+    `_resumed_team_pick` checks only `handler`+`kind`, ignoring `expects` and the payload
+    entirely, so this exact shape still resolves and carries MOCHA - the whole tier-1 pool
+    problem D3 exists to prevent, one layer down."""
+    ctx = _resumed_team_pick_ctx(
+        expects="yes_no",
+        payload_product_code=None,
+        focus_product_code="MWC7625-SH-S10",
+        focus_domain="inventory",
+        team_options=[{"idx": 1, "team": "marketing_product", "label": "Marketing Product"}],
+    )
+    item = _item(team="warehouse")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name(
+                    "MWC7625-SH-S10", brand_code="mocha", brand_name="Mocha",
+                    company_id="co-mocha", company_name="Mocha",
+                )
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    services.resolve_and_gate.assert_not_called(), (
+        "a one-team yes/no offer's payload carries no product_code - the D10 carry must "
+        "never fire off it, whatever the conversation happened to be carrying before"
+    )
+    assert result["arm"] == "human-intervention", result
+    body = _next_assignee_body(services)
+    assert body["team_code"] == "marketing_product", body
+    assert body.get("brand_code") is None, (
+        f"no brand must reach the body off a plain yes/no accept: {body!r}"
+    )
+    second_send = result["actions"][-1]
+    assert "handling" not in second_send["text"], second_send["text"]
+
+
+def test_d10_narrow_a_multi_team_pick_whose_payload_named_no_product_never_carries() -> None:
+    """Reviewer round 9: the multi-team pick's OWN payload carries no `product_code` (the
+    escalation this ask was armed for named no product itself) - a resumed pick must not
+    then reach back into `focus.products` for a stock-turn leftover either. RED on
+    c500b4398: today's carry still reads `_carried_products(ctx)`, never the payload, so a
+    stock turn's MOCHA product still carries here too."""
+    ctx = _resumed_team_pick_ctx(
+        payload_product_code=None,
+        focus_product_code="MWC7625-SH-S10",
+        focus_domain="inventory",
+    )
+    item = _item(team="warehouse")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name(
+                    "MWC7625-SH-S10", brand_code="mocha", brand_name="Mocha",
+                    company_id="co-mocha", company_name="Mocha",
+                )
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    services.resolve_and_gate.assert_not_called()
+    assert result["arm"] == "human-intervention", result
+    body = _next_assignee_body(services)
+    assert body["team_code"] == "marketing_product", body
+    assert body.get("brand_code") is None, body
+
+
 def test_d10_guard_a_fresh_team_pick_with_no_answered_record_still_drops_the_carry() -> None:
     """GREEN guard, must stay green: the SAME previous state (an open `team_pick`,
-    `focus.products` carrying SRTWB8004 off a `master_products`/`purchasing` turn) but
-    `ctx.parse._answered` is absent - this is an ordinary fresh "escalate to marketing
-    product" turn that happens to arrive while an unrelated team_pick is still open, not
-    an answer to it, so D3's gate must still say no. Not the same fixture as
-    `test_ac1128_...` above (that one carries no open question at all); this is the
-    negative half of D10 itself, on the exact finding 6 shape, and must not regress once
-    the coder wires the D10 skip."""
+    payload carrying the frozen `product_code`) but `ctx.parse._answered` is absent - this
+    is an ordinary fresh "escalate to marketing product" turn that happens to arrive while
+    an unrelated team_pick is still open, not an answer to it, so D3's gate must still say
+    no."""
     ctx = _resumed_team_pick_ctx()
     del ctx["parse"]["_answered"]
     item = _item(team="purchasing")
@@ -1229,13 +1376,16 @@ def test_d10_guard_a_fresh_team_pick_with_no_answered_record_still_drops_the_car
     )
 
 
-def test_d10_guard_a_resumed_team_pick_with_no_carried_product_resolves_nothing() -> None:
-    """GREEN guard, must stay green: the D10 skip only removes the SAME-TEAM gate, it does
-    not manufacture a product out of nothing - a resumed `team_pick` whose `focus.products`
-    is empty (the conversation never carried one) must still call no resolver and assign
-    with no brand."""
+def test_d10_n1_an_answered_product_pick_over_an_open_team_pick_question_never_carries() -> None:
+    """N1 pin, guard: `_answered.handler` must be exactly `team_pick` - a turn that
+    resumed a DIFFERENT open question (a `product_pick`) while a stale `team_pick` also
+    happens to sit in the previous state must not read as the D10 resumption. Not
+    reachable in practice (only one question is ever open, D6/AC-1014) but pinned as the
+    discriminator's own boundary, the same defence `_deferred_escalation` applies to its
+    own handler check. GUARD, already green under both the old and the narrowed gate -
+    kept here so the narrowing cannot regress it silently."""
     ctx = _resumed_team_pick_ctx()
-    ctx["session"]["session_vars"]["variables"]["focus"].pop("products", None)
+    ctx["parse"]["_answered"]["handler"] = "product_pick"
     item = _item(team="purchasing")
     services = _services(
         gate={
@@ -1248,12 +1398,115 @@ def test_d10_guard_a_resumed_team_pick_with_no_carried_product_resolves_nothing(
 
     result = run(ctx, item, services=services)
 
-    services.resolve_and_gate.assert_not_called(), (
-        "a resumed team_pick with no carried product has nothing to resolve"
-    )
-    assert result["arm"] == "human-intervention", result
+    services.resolve_and_gate.assert_not_called()
     body = _next_assignee_body(services)
-    assert body["team_code"] == "marketing_product", body
-    assert body.get("brand_code") is None, (
-        f"assignment still happens with no product to carry a brand from: {body!r}"
+    assert body.get("brand_code") is None, body
+
+
+def test_d10_n1_an_answered_team_pick_over_a_previous_product_pick_question_never_carries() -> None:
+    """N1 pin, guard: the previous open question's own `kind` must also say `team_pick` -
+    a stale `_answered` record naming `team_pick` with the SESSION's open question
+    actually a `product_pick` must not carry either. GUARD, already green."""
+    ctx = _resumed_team_pick_ctx()
+    ctx["session"]["session_vars"]["variables"]["open_question"]["kind"] = "product_pick"
+    item = _item(team="purchasing")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="SORENTO")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    services.resolve_and_gate.assert_not_called()
+    body = _next_assignee_body(services)
+    assert body.get("brand_code") is None, body
+
+
+def test_d10_the_lane_freezes_the_resolved_products_code_on_the_team_clarify_ask() -> None:
+    """New contract (reviewer round 9, item 5): the `team_clarify` question the lane arms
+    THIS turn must carry the product this escalation resolved, so a resumed pick can find
+    it again without reaching back into `focus.products` at all. D6 already resolves the
+    product before the team ladder runs (the product-first order); this only adds the ONE
+    field `tail/compile_state._ask_for_turn` needs to freeze it onto the `team_pick`
+    payload. RED on c500b4398: `_human_intervention`'s clarify branch builds `clarify`
+    with no `clarify_product_code` key at all."""
+    ctx = _ctx(
+        routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "marketing", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWB8004")],
+    )
+    item = _item(team="purchasing")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="SORENTO")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    assert result["arm"] == "clarify", result
+    assert result["clarify"] is not None
+    assert result["clarify"].get("clarify_product_code") == "SRTWB8004", (
+        f"the team_clarify ask must freeze the code this escalation resolved: {result['clarify']!r}"
+    )
+
+
+def test_n4_a_production_dry_run_whose_ladder_raises_is_never_swallowed(monkeypatch) -> None:
+    """N4 (review round 8). D9's dry-run READS are guarded only where a SEAM can fail
+    (`_resolve_product`, `_carried_brand`, the `preview_assignee` call itself) - AC-1142's
+    own rule is that a RESOLVER failure degrades, never a genuine LANE DEFECT. The
+    session-open/bundle-build `try` at `run()`'s dry-run branch (escalation.py ~616) is
+    narrower still: it wraps opening the unit of work, not `_human_intervention` itself,
+    so a raise from inside the ladder - a real bug, not a seam failure - must surface
+    uncaught, and the session it opened must still be rolled back and closed by
+    `production_session`'s own `with` (H56's unit-of-work rule, ~escalation.py 626-630)."""
+    from app.services.chatbot.lanes import escalation as escalation_mod
+
+    class _StubSession:
+        def __init__(self) -> None:
+            self.rolled_back = False
+            self.closed = False
+
+        def rollback(self) -> None:
+            self.rolled_back = True
+
+        def close(self) -> None:
+            self.closed = True
+
+    sessions: list[_StubSession] = []
+
+    def _factory() -> _StubSession:
+        session = _StubSession()
+        sessions.append(session)
+        return session
+
+    def _boom(_ctx: dict, _landed_item: dict) -> dict:
+        raise RuntimeError("a genuine lane defect, not a seam failure")
+
+    monkeypatch.setattr(escalation_mod, "_next_assignee_body", _boom)
+
+    ctx = _ctx(
+        routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": "warehouse", "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+    )
+    item = _item(team="warehouse")
+
+    with pytest.raises(RuntimeError, match="a genuine lane defect"):
+        escalation_mod.run(ctx, item, dry_run=True, session_factory=_factory)
+
+    assert len(sessions) == 1, sessions
+    assert sessions[0].rolled_back is True, (
+        "production_session must roll back on the way out of a raise from the ladder"
+    )
+    assert sessions[0].closed is True, (
+        "production_session must close the session whatever happened inside the ladder"
     )

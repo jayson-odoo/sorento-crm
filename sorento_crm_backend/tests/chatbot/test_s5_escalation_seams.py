@@ -323,6 +323,130 @@ class TestProductionSeams:
 
 
 # --------------------------------------------------------------------------- #
+# Finding 7 (owner console, 13 Sep 2026, measured on the stack DB):
+# `escalation_services._resolve_and_gate` sends `resolve_entity_body`'s DEFAULT
+# `match_mode` ("and", `resolve_gate.py` ~444 - the lane's own `ctx` carries no
+# `match_mode` key). The AND route answers with `intersection` / `by_entity_type` rows,
+# never a `resolutions` key - `_product_rows` reads ONLY `payload["resolutions"]`
+# (`escalation_services.py` ~275), so it iterates zero times and the seam returns
+# `([], [])` for every real code, whatever the resolver actually found. The fix the
+# coder is landing: `_resolve_and_gate` overrides `match_mode` to `"or"` on the body it
+# sends, the same override `query` / `spec_fallback` / `understand_phrase` already get.
+#
+# A real Postgres seed (blank schema, `tests/chatbot/conftest.py`'s `session_factory`),
+# through `escalation_mod.production_services(db).resolve_and_gate` - the exact
+# production seam, not a stand-in - so the AND-mode shape is the resolver's REAL one,
+# not the tester's guess at it.
+# --------------------------------------------------------------------------- #
+
+
+class TestFinding7ResolveAndGateMustNotSendAndMode:
+    """RED on c500b4398 for the reason above; green once `_resolve_and_gate` sends
+    `match_mode: "or"`."""
+
+    @pytest.fixture
+    def _seeded_product(self, session_factory):
+        """One real company / brand / product, `ZZT`-prefixed, company-scoped like the
+        engine scopes every session it opens (`engine._scoped_factory`)."""
+        import uuid
+
+        from app.models.base import set_company_scope
+        from app.models.company import Company
+        from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+        from app.services.company_scope import register_company_scope_listeners
+        from tests._pg_fixture import unique_code
+
+        register_company_scope_listeners()
+
+        db = session_factory()
+        company_id = str(uuid.uuid4())
+        db.add(Company(id=company_id, name="ZZT Escalation Co", code=unique_code("ZEC")[:50]))
+        cat_id, uom_id = str(uuid.uuid4()), str(uuid.uuid4())
+        db.add(ProductCategory(id=cat_id, category_code=unique_code("ZC")[:50], category_name="ZZT Category"))
+        db.add(UnitOfMeasure(id=uom_id, uom_code=unique_code("ZU")[:20], uom_name="Each"))
+        brand_id = str(uuid.uuid4())
+        brand_code = unique_code("ZBR")[:50]
+        db.add(
+            Brand(
+                id=brand_id,
+                brand_code=brand_code,
+                brand_name=unique_code("ZZT Brand")[:150],
+                company_id=company_id,
+            )
+        )
+        code = unique_code("ZFD")[:20].upper().replace("-", "")
+        product_id = str(uuid.uuid4())
+        db.add(
+            Product(
+                id=product_id,
+                product_code=code,
+                product_name=code,
+                category_id=cat_id,
+                base_uom_id=uom_id,
+                list_price=10,
+                is_active=True,
+                company_id=company_id,
+                brand_id=brand_id,
+            )
+        )
+        db.commit()
+        set_company_scope(db, frozenset({company_id}))
+        return {
+            "db": db,
+            "code": code,
+            "brand_id": brand_id,
+            "brand_code": brand_code,
+            "company_id": company_id,
+        }
+
+    def _ctx_naming(self, code: str) -> dict:
+        return {
+            "parse": {
+                "output": {
+                    "entities": [
+                        {"raw": code, "hint": "product", "confident": True, "current_message": True}
+                    ]
+                }
+            }
+        }
+
+    def test_an_exact_seeded_code_resolves_one_row_with_its_own_brand(self, _seeded_product) -> None:
+        """RED today: the default AND-mode body's answer carries no `resolutions` key at
+        all, so `resolved` comes back empty for a code that genuinely exists."""
+        services = escalation_mod.production_services(_seeded_product["db"])
+        ctx = self._ctx_naming(_seeded_product["code"])
+
+        answer = services.resolve_and_gate(ctx, {})
+
+        assert answer["did_you_mean"] == [], answer
+        assert len(answer["resolved"]) == 1, answer
+        row = answer["resolved"][0]
+        assert row["canonical_code"] == _seeded_product["code"], row
+        assert row["display"]["brand"]["brand_code"] == _seeded_product["brand_code"], row
+
+    def test_a_prefix_of_the_seeded_code_offers_a_did_you_mean_not_a_resolve(
+        self, _seeded_product
+    ) -> None:
+        """RED today for the same reason: AND mode's answer has no `resolutions` key, so
+        even the DID-YOU-MEAN side (which never required an exact tier) comes back empty
+        for a code the resolver can genuinely suggest a variant for."""
+        services = escalation_mod.production_services(_seeded_product["db"])
+        typed = _seeded_product["code"][:-1]
+        ctx = self._ctx_naming(typed)
+
+        answer = services.resolve_and_gate(ctx, {})
+
+        assert answer["resolved"] == [], (
+            f"a prefix of a real code must not resolve exact: {answer!r}"
+        )
+        assert answer["did_you_mean"], (
+            f"the resolver must offer the seeded code as a did-you-mean candidate: {answer!r}"
+        )
+        offered_codes = {row.get("canonical_code") for row in answer["did_you_mean"]}
+        assert _seeded_product["code"] in offered_codes, answer["did_you_mean"]
+
+
+# --------------------------------------------------------------------------- #
 # 3. AC-505 end to end: the clarify arm through `run_turn` + `complete_turn`
 # --------------------------------------------------------------------------- #
 
