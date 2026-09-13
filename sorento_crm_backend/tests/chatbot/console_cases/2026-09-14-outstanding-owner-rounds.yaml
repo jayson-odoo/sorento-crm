@@ -1,0 +1,271 @@
+# Console cases for chatbot outstanding report owner rounds R15-R24.
+#
+# `documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` S4 / `chatbot-outstanding-report-acceptance-criteria.md`
+# owner design rulings, final grading run 14 Sep 2026.
+#
+# NOT collected by pytest. Run with `scripts/chatbot_console_check.py` against the lane
+# stack once all slices are green:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-14-outstanding-owner-rounds.yaml \
+#       --base-url http://127.0.0.1:8085 \
+#       --prompt-version <FULL version id>
+#
+# Export EXTERNAL_API_KEY from the backend .env before running.
+#
+# GRADING SCOPE: Ruling groups per the plan's S4 point 2 (Mechanics):
+# - R15: refinement by date and location (two refinement turns stacked)
+# - R16/R21: picker answers one / all keep the outstanding ask (ambiguous customer)
+# - R17: refinement location dies with the offer (location removes the pending ask)
+# - R18/R20: warehouse word and DO hint on the picker (picker shows operational hints)
+# - R19/R19b: full header with names from customer rows (customer header line lists all)
+# - R22: decline and second unreadable turn leave the offer (pending sticky, reply count)
+# - R23: latest date first (SO list shows newest order first)
+# - R24: a business query under an open offer is a new ask (offers don't inherit filters)
+#
+# DATA FACTS: the cases lean on these real rows in the prod copy (sorento_ai_automation_0907):
+# - CNK HARDWARE: two ledgers, customer names "CNK HARDWARE SDN BHD" and "CNK HARDWARE SDN BHD (PROJECT)"
+# - hanlim: a customer family with multiple ledgers (used for multiselect tests)
+# - fullshun / FULLSHUN: multiple families including "*FULLSHUN SANITARYWARE SDN BHD (SHOWCASE)"
+# - chin chun: three families (CHIN CHUN HARDWARE SDN BHD, CHIN CHUN HOMEMART SDN BHD, CHIN CHUN HARDWARE AND TIMBER TRADING)
+# - SRTKT39SS: product with outstanding DO 5 on 07/09/2026 under chin chun, outstanding SO in 2026
+# - SRTWT7443: product with 82 open SOs, latest 02/09/2026
+# - SRTWT7445: product with open SO and DO lines
+#
+contact: "437264483"
+
+cases:
+  - name: R15 - refinement by date and location stacked
+    cold: true
+    turns:
+      # 1. Customer/scope ask - no customer name in scope question yet (before R19).
+      - text: "outstanding dealer quantity for CNK HARDWARE"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Outstanding for which document?"]
+
+      # 2. Scope answer - both docs, customer in header (R19 onwards).
+      - text: "3"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Customer: CNK HARDWARE SDN BHD", "Sales order outstanding", "Delivery order outstanding", "Order date: all"]
+
+      # 3. Date refinement - narrows the date range, keeps both scopes.
+      - text: "i want to see this month only"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Order date: 01/09/2026 to 30/09/2026", "Sales order outstanding", "Delivery order outstanding"]
+          reply_not_contains: ["Outstanding for which document?"]
+
+      # 4. Detail selection - picks sales order list, opens offer.
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["*SO Number:*"]
+
+      # 5. Location refinement - narrows to BRW, reply format is single-scope "Reply 1...".
+      - text: "only BRW"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Location: BRW", "Order date: 01/09/2026 to 30/09/2026", "Sales order outstanding"]
+          reply_not_contains: ["Outstanding for which document?"]
+
+  - name: R16 - picker answer keeps the outstanding ask (fullshun names)
+    cold: true
+    turns:
+      # 1. Ambiguous customer name triggers picker.
+      - text: "outstanding dealer quantity for fullshun"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Which customer do you mean?", "FULLSHUN"]
+          reply_not_contains: ["Outstanding for which document?"]
+
+      # 2. Pick first option - resolves customer but keeps outstanding ask.
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Outstanding for which document?"]
+          reply_not_contains: ["Here are the orders I found"]
+
+      # 3. Scope answer - both, now with customer in header.
+      - text: "3"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Customer: FULLSHUN", "Location: all", "Order date: all", "Sales order outstanding", "Delivery order outstanding"]
+          reply_not_contains: ["Here are the orders I found"]
+
+  - name: R19 - scope question header shows customer names (chin chun on SRTKT39SS 2026)
+    cold: true
+    turns:
+      # 1. Multiple customers match - picker.
+      - text: "outstanding dealer quantity for chin chun product SRTKT39SS in 2026"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Which customer do you mean?", "CHIN CHUN HARDWARE SDN BHD"]
+
+      # 2. Pick first - scope question now carries customer, product, date in header.
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Product: SRTKT39SS", "Customer: CHIN CHUN HARDWARE", "Location: all", "Order date: 01/01/2026 to 31/12/2026", "Outstanding for which document?"]
+          reply_not_contains: ["300-H070"]
+
+      # 3. Scope answer - both scopes with header filters intact.
+      - text: "3"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Product: SRTKT39SS", "Customer: CHIN CHUN HARDWARE", "Order date: 01/01/2026 to 31/12/2026", "Sales order outstanding", "Delivery order outstanding"]
+
+  - name: R19b - full header on scope question lists all distinct customer names (SRTWT7445 fullshun)
+    cold: true
+    turns:
+      # 1. Fullshun family - scope question header prints all distinct names.
+      - text: "SRTWT7445 outstanding for fullshun sanitaryware sdn bhd"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Product: SRTWT7445", "Customer:", "Location: all", "Order date: all", "Outstanding for which document?"]
+
+      # 2. Detail selection - no duplicate customer names in result.
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sales order outstanding"]
+          reply_not_contains: ["FULLSHUN SANITARYWARE SDN BHD, FULLSHUN SANITARYWARE SDN BHD,"]
+
+  - name: R20 - no DO hint on the customer picker of an outstanding ask
+    cold: true
+    turns:
+      # 1. Picker includes DO presence hint in option labels.
+      - text: "outstanding dealer quantity for chin chun product SRTKT39SS in 2026"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Which customer do you mean?", "1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)"]
+          reply_not_contains: ["no DO", "has DO", "None of these have"]
+
+      # 2. Pick first - scope question header (product, customer, date, location, question).
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Product: SRTKT39SS", "Customer: CHIN CHUN HARDWARE SDN BHD", "Location: all", "Order date: 01/01/2026 to 31/12/2026", "Outstanding for which document?"]
+          reply_not_contains: ["(MCH, SRT)", "300-H070"]
+
+      # 3. Word answer "all" - both scopes.
+      - text: "all"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Customer: CHIN CHUN HARDWARE SDN BHD", "Delivery order outstanding", "Outstanding: 5"]
+          reply_not_contains: ["(MCH, SRT)"]
+
+  - name: R20 guard - plain DO ask keeps the picker hint
+    cold: true
+    turns:
+      # 1. Plain delivery ask - picker shows DO hints.
+      - text: "any DO for chin chun on SRTKT39SS?"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Which customer do you mean?", " DO"]
+
+  - name: R21 - all on the picker keeps the outstanding ask, lists all families (chin chun SRTKT39SS)
+    cold: true
+    turns:
+      # 1. Picker with "all" option.
+      - text: "outstanding dealer quantity for chin chun product SRTKT39SS in 2026"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Which customer do you mean?", "3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)"]
+
+      # 2. Answer "all" - scope question header lists all families.
+      - text: "all"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Product: SRTKT39SS", "Customer: ", "CHIN CHUN HOMEMART SDN BHD", "CHIN CHUN HARDWARE AND TIMBER TRADING", "Order date: 01/01/2026 to 31/12/2026", "Outstanding for which document?"]
+          reply_not_contains: ["Here are the orders I found", "(MCH, SRT)"]
+
+      # 3. Scope answer - both scopes, all families.
+      - text: "3"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Product: SRTKT39SS", "CHIN CHUN HOMEMART SDN BHD", "Order date: 01/01/2026 to 31/12/2026", "Sales order outstanding", "Delivery order outstanding", "Outstanding: 5"]
+          reply_not_contains: ["Here are the orders I found"]
+
+  - name: R21 guard - all on picker under a plain DO ask still lists every family
+    cold: true
+    turns:
+      # 1. Plain DO ask.
+      - text: "any DO for chin chun on SRTKT39SS?"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Which customer do you mean?"]
+
+      # 2. Answer "all" - lists all families, no outstanding ask.
+      - text: "all"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Here are the orders I found", "CHIN CHUN HARDWARE SDN BHD"]
+          reply_not_contains: ["Outstanding for which document?"]
+
+  - name: R22a - decline answer leaves the offer, one-line ack
+    cold: true
+    turns:
+      # 1. Direct SO ask - offer.
+      - text: "SRTWT7443 sales order outstanding"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sales order outstanding", "Reply 1 for the sales order list."]
+
+      # 2. Decline - no offer repeat, one-line ack only.
+      - text: "no"
+        expect:
+          reply_contains: ["Okay, noted."]
+          reply_not_contains: ["Reply 1 for", "Let me understand more"]
+
+  - name: R22b - second unreadable turn leaves the offer after greeting
+    cold: true
+    turns:
+      # 1. Direct SO ask - offer.
+      - text: "SRTWT7443 sales order outstanding"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Reply 1 for the sales order list."]
+
+      # 2. Unreadable turn - repeats offer (sticky pending).
+      - text: "hmm"
+        expect:
+          reply_contains: ["Reply 1 for the sales order list."]
+
+      # 3. Greeting - ends the conversation, no offer, replies with greeting.
+      - text: "hi"
+        expect:
+          reply_contains: ["How can I help"]
+          reply_not_contains: ["Reply 1 for", "Sales order outstanding"]
+
+  - name: R23 - SO detail list shows latest order date first
+    cold: true
+    turns:
+      # 1. Direct SO ask - offer.
+      - text: "SRTWT7443 sales order outstanding"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Reply 1 for the sales order list."]
+
+      # 2. Detail selection - newest order (02/09/2026) listed first.
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["1. *SO Number:*", "*Order Date:* 02/09/2026"]
+          reply_not_contains: ["1. *SO Number:* SO245246"]
+
+  - name: R24 - a business query under an open offer is a new ask (hanlim delivery)
+    cold: true
+    turns:
+      # 1. Direct SO ask - opens offer.
+      - text: "SRTWT7443 sales order outstanding"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Reply 1 for the sales order list."]
+
+      # 2. New business ask (delivery status, customer filter) - fresh ask, not offer continuation.
+      - text: "delivery status for hanlim"
+        expect:
+          reply_not_contains: ["Product: SRTWT7443", "Sales order outstanding", "Reply 1 for"]
+          reply_contains: ["HANLIM"]
