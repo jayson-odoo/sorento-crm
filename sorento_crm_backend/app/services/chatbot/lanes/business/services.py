@@ -400,6 +400,29 @@ def fetch_space_id(db: Session) -> str | None:
     return default_space_id(db)
 
 
+def outstanding_customer_echo(db: Session, customer_ids: Any) -> str:
+    """The `Customer:` line for a set of resolved customer ids - ONE source, the
+    customer ROWS (R19b, owner round 7, 13 Sep 2026).
+
+    Delegates to the report route's own `_customer_echo`, which is what renders the
+    line under the REPORT (AC-1136) and applies AC-1163's distinct, first-seen-order
+    rule. The scope question asked the same thing of a different source and got a
+    different answer: it printed the PICKER's roster label, company-code suffix and
+    all ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)"), while the report two turns later
+    named the eight ledger rows. A roster label is a display string for the PICK, not
+    a customer name, and one line asked about one filter cannot have two sources.
+
+    Reads on the ENGINE's own per-contact scoped session, like
+    `resolve_warehouse_token` above and for the same reason.
+    """
+    from app.services.outstanding_report_service import _customer_echo
+
+    ids = [str(uid) for uid in (customer_ids or []) if uid]
+    if not ids:
+        return ""
+    return _customer_echo(db, None, ids) or ""
+
+
 def resolve_warehouse_token(db: Session, token: str) -> list[str]:
     """D5 (PLAN-chatbot-outstanding-report.md, S4 point 7): a token equal to a
     `warehouse_code` (case-insensitive) resolves to that code ONLY (`BRW` -> `BRW`); a

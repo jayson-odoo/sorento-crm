@@ -30,6 +30,7 @@ from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
+    outstanding_customer_echo,
     resolve_warehouse_token,
 )
 
@@ -92,10 +93,6 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
         "date_filter_start": semantic_input.get("date_filter_start"),
         "date_filter_end": semantic_input.get("date_filter_end"),
         "customer_ids": customer_ids,
-        # R19: the NAMES behind those ids, for the question's own `Customer:` line. The
-        # ids are uuids and never reach a screen; the names are worked out once, in
-        # `run_fetch`, from whatever resolved the customer this turn.
-        "customer_names": semantic_input.get("outstanding_customer_names") or [],
         "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
         # AC-1132 (review round, 13 Sep 2026): the TOKEN travels with the codes, so the
         # answering turn prints the same `Location: IB (BRW-IB, MWH-IB)` header the
@@ -104,13 +101,17 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
     }
 
 
-def _outstanding_scope_ask(entities: Any, semantic_input: dict[str, Any]) -> dict[str, Any]:
+def _outstanding_scope_ask(
+    entities: Any, semantic_input: dict[str, Any], *, db: Any = None
+) -> dict[str, Any]:
     """AC-1130: ARM the scope question, no fetch this turn - the FIRST ask, filters
     freshly parsed off this turn's resolved entities."""
-    return _outstanding_scope_ask_from_filters(_outstanding_filters_from(entities, semantic_input))
+    return _outstanding_scope_ask_from_filters(
+        _outstanding_filters_from(entities, semantic_input), db=db
+    )
 
 
-def _outstanding_scope_filter_lines(filters: dict[str, Any]) -> list[str]:
+def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: str = "") -> list[str]:
     """The scope question's header: the SAME four lines the report prints, in the same
     order and the same words (`sorento_crm_mcp.presenters._outstanding_report`, the
     `Product:` / `Customer:` / `Location:` / `Order date:` block), one writer for every
@@ -131,20 +132,16 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any]) -> list[str]:
     is the same one - this copy FOLLOWS the presenter and invents nothing - and both
     copies are pinned by tests that assert the exact bytes.
 
-    The `Customer:` line prints NAMES (`filters["customer_names"]`), never the resolved
-    ids: they are uuids, and a uuid never reaches a customer's screen. Distinct names,
-    first-seen order - AC-1163's rule, the same one the route's own `_customer_echo`
-    applies to the report header, because one company routinely holds several ledger
-    rows and printing each one is how "FULLSHUN SANITARYWARE SDN BHD" appeared five
-    times in one header.
+    The `Customer:` line prints NAMES, never the resolved ids: they are uuids, and a
+    uuid never reaches a customer's screen. `customer_name` is handed in already
+    rendered by `outstanding_customer_echo` - the REPORT's own `_customer_echo`, run
+    over the same ids - so the question and the answer cannot say different things
+    about the same filter (R19b). They did: the question printed the picker's roster
+    label with its company-code suffix ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)") while
+    the report named the ledger rows. AC-1163's distinct, first-seen rule comes with
+    it, because it lives in that one function.
     """
     product_code = jsc.js_string(filters.get("product_code") or "").strip()
-
-    names: list[str] = []
-    for raw_name in jsc.array(filters.get("customer_names")):
-        name = jsc.js_string(raw_name or "").strip()
-        if name and name not in names:
-            names.append(name)
 
     codes = [jsc.js_string(c) for c in jsc.array(filters.get("warehouse_codes")) if jsc.truthy(c)]
     token = jsc.js_string(filters.get("location_token") or "").strip()
@@ -166,7 +163,7 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any]) -> list[str]:
 
     return [
         f"Product: {product_code or 'all'}",
-        f"Customer: {', '.join(names) if names else 'all'}",
+        f"Customer: {jsc.js_string(customer_name or '').strip() or 'all'}",
         f"Location: {location}",
         f"Order date: {order_date}",
     ]
@@ -181,7 +178,9 @@ def _outstanding_ddmmyyyy(value: Any) -> str:
     return f"{parts[2]}/{parts[1]}/{parts[0]}"
 
 
-def _outstanding_scope_ask_from_filters(filters: dict[str, Any]) -> dict[str, Any]:
+def _outstanding_scope_ask_from_filters(
+    filters: dict[str, Any], *, db: Any = None
+) -> dict[str, Any]:
     """AC-1130/AC-1132: ARM the scope question, no fetch this turn. Builds the SAME
     `structured` shape `output_structurer`'s `crm_outstanding_report` branch returns for
     a real hit (`response` + `outstanding_ask`), so `tail/compile_state.py` reads both
@@ -192,7 +191,19 @@ def _outstanding_scope_ask_from_filters(filters: dict[str, Any]) -> dict[str, An
     # `_outstanding_scope_filter_lines`. (R13 dropped the `Product:` line on a
     # customer-only ask because it printed empty; the answer to that is a value on every
     # line, `all` included, not a missing line.)
-    header = "".join(f"{line}\n" for line in _outstanding_scope_filter_lines(filters))
+    # R19b: the names come from the customer ROWS, through the report's own echo, so the
+    # question and the report cannot disagree about the same filter. `db` is None outside
+    # a real turn (this module's own direct `run_fetch` tests), which reads as `all` -
+    # the same no-op a turn with no customer gets.
+    header = "".join(
+        f"{line}\n"
+        for line in _outstanding_scope_filter_lines(
+            filters,
+            customer_name=(
+                outstanding_customer_echo(db, filters.get("customer_ids")) if db is not None else ""
+            ),
+        )
+    )
     text = (
         header + "Outstanding for which document?\n"
         "1. Sales orders (not yet transferred to DO)\n"
@@ -553,7 +564,7 @@ def run_fetch(
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
         if _OUTSTANDING_SO_GRANT in granted:
-            return _outstanding_scope_ask_from_filters(reask_filters)
+            return _outstanding_scope_ask_from_filters(reask_filters, db=db)
 
     # ── the tier ask, with its per-tier probe ────────────────────────────────
     # `if-tier-ask` sits UPSTREAM of the rag call in n8n: there is nothing to fetch until
@@ -745,47 +756,6 @@ def run_fetch(
         # customer, and otherwise the ones the CARRIED entities still hold (an answering
         # or refining turn resolves nothing of its own; the report's own header is built
         # from the ids by the route, which has the `customers` table to read).
-        # The WORD the customer saw for each resolved customer, by uuid: a pick's own
-        # roster label, or the token they typed. Read off the raw parsed entities, the
-        # same way the location word above is.
-        typed_customer_labels: dict[str, str] = {}
-        for e in jsc.array(parse_output.get("entities")):
-            if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "customer":
-                continue
-            uid = jsc.js_string(e.get("uuid") or "")
-            label = jsc.js_string(e.get("raw") or "").strip()
-            if uid and label and uid not in typed_customer_labels:
-                typed_customer_labels[uid] = label
-
-        def _customer_line_name(uid: str, resolved_name: Any, code: Any) -> str:
-            # The resolver's own NAME wins; failing that the label on the customer's own
-            # screen; the code is the last resort and is usually a DEBTOR CODE, which D7
-            # says is never printed - a picked customer's `canonical_code` is exactly
-            # that ("300-H070"), which is what this order exists to keep off the line.
-            return (
-                jsc.js_string(resolved_name or "").strip()
-                or typed_customer_labels.get(uid, "")
-                or jsc.js_string(code or "").strip()
-            )
-
-        customer_names: list[str] = []
-        for e in jsc.array(entities):
-            if not isinstance(e, dict) or e.get("entity_type") != "customer":
-                continue
-            name = _customer_line_name(
-                jsc.js_string(e.get("uuid") or ""), e.get("display_name"), e.get("code")
-            )
-            if name and name not in customer_names:
-                customer_names.append(name)
-        if not customer_names:
-            # Nothing resolved this turn (an answering or refining turn): the carried
-            # entities still hold the label, and their `canonical_code` is the debtor
-            # code again, so the same order applies.
-            for uid, label in typed_customer_labels.items():
-                if label not in customer_names:
-                    customer_names.append(label)
-        if customer_names:
-            semantic_input["outstanding_customer_names"] = customer_names
 
         # -- D13: the sales_orders.outstanding field-reveal gate, before any fetch -- #
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
@@ -806,7 +776,7 @@ def run_fetch(
             and jsc.truthy(parse_output.get("outstanding_scope_ask_candidate"))
             and has_so_grant
         ):
-            return _outstanding_scope_ask(entities, semantic_input)
+            return _outstanding_scope_ask(entities, semantic_input, db=db)
 
         scope = fetch_mod.ORDER_STATUS_TO_SCOPE.get(order_status_raw, "both")
         so_refused = False

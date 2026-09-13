@@ -524,7 +524,47 @@ DIVERGENCES: list[Divergence] = [
                 ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
             ),
         )
-        for name in ("rg-15114061", "rg-15125764")
+        for name in ("rg-15114061",)
+    ),
+    # R20 (owner round 7, 13 Sep 2026): `rg-15125764` is the SAME two fields as the entry
+    # above (its `escalate_message` carries the picker's own hint wording, and its
+    # `allowed_lookup` echoes predate S4 point 7) plus the two diagnostics that record
+    # WHY the hint is now absent from it - and it needs its own entry because `find()`
+    # returns the first match per fixture. Split from its sibling rather than widening
+    # that entry, because `rg-15114061` (`order_status: null`) is NOT an outstanding ask,
+    # still probes, and must keep grading both diagnostics.
+    #
+    # This capture IS the defect: `order_status: "outstanding"`, and the live picker
+    # stamped "- no recent delivery" on all five candidates and closed with "None of
+    # these have a recent delivery." The probe behind that claim measures orders with an
+    # `actual_delivery_date` - DELIVERED DOs - which is the opposite population from the
+    # outstanding report's own DO block, so the claim was about something the customer had
+    # not asked about ("it is still kinda strange for me though, to say no DO, then later
+    # when i get the summary, there is DO"). The port does not probe on an outstanding ask
+    # at all, so `customer_probe_hits` is null (not measured) rather than 0 (measured
+    # none), and `customer_probe_skip_reason` says which rule skipped it. Pinned by
+    # tests/chatbot/test_outstanding_lane.py::TestOutstandingAskPickerHasNoDeliveryHint.
+    Divergence(
+        node="sub-resolve-and-gate",
+        fixture="rg-15125764",
+        hazard="R20 (owner round 7, 13 Sep 2026) + owner ruling A + AC-1 (allowed_lookup)",
+        reason=(
+            "an OUTSTANDING ask's customer picker no longer probes for a delivery order "
+            "and prints no hint, so this capture's picker message, its "
+            "`customer_probe_hits` (null = not measured, was 0) and its new "
+            "`customer_probe_skip_reason` all move; `escalate_message` and the four "
+            "`allowed_lookup` echoes move for the two reasons the sibling entry above "
+            "records."
+        ),
+        strip_paths=(
+            ("escalate_message",),
+            ("customer_probe_hits",),
+            ("customer_probe_skip_reason",),
+            ("gate_debug", "allowed_lookup"),
+            ("gate", "gate_debug", "allowed_lookup"),
+            ("ctx_resolved", "gate_debug", "allowed_lookup"),
+            ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+        ),
     ),
     # OWNER CONSOLE PASS 4, item F (6 Sep 2026): a container-hinted token that the
     # resolver answers with PRODUCTS and no shipment is retyped `product` before the

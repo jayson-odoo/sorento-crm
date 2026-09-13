@@ -1501,9 +1501,6 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
         "date_filter_start": semantic_input.get("date_filter_start"),
         "date_filter_end": semantic_input.get("date_filter_end"),
         "customer_ids": customer_ids,
-        # R19: the names behind the ids, so a question re-asked over this filter set
-        # can print the same `Customer:` line the report printed.
-        "customer_names": semantic_input.get("outstanding_customer_names") or [],
         "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
         # AC-1132/AC-1138 (review round): the location is part of the filter set, and
         # the TOKEN travels with the codes - the answering turn has to print the same
