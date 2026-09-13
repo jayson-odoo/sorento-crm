@@ -17,6 +17,11 @@ them.
 Substrate: `pg_session()` against the REAL database, rolled back. `project_label` /
 `project_label_source` are mapped on the ORM model, and a raw-SQL pre-seed of an existing
 label (AC-O3, AC-O4) fails loudly where migration 511 has not been applied.
+
+Every chain the upload needs is seeded here, the UPLOADER included: `apply` refuses a sheet
+it cannot attribute to anybody (AC-S1-42), and a test that leaves the actor out is really
+testing whether the machine running it happens to have `EXTERNAL_API_KEY_ACT_AS_USER_ID` in
+its `.env`.
 """
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ from app.models.base import set_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.user import User
 from app.services import project_order_inquiry_import_service as svc
 from tests._pg_fixture import pg_session, unique_code
 
@@ -70,8 +76,15 @@ def world(db):
         is_active=True, counts_as_available=True,
     )
     db.add(wh)
+    uploader = User(
+        id=_u(),
+        email=f"{MARKER}-{uuid.uuid4().hex[:8]}@example.test",
+        name=f"{MARKER} uploader",
+        status="ACTIVE",
+    )
+    db.add(uploader)
     db.flush()
-    return {"product": product, "warehouse": wh}
+    return {"product": product, "warehouse": wh, "actor": str(uploader.id)}
 
 
 #: The customer's own header row, with the project cell Rule 1 reads.
@@ -102,8 +115,17 @@ def _row(number, item_code, project, *, qty=10.0, delivery_date=date(2026, 9, 1)
     return (number, item_code, qty, delivery_date, LOCATION, project)
 
 
-def _apply(db, rows) -> dict:
-    return svc.apply(db, _sheet(rows), file_name="project label.xlsx")
+def _apply(db, rows, actor) -> dict:
+    """Apply the sheet the way the route does: as a person, with a real user behind it.
+
+    The actor is not decoration. Every row this importer raises is born acknowledged and
+    every link records who made it, so `apply` refuses an upload it cannot attribute to
+    anybody (AC-S1-42). Without one passed here the call fell through to
+    `EXTERNAL_API_KEY_ACT_AS_USER_ID`, which a developer machine has in its `.env` and CI
+    does not - so these tests passed locally and refused the whole upload in CI, reporting
+    it as a label that never landed.
+    """
+    return svc.apply(db, _sheet(rows), actor=actor, file_name="project label.xlsx")
 
 
 def _held_order(db, world, number, *, qty_ordered=999) -> SalesOrder:
@@ -152,7 +174,8 @@ def test_o1_an_order_autocount_owns_gets_the_inquiry_label_and_keeps_its_figures
     _held_order(db, world, number)
 
     cell = "PEMBINAAN TEGUH MAJU / PASAR BESAR CHERAS - RESIDENCE / KUALA LUMPUR"
-    out = _apply(db, [_row(number, world["product"].product_code, cell, qty=1.0)])
+    out = _apply(db, [_row(number, world["product"].product_code, cell, qty=1.0)],
+                 world["actor"])
 
     assert out["rows_raised"] == 1
     assert out["orders_stamped"] == 1
@@ -176,7 +199,7 @@ def test_o2_a_label_matching_no_customer_still_lands_on_the_order(db, world):
     _held_order(db, world, number)
     cell = "URC ENGINEERING / BAMBOO RESIDENCE / KUALA LUMPUR"
 
-    _apply(db, [_row(number, world["product"].product_code, cell)])
+    _apply(db, [_row(number, world["product"].product_code, cell)], world["actor"])
 
     order = _order(db, number)
     assert order.project_label == "BAMBOO RESIDENCE / KUALA LUMPUR"
@@ -189,7 +212,8 @@ def test_o3_a_customer_only_cell_writes_no_label_and_leaves_an_existing_one_unto
     _set_label(db, theirs.id, label="PRE-EXISTING LABEL", source="note")
 
     _apply(db, [_row(number, world["product"].product_code,
-                     "PASAR BESAR CHERAS")])  # no slash - a customer name only
+                     "PASAR BESAR CHERAS")],  # no slash - a customer name only
+           world["actor"])
 
     order = _order(db, number)
     assert order.project_label == "PRE-EXISTING LABEL"
@@ -202,7 +226,7 @@ def test_o4_a_reupload_with_a_corrected_cell_overwrites_the_earlier_inquiry_labe
     _set_label(db, theirs.id, label="OLD LABEL", source="inquiry")
 
     _apply(db, [_row(number, world["product"].product_code,
-                     "CUSTOMER / CORRECTED LABEL")])
+                     "CUSTOMER / CORRECTED LABEL")], world["actor"])
 
     order = _order(db, number)
     assert order.project_label == "CORRECTED LABEL"
