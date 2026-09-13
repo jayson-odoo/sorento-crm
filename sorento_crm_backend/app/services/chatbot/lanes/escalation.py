@@ -695,16 +695,126 @@ def _resolve_product(
     did_you_mean = [r for r in jsc.array(jsc.get(answer, "did_you_mean")) if jsc.truthy(r)]
     brands = list(dict.fromkeys(b for b in (_brand_of(r) for r in resolved) if b))
     code = jsc.get(resolved[0], "canonical_code") if len(resolved) == 1 else None
+    # D6: DID-YOU-MEAN FIRST, then which team. Nothing is assigned on this turn - the rows
+    # go out and the escalation is remembered on the question they are frozen onto.
+    #
+    # NOT when this turn is itself the pick that resumed a deferred escalation: the customer
+    # has already chosen from rows we printed, and offering them again would be a loop with
+    # the same three codes in it.
+    ask = None
+    if not resolved and did_you_mean and _deferred_team_word(ctx) is None:
+        ask = _product_pick_ask(ctx, context_item, did_you_mean)
     return {
         # One row is the answer. Several rows that agree on a brand still name it - that is
         # a code twin across companies, and both twins route to the same brand's member.
         # Several that disagree name none: a guess there picks a person for the wrong brand.
         "brand_code": brands[0] if len(brands) == 1 else None,
         "code": code,
-        "ask": None,
+        "ask": ask,
         "resolved": resolved,
         "did_you_mean": did_you_mean,
     }
+
+
+def _product_pick_ask(
+    ctx: dict[str, Any], context_item: dict[str, Any], rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """The did-you-mean rows, armed as the ONE open question, with the escalation deferred.
+
+    The 11 Sep 12:55 turn is the whole of this arm: "ESCALTE TO MARKETING BIDET SEAT COVER
+    FOR SRTWC60630-SH" names a code that does not exist, and assigning it would put a
+    marketing person on a conversation about a product nobody can name - so the rows come
+    first and the team question waits for the pick (D6).
+
+    The escalation rides the question's PAYLOAD (`then.escalate`), which is why no new
+    open-question kind and no new session key are needed (D5): `dialogue/open_question.
+    _product_pick` reads it, says `escalate`, and the next turn re-enters this lane with the
+    product resolved and the team word remembered.
+
+    The rows, the numbered sentence and the quick replies are built from ONE list, the same
+    rule `_clarify_over` follows for teams: a tap can never name a code the ask did not
+    offer.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+
+    options = []
+    for index, row in enumerate(rows, start=1):
+        code = jsc.get(row, "canonical_code")
+        options.append(
+            {
+                "idx": index,
+                "uuid": jsc.get(row, "uuid"),
+                "code": code,
+                "label": jsc.js_string(code),
+                "entity_type": "product",
+            }
+        )
+    escalate: dict[str, Any] = {"team_word": _parser_team(ctx, jsc.get(context_item, "team"))}
+    offered = _offered_team(ctx)
+    if offered:
+        escalate["offer_team"] = offered
+    question = oq.ask(
+        "product_pick",
+        options=options,
+        turn_no=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
+        payload={"then": {"escalate": escalate}},
+    )
+    labels = [jsc.js_string(jsc.get(o, "label")) for o in options]
+    typed = jsc.js_string(_typed_product_code(ctx))
+    listed = "\n".join(f"{jsc.get(o, 'idx')}. {jsc.get(o, 'label')}" for o in options)
+    lead = f"I could not find *{typed}*." if typed else "I could not find that code."
+    text = f"{lead} Did you mean one of these?\n{listed}\nReply with a number."
+    return {
+        "arm": "product_pick",
+        # The tail persists the QUESTION the lane armed, unchanged, because this is the
+        # moment the rows and the numbering are known to belong together
+        # (`tail/compile_state`'s "the lane's own question wins").
+        "clarify": {
+            **context_item,
+            "clarify_product": True,
+            "clarify_text": text,
+            "open_question": question,
+        },
+        "actions": _clarify_actions(text, options=labels, dry_run=False),
+        "pending": question,
+    }
+
+
+def _typed_product_code(ctx: dict[str, Any]) -> Any:
+    """The code the CUSTOMER typed for the product this turn named, as the parser kept it."""
+    products = _this_turn_products(ctx)
+    if not products:
+        return None
+    first = products[0]
+    return jsc.get(first, "canonical_code") or jsc.get(first, "raw")
+
+
+def _deferred_team_word(ctx: dict[str, Any]) -> Any:
+    """The team word a deferred escalation remembered, on the turn its pick resumes it.
+
+    Two structured signals, no new session key (D5, D11):
+
+    * `ctx.parse._answered` - the engine's own record of the question THIS message answered
+      (`handler: product_pick`, `after.escalate: true`, written in the `answered` stage).
+      Without it a stale picker left open by another lane would keep handing a team word to
+      every later escalation turn;
+    * the question's own payload (`then.escalate.team_word`), frozen when the rows were
+      printed, read off the session as it was READ - which is where the answered question
+      still is.
+    """
+    answered = jsc.get(jsc.get(ctx, "parse"), "_answered")
+    if not isinstance(answered, dict):
+        return None
+    if jsc.get(answered, "handler") != "product_pick":
+        return None
+    if jsc.get(jsc.get(answered, "after"), "escalate") is not True:
+        return None
+    question = jsc.get(_prev_variables(ctx), "open_question")
+    escalate = jsc.get(jsc.get(jsc.get(question, "payload"), "then"), "escalate")
+    if not isinstance(escalate, dict):
+        return None
+    word = jsc.get(escalate, "team_word")
+    return word if jsc.truthy(word) else None
 
 
 def _agent_for_team(team: Any) -> Any:
@@ -938,7 +1048,12 @@ def _person_routing(
     # NAMED TEAM BEATS THE FLAG: the customer said where they want this to go, which is
     # more than a yes to a question says. (S1 also clamps the flag to the turns where an
     # offer really is open, so the two halves of D7 hold at both ends.)
+    # The word the customer typed THIS turn, else the one a deferred escalation remembered
+    # (D6): a pick on a did-you-mean resumes the escalation it was deferred from, and the
+    # team word it carried is the customer's own - typed one turn earlier, never re-read.
     raw_team = _parser_team(ctx, team)
+    if not jsc.truthy(raw_team):
+        raw_team = _deferred_team_word(ctx)
     if jsc.truthy(raw_team):
         # The parser named SOMETHING. Which catalogue members does that word name?
         matched = _catalogue_teams(raw_team)
@@ -1004,7 +1119,13 @@ def _offered_team(ctx: dict[str, Any]) -> Any:
     question = jsc.get(_prev_variables(ctx), "open_question")
     if not isinstance(question, dict):
         return None
-    team = jsc.get(jsc.get(question, "payload"), "team")
+    payload = jsc.get(question, "payload")
+    team = jsc.get(payload, "team")
+    if not jsc.truthy(team):
+        # A DEFERRED escalation remembers the offer that was open when it was deferred, so
+        # the pick that resumes it narrows the family exactly as the original turn would
+        # have (AC-1113 across the deferral).
+        team = jsc.get(jsc.get(jsc.get(payload, "then"), "escalate"), "offer_team")
     if jsc.truthy(team):
         return jsc.nullish_str(team).strip().lower()
     options = jsc.array(jsc.get(question, "options"))

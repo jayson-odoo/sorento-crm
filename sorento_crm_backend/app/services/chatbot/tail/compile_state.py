@@ -1073,6 +1073,14 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # output composed before the conversion - it goes with the last of them (step 4).
     asked = jsc.get(sug, "open_question") if jsc.truthy(sug) else None
     if not (isinstance(asked, dict) and asked.get("kind")):
+        # The ESCALATION lane's own did-you-mean (D6): same rule as the miss lane's above,
+        # and for the same reason - the lane that printed the rows froze them onto the
+        # question, with the deferred escalation on its payload, so the tail persists that
+        # rather than re-deriving a roster from a `selection_context` label.
+        lane_clarify = outcome.get("clarify-company-reply")
+        lane_asked = jsc.get(lane_clarify, "open_question") if jsc.truthy(lane_clarify) else None
+        asked = lane_asked if isinstance(lane_asked, dict) and lane_asked.get("kind") else None
+    if not (isinstance(asked, dict) and asked.get("kind")):
         asked = asked_here
     # THE CLOCK DOES NOT RESTART ON A CARRY. A question the customer can still see is the
     # same question: re-stamping it every turn would make its age permanently zero, and the
@@ -2260,11 +2268,13 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
             variables["routing_roster_plan"] = None
             variables["routing_company"] = None
             variables["routing_brand"] = None
-        elif jsc.get(clar, "clarify_team") is True:
+        elif jsc.get(clar, "clarify_team") is True or jsc.get(clar, "clarify_product") is True:
             # Without this the team-clarify arm fell through to the STALE previous
             # response; if that was an escalate offer, `offeredEscalation` read TRUE
             # against an offer the customer can no longer see, and a negatively phrased
-            # clarify answer read as declining it.
+            # clarify answer read as declining it. The escalation lane's did-you-mean ask
+            # (D6) is the same shape with the same hazard: what the turn SENT is what the
+            # next turn must be judged against.
             variables["response"] = jsc.get(clar, "clarify_text")
         elif isinstance(jsc.get(prev, "response"), str) and jsc.get(prev, "response"):
             variables["response"] = jsc.get(prev, "response")

@@ -2739,13 +2739,20 @@ def _run_escalation_arm(
     turn_trace.record(
         "looked_up",
         summary=(
-            "Asked which company should take it."
+            "Offered the codes it could find."
+            if arm == "product_pick"
+            else "Asked which company should take it."
             if arm == "clarify"
             else "Handed the conversation to a person."
         ),
         why=(
-            "More than one company was offered and nobody picked one, so assigning would "
-            "have round-robined a pool the customer never chose."
+            # D6: the product is resolved before the team, because the brand the team's
+            # roster is narrowed by comes off the product.
+            "The code the customer named does not exist, and the brand that picks the "
+            "person comes off the product - so the rows go out before anyone is assigned."
+            if arm == "product_pick"
+            else "More than one company was offered and nobody picked one, so assigning "
+            "would have round-robined a pool the customer never chose."
             if arm == "clarify"
             else "The turn asked for a human, so the lane assigns one and starts the SLA clock."
         ),

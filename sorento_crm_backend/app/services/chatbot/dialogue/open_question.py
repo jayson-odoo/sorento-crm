@@ -6,6 +6,7 @@ handler each, and a dispatcher that never guesses:
 | kind             | expects     | options                        | outcome                       |
 |------------------|-------------|--------------------------------|-------------------------------|
 | `product_pick`   | pick        | frozen rows: uuid, code, label | focus.products, source `pick` |
+|                  |             | + `payload.then.escalate`      | ... and the escalation resumes |
 | `customer_pick`  | pick        | family rows with company codes | focus.customer                |
 | `team_pick`      | pick/yes_no | the teams the ask OFFERED      | routing set, escalation on    |
 | `company_pick`   | pick        | the ledgers the ask offered    | routing set, escalation on    |
@@ -223,7 +224,7 @@ def _product_pick(answer: dict, options: list, payload: dict) -> Outcome:
         for e in payload.get("keep") or []
         if isinstance(e, dict) and not _same_code(e, entities)
     ]
-    return Outcome(
+    outcome = Outcome(
         handler="product_pick",
         outcome=f"Picked {', '.join(_label_of(r) for r in picked)}.",
         resolved=True,
@@ -231,6 +232,23 @@ def _product_pick(answer: dict, options: list, payload: dict) -> Outcome:
         keep=keep,
         focus={"products": entities + [e for e in keep if _is_product(e)]},
     )
+    # A DEFERRED ESCALATION rides `payload.then.escalate` (D6, AC-1125). The escalation
+    # lane arms this question when the customer asks for a person AND names a code that
+    # does not exist: the rows go out first, because the brand the team is narrowed by comes
+    # off the product. A pick is therefore not just an answer about a product - it resumes
+    # the escalation the same turn, which is what `escalate` tells the caller. No new kind
+    # and no new session key (D5): the deferral is a payload, the same way `keep` is.
+    deferred = payload.get("then")
+    deferred = deferred.get("escalate") if isinstance(deferred, dict) else None
+    if isinstance(deferred, dict):
+        outcome.escalate = True
+        outcome.outcome = f"{outcome.outcome} Resuming the escalation."
+        # The team WORD the customer typed on the turn that was deferred, verbatim, for the
+        # lane's own ladder to narrow (`escalation._deferred_team_word`). Not
+        # `suggested_team`: a family word like "marketing" is no team the router can act on,
+        # and writing it there would persist a routing nothing can assign to.
+        outcome.routing = {k: v for k, v in deferred.items() if v}
+    return outcome
 
 
 def _customer_pick(answer: dict, options: list, payload: dict) -> Outcome:

@@ -337,3 +337,93 @@ def test_ac1130_the_comment_names_the_raw_code_the_customer_typed() -> None:
     assert "SRTWB8004" in comment["text"], (
         f"the comment must name the raw code the customer typed: {comment['text']!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# AC-1125, the CROSS-TURN half. Added by the coder (slice S4) on the captain's
+# instruction: the tester pinned AC-1125 at the `resolve()` handler level because the
+# wiring between the two turns was the coder's to design, and a two-turn assertion is what
+# proves the design rather than the handler. Nothing above is weakened or edited - these
+# two run the REAL artifacts end to end: turn 1's lane arms the question, the REAL
+# `open_question.resolve` answers it, and turn 2's lane reads its own payload back.
+# --------------------------------------------------------------------------- #
+
+
+def _deferred_question(team_word: str) -> dict:
+    """Turn 1: an escalation naming a code that does not resolve. Returns the armed question."""
+    ctx = _ctx(
+        routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+        parser_raw={"routing": {"suggested_team": team_word, "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWC60630-SH")],
+    )
+    services = _services(
+        gate={
+            "resolved": [],
+            "did_you_mean": [_resolved_row("SRTWC6030-SH-BL", brand="sorento")],
+        }
+    )
+    result = run(ctx, _item(team="purchasing"), services=services)
+    assert result["arm"] == "product_pick", result
+    return result["pending"]
+
+
+def _resumed_ctx(question: dict) -> dict:
+    """Turn 2: the customer picks row 1, through the real resolver and the real handler."""
+    from app.services.chatbot.dialogue.open_question import resolve
+
+    outcome = resolve("product_pick", {"picks": [1]}, question["options"], question["payload"])
+    assert outcome.escalate is True, outcome
+    ctx = _ctx(
+        # The head's routing chain on a bare "1": no team of its own, so the turn carries
+        # the same inherited team the deferred turn had.
+        routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+        # A pick names no team word of its own - that is the whole reason the deferral has
+        # to remember one.
+        parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+        escalation={"is_escalation_confirmation": True, "company_pick": None},
+        entities=outcome.focus["products"],
+        prev_variables={"open_question": question},
+    )
+    # `engine._run_stages` stamps this in the `answered` stage (`parse_block["_answered"] =
+    # answered_entry`), which is how the lane knows THIS message answered the question the
+    # deferral was armed on. Set here rather than through `_ctx` so the tester's shared
+    # builder is untouched.
+    ctx["parse"]["_answered"] = {"handler": outcome.handler, "after": {"escalate": True}}
+    return ctx
+
+
+def test_ac1125_a_pick_resumes_the_deferred_escalation_with_the_resolved_brand() -> None:
+    """The deferral remembered an EXACT catalogue word, so the pick assigns straight away,
+    with the picked product's brand on the body (plan step 2, journey steps 1 to 3)."""
+    question = _deferred_question("marketing_product")
+    services = _services(
+        gate={"resolved": [_resolved_row("SRTWC6030-SH-BL", brand="sorento")], "did_you_mean": []}
+    )
+
+    result = run(_resumed_ctx(question), _item(team="purchasing"), services=services)
+
+    assert result["arm"] == "human-intervention", result
+    body = _next_assignee_body(services)
+    assert body["team_code"] == "marketing_product", body
+    assert body["brand_code"] == "sorento", body
+
+
+def test_ac1125_a_pick_on_a_family_word_deferral_asks_which_team_next() -> None:
+    """The deferral remembered the FAMILY word `marketing` and the previous turn sat on
+    `purchasing`, outside it - so the pick resolves the product and then asks which
+    marketing team, which is journey step 2."""
+    question = _deferred_question("marketing")
+    services = _services(
+        gate={"resolved": [_resolved_row("SRTWC6030-SH-BL", brand="sorento")], "did_you_mean": []}
+    )
+
+    result = run(_resumed_ctx(question), _item(team="purchasing"), services=services)
+
+    assert result["arm"] == "clarify", result
+    assert [p["team"] for p in result["pending"]["options"]] == [
+        "marketing_product",
+        "marketing_form",
+        "marketing_promotion",
+    ], result["pending"]
+    services.next_assignee.assert_not_called()
