@@ -37,7 +37,7 @@ from tests.chatbot.test_escalation_routing_head import (
     _decide_ctx,
     _full_emission,
 )
-from tests.chatbot.test_s5_escalation_lane import _ctx, _item, _services
+from tests.chatbot.test_s5_escalation_lane import _ctx, _item, _kl_fmt, _services
 
 # --------------------------------------------------------------------------- #
 # AC-1141 / H37: a dry run reaches no side-effecting seam, over every shape above
@@ -1786,3 +1786,223 @@ def test_console_finding3_s11_companion_a_domain_named_turn_over_the_open_pick_s
     assert branch == "low_signal", (
         f"measured today's own branch rather than assuming one: {branch!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# D8, owner ruling console pass 13 Sep 2026: the routed-to-PIC send_message and the PIC's
+# own comment name the BRAND when the landed team is one of the two whose members are
+# split by brand (marketing_product, marketing_promotion) and this turn resolved a brand
+# NAME to print. `_brand_fragment` reads `display.brand.brand_name` off the RESOLVED ROW
+# (`_resolve_product`), never a lookup and never the customer's text (D11) - a code with
+# no name (the legacy same-team carry, a stated brand) prints nothing.
+# --------------------------------------------------------------------------- #
+
+
+def _resolved_row_with_brand_name(code: str, *, brand_code: str, brand_name: str, company_id: str = "co-sorento", company_name: str = "Sorento") -> dict:
+    return {
+        "uuid": f"uuid-{code}",
+        "canonical_code": code,
+        "company_id": company_id,
+        "company_name": company_name,
+        "display": {"brand": {"brand_code": brand_code, "brand_name": brand_name}},
+    }
+
+
+def test_d8_the_pic_copy_and_comment_name_the_brand_marketing_product_sorento() -> None:
+    """D8 shape 1. `marketing_product` lands with a Sorento product resolved THIS turn -
+    the send_message carries " handling Sorento" and the comment's Team line matches it.
+    RED before 52a9c09a8: `ROUTED_TO_PIC_REPLY` had no brand clause and `_comment_text`
+    took no `brand_name` at all."""
+    ctx = _ctx(
+        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWB8004")],
+    )
+    item = _item(team="marketing_product")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="Sorento")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    assert result["arm"] == "human-intervention", result
+    first_send, assign, comment, second_send = result["actions"]
+    assert second_send["text"] == (
+        "This inquiry has been routed to the respective person-in-charge (PIC) from "
+        "marketing product team handling Sorento. We will get back to you soon. "
+        "Thanks for your patience."
+    ), second_send["text"]
+
+    sla_result = services.sla_create.return_value
+    expected_comment = (
+        "Team: marketing_product handling Sorento\n"
+        # AC-1130's own line: the code the customer typed ("SRTWB8004") equals the code the
+        # resolver picked, so this is the single-code form, not the "(picked ...)" one.
+        "Product: SRTWB8004\n"
+        f"⏰ SLA Alert: This contact is routed to you at {_kl_fmt(sla_result['initiated_at'])}.\n"
+        f"You have until {_kl_fmt(sla_result['due_at'])} to respond.\n"
+        f"You have until {_kl_fmt(sla_result['due_at_resolution'])} to resolve.\n"
+        "Reference message: https://app.respond.io/space/364817/inbox/"
+        f"{ctx['contact']['id']}#{ctx['text']['message']['messageId']}"
+    )
+    assert comment["text"] == expected_comment, comment["text"]
+
+    services.next_assignee.assert_called_once()
+    body = services.next_assignee.call_args[0][0]
+    assert body["brand_code"] == "sorento", body
+
+
+def test_d8_companion_marketing_promotion_mocha() -> None:
+    """D8 shape 2. `marketing_promotion` lands with a Mocha product resolved this turn -
+    " handling Mocha" and `Team: marketing_promotion handling Mocha`."""
+    ctx = _ctx(
+        routing={"suggested_team": "marketing_promotion", "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("MWC7625-SH-S10")],
+    )
+    item = _item(team="marketing_promotion")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name(
+                    "MWC7625-SH-S10", brand_code="mocha", brand_name="Mocha", company_id="co-mocha", company_name="Mocha"
+                )
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    assert result["arm"] == "human-intervention", result
+    _first_send, _assign, comment, second_send = result["actions"]
+    assert second_send["text"] == (
+        "This inquiry has been routed to the respective person-in-charge (PIC) from "
+        "marketing promotion team handling Mocha. We will get back to you soon. "
+        "Thanks for your patience."
+    ), second_send["text"]
+    assert comment["text"].startswith("Team: marketing_promotion handling Mocha\n"), comment["text"]
+
+
+def test_d8_companion_marketing_team_with_no_brand_resolved_stays_unchanged() -> None:
+    """D8 shape 3, green guard. `marketing_product` lands but names no product this turn -
+    no brand NAME to print, so the sentence and the comment stay exactly as they always
+    have (no `handling` clause anywhere)."""
+    ctx = _ctx(
+        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+    )
+    item = _item(team="marketing_product")
+    services = _services()
+
+    result = run(ctx, item, services=services)
+
+    _first_send, _assign, comment, second_send = result["actions"]
+    assert second_send["text"] == (
+        "This inquiry has been routed to the respective person-in-charge (PIC) from "
+        "marketing product team. We will get back to you soon. Thanks for your patience."
+    ), second_send["text"]
+    assert comment["text"].startswith("Team: marketing_product\n"), comment["text"]
+    assert "handling" not in second_send["text"] and "handling" not in comment["text"]
+
+
+def test_d8_companion_a_non_brand_split_team_with_a_resolved_brand_stays_unchanged() -> None:
+    """D8 shape 4, green guard. `warehouse` is not one of the two brand-split teams -
+    even with a brand resolved this turn, the sentence and comment stay unchanged.
+    `test_assignment_actions_in_order` (customer_service, no product) is the fifth
+    measured shape and stays green, unedited."""
+    ctx = _ctx(
+        routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWB8004")],
+    )
+    item = _item(team="warehouse")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="Sorento")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    _first_send, _assign, comment, second_send = result["actions"]
+    assert second_send["text"] == (
+        "This inquiry has been routed to the respective person-in-charge (PIC) from "
+        "warehouse team. We will get back to you soon. Thanks for your patience."
+    ), second_send["text"]
+    assert comment["text"].startswith("Team: warehouse\n"), comment["text"]
+    assert "handling" not in second_send["text"] and "handling" not in comment["text"]
+
+
+def test_d8_companion_a_resolved_brand_code_with_no_name_prints_no_fragment() -> None:
+    """D8 shape 5, green guard (captain's addition, 13 Sep 2026). A resolved row that
+    carries a `brand_code` but no `brand_name` - the legacy shape most fixtures across
+    this file's sibling tests still use - must print NOTHING, never fall back to the
+    code: D8 is explicit that the customer reads the name, never the slug."""
+    ctx = _ctx(
+        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=[_product_entity("SRTWB8004")],
+    )
+    item = _item(team="marketing_product")
+    services = _services(
+        gate={"resolved": [_resolved_row("SRTWB8004", brand="sorento")], "did_you_mean": []}
+    )
+
+    result = run(ctx, item, services=services)
+
+    _first_send, _assign, comment, second_send = result["actions"]
+    assert second_send["text"] == (
+        "This inquiry has been routed to the respective person-in-charge (PIC) from "
+        "marketing product team. We will get back to you soon. Thanks for your patience."
+    ), second_send["text"]
+    assert comment["text"].startswith("Team: marketing_product\n"), comment["text"]
+    assert "handling" not in second_send["text"] and "handling" not in comment["text"]
+
+
+# --------------------------------------------------------------------------- #
+# Review S12 follow-up: positions are NOT gated by the v3 answer key - a number is the
+# v1 contract's own answer, never an inference, so an explicit v3 `{resolved: false}`
+# must still let a numbered reply through.
+# --------------------------------------------------------------------------- #
+
+
+def test_positions_are_not_gated_by_an_explicit_v3_no_answer() -> None:
+    """An explicit v3 `answers_open_question: {resolved: false}` (the model looked at the
+    open question and said this message does not answer it) sits beside
+    `reference_positions: [2]` - the SAME turn also carrying a plain numbered reply. The
+    number still resolves to option 2 (`marketing_form`): a position is not an inference
+    the explicit no can override, it is the v1 contract's own answer channel."""
+    from app.services.chatbot.engine import _resolve_open_question
+
+    parser_raw = _full_emission(
+        message_type="casual",
+        is_affirmative=None,
+        entities=[],
+        reference_positions=[2],
+        answers_open_question={"resolved": False},
+        routing={"suggested_team": None, "suggested_agent": None},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal="2",
+    )
+    answered = _resolve_open_question(
+        TEAM_PICK_PREVIOUS_STATE,
+        parser_raw=parser_raw,
+        emits_v3=False,
+        referenced_result_set=None,
+        turn_no=8,
+    )
+
+    outcome = answered.get("outcome")
+    assert outcome is not None and outcome.resolved is True, (
+        f"a numbered reply must resolve even beside an explicit v3 'no': {answered!r}"
+    )
+    assert outcome.picked and outcome.picked[0].get("team") == "marketing_form", outcome
