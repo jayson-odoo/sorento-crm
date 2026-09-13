@@ -40,6 +40,7 @@ anywhere in this module, and `test_s5_no_chat_history_write.py` asserts the row 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
@@ -77,6 +78,24 @@ ROUTED_TO_PIC_REPLY = (
 # uses. Asia/Kuala_Lumpur is +08:00 with no DST, so a fixed offset is the whole rule.
 MALAYSIA = timezone(timedelta(hours=8))
 RESPOND_INBOX_URL = "https://app.respond.io/space/{space_id}/inbox/{contact_id}#{message_id}"
+
+# A CODE THE CUSTOMER TYPED, BOUNDED BEFORE IT BECOMES TEXT. `raw` on a product entity is
+# the parser's echo of the customer's own message, and it reaches two sinks that outlive the
+# turn: the respond.io comment the PIC reads, and the reply `tail/compile_state` persists as
+# `variables["response"]` - which `offer_is_open` still pattern-matches. Whitespace and
+# control characters collapse to one space and the result is capped at the width the column
+# the string claims to name actually has (`products.product_code` is `String(100)`), so a
+# pasted document cannot arrive as a multi-line comment or a reply that is mostly one token.
+# Nothing else is sanitised: this is a length and line-break bound, not an escaping layer.
+PRODUCT_CODE_MAX_CHARS = 100
+_CODE_NOISE = re.compile(r"[\s\x00-\x1f\x7f-\x9f]+")
+
+
+def _safe_code(value: Any) -> str:
+    """One bound, both sinks (the comment and the reply). Empty string for nothing."""
+    text = jsc.js_string(value) if jsc.truthy(value) else ""
+    return _CODE_NOISE.sub(" ", text).strip()[:PRODUCT_CODE_MAX_CHARS]
+
 
 # `get-round-robin-assignee`'s body has these two frozen, as literals in the JSON.
 NEXT_ASSIGNEE_POLICY_CODE = "NORMAL"
@@ -788,12 +807,19 @@ def _product_pick_ask(
 
 
 def _typed_product_code(ctx: dict[str, Any]) -> Any:
-    """The code the CUSTOMER typed for the product this turn named, as the parser kept it."""
+    """The code the CUSTOMER typed for the product this turn named, BOUNDED (`_safe_code`).
+
+    This is the one customer-authored string this lane puts into durable text, and every
+    reader of it goes through here - the did-you-mean lead, the `typed_code` the deferral
+    remembers, and the PIC comment on the turn that resumes it - so the bound is applied
+    once, where the value is read, rather than at each sink.
+    """
     products = _this_turn_products(ctx)
     if not products:
         return None
     first = products[0]
-    return jsc.get(first, "canonical_code") or jsc.get(first, "raw")
+    code = _safe_code(jsc.get(first, "canonical_code") or jsc.get(first, "raw"))
+    return code or None
 
 
 def _deferred_team_word(ctx: dict[str, Any]) -> Any:
@@ -839,14 +865,16 @@ def _product_line(ctx: dict[str, Any], product: Any) -> str:
     product, which is what keeps the comment byte-identical to the ported n8n body there.
     """
     deferred = _deferred_escalation(ctx)
-    typed = jsc.get(deferred, "typed_code") if deferred is not None else None
+    # Bounded on the way OUT as well as on the way in: this value came back off a stored
+    # session, which an earlier build (or a harness) may have written without the bound.
+    typed = _safe_code(jsc.get(deferred, "typed_code")) if deferred is not None else ""
     if not jsc.truthy(typed):
         typed = _typed_product_code(ctx)
     picked = jsc.get(product, "code") if product is not None else None
     if not jsc.truthy(picked):
         picked = _typed_product_code(ctx)
     typed_text = jsc.js_string(typed) if jsc.truthy(typed) else ""
-    picked_text = jsc.js_string(picked) if jsc.truthy(picked) else ""
+    picked_text = _safe_code(picked)
     if not typed_text and not picked_text:
         return ""
     if picked_text and picked_text.strip().lower() != typed_text.strip().lower():
