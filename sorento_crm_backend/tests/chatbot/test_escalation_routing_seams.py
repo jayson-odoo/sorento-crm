@@ -1465,3 +1465,185 @@ def test_owner_regression_companion_the_same_keep_without_a_deferred_escalation(
         f"a plain #708 keep with a NON-product sibling is dropped too - this is not "
         f"specific to the deferred-escalation payload: {qf.get('entities')!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Console pass finding 3, 13 Sep 2026: a team_pick left open over three
+# marketing teams (turn d2dc30f8), and the customer's NEXT turn (b24ea133)
+# named the team the PARSER already resolved structurally
+# (`routing.suggested_team: "marketing_product"`) - no position, no yes/no.
+# `_resolve_open_question`'s two existing answer channels (positions, and
+# `is_affirmative` for a `yes_no` question) both miss it: this question's
+# `expects` is `"pick"`, and the answer is neither a position nor a yes/no,
+# it is the parser's OWN structured team word matched against the offered
+# options. D11 clean throughout: no read of the customer's text anywhere,
+# only `routing.suggested_team`, the parser's already-normalised field.
+# --------------------------------------------------------------------------- #
+
+TEAM_PICK_PREVIOUS_STATE = {
+    "focus": {
+        "domains": {
+            "value": ["product_attachment"],
+            "set_at_turn": 6,
+            "set_at": None,
+            "source": "reuse",
+        },
+        "products": {
+            "value": [
+                {
+                    "raw": "srtwc60630-sh",
+                    "hint": "product",
+                    "canonical_code": None,
+                    "current_message": False,
+                    "confident": True,
+                }
+            ],
+            "set_at_turn": 6,
+            "set_at": None,
+            "source": "reuse",
+        },
+    },
+    "open_question": {
+        "kind": "team_pick",
+        "options": [
+            {"idx": 1, "team": "marketing_product", "label": "marketing product"},
+            {"idx": 2, "team": "marketing_form", "label": "marketing form"},
+            {"idx": 3, "team": "marketing_promotion", "label": "marketing promotion"},
+        ],
+        "expects": "pick",
+        # The team the ORIGINAL ask was raised against, not one of the three offered
+        # members - the same "who narrowed us here" fact `_offered_team` reads for a
+        # deferred escalation, kept here verbatim from the persisted capture.
+        "payload": {"team": "customer_service"},
+        "asked_at_turn": 7,
+        "asked_at": None,
+    },
+    "ideation": None,
+    "access_levels": [],
+    "contains_flyer": False,
+}
+
+
+def _run_team_pick_turn(*, suggested_team, reference_positions=None, text: str):
+    from app.services.chatbot.engine import _resolve_open_question
+
+    _assert_only_five_keys(TEAM_PICK_PREVIOUS_STATE)
+
+    parser_raw = _full_emission(
+        message_type="casual",
+        is_affirmative=None,
+        entities=[],
+        reference_positions=reference_positions or [],
+        routing={"suggested_team": suggested_team, "suggested_agent": None},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        user_goal=text,
+    )
+    answered = _resolve_open_question(
+        TEAM_PICK_PREVIOUS_STATE,
+        parser_raw=parser_raw,
+        emits_v3=False,
+        referenced_result_set=None,
+        turn_no=8,
+    )
+    parent_input = {
+        "latest_user_message": text,
+        "contact_id": "ZZT-esc-teampick-1",
+        "previous_conversation_state": TEAM_PICK_PREVIOUS_STATE,
+        "parser_emits_v3": False,
+        "_answered": answered,
+        "turn_no": 8,
+    }
+    parse_block = post_process({"output": dict(parser_raw)}, {}, parent_input)
+    parse_block = suggest_follow_up(parse_block, parent_input)
+    qf = parse_block["output"]
+
+    ctx = {
+        "contact": {"id": "ZZT-esc-teampick-1", "phone": "+60123450099", "custom_fields": []},
+        "text": {"message": {"messageId": "ZZT-esc-teampick-msg-1", "message": {"type": "text", "text": text}}},
+        "session": {"session_vars": {"variables": TEAM_PICK_PREVIOUS_STATE}},
+        "parse": {"output": qf, "_parser_raw": parse_block.get("_parser_raw")},
+        "access": {"allowed": True, "decision": "allow"},
+        "media": None,
+    }
+    branch, _tier = decide(ctx)
+    return answered, qf, branch, ctx
+
+
+def test_console_finding3_a_structurally_named_team_resolves_the_open_team_pick() -> None:
+    """Console pass finding 3, primary. `routing.suggested_team: "marketing_product"`
+    matches option 1 exactly - the answer is the parser's OWN structured team, never a
+    position or a yes/no. RED today: `_resolve_open_question` has no third answer channel
+    for a `team_pick` whose `expects` is `"pick"`, so the outcome stays unresolved, the
+    routing chain falls to the hard default, and the turn lands on `route.decide`'s
+    low-signal catch-all instead of the escalation lane."""
+    answered, qf, branch, ctx = _run_team_pick_turn(
+        suggested_team="marketing_product", text="marketing product"
+    )
+
+    outcome = answered.get("outcome")
+    assert outcome is not None and outcome.handler == "team_pick" and outcome.resolved is True, (
+        f"the structurally-named team must resolve the open team_pick: {answered!r}"
+    )
+    assert branch == "out_of_scope", (
+        f"a resolved team_pick must reach the escalation lane: {branch!r}"
+    )
+
+    item = {
+        "allowed": True,
+        "decision": "allow",
+        "agent_name": "General Enquiries",
+        "attributes": None,
+        "all_attributes_allowed": None,
+        "branch_kind": branch,
+    }
+    services = _services()
+    result = run(ctx, item, services=services)
+
+    services.next_assignee.assert_called_once()
+    body = services.next_assignee.call_args[0][0]
+    assert body["team_code"] == "marketing_product", body
+
+
+def test_console_finding3_companion_a_family_word_that_names_no_single_option_stays_unresolved() -> None:
+    """Console pass finding 3, companion (a) - green guard. `marketing` is the FAMILY, not
+    one of the three offered members by exact name - it must not resolve the team_pick
+    (a tap can only answer what was actually offered), and today's behaviour (unaffected
+    by the fix this file's primary test targets) is pinned as measured, not assumed."""
+    answered, qf, branch, ctx = _run_team_pick_turn(suggested_team="marketing", text="marketing")
+
+    assert answered.get("outcome") is None, (
+        f"a family word matching no SINGLE offered option must not resolve the pick: {answered!r}"
+    )
+    assert branch == "low_signal", (
+        f"measured today's own branch rather than assuming one: {branch!r}"
+    )
+
+
+def test_console_finding3_companion_a_catalogue_team_outside_the_offered_options_stays_unresolved() -> None:
+    """Console pass finding 3, companion (b) - green guard. `warehouse` is a REAL
+    catalogue team, but it is not one of the three teams THIS question offered - resolving
+    to it would answer with a team the customer was never shown. Today's behaviour pinned
+    as measured."""
+    answered, qf, branch, ctx = _run_team_pick_turn(suggested_team="warehouse", text="warehouse")
+
+    assert answered.get("outcome") is None, (
+        f"a catalogue team outside the offered options must not resolve the pick: {answered!r}"
+    )
+    assert branch == "low_signal", (
+        f"measured today's own branch rather than assuming one: {branch!r}"
+    )
+
+
+def test_console_finding3_companion_a_numbered_pick_is_unchanged() -> None:
+    """Console pass finding 3, companion (c) - green guard. The EXISTING positional
+    channel is untouched by this finding: "2" still picks `marketing_form` exactly as it
+    does today."""
+    answered, qf, branch, ctx = _run_team_pick_turn(
+        suggested_team=None, reference_positions=[2], text="2"
+    )
+
+    outcome = answered.get("outcome")
+    assert outcome is not None and outcome.resolved is True
+    assert outcome.picked and outcome.picked[0].get("team") == "marketing_form", outcome
+    assert branch == "out_of_scope", branch
+    assert qf["routing"]["suggested_team"] == "marketing_form", qf["routing"]
