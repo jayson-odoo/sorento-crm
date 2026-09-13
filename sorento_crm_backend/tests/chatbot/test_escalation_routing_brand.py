@@ -1055,3 +1055,205 @@ def test_console_finding2_the_miss_lane_never_persists_a_team_the_offer_did_not_
         f"payload must carry no `then` key at all, not an offer nobody was actually shown: "
         f"{payload!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# D10, owner ruling (console pass, 13 Sep 2026, finding 6): a `team_pick` THIS TURN
+# ANSWERED carries the product the escalation named, even when the previous turn's own
+# team (re-derived off `focus.domains`, `_carried_team`) differs from the team the pick
+# just landed on - the D3 same-team gate is for a product left over from an UNRELATED
+# earlier turn, and a team question the lane itself asked on a turn that named the
+# product is a deferral of that SAME escalation, not a fresh one.
+#
+# Turn A (finding 6): "esclate to marketing about water tap of SRTWB8004" - the parser
+# resolved SRTWB8004 (`focus.products`) and the domain `master_products` (-> team
+# `purchasing`, `focus.domains`), then the family word "marketing" armed a three-way
+# `team_pick` (marketing_product / marketing_form / marketing_promotion), payload
+# `{"team": "purchasing", "domain": "master_products"}`.
+# Turn B: "marketing product" resolves that `team_pick` (`ctx.parse._answered.handler ==
+# "team_pick"`), landing `marketing_product` - a team OUTSIDE the carried team
+# (`purchasing`), so the D3 gate alone would drop SRTWB8004's brand.
+# --------------------------------------------------------------------------- #
+
+
+def _resolved_row_with_brand_name(
+    code: str, *, brand_code: str, brand_name: str, company_id: str = "co-sorento", company_name: str = "Sorento"
+) -> dict:
+    return {
+        "uuid": f"uuid-{code}",
+        "canonical_code": code,
+        "company_id": company_id,
+        "company_name": company_name,
+        "display": {"brand": {"brand_code": brand_code, "brand_name": brand_name}},
+    }
+
+
+def _resumed_team_pick_ctx(*, entities: list | None = None) -> dict:
+    """Turn B's ctx: the finding 6 shape, `_focus_previous_state` plus the open
+    `team_pick` question it left, plus the engine's own `_answered` record for a turn
+    that resolved it by naming one of the offered teams (`open_question.team_slug_pick`,
+    `outcome.handler == "team_pick"`, `outcome.escalate is True`)."""
+    prev = _focus_previous_state(product_code="SRTWB8004", domain="master_products")
+    prev["open_question"] = {
+        "kind": "team_pick",
+        "options": [
+            {"idx": 1, "team": "marketing_product", "label": "Marketing Product"},
+            {"idx": 2, "team": "marketing_form", "label": "Marketing Form"},
+            {"idx": 3, "team": "marketing_promotion", "label": "Marketing Promotion"},
+        ],
+        "expects": "pick",
+        "asked_at_turn": 3,
+        "asked_at": None,
+        "payload": {"team": "purchasing", "domain": "master_products"},
+    }
+    ctx = _ctx(
+        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+        entities=entities or [],
+        prev_variables=prev,
+    )
+    ctx["parse"]["_answered"] = {
+        "before": {"kind": "team_pick", "expects": "pick", "options": 3, "quoted": False},
+        "answer": {"resolved": True, "picks": [1]},
+        "after": {"escalate": True, "declined": False, "lane": "escalation"},
+        "handler": "team_pick",
+        "outcome": "Routed to marketing_product.",
+    }
+    return ctx
+
+
+def test_d10_a_resumed_team_pick_carries_the_named_product_over_the_previous_teams_gate() -> None:
+    """D10, live. RED today: `_carried_brand`'s gate compares the landed team
+    (`marketing_product`) against `_carried_team(ctx)` (`purchasing`, derived off the
+    carried `focus.domains`) unconditionally and returns `(None, None)` on the mismatch -
+    `resolve_and_gate` is never called and the body's `brand_code` stays `None`."""
+    ctx = _resumed_team_pick_ctx()
+    item = _item(team="purchasing")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="SORENTO")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    services.resolve_and_gate.assert_called_once()
+    called_with = str(services.resolve_and_gate.call_args)
+    assert "SRTWB8004" in called_with, (
+        f"the seam must be asked to resolve the carried code, not called with an empty "
+        f"turn: {called_with}"
+    )
+    assert result["arm"] == "human-intervention", result
+    assert result["pending"] is None
+    body = _next_assignee_body(services)
+    assert body["team_code"] == "marketing_product", body
+    assert body["brand_code"] == "sorento", (
+        f"a team_pick THIS TURN resolved must carry the product it was answering about, "
+        f"regardless of the previous turn's own team: {body!r}"
+    )
+    second_send = result["actions"][-1]
+    assert second_send["kind"] == "send_message"
+    assert "Marketing Product team handling SORENTO" in second_send["text"], second_send["text"]
+
+
+def test_d10_dry_run_the_resumed_carry_reaches_the_preview_and_the_same_copy() -> None:
+    """D10, dry run (D9's own rule: every READ in the ladder, including this one, runs on
+    a dry run exactly as it does live). RED for the same reason as the live test - the
+    gate drops the carry before the dry-run preview or copy ever see a brand."""
+    ctx = _resumed_team_pick_ctx()
+    item = _item(team="purchasing")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="SORENTO")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services, dry_run=True)
+
+    services.resolve_and_gate.assert_called_once()
+    services.next_assignee.assert_not_called()
+    services.sla_create.assert_not_called()
+
+    second_send = result["actions"][-1]
+    assert second_send["kind"] == "send_message"
+    assert second_send.get("dry_run") is True
+    assert "Marketing Product team handling SORENTO" in second_send["text"], second_send["text"]
+
+    services.preview_assignee.assert_called_once()
+    preview_body = services.preview_assignee.call_args[0][0]
+    assert preview_body.get("brand_code") == "sorento", (
+        f"the dry-run preview must carry the same brand the live draw would: {preview_body!r}"
+    )
+    assert preview_body.get("preview") is True, preview_body
+
+
+def test_d10_guard_a_fresh_team_pick_with_no_answered_record_still_drops_the_carry() -> None:
+    """GREEN guard, must stay green: the SAME previous state (an open `team_pick`,
+    `focus.products` carrying SRTWB8004 off a `master_products`/`purchasing` turn) but
+    `ctx.parse._answered` is absent - this is an ordinary fresh "escalate to marketing
+    product" turn that happens to arrive while an unrelated team_pick is still open, not
+    an answer to it, so D3's gate must still say no. Not the same fixture as
+    `test_ac1128_...` above (that one carries no open question at all); this is the
+    negative half of D10 itself, on the exact finding 6 shape, and must not regress once
+    the coder wires the D10 skip."""
+    ctx = _resumed_team_pick_ctx()
+    del ctx["parse"]["_answered"]
+    item = _item(team="purchasing")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="SORENTO")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    services.resolve_and_gate.assert_not_called(), (
+        "no `_answered` record means this turn never resumed the open team_pick - the D3 "
+        "same-team gate must still apply and drop the carry"
+    )
+    assert result["arm"] == "human-intervention", result
+    body = _next_assignee_body(services)
+    assert body["team_code"] == "marketing_product", body
+    assert body.get("brand_code") is None, (
+        f"with no answered record the previous team (purchasing) still differs from the "
+        f"landed one (marketing_product) - nothing must carry: {body!r}"
+    )
+
+
+def test_d10_guard_a_resumed_team_pick_with_no_carried_product_resolves_nothing() -> None:
+    """GREEN guard, must stay green: the D10 skip only removes the SAME-TEAM gate, it does
+    not manufacture a product out of nothing - a resumed `team_pick` whose `focus.products`
+    is empty (the conversation never carried one) must still call no resolver and assign
+    with no brand."""
+    ctx = _resumed_team_pick_ctx()
+    ctx["session"]["session_vars"]["variables"]["focus"].pop("products", None)
+    item = _item(team="purchasing")
+    services = _services(
+        gate={
+            "resolved": [
+                _resolved_row_with_brand_name("SRTWB8004", brand_code="sorento", brand_name="SORENTO")
+            ],
+            "did_you_mean": [],
+        }
+    )
+
+    result = run(ctx, item, services=services)
+
+    services.resolve_and_gate.assert_not_called(), (
+        "a resumed team_pick with no carried product has nothing to resolve"
+    )
+    assert result["arm"] == "human-intervention", result
+    body = _next_assignee_body(services)
+    assert body["team_code"] == "marketing_product", body
+    assert body.get("brand_code") is None, (
+        f"assignment still happens with no product to carry a brand from: {body!r}"
+    )
