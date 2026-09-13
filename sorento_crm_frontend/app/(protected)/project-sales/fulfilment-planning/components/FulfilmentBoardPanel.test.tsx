@@ -163,10 +163,8 @@ import {
   deleteLineDraft,
   putLineDraft,
 } from '../../_shared/services/fulfilmentPlanningService';
-import {
-  FulfilmentBoardPanel,
-  unpostableNotices,
-} from './FulfilmentBoardPanel';
+import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
   type BoardDemandLine,

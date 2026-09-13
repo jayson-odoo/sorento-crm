@@ -92,3 +92,24 @@ open then close then open again, collapse then expand then collapse - and the as
 MEASURED final state (element rects, computed transform/overflow, no overlap with the content
 pane), not a mid-animation screenshot. Animated UIs park stale content in exit phases; a pass
 recorded mid-flight has repeatedly hidden broken end states.
+
+## Browser clicks must clear the fixed header (added 2026-09-13, from two failed walks)
+
+Diagnosed by the coder against a real failed session: a record's header (the card carrying
+Cancel / Save) is a static element that scrolls UNDER the app's own fixed header (70px tall,
+z-index 10) once `scrollintoview` brings a grid row into view further down the page. A
+coordinate click on Save then lands on the fixed header instead, on whatever sits at that
+point, in this case the "Switch layout" button. That opens a Radix menu which sets `body
+{ pointer-events: none }` and `aria-hidden` on the rest of the page - every later click is
+now dead, with a clean console and a snapshot that shows only the nav fragment, which reads
+exactly like the page went blank rather than like a click that landed on the wrong element.
+
+- `scrollintoview @ref` before EVERY click, including Save / Cancel - a header card is not
+  exempt just because it looks pinned.
+- Before an important click (Save, Confirm, a destructive action), run `eval
+  document.elementFromPoint(x, y)` at the center of the ref's rect and confirm the returned
+  element is inside the intended button, not the app's fixed header sitting on top of it.
+- If a click "does nothing", read `document.body.style.pointerEvents` first. If it reads
+  `none`, press Escape and re-check before assuming the click never fired.
+- Never read a nav-only snapshot as "no request fired" - it can mean a stray menu is open and
+  the page underneath is inert, not that the interaction was a no-op.
