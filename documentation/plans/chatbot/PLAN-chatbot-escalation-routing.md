@@ -93,9 +93,23 @@ flip to real tests, and their "live counterparts" asserting no resolve call are 
    `context_item["team"]`), `agent_code` = that team's agent from the domain table
    (`derive_routing`'s map, inverted by team), `brand_code` from step 1 to 3.
 
-The `same_team` gates in `escalation_context` and `tail/compile_state` are kept in spirit
-(D3) but evaluated against the landed team. The "fresh" flag in compile_state becomes true
-when THIS lane resolved a product, the same way it is for the business lane.
+The `same_team` gate in `escalation_context` is kept in spirit (D3) and evaluated against
+the landed team: the function takes the landed team as a parameter and `_human_intervention`
+re-runs it once the ladder has decided, so there is one ladder rather than two.
+
+**Deviation, S5, measured 13 Sep 2026 (coder).** The other half of this paragraph -
+`tail/compile_state`'s brand-company axes block and its `fresh` flag - is NOT changed, because
+on this stack that block's output is never read by another turn. Lane 1 (#863) reduced the
+persisted session to five keys (`contracts.SESSION_VAR_KEYS` = `focus`, `open_question`,
+`ideation`, `access_levels`, `contains_flyer`) and `SessionVars(extra="forbid")` rejects a
+sixth, so `routing`, `routing_brand`, `routing_brand_source`, `routing_company`,
+`routing_companies` and `routing_roster_plan` are computed there and then dropped. Comparing
+them against the landed team would change a value nothing reads, in a block 224
+`compile-current-state` captures grade. The trigger to do it: any of those keys returning to
+`SESSION_VAR_KEYS`. What carries the brand forward today is `focus.brands` through
+`query_brands`, which `escalation_context`'s `stated_brand` rung already reads, and the
+previous turn's TEAM is carried as the domain (`focus.domains` -> `derive_routing`), which is
+why the team ladder's "previous turn's team" rung falls back to the team this turn inherited.
 
 ### Not built, with the reason
 
@@ -115,7 +129,7 @@ when THIS lane resolved a product, the same way it is for the business lane.
 | S2 | `_person_routing` reorder + family narrowing by offer / previous team (D2) | T2, T6, T7, T9b, T12, T13, T14 |
 | S3 | Lane resolves this turn's product (H26 closed); brand in the body; landed team + agent in the body (T8) | T3, T4, T8, T10 |
 | S4 | Not found -> `product_pick` with deferred escalation; pick re-enters the ladder (D6) | T1b, T1c, T1d |
-| S5 | D3 carry against the landed team (lane + compile_state) | T9, T9b |
+| S5 | D3 carry against the landed team (lane; compile_state half not needed, see the deviation above) | T9, T9b |
 | S6 | Replay fixtures from the four real turns + the Mocha turn; divergences registered; console check | replay green |
 
 Phase 1 (frontend-first mock) does not apply: no UI changes. The console already shows the
