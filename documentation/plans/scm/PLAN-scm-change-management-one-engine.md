@@ -400,6 +400,35 @@ S3, S4, S9, S10, S12 likewise), `decision` null / confirm / amend only.
    function corrected. `PLANNING_CHANGE_REACTION_*` stays: `tests/test_project_so_unpublish
    .py` still writes `suggested=PLANNING_CHANGE_REACTION_KEEP` when it builds a row.
 
+### G. Slice C board display (owner feedback, 13 September 2026, AC-C9 to AC-C14)
+
+The inline Was / Now block is retired from the board. A changed line shows ONE amber hazard
+icon - the warning triangle a Rejected verdict already uses - in the grid cell beside the
+figure, and in the list in the column that moved: Required date when the date moved,
+Outstanding when the quantity did, Suggested when neither did but there is still a composed
+suggestion to read. Clicking it opens a lightbox titled "What changed, <SO> (Line <n>)"
+holding ONLY the fields that moved, one line each as `<label> <old> -> <new>`, then the
+server's suggestion labels verbatim, then lateness once. A shortfall has no line of its own
+any more: the engine's own label already reads "Short 44 by 22 Aug (was Buy 134)", and the
+bare "Short 44" beside it was that fact said twice.
+
+What counts as changed is decided in ONE place, `changedFieldsOf` in
+`boardChangeAnnotations.ts`: the lightbox prints those lines and the list puts the icon in
+the column each key names, so the two cannot come to disagree. Dates read `4 Sep` from a
+named month table rather than `Intl`, whose `en-GB` short form spells September "Sept" while
+the engine's own labels say "Sep".
+
+The list also loses its two-line rows: the Sales order cell reads `SO419772 (Line 1)` on one
+line, and the Suggested and Decided cells carry the composition in words with no progress bar
+under it. Expand all / Collapse all are the reorder-planning pair, same icons and same
+placement, with the unsaved-edit question asked ONCE for the whole collapse rather than once
+per open row. A single row toggle is unchanged: opening another row closes the one before it,
+and asks first when that one holds unsaved work.
+
+The Was / Now table itself survives in one place, `BoardChangeWasNowTable`, for the Order
+Inquiries worklist lightbox: a settled amendment, two values, no suggestion and no board
+behind it, already inside a dialog of its own. No backend field was added for any of this.
+
 ## Slice E contract (captain, 13 September 2026, issue #860, AC-E1/AC-E2; AC-X1, issue #854)
 
 1. `challenge_if_drifted` (`project_supply_service.py`) loses every caller and is deleted
