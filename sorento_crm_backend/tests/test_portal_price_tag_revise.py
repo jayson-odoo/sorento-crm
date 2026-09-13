@@ -643,3 +643,385 @@ class TestPortalRevisionSettingsIncludesPriceTagRequest:
         body = res.json()
         assert body["source_entity_type"] == "price_tag_request"
         assert body["allowed_statuses"] == ["new", "designing", "changes_requested"]
+
+
+# =========================================================================== #
+# Security review of S10 (aa3ff8e21) - five gaps in the revise path.
+# =========================================================================== #
+
+
+def _revoke_grant(db, contact) -> None:
+    """Take price_tag_request off every access type this contact holds -
+    mirrors ``test_portal_price_tag_routes.py::_revoke_the_grant``."""
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    codes = [
+        row.access_type_code
+        for row in db.execute(
+            respond_contact_access_types.select().where(
+                respond_contact_access_types.c.contact_id == contact.id
+            )
+        )
+    ]
+    db.query(ContactAccessType).filter(ContactAccessType.code.in_(codes)).update(
+        {"portal_form_types": []}, synchronize_session=False
+    )
+    db.commit()
+
+
+class TestRevisePromotionAudienceGate:
+    """Gap A: ``_apply_price_tag_lines`` never calls
+    ``PriceTagRequestService.validate_promotion_access`` - a revise payload
+    setattrs ``promotion_id`` straight onto the row (via the generic portal
+    field-whitelist writer), so a promotion this contact's audience cannot
+    see, or one belonging to another company, lands anyway."""
+
+    def test_revise_promotion_outside_audience_422(self, db):
+        from app.models.marketing import Promotion
+
+        contact, product_id, row = _setup(db)
+        token = _seed_token(contact)
+
+        outside_audience = Promotion(
+            id=str(uuid.uuid4()),
+            description="ZZT Dealer-Only Promo",
+            is_active=True,
+            access_levels=["some-other-access-code"],
+            company_id=_SORENTO_COMPANY_ID,
+        )
+        db.add(outside_audience)
+        db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            PortalRevisionService(db).revise(
+                token,
+                "price_tag_request",
+                str(row.id),
+                {"promotion_id": outside_audience.id},
+                "Reason",
+                0,
+            )
+        assert exc.value.status_code == 422
+        detail = exc.value.detail
+        code = detail.get("code") if isinstance(detail, dict) else None
+        assert code == "PROMOTION_NOT_AVAILABLE", detail
+
+        db.expire_all()
+        fresh = PriceTagRequestService.get_request(db, str(row.id))
+        assert fresh.promotion_id is None
+        assert fresh.revision_no == 0
+        from app.models.portal import PortalFormRevision
+
+        assert (
+            db.query(PortalFormRevision)
+            .filter(
+                PortalFormRevision.source_entity_type == "price_tag_request",
+                PortalFormRevision.source_entity_id == str(row.id),
+                PortalFormRevision.kind == "revision",
+            )
+            .count()
+            == 0
+        )
+
+    def test_revise_promotion_from_another_company_422(self, db):
+        from app.models.company import Company
+        from app.models.marketing import Promotion
+
+        contact, product_id, row = _setup(db)
+        token = _seed_token(contact)
+
+        other_company = Company(
+            id=str(uuid.uuid4()), name=unique_code("ZZT Other Co"), code=unique_code("co")[:20],
+        )
+        db.add(other_company)
+        db.flush()
+        other_company_promo = Promotion(
+            id=str(uuid.uuid4()),
+            description="ZZT Other Company Promo",
+            is_active=True,
+            access_levels=["dealer", "end_user"],
+            company_id=other_company.id,
+        )
+        db.add(other_company_promo)
+        db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            PortalRevisionService(db).revise(
+                token,
+                "price_tag_request",
+                str(row.id),
+                {"promotion_id": other_company_promo.id},
+                "Reason",
+                0,
+            )
+        assert exc.value.status_code == 422
+        db.expire_all()
+        assert PriceTagRequestService.get_request(db, str(row.id)).promotion_id is None
+
+
+class TestRevisionRoutesRequireFormVisibility:
+    """Gap B: ``_require_own_request`` (the ownership check the generic
+    revision routes dispatch to for price_tag_request) checks ownership
+    ONLY - never ``_assert_visible``/``_require_price_tag_request_visible``.
+    A contact whose price_tag_request grant is revoked can still list, revise
+    and save/discard a revision draft on their own old request."""
+
+    @pytest.fixture
+    def route_client(self):
+        from app.database import get_db
+
+        with blank_session() as db:
+
+            def _override_get_db():
+                yield db
+
+            app.dependency_overrides[get_db] = _override_get_db
+            try:
+                with TestClient(app) as c:
+                    yield c, db
+            finally:
+                app.dependency_overrides.clear()
+
+    def _seeded_but_revoked(self, db):
+        contact, product_id, row = _setup(db)
+        _revoke_grant(db, contact)
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+        return row, headers
+
+    def test_list_revisions_refused_without_visibility(self, route_client):
+        c, db = route_client
+        row, headers = self._seeded_but_revoked(db)
+
+        res = c.get(
+            f"{_PORTAL_BASE}/submissions/price_tag_request/{row.id}/revisions",
+            headers=headers,
+        )
+        assert res.status_code in (403, 404), res.text
+
+    def test_revise_refused_without_visibility(self, route_client):
+        c, db = route_client
+        row, headers = self._seeded_but_revoked(db)
+
+        res = c.post(
+            f"{_PORTAL_BASE}/submissions/price_tag_request/{row.id}/revise",
+            headers=headers,
+            json={"reason": "Reason", "expected_revision_no": 0, "fields": {}},
+        )
+        assert res.status_code in (403, 404), res.text
+
+    def test_save_revision_draft_refused_without_visibility(self, route_client):
+        c, db = route_client
+        row, headers = self._seeded_but_revoked(db)
+
+        res = c.put(
+            f"{_PORTAL_BASE}/submissions/price_tag_request/{row.id}/revision-draft",
+            headers=headers,
+            json={"base_revision_no": 0, "fields": {}},
+        )
+        assert res.status_code in (403, 404), res.text
+
+    def test_discard_revision_draft_refused_without_visibility(self, route_client):
+        c, db = route_client
+        row, headers = self._seeded_but_revoked(db)
+
+        res = c.delete(
+            f"{_PORTAL_BASE}/submissions/price_tag_request/{row.id}/revision-draft",
+            headers=headers,
+        )
+        assert res.status_code in (403, 404), res.text
+
+
+class TestAttachmentGateRechecksPolicy:
+    """Gap C: ``_require_editable`` treats the mere EXISTENCE of a revision
+    draft row as "editable", never re-checking whether the request's CURRENT
+    status still allows a revision. A draft saved while the request was
+    `new` keeps unlocking attachments after the request moves to a terminal
+    status the policy would refuse outright (`ready`, `void`)."""
+
+    class _FakeStorageBackend:
+        def upload_file(self, *args, **kwargs):
+            key = args[1] if len(args) > 1 else kwargs.get("file_path")
+            return key, f"https://cdn.test/{key}"
+
+        def download_file(self, key: str) -> bytes:
+            return b"zzt-file-bytes"
+
+    @pytest.fixture
+    def attachment_client(self, monkeypatch):
+        from app.database import get_db
+        from app.models.resources import AttachmentType
+        from app.services.portal_service import PORTAL_ATTACHMENT_TYPE_CODE
+        import app.services.storage_router as storage_router
+
+        with blank_session() as db:
+            db.add(
+                AttachmentType(
+                    id=str(uuid.uuid4()),
+                    code=PORTAL_ATTACHMENT_TYPE_CODE,
+                    type_name="Portal Submission",
+                    allowed_extensions="jpg,jpeg,png,pdf",
+                    max_file_size_mb=10,
+                )
+            )
+            db.commit()
+
+            fake_backend = self._FakeStorageBackend()
+            monkeypatch.setattr(storage_router, "default_provider", lambda: "s3")
+            monkeypatch.setattr(storage_router, "get_backend", lambda provider: fake_backend)
+            monkeypatch.setattr(
+                storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}"
+            )
+
+            def _override_get_db():
+                yield db
+
+            app.dependency_overrides[get_db] = _override_get_db
+            try:
+                with TestClient(app) as c:
+                    yield c, db
+            finally:
+                app.dependency_overrides.clear()
+
+    @pytest.mark.parametrize("terminal_status", ["ready", "void"])
+    def test_attachment_gate_rechecks_policy(self, attachment_client, terminal_status):
+        import io
+
+        c, db = attachment_client
+        contact, product_id, row = _setup(db)
+        token_str = _persisted_token(db, contact)
+
+        # A revision draft saved while the request is still `new`.
+        PortalRevisionService(db).save_draft(
+            _seed_token(contact),
+            "price_tag_request",
+            str(row.id),
+            {"debtor_name": "ZZT Draft Edit"},
+            "In progress",
+            0,
+        )
+
+        # The request then moves on - approved/produced/voided, well past
+        # any status the policy would still allow a revision at.
+        db.expire_all()
+        fresh = PriceTagRequestService.get_request(db, str(row.id))
+        fresh.status = terminal_status
+        db.commit()
+
+        upload_res = c.post(
+            f"{_PORTAL_BASE}/attachments",
+            data={"kind": "price_tag_request", "submission_id": str(row.id)},
+            files={"file": ("po.pdf", io.BytesIO(b"%PDF-1.4 zzt"), "application/pdf")},
+            headers={"X-Portal-Token": token_str},
+        )
+        assert upload_res.status_code == 409, upload_res.text
+
+        from app.models.entity_attachment import EntityAttachmentLink
+        from app.models.resources import Attachment
+
+        att = Attachment(
+            id=str(uuid.uuid4()),
+            original_filename="ZZT-existing.pdf",
+            stored_filename="ZZT-existing.pdf",
+            file_path=f"portal/zzt/{uuid.uuid4()}.pdf",
+            mime_type="application/pdf",
+            uploader_kind="contact",
+            uploaded_by_contact_id=contact.id,
+        )
+        db.add(att)
+        db.flush()
+        link = EntityAttachmentLink(
+            entity_type="price_tag_request", entity_id=str(row.id), attachment_id=att.id
+        )
+        db.add(link)
+        db.commit()
+
+        delete_res = c.delete(
+            f"{_PORTAL_BASE}/attachments/{link.id}",
+            headers={"X-Portal-Token": token_str},
+        )
+        assert delete_res.status_code == 409, delete_res.text
+
+
+class TestReviseCarriesAlternativesAndAccessories:
+    """Gap D: ``_convert_ptag_revise_line`` only reads ``product_id`` /
+    ``product_set_id`` / ``quantity`` / ``remarks`` off a revise payload
+    line, so ``replace_lines`` -> ``_add_lines`` writes every revised line's
+    ``alternatives`` back as ``[]`` and ``included_accessories`` as ``None``
+    - the same "silently wipes a per-line detail on re-save" bug the
+    marketing-override carry-over already fixed, left open for these two
+    fields."""
+
+    def test_revise_carries_alternatives_and_accessories(self, db):
+        from app.models.price_tag import PriceTagRequestLine
+
+        contact, product_id, row = _setup(db)
+        line = db.query(PriceTagRequestLine).filter(
+            PriceTagRequestLine.request_id == row.id
+        ).one()
+        line.alternatives = ["ALT-CODE-1", "ALT-CODE-2"]
+        line.included_accessories = "Tap + waste kit"
+        db.commit()
+        token = _seed_token(contact)
+
+        PortalRevisionService(db).revise(
+            token,
+            "price_tag_request",
+            str(row.id),
+            {"products": [{"product_id": product_id, "quantity": 4}]},
+            "Reason",
+            0,
+        )
+
+        db.expire_all()
+        fresh_line = (
+            db.query(PriceTagRequestLine).filter(PriceTagRequestLine.request_id == row.id).one()
+        )
+        assert fresh_line.alternatives == ["ALT-CODE-1", "ALT-CODE-2"]
+        assert fresh_line.included_accessories == "Tap + waste kit"
+
+
+class TestRevisionRoutesMalformedId:
+    """Gap E: neither ``PriceTagRequestService.get_request`` (used by
+    ``_require_own_request``) nor ``PortalRevisionService.fetch_owned``
+    validate the path id is a UUID before it reaches the query - a
+    non-UUID id 500s from Postgres refusing the comparison instead of
+    answering the usual "not found" 404."""
+
+    @pytest.fixture
+    def route_client(self):
+        from app.database import get_db
+
+        with blank_session() as db:
+
+            def _override_get_db():
+                yield db
+
+            app.dependency_overrides[get_db] = _override_get_db
+            try:
+                with TestClient(app) as c:
+                    yield c, db
+            finally:
+                app.dependency_overrides.clear()
+
+    def test_list_revisions_malformed_id_404(self, route_client):
+        c, db = route_client
+        contact = _seed_contact(db)
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        res = c.get(
+            f"{_PORTAL_BASE}/submissions/price_tag_request/not-a-uuid/revisions",
+            headers=headers,
+        )
+        assert res.status_code == 404, res.text
+
+    def test_revise_malformed_id_404(self, route_client):
+        c, db = route_client
+        contact = _seed_contact(db)
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        res = c.post(
+            f"{_PORTAL_BASE}/submissions/price_tag_request/not-a-uuid/revise",
+            headers=headers,
+            json={"reason": "Reason", "expected_revision_no": 0, "fields": {}},
+        )
+        assert res.status_code == 404, res.text
