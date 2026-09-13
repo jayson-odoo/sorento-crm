@@ -38,9 +38,10 @@ from app.models.portal import (
     PortalRevisionDraft,
     PortalToken,
 )
+from app.models.price_tag import PriceTagRequest
 from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine, StockInquiry
 from app.services.document_number import suffix_revision
-from app.services.error_handler import handle_conflict, handle_unprocessable
+from app.services.error_handler import handle_conflict, handle_not_found, handle_unprocessable
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,14 @@ class RevisionAdapter:
     date_display_fields: tuple[str, ...] = ()
     # Child lines -> list[dict]. None for a type with no lines (stock inquiry).
     serialize_lines: Optional[Callable[[Session, Any], list[dict]]] = None
+    # R3-1: how `revise()` applies the payload's lines to the row - the ONE
+    # code path every line-carrying type shares (`(db, row, payload) -> None`).
+    # PR/SF's own `PortalService._replace_request_lines_if_needed` moved onto
+    # this field rather than staying a name `revise()` special-cased; price
+    # tags run their own submit-shaped validation (set guard, duplicate
+    # product, completeness) here too, since a revision is a save the office
+    # already treats as complete. None for a type with no lines.
+    apply_lines: Optional[Callable[[Session, Any, dict], None]] = None
     # UAC AB2: fields a revision may NEVER change. Subtracted from the payload,
     # never from the whitelist.
     frozen_on_revise: tuple[str, ...] = ()
@@ -231,6 +240,21 @@ _REQUEST_LABELS = {
     "products": "Products",
 }
 
+def _apply_request_lines(kind: str) -> Callable[[Session, Any, dict], None]:
+    """PR/SF's own line replace, moved onto `apply_lines` (R3-1) so `revise()`
+    has ONE code path for every line-carrying type instead of special-casing
+    these two by name."""
+
+    def _apply(db: Session, row: Any, payload: dict) -> None:
+        from app.services.portal_service import PortalService
+
+        PortalService(db)._replace_request_lines_if_needed(  # noqa: SLF001
+            kind, row, payload
+        )
+
+    return _apply
+
+
 _PR_ADAPTER = RevisionAdapter(
     source_entity_type="purchase_request",
     model=PurchaseRequestHeader,
@@ -251,6 +275,7 @@ _PR_ADAPTER = RevisionAdapter(
     lookup_fields={"sales_type": "procurement_sales_type"},
     date_display_fields=("expected_delivery_date", "expected_po_date"),
     serialize_lines=_serialize_request_lines,
+    apply_lines=_apply_request_lines("purchase_request"),
     frozen_on_revise=_REQUEST_FROZEN,
     invalidated_on_revise=_REQUEST_INVALIDATED,
     status_for_stage=_request_status_for_stage,
@@ -279,6 +304,7 @@ _SF_ADAPTER = RevisionAdapter(
     lookup_fields={"sponsor_subject": "procurement_sponsor_subject"},
     date_display_fields=("expected_delivery_date",),
     serialize_lines=_serialize_request_lines,
+    apply_lines=_apply_request_lines("sponsorship_form"),
     frozen_on_revise=_REQUEST_FROZEN,
     invalidated_on_revise=_REQUEST_INVALIDATED,
     status_for_stage=_request_status_for_stage,
@@ -287,10 +313,127 @@ _SF_ADAPTER = RevisionAdapter(
     field_labels=_REQUEST_LABELS,
 )
 
+
+def _serialize_price_tag_lines(db: Session, row: Any) -> list[dict]:
+    """Post-edit line items for a price tag request, read back from the table
+    (same reasoning as `_serialize_request_lines`: `apply_lines` replaces rows
+    with a clear + re-add, so `row.lines` is stale until refreshed)."""
+    from app.models.price_tag import PriceTagRequestLine
+
+    lines = (
+        db.query(PriceTagRequestLine)
+        .filter(PriceTagRequestLine.request_id == row.id)
+        .order_by(PriceTagRequestLine.sort_order.asc().nulls_last(), PriceTagRequestLine.id.asc())
+        .all()
+    )
+    return [
+        {
+            "product_id": ln.product_id,
+            "product_set_id": ln.product_set_id,
+            "quantity": _jsonable(ln.quantity),
+            "remarks": ln.remarks,
+        }
+        for ln in lines
+    ]
+
+
+def _convert_ptag_revise_line(raw: dict) -> dict:
+    """A revise payload line names a product/set by id and a quantity, the
+    same shape the portal PUT/create routes already read - never a
+    `line_type`, which those routes require. Derived here instead."""
+    if raw.get("product_set_id"):
+        return {
+            "line_type": "product_set",
+            "product_id": None,
+            "product_set_id": raw.get("product_set_id"),
+            "quantity": raw.get("quantity", 1),
+            "remarks": raw.get("remarks"),
+        }
+    return {
+        "line_type": "product",
+        "product_id": raw.get("product_id"),
+        "product_set_id": None,
+        "quantity": raw.get("quantity", 1),
+        "remarks": raw.get("remarks"),
+    }
+
+
+def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
+    """R3-1/AC-R3: the same completeness, set-guard and duplicate-product bar
+    Submit and the post-submit PUT already enforce - a revision is a save the
+    office already treats as complete. Validated BEFORE any mutation: once
+    `PriceTagRequestService.replace_lines` clears the old rows it flushes
+    immediately, so a guard raised only AFTER calling it would still have
+    wiped the request's existing lines on a refused revision.
+    """
+    from app.services.error_handler import AppException
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    if "products" not in payload:
+        # No lines in this revision - still has to clear the same bar with
+        # whatever the row already carries.
+        PriceTagRequestService.validate_submittable(row, require_debtor=False)
+        return
+    converted = [_convert_ptag_revise_line(d) for d in (payload.get("products") or [])]
+    if not converted:
+        raise AppException(
+            status_code=422,
+            message="This request needs at least one line before it can be submitted.",
+            detail="lines",
+            code="SUBMIT_INCOMPLETE",
+        )
+    offenders: list[tuple[int, str]] = []
+    for index, line in enumerate(converted):
+        code = PriceTagRequestService._ala_carte_offender(  # noqa: SLF001
+            db, line["line_type"], line.get("product_id")
+        )
+        if code:
+            offenders.append((index, code))
+    if offenders:
+        raise PriceTagRequestService._set_guard_refusal(offenders)  # noqa: SLF001
+    PriceTagRequestService._raise_on_duplicate_line(db, converted)  # noqa: SLF001
+    PriceTagRequestService.replace_lines(db, row, converted)
+
+
+_PTAG_ADAPTER = RevisionAdapter(
+    source_entity_type="price_tag_request",
+    model=PriceTagRequest,
+    label="price tag request",
+    number_attr="doc_number",
+    snapshot_extra_fields=("doc_number", "status"),
+    snapshot_form_fields=(
+        "debtor_code",
+        "debtor_name",
+        "promotion_id",
+        "needed_by_date",
+        "notes",
+        "price_mode",
+    ),
+    lookup_fields={},
+    date_display_fields=("needed_by_date",),
+    serialize_lines=_serialize_price_tag_lines,
+    apply_lines=_apply_price_tag_lines,
+    frozen_on_revise=(),
+    invalidated_on_revise=(),
+    status_for_stage=lambda _stage_code: "new",
+    terminal_statuses=("approved", "ready", "void"),
+    field_labels={
+        "doc_number": "Request number",
+        "debtor_code": "Dealer code",
+        "debtor_name": "Dealer",
+        "promotion_id": "Promotion",
+        "needed_by_date": "Need by",
+        "notes": "Notes",
+        "price_mode": "Price",
+        "products": "Products",
+    },
+)
+
 ADAPTERS: dict[str, RevisionAdapter] = {
     _SI_ADAPTER.source_entity_type: _SI_ADAPTER,
     _PR_ADAPTER.source_entity_type: _PR_ADAPTER,
     _SF_ADAPTER.source_entity_type: _SF_ADAPTER,
+    _PTAG_ADAPTER.source_entity_type: _PTAG_ADAPTER,
 }
 
 
@@ -1008,12 +1151,21 @@ class PortalRevisionService:
         query = self.db.query(adapter.model).filter(
             adapter.model.id == str(submission_id),
             adapter.model.contact_id == token.contact_id,
-            adapter.model.space_id == token.space_id,
         )
+        # price_tag_request has no space_id column - ownership there has
+        # always been contact_id alone (portal_price_tag.py's own
+        # _require_own_request never checks it either).
+        if hasattr(adapter.model, "space_id"):
+            query = query.filter(adapter.model.space_id == token.space_id)
         if adapter.request_type is not None:
             query = query.filter(adapter.model.request_type == adapter.request_type)
         row = query.first()
         if row is None:
+            if source_entity_type == "price_tag_request":
+                # price_tag_request's own convention (portal_price_tag.
+                # _require_own_request): always 404, never the generic
+                # kinds' 403 "log in as the owner" - no owner hint leak.
+                raise handle_not_found(adapter.label.title(), str(submission_id))
             PortalService(self.db)._raise_submission_missing(  # noqa: SLF001
                 adapter.label.title(),
                 adapter.model,
@@ -1223,9 +1375,8 @@ class PortalRevisionService:
             if key not in adapter.frozen_on_revise
         }
         portal._apply_payload(source_entity_type, row, clean_payload)  # noqa: SLF001
-        portal._replace_request_lines_if_needed(  # noqa: SLF001
-            source_entity_type, row, clean_payload
-        )
+        if adapter.apply_lines is not None:
+            adapter.apply_lines(self.db, row, clean_payload)
         self.db.flush()
 
         # 6. Snapshot the stage output this revision invalidates, then clear it on the

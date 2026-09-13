@@ -11,6 +11,7 @@ export const PORTAL_REVISION_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
   complaint: 'Complaint',
+  price_tag_request: 'Price Tag Request',
 };
 
 export const PORTAL_REVISION_STATUS_OPTIONS: Record<
@@ -49,6 +50,11 @@ export const PORTAL_REVISION_STATUS_OPTIONS: Record<
     { value: 'rejected', label: 'Rejected' },
     { value: 'processed_by_cs', label: 'Processed by CS' },
     { value: 'closed', label: 'Closed' },
+  ],
+  price_tag_request: [
+    { value: 'new', label: 'New' },
+    { value: 'designing', label: 'Designing' },
+    { value: 'changes_requested', label: 'Changes requested' },
   ],
 };
 

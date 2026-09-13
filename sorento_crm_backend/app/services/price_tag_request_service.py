@@ -739,15 +739,22 @@ class PriceTagRequestService:
     def list_items(db: Session, requests: list[PriceTagRequest]) -> list:
         """The listing rows the queue draws, names resolved."""
         from app.schemas.price_tag import PriceTagRequestListItem
+        from app.services.portal_service import PortalService
 
         labels = PriceTagRequestService.resolved_labels(
             db, [request.id for request in requests]
+        )
+        # R3-1/AC-R5: the summary carries whether an unsent revision draft is
+        # parked for this row, same shared check the other portal kinds use.
+        draft_ids = PortalService(db)._ids_with_revision_draft(  # noqa: SLF001
+            "price_tag_request", [str(request.id) for request in requests]
         )
         items = []
         for request in requests:
             item = PriceTagRequestListItem.model_validate(request)
             for key, value in labels.get(request.id, {}).items():
                 setattr(item, key, value)
+            item.has_revision_draft = str(request.id) in draft_ids
             items.append(item)
         return items
 
@@ -809,14 +816,10 @@ class PriceTagRequestService:
             latest_completed_export(db, request.id) is not None
         )
 
-        # D-P6/AC-B6: the FE Edit button reads this, never the status list
-        # itself - a draft is always editable; a submitted request stays
-        # editable only at New / Changes requested, mirroring
-        # ``portal_price_tag._require_editable``.
-        response.is_editable = bool(request.portal_draft_at) or request.status in (
-            STATUS_NEW,
-            STATUS_CHANGES_REQUESTED,
-        )
+        # R3-1/AC-R1: reverses S8's D-P6 - a submitted request is read-only
+        # exactly like a stock inquiry. True for a draft only; a submitted
+        # request changes through the revision engine instead.
+        response.is_editable = bool(request.portal_draft_at)
 
         # The header's names, from the same resolver the listing uses so the two
         # screens cannot disagree about who claimed a request.

@@ -15,6 +15,7 @@ import {
   Download,
   Loader2,
   MessageSquare,
+  PencilLine,
   Plus,
   Trash2,
 } from 'lucide-react';
@@ -47,6 +48,7 @@ import {
   priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
 import { portalBase, portalDuplicatePath } from '../lib/portal-paths';
+import { useRevisionPolicy, useReviseSubmission } from '../hooks/useRevisions';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
@@ -316,12 +318,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // the read-only page instead of the form.
   const isDraft = Boolean(request?.portal_draft_at);
   const isEditable = isNew || isDraft;
-  // D-P6: a post-submit edit at New / Changes requested. `editing` is a
-  // separate flip from `isEditable` - it only ever turns on via the header's
-  // own Edit button, never from status/draft state directly, so a Cancel can
-  // put the read view back with no round trip.
-  const [editing, setEditing] = useState(false);
-  const showEditForm = isEditable || editing;
+  // R3-1: no post-submit Edit any more - a submitted request is read-only,
+  // and a change goes through the revision engine instead. `reviseMode` only
+  // ever turns on via the header gear's own Revise item (same hooks
+  // `SubmissionForm` reads for the legacy kinds), never from status/draft
+  // state directly, so Cancel puts the read view back with no round trip.
+  const [reviseMode, setReviseMode] = useState(false);
+  const [reviseReason, setReviseReason] = useState('');
+  const showEditForm = isEditable || reviseMode;
   const isProofReady = request?.status === 'proof_ready';
   // The design preview shows for longer than the approve/request-changes
   // actions do (D11/AC-S4-4): once approved the salesperson can still look
@@ -331,6 +335,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // The id to save/flush against: the route param when one exists, else
   // whatever a create call in THIS session already answered with.
   const effectiveId = requestId ?? createdRequestId ?? undefined;
+  // R3-1/AC-R7: same generic revision hooks SubmissionForm reads for the
+  // legacy kinds, rather than a second revise mechanism.
+  const { policy: revisionPolicy } = useRevisionPolicy('price_tag_request', effectiveId);
+  const { revise, submitting: revising } = useReviseSubmission(
+    'price_tag_request',
+    effectiveId,
+  );
 
   // ---- Sections (D-P1): Customer open by default, everything else opens
   // progressively as the form gains the value the next section needs. A rule
@@ -940,64 +951,50 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
-  // ---- Post-submit edit (D-P6): Save writes in place, no re-submit, no SLA
-  // restart, and lands back on the read view with the saved values - never a
-  // navigate-away like Save Draft does. ----
-  const handleSaveEdit = useCallback(async () => {
+  // ---- Revise (R3-1): sent through the portal revision engine, never the
+  // retired post-submit PUT. A reason is required; the same zero-line/
+  // set-guard/duplicate-product bar Submit runs is enforced server side
+  // inside the revise transaction (apply_lines), so a client-side pre-check
+  // here only saves a round trip on the one case that is free to check
+  // (zero lines) - the rest surfaces as the server's own sentence. ----
+  const handleSubmitRevision = useCallback(async () => {
     if (!effectiveId) return;
-    // A post-submit Save is the same Save the backend's own validate_submittable
-    // runs on write (review round 2, AC-B10) - checked here first too, so a
-    // zero-line save never round-trips just to be refused (same pattern as
-    // handleSubmit's own pre-check).
-    const { next, emptyRows } = collectProblems();
-    if (Object.keys(next).length > 0 || emptyRows.length > 0) {
-      setFieldErrors(next);
-      setLines((prev) =>
-        prev.map((l, index) => ({
-          ...l,
-          guard_error: emptyRows.includes(index) ? EMPTY_LINE : null,
-        })),
-      );
-      openSectionForProblems(next, emptyRows.length > 0);
-      scrollToFirstProblem();
+    if (!reviseReason.trim()) {
+      toast.error('Tell us what changed and why.');
       return;
     }
-    setSaving(true);
     try {
       const debtor = debtors.find((d) => d.code === debtorCode);
-      const payload = {
-        debtor_code: debtorCode || null,
-        debtor_name: debtorCode ? (debtor?.name ?? debtorCode) : null,
-        promotion_id: promotionId || null,
-        needed_by_date: neededByDate || null,
-        notes: notes || null,
-        price_mode: priceMode,
-        lines: payloadLines(),
-      };
-      await updateRequest(effectiveId, payload);
-      await flushPendingFiles(effectiveId);
+      await revise({
+        reason: reviseReason.trim(),
+        expectedRevisionNo: request?.revision_no ?? 0,
+        fields: {
+          debtor_code: debtorCode || null,
+          debtor_name: debtorCode ? (debtor?.name ?? debtorCode) : null,
+          promotion_id: promotionId || null,
+          needed_by_date: neededByDate || null,
+          notes: notes || null,
+          price_mode: priceMode,
+        },
+        products: payloadLines(),
+      });
       const fresh = await getRequest(effectiveId);
       if (fresh) {
         setRequest(fresh);
         applyRequestFieldsFrom(fresh);
       }
-      setEditing(false);
-      toast.success('Saved');
+      setReviseMode(false);
+      setReviseReason('');
+      toast.success('Revision sent');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save changes');
-    } finally {
-      setSaving(false);
+      toast.error(e instanceof Error ? e.message : 'Failed to send revision');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, applyRequestFieldsFrom, collectProblems, openSectionForProblems]);
+  }, [effectiveId, reviseReason, revise, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, request, applyRequestFieldsFrom]);
 
-  // Cancel re-fetches the request rather than replaying the pre-edit
-  // snapshot (review round 2): an attachment drop persists immediately (its
-  // own upload call, not on Save), so a Cancel that only restores
-  // `applyRequestFieldsFrom(request)` shows a form missing a file the server
-  // already has.
-  const handleCancelEdit = useCallback(async () => {
-    setEditing(false);
+  const handleCancelRevise = useCallback(async () => {
+    setReviseMode(false);
+    setReviseReason('');
     setPendingFiles([]);
     if (!effectiveId) return;
     try {
@@ -1007,7 +1004,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         applyRequestFieldsFrom(fresh);
       }
     } catch {
-      // The read view already fell back to the pre-edit `request` snapshot
+      // The read view already fell back to the pre-revise `request` snapshot
       // above; a failed re-fetch leaves that in place rather than erroring
       // out of a Cancel, which is not a save the reader needs told about.
     }
@@ -1169,19 +1166,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             <ArrowLeft className="size-4 mr-1" /> Back
           </Button>
           <div className="flex items-center gap-2">
-            {/* D-P6: New / Changes requested only (AC-B6 reads `is_editable`,
-                never the status list itself) - Designing onward keeps its
-                existing Request Changes / Approve actions instead. */}
-            {request.is_editable && (
-              <Button size="sm" onClick={() => setEditing(true)}>
-                Edit
-              </Button>
-            )}
-            {/* The gear (D19): Download PDF, disabled with a reason until a
-                completed export exists. The stub toast is gone. Controlled open
-                state so the menu closes itself once the download settles,
-                instead of sitting open with a stale item until an outside
-                click. */}
+            {/* R3-1/AC-R7: no Edit after submit - a submitted request is
+                read-only exactly like a stock inquiry, and a change goes
+                through the revision engine instead. ONE gear: Duplicate,
+                Download PDF (disabled with a reason until a completed
+                export exists), and Revise when the policy allows it.
+                Controlled open state so the menu closes itself once the
+                download settles, instead of sitting open with a stale item
+                until an outside click. */}
             <DetailActionsMenu
               ariaLabel="Price tag request actions"
               open={gearOpen}
@@ -1218,6 +1210,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 <Copy className="size-4" />
                 Duplicate
               </DropdownMenuItem>
+              {revisionPolicy?.allowed && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setGearOpen(false);
+                    setReviseMode(true);
+                    setReviseReason('');
+                  }}
+                >
+                  <PencilLine className="size-4" />
+                  Revise
+                </DropdownMenuItem>
+              )}
             </DetailActionsMenu>
           </div>
         </div>
@@ -1232,9 +1237,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             </span>
           </div>
           {/* Read-only metadata, never a form field: created is derived, not
-              something the salesperson typed. */}
+              something the salesperson typed. The revision status (budget or
+              blocked reason) rides the same line, muted (AC-R7/R3-5). */}
           <p className="text-xs text-muted-foreground">
             Created {new Date(request.created_at).toLocaleDateString()}
+            {revisionPolicy && !revisionPolicy.allowed && revisionPolicy.blocked_reason && (
+              <>
+                {' '}
+                <span aria-hidden>·</span>{' '}
+                <span>{revisionPolicy.blocked_reason}</span>
+              </>
+            )}
           </p>
         </div>
 
@@ -1465,11 +1478,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Edit / create form ----
   return (
     <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
-      {editing && request ? (
-        // Review round 2: edit mode is the SAME header as the read view -
-        // doc number, status pill, Created line - with Save / Cancel where
-        // the Edit button was, not a bare "Edit ..." heading and a second
-        // Save/Cancel row at the bottom of the page.
+      {reviseMode && request ? (
+        // R3-1: revise mode is the SAME header as the read view - doc
+        // number, status pill, Created line - with Cancel / Submit revision
+        // where the gear's Revise item was, not a bare heading and a second
+        // action row at the bottom of the page.
         <>
           <div className="flex items-center justify-between gap-2">
             <Button
@@ -1480,12 +1493,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               <ArrowLeft className="size-4 mr-1" /> Back
             </Button>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={handleCancelEdit} disabled={saving}>
+              <Button variant="outline" onClick={handleCancelRevise} disabled={revising}>
                 Cancel
               </Button>
-              <Button onClick={handleSaveEdit} disabled={saving}>
-                {saving && <Loader2 className="size-4 mr-1 animate-spin" />}
-                Save
+              <Button onClick={handleSubmitRevision} disabled={revising}>
+                {revising && <Loader2 className="size-4 mr-1 animate-spin" />}
+                Submit revision
               </Button>
             </div>
           </div>
@@ -1501,6 +1514,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             <p className="text-xs text-muted-foreground">
               Created {new Date(request.created_at).toLocaleDateString()}
             </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="revision_reason">Reason</Label>
+            <Textarea
+              id="revision_reason"
+              value={reviseReason}
+              onChange={(e) => setReviseReason(e.target.value)}
+              placeholder="What changed, and why?"
+              rows={3}
+            />
           </div>
         </>
       ) : (
@@ -1800,12 +1823,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
       )}
 
-      {/* Actions - D-P6: a post-submit edit (editing, never a draft or new
-          form here - see `showEditForm`) has its Save / Cancel in the header
-          above (review round 2), same spot the read view's Edit button sat -
-          not a second action row down here, and never Delete. Everything
-          else (a draft or a brand new form) keeps Save Draft / Submit. */}
-      {!editing && (
+      {/* Actions - R3-1: a revision (reviseMode, never a draft or new form
+          here - see `showEditForm`) has its Cancel / Submit revision in the
+          header above, same spot the read view's Revise gear item sat - not
+          a second action row down here, and never Delete. Everything else
+          (a draft or a brand new form) keeps Save Draft / Submit. */}
+      {!reviseMode && (
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           {/* Delete sits apart from Save and Submit, and asks first. */}
           {!isNew && isDraft && (

@@ -180,6 +180,10 @@ class PriceTagRequestResponse(BaseModel):
     assigned_to_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    # R3-1: the revise composer's stale-write guard sends this straight back
+    # as `expected_revision_no`, and the header line reads it too.
+    revision_no: int = 0
+    last_revised_at: Optional[datetime] = None
     lines: list[PriceTagRequestLineResponse] = []
 
     # Resolved, not stored. Filled by
@@ -244,6 +248,12 @@ class PriceTagRequestListItem(BaseModel):
     # list as New, and a schema drops what it does not declare just as silently
     # as a response_model does.
     portal_draft_at: Optional[datetime] = None
+    # R3-1/AC-R5: the same revision fields the legacy kinds' own summaries
+    # carry - the portal card badge and the settings-driven Revisions tab
+    # both read these instead of a second round trip.
+    revision_no: int = 0
+    last_revised_at: Optional[datetime] = None
+    has_revision_draft: bool = False
 
 
 # ---------------------------------------------------------------------------

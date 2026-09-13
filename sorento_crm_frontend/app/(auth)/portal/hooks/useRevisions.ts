@@ -10,10 +10,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
+  PortalLandingKind,
   PortalOwnerMismatchError,
   PortalRevisionEntry,
   PortalRevisionPolicy,
-  PortalSubmissionKind,
   PortalUnauthorizedError,
   ReviseSubmissionInput,
   ReviseSubmissionResult,
@@ -32,7 +32,7 @@ export interface RevisionHistoryState {
 /** Full lineage for one submission. Always fetched for a saved submission: the
  *  history section renders even when the original is the only version. */
 export function useRevisionHistory(
-  kind: PortalSubmissionKind,
+  kind: PortalLandingKind,
   submissionId: string | null | undefined,
 ): RevisionHistoryState {
   const [entries, setEntries] = useState<PortalRevisionEntry[]>([]);
@@ -88,7 +88,7 @@ export function useRevisionHistory(
  * renders from). A failure simply yields no policy, and the action is hidden.
  */
 export function useRevisionPolicy(
-  kind: PortalSubmissionKind,
+  kind: PortalLandingKind,
   submissionId: string | null | undefined,
 ): { policy: PortalRevisionPolicy | null; loading: boolean } {
   const [policy, setPolicy] = useState<PortalRevisionPolicy | null>(null);
@@ -103,7 +103,15 @@ export function useRevisionPolicy(
     let cancelled = false;
     setLoading(true);
     setPolicy(null);
-    fetchSubmission(kind, submissionId)
+    // `Promise.resolve().then(...)` defers the CALL itself (not just its
+    // result) into the chain the `.catch` below already covers - a caller
+    // whose test mocks `portal-client.ts` without `fetchSubmission` (every
+    // price tag test predating this hook's reuse for that kind) throws
+    // SYNCHRONOUSLY on the bare call, which no `.catch` after it would ever
+    // see; deferred, it lands in the same "no policy" fallback a real
+    // network failure already takes, rather than crashing the render.
+    Promise.resolve()
+      .then(() => fetchSubmission(kind, submissionId))
       .then((detail) => {
         if (!cancelled) setPolicy(detail.revision ?? null);
       })
@@ -123,7 +131,7 @@ export function useRevisionPolicy(
 
 /** Send a revision. The caller keeps the form state; this owns the in-flight
  *  flag so a double tap cannot fire two requests before the server guard does. */
-export function useReviseSubmission(kind: PortalSubmissionKind, submissionId?: string) {
+export function useReviseSubmission(kind: PortalLandingKind, submissionId?: string) {
   const [submitting, setSubmitting] = useState(false);
 
   const revise = useCallback(

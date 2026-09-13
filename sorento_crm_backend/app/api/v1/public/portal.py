@@ -713,6 +713,49 @@ def _check_kind(kind: str) -> str:
 _ATTACHMENT_ONLY_KINDS = ("price_tag_request",)
 
 
+def _check_revisable_kind(kind: str) -> str:
+    """Kinds the REVISION routes accept - every registered RevisionAdapter.
+    As of R3-1 that is SUPPORTED_TYPES' three original kinds plus
+    price_tag_request (own dedicated router, sharing this generic revision
+    plumbing the same way the attachment routes already do above)."""
+    from app.services.portal_revision_service import ADAPTERS
+
+    k = (kind or "").strip().lower()
+    if k not in SUPPORTED_TYPES and k not in ADAPTERS:
+        raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+    return k
+
+
+def _require_revisable_ownership(
+    db: Session, token: PortalToken, kind: str, submission_id: str
+) -> None:
+    """Ownership check for a revision route, dispatched the same way the
+    attachment routes already widen for price_tag_request: its own dedicated
+    router's ownership check, not PortalService's generic CRUD."""
+    if kind == "price_tag_request":
+        from app.api.v1.public.portal_price_tag import _require_own_request
+
+        _require_own_request(db, token, submission_id)
+    else:
+        PortalService(db).get_submission(token, kind, submission_id)
+
+
+def _revision_submission_detail(
+    db: Session, token: PortalToken, kind: str, submission_id: str
+) -> dict:
+    """The submission body a revision route hands back, dispatched the same
+    way ownership is: price_tag_request's own detail body (already carries
+    attachments, revision, revision_draft), the generic one otherwise."""
+    if kind == "price_tag_request":
+        from app.api.v1.public.portal_price_tag import _detail_body, _require_own_request
+
+        row = _require_own_request(db, token, submission_id)
+        return _detail_body(db, row)
+    detail = PortalService(db).get_submission(token, kind, submission_id)
+    detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
+    return detail
+
+
 def _check_attachment_kind(kind: str) -> str:
     k = (kind or "").strip().lower()
     if k not in SUPPORTED_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
@@ -768,7 +811,7 @@ def _require_own_price_tag_request(
     if require_editable:
         from app.api.v1.public.portal_price_tag import _require_editable
 
-        _require_editable(row)
+        _require_editable(row, db)
 
 
 @router.get("/submissions")
@@ -905,8 +948,8 @@ def portal_list_revisions(
     """
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_kind(kind)
-    PortalService(db).get_submission(token, k, submission_id)
+    k = _check_revisable_kind(kind)
+    _require_revisable_ownership(db, token, k, submission_id)
     return {"items": PortalRevisionService(db).list_revisions(k, submission_id)}
 
 
@@ -928,7 +971,7 @@ def portal_revise_submission(
     """
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_kind(kind)
+    k = _check_revisable_kind(kind)
     body = dict(payload.fields or {})
     if payload.products is not None:
         body["products"] = payload.products
@@ -940,8 +983,7 @@ def portal_revise_submission(
         payload.reason,
         payload.expected_revision_no,
     )
-    submission = PortalService(db).get_submission(token, k, submission_id)
-    submission["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
+    submission = _revision_submission_detail(db, token, k, submission_id)
     submission["revision"] = result["policy"]
     return {
         "submission": submission,
@@ -972,7 +1014,7 @@ def portal_save_revision_draft(
     """Save (or update) an in-progress revision, without sending it."""
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_kind(kind)
+    k = _check_revisable_kind(kind)
     body = dict(payload.fields or {})
     if payload.products is not None:
         body["products"] = payload.products
@@ -996,7 +1038,7 @@ def portal_discard_revision_draft(
     """Discard the in-progress revision, if any. Idempotent."""
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_kind(kind)
+    k = _check_revisable_kind(kind)
     service = PortalRevisionService(db)
     service.fetch_owned(token, k, submission_id)  # ownership: 403/404 as elsewhere
     service.discard_draft(k, submission_id)

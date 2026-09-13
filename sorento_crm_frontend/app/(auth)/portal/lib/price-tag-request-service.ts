@@ -63,6 +63,10 @@ export interface PriceTagRequestSummary {
   created_at: string;
   /** Set while the request is a draft the salesperson has not submitted. */
   portal_draft_at?: string | null;
+  /** R3-1: the same revision fields the legacy kinds' own summaries carry. */
+  revision_no?: number;
+  last_revised_at?: string | null;
+  has_revision_draft?: boolean;
 }
 
 export interface PriceTagRequestDetail extends PriceTagRequestSummary {

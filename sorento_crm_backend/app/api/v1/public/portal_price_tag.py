@@ -295,21 +295,18 @@ def portal_update_price_tag_request(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Update a draft, or (D-P6) a submitted request still at New / Changes
-    requested. The latter never touches ``status``, ``assigned_to_id`` or
-    ``portal_draft_at``, and never re-fires the form SLA - only ``submit``
-    does that, and it stays gated on ``_require_draft`` so a post-submit edit
-    can never re-open that door. It writes an audit row instead, so the
-    change is on record even though nothing else observably happened."""
+    """Update a draft. R3-1 REVERSES D-P6/S8: a submitted request is
+    read-only exactly like the other portal kinds - changes go through the
+    revision engine (``PortalRevisionService.revise``) instead, gated by
+    System Settings > Portal Revisions. Back to ``_require_draft``: 409
+    ``NOT_DRAFT`` for every non-draft status, ``new`` / ``changes_requested``
+    included. The post-submit validators, override carry-over and audit row
+    S8 added here now live in ``portal_revision_service._apply_price_tag_lines``,
+    part of the revise transaction."""
     request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
-    _require_editable(req)
-    is_post_submit_edit = req.portal_draft_at is None
-
-    # Pre-edit snapshot for the audit row's old_values (D-P6b) - taken before
-    # any setattr/replace_lines below, so it is genuinely the "before" state.
-    old_snapshot = _header_and_lines_snapshot(req) if is_post_submit_edit else None
+    _require_draft(req, "Only a draft can be edited.")
 
     update_data = payload.model_dump(exclude_unset=True)
     if "promotion_id" in update_data:
@@ -327,34 +324,6 @@ def portal_update_price_tag_request(
         PriceTagRequestService.replace_lines(db, req, lines)
 
     db.flush()
-
-    if is_post_submit_edit:
-        # A post-submit PUT is a Save on a request marketing already treats as
-        # complete - it must clear the same bar Submit does (D-P6b), after the
-        # write so it inspects what would actually be saved. Set guard first:
-        # a guarded line is the more specific, more actionable refusal, and a
-        # test fixture with no debtor set (this PUT never touches debtor_name)
-        # must not have that generic incompleteness mask it.
-        PriceTagRequestService.validate_set_guard(db, req)
-        PriceTagRequestService.validate_submittable(req, require_debtor=False)
-
-        from app.services.audit_service import log_audit
-
-        log_audit(
-            db,
-            entity_type="price_tag_request",
-            entity_id=req.id,
-            action="UPDATE",
-            contact_id=req.contact_id,
-            company_id=req.company_id,
-            old_values=old_snapshot,
-            # JSON-safe payload (mode="json"): the python-mode `update_data`
-            # above still carries raw `date` objects, which the JSONB column's
-            # driver cannot serialise and used to 500 the whole request.
-            new_values=payload.model_dump(exclude_unset=True, mode="json"),
-            description="portal edit after submit",
-        )
-
     db.commit()
     return _detail_body(db, req)
 
@@ -643,56 +612,26 @@ def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
         raise AppException(status_code=409, message=message, code=code)
 
 
-def _require_editable(req) -> None:
-    """D-P6: PUT only. A draft is always editable (unchanged); a submitted
-    request stays editable while marketing has not started designing it yet
-    (``new`` / ``changes_requested``) - once it does, the tag data underneath
-    is being worked on and a silent edit would land under the designer's
-    feet. DELETE and submit keep the stricter ``_require_draft``: only a
-    draft may be deleted or (re-)submitted."""
+def _require_editable(req, db: Session) -> None:
+    """R3-1: the attachment gate (upload/delete). A draft is always editable;
+    a submitted request is editable ONLY while a revision draft is in
+    progress for it - the revision engine's own draft
+    (``PortalRevisionService.get_draft``), never the retired
+    ``new``/``changes_requested`` post-submit window S8 opened. Wired
+    through the real engine rather than a coincidental status check, so this
+    gate can never drift from what the revise composer is actually allowed
+    to touch."""
     if req.portal_draft_at is not None:
         return
-    if req.status in (STATUS_NEW, STATUS_CHANGES_REQUESTED):
+    from app.services.portal_revision_service import PortalRevisionService
+
+    if PortalRevisionService(db).get_draft("price_tag_request", req.id) is not None:
         return
     raise AppException(
         status_code=409,
         message="This request can no longer be edited.",
         code="NOT_EDITABLE",
     )
-
-
-def _header_and_lines_snapshot(req) -> dict:
-    """A JSON-safe snapshot of the header fields a post-submit PUT can change,
-    plus the whole line table, for the audit row's ``old_values`` (D-P6b).
-    Called BEFORE any ``setattr``/``replace_lines`` on the request, so it is
-    genuinely the pre-edit state, not the header-only dict the payload itself
-    carries.
-    """
-    return {
-        "debtor_code": req.debtor_code,
-        "debtor_name": req.debtor_name,
-        "promotion_id": req.promotion_id,
-        "needed_by_date": req.needed_by_date.isoformat() if req.needed_by_date else None,
-        "notes": req.notes,
-        "price_mode": req.price_mode,
-        "lines": [
-            {
-                "line_type": line.line_type,
-                "product_id": line.product_id,
-                "product_set_id": line.product_set_id,
-                "quantity": line.quantity,
-                "remarks": line.remarks,
-                "marketing_price_override": (
-                    float(line.marketing_price_override)
-                    if line.marketing_price_override is not None
-                    else None
-                ),
-                "marketing_override_reason": line.marketing_override_reason,
-                "sort_order": line.sort_order,
-            }
-            for line in req.lines
-        ],
-    }
 
 
 def _detail_body(db: Session, req) -> dict:
@@ -703,10 +642,21 @@ def _detail_body(db: Session, req) -> dict:
     ``entity_attachment_service.list_attachments_for_entity`` - real rows once
     the PO dropzone has uploaded any, an empty list otherwise. The portal form
     reads the key unconditionally, so it always has to be present.
+
+    R3-1/AC-R7: ``revision`` (the policy block: allowed, remaining, blocked
+    reason) and ``revision_draft`` (the in-progress revise composer, if any)
+    ride along too, like the legacy kinds' detail bodies do - one call, no
+    extra round trip.
     """
-    return PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
+    from app.services.portal_revision_service import PortalRevisionService
+
+    body = PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
         mode="json"
     )
+    revision_service = PortalRevisionService(db)
+    body["revision"] = revision_service.policy_for("price_tag_request", req.id).as_dict()
+    body["revision_draft"] = revision_service.get_draft("price_tag_request", req.id)
+    return body
 
 
 def _resolve_company(db: Session, token: PortalToken) -> str:

@@ -1999,7 +1999,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               revise FROM yet. */}
           {detail && !editing && (
             <DetailActionsMenu
-              ariaLabel={`${SUBMISSION_LABELS[kind]} actions`}
+              ariaLabel="Submission actions"
               className="shrink-0"
             >
               <DropdownMenuItem
