@@ -316,11 +316,24 @@ class SupplyProposal(BaseModel):
 class ConfirmReserveComponent(BaseModel):
     warehouse_id: str
     qty: Decimal = Decimal("0")
+    #: The warehouse CODE the id names (R4, review round, second re-walk). Optional and
+    #: ignored on the way IN - addressing is the id's job, and the endpoint reads nothing
+    #: else here - but this SAME schema is reused as the OUTPUT shape for a planning-change
+    #: row's stored `composition` (`app/schemas/planning_change.py` imports `ConfirmLine`
+    #: from this module), and without this field declared, `response_model` drops the code
+    #: `_validate_composition_shape` already wrote into the stored JSON on its way back out
+    #: over the wire - a reader of the ROUTE's response never sees it, only a reader of the
+    #: row directly off the database would.
+    location: Optional[str] = None
 
 
 class ConfirmBorrowComponent(BaseModel):
     source: BorrowSource
     warehouse_id: str
+    #: The warehouse CODE the id names (R4), same reasoning as `ConfirmReserveComponent.
+    #: location` - ignored on input, needed on output since this schema is reused for a
+    #: planning-change row's stored `composition`.
+    location: Optional[str] = None
     donor_project_id: Optional[str] = None
     qty: Decimal = Decimal("0")
     #: Required, but NOT by the schema: an empty reason is a failing LINE, named by line
@@ -496,18 +509,24 @@ class ConfirmManyOrderBody(BaseModel):
 
     pso_id: str
     lines: List[ConfirmLine] = Field(default_factory=list)
+    #: This order's OWN planning-change batch (`PLAN-scm-board-picks-up-pending-change.md`,
+    #: AC-B5/AC-B6): a board can now show two orders on two different batches, so the batch
+    #: an order answers has to travel WITH that order, not once for the whole press. Falls
+    #: back to `ConfirmManyBody.batch_id` when absent, so the pre-slice shape (one
+    #: body-level id applied to every order) keeps working during the deploy window.
+    batch_id: Optional[str] = None
 
 
 class ConfirmManyBody(BaseModel):
     orders: List[ConfirmManyOrderBody] = Field(default_factory=list)
     #: The planning-change batch this press is ANSWERING (part 3, AC-P3-4).
     #:
-    #: One batch per board, which is the shape the board already has: it is opened at
-    #: `?orders=...&batch=<id>` and every order on it belongs to that batch. Set, each
-    #: order's lines become its batch rows' own compositions and the batch is applied for
-    #: THAT order - the same single write `POST .../sales-orders/{id}/confirm` does with its
-    #: own `batch_id`, once per order rather than once per press. Absent on every ordinary
-    #: board Confirm.
+    #: DEPRECATED as the primary shape (`PLAN-scm-board-picks-up-pending-change.md`, change
+    #: 4): a board with two orders on two different batches cannot name one body-level id
+    #: for both. `ConfirmManyOrderBody.batch_id` is read first; this is the FALLBACK for a
+    #: caller that has not moved to the per-order id yet - one batch per board, which was
+    #: the only shape the board had before this slice: opened at `?orders=...&batch=<id>`,
+    #: every order on it belonging to that one batch. Absent on every ordinary board Confirm.
     batch_id: Optional[str] = None
 
 

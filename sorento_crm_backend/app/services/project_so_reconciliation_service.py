@@ -71,6 +71,7 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
+from app.services import planning_change_service
 from app.services.error_handler import AppException
 from app.services.scm.demand import PROJECT_CLASS, demand_qty, is_open_demand
 
@@ -472,13 +473,21 @@ class ProjectSOReconciliationService:
         review state (AC-A03), and linking its lines to a core sales order it has not been
         published against would be the system deciding something on its own.
 
-        An ADOPTED order is read and nothing else HERE, for a different reason: its
-        reconciliation is a one-way SYNC of the mirror against the book (plan section 5.1
-        `resync`), not the two-pass mapping below, and running the authored mapping over
-        mirror lines that already carry their core link would be answering a question
-        nobody asked. Until the sync lands, `evaluate` is the honest answer.
+        An ADOPTED order runs the one sync it actually has HERE - `mirror_missing_lines`
+        (AC-FP12), the same additive re-sync `ProjectSOAdoptionService.adopt`'s own
+        already-adopted branch runs - rather than the two-pass authored mapping below:
+        running that over mirror lines that already carry their core link would be
+        answering a question nobody asked. Measured live (attempt 7 browser walk,
+        SO419851): an AutoCount re-ingest closes the core lines an adopted order's mirror
+        already points at and inserts brand-new open ones nobody mirrors, and pressing
+        Re-sync used to leave `lines_linked` and the exception list untouched - the board's
+        own notice names Re-sync as the remedy, so this is what makes that name true.
         """
         if order.status == SO_STATUS_ADOPTED:
+            from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+            ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
+            self.db.flush()
             return self.evaluate(order)
         if order.status not in LIVE_SO_STATUSES:
             return self.evaluate(order)
@@ -506,9 +515,9 @@ class ProjectSOReconciliationService:
         A re-mapping is a material change (AC-C06): an active revision was decided against
         the links that stood then, so if any of them moves it is superseded and the whole
         SO goes back to Needs CS review. When the links stand but the facts behind them
-        have drifted - a quantity or a required date on the core line - the revision is
-        challenged instead, which says the same thing about the promise and keeps the
-        evidence of what was promised.
+        have drifted - a quantity or a required date on the core line - that is no longer
+        read as a signal of its own here (Slice E, one signal): the change batch a re-run
+        or manual edit raises is the only thing that supersedes an active revision now.
         """
         relinked = [
             row
@@ -549,17 +558,12 @@ class ProjectSOReconciliationService:
                 "reconciled. Re-run the reconciliation to see which line it took.",
             ) from exc
 
-        from app.services.project_supply_service import ProjectSupplyService
-
-        supply = ProjectSupplyService(self.db)
         if relinked:
-            supply.supersede_for_material_change(
+            from app.services.project_supply_service import ProjectSupplyService
+
+            ProjectSupplyService(self.db).supersede_for_material_change(
                 outcome.order,
                 "The AutoCount line mapping changed after this revision was confirmed.",
-            )
-        else:
-            supply.challenge_if_drifted(
-                outcome.order, lines=[row.line for row in outcome.lines]
             )
 
     # ---------------------------------------------------------------- the map
@@ -1297,6 +1301,17 @@ class ProjectSOReconciliationService:
         data = []
         for row in window:
             data.append(self._worklist_row(row, outcomes, headers))
+        # AC-B7: the same `Changed` pill the SCM Sales Orders list and the fulfilment
+        # board show, off the SAME rule
+        # (`planning_change_service.pending_batch_id_by_sales_order`,
+        # `PLAN-scm-board-picks-up-pending-change.md`) - one query for the page, not one
+        # per row.
+        page_so_ids = list({r["sales_order_id"] for r in data if r.get("sales_order_id")})
+        pending_by_so = planning_change_service.pending_batch_id_by_sales_order(
+            self.db, page_so_ids,
+        )
+        for r in data:
+            r["planning_change_batch_id"] = pending_by_so.get(r.get("sales_order_id"))
         return {
             "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
