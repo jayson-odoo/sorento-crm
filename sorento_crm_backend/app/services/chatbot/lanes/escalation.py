@@ -118,10 +118,14 @@ def _fold_code(value: Any) -> str:
     return _CODE_FOLD.sub("", jsc.js_string(value).strip().lower()) if jsc.truthy(value) else ""
 
 
-# WHAT A DRY RUN CANNOT KNOW, said on the preview rather than left to be inferred. The brand
-# comes from a resolver call and a dry run reaches no seam that writes OR reads (H37,
-# AC-1141), so the previewed assignee is drawn from the turn's team and company alone. Without
-# the note the console shows a blank brand beside a correct team and reads as a routing defect.
+# WHAT A DRY RUN CANNOT KNOW, said where the console actually reads. The brand comes from a
+# resolver call and a dry run reaches no seam that writes OR reads (H37, AC-1141), so the
+# previewed assignee is drawn from the turn's team and company alone - and without the note a
+# blank brand beside a correct team reads as a routing defect.
+#
+# It rides the TRACE, on the `looked_up` record's facts (`engine.py`), not the actions. On the
+# actions it had no reader at all: the executor executes `kind` and its own fields, and the
+# trace record carries only the action KINDS, so nothing rendered it. One string, one reader.
 PREVIEW_BRAND_NOTE = "brand resolved on live turns only"
 
 # `get-round-robin-assignee`'s body has these two frozen, as literals in the JSON.
@@ -1576,7 +1580,9 @@ def _preview_routing(
         # named team is the common escalation, and drawing the preview from `context_item`
         # showed the inherited team's pool (and its agent) beside a customer copy naming the
         # landed one. The brand is NOT resolved here - a dry run reaches no seam (AC-1141) -
-        # so the body carries none and the actions say so (`PREVIEW_BRAND_NOTE`).
+        # so the body carries none and the TRACE says so (`PREVIEW_BRAND_NOTE`, stamped on
+        # the `looked_up` record's facts by the engine - the console renders facts, and an
+        # action field had no reader).
         landed = routed["team"] if routed is not None else team
         item = _landed_item(context_item, ctx=ctx, team=team, landed=landed, product=None)
         body = {**_next_assignee_body(ctx, item), "team_code": landed, "preview": True}
@@ -1672,7 +1678,6 @@ def _assignment_actions(
         }
         if preview:
             action["preview"] = True
-            action["preview_note"] = PREVIEW_BRAND_NOTE
         actions.append(action)
     comment: dict[str, Any] = {
         "kind": "add_comment",
@@ -1685,7 +1690,6 @@ def _assignment_actions(
     }
     if preview:
         comment["preview"] = True
-        comment["preview_note"] = PREVIEW_BRAND_NOTE
     actions.append(comment)
     actions.append(_send_message(ROUTED_TO_PIC_REPLY.format(team=_pretty_team(team)), dry_run))
     return actions
