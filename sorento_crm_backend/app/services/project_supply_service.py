@@ -375,9 +375,13 @@ def _open_of(core: Optional[SalesOrderLine]) -> Decimal:
     """AC-B01: the core line's CURRENT open fulfilment quantity, floored at zero.
 
     Not the original customer quantity, and not a figure a downstream reader has already
-    netted: what is still owed, in the line's own UOM.
+    netted: what is still owed, in the line's own UOM. A CANCELLED line owes nothing (R2c,
+    13 Sep browser walk): `qty_ordered - qty_delivered` alone does not read zero for one
+    (the book rarely reverses a delivered quantity when it cancels a line), and this is the
+    single primitive the drift check (`_carry_snapshot_has_drifted`) and the board's own
+    queue both read - reading it here is the one place that fixes both.
     """
-    if core is None:
+    if core is None or (core.line_status or "open") == "cancelled":
         return _ZERO
     return max(_dec(core.qty_ordered) - _dec(core.qty_delivered), _ZERO)
 
@@ -4200,12 +4204,14 @@ class ProjectSupplyService:
 
         A snapshot for a line no longer on the order is not carried either: there is no
         row to hold stock for. Nor is one whose frozen link, open quantity or required
-        date has moved since the revision that covered it (`_carry_snapshot_has_drifted`,
-        the same three facts `challenge_if_drifted` used to compare) - Slice E (one
-        signal) judges that per line, here, rather than flipping the whole decision to
-        `challenged`: the lines this confirmation DOES name still commit, and the drifted
-        one is simply undecided again, exactly as a line the revision never covered would
-        be. Everything else comes across untouched.
+        date has moved since the revision that covered it, or whose core line the book
+        CANCELLED (`_carry_snapshot_has_drifted`) - Slice E (one signal) judges that per
+        line, here, rather than flipping the whole decision to `challenged`: the lines
+        this confirmation DOES name still commit, and the drifted one is simply undecided
+        again, exactly as a line the revision never covered would be. A line whose PRODUCT
+        was renamed is carried, not excluded, its snapshot's identity patched to the live
+        product (R2, 13 Sep browser walk) - its demand did not change, only what it is
+        for. Everything else comes across untouched.
         """
         if previous is None:
             return []
@@ -4215,8 +4221,19 @@ class ProjectSupplyService:
             line_id = str(snapshot.get("project_line_id") or "")
             if not line_id or line_id in named or line_id not in by_id or line_id in uncover:
                 continue
-            if self._carry_snapshot_has_drifted(by_id[line_id], snapshot, facts.get(line_id)):
+            fact = facts.get(line_id)
+            if self._carry_snapshot_has_drifted(by_id[line_id], snapshot, fact):
                 continue
+            # R2 (renamed product, 13 Sep browser walk): the line's own quantity is
+            # untouched, so it still carries - but never under a product that has left
+            # the order. Patched onto a COPY; `snapshot` is the previous revision's own
+            # stored dict and must read exactly as it was decided.
+            live_product = str(fact.product_id) if fact and fact.product_id else None
+            if live_product and str(snapshot.get("product_id") or "") != live_product:
+                snapshot = dict(snapshot)
+                snapshot["product_id"] = live_product
+                if fact.item_code:
+                    snapshot["item_code"] = fact.item_code
             out.append(
                 _CarriedLine(line=by_id[line_id], snapshot=snapshot, fact=facts[line_id])
             )
@@ -4230,8 +4247,23 @@ class ProjectSupplyService:
     ) -> bool:
         """Whether `line`'s live facts still match what `snapshot` froze - the per-line
         check `_carried_lines` uses in place of the retired whole-decision `challenge_if_
-        drifted` flip."""
+        drifted` flip.
+
+        R2/R2c (13 Sep browser walk, SO400884): a core line the book CANCELLED must never
+        be carried on the strength of the checks below alone. Caught explicitly rather
+        than relied on to fall out of the open-qty comparison - `_open_of` now floors a
+        cancelled line to zero, so most cancellations already disagree with a nonzero
+        frozen `open_qty`, but a line frozen at zero already (nothing left to fulfil when
+        it was confirmed) would not, and this line has genuinely left the book either way.
+
+        A RENAMED product is not this function's concern: the line's own demand has not
+        changed, only what it is for, and `_carried_lines` patches the carried snapshot's
+        identity to the live product rather than excluding the line here - excluding it
+        would read as the demand itself having gone, which is not what happened.
+        """
         if fact is None:
+            return True
+        if fact.core is not None and (fact.core.line_status or "open") == "cancelled":
             return True
         frozen_core = snapshot.get("core_line_id")
         live_core = (

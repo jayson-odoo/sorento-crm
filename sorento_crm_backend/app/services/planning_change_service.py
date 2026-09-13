@@ -3868,21 +3868,48 @@ def _apply_one_order(
         )
         .all()
     ]
-    # Every line THIS batch changed and nobody has decided yet. Not the same thing as a
-    # bystander: the book moved it, so its frozen composition is about a line that no
-    # longer exists, and `confirm()`'s carry-forward rule (13.4, "the union is the
-    # server's") would copy that stale answer into the new revision the moment any OTHER
-    # line of the order is named (seen live: SO403765 rev 5 kept line 12's old Buy and old
-    # date after an ADVANCE had been raised for it). It is UNCOVERED instead - back on the
-    # board at its new state - which is what the retired `replan` verb used to do for it.
+    # Every line changed and nobody has decided yet - THIS batch's own rows, and R1's
+    # sibling: any OTHER unapplied batch of the SAME order (13 Sep browser walk, R2). One
+    # open batch per order does not mean only one EVER exists mid-flight - a batch already
+    # being applied can still have a sibling still on the board - and a pending row for
+    # this line in that sibling is no less stale here than one in THIS batch: the book
+    # moved it, so its frozen composition is about a line that no longer exists, and
+    # `confirm()`'s carry-forward rule (13.4, "the union is the server's") would copy that
+    # stale answer into the new revision the moment any OTHER line of the order is named
+    # (seen live: SO403765 rev 5 kept line 12's old Buy and old date after an ADVANCE had
+    # been raised for it). It is UNCOVERED instead - back on the board at its new state -
+    # which is what the retired `replan` verb used to do for it.
+    #
+    # `cancelled` is excluded (it leaves the revision through its own `retired_line_ids`
+    # path, or - cross-batch, where this apply is not the one closing it - through
+    # `ProjectSupplyService._carry_snapshot_has_drifted`'s explicit check) and so is
+    # `product_changed`: the line's own demand did not change, only what it is for, so it
+    # stays ELIGIBLE for carry rather than being un-decided - `_carried_lines` patches its
+    # snapshot's identity to the live product instead of excluding it.
+    _UNDECIDED_KINDS_EXCLUDED = ("cancelled", "product_changed")
+    other_batch_undecided_line_ids = {
+        str(line_id)
+        for (line_id,) in db.query(PlanningChangeRow.project_line_id)
+        .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+        .filter(
+            PlanningChangeRow.project_sales_order_id == order.id,
+            PlanningChangeRow.batch_id != batch.id,
+            PlanningChangeRow.project_line_id.isnot(None),
+            PlanningChangeRow.decision.is_(None),
+            PlanningChangeRow.kind.notin_(_UNDECIDED_KINDS_EXCLUDED),
+            PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+            PlanningChangeBatch.applied_at.is_(None),
+        )
+        .all()
+    }
     undecided_changed_line_ids = {
         str(r.project_line_id)
         for r in order_rows
         if r.project_line_id
         and r.decision is None
-        and r.kind != "cancelled"
+        and r.kind not in _UNDECIDED_KINDS_EXCLUDED
         and r.applied_state == PLANNING_CHANGE_STATE_PENDING
-    }
+    } | other_batch_undecided_line_ids
     confirm_lines: List[dict] = []
     replanned = 0
     retired = 0
