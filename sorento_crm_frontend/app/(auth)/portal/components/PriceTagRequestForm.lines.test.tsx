@@ -233,6 +233,54 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   });
 });
 
+describe('PriceTagRequestForm - no line reorder arrows (R3-6, AC-R12)', () => {
+  it('renders no up/down move buttons on a line', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
+
+    await addLine();
+    await screen.findByLabelText('Search a set or product...');
+
+    expect(screen.queryByLabelText(/Move line 1 up/)).toBeNull();
+    expect(screen.queryByLabelText(/Move line 1 down/)).toBeNull();
+    expect(screen.queryByTitle('Move up')).toBeNull();
+    expect(screen.queryByTitle('Move down')).toBeNull();
+  });
+});
+
+describe('PriceTagRequestForm - duplicate product refused inline (R3-7, AC-R12)', () => {
+  it('picking a product already on the request shows an inline message and does not add a line', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
+
+    await addLine();
+    await selectOption('Search a set or product...', 'product:prod-uuid-1');
+
+    await addLine();
+    const pickers = screen.getAllByLabelText('Search a set or product...');
+    const secondPicker = pickers[1] as HTMLSelectElement;
+    // The mocked SearchableSelect resolves its options asynchronously
+    // (fetchOptions), so the second instance needs the same wait
+    // `selectOption` (test-utils) gives the first - firing the change before
+    // it resolves finds no matching option and the handler no-ops.
+    await waitFor(() =>
+      expect(Array.from(secondPicker.options).map((o) => o.value)).toContain(
+        'product:prod-uuid-1',
+      ),
+    );
+    fireEvent.change(secondPicker, { target: { value: 'product:prod-uuid-1' } });
+
+    expect(
+      await screen.findByText(/already on this request/i),
+    ).toBeInTheDocument();
+    // The second row stays an empty, unpicked line - the duplicate is
+    // refused before it ever becomes a second real line for the product.
+    expect(secondPicker).toHaveValue('');
+  });
+});
+
 describe('PriceTagRequestForm - the debtor dropdown explains itself (D46a)', () => {
   it('shows the not-linked notice when the lookup answers with nothing', async () => {
     (lookupDebtors as ReturnType<typeof vi.fn>).mockResolvedValue([]);

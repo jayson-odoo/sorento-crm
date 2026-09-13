@@ -1,10 +1,15 @@
 /**
- * PLAN-portal-price-tag-journey-r8, D-L5 (AC-L7): the card/list view toggle.
+ * PLAN-portal-price-tag-journey-r8, Round 3 (R3-2, AC-R9).
  *
- * Default board under 768px, list at 768px and up when nothing is stored;
- * the choice persists per device (`localStorage['sorento.portalView']`) and
- * survives a type switch; list view renders exactly one line per submission,
- * every cell truncated with a `title`.
+ * REPLACES the D-L5/AC-L7 contract this file used to pin (viewport-based
+ * default, list view = one custom `<SubmissionRow>` line per submission):
+ *
+ *  - Cards is the default at EVERY width when nothing is stored - the
+ *    `window.matchMedia('(min-width: 768px)')` viewport default is gone.
+ *  - A stored choice still wins (unaffected by R3-2).
+ *  - List view renders the repo DataGrid (`role="table"`), one column per
+ *    field of the kind (Form Number, Status, the kind's own fields, Need by,
+ *    Created), not the old `<ul>` of `SubmissionRow`.
  *
  * Mocking pattern mirrors `PortalLanding.revBadge.test.tsx` (no price-tag
  * mock needed - `visible_form_types` is absent from `ME`, so
@@ -64,9 +69,9 @@ const ROW: PortalSubmissionSummary = {
     'ZZT-A-VERY-LONG-PRODUCT-CODE-THAT-WOULD-WRAP-A-NARROW-ROW-IF-LET-TO',
 };
 
-/** `window.matchMedia('(min-width: 768px)')` - the one query PortalLanding
- *  reads to pick a first-visit default. Everything else keeps the suite's
- *  own default ("no match" - see `vitest.setup.ts`). */
+/** `window.matchMedia('(min-width: 768px)')` - R3-2 removes the viewport
+ *  default entirely, so this is only used to prove BOTH widths land on
+ *  Cards, not to pick a different expectation per width. */
 function mockViewportAtLeast768(matches: boolean) {
   const original = window.matchMedia;
   window.matchMedia = ((query: string) => ({
@@ -94,8 +99,8 @@ beforeEach(() => {
   );
 });
 
-describe('PortalLanding - view default (AC-L7)', () => {
-  it('defaults to board under 768px when nothing is stored', async () => {
+describe('PortalLanding - Cards is the default at every width (R3-2, AC-R9)', () => {
+  it('defaults to Cards at 375px-equivalent (no match) when nothing is stored', async () => {
     const restore = mockViewportAtLeast768(false);
     try {
       render(<PortalLanding slug="darren" />);
@@ -109,37 +114,32 @@ describe('PortalLanding - view default (AC-L7)', () => {
     }
   });
 
-  it('defaults to list at 768px and up when nothing is stored', async () => {
+  it('defaults to Cards at 1280px-equivalent (matches) too - the viewport default is gone', async () => {
     const restore = mockViewportAtLeast768(true);
     try {
       render(<PortalLanding slug="darren" />);
       await screen.findByText('SI-26-0184');
 
       expect(
-        screen.getByRole('radio', { name: 'List view' }),
+        screen.getByRole('radio', { name: 'Board view' }),
       ).toHaveAttribute('aria-checked', 'true');
     } finally {
       restore();
     }
   });
 
-  it('a stored choice wins over the viewport default', async () => {
+  it('a stored choice still wins over the default', async () => {
     window.localStorage.setItem('sorento.portalView', 'list');
-    const restore = mockViewportAtLeast768(false);
-    try {
-      render(<PortalLanding slug="darren" />);
-      await screen.findByText('SI-26-0184');
+    render(<PortalLanding slug="darren" />);
+    await screen.findByText('SI-26-0184');
 
-      expect(
-        screen.getByRole('radio', { name: 'List view' }),
-      ).toHaveAttribute('aria-checked', 'true');
-    } finally {
-      restore();
-    }
+    expect(
+      screen.getByRole('radio', { name: 'List view' }),
+    ).toHaveAttribute('aria-checked', 'true');
   });
 });
 
-describe('PortalLanding - view persists (AC-L7)', () => {
+describe('PortalLanding - view persists (AC-L7, unaffected by R3-2)', () => {
   it('persists the pick to localStorage and keeps it across a type switch', async () => {
     render(<PortalLanding slug="darren" />);
     await screen.findByText('SI-26-0184');
@@ -164,35 +164,34 @@ describe('PortalLanding - view persists (AC-L7)', () => {
   });
 });
 
-describe('PortalLanding - list view rows (AC-L7)', () => {
-  it('renders exactly one line per submission, with truncate + title on the long cell', async () => {
+describe('PortalLanding - List view is a DataGrid table (R3-2, AC-R9)', () => {
+  it('renders a table with one column per field of the kind, and the row', async () => {
     window.localStorage.setItem('sorento.portalView', 'list');
     render(<PortalLanding slug="darren" />);
 
-    const cell = await screen.findByTitle(ROW.product_code!);
-    expect(cell).toHaveClass('truncate');
-    expect(cell.tagName).toBe('SPAN');
-    // The row itself is a single flex line, not a stacked card - no
-    // block-level wrapper holding a second row of content underneath it.
-    const rowEl = cell.closest('[role="link"]');
-    expect(rowEl).toHaveClass('items-center');
-    expect(rowEl?.querySelectorAll(':scope > div')).toHaveLength(0);
+    const table = await screen.findByRole('table', {}, { timeout: 2000 });
+    expect(table).toBeInTheDocument();
+
+    // Column headers: Form Number, Status, the kind's own fields, Created.
+    expect(screen.getByRole('columnheader', { name: /Form Number/ })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Status/ })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Product/ })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Created/ })).toBeInTheDocument();
+
+    expect(screen.getByText('SI-26-0184')).toBeInTheDocument();
   });
 
-  it('formats needed_by_date like the created date (toLocaleDateString), not raw ISO (review round 2)', async () => {
-    (fetchSubmissions as ReturnType<typeof vi.fn>).mockImplementation(
-      async (kind: string) =>
-        kind === 'stock_inquiry' ? [{ ...ROW, needed_by_date: '2026-09-15' }] : [],
-    );
+  it('clicking a row navigates to the submission detail (rowHref)', async () => {
     window.localStorage.setItem('sorento.portalView', 'list');
     render(<PortalLanding slug="darren" />);
-    await screen.findByText('SI-26-0184');
+    await screen.findByRole('table', {}, { timeout: 2000 });
 
-    const expected = new Date('2026-09-15').toLocaleDateString(undefined, {
-      dateStyle: 'medium',
-    });
-    expect(screen.getByTitle(expected)).toBeInTheDocument();
-    expect(screen.queryByTitle('2026-09-15')).toBeNull();
-    expect(screen.queryByText('2026-09-15')).toBeNull();
+    fireEvent.click(screen.getByText('SI-26-0184'));
+
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith(
+        expect.stringContaining('stock_inquiry/si-1'),
+      ),
+    );
   });
 });

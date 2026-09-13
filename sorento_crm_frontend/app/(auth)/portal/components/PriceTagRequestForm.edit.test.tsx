@@ -1,18 +1,28 @@
 /**
- * PLAN-portal-price-tag-journey-r8, D-P6 (AC-P12, AC-P13).
+ * PLAN-portal-price-tag-journey-r8, Round 3 (R3-1, R3-5, AC-R7).
  *
- * `is_editable` gates the header's "Edit" button - never a hardcoded status
- * list (the plan's own point: the FE reads the field, the BE owns the rule).
- * S7 mocked `is_editable` at the service layer
- * (`price-tag-request-service.ts`'s `deriveIsEditable`); this file mocks the
- * SERVICE module wholesale (same pattern as the sibling read-only suites),
- * so the field comes straight from what `getRequest` is told to resolve.
+ * REPLACES the S8-era Edit / Save / Cancel contract this file used to pin
+ * (post-submit PUT via an "Edit" header button): R3-1 reverses that - a
+ * submitted price tag request is read-only exactly like a stock inquiry, and
+ * a change goes through the portal revision engine instead. So:
  *
- * `DetailActionsMenu` is stubbed the same way
- * `PriceTagRequestForm.readOnlyGear.test.tsx` / `.readOnlyAttachments
- * .test.tsx` already do: the real one mounts a Radix DropdownMenu (Portal +
- * `motion/react` AnimatePresence) that is unrelated to what this file
- * asserts and flickers sibling text in jsdom.
+ *  - No "Edit" button ever renders for a submitted (non-draft) request.
+ *  - The header holds exactly ONE gear (`DetailActionsMenu`) with Duplicate,
+ *    Download PDF, and Revise - Revise present only when the revision policy
+ *    (`useRevisionPolicy`, the same hook `SubmissionForm` reads) allows it;
+ *    otherwise the policy's `blocked_reason` renders in the header line and
+ *    no Revise item exists at all.
+ *  - Tapping Revise switches to a revise mode: a reason field, the sections
+ *    editable, and a "Submit revision" button (never "Save"/"Save draft").
+ *    Submit revision calls the revise action (`useReviseSubmission`, the
+ *    same hook `SubmissionForm` reads to call `reviseSubmission`) and
+ *    returns to the read view on success.
+ *
+ * `DetailActionsMenu` / `DropdownMenuItem` are stood in for plain markup
+ * (not the real Radix DropdownMenu) - same reasoning as
+ * `PriceTagRequestForm.readOnlyGear.test.tsx`: the real one mounts a Portal +
+ * `motion/react` AnimatePresence that flickers sibling text in jsdom, and
+ * what this file owns is the wiring, not the menu primitive itself.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -36,6 +46,19 @@ vi.mock('../lib/price-tag-request-service', () => ({
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
+  downloadPriceTagPdf: vi.fn(),
+}));
+
+// Same generic hooks `SubmissionForm` already reads for the legacy kinds
+// (`app/(auth)/portal/hooks/useRevisions.ts`) - R3-1 has `PriceTagRequestForm`
+// reuse them rather than a second revise mechanism (plan D-P1/"R3-1").
+const { revisePolicyMock, reviseMock } = vi.hoisted(() => ({
+  revisePolicyMock: vi.fn(),
+  reviseMock: vi.fn(),
+}));
+vi.mock('../hooks/useRevisions', () => ({
+  useRevisionPolicy: revisePolicyMock,
+  useReviseSubmission: () => ({ revise: reviseMock, submitting: false }),
 }));
 
 vi.mock('@/components/common/AttachmentPreviewModal', () => ({
@@ -43,16 +66,42 @@ vi.mock('@/components/common/AttachmentPreviewModal', () => ({
   default: () => null,
 }));
 
+// Plain stand-ins: `DetailActionsMenu` renders its children unconditionally,
+// wrapped so the test can assert there is exactly ONE of them on the page
+// (AC-R7/R3-5: one gear, not two).
 vi.mock('@/components/common/DetailActionsMenu', () => ({
   __esModule: true,
-  DetailActionsMenu: () => null,
+  DetailActionsMenu: ({ children }: { children?: React.ReactNode }) => (
+    <div data-testid="gear-menu">{children}</div>
+  ),
+}));
+
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  __esModule: true,
+  DropdownMenuItem: ({
+    children,
+    disabled,
+    onSelect,
+  }: {
+    children?: React.ReactNode;
+    disabled?: boolean;
+    onSelect?: (event: { preventDefault: () => void }) => void;
+  }) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => onSelect?.({ preventDefault: () => {} })}
+    >
+      {children}
+    </button>
+  ),
 }));
 
 vi.mock('./AttachmentDropzone', () => ({
   AttachmentDropzone: () => null,
 }));
 
-import { getRequest, updateRequest } from '../lib/price-tag-request-service';
+import { getRequest } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -77,59 +126,45 @@ function baseRequest(over: Record<string, unknown> = {}) {
     lines: [],
     attachments: [],
     is_editable: false,
+    revision_no: 0,
+    last_revised_at: null,
     ...over,
   };
 }
 
-// A single line, for tests where post-submit Save must actually reach PUT -
-// AC-P10/D-P6b now refuses a zero-line Save client-side, so any test of the
-// PUT path itself needs a request that already carries one.
-const ONE_LINE = {
-  id: 'line-1',
-  line_type: 'product',
-  product_id: 'prod-1',
-  product_set_id: null,
-  name: 'ZZT Kitchen Sink',
-  code: 'CBF-1234',
-  show_promo_price: false,
-  quantity: 1,
-  alternatives: [],
-  included_accessories: null,
-  remarks: null,
-  sort_order: 0,
+const ALLOWED_POLICY = {
+  enabled: true,
+  allowed: true,
+  used: 0,
+  max: 3,
+  remaining: 3,
+  blocked_reason: null,
+};
+
+const BLOCKED_POLICY = {
+  enabled: true,
+  allowed: false,
+  used: 3,
+  max: 3,
+  remaining: 0,
+  blocked_reason: 'You have used all 3 revisions.',
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  revisePolicyMock.mockReturnValue({ policy: ALLOWED_POLICY, loading: false });
+  reviseMock.mockResolvedValue({
+    submission: baseRequest({ debtor_name: 'ZZT Revised Dealer' }),
+    revision: ALLOWED_POLICY,
+    revision_no: 1,
+  });
 });
 
-describe('PriceTagRequestForm - Edit CTA gated on is_editable (AC-P12)', () => {
-  it('shows Edit when is_editable is true at status new', async () => {
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', is_editable: true }),
-    );
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-
-    await screen.findByText('PT-202609-0001');
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
-  });
-
-  it('shows Edit when is_editable is true at status changes_requested', async () => {
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'changes_requested', is_editable: true }),
-    );
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-
-    await screen.findByText('PT-202609-0001');
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
-  });
-
-  it.each(['designing', 'proof_ready', 'approved', 'ready', 'void'])(
-    'no Edit button at status %s once is_editable is false',
+describe('PriceTagRequestForm - no Edit after submit (R3-1, AC-R7)', () => {
+  it.each(['new', 'changes_requested', 'designing', 'proof_ready', 'approved', 'ready', 'void'])(
+    'never shows an Edit button for a submitted request at status %s',
     async (status) => {
-      asMock(getRequest).mockResolvedValue(baseRequest({ status, is_editable: false }));
+      asMock(getRequest).mockResolvedValue(baseRequest({ status, portal_draft_at: null }));
 
       render(<PriceTagRequestForm requestId="req-1" />);
 
@@ -137,173 +172,68 @@ describe('PriceTagRequestForm - Edit CTA gated on is_editable (AC-P12)', () => {
       expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     },
   );
+});
 
-  it('reads is_editable itself, never a hardcoded status list', async () => {
-    // A status not named anywhere in the plan's editable list, but the field
-    // says yes anyway - the FE must still show Edit, proving it is not
-    // secretly checking `status === 'new' || status === 'changes_requested'`.
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'some_future_status', is_editable: true }),
-    );
+describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (AC-R7)', () => {
+  it('renders exactly one gear, holding Duplicate, Download PDF and Revise when the policy allows it', async () => {
+    revisePolicyMock.mockReturnValue({ policy: ALLOWED_POLICY, loading: false });
+    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'new', portal_draft_at: null }));
 
     render(<PriceTagRequestForm requestId="req-1" />);
-
     await screen.findByText('PT-202609-0001');
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+
+    expect(screen.getAllByTestId('gear-menu')).toHaveLength(1);
+    const gear = screen.getByTestId('gear-menu');
+    expect(screen.getByText('Duplicate')).toBeInTheDocument();
+    expect(screen.getByText('Download PDF')).toBeInTheDocument();
+    expect(gear).toHaveTextContent('Revise');
+  });
+
+  it('hides Revise and shows the blocked reason in the header line when the policy refuses it', async () => {
+    revisePolicyMock.mockReturnValue({ policy: BLOCKED_POLICY, loading: false });
+    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'ready', portal_draft_at: null }));
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+
+    expect(screen.getByTestId('gear-menu')).not.toHaveTextContent('Revise');
+    expect(screen.getByText('You have used all 3 revisions.')).toBeInTheDocument();
   });
 });
 
-describe('PriceTagRequestForm - Edit / Save / Cancel (AC-P13)', () => {
-  it('Save writes via PUT, returns to read mode with the saved values, status unchanged, toasts Saved', async () => {
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', is_editable: true, lines: [ONE_LINE] }),
-    );
-    asMock(updateRequest).mockResolvedValue({ id: 'req-1' });
+describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
+  it('tapping Revise shows a reason field and a Submit revision button', async () => {
+    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'new', portal_draft_at: null }));
 
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Revise'));
 
-    const notesField = await screen.findByLabelText('Notes');
-    fireEvent.change(notesField, { target: { value: 'Edited after submit' } });
-
-    // The re-fetch after Save answers with the edited value AND the same
-    // status - a post-submit edit never re-submits or restarts the SLA.
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({
-        status: 'new',
-        is_editable: true,
-        notes: 'Edited after submit',
-        lines: [ONE_LINE],
-      }),
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(updateRequest).toHaveBeenCalledWith('req-1', expect.anything()));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith('Saved'));
-
-    // Back to read mode: Edit is offered again (still is_editable), the
-    // status pill still reads the same status, and the saved note shows.
-    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument();
-    expect(screen.getByText('Edited after submit')).toBeInTheDocument();
+    expect(await screen.findByLabelText(/reason/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Submit revision' })).toBeInTheDocument();
   });
 
-  it('Cancel restores the values shown before Edit, and writes nothing', async () => {
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', is_editable: true, notes: 'Original note' }),
-    );
+  it('Submit revision calls the revise action and returns to the read view', async () => {
+    asMock(getRequest).mockResolvedValue(baseRequest({ status: 'new', portal_draft_at: null }));
 
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    const notesField = await screen.findByLabelText('Notes');
-    expect(notesField).toHaveValue('Original note');
-    fireEvent.change(notesField, { target: { value: 'A change about to be discarded' } });
+    fireEvent.click(screen.getByText('Revise'));
+    const reasonField = await screen.findByLabelText(/reason/i);
+    fireEvent.change(reasonField, { target: { value: 'Dealer changed their mind' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    expect(updateRequest).not.toHaveBeenCalled();
-    expect(await screen.findByText('Original note')).toBeInTheDocument();
-    expect(screen.queryByText('A change about to be discarded')).toBeNull();
-  });
-});
-
-describe('PriceTagRequestForm - edit layout parity, save failure and validation (review round 2)', () => {
-  it('edit mode keeps the SAME layout as read mode: status badge and Created line, alongside Save/Cancel', async () => {
-    // D-P6 / PRINCIPLES "View and Edit are the SAME layout" - the edit
-    // form's own header today is just a bare `<h1>Edit ...</h1>`, dropping
-    // the status pill and the "Created ..." metadata line the read view
-    // shows right above the same sections.
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', is_editable: true }),
-    );
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    expect(screen.getByText('New')).toBeInTheDocument();
-    expect(screen.getByText(/^Created/)).toBeInTheDocument();
-  });
-
-  it('Save with a 500 from PUT shows an error toast and stays in edit mode', async () => {
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({
-        status: 'new',
-        is_editable: true,
-        lines: [
-          {
-            id: 'line-1',
-            line_type: 'product',
-            product_id: 'prod-1',
-            product_set_id: null,
-            name: 'ZZT Kitchen Sink',
-            code: 'CBF-1234',
-            show_promo_price: false,
-            quantity: 1,
-            alternatives: [],
-            included_accessories: null,
-            remarks: null,
-            sort_order: 0,
-          },
-        ],
-      }),
-    );
-    asMock(updateRequest).mockRejectedValue(new Error('Internal Server Error'));
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit revision' }));
 
     await waitFor(() =>
-      expect(toasts.error).toHaveBeenCalledWith('Internal Server Error'),
+      expect(reviseMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'Dealer changed their mind' }),
+      ),
     );
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-  });
-
-  it('Save with zero lines does not call PUT and shows the inline "Add at least one line." error', async () => {
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', is_editable: true, lines: [] }),
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Submit revision' })).toBeNull(),
     );
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    expect(await screen.findByText('Add at least one line.')).toBeInTheDocument();
-    expect(updateRequest).not.toHaveBeenCalled();
-  });
-
-  it('Cancel after an upload re-fetches the request instead of restoring the first snapshot', async () => {
-    // An attachment drop persists immediately (its own upload call), not on
-    // Save - so a Cancel that only replays the ORIGINAL `getRequest` snapshot
-    // (today's `applyRequestFieldsFrom(request)`, no round trip) shows the
-    // reader a form missing the file that is already sitting on the server.
-    asMock(getRequest).mockResolvedValue(
-      baseRequest({ status: 'new', is_editable: true, notes: 'Original note' }),
-    );
-
-    render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText('PT-202609-0001');
-    expect(getRequest).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    await waitFor(() => expect(getRequest).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('PT-202609-0001')).toBeInTheDocument();
   });
 });

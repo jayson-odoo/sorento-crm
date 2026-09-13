@@ -55,25 +55,32 @@ function Harness({
   items = ROWS,
   initialFilters = {},
   initialSort = DEFAULT_LANDING_SORT,
+  initialView = 'board',
 }: {
   items?: PortalSubmissionSummary[];
   initialFilters?: LandingFilters;
   initialSort?: LandingSort;
+  initialView?: 'list' | 'board';
 }) {
   const [filters, setFilters] = React.useState<LandingFilters>(initialFilters);
   const [sort, setSort] = React.useState<LandingSort>(initialSort);
-  const [view, setView] = React.useState<'list' | 'board'>('board');
+  const [view, setView] = React.useState<'list' | 'board'>(initialView);
   return (
-    <LandingToolbar
-      fields={FIELDS}
-      items={items}
-      filters={filters}
-      onFiltersChange={setFilters}
-      sort={sort}
-      onSortChange={setSort}
-      view={view}
-      onViewChange={setView}
-    />
+    <>
+      {/* Exposed so a test can read the picked sort without racing the
+          dropdown's own close/exit animation to re-open it. */}
+      <div data-testid="sort-state">{`${sort.key}:${sort.dir}`}</div>
+      <LandingToolbar
+        fields={FIELDS}
+        items={items}
+        filters={filters}
+        onFiltersChange={setFilters}
+        sort={sort}
+        onSortChange={setSort}
+        view={view}
+        onViewChange={setView}
+      />
+    </>
   );
 }
 
@@ -134,50 +141,64 @@ describe('LandingToolbar - Filter (AC-L5)', () => {
   });
 });
 
-describe('LandingToolbar - Sort (AC-L6)', () => {
-  it('lists every sortable field with ascending/descending, Form Number labelled for the number field', async () => {
+describe('LandingToolbar - Sort (R3-3, AC-R10)', () => {
+  // REPLACES the pre-R3-3 "Ascending/Descending sub-row per field" contract:
+  // the menu now lists each field EXACTLY ONCE, the active field shows its
+  // own direction as an arrow, tapping it flips that direction, and tapping
+  // a different field selects it at its type's natural default (dates
+  // newest first / desc, text A-to-Z / asc) - no separate direction items.
+  it('lists each field exactly once, with no Ascending/Descending sub-rows', async () => {
     render(<Harness />);
     await openMenu('Sort');
 
     const menu = within(screen.getByRole('menu'));
-    expect(menu.getAllByText('Ascending').length).toBe(FIELDS.length);
-    expect(menu.getAllByText('Descending').length).toBe(FIELDS.length);
-    expect(menu.getByText('Form Number')).toBeInTheDocument();
+    expect(menu.queryByText('Ascending')).toBeNull();
+    expect(menu.queryByText('Descending')).toBeNull();
+    for (const field of FIELDS) {
+      expect(menu.getAllByText(field.label)).toHaveLength(1);
+    }
   });
 
-  it('defaults to Created, newest first, ticked', async () => {
-    render(<Harness />);
-
-    // The button label reads the active field's name (shown at `md:`, but
-    // present in the DOM regardless of viewport in jsdom).
-    expect(screen.getByRole('button', { name: /Sort/ })).toHaveTextContent(
-      'Created',
-    );
-
-    await openMenu('Sort');
-    // Every field carries its own "Descending" item - the ticked one is the
-    // one under `Created` (default sort).
-    const checked = screen
-      .getAllByRole('menuitemradio')
-      .find((el) => el.getAttribute('aria-checked') === 'true');
-    expect(checked).toHaveAccessibleName('Descending');
-  });
-
-  it('picking a field and a direction calls back with both', async () => {
+  it('the active field (default: Created, desc) carries a direction indicator the others do not', async () => {
     render(<Harness />);
     await openMenu('Sort');
 
-    fireEvent.click(
-      within(screen.getByRole('menu')).getAllByText('Ascending')[2],
-    );
+    const menu = within(screen.getByRole('menu'));
+    const createdItem = menu.getByText('Created').closest('[role="menuitem"]');
+    const productItem = menu.getByText('Product').closest('[role="menuitem"]');
+    expect(createdItem?.querySelector('svg')).not.toBeNull();
+    expect(productItem?.querySelector('svg')).toBeNull();
+  });
 
+  it('tapping the active field flips its direction (default desc -> asc)', async () => {
+    render(<Harness />);
+    await openMenu('Sort');
+
+    fireEvent.click(within(screen.getByRole('menu')).getByText('Created'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sort-state')).toHaveTextContent('created_at:asc'),
+    );
+  });
+
+  it('tapping a different field selects it at its type default direction (text = ascending)', async () => {
+    render(<Harness />);
+    await openMenu('Sort');
+
+    fireEvent.click(within(screen.getByRole('menu')).getByText('Product'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sort-state')).toHaveTextContent(
+        'product_code:asc',
+      ),
+    );
     // The button label now reads the newly picked field. The trigger sits
     // behind an `aria-hidden` wrapper for one tick while the menu's exit
     // animation settles (motion's AnimatePresence), so it is queried with
     // `hidden: true` rather than waited on as if it had unmounted.
     expect(
       screen.getByRole('button', { name: /Sort/, hidden: true }),
-    ).toHaveTextContent(FIELDS[2].label);
+    ).toHaveTextContent('Product');
   });
 });
 
@@ -191,5 +212,17 @@ describe('LandingToolbar - view toggle wiring (AC-L7)', () => {
       'aria-checked',
       'true',
     );
+  });
+});
+
+describe('LandingToolbar - Sort button hidden in List view (R3-2, AC-R9)', () => {
+  it('shows the Sort button in Cards view', () => {
+    render(<Harness initialView="board" />);
+    expect(screen.getByRole('button', { name: /Sort/ })).toBeInTheDocument();
+  });
+
+  it('hides the Sort button in List view - headers sort instead', () => {
+    render(<Harness initialView="list" />);
+    expect(screen.queryByRole('button', { name: /Sort/ })).toBeNull();
   });
 });

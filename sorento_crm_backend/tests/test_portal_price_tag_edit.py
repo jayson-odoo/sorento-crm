@@ -1,31 +1,17 @@
-"""Red tests for PLAN-portal-price-tag-journey-r8 slice S8 (D-P6 BE, D-P2 BE,
-D-P2b BE).
+"""Red tests for PLAN-portal-price-tag-journey-r8 Round 3, R3-1 (AC-R1).
 
-Contract under test (plan section "D-P6", UAC AC-B1..B6, B9):
+R3-1 REVERSES S8's D-P6: a submitted price tag request is read-only exactly
+like a stock inquiry. ``PUT /api/v1/public/portal/submissions/price_tag_request/{id}``
+now succeeds ONLY when ``portal_draft_at`` is set - ``_require_editable`` goes
+back to ``_require_draft`` (409 ``NOT_DRAFT`` for every non-draft status,
+``new`` and ``changes_requested`` included). Post-submit changes go through the
+revision engine instead (``tests/test_portal_price_tag_revise.py``, AC-R2/R3),
+which is why the audit-row-shape, zero-lines-422, set-guard-422 and
+marketing-override-carry assertions that used to live here (S8) now live
+there as part of the revise transaction, not the PUT route.
 
-- ``PUT /api/v1/public/portal/submissions/price_tag_request/{id}`` succeeds
-  (200) when ``portal_draft_at`` is set (existing draft-edit behaviour) OR the
-  request is NOT a draft but its ``status`` is ``new`` / ``changes_requested``
-  (the new post-submit edit gate, ``_require_editable``). On that new path:
-  ``status``, ``assigned_to_id`` and ``portal_draft_at`` are unchanged, no form
-  SLA event fires, and an audit row is written (``action == "UPDATE"``,
-  description "portal edit after submit" - AC-B10).
-- Every other post-submit status (``designing``, ``proof_ready``, ``approved``,
-  ``ready``, ``void``) refuses PUT with 409 ``NOT_EDITABLE``.
-- Ownership (another contact's request) still 403/404s as today.
-- ``POST .../submit`` on an already-submitted request is still 409
-  ``NOT_DRAFT``-shaped (today's code + message is ``ALREADY_SUBMITTED``; the
-  UAC's own AC-B4 wording is "NOT_DRAFT" - either way this must still be a
-  409 with a code the FE treats as "already submitted", so the assertion
-  pins the STATUS CODE and refusal-family rather than the exact code string).
-- Submitting a draft with ``price_mode=selling`` and no ``promotion_id``
-  succeeds (200), and every line comes back with ``show_promo_price=True``
-  (the ``PRICE_MODE_NEEDS_PROMOTION`` submit guard is retired).
-- Submitting a draft with no ``needed_by_date`` succeeds (200) (need-by is
-  optional).
-- The detail GET carries ``is_editable``: True for a draft, True for a
-  non-draft ``new``/``changes_requested`` request, False for every other
-  status.
+``is_editable`` (AC-B6, now AC-R1) mirrors the same reversal: True for a draft
+only, False for every non-draft status including ``new`` / ``changes_requested``.
 
 Fixtures modelled on ``tests/test_portal_price_tag_routes.py``: Postgres via
 ``tests/_pg_fixture.py::blank_session``, own seeded contact/product/promotion/
@@ -46,6 +32,16 @@ from tests._pg_fixture import blank_session, unique_code
 
 _BASE = "/api/v1/public/portal/submissions/price_tag_request"
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
+
+_ALL_NON_DRAFT_STATUSES = [
+    "new",
+    "changes_requested",
+    "designing",
+    "proof_ready",
+    "approved",
+    "ready",
+    "void",
+]
 
 
 def _seed_contact_who_can_see_the_form(db: Session) -> str:
@@ -107,19 +103,6 @@ def _seed_product(db: Session, *, class_label: str = "Kitchen Sink") -> str:
     db.add(product)
     db.flush()
     return product.id
-
-
-def _seed_promotion(db: Session, *, description: str = "ZZT Promo") -> str:
-    from app.models.marketing import Promotion
-
-    promo = Promotion(
-        id=str(uuid.uuid4()),
-        description=description,
-        is_active=True,
-    )
-    db.add(promo)
-    db.flush()
-    return promo.id
 
 
 def _seed_user(db: Session) -> str:
@@ -196,132 +179,14 @@ def _force_status(
 
 
 # ---------------------------------------------------------------------------
-# AC-B1: PUT succeeds post-submit while status is new/changes_requested
+# AC-R1: PUT is refused (409 NOT_DRAFT) for EVERY non-draft status, including
+# new / changes_requested - the S8 post-submit-edit window is gone.
 # ---------------------------------------------------------------------------
 
 
-class TestPostSubmitEditAllowed:
-    def test_put_new_not_draft_updates_and_keeps_status(self, client):
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        designer_id = _seed_user(db)
-        created = _create_draft(c, product_id, debtor_name="ZZT Original")
-        _force_status(
-            db,
-            created["id"],
-            status="new",
-            portal_draft_at=None,
-            assigned_to_id=designer_id,
-        )
-
-        res = c.put(
-            f"{_BASE}/{created['id']}",
-            json={"debtor_name": "ZZT Edited After Submit"},
-        )
-
-        assert res.status_code == 200, res.text
-        body = res.json()
-        assert body["debtor_name"] == "ZZT Edited After Submit"
-        assert body["status"] == "new"
-        assert body["assigned_to_id"] == designer_id
-        assert body["portal_draft_at"] is None
-
-    def test_put_changes_requested_updates(self, client):
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id, debtor_name="ZZT Original")
-        _force_status(
-            db, created["id"], status="changes_requested", portal_draft_at=None,
-        )
-
-        res = c.put(
-            f"{_BASE}/{created['id']}",
-            json={"debtor_name": "ZZT Revised Per Feedback"},
-        )
-
-        assert res.status_code == 200, res.text
-        body = res.json()
-        assert body["debtor_name"] == "ZZT Revised Per Feedback"
-        assert body["status"] == "changes_requested"
-        assert body["portal_draft_at"] is None
-
-    def test_put_after_submit_writes_an_audit_row_and_no_form_event(
-        self, client, monkeypatch
-    ):
-        """AC-B1: an audit row records the edit; no form SLA event fires (a
-        post-submit edit must never re-open or re-fire the tracker)."""
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id, debtor_name="ZZT Original")
-        _force_status(db, created["id"], status="new", portal_draft_at=None)
-
-        emitted = []
-        import app.services.form_sla_service as form_sla_service
-
-        monkeypatch.setattr(
-            form_sla_service,
-            "emit_form_event",
-            lambda *a, **k: emitted.append((a, k)),
-        )
-
-        res = c.put(
-            f"{_BASE}/{created['id']}",
-            json={"debtor_name": "ZZT Edited"},
-        )
-
-        assert res.status_code == 200, res.text
-        assert emitted == []
-
-        from app.models.audit import AuditLog
-
-        rows = (
-            db.query(AuditLog)
-            .filter(
-                AuditLog.entity_type == "price_tag_request",
-                AuditLog.entity_id == created["id"],
-            )
-            .all()
-        )
-        assert len(rows) == 1, rows
-        assert rows[0].action == "UPDATE"
-        assert rows[0].description == "portal edit after submit"
-
-    def test_put_after_submit_lines_are_replaced(self, client):
-        """The header fields AND the lines are the whole payload the plan
-        promises is editable, not just header fields."""
-        c, db, _contact_id = client
-        first = _seed_product(db)
-        second = _seed_product(db)
-        created = _create_draft(c, first, debtor_name="ZZT Original")
-        _force_status(db, created["id"], status="new", portal_draft_at=None)
-
-        res = c.put(
-            f"{_BASE}/{created['id']}",
-            json={
-                "lines": [
-                    {"line_type": "product", "product_id": second, "quantity": 3}
-                ]
-            },
-        )
-
-        assert res.status_code == 200, res.text
-        body = res.json()
-        assert len(body["lines"]) == 1
-        assert body["lines"][0]["product_id"] == second
-        assert body["lines"][0]["quantity"] == 3
-
-
-# ---------------------------------------------------------------------------
-# AC-B2: every other post-submit status refuses PUT with 409 NOT_EDITABLE
-# ---------------------------------------------------------------------------
-
-
-class TestPostSubmitEditRefused:
-    @pytest.mark.parametrize(
-        "status_value",
-        ["designing", "proof_ready", "approved", "ready", "void"],
-    )
-    def test_put_refused_with_409_not_editable(self, client, status_value):
+class TestPutRefusedOutsideDraft:
+    @pytest.mark.parametrize("status_value", _ALL_NON_DRAFT_STATUSES)
+    def test_put_non_draft_409_not_draft(self, client, status_value):
         c, db, _contact_id = client
         product_id = _seed_product(db)
         created = _create_draft(c, product_id, debtor_name="ZZT Original")
@@ -333,66 +198,70 @@ class TestPostSubmitEditRefused:
         )
 
         assert res.status_code == 409, res.text
-        assert res.json()["code"] == "NOT_EDITABLE"
+        assert res.json()["code"] == "NOT_DRAFT"
 
-    def test_put_designing_409_not_editable(self, client):
+        # Nothing changed: the field the PUT tried to set never landed.
+        unchanged = c.get(f"{_BASE}/{created['id']}").json()
+        assert unchanged["debtor_name"] == "ZZT Original"
+
+    def test_put_new_keeps_assignee_and_status_untouched(self, client):
+        """A refused PUT must not have side effects: status and assignee both
+        stay exactly as ``_force_status`` left them."""
         c, db, _contact_id = client
         product_id = _seed_product(db)
+        designer_id = _seed_user(db)
         created = _create_draft(c, product_id)
-        _force_status(db, created["id"], status="designing", portal_draft_at=None)
+        _force_status(
+            db, created["id"], status="new", portal_draft_at=None, assigned_to_id=designer_id,
+        )
 
-        res = c.put(f"{_BASE}/{created['id']}", json={"debtor_name": "ZZT"})
-
+        res = c.put(f"{_BASE}/{created['id']}", json={"debtor_name": "ZZT Edited"})
         assert res.status_code == 409, res.text
-        assert res.json()["code"] == "NOT_EDITABLE"
 
-    def test_put_proof_ready_409_not_editable(self, client):
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id)
-        _force_status(db, created["id"], status="proof_ready", portal_draft_at=None)
-
-        res = c.put(f"{_BASE}/{created['id']}", json={"debtor_name": "ZZT"})
-
-        assert res.status_code == 409, res.text
-        assert res.json()["code"] == "NOT_EDITABLE"
-
-    def test_put_approved_409_not_editable(self, client):
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id)
-        _force_status(db, created["id"], status="approved", portal_draft_at=None)
-
-        res = c.put(f"{_BASE}/{created['id']}", json={"debtor_name": "ZZT"})
-
-        assert res.status_code == 409, res.text
-        assert res.json()["code"] == "NOT_EDITABLE"
-
-    def test_put_ready_409_not_editable(self, client):
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id)
-        _force_status(db, created["id"], status="ready", portal_draft_at=None)
-
-        res = c.put(f"{_BASE}/{created['id']}", json={"debtor_name": "ZZT"})
-
-        assert res.status_code == 409, res.text
-        assert res.json()["code"] == "NOT_EDITABLE"
-
-    def test_put_void_409_not_editable(self, client):
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id)
-        _force_status(db, created["id"], status="void", portal_draft_at=None)
-
-        res = c.put(f"{_BASE}/{created['id']}", json={"debtor_name": "ZZT"})
-
-        assert res.status_code == 409, res.text
-        assert res.json()["code"] == "NOT_EDITABLE"
+        detail = c.get(f"{_BASE}/{created['id']}").json()
+        assert detail["status"] == "new"
+        assert detail["assigned_to_id"] == designer_id
 
 
 # ---------------------------------------------------------------------------
-# AC-B3: ownership gate unchanged
+# A draft PUT still works, unaffected by R3-1.
+# ---------------------------------------------------------------------------
+
+
+class TestDraftPutStillWorks:
+    def test_put_draft_still_200(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = _create_draft(c, product_id, debtor_name="ZZT Original")
+
+        res = c.put(f"{_BASE}/{created['id']}", json={"debtor_name": "ZZT Draft Edit"})
+
+        assert res.status_code == 200, res.text
+        assert res.json()["debtor_name"] == "ZZT Draft Edit"
+
+
+# ---------------------------------------------------------------------------
+# AC-R1: detail is_editable - True for a draft only.
+# ---------------------------------------------------------------------------
+
+
+class TestIsEditableDraftOnly:
+    def test_detail_is_editable_matrix(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+
+        draft = _create_draft(c, product_id)
+        assert c.get(f"{_BASE}/{draft['id']}").json()["is_editable"] is True
+
+        for locked_status in _ALL_NON_DRAFT_STATUSES:
+            req_body = _create_draft(c, product_id)
+            _force_status(db, req_body["id"], status=locked_status, portal_draft_at=None)
+            body = c.get(f"{_BASE}/{req_body['id']}").json()
+            assert body["is_editable"] is False, (locked_status, body)
+
+
+# ---------------------------------------------------------------------------
+# Ownership gate unchanged (unrelated to R3-1).
 # ---------------------------------------------------------------------------
 
 
@@ -419,8 +288,8 @@ class TestOwnershipUnchanged:
 
 
 # ---------------------------------------------------------------------------
-# AC-B4: a second submit is still refused - a post-submit edit must never
-# re-open the door to re-firing the SLA via submit.
+# A second submit is still refused - unaffected by R3-1 (submit already used
+# `_require_draft`; a PUT in between now never succeeds either way).
 # ---------------------------------------------------------------------------
 
 
@@ -439,7 +308,6 @@ class TestSubmitTwiceStillRefused:
         first = c.post(f"{_BASE}/{created['id']}/submit")
         assert first.status_code == 200, first.text
 
-        # A post-submit edit via PUT in between must not have re-opened submit.
         c.put(f"{_BASE}/{created['id']}", json={"debtor_name": "ZZT Edited"})
 
         second = c.post(f"{_BASE}/{created['id']}/submit")
@@ -449,7 +317,8 @@ class TestSubmitTwiceStillRefused:
 
 
 # ---------------------------------------------------------------------------
-# AC-B5: selling with no promotion now submits fine (r7's guard is retired)
+# Selling with no promotion submits fine (r7's guard is retired) - unaffected
+# by R3-1.
 # ---------------------------------------------------------------------------
 
 
@@ -488,7 +357,7 @@ class TestSellingWithoutPromotionNowSubmits:
 
 
 # ---------------------------------------------------------------------------
-# AC-B9: need-by is optional at submit
+# Need-by is optional at submit - unaffected by R3-1.
 # ---------------------------------------------------------------------------
 
 
@@ -513,210 +382,13 @@ class TestNeedByOptionalAtSubmit:
 
 
 # ---------------------------------------------------------------------------
-# AC-B6: detail GET carries is_editable
+# Promotion audience gate on a draft write - unaffected by R3-1 (a draft PUT
+# still runs the same write path).
 # ---------------------------------------------------------------------------
-
-
-class TestIsEditableMatrix:
-    def test_detail_is_editable_matrix(self, client):
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-
-        # Draft: portal_draft_at is set (created and never submitted).
-        draft = _create_draft(c, product_id)
-        assert c.get(f"{_BASE}/{draft['id']}").json()["is_editable"] is True
-
-        # Non-draft new / changes_requested: still editable.
-        for editable_status in ("new", "changes_requested"):
-            req_body = _create_draft(c, product_id)
-            _force_status(
-                db, req_body["id"], status=editable_status, portal_draft_at=None,
-            )
-            body = c.get(f"{_BASE}/{req_body['id']}").json()
-            assert body["is_editable"] is True, (editable_status, body)
-
-        # Every other post-submit status: not editable.
-        for locked_status in ("designing", "proof_ready", "approved", "ready", "void"):
-            req_body = _create_draft(c, product_id)
-            _force_status(
-                db, req_body["id"], status=locked_status, portal_draft_at=None,
-            )
-            body = c.get(f"{_BASE}/{req_body['id']}").json()
-            assert body["is_editable"] is False, (locked_status, body)
-
-
-# ---------------------------------------------------------------------------
-# Review round 2 findings (r8): PUT date serialization, audit row shape,
-# submit validators on the post-submit path, marketing override survival,
-# promotion audience gate, and empty-string needed_by_date on a draft.
-# ---------------------------------------------------------------------------
-
-
-class TestPostSubmitEditNeededByDateSerializes:
-    def test_put_post_submit_with_needed_by_date_200(self, client):
-        """A post-submit PUT that sets needed_by_date must not 500 writing
-        the audit row: ``new_values`` carries a raw ``date`` object today,
-        and ``AuditLog.new_values`` is JSONB - the DB adapter cannot
-        serialize a ``datetime.date`` and the flush raises."""
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id)
-        _force_status(db, created["id"], status="new", portal_draft_at=None)
-
-        res = c.put(
-            f"{_BASE}/{created['id']}",
-            json={"needed_by_date": "2026-10-20"},
-        )
-
-        assert res.status_code == 200, res.text
-        assert res.json()["needed_by_date"] == "2026-10-20"
-
-        from app.models.audit import AuditLog
-
-        rows = (
-            db.query(AuditLog)
-            .filter(
-                AuditLog.entity_type == "price_tag_request",
-                AuditLog.entity_id == created["id"],
-            )
-            .all()
-        )
-        assert len(rows) == 1, rows
-
-
-class TestPostSubmitEditAuditRowShape:
-    def test_put_post_submit_audit_row_has_old_values_lines_company(self, client):
-        """The audit row must hold the PRE-edit snapshot (old_values), the
-        lines in new_values too (not just the header), the entity's own
-        company_id, action UPDATE, and a description naming the portal edit.
-        Today's row: no old_values, new_values missing lines (popped before
-        the audit call), action 'PORTAL_EDIT' not 'UPDATE', no company_id."""
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id, debtor_name="ZZT Original")
-        _force_status(db, created["id"], status="new", portal_draft_at=None)
-
-        res = c.put(
-            f"{_BASE}/{created['id']}",
-            json={
-                "debtor_name": "ZZT Edited",
-                "lines": [
-                    {
-                        "line_type": "product",
-                        "product_id": product_id,
-                        "quantity": 2,
-                    }
-                ],
-            },
-        )
-        assert res.status_code == 200, res.text
-
-        from app.models.audit import AuditLog
-
-        row = (
-            db.query(AuditLog)
-            .filter(
-                AuditLog.entity_type == "price_tag_request",
-                AuditLog.entity_id == created["id"],
-            )
-            .one()
-        )
-        assert row.action == "UPDATE", row.action
-        assert row.old_values is not None
-        assert row.old_values.get("debtor_name") == "ZZT Original"
-        assert "lines" in (row.old_values or {})
-        assert "lines" in (row.new_values or {})
-        assert row.company_id == _SORENTO_COMPANY_ID
-        assert row.description and "portal edit" in row.description.lower()
-
-
-class TestPostSubmitEditRunsSubmitValidators:
-    def test_put_post_submit_zero_lines_422(self, client):
-        """A post-submit PUT is a Save on a request marketing already treats
-        as complete - it must run the same completeness check Submit does.
-        Today the PUT route never calls ``validate_submittable``, so this
-        lands a request with zero lines at 200."""
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id)
-        _force_status(db, created["id"], status="new", portal_draft_at=None)
-
-        res = c.put(f"{_BASE}/{created['id']}", json={"lines": []})
-
-        assert res.status_code == 422, res.text
-
-    def test_put_post_submit_set_guard_422(self, client):
-        """Same reasoning for the ala-carte set guard: today the PUT route
-        never calls ``validate_set_guard``, so a Bathroom Furniture line
-        lands as an individual product at 200."""
-        c, db, _contact_id = client
-        ok_product = _seed_product(db)
-        bad_product = _seed_product(db, class_label="Bathroom Furniture")
-        created = _create_draft(c, ok_product)
-        _force_status(db, created["id"], status="new", portal_draft_at=None)
-
-        res = c.put(
-            f"{_BASE}/{created['id']}",
-            json={"lines": [{"line_type": "product", "product_id": bad_product}]},
-        )
-
-        assert res.status_code == 422, res.text
-        assert res.json()["code"] == "SET_GUARD_VIOLATION"
-
-
-class TestPostSubmitEditKeepsMarketingOverride:
-    def test_put_post_submit_keeps_marketing_override(self, client):
-        """``replace_lines`` -> ``_add_lines`` never carries
-        ``marketing_price_override`` / ``marketing_override_reason`` off the
-        old row onto the new one it builds for the same product - a re-save
-        with just a new remark silently wipes marketing's own override."""
-        c, db, _contact_id = client
-        product_id = _seed_product(db)
-        created = _create_draft(c, product_id)
-        _force_status(db, created["id"], status="new", portal_draft_at=None)
-
-        from app.models.price_tag import PriceTagRequestLine
-
-        line = (
-            db.query(PriceTagRequestLine)
-            .filter(PriceTagRequestLine.request_id == created["id"])
-            .one()
-        )
-        line.marketing_price_override = 88.50
-        line.marketing_override_reason = "Marketing discount ZZT"
-        db.flush()
-
-        res = c.put(
-            f"{_BASE}/{created['id']}",
-            json={
-                "lines": [
-                    {
-                        "line_type": "product",
-                        "product_id": product_id,
-                        "remarks": "Updated remark",
-                    }
-                ]
-            },
-        )
-
-        assert res.status_code == 200, res.text
-
-        rows = (
-            db.query(PriceTagRequestLine)
-            .filter(PriceTagRequestLine.request_id == created["id"])
-            .all()
-        )
-        assert len(rows) == 1, rows
-        assert float(rows[0].marketing_price_override or 0) == pytest.approx(88.50)
-        assert rows[0].marketing_override_reason == "Marketing discount ZZT"
 
 
 class TestPromotionAudienceGateOnWrite:
     def test_put_promotion_outside_audience_422(self, client):
-        """``lookup_promotions`` gates the dropdown by the contact's access
-        codes, but nothing gates a raw ``promotion_id`` on save - a promotion
-        whose ``access_levels`` exclude this contact's codes is accepted
-        today (200)."""
         c, db, _contact_id = client
         product_id = _seed_product(db)
 

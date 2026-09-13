@@ -325,4 +325,23 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     expect(screen.queryByLabelText('Quantity for line 3')).toBeNull();
     expect(toasts.error).not.toHaveBeenCalled();
   });
+
+  it('R3-7/AC-R12: the same product extracted twice merges into ONE line with summed quantity', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    openSalesOrderSection();
+
+    const products = [
+      { product_code: MATCHED_PRODUCT.code, quantity: 2, notes: 'first mention' },
+      { product_code: MATCHED_PRODUCT.code, quantity: 3, notes: 'second mention' },
+    ];
+    await extractAndSettle(products);
+
+    await act(async () => {
+      captured.onApply?.({ productLines: products });
+    });
+
+    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(5);
+    expect(screen.queryByLabelText('Quantity for line 2')).toBeNull();
+  });
 });

@@ -1,12 +1,10 @@
-"""Review round 2 (r8): a price tag request's attachment routes must respect
-the same editability gate the header PUT already enforces
-(``portal_price_tag._require_editable``) - not ownership alone.
-
-Today neither ``POST /public/portal/attachments`` nor
-``DELETE /public/portal/attachments/{link_id}`` check the request's status at
-all for ``kind=price_tag_request`` (``_require_own_price_tag_request`` is an
-ownership check only), so uploading or deleting a file on a locked request
-(e.g. ``approved``) succeeds where it should 409.
+"""Round 3 (R3-1): a price tag request's attachment routes must respect the
+same gate the header PUT now enforces - a draft, OR while a revision draft
+exists for it, refused otherwise. R3-1 reverses S8's ``_require_editable``
+(new / changes_requested writable post-submit) back to ``_require_draft``, so
+the attachment gate reverses with it: `status=new, portal_draft_at=None` with
+NO revision draft in progress must now 409 (S8 had this case succeed), and
+only gains attachments back once a revision draft row exists for the request.
 
 Fixture pattern: ``tests/test_price_tag_request_portal_attachments.py``.
 """
@@ -177,14 +175,52 @@ class TestAttachmentRoutesRefuseWhenNotEditable:
         )
         assert delete_res.status_code == 409, delete_res.text
 
-        # Editable: status new, portal_draft_at cleared (post-submit edit
-        # window) - the same calls must still succeed here.
-        editable_req = _request(db, contact.id, status="new", portal_draft_at=None)
+    def test_attachment_routes_refused_at_new_with_no_revision_draft(self, client):
+        """R3-1 reverses the S8 case this file used to assert as 200: `status
+        new, portal_draft_at=None` with no revision draft in progress is no
+        longer editable at all - only a draft (or an in-progress revision
+        draft, see the next test) may touch attachments."""
+        c, db = client
+        contact = _contact(db)
+        token = _token(db, contact)
+
+        req = _request(db, contact.id, status="new", portal_draft_at=None)
+
+        upload_res = c.post(
+            _ATTACHMENTS_BASE,
+            data={"kind": "price_tag_request", "submission_id": req.id},
+            files={"file": ("po2.pdf", io.BytesIO(b"%PDF-1.4 zzt"), "application/pdf")},
+            headers={"X-Portal-Token": token.token},
+        )
+        assert upload_res.status_code == 409, upload_res.text
+
+    def test_attachment_routes_allowed_while_a_revision_draft_exists(self, client):
+        """R3-1: a submitted, non-draft request regains attachment writes while
+        the contact has an in-progress revision draft for it - the revision
+        engine's own draft, not ``portal_draft_at``."""
+        from app.models.portal import PortalRevisionDraft
+
+        c, db = client
+        contact = _contact(db)
+        token = _token(db, contact)
+
+        req = _request(db, contact.id, status="new", portal_draft_at=None)
+        db.add(
+            PortalRevisionDraft(
+                id=str(uuid.uuid4()),
+                source_entity_type="price_tag_request",
+                source_entity_id=req.id,
+                contact_id=contact.id,
+                base_revision_no=0,
+                payload_json={},
+            )
+        )
+        db.commit()
 
         ok_upload_res = c.post(
             _ATTACHMENTS_BASE,
-            data={"kind": "price_tag_request", "submission_id": editable_req.id},
-            files={"file": ("po2.pdf", io.BytesIO(b"%PDF-1.4 zzt"), "application/pdf")},
+            data={"kind": "price_tag_request", "submission_id": req.id},
+            files={"file": ("po3.pdf", io.BytesIO(b"%PDF-1.4 zzt"), "application/pdf")},
             headers={"X-Portal-Token": token.token},
         )
         assert ok_upload_res.status_code == 200, ok_upload_res.text
