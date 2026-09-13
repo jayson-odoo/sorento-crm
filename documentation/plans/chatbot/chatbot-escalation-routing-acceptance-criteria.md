@@ -108,9 +108,13 @@ she typed and the code she picked.
   a failed turn. pytest with a raising resolver.
 - AC-1143 The strict xfail tests for H26 and H27 in `test_s5_escalation_lane.py` become
   passing tests; their "no resolve call on live lane" counterparts are retired with a note.
-- AC-1144 Replay: fixtures for the 11 Sep 12:55, 12:55 (MARKETING code), 12:56 turns and the
-  21 Aug turn, plus one Mocha-brand turn, in `tests/fixtures/chatbot/`; `test_replay.py` green;
-  any registered divergence carries its reason in `divergences.py`.
+- AC-1144 Replay: no real n8n capture exists for the 11 Sep or 21 Aug turns (console-only),
+  and hand-written corpus fixtures never gate `test_replay.py`, so the evidence is the chained
+  head-to-lane tests in `tests/chatbot/test_escalation_routing_seams.py` built from
+  `documentation/plans/chatbot/evidence/escalation-routing-real-turns.json` (turn 1, 3, 4 and a
+  Mocha-brand turn); `test_replay.py` stays green at its current count; any registered
+  divergence carries its reason in `divergences.py`. (Reviewer S4, captain's amendment 13 Sep
+  2026.)
 - AC-1145 The console (chat turn page) shows the lane stages for these turns with the landed
   team, brand and question kind visible in the technical details. Owner console pass on the
   lane stack.
