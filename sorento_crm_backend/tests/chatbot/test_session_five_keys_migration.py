@@ -124,11 +124,44 @@ class TestItNeverRewritesASessionTwice:
         }
         assert migration.convert(already) is None
 
-    def test_a_flat_blob_stays_flat(self, migration):
-        """A session written through `PUT /external/conversation-variables` has no
-        `variables` wrapper, and the reader after this migration reads whichever it finds."""
-        converted = migration.convert({"domain_hint": "inventory", "entities": [], "access_levels": []})
-        assert set(converted) == FIVE_KEYS
+    def test_a_flat_blob_comes_back_wrapped(self, migration):
+        """A session written through `PUT /external/conversation-variables` before AC-1034
+        has no `variables` wrapper. The engine reads `session_vars.variables` and nothing
+        else, so a converted row left FLAT reads as an empty memory - and the idempotency
+        test above would find its `open_question` and call the row done."""
+        converted = migration.convert(
+            {"domain_hint": "inventory", "entities": [], "access_levels": []}
+        )
+        assert set(converted) == {"variables"}
+        assert set(converted["variables"]) == FIVE_KEYS
+        assert converted["variables"]["focus"]["domains"]["value"] == ["inventory"]
+
+    def test_an_empty_blob_comes_back_wrapped_and_empty(self, migration):
+        """Measured on a prod clone: 19 of 98 rows were stored as a bare `{}`. They took
+        the flat branch and came out with the five keys at the top level."""
+        converted = migration.convert({})
+        assert set(converted) == {"variables"}
+        assert converted["variables"] == {
+            "focus": None,
+            "open_question": None,
+            "ideation": None,
+            "access_levels": [],
+            "contains_flyer": False,
+        }
+
+    def test_a_row_an_earlier_build_left_flat_is_wrapped_and_not_re_derived(self, migration):
+        """The five keys are already there, at the top level, because an earlier build of
+        this migration put them there. The only thing that row needs is the wrapper, and
+        re-deriving it would be deriving a focus from a focus."""
+        already_flat = {
+            "focus": {"products": {"value": [], "set_at_turn": 3, "set_at": None, "source": "reuse"}},
+            "open_question": None,
+            "ideation": {"draft_id": "ZZT-1"},
+            "access_levels": ["dealer"],
+            "contains_flyer": False,
+        }
+        converted = migration.convert(already_flat)
+        assert converted == {"variables": already_flat}
 
     def test_a_blob_that_is_not_an_object_is_left_alone(self, migration):
         assert migration.convert(None) is None

@@ -160,9 +160,24 @@ def _open_question_of(variables: dict[str, Any]) -> dict[str, Any] | None:
 def convert(session_vars: Any) -> dict[str, Any] | None:
     """One stored `session_vars` blob, in the five-key shape. `None` = leave the row alone.
 
-    The engine stores `{"variables": {...}}`; a blob written through
-    `PUT /external/conversation-variables` is flat. Both are handled, and the wrapper is
-    preserved, because the reader that follows this migration reads whichever it finds.
+    ALWAYS `{"variables": {...}}` on the way out, whatever came in. The engine reads
+    `session_vars.variables` and nothing else, so a converted row that is FLAT reads as an
+    empty memory - and, worse, the idempotency test below would find its `open_question`
+    and call the row done. Measured on a prod clone: 19 of 98 rows were stored as a bare
+    `{}`, which took the flat branch and came out with the five keys at the top level.
+    Nothing was lost (those rows had no memory to lose) but two shapes for one fact is the
+    drift this whole lane exists to end.
+
+    The three inputs, and what each means:
+
+    * `{"variables": {...legacy 34 keys...}}` - the engine's own shape. Converted, wrapper
+      kept.
+    * a FLAT legacy blob, or `{}` - a row written through
+      `PUT /external/conversation-variables` before AC-1034 made that endpoint take the
+      wrapper, or one that never held anything. Converted and WRAPPED.
+    * anything already carrying `open_question`, wrapped or flat - already converted. A
+      FLAT one is re-wrapped rather than left alone, which is what makes this safe to run
+      again over a database an earlier build of this migration already touched.
     """
     if not _is_dict(session_vars):
         return None
@@ -171,7 +186,10 @@ def convert(session_vars: Any) -> dict[str, Any] | None:
     if not _is_dict(variables):
         return None
     if "open_question" in variables:
-        return None  # already converted; never rewrite a session twice
+        # Already converted. Wrapped is the finished shape and needs no write; FLAT is a
+        # row an earlier build of this migration left at the top level, and the only thing
+        # it needs is the wrapper.
+        return None if wrapped else {"variables": {k: variables.get(k) for k in FIVE_KEYS}}
 
     focus: dict[str, Any] = {}
     products = _entities_of(variables, "product")
@@ -210,7 +228,7 @@ def convert(session_vars: Any) -> dict[str, Any] | None:
         "access_levels": variables.get("access_levels") or [],
         "contains_flyer": bool(variables.get("contains_flyer")),
     }
-    return {"variables": converted} if wrapped else converted
+    return {"variables": converted}
 
 
 def upgrade() -> None:
