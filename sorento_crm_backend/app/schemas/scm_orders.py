@@ -85,6 +85,33 @@ class SalesOrderLineLink(BaseModel):
     late_days: Optional[int] = None
 
 
+class SalesOrderLinePlanningChangeResult(BaseModel):
+    """What Apply wrote for this row alone (`planning_change_service.row_out`'s own
+    `result` key) - `executed_reallocations` says where a moved quantity actually went,
+    `released_documents` names one given back rather than moved. Both empty on a row
+    Apply has not touched yet."""
+
+    executed_reallocations: List[str] = Field(default_factory=list)
+    released_documents: List[str] = Field(default_factory=list)
+
+
+class SalesOrderLinePlanningChange(BaseModel):
+    """The latest planning-change row for THIS line, within the order's own newest batch.
+
+    A cancelled line leaves the fulfilment board entirely (a closed line has no cell), so
+    the board's own "Where it went" dialog is unreachable there right when CS needs it -
+    this is the SO detail screen's own seam onto the same fact. `applied_state` is
+    whatever the row's own is (pending, applied, failed, superseded), never filtered to
+    one value: a superseded row is still worth reading if it is the newest one the batch
+    carries for this line. `result` is `None` until Apply has run.
+    """
+
+    id: str
+    kind: str
+    applied_state: str
+    result: Optional[SalesOrderLinePlanningChangeResult] = None
+
+
 class SalesOrderLine(BaseModel):
     id: str
     sku: str
@@ -173,6 +200,11 @@ class SalesOrderLine(BaseModel):
     #: covers it at all. The two are different answers - "nothing has been linked" against
     #: "nobody was told about this line" - and the column prints each in its own words.
     linked_to: Optional[List[SalesOrderLineLink]] = None
+    #: The latest planning-change row for this line, within the order's own newest batch
+    #: (`_line_planning_changes`) - `None` when no batch has ever named this line. Sent on
+    #: the SINGLE order read only, same gate as `order_inquiry` above: the list has no
+    #: column for it.
+    planning_change: Optional[SalesOrderLinePlanningChange] = None
 
 
 class SalesOrder(BaseModel):

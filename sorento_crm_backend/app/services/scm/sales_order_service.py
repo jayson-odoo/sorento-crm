@@ -412,6 +412,10 @@ class SalesOrderService:
         # an SPO already promised reads "-" forever.
         links = self._line_links(so) if line_planning else {}
         spo_links = self._spo_line_links(so) if line_planning else {}
+        # A cancelled line leaves the fulfilment board entirely (a closed line has no
+        # cell), so this is the detail screen's own seam onto the same "where it went"
+        # fact the board's dialog reads. Same gate: the list has no column for it.
+        planning_changes = self._line_planning_changes(so) if line_planning else {}
         total_qty = 0.0
         committed = 0.0
         lines = []
@@ -489,6 +493,7 @@ class SalesOrderService:
                 # covers it but holds no link yet: "nobody was told" and "told, nothing
                 # linked" are different answers and the column says so.
                 "linked_to": self._linked_to_for(links.get(str(ln.id)), spo_links.get(str(ln.id))),
+                "planning_change": planning_changes.get(str(ln.id)),
                 "decision_revision": (decided.get(str(ln.id)) or {}).get("revision_no"),
                 # The two compositions in the planning board's vocabulary. Both null on a
                 # line no active revision covers; `supply_decided` STAYS null there even
@@ -633,6 +638,62 @@ class SalesOrderService:
             str(core_id): {"inquiry_no": inquiry_no, "state": state}
             for core_id, inquiry_no, state in rows
         }
+
+    def _line_planning_changes(self, so: SalesOrder) -> dict[str, dict]:
+        """The latest planning-change row for each of this order's lines, WITHIN the
+        order's own newest batch - keyed by CORE line id (`core_line_id`).
+
+        A cancelled line leaves the fulfilment board entirely (a closed line has no cell),
+        so the board's own "Where it went" dialog is unreachable there right when CS needs
+        it - this is the detail screen's own seam onto the same fact.
+
+        ONE query for the whole order: `PlanningChangeRow` joined straight to
+        `ProjectSalesOrder` on `so_id`, never through a separate lookup first, and ordered
+        BATCH-first (`created_at` desc, `id` desc) then ROW-first the same way - so the
+        FIRST row this loop sees names the newest batch, every row after it that names a
+        DIFFERENT batch is skipped, and the first row per core line within that one batch
+        is kept. Any `applied_state`, never filtered to one: a `qty_up` row a later
+        `cancelled` row in the SAME batch superseded (measured live on SO419851's batch
+        32d37118, both `line_no 9`) must not win just because it is `applied` and the
+        newer one is not.
+        """
+        from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+        from app.models.project_so import ProjectSalesOrder
+
+        rows = (
+            self.db.query(PlanningChangeRow, PlanningChangeBatch.id)
+            .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == PlanningChangeRow.project_sales_order_id,
+            )
+            .filter(
+                ProjectSalesOrder.so_id == so.id,
+                PlanningChangeRow.core_line_id.isnot(None),
+            )
+            .order_by(
+                PlanningChangeBatch.created_at.desc(), PlanningChangeBatch.id.desc(),
+                PlanningChangeRow.created_at.desc(), PlanningChangeRow.id.desc(),
+            )
+            .all()
+        )
+        if not rows:
+            return {}
+        newest_batch_id = rows[0][1]
+        out: dict[str, dict] = {}
+        for row, batch_id in rows:
+            if batch_id != newest_batch_id:
+                continue
+            core_id = str(row.core_line_id)
+            if core_id in out:
+                continue
+            out[core_id] = {
+                "id": row.id,
+                "kind": row.kind,
+                "applied_state": row.applied_state,
+                "result": row.result_json or None,
+            }
+        return out
 
     def _line_links(self, so: SalesOrder) -> dict[str, list[dict]]:
         """Every document each of this order's lines is linked to, keyed by CORE line id.
