@@ -1524,22 +1524,32 @@ TEAM_PICK_PREVIOUS_STATE = {
 }
 
 
-def _run_team_pick_turn(*, suggested_team, reference_positions=None, text: str):
+def _run_team_pick_turn(
+    *,
+    suggested_team,
+    reference_positions=None,
+    text: str,
+    entities=None,
+    domain_hint=None,
+    previous_state=None,
+):
     from app.services.chatbot.engine import _resolve_open_question
 
-    _assert_only_five_keys(TEAM_PICK_PREVIOUS_STATE)
+    previous_state = previous_state if previous_state is not None else TEAM_PICK_PREVIOUS_STATE
+    _assert_only_five_keys(previous_state)
 
     parser_raw = _full_emission(
         message_type="casual",
         is_affirmative=None,
-        entities=[],
+        entities=entities or [],
+        domain_hint=domain_hint,
         reference_positions=reference_positions or [],
         routing={"suggested_team": suggested_team, "suggested_agent": None},
         escalation={"is_escalation_confirmation": False, "company_pick": None},
         user_goal=text,
     )
     answered = _resolve_open_question(
-        TEAM_PICK_PREVIOUS_STATE,
+        previous_state,
         parser_raw=parser_raw,
         emits_v3=False,
         referenced_result_set=None,
@@ -1548,7 +1558,7 @@ def _run_team_pick_turn(*, suggested_team, reference_positions=None, text: str):
     parent_input = {
         "latest_user_message": text,
         "contact_id": "ZZT-esc-teampick-1",
-        "previous_conversation_state": TEAM_PICK_PREVIOUS_STATE,
+        "previous_conversation_state": previous_state,
         "parser_emits_v3": False,
         "_answered": answered,
         "turn_no": 8,
@@ -1560,13 +1570,24 @@ def _run_team_pick_turn(*, suggested_team, reference_positions=None, text: str):
     ctx = {
         "contact": {"id": "ZZT-esc-teampick-1", "phone": "+60123450099", "custom_fields": []},
         "text": {"message": {"messageId": "ZZT-esc-teampick-msg-1", "message": {"type": "text", "text": text}}},
-        "session": {"session_vars": {"variables": TEAM_PICK_PREVIOUS_STATE}},
+        "session": {"session_vars": {"variables": previous_state}},
         "parse": {"output": qf, "_parser_raw": parse_block.get("_parser_raw")},
         "access": {"allowed": True, "decision": "allow"},
         "media": None,
     }
     branch, _tier = decide(ctx)
     return answered, qf, branch, ctx
+
+
+def _team_pick_state_with_option_label(label: str) -> dict:
+    """A copy of `TEAM_PICK_PREVIOUS_STATE` whose option 1 LABEL is `label` instead of its
+    usual "marketing product" - N17 needs a label that reads nothing like its own team so a
+    label-matching bug and a team-matching fix are distinguishable."""
+    import copy as _copy
+
+    state = _copy.deepcopy(TEAM_PICK_PREVIOUS_STATE)
+    state["open_question"]["options"][0]["label"] = label
+    return state
 
 
 def test_console_finding3_a_structurally_named_team_resolves_the_open_team_pick() -> None:
@@ -1647,3 +1668,121 @@ def test_console_finding3_companion_a_numbered_pick_is_unchanged() -> None:
     assert outcome.picked and outcome.picked[0].get("team") == "marketing_form", outcome
     assert branch == "out_of_scope", branch
     assert qf["routing"]["suggested_team"] == "marketing_form", qf["routing"]
+
+
+@pytest.mark.parametrize(
+    "suggested_team",
+    ["Marketing Product", "marketing-product"],
+    ids=["mixed_case_with_spaces", "hyphenated"],
+)
+def test_console_finding3_n16_the_slug_equality_check_normalises_both_sides(suggested_team) -> None:
+    """N16. `open_question.team_slug_pick` normalises both the parser's slug and the
+    offered team (lower, spaces and hyphens to underscores) before comparing them, so a slug
+    spelled "Marketing Product" or "marketing-product" is the SAME slug as the offered
+    "marketing_product" and must still resolve option 1. Verified by hand: replacing
+    `open_question._team_slug` with the identity function turns this red (neither variant
+    equals "marketing_product" without normalisation); restored before this run."""
+    answered, qf, branch, ctx = _run_team_pick_turn(suggested_team=suggested_team, text=suggested_team)
+
+    outcome = answered.get("outcome")
+    assert outcome is not None and outcome.handler == "team_pick" and outcome.resolved is True, (
+        f"a differently-cased or hyphenated slug must still equal the offered team: {answered!r}"
+    )
+    assert outcome.picked and outcome.picked[0].get("team") == "marketing_product", outcome
+    assert branch == "out_of_scope", (
+        f"a resolved team_pick must reach the escalation lane: {branch!r}"
+    )
+
+
+def test_console_finding3_n17_a_slug_matching_the_label_but_not_the_team_stays_unresolved() -> None:
+    """N17, red guard. The option's own LABEL is "Product Marketing" (normalises to
+    "product_marketing") while its TEAM stays "marketing_product" - a parser slug of
+    "product_marketing" equals the label, never the team, and `team_slug_pick` reads only
+    `options[].team` (D11: the parser owns language, code owns structure, and a label is
+    display text, not a slug the parser could ever emit). Verified by hand: allowing
+    `team_slug_pick` to also match `row.get("label")` turns this red; restored before this
+    run."""
+    state = _team_pick_state_with_option_label("Product Marketing")
+    answered, qf, branch, ctx = _run_team_pick_turn(
+        suggested_team="product_marketing", text="product marketing", previous_state=state
+    )
+
+    assert answered.get("outcome") is None, (
+        f"a slug matching only the LABEL, never the team, must not resolve the pick: {answered!r}"
+    )
+    assert branch == "low_signal", (
+        f"measured today's own branch rather than assuming one: {branch!r}"
+    )
+
+
+def test_console_finding3_n17_companion_the_matching_team_still_resolves_despite_the_odd_label() -> None:
+    """N17, green companion. Same odd label ("Product Marketing" on the `marketing_product`
+    option), but the parser slug is "marketing_product" - the TEAM, not the label - and it
+    must resolve exactly as it does with the ordinary label, proving the odd label changed
+    nothing about the team-equality check."""
+    state = _team_pick_state_with_option_label("Product Marketing")
+    answered, qf, branch, ctx = _run_team_pick_turn(
+        suggested_team="marketing_product", text="marketing product", previous_state=state
+    )
+
+    outcome = answered.get("outcome")
+    assert outcome is not None and outcome.resolved is True, (
+        f"the slug matching the TEAM must resolve regardless of the option's label: {answered!r}"
+    )
+    assert outcome.picked and outcome.picked[0].get("team") == "marketing_product", outcome
+    assert branch == "out_of_scope", branch
+
+
+def test_console_finding3_s11_a_team_pick_answer_that_also_names_its_own_product_still_resolves() -> None:
+    """S11 shape, plan update 13 Sep 2026. "marketing product srtwb8004" answers the open
+    team_pick AND names, in the same breath, the product the whole conversation already
+    concerns: `message_type: casual`, `domain_hint: null`, one product entity marked
+    `current_message: true`. RED on 152cdc201 - `_resolve_open_question`'s
+    `names_business_content` gate treats ANY current-message entity as business content and
+    blocks the team-slug rung, the same guard that correctly blocks a stray product mention
+    over an unrelated offer. Expected once S11 lands: the pick still resolves to option 1 and
+    the turn reaches the escalation lane with team marketing_product."""
+    entities = [
+        {
+            "raw": "SRTWB8004",
+            "hint": "product",
+            "confident": True,
+            "canonical_code": None,
+            "current_message": True,
+        }
+    ]
+    answered, qf, branch, ctx = _run_team_pick_turn(
+        suggested_team="marketing_product",
+        text="marketing product srtwb8004",
+        entities=entities,
+        domain_hint=None,
+    )
+
+    outcome = answered.get("outcome")
+    assert outcome is not None and outcome.handler == "team_pick" and outcome.resolved is True, (
+        f"an answer that also names its own product must still resolve the open team_pick: {answered!r}"
+    )
+    assert outcome.picked and outcome.picked[0].get("team") == "marketing_product", outcome
+    assert branch == "out_of_scope", (
+        f"a resolved team_pick must reach the escalation lane: {branch!r}"
+    )
+
+
+def test_console_finding3_s11_companion_a_domain_named_turn_over_the_open_pick_stays_unresolved() -> None:
+    """S11 shape, companion - green guard, pinned both before and after S11. World chain
+    900000006's own case: `domain_hint: "inventory"` over the open team_pick is a real
+    business turn wearing the same slug by coincidence, and the domain half of
+    `names_business_content` must keep blocking it whatever the entity half does - a stock
+    question is never an answer to "which team", full stop."""
+    answered, qf, branch, ctx = _run_team_pick_turn(
+        suggested_team="marketing_product",
+        text="marketing product srtwb8004",
+        domain_hint="inventory",
+    )
+
+    assert answered.get("outcome") is None, (
+        f"a turn naming a domain must not resolve the team_pick, S11 or not: {answered!r}"
+    )
+    assert branch == "low_signal", (
+        f"measured today's own branch rather than assuming one: {branch!r}"
+    )
