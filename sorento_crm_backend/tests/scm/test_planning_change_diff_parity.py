@@ -31,9 +31,11 @@ from app.models.planning_change import (
     PlanningChangeBatch,
     PlanningChangeRow,
 )
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     DECISION_CHALLENGED,
+    IV_ORDER,
     SO_STATUS_ADOPTED,
     SO_STATUS_PUBLISHED,
     AllocationClaim,
@@ -42,10 +44,12 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
     SOSupplyDecision,
 )
+from app.models.scm import OrderLinkClaim
 from app.models.user import User
 from app.schemas.scm_orders import SalesOrderUpdate
-from app.services import project_seed_service
+from app.services import planning_change_service, project_seed_service
 from app.services.error_handler import AppException
+from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.scm.front_planning_engine import qty_text
 from app.services.scm.sales_order_service import SalesOrderService
 from tests._pg_fixture import blank_session
@@ -275,6 +279,36 @@ def _freeze_with_a_full_buy(db, world, order, mirror_line):
     finally:
         _restore_api_client(originals)
     db.commit()
+
+
+def _place_row_on_a_real_po(db, world, product: Product, row: OrderInquiryRow, *, qty_ordered):
+    """Places `row` through the REAL section-G path (`ProjectOrderInquiryService.place_on_po`),
+    never by hand-setting `row.state` - `tests/test_planning_changes.py`'s own helper of the
+    same name, copied (not imported, per the module docstring) since that file's `_World`
+    carries `.product` and this one takes it as its own argument instead. `place_on_po`
+    writes the `OrderInquiryLink` AND, as its own side effect, the `OrderLinkClaim` this
+    slice's removal check reads (`OrderLinkClaim.source == 'order_inquiry'`,
+    `project_order_inquiry_service.py::_remove_links`). Returns `(po, po_line)`."""
+    supplier = Supplier(
+        id=_uid(), company_id=world.company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} supplier",
+    )
+    po = PurchaseOrder(
+        id=_uid(), company_id=world.company_id, po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([supplier, po])
+    db.flush()
+    po_line = PurchaseOrderLine(
+        id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+        product_id=product.id, warehouse_id=world.own_wh.id,
+        qty_ordered=Decimal(str(qty_ordered)), qty_received=Decimal("0"), line_status="open",
+    )
+    db.add(po_line)
+    db.commit()
+    ProjectOrderInquiryService(db).place_on_po(row.id, po_line.id, actor_user_id=world.actor)
+    db.commit()
+    return po, po_line
 
 
 def _rows_for(db, batch_id: str) -> list[PlanningChangeRow]:
@@ -624,12 +658,24 @@ def test_saving_the_same_payload_again_does_not_re_raise_the_cancellation(api):
 
 
 # --------------------------------------------------------------------------- #
-# R-S2 (review round): a held line's removal is only ever bypassed by the
-# SOLineAllocation Confirm itself writes - another project's AllocationClaim
-# on the same mirror line still refuses the removal.
+# Re-walk ruling (13 Sep, SO419595): rule 5 ("removal never refused") and rule 6
+# ("freed PO qty is reallocated") - a line with ANY dependent (allocation,
+# inquiry row, PO/SPO link claim, allocation claim, draft finding, divergence
+# line) now takes the CANCEL path, same as a held-or-inquired line always has.
+# The ONLY remaining 409 on removal is project ownership (SO_LINE_LINKED_TO_
+# PROJECT for an authored, non-adopted project SO) - `is_authored`, still
+# unconditional and still first in `_upsert_lines`'s loop.
+#
+# Supersedes R-S2 (review round): was "another project's AllocationClaim still
+# refuses the removal" - now accepted and cancelled, the claim itself untouched
+# until apply (Slice D's own reallocation runs there, not at save).
+#
+# The zero-dependents case (a line nothing hangs off) is unaffected and already
+# green: `tests/scm/test_sales_order_line_upsert.py::
+# test_a_line_dropped_from_the_payload_is_deleted` is the hard-delete guard.
 # --------------------------------------------------------------------------- #
 
-def test_removing_a_held_line_with_an_allocation_claim_is_still_refused(api):
+def test_removing_a_line_with_an_allocation_claim_is_accepted_and_cancelled(api):
     world, project = api
     db = world.db
     core_so, core_line, _held_product, order, mirror_line = _adopted_line(world, qty_ordered=72)
@@ -643,13 +689,28 @@ def test_removing_a_held_line_with_an_allocation_claim_is_still_refused(api):
     db.add(claim)
     db.commit()
 
-    with pytest.raises(AppException) as exc:
-        SalesOrderService(db).update(
-            core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor,
-        )
+    # GENUINE RED today: `_upsert_lines`'s `has_other_dependents` check (which an
+    # AllocationClaim on this line trips) still raises 409 SO_LINE_LINKED_TO_PROJECT
+    # unconditionally - this must not raise at all under the new ruling.
+    result = SalesOrderService(db).update(
+        core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor,
+    )
 
-    assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "SO_LINE_LINKED_TO_PROJECT"
+    envelope = result["planning_change_batch"]
+    assert envelope is not None, "removal must raise a batch (rule 5)"
+    batch = db.get(PlanningChangeBatch, envelope["id"])
+    rows = _rows_for(db, batch.id)
+    assert len(rows) == 1, [r.kind for r in rows]
+    assert rows[0].kind == "cancelled", rows[0].kind
+
+    db.expire_all()
+    assert db.get(SalesOrderLine, core_line.id).line_status == "cancelled"
+
+    # The OTHER project's claim survives the removal itself - only apply (Slice D)
+    # resolves what a dependent actually does with the freed quantity.
+    assert (
+        db.query(AllocationClaim).filter(AllocationClaim.id == claim.id).count() == 1
+    ), "the other project's AllocationClaim must survive the save, until apply"
 
 
 # --------------------------------------------------------------------------- #
@@ -767,3 +828,119 @@ def test_re_sending_an_already_zero_line_does_not_cancel_it(api):
     rows = _rows_for(db, batch.id)
     assert len(rows) == 1, [r.kind for r in rows]
     assert rows[0].kind == "qty_up", rows[0].kind
+
+
+# --------------------------------------------------------------------------- #
+# Re-walk ruling (13 Sep, SO419595): removing a line whose held Buy is placed
+# on a real purchase order is accepted and cancelled, not refused.
+#
+# SO419595's CKS1050 removal 409'd SO_LINE_LINKED_TO_CLAIM: its Buy row was
+# placed on a PO, which writes one `scm.order_link_claim` on the CORE line id.
+# `_upsert_lines`'s own claim check (`OrderLinkClaim.so_line_id.in_(removed_ids)`,
+# unconditional, runs AFTER the held-or-inquiry loop but before anything is
+# written) must instead let a line with a claim take the SAME cancel path a
+# held-or-inquired line already does - the claim is resolved at apply (rule 6),
+# not at save.
+# --------------------------------------------------------------------------- #
+
+def test_removing_a_line_placed_on_a_po_is_accepted_and_cancelled(api):
+    world, _project = api
+    db = world.db
+    core_so, core_line, product, order, mirror_line = _adopted_line(world, qty_ordered=72)
+    _freeze_with_a_full_buy(db, world, order, mirror_line)
+
+    placed_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == mirror_line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    po, _po_line = _place_row_on_a_real_po(db, world, product, placed_row, qty_ordered="72")
+
+    # Setup sanity: placing on a real PO must have written the claim this ruling is about,
+    # on the CORE line id (`_upsert_lines`'s own `removed_ids` are core ids, never mirror).
+    assert (
+        db.query(OrderLinkClaim).filter(OrderLinkClaim.so_line_id == core_line.id).count() >= 1
+    ), "setup sanity: place_on_po must write an order_link_claim on the CORE line id"
+
+    # GENUINE RED today: the unconditional `OrderLinkClaim` check 409s
+    # SO_LINE_LINKED_TO_CLAIM here - it must not raise at all under the new ruling.
+    result = SalesOrderService(db).update(
+        core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor,
+    )
+
+    envelope = result["planning_change_batch"]
+    assert envelope is not None, "removal must raise a batch (rule 5)"
+    batch = db.get(PlanningChangeBatch, envelope["id"])
+    rows = _rows_for(db, batch.id)
+    assert len(rows) == 1, [r.kind for r in rows]
+    row = rows[0]
+    assert row.kind == "cancelled", row.kind
+    assert row.project_line_id == str(mirror_line.id)
+
+    db.expire_all()
+    assert db.get(SalesOrderLine, core_line.id).line_status == "cancelled"
+
+    # The suggestion (`compose_suggestion`'s existing "cancelled" -> `_release_components`
+    # path, AC-D-adjacent) must name a reallocate/po component for the placed document -
+    # the machinery already exists for a held Buy's cancellation (qty-to-zero, R-S5); this
+    # is the same composition, reached through a claim instead of a held-or-inquiry gate.
+    suggestion = row.suggestion_json or {}
+    components = suggestion.get("components") or []
+    reallocate_po = [
+        c for c in components if c.get("action") == "reallocate" and c.get("source") == "po"
+    ]
+    assert reallocate_po, f"expected a reallocate/po component naming the placed PO: {components}"
+    assert reallocate_po[0].get("document") == po.po_number, reallocate_po[0]
+
+    # The claim itself is UNTOUCHED until apply - only the suggestion names what will
+    # happen to it (Slice D executes it, rule 6).
+    assert (
+        db.query(OrderLinkClaim).filter(OrderLinkClaim.so_line_id == core_line.id).count() >= 1
+    ), "removal must not touch the claim before apply"
+
+
+def test_applying_the_cancelled_row_frees_the_po_link(api):
+    world, _project = api
+    db = world.db
+    core_so, core_line, product, order, mirror_line = _adopted_line(world, qty_ordered=72)
+    _freeze_with_a_full_buy(db, world, order, mirror_line)
+
+    placed_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == mirror_line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    po, _po_line = _place_row_on_a_real_po(db, world, product, placed_row, qty_ordered="72")
+
+    # GENUINE RED today: this 409s before a batch ever exists to confirm or apply.
+    result = SalesOrderService(db).update(
+        core_so.id, SalesOrderUpdate(lines=[]), user_id=world.actor,
+    )
+    envelope = result["planning_change_batch"]
+    assert envelope is not None
+    batch = db.get(PlanningChangeBatch, envelope["id"])
+    rows = _rows_for(db, batch.id)
+    row = rows[0]
+
+    planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "confirm")
+    db.commit()
+    planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+
+    # The line's PO link (and the claim it wrote) are gone - the freed quantity has been
+    # given up, not left dangling on a line that no longer exists.
+    db.expire_all()
+    assert (
+        db.query(OrderLinkClaim).filter(OrderLinkClaim.so_line_id == core_line.id).count() == 0
+    ), "apply must free the claim the removed line's placement wrote"
+
+    # Rule 6: the freed quantity follows a pool row or a raised row - Slice D's own
+    # `_execute_reallocations` (already built for qty_down/product_changed) records what it
+    # did on the row's own `result_json` (`executed_reallocations` / `released_documents`,
+    # planning_change_service.py ~3485) - never silently swallowed.
+    reloaded_row = db.get(PlanningChangeRow, row.id)
+    result_json = reloaded_row.result_json or {}
+    moved = (result_json.get("executed_reallocations") or []) + (
+        result_json.get("released_documents") or []
+    )
+    assert moved, f"expected the freed PO quantity's move recorded on the row: {result_json}"
