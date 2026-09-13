@@ -61,6 +61,48 @@ _SLA_CLOSE_SENTINEL = "__sla_conversation_close__"
 
 NEW_WORLDS: tuple[OwnerWorld, ...] = (
     OwnerWorld(
+        world_id="focus-v1-explicit-new-domain-drops-the-old-subject",
+        # emits_v3 is FALSE, and that is the whole point: this is the PROMOTED prompt.
+        acs=("AC-1008",),
+        why=(
+            "Browser verification, 13 Sep 2026: under the promoted v1 prompt a topic "
+            "change cleared nothing, because `topic_reset` is a v3 key and `v3_signals` "
+            "returns False for it under v1 by design. Owner ruling K rule 2 is the ONLY "
+            "trigger a v1 deployment has - an EXPLICIT new-domain query bringing its own "
+            "scope - and it had gone dead reading `prev.domain_hint` off a session that "
+            "is five keys. Same world, same clearing, on the prompt that answers "
+            "customers today."
+        ),
+        turns=(
+            OwnerTurn(
+                message="orders for Hanlim",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "order",
+                    "intent_hint": "check_order",
+                    "entities": [_customer("Hanlim")],
+                },
+                expect={"focus_customer": "Hanlim", "focus_domains": ["order"]},
+            ),
+            OwnerTurn(
+                message="promo for MKS9141",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "promotion",
+                    "intent_hint": "check_promotion",
+                    "entities": [_product("MKS9141")],
+                },
+                expect={
+                    # The new subject stands, and the OLD one's customer is gone rather
+                    # than left narrowing a question nobody asked about them (H66).
+                    "focus_products": ["MKS9141"],
+                    "focus_domains": ["promotion"],
+                    "focus_customer": None,
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
         world_id="focus-product-carries-past-turn-ten-then-conversation-closes",
         acs=("AC-1006",),
         why=(
