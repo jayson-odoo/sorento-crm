@@ -80,7 +80,7 @@ export function FulfilmentBoardListView({
    * readings now, or the two would teach different gestures for one act - including the
    * question asked before an unsaved composition is thrown away (C5).
    */
-  const expansion = useDecisionRowExpansion();
+  const expansion = useDecisionRowExpansion({ multiple: true });
   const {
     expanded,
     setExpanded,

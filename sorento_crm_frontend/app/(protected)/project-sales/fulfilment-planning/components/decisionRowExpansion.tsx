@@ -22,10 +22,12 @@ import {
  * so the question a planner is asked cannot come to differ between two screens showing the
  * same lines.
  *
- * A TOGGLE still opens one row: clicking another row is a planner moving on, and the panel
- * they were in has nothing left to say. Expand all is the other gesture (AC-C12, owner
- * feedback 13 September 2026, "just like reorder planning") - it opens every row at once,
- * and Collapse all closes them, asking ONCE if any of them holds unsaved work.
+ * HOW MANY AT ONCE differs, and only there. The cell dialog opens ONE row: it is a narrow
+ * surface about a single product and date, so opening another closes the one before it - and
+ * asks first, because that close is what throws the edit away. The list opens as many as the
+ * planner wants (AC-C12, owner feedback 13 September 2026, "just like reorder planning"), so
+ * opening a second row there discards NOTHING and asks nothing; only closing a dirty row, or
+ * a Collapse all over one, is a question - and Collapse all asks it once for the lot.
  */
 export interface DecisionRowExpansion {
   expanded: ExpandedState;
@@ -74,7 +76,10 @@ type PendingAction =
   | { kind: 'collapseAll' }
   | { kind: 'close'; close: () => void };
 
-export function useDecisionRowExpansion(): DecisionRowExpansion {
+export function useDecisionRowExpansion(
+  options: { multiple?: boolean } = {},
+): DecisionRowExpansion {
+  const multiple = options.multiple ?? false;
   const [expanded, setExpanded] = React.useState<ExpandedState>({});
   /** Which OPEN rows hold an edit nobody has saved. Per row: the list runs several. */
   const [dirtyKeys, setDirtyKeys] = React.useState<string[]>([]);
@@ -122,21 +127,32 @@ export function useDecisionRowExpansion(): DecisionRowExpansion {
     [setDirtyFor],
   );
 
-  const toggle = React.useCallback((key: string) => {
-    setDirtyKeys([]);
-    setExpanded((current) => {
-      const record = typeof current === 'boolean' ? {} : current;
+  const toggle = React.useCallback(
+    (key: string) => {
+      const record = typeof expanded === 'boolean' ? {} : expanded;
       if (record[key]) {
         // Closing the one that was clicked, and only it: after Expand all the rest are
-        // somebody's deliberate state, not leftovers.
+        // somebody's deliberate state, not leftovers. Only ITS unsaved flag is cleared -
+        // wiping the lot here left a dirty row still open with nothing marking it, and the
+        // next Collapse all threw that edit away without asking.
+        setDirtyFor(key, false);
         const next = { ...record };
         delete next[key];
-        return next;
+        setExpanded(next);
+        return;
       }
-      // Opening one: the planner has moved on from wherever they were.
-      return { [key]: true };
-    });
-  }, []);
+      if (multiple) {
+        // Opening a second row closes nothing, so there is nothing to forget.
+        setExpanded({ ...record, [key]: true });
+        return;
+      }
+      // One at a time: opening this one CLOSES whatever was open, so whatever that row held
+      // is gone with it, and the flag goes too.
+      setDirtyKeys([]);
+      setExpanded({ [key]: true });
+    },
+    [expanded, multiple, setDirtyFor],
+  );
 
   const collapseAll = React.useCallback(() => {
     setDirtyKeys([]);
@@ -150,14 +166,16 @@ export function useDecisionRowExpansion(): DecisionRowExpansion {
       // What a toggle would THROW AWAY is the question: closing a dirty row, or - on the
       // single-open reading - opening another over one. Opening a second row where several
       // may stand loses nothing, so nothing is asked.
-      const losing = isOpen ? dirtyKeys.includes(key) : dirtyKeys.length > 0;
+      const losing = isOpen
+        ? dirtyKeys.includes(key)
+        : !multiple && dirtyKeys.length > 0;
       if (losing) {
         setPending({ kind: 'toggle', key });
         return;
       }
       toggle(key);
     },
-    [dirtyKeys, expanded, toggle],
+    [dirtyKeys, expanded, multiple, toggle],
   );
 
   const expandAll = React.useCallback((keys: string[]) => {
