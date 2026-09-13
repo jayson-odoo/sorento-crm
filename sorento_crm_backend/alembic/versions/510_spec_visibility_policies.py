@@ -31,7 +31,14 @@ TABLE = "spec_visibility_policies"
 
 
 def seed_default_and_project_rows(bind) -> None:
-    """Insert the two seeded rows. Idempotent - re-running adds nothing."""
+    """Insert the two seeded rows. Idempotent - re-running adds nothing.
+
+    The default row's Hide list is a literal here - migrations stay frozen and
+    do not import app code - and matches `app.services.spec_visibility.
+    DEFAULT_HIDDEN_KEYS` (that module's code-level fallback for a database
+    built by `create_all`, which has no seeds); a test pins the two lists equal
+    so they cannot drift apart silently.
+    """
     bind.execute(
         sa.text(
             f"""

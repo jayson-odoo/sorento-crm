@@ -14,9 +14,10 @@ shape matches and diverging on the two points the plan calls out
   contact, never to "no answer" - a stock question with nobody to check against
   gets zero rows and no block, but a spec question always gets an answer.
 
-**The floor is code, not data.** The default row is seeded by migration 515, but
+**The floor is code, not data.** The default row is seeded by migration 510, but
 a database built by ``create_all`` (CI) has no seeds, so ``default_policy`` falls
-back to "every key visible" rather than to nothing.
+back to the ship-closed ``DEFAULT_HIDDEN_KEYS`` floor rather than to "everything
+visible" - the migration seed reads the same constant, so the two cannot drift.
 """
 from __future__ import annotations
 
@@ -31,6 +32,12 @@ from app.services.error_handler import AppException
 SOURCE_CONTACT = "contact"
 SOURCE_SEGMENT = "segment"
 SOURCE_DEFAULT = "default"
+
+#: The ship-closed floor (PLAN-spec-visibility-policy.md "Decisions" - "default
+#: ships closed"). Migration 510's seed reads this SAME constant when it inserts
+#: the default row, so the seeded data and this code-level fallback (for a
+#: database built by `create_all`, which has no seeds) cannot drift apart.
+DEFAULT_HIDDEN_KEYS: frozenset[str] = frozenset({"thickness", "board_thickness"})
 
 
 @dataclass(frozen=True)
@@ -68,8 +75,9 @@ def _policy_from_row(row, source: str, source_label: Optional[str] = None) -> Sp
 
 
 def default_policy(db: Session) -> SpecPolicy:
-    """The global default row, or the inert "everything visible" policy when
-    absent (a database built by `create_all`, CI, has no migration seed)."""
+    """The global default row, or the ship-closed `DEFAULT_HIDDEN_KEYS` floor
+    when absent (a database built by `create_all`, CI, has no migration seed -
+    S1: this must still be closed, never "everything visible")."""
     from app.models.access import SpecVisibilityPolicy
 
     row = (
@@ -81,7 +89,11 @@ def default_policy(db: Session) -> SpecPolicy:
         .first()
     )
     if row is None:
-        return SpecPolicy(spec_keys=None, excluded_spec_keys=None, source=SOURCE_DEFAULT)
+        return SpecPolicy(
+            spec_keys=None,
+            excluded_spec_keys=frozenset(DEFAULT_HIDDEN_KEYS),
+            source=SOURCE_DEFAULT,
+        )
     return _policy_from_row(row, SOURCE_DEFAULT)
 
 
@@ -110,8 +122,10 @@ def segment_override(db: Session, segment_code: str):
 def _merge_segment_rows(rows: list[tuple]) -> SpecPolicy:
     """Intersection of Show-only lists, union of Hide-these lists, both carried
     on the merged (in-memory) policy - never on one row. ``rows`` arrives
-    pre-ordered by the segment's own sort order, so the label is simply the
-    FIRST row's segment name (plan Decisions "Merge")."""
+    pre-ordered by sort order and already narrowed to the segments that carry
+    a policy row (the join in ``segment_policy``), so the label is simply the
+    FIRST segment by sort order among the rows that carry a policy (plan
+    Decisions "Merge")."""
     merged_keys: Optional[frozenset[str]] = None
     for row, _name in rows:
         ids = _row_keys(row.spec_keys)
@@ -194,8 +208,11 @@ def hidden_keys(policy: SpecPolicy, registry_keys: Iterable[str]) -> frozenset[s
 
     Show-only null -> nothing hidden except the Hide list; Show-only list ->
     every key not in it, PLUS the Hide list when a merged policy carries both;
-    Show-only [] -> every key. A key that has since left the registry is
-    ignored - ``registry_keys`` is the caller's own notion of "still active".
+    Show-only [] -> every key. A key that has since left the registry ENTIRELY
+    is ignored - ``registry_keys`` is the caller's own notion of "still
+    exists", which for a READ must be the FULL registry (B1, security review):
+    a merely deactivated key stays hidden or stays shown, whichever the stored
+    policy already says, never un-hidden by an unrelated `is_active` flip.
     """
     registry = frozenset(str(k) for k in registry_keys)
     hidden: frozenset[str] = frozenset()
@@ -357,12 +374,29 @@ def delete_policy(
 
 def active_registry_rows(db: Session) -> list[tuple[str, str]]:
     """`(spec_key, label)` for every ACTIVE registry key, sorted by label - the
-    picker's own vocabulary and the resolver's notion of "still active"."""
+    PICKER's vocabulary (`GET /keys`) and WRITE-time validation only. Never for
+    computing what is hidden - see `full_registry_rows`."""
     from app.models.product_spec import ProductSpecRegistry
 
     return (
         db.query(ProductSpecRegistry.spec_key, ProductSpecRegistry.label)
         .filter(ProductSpecRegistry.is_active.is_(True))
+        .order_by(ProductSpecRegistry.label.asc())
+        .all()
+    )
+
+
+def full_registry_rows(db: Session) -> list[tuple[str, str]]:
+    """`(spec_key, label)` for EVERY registry key, active or not - the READ-time
+    notion of "still exists" `hidden_keys` needs (B1, security review). A stored
+    policy key is the admin's INTENT to hide or show it; a later `is_active`
+    flip on the registry (a merchandising decision about a different question -
+    whether the key is still offered at all) must not silently un-hide it. Only
+    a key whose ROW IS GONE ENTIRELY is "ignored on read" (AC-10)."""
+    from app.models.product_spec import ProductSpecRegistry
+
+    return (
+        db.query(ProductSpecRegistry.spec_key, ProductSpecRegistry.label)
         .order_by(ProductSpecRegistry.label.asc())
         .all()
     )
@@ -390,11 +424,16 @@ def _resolve_refs(db: Session, keys: Optional[frozenset[str]]) -> Optional[list[
 
 
 def policy_payload(db: Session, policy: SpecPolicy) -> dict:
-    """One SpecPolicy as the API returns it."""
-    active_rows = active_registry_rows(db)
-    active_keys = frozenset(key for key, _label in active_rows)
-    label_map = dict(active_rows)
-    hidden = hidden_keys(policy, active_keys)
+    """One SpecPolicy as the API returns it.
+
+    `hidden` is computed against the FULL registry (B1), not the active-only
+    one: a key the admin already hid or already left visible stays that way
+    across an unrelated `is_active` flip.
+    """
+    registry_rows = full_registry_rows(db)
+    registry_keys = frozenset(key for key, _label in registry_rows)
+    label_map = dict(registry_rows)
+    hidden = hidden_keys(policy, registry_keys)
     hidden_refs = sorted(
         ({"key": k, "label": label_map.get(k, k)} for k in hidden),
         key=lambda ref: ref["label"],

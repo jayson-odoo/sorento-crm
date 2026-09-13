@@ -18,6 +18,7 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text as sa_text
 
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.product_class_signal import backfill_category_signals
@@ -92,17 +93,67 @@ def test_hidden_spec_keys_drops_the_thickness_candidate_and_its_summary(client):
     """A retail contact's `hidden_spec_keys` (['thickness']) means the resolver
     neither ranks on the stated thickness nor prints it in any candidate's
     summary; the SAME sentence with no hidden keys ranks on it (a project
-    contact, unaffected)."""
+    contact, unaffected).
+
+    Earns its name (code review): the candidate's rendered `summary` and the
+    `display.product_name` `_emit_spec_matches` copies it into
+    (app/api/v1/system/references.py ~:2191) are a SENTENCE built from the
+    product's full stored values, a different surface from the `specifications`
+    dict/`matched_specs` list checked above - "... 1.2 mm thick." must not go
+    out through it either.
+    """
     without_hidden = client.post(RESOLVE, json={"query": SENTENCE, "spec_fallback": True}).json()
     matches = _spec_matches(without_hidden)
     assert matches, "the fixture sentence must actually rank by thickness today"
     assert matches[0]["display"]["specifications"].get("thickness") == 1.2
+    assert "thick" in matches[0]["display"]["product_name"].lower()
 
     with_hidden = client.post(
         RESOLVE,
         json={"query": SENTENCE, "spec_fallback": True, "hidden_spec_keys": ["thickness"]},
     ).json()
     hidden_matches = _spec_matches(with_hidden)
+    assert hidden_matches, "hiding thickness must not empty the candidate list"
     for match in hidden_matches:
+        assert "thickness" not in match["display"]["specifications"]
+        assert "thickness" not in (match["display"].get("matched_specs") or [])
+        product_name = match["display"]["product_name"].lower()
+        assert "thick" not in product_name
+        assert "1.2" not in product_name
+
+
+def test_resolve_spec_fallback_resolves_hidden_keys_server_side_from_contact(client, db):
+    """Security review B/S2: a caller that sends `contact_id` (+ `space_id`) but
+    NO `hidden_spec_keys` at all must not leak a key that contact's OWN policy
+    hides - the route resolves the policy itself (`resolve_policy` +
+    `hidden_keys`, the same pair `check_access` uses) rather than trusting only
+    a caller-supplied list. Keeps the existing caller-supplied-list test above
+    unchanged: that path still narrows further, it just is not the only one."""
+    from app.models.access import RespondContact
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().int % 10**9:09d}",
+        name="ZZT Contact",
+    )
+    db.add(contact)
+    db.flush()
+    db.execute(
+        sa_text(
+            "INSERT INTO spec_visibility_policies (id, contact_id, spec_keys, excluded_spec_keys) "
+            "VALUES (gen_random_uuid(), :cid, NULL, ARRAY['thickness'])"
+        ),
+        {"cid": contact.id},
+    )
+    db.commit()
+
+    body = client.post(
+        RESOLVE,
+        json={"query": SENTENCE, "spec_fallback": True, "contact_id": contact.id},
+    ).json()
+
+    matches = _spec_matches(body)
+    assert matches, "hiding thickness server-side must not empty the candidate list"
+    for match in matches:
         assert "thickness" not in match["display"]["specifications"]
         assert "thickness" not in (match["display"].get("matched_specs") or [])

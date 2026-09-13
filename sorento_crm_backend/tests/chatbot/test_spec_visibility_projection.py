@@ -214,6 +214,30 @@ class TestHiddenKeyDirectAsk:
         assert "not available for" not in out["response"]
         assert out["response"].count("not available") == 1
 
+    def test_projection_asked_word_shared_with_hidden_key_still_renders_the_visible_key(self):
+        """Code review: "thickness" token-contains BOTH the hidden `thickness`
+        key (exact match) and the visible `board_thickness` key's label
+        ("Drainer board / countertop thickness" - "thickness" is one of its
+        tokens), the same containment rule an ordinary hit uses. The hidden
+        match must not short-circuit the visible one - the reply needs the
+        board thickness VALUE and the "Thickness: not available" miss, not one
+        instead of the other."""
+        envelope = _product_envelope(_SPECS)
+        ctx = {
+            "semantic_input": {"requested_attributes": ["thickness"]},
+            "access": {"hidden_spec_keys": ["thickness"]},
+        }
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        fields = out["answers"][0]["fields"]
+        assert any(
+            f["label"] == "Drainer board / countertop thickness" and f["value"] == "18 mm"
+            for f in fields
+        )
+        assert "*Thickness:* not available" in out["response"]
+        assert out["response"].count("not available") == 1
+
 
 class TestTurnTraceSpecVisibility:
     def test_turn_trace_has_spec_visibility_hidden_and_dropped(self):
@@ -242,3 +266,38 @@ class TestTurnTraceSpecVisibility:
         assert len(events) == 1
         assert events[0]["hidden"] == ["thickness"]
         assert "thickness" in events[0]["dropped"]
+
+    def test_turn_trace_dropped_lists_only_keys_actually_removed(self):
+        """Code review: `dropped` must name keys the ENVELOPE actually carried
+        and removed, not merely keys the vocabulary knows about - a product
+        with no `spec:thickness` field (never populated on this product) has
+        nothing to drop even though `thickness` sits in `spec_vocabulary` (the
+        registry-wide map) and in the contact's hidden set."""
+        t = trace_mod.TurnTrace()
+        payload = {
+            "_exit_kind": "continue",
+            "gate": {
+                "compatible_entities": [
+                    {"uuid": str(uuid.uuid4()), "entity_type": "product", "code": "SRTKS8825"}
+                ]
+            },
+            "ctx": {
+                "parse": {"output": {"domain_hint": "master_products"}},
+                "access": {"hidden_spec_keys": ["thickness"]},
+            },
+        }
+        # `material` is populated on this product; `thickness` is known to the
+        # vocabulary (the registry carries it) but this particular product has
+        # no `spec:thickness` field at all.
+        envelope = _product_envelope(
+            [{"key": "material", "label": "Material", "value": "Stainless steel"}]
+        )
+        envelope["spec_vocabulary"]["thickness"] = "Thickness"
+        services = FetchServices(mcp_call=lambda name, args: json.dumps(envelope))
+
+        business.run_fetch(payload, services=services, dry_run=False, trace=t)
+
+        events = [e for e in t.events if e["kind"] == "spec_visibility"]
+        assert len(events) == 1
+        assert events[0]["hidden"] == ["thickness"]
+        assert events[0]["dropped"] == []

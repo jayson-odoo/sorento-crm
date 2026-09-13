@@ -102,10 +102,15 @@ def _hidden_spec_keys(db: Session, *, contact_id: str, space_id: str | None) -> 
     FAILS CLOSED TO THE DEFAULT POLICY, never to `[]`: a spec question always
     gets an answer, so an unresolvable contact gets the default's hidden set
     rather than "nothing hidden".
+
+    The registry read is the FULL one (B1, security review), not active-only:
+    the hidden set is a READ, and a merely deactivated key must stay hidden or
+    stay shown, whichever the stored policy already says.
     """
     from app.services.spec_visibility import (
-        active_registry_rows,
+        DEFAULT_HIDDEN_KEYS,
         default_policy,
+        full_registry_rows,
         hidden_keys,
         resolve_policy,
     )
@@ -115,15 +120,17 @@ def _hidden_spec_keys(db: Session, *, contact_id: str, space_id: str | None) -> 
             db, contact_id=contact_id, space_id=space_id
         )
         policy = resolve_policy(db, resolved, space_id) if resolved is not None else default_policy(db)
-        registry_keys = {key for key, _label in active_registry_rows(db)}
+        registry_keys = {key for key, _label in full_registry_rows(db)}
         return sorted(hidden_keys(policy, registry_keys))
     except Exception:  # noqa: BLE001 - a lookup failure must fail closed to the default policy
         logger.warning("chatbot: spec visibility lookup failed for %s", contact_id, exc_info=True)
         try:
-            registry_keys = {key for key, _label in active_registry_rows(db)}
+            registry_keys = {key for key, _label in full_registry_rows(db)}
             return sorted(hidden_keys(default_policy(db), registry_keys))
-        except Exception:  # noqa: BLE001 - the registry itself is unreachable
-            return []
+        except Exception:  # noqa: BLE001 - the registry itself is unreachable too (S1: still
+            # closed, never `[]` - a spec question always gets an answer, and the ship-closed
+            # floor is a Python constant, not a query, so it survives even this).
+            return sorted(DEFAULT_HIDDEN_KEYS)
 
 
 def check_access(

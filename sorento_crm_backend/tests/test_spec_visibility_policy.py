@@ -386,6 +386,61 @@ def test_hidden_keys_ignores_key_missing_from_registry(db):
     assert hidden_keys(policy, {"thickness"}) == frozenset({"thickness"})
 
 
+def test_hidden_keys_keeps_a_key_that_was_deactivated_after_the_policy_was_stored(db):
+    """Security finding B1: deactivating a spec key AFTER a policy already named
+    it must not un-hide it - `is_active` is a merchandising decision (should the
+    parser still offer/derive this key), not "does this key still exist" for a
+    stored policy's read.
+
+    Exercises `check_access`'s real seam (`app/services/chatbot/head/access.py::
+    _hidden_spec_keys`, private but it IS the unit under test: the exact call
+    that resolves `resolve_policy` and feeds its result into `hidden_keys` with
+    whichever registry list it obtains) rather than reimplementing the registry
+    read here, so this stays correct whatever helper backs it."""
+    from app.services.chatbot.head.access import _hidden_spec_keys
+
+    thickness = _spec_key(db, "thickness", "Thickness", is_active=True)
+    _spec_key(db, "material", "Material", is_active=True)
+    _policy_row(db, spec_keys=None, excluded_spec_keys=["thickness"])
+    db.flush()
+
+    thickness.is_active = False
+    db.flush()
+
+    # Hide-these shape: the default row named `thickness` explicitly; an
+    # unresolvable contact falls back to it (fail-closed).
+    hidden = _hidden_spec_keys(db, contact_id="ZZT-NO-SUCH-CONTACT", space_id=None)
+    assert "thickness" in hidden
+
+    # Show-only shape: a contact override naming ONLY `material` must still
+    # hide `thickness` - it was never in the show list, active or not.
+    contact = _contact(db)
+    _policy_row(db, contact=contact, spec_keys=["material"], excluded_spec_keys=None)
+    db.flush()
+
+    hidden_show_only = _hidden_spec_keys(db, contact_id=contact.id, space_id=None)
+    assert "thickness" in hidden_show_only
+
+
+def test_default_policy_without_a_default_row_is_closed(db):
+    """Security finding S1: the plan's ship-closed floor (thickness +
+    board_thickness hidden by default) has to live in CODE, not only in the
+    migration seed - a database built by `create_all` (CI, and this blank
+    schema) has no seed row at all, and `default_policy` must not fall back to
+    "everything visible" there."""
+    from app.services.spec_visibility import default_policy, hidden_keys
+
+    _spec_key(db, "thickness", "Thickness")
+    _spec_key(db, "board_thickness", "Drainer board / countertop thickness")
+    _spec_key(db, "material", "Material")
+
+    policy = default_policy(db)
+
+    assert hidden_keys(policy, {"thickness", "board_thickness", "material"}) == frozenset(
+        {"thickness", "board_thickness"}
+    )
+
+
 # ============================================================ AC-11/12/13 routes
 
 

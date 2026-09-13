@@ -1367,8 +1367,28 @@ class ResolveReferenceRequest(BaseModel):
             "decides which product wins - and stripped from every candidate's "
             "`specifications` / `matched_specs` before the response is built, so "
             "the value cannot leak through even when the product's OWN stored "
-            "values carry it. Only used when `spec_fallback` is true."
+            "values carry it. Only used when `spec_fallback` is true. UNIONED "
+            "with the server-resolved set below when `contact_id` is also sent - "
+            "a caller-supplied list only ever NARROWS what search_specs prints, "
+            "it can never widen past what the contact's own policy hides."
         ),
+    )
+    contact_id: str | None = Field(
+        default=None,
+        description=(
+            "Security review B/S2: when present, the route resolves THIS "
+            "contact's spec visibility policy itself (`resolve_policy` + "
+            "`hidden_keys`, the same pair `check_access` uses) rather than "
+            "trusting only the caller-supplied `hidden_spec_keys` - a caller "
+            "that forgot to compute or forward the hidden set (or sent a stale "
+            "one) must not leak a hidden key. `respond_contacts.id` or the "
+            "Respond.io id; `space_id` disambiguates the latter. Only used "
+            "when `spec_fallback` is true."
+        ),
+    )
+    space_id: str | None = Field(
+        default=None,
+        description="Respond.io workspace id, to disambiguate a Respond.io `contact_id`.",
     )
     free_terms: list[str] | None = Field(
         default=None,
@@ -2459,18 +2479,56 @@ def resolve_reference_post(
         # half is needed even though the first already ran, because a
         # candidate's `specifications` is the product's OWN full stored values,
         # independent of what was searched for.
+        #
+        # B/S2 (security review): the CALLER's `hidden_spec_keys` is trusted
+        # input a caller could forget to compute, forget to forward, or send
+        # stale - so when `contact_id` is also sent, the route resolves that
+        # contact's policy itself (the same `resolve_policy` + `hidden_keys`
+        # pair `check_access` uses) and UNIONS it in. The caller-supplied list
+        # only ever narrows further; it can never widen past the server's own
+        # answer for that contact.
         hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
+        if payload.contact_id:
+            from app.services.spec_visibility import (
+                full_registry_rows,
+                hidden_keys as _hidden_keys,
+                resolve_policy as _resolve_spec_policy,
+            )
+
+            contact_policy = _resolve_spec_policy(db, payload.contact_id, payload.space_id)
+            registry_keys = {key for key, _label in full_registry_rows(db)}
+            hidden_spec_keys |= _hidden_keys(contact_policy, registry_keys)
         if hidden_spec_keys:
             specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
 
         found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms)
         if hidden_spec_keys:
+            from app.services.product_spec_rendering import render_spec_sentence
+
             for candidate in found.get("candidates") or []:
                 spec_values = candidate.get("specifications")
+                filtered_values: dict | None = None
                 if isinstance(spec_values, dict):
-                    candidate["specifications"] = {
+                    filtered_values = {
                         k: v for k, v in spec_values.items() if k not in hidden_spec_keys
                     }
+                    candidate["specifications"] = filtered_values
+                    # B1 (code review): `summary` is the rendered sentence
+                    # (`rendered_text`), built from the SAME values - a hidden
+                    # key's own number or word survives inside it otherwise
+                    # ("... 1.2 mm thick.") - and `_emit_spec_matches` copies it
+                    # straight into `display.product_name`, the one field the
+                    # filtering above never reached. Re-rendered from the
+                    # FILTERED values through the real renderer (never a regex
+                    # edit of the old sentence, which could not tell a hidden
+                    # number from any other). `render_spec_sentence` reads
+                    # `{key: {"value": ...}}`; `filtered_values` is already
+                    # values-only, so each is re-wrapped one level to match.
+                    nested = {k: {"value": v} for k, v in filtered_values.items()}
+                    # No fallback to the ORIGINAL summary on a None render - an
+                    # empty sentence is silence, not a leak of what filtering
+                    # removed.
+                    candidate["summary"] = render_spec_sentence(nested) or ""
                 matched_specs = candidate.get("matched_specs")
                 if isinstance(matched_specs, list):
                     candidate["matched_specs"] = [

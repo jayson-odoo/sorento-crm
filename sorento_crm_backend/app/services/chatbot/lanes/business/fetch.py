@@ -1265,6 +1265,12 @@ def _project_product_specs(
         norm: [] for norm, _ in asked if norm not in hidden_asks
     }
 
+    # AC-17 / code review S2: the keys ACTUALLY removed from this envelope, for
+    # the turn trace's `spec_visibility.dropped` - not vocabulary membership,
+    # which says nothing about whether the product this turn showed even
+    # carried the key.
+    dropped_keys: set[str] = set()
+
     for it in e.get("items") or []:
         if not jsc.truthy(it) or not isinstance(jsc.get(it, "fields"), list):
             continue
@@ -1281,13 +1287,18 @@ def _project_product_specs(
         ]
         # Hidden keys are dropped HERE, before either branch below runs - the
         # "Specs:" summary and the asked-word matching both read `spec_fields`.
-        spec_fields = [
+        raw_spec_fields = [
             f
             for f in fields
-            if isinstance(f, dict)
-            and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX)
-            and jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):] not in hidden
+            if isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX)
         ]
+        spec_fields = []
+        for f in raw_spec_fields:
+            raw_key = jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):]
+            if raw_key in hidden:
+                dropped_keys.add(raw_key)
+            else:
+                spec_fields.append(f)
 
         if not asked:
             # No attribute asked: base fields untouched, plus the compact summary -
@@ -1310,14 +1321,15 @@ def _project_product_specs(
         matched: list[dict[str, Any]] = []
         seen_field_ids: set[int] = {id(f) for f in kept_base}
         for norm, _asked_word in asked:
-            if norm in hidden_asks:
-                # Handled once, after the items loop, as a `spec_hidden:` miss -
-                # never matched (the field is already gone from `spec_fields`
-                # above) and never counted towards the ordinary "not recorded"
-                # miss either.
-                continue
             # 1. spec keys: an exact key/label match AND every key whose key or label
-            #    tokens contain every asked token - ALL of them, in registry order
+            #    tokens contain every asked token - ALL of them, in registry order.
+            #    Runs REGARDLESS of whether `norm` also names a hidden key (code
+            #    review S1): "thickness" with `thickness` hidden and
+            #    `board_thickness` visible must still render the visible field -
+            #    the hidden field is already gone from `spec_fields` above, so it
+            #    can never itself be matched here, but a DIFFERENT visible key
+            #    whose tokens contain the same asked word (like `board_thickness`
+            #    containing "thickness") is a real, separate hit.
             toks = _tokens(norm)
             contained = [
                 f
@@ -1329,6 +1341,11 @@ def _project_product_specs(
                 if id(f) not in seen_field_ids:
                     matched.append(f)
                     seen_field_ids.add(id(f))
+            if norm in hidden_asks:
+                # Handled once, after the items loop, as a `spec_hidden:` miss
+                # instead of - never in addition to - the ordinary "not
+                # recorded" one, whatever the visible-key matching above found.
+                continue
             # 2. a spec miss - UNLESS the word names a base property, which is already
             #    on the page (kept_base, above) and needs no "not recorded" line.
             if not hit and not _names_a_base_property(norm):
@@ -1358,6 +1375,12 @@ def _project_product_specs(
         misses.append({"key": f"spec_hidden:{key}", "label": label, "value": "not available"})
     if misses:
         e["spec_misses"] = misses
+
+    # AC-17 / code review S2: what this function actually removed, for the turn
+    # trace (`run_fetch`'s `spec_visibility` event) - always set when this
+    # function ran, even `[]`, so the trace reads "ran, nothing to drop" rather
+    # than reaching for a vocabulary check of its own.
+    e["spec_hidden_dropped"] = sorted(dropped_keys)
 
 
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
