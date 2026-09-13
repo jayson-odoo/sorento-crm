@@ -589,7 +589,20 @@ def portal_lookup_promotions(
 
 
 def _require_own_request(db: Session, token: PortalToken, request_id: str):
-    """The contact's own request, or a 404. Another contact's is not theirs to see."""
+    """The contact's own request, or a 404. Another contact's is not theirs to see.
+
+    Gap B (security review of S10): also gates on form visibility, like every
+    other price_tag_request route (``_assert_visible``) - this helper is what
+    the generic revision routes in portal.py dispatch ownership to
+    (``_require_revisable_ownership`` / ``_revision_submission_detail``), and
+    those never carried an equivalent check of their own, so a contact whose
+    grant was revoked could still list/revise/save-draft their own old
+    request. Gap E: validates the id is a UUID first, same as every other
+    caller here does before reaching ``get_request``, so a malformed id 404s
+    instead of a driver 500.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
     req = PriceTagRequestService.get_request(db, request_id)
     if not req or req.contact_id != token.contact_id:
         raise AppException(
@@ -620,12 +633,22 @@ def _require_editable(req, db: Session) -> None:
     ``new``/``changes_requested`` post-submit window S8 opened. Wired
     through the real engine rather than a coincidental status check, so this
     gate can never drift from what the revise composer is actually allowed
-    to touch."""
+    to touch.
+
+    Gap C (security review of S10): the mere EXISTENCE of a draft row is not
+    enough - a draft saved while the request was still ``new`` used to keep
+    unlocking attachments after the request moved on to a status the policy
+    would refuse outright (``ready``, ``void``). Re-checks the policy against
+    the request's CURRENT status, the same call ``revise``/``save_draft``
+    make, so a stale draft cannot outlive what it was actually allowed to do.
+    """
     if req.portal_draft_at is not None:
         return
     from app.services.portal_revision_service import PortalRevisionService
 
-    if PortalRevisionService(db).get_draft("price_tag_request", req.id) is not None:
+    service = PortalRevisionService(db)
+    has_draft = service.get_draft("price_tag_request", req.id) is not None
+    if has_draft and service.policy_for("price_tag_request", req.id).allowed:
         return
     raise AppException(
         status_code=409,
