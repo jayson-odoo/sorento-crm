@@ -18,6 +18,7 @@ import {
   ListOrdered,
   LoaderCircleIcon,
   Move,
+  Plus,
   SquarePen,
   Trash2,
   Truck,
@@ -302,6 +303,13 @@ function isCancelledLine(row: SalesOrderLine): boolean {
   return (row.line_status ?? 'open') === 'cancelled';
 }
 
+/** A line typed in THIS session: it has no server id yet, so Save sends it without one. */
+const NEW_LINE_PREFIX = 'new-';
+
+function isNewLine(row: Pick<SalesOrderLine, 'id'>): boolean {
+  return row.id.startsWith(NEW_LINE_PREFIX);
+}
+
 /**
  * What a line is worth: the total the source document stated, or the arithmetic its parts
  * support. The SAME rule the backend's own `total_amount` follows, so the column, the
@@ -438,6 +446,16 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // docstring). Reset on every fresh session and after a save, so a leftover removal from a
   // prior edit cannot silently carry into the next one.
   const [removedLineIds, setRemovedLineIds] = useState<Set<string>>(new Set());
+  /**
+   * Lines ADDED in this session, before Save (R4c, the SO400884 walk).
+   *
+   * Placeholder rows, not server rows: they carry a `new-` id so the grid, the drafts map
+   * and the remove button can all address them the way they address a stored line, and the
+   * SAME cells edit them - one row control for a line however it got onto the order. Save
+   * sends them with no `id`, which is what the upsert reads as "this one is new"; Cancel
+   * drops them.
+   */
+  const [newLines, setNewLines] = useState<SalesOrderLine[]>([]);
 
   const beginEdit = (so: SalesOrder) => {
     setPlanningChangeBatch(null);
@@ -453,6 +471,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
     }
     setLineDrafts(drafts);
     setRemovedLineIds(new Set());
+    setNewLines([]);
     originalLineSignatureRef.current = lineSignature(
       so.lines.map((l) => ({
         sku: l.sku,
@@ -472,6 +491,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
     setIsEditing(false);
     setError(null);
     setRemovedLineIds(new Set());
+    setNewLines([]);
   };
 
   // `?edit=1` opens the session on arrival - the same entry the list's Pencil action uses -
@@ -489,8 +509,15 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // totals footer and the "last line" guard all read this one array, so a row that has been
   // removed cannot still count toward any of them.
   const lines = useMemo<SalesOrderLine[]>(
-    () => (data?.lines ?? []).filter((l) => !isEditing || !removedLineIds.has(l.id)),
-    [data, isEditing, removedLineIds],
+    () => {
+      const stored = (data?.lines ?? []).filter(
+        (l) => !isEditing || !removedLineIds.has(l.id),
+      );
+      // A line added in this session sits at the END, where it was typed, and only while
+      // the session is open.
+      return isEditing && newLines.length ? [...stored, ...newLines] : stored;
+    },
+    [data, isEditing, newLines, removedLineIds],
   );
   // Sorted and searched here rather than by the API: the lines come embedded in the order
   // read, so there is no second request to spend and no page boundary to work across.
@@ -575,11 +602,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
         return;
       }
       setError(null);
-      setRemovedLineIds((prev) => {
-        const next = new Set(prev);
-        next.add(row.id);
-        return next;
-      });
+      if (isNewLine(row)) {
+        // Never saved, so there is nothing for the backend to be told about: the row simply
+        // stops existing.
+        setNewLines((prev) => prev.filter((ln) => ln.id !== row.id));
+      } else {
+        setRemovedLineIds((prev) => {
+          const next = new Set(prev);
+          next.add(row.id);
+          return next;
+        });
+      }
       setLineDrafts((prev) => {
         const next = { ...prev };
         delete next[row.id];
@@ -589,28 +622,69 @@ export function SalesOrderDetail({ id }: { id: string }) {
     [lines],
   );
 
+  // A CANCELLED line is out of every total (R4, the SO400884 walk). The book closed it, so
+  // its quantity is not ordered any more, nothing about it is outstanding, and what it was
+  // once priced at is not part of what this order is worth - the stale figures sat in the
+  // footer reading as though the line still counted.
+  const countedLines = useMemo(() => lines.filter((l) => !isCancelledLine(l)), [lines]);
+  /**
+   * Add line (R4c, the SO400884 walk): a blank row at the end of the grid, editable by the
+   * SAME cells every other line is edited by.
+   *
+   * A placeholder row rather than a second form: the grid already knows how to render a
+   * product select, a quantity, a date and a UoM for a line, so a new line is just a line
+   * the backend has not seen yet. It is sent on Save with no `id`, and Cancel drops it.
+   */
+  const handleAddLine = useCallback(() => {
+    setError(null);
+    const row: SalesOrderLine = {
+      id: `${NEW_LINE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      sku: '',
+      product_name: '',
+      qty_ordered: 0,
+      qty_delivered: 0,
+      uom: '',
+      warehouse_code: '',
+      line_status: 'open',
+      required_date: null,
+    };
+    setNewLines((prev) => [...prev, row]);
+    setLineDrafts((prev) => ({
+      ...prev,
+      [row.id]: {
+        sku: '',
+        qty_ordered: '',
+        warehouse_code: '',
+        required_date: '',
+        uom: '',
+        unit_price: '',
+        discount: '',
+      },
+    }));
+  }, []);
+
   const qtyOrderedTotal = useMemo(
     () =>
-      lines.reduce((sum, l) => {
+      countedLines.reduce((sum, l) => {
         const qty = isEditing
           ? Number(draftOrRow(lineDrafts, l).qty_ordered)
           : Number(l.qty_ordered);
         return sum + (Number.isFinite(qty) ? qty : 0);
       }, 0),
-    [lines, isEditing, lineDrafts],
+    [countedLines, isEditing, lineDrafts],
   );
   const qtyDeliveredTotal = useMemo(
     () => lines.reduce((sum, l) => sum + Number(l.qty_delivered), 0),
     [lines],
   );
   const outstandingTotal = useMemo(
-    () => lines.reduce((sum, l) => sum + outstandingOf(l), 0),
-    [lines, outstandingOf],
+    () => countedLines.reduce((sum, l) => sum + outstandingOf(l), 0),
+    [countedLines, outstandingOf],
   );
   const amountTotal = useMemo(() => {
-    const amounts = lines.map(amountOf).filter((a): a is string => a !== null);
+    const amounts = countedLines.map(amountOf).filter((a): a is string => a !== null);
     return amounts.length ? sumMoney(amounts) : null;
-  }, [lines, amountOf]);
+  }, [countedLines, amountOf]);
 
   const columns = useMemo<ColumnDef<SalesOrderLine>[]>(
     () => [
@@ -1225,7 +1299,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
     // see the class docstring - carrying either what the person typed or, for an untouched
     // line, exactly what the order loaded with. A removed line is left out here, before the
     // draft loop even runs - the BE's own upsert deletes whatever `lines` does not name.
-    const cleanedLines = so.lines.filter((ln) => !removedLineIds.has(ln.id)).map((ln) => {
+    const cleanedLines = [
+      ...so.lines.filter((ln) => !removedLineIds.has(ln.id)),
+      ...newLines,
+    ].map((ln) => {
       const draft = lineDrafts[ln.id];
       return {
         id: ln.id,
@@ -1238,7 +1315,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
         discount: draft?.discount ?? ln.discount ?? '',
       };
     });
-    if (cleanedLines.some((l) => !l.sku || !(l.qty_ordered > 0))) {
+    // ZERO IS A REAL EDIT ON A LINE THAT EXISTS (R4, the SO400884 walk): the book's own way
+    // of closing a line is to order none of it, and the backend cancels the line for exactly
+    // that quantity (Slice A rule 5). Refusing it here left the screen unable to say the one
+    // thing the planner came to say. A line that does not exist yet is the other case - "add
+    // a line for none of something" is not an instruction, so a NEW row still needs a
+    // quantity above zero, and so does every line on create.
+    const badQuantity = cleanedLines.some((l) => {
+      if (!Number.isFinite(l.qty_ordered) || l.qty_ordered < 0) return true;
+      return isNewLine(l) && l.qty_ordered === 0;
+    });
+    if (cleanedLines.some((l) => !l.sku) || badQuantity) {
       return setError('Every line needs a product and a quantity above zero.');
     }
     // A removal carries no field change to compare - it is the LINE COUNT that moves, so a
@@ -1260,7 +1347,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
           ...(linesUnchanged
             ? {}
             : {
-                lines: cleanedLines.map((l) => ({
+                lines: cleanedLines.map(({ id: lineId, ...l }) => ({
+                  // A session-local `new-` id is not a row the backend has ever seen, so it
+                  // is left off: no id means "match by SKU, or create it".
+                  ...(lineId.startsWith(NEW_LINE_PREFIX) ? {} : { id: lineId }),
                   ...l,
                   // Empty means "clear this figure", which is what the BE reads a `null` as.
                   unit_price: l.unit_price || null,
@@ -1272,6 +1362,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
       setPlanningChangeBatch(result.planning_change_batch ?? null);
       setIsEditing(false);
       setRemovedLineIds(new Set());
+      setNewLines([]);
     } catch {
       // The mutation already toasted the reason; leave the session open so nothing typed
       // is lost.
@@ -1714,6 +1805,20 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   <CardTitle>Order lines</CardTitle>
                 </CardHeading>
                 <CardToolbar className="flex-wrap">
+                  {/* Only inside an edit session: outside one there is nothing to add a line
+                      TO that would ever be saved. */}
+                  {isEditing ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={handleAddLine}
+                    >
+                      <Plus className="size-4" aria-hidden />
+                      Add line
+                    </Button>
+                  ) : null}
                   {/* The order is the unit here, so the search is over the lines already
                       loaded - no request, no paging, and it answers "is this item on this
                       order" on a 200-line contract. */}
