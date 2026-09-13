@@ -93,6 +93,15 @@ import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
 /** Persisted in the URL as `?view=list` (D2). Grid is the default the board shipped as. */
 type BoardView = 'grid' | 'list';
 
+/**
+ * One line of the results block: a server outcome, or an order THIS press could not send.
+ *
+ * `so_number` is the panel's own addition and is never posted anywhere: an order the press
+ * left out has no `pso_id` to look a name up by, and the results block must not fall back to
+ * an id nobody can read. A server result carries none and is named off the board as before.
+ */
+type BoardBatchResult = ConfirmManyOrderResult & { so_number?: string };
+
 function boardViewFrom(value: string | null): BoardView {
   return value === 'list' ? 'list' : 'grid';
 }
@@ -791,7 +800,7 @@ export function FulfilmentBoardPanel({
    */
   const [undoAllOpen, setUndoAllOpen] = React.useState(false);
   const [confirmingAll, setConfirmingAll] = React.useState(false);
-  const [batchResults, setBatchResults] = React.useState<ConfirmManyOrderResult[] | null>(null);
+  const [batchResults, setBatchResults] = React.useState<BoardBatchResult[] | null>(null);
 
   /**
    * CONFIRM: one call, grouped per order, each order writing in its OWN transaction
@@ -833,13 +842,26 @@ export function FulfilmentBoardPanel({
       if (wantedOrders.size === 0) return;
 
       let adoptedAny = false;
+      // WHAT ADOPT ITSELF ANSWERED WITH, kept rather than discarded. The id is in the
+      // response body (that is why the mutation resolves with one), and the refetch below is
+      // a second, slower read of the same fact that can still come back `null`: the board
+      // derives an order's planning record from its MIRROR LINES, so an order whose core
+      // lines were re-ingested under new ids reports "not adopted" however many times it has
+      // been adopted (SO419851, 13 Sep walk). Reading the press's own answer is what stops a
+      // Confirm (1) posting nothing at all.
+      const adoptedPsoIds = new Map<string, string>();
       for (const order of liveBoard.orders) {
         if (!wantedOrders.has(order.sales_order_id) || order.project_sales_order_id) continue;
         try {
-          await adopt.mutateAsync(order.sales_order_id);
+          const adopted = await adopt.mutateAsync(order.sales_order_id);
           adoptedAny = true;
+          if (adopted?.project_sales_order_id) {
+            adoptedPsoIds.set(order.sales_order_id, adopted.project_sales_order_id);
+          }
         } catch {
-          // Left out of the batch below: with no pso_id there is nothing to post for it.
+          // Named in the results block below rather than swallowed: with no pso_id there is
+          // nothing to post for this order, and a press that ends having said nothing reads
+          // as a press that did nothing.
         }
       }
       if (adoptedAny) {
@@ -855,6 +877,11 @@ export function FulfilmentBoardPanel({
           .filter((order) => order.project_sales_order_id)
           .map((order) => [order.sales_order_id, order.project_sales_order_id as string]),
       );
+      // The adopt answer WINS over the refetched board: both name the same record when the
+      // board is in step, and only one of them is the press's own.
+      for (const [salesOrderId, psoId] of adoptedPsoIds) {
+        psoIdBySalesOrder.set(salesOrderId, psoId);
+      }
 
       const orders: {
         pso_id: string;
@@ -864,13 +891,27 @@ export function FulfilmentBoardPanel({
       // An order whose planning change is already applied is NOT sent again (AC-P3-4). It is
       // reported instead, in the same place a server refusal is reported, so a press that
       // deliberately skipped it does not read as a press that did nothing.
-      const skipped: ConfirmManyOrderResult[] = [];
+      const skipped: BoardBatchResult[] = [];
       for (const salesOrderId of wantedOrders) {
         const psoId = psoIdBySalesOrder.get(salesOrderId);
-        if (!psoId) continue;
-        const soNumber = liveBoard.orders.find(
+        const standing = liveBoard.orders.find(
           (order) => order.sales_order_id === salesOrderId,
-        )?.so_number;
+        );
+        const soNumber = standing?.so_number;
+        // NO PLANNING RECORD, AND ADOPTING IT DID NOT PRODUCE ONE (it was refused, or it
+        // answered without an id). There is nothing to post against, so the order is left
+        // out - but it is left out OUT LOUD, beside every other order's outcome, because the
+        // silent `continue` here ended the whole press with an empty screen.
+        if (!psoId) {
+          skipped.push({
+            pso_id: '',
+            so_number: soNumber,
+            ok: false,
+            error:
+              'is not being planned yet, so there is nothing to confirm it against. Press Start planning on it, then confirm again.',
+          } as BoardBatchResult);
+          continue;
+        }
         if (soNumber && appliedSoNumbers.has(soNumber)) {
           skipped.push({
             pso_id: psoId,
@@ -883,7 +924,14 @@ export function FulfilmentBoardPanel({
         if (lines.length > 0) {
           // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders
           // on two different pending batches each answer their own.
-          const orderBatchId = soNumber ? batchIdBySoNumber.get(soNumber) ?? null : null;
+          // The batches the screen LOADED first (it was opened on one), and the BOARD'S own
+          // statement of the newest pending batch for this order second (AC-B1). Same fact,
+          // two sources: a board reached without `?batch=` loads no batch rows at all, and
+          // sending `null` there confirmed the lines while leaving the change Pending.
+          const orderBatchId =
+            (soNumber ? batchIdBySoNumber.get(soNumber) : undefined) ??
+            standing?.pending_change_batch_id ??
+            null;
           orders.push({ pso_id: psoId, lines, batch_id: orderBatchId });
         }
       }
@@ -1375,12 +1423,12 @@ export function FulfilmentBoardPanel({
               const order = board.data?.orders.find(
                 (candidate) => candidate.project_sales_order_id === result.pso_id,
               );
-              const label = order?.so_number ?? result.pso_id;
+              const label = order?.so_number ?? result.so_number ?? result.pso_id;
               // A refusal names the LINES it refused, not just the order: the fix is on one
               // row, and "SO404352: refused" sends a planner to read thirty of them.
               const failing = result.failing_lines ?? [];
               return (
-                <li key={result.pso_id} className="space-y-0.5">
+                <li key={`${result.pso_id}-${result.so_number ?? ''}`} className="space-y-0.5">
                   <span
                     className={`block text-sm break-words ${result.ok ? 'text-emerald-700' : 'text-destructive'}`}
                   >
