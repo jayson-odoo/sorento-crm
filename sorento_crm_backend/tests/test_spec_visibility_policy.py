@@ -600,6 +600,41 @@ def test_put_inactive_key_422(client, db):
     assert "retired_key" in response.text
 
 
+def test_put_accepts_a_default_hidden_key_absent_from_the_registry(client, db):
+    """The shipped default policy (migration 510) names `board_thickness` in its
+    Hide list before the `chore/sink-thickness-loader` lane that registers that
+    spec key ships - measured 422 "Unknown spec key: board_thickness" in browser
+    verification the moment a CS admin re-saves ANY tier whose card inherited
+    those chips. `thickness` IS a seeded, currently-registered key; `board_thickness`
+    is deliberately NOT, standing in for the not-yet-loaded one. A genuinely
+    unknown key (`wibble`) still 422s - this is not a blanket bypass, only the
+    keys the ship-closed default itself already committed to."""
+    _spec_key(db, "thickness", "Thickness")
+    contact = _contact(db)
+    db.flush()
+
+    response = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={"spec_keys": None, "excluded_spec_keys": ["thickness", "board_thickness"]},
+    )
+    assert response.status_code == 200, response.text
+    excluded = response.json()["override"]["excluded_specs"]
+    assert {ref["key"] for ref in excluded} == {"thickness", "board_thickness"}
+    board_thickness_ref = next(ref for ref in excluded if ref["key"] == "board_thickness")
+    # No registry row exists for it, so the label falls back to a readable form
+    # of the key - never the raw slug with its underscore (no-slugs-in-the-UI
+    # rule, CLAUDE.md).
+    assert board_thickness_ref["label"] != "board_thickness"
+    assert "_" not in board_thickness_ref["label"]
+
+    unknown = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={"spec_keys": None, "excluded_spec_keys": ["wibble"]},
+    )
+    assert unknown.status_code == 422
+    assert "wibble" in unknown.text
+
+
 def test_put_unknown_segment_404(client, db):
     response = client.put(
         f"{BASE}/segments/ZZT-NO-SUCH-SEGMENT",

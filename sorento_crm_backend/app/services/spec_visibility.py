@@ -230,11 +230,16 @@ def hidden_keys(policy: SpecPolicy, registry_keys: Iterable[str]) -> frozenset[s
 
 
 def validated_spec_keys(db: Session, spec_keys) -> Optional[list[str]]:
-    """Reject a key that is not an ACTIVE registry key before it is stored.
+    """Reject a key that is not an ACTIVE registry key before it is stored -
+    EXCEPT a `DEFAULT_HIDDEN_KEYS` key, which is always accepted (browser
+    verification): it is the shipped intent (S1), and its registry row can
+    arrive on its own lane's own schedule (`board_thickness`, the sink-
+    thickness loader) - a card merely showing the ship-closed default must not
+    422 on Save because that OTHER lane has not landed yet.
 
-    Inactive and unknown get the SAME answer (AC-12): from the admin's side,
-    a retired key is not a key they may hide or show any more than one that
-    was never registered.
+    Inactive and unknown get the SAME answer otherwise (AC-12): from the
+    admin's side, a retired key is not a key they may hide or show any more
+    than one that was never registered.
     """
     from app.models.product_spec import ProductSpecRegistry
 
@@ -244,16 +249,19 @@ def validated_spec_keys(db: Session, spec_keys) -> Optional[list[str]]:
     if not wanted:
         return []
 
-    active = {
-        row_key
-        for (row_key,) in db.query(ProductSpecRegistry.spec_key)
-        .filter(
-            ProductSpecRegistry.spec_key.in_(wanted),
-            ProductSpecRegistry.is_active.is_(True),
-        )
-        .all()
-    }
-    missing = [k for k in wanted if k not in active]
+    to_check = [k for k in wanted if k not in DEFAULT_HIDDEN_KEYS]
+    active: set[str] = set()
+    if to_check:
+        active = {
+            row_key
+            for (row_key,) in db.query(ProductSpecRegistry.spec_key)
+            .filter(
+                ProductSpecRegistry.spec_key.in_(to_check),
+                ProductSpecRegistry.is_active.is_(True),
+            )
+            .all()
+        }
+    missing = [k for k in to_check if k not in active]
     if missing:
         raise AppException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -405,6 +413,24 @@ def full_registry_rows(db: Session) -> list[tuple[str, str]]:
     )
 
 
+def _readable_fallback_label(key: str) -> str:
+    """A key with no registry row, rendered the way a person reads it - the
+    SAME fallback rule `lib/spec-readable.ts`'s `readable()` uses for a key it
+    has no special case for: underscores to spaces, first letter capitalised
+    only (`board_thickness` -> "Board thickness", never "Board Thickness").
+
+    Reached only for a key genuinely absent from the registry - a
+    `DEFAULT_HIDDEN_KEYS` key whose row has not landed yet (a separate lane,
+    e.g. the sink-thickness loader creating `board_thickness`) is the case
+    this exists for, but nothing here assumes that; any registry-less key
+    reads better this way than as a bare slug.
+    """
+    words = key.replace("_", " ").strip()
+    if not words:
+        return key
+    return words[0].upper() + words[1:]
+
+
 def _resolve_refs(db: Session, keys: Optional[frozenset[str]]) -> Optional[list[dict]]:
     """Stored keys resolved to `{key, label}`, sorted by label - the admin card
     renders labels and never a key slug."""
@@ -421,7 +447,7 @@ def _resolve_refs(db: Session, keys: Optional[frozenset[str]]) -> Optional[list[
     )
     label_map = dict(rows)
     return sorted(
-        ({"key": k, "label": label_map.get(k, k)} for k in keys),
+        ({"key": k, "label": label_map.get(k) or _readable_fallback_label(k)} for k in keys),
         key=lambda ref: ref["label"],
     )
 
@@ -438,7 +464,7 @@ def policy_payload(db: Session, policy: SpecPolicy) -> dict:
     label_map = dict(registry_rows)
     hidden = hidden_keys(policy, registry_keys)
     hidden_refs = sorted(
-        ({"key": k, "label": label_map.get(k, k)} for k in hidden),
+        ({"key": k, "label": label_map.get(k) or _readable_fallback_label(k)} for k in hidden),
         key=lambda ref: ref["label"],
     )
     return {
