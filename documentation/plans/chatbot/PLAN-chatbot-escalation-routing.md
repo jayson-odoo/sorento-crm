@@ -1,6 +1,6 @@
 # PLAN - Chatbot escalation routing: verb, team and brand from one source each
 
-Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477, with one comment fix (S9) on top; the behaviour is carried by ec2b3bb7b and 36e24e928. S1 to S6, three review rounds (security, reviewer, reviewer re-check) and the owner console pass, with the tester's rounds folded in at each; guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. The console pass found one defect and it is fixed (see "Found on the console pass"); a re-pass on the stack is the owner's call. Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
+Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477 (S9 comment fix on top); two owner console passes since, each finding one defect, each fixed with the tester's real-shape tests merged: the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), and the miss lane's combined did-you-mean plus escalate offer (b6e108634). S1 to S6, three review rounds, the tester's five rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. See "Found on the console pass" for both root causes, which are #863's. Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
 UAC: `chatbot-escalation-routing-acceptance-criteria.md` (AC-11xx).
 Predecessors: `PLAN-chatbot-focus-multi-domain.md` (lane 1, the dialogue state this lane's open questions live in), `PLAN-chatbot-turn-engine.md` S5 (the escalation lane port, hazards H26 / H27 / H37).
 Issue: #865 (13 Sep 2026).
@@ -155,6 +155,23 @@ A second, narrower gap fell out of the same audit and is fixed beside it: the fa
 narrowing read the team THIS turn inherited as a stand-in for the previous turn's, which on a
 five-key session is the hard default. It reads the carried DOMAIN re-derived
 (`escalation._carried_team`, already D3's source) instead.
+
+**Second pass, same day, same class one lane over (b6e108634).** "SRTWT2643 photo" missed, and the
+miss lane's combined reply offered three codes AND "would you like me to escalate to marketing
+product team?" with a Yes escalate button - but the `product_pick` it armed recorded only the
+codes, and `engine._resolve_open_question` would not let a picker resolve on a yes. So the yes
+answered nothing and the turn was assigned the chain's hard default: offered Marketing Product,
+got Customer Service. Fixed as one mechanism with the deferral S4 already had: the question now
+carries `then: {escalate: {offer_team}}` (written only when the escalate button really went out,
+by the same `answer.offer_escalation_team` the sentence uses), the engine lets such a question
+resolve on `is_affirmative`, and `_product_pick` grows a yes arm (accept, to the offered team)
+and a no arm (the existing decline, which clears it).
+
+A PICK still answers the product rather than escalating, and that is the one subtlety: two
+deferrals ride `then.escalate`, so the lane's own - which always writes the `team_word` KEY, null
+included - is told from the miss lane's offer by MEMBERSHIP of that key, not by its truthiness.
+Both halves are #863's: the five-key session dropped the legacy readers that used to catch a
+yes, and the miss ladder never recorded what its own copy promised.
 
 ### Not built, with the reason
 
