@@ -172,7 +172,9 @@ def _company_keys(company: Any) -> set[str]:
     return keys
 
 
-def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
+def escalation_context(
+    item: dict[str, Any], *, ctx: dict[str, Any], team: Any = None
+) -> dict[str, Any]:
     """The brand / company axes this escalation routes on. Pure.
 
     A five-rung ladder, in the live body's order:
@@ -194,7 +196,16 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     prev = _prev_variables(ctx)
 
-    team = jsc.get(jsc.get(output, "routing"), "suggested_team") or None
+    # `team` is the turn's INHERITED team by default, and the LANDED team when the caller
+    # names one (D3, owner ruling 13 Sep 2026). The same-team rung below is the carry rule,
+    # and the team it has to be judged against is the one this escalation actually lands
+    # on: an escalation almost always changes team, so comparing against the inherited
+    # value carried the previous thread's brand onto a different team's assignment (the
+    # 21 Aug turn: a customer-service order thread's axes on a marketing_product routing).
+    # `_human_intervention` re-runs this function once the ladder has decided, which is
+    # why the override is a parameter rather than a second copy of the ladder.
+    if team is None:
+        team = jsc.get(jsc.get(output, "routing"), "suggested_team") or None
     prev_routing = jsc.get(prev, "routing")
     same_team = bool(
         jsc.truthy(prev_routing)
@@ -563,8 +574,17 @@ def _human_intervention(
     """Assign the conversation, or ask which team - one place, both seam sources.
 
     The person / team decision needs a seam, so it happens HERE rather than in `run()`,
-    where the production bundle does not exist yet.
+    where the production bundle does not exist yet. So does the product resolve, and the
+    ORDER of the two is owner ruling D6: the product first. An unknown code with a family
+    word gets the did-you-mean rows before the question about which team, because the
+    brand the team is narrowed by comes off the product.
+
+    Nothing here runs on a dry run: `run()` returns from its own preview branch above, so
+    no seam is reached at all (H37, AC-1141) - not this one, not the round robin.
     """
+    product = _resolve_product(ctx, context_item, services)
+    if product is not None and product["ask"] is not None:
+        return product["ask"]
     routed = _person_routing(ctx, context_item, team, services)
     if routed is not None and routed["kind"] == "clarify":
         # The tail keys on `clarify_text` (`compile_state`'s clarify arm), the same field
@@ -591,17 +611,162 @@ def _human_intervention(
                 "options": routed.get("option_pairs") or [],
             },
         }
-    if routed is not None and routed["kind"] == "assign":
-        actions = _assign(
-            ctx,
-            context_item,
-            routed["team"],
-            services,
-            assignee=routed["assignee"],
-        )
-        return {**result, "actions": actions, "pending": None}
-    actions = _assign(ctx, context_item, team, services)
+    # THE LANDED TEAM, which is what the body, the comment and the customer copy all name
+    # (AC-1129). `routed is None` means the ladder had nothing to correct, so the team the
+    # routing chain resolved stands.
+    landed = routed["team"] if (routed is not None and routed["kind"] == "assign") else team
+    assignee = routed["assignee"] if routed is not None else None
+    actions = _assign(
+        ctx,
+        _landed_item(context_item, ctx=ctx, team=team, landed=landed, product=product),
+        landed,
+        services,
+        assignee=assignee,
+    )
     return {**result, "actions": actions, "pending": None}
+
+
+def _this_turn_products(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """The product entities THIS MESSAGE named, in parser order.
+
+    `current_message` is the discriminator, not mere presence: the emission carries the
+    conversation's carried scope too, and resolving that would answer an escalation with
+    the brand of whatever product the thread was about three turns ago. D11-clean - these
+    are the parser's own entities, never a read of the customer's words.
+    """
+    output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    return [
+        e
+        for e in jsc.array(jsc.get(output, "entities"))
+        if jsc.truthy(e)
+        and jsc.lower_or_empty(jsc.get(e, "hint")) == "product"
+        and jsc.get(e, "current_message") is True
+    ]
+
+
+def _brand_of(row: Any) -> str | None:
+    """`display.brand.brand_code`, lowercased - `lanes/business/gate.py`'s own `_bc`.
+
+    The SAME read, deliberately not re-derived: the brand a resolved row carries is what
+    `next_assignee` narrows the tier-1 pool by (brand-tagged members plus untagged ones),
+    and a second spelling of that field is how the two would come to disagree.
+    """
+    brand = jsc.get(jsc.get(row, "display"), "brand")
+    code = (
+        (jsc.get(brand, "brand_code") if isinstance(brand, dict) else brand)
+        if jsc.truthy(brand)
+        else None
+    )
+    return jsc.js_string(code).strip().lower() if jsc.truthy(code) else None
+
+
+def _resolve_product(
+    ctx: dict[str, Any], context_item: dict[str, Any], services: Any
+) -> dict[str, Any] | None:
+    """The product this turn named, resolved through the business lane's own resolver.
+
+    H26, closed. The lane used to route brand-blind: `resolve_and_gate` was in the seam and
+    never called, so "ESCALATE TO MARKETING FOR SRTWB8004" reached `next_assignee` with
+    `brand_code: null` and round-robined the whole marketing tier 1 - Zhi Yang got Mocha
+    products and Kia Yee got Sorento ones, on a roster where every member is brand-tagged.
+
+    Returns `None` when this turn named no product at all, which is D3's case and carries
+    the previous turn's axes instead (`escalation_context`'s same-team rung). Otherwise:
+
+        {"brand_code": <str | None>, "code": <the picked canonical code | None>,
+         "ask": <the product_pick arm | None>}
+
+    **A resolver failure DEGRADES, it never fails the turn** (AC-1142). The escalation is
+    real whether or not we can name the brand: a caught resolver leaves the brand null,
+    which is exactly the pool the lane drew from before this was wired, and the person
+    still gets the conversation.
+    """
+    if not _this_turn_products(ctx):
+        return None
+    seam = getattr(services, "resolve_and_gate", None) if services is not None else None
+    if seam is None:
+        return None  # a bundle without the seam behaves exactly as it did before
+    try:
+        answer = seam(ctx, context_item)
+    except Exception:  # noqa: BLE001 - a brand nobody could resolve is not a failed turn
+        logger.warning("chatbot: the escalation resolve did not run", exc_info=True)
+        answer = None
+    resolved = [r for r in jsc.array(jsc.get(answer, "resolved")) if jsc.truthy(r)]
+    did_you_mean = [r for r in jsc.array(jsc.get(answer, "did_you_mean")) if jsc.truthy(r)]
+    brands = list(dict.fromkeys(b for b in (_brand_of(r) for r in resolved) if b))
+    code = jsc.get(resolved[0], "canonical_code") if len(resolved) == 1 else None
+    return {
+        # One row is the answer. Several rows that agree on a brand still name it - that is
+        # a code twin across companies, and both twins route to the same brand's member.
+        # Several that disagree name none: a guess there picks a person for the wrong brand.
+        "brand_code": brands[0] if len(brands) == 1 else None,
+        "code": code,
+        "ask": None,
+        "resolved": resolved,
+        "did_you_mean": did_you_mean,
+    }
+
+
+def _agent_for_team(team: Any) -> Any:
+    """The agent the DOMAIN TABLE pairs with this team (AC-1129).
+
+    `derive_routing` reads `DOMAIN_SPEC[domain].escalation_team` and `_AGENT_BY_DOMAIN[
+    domain]` as a pair; this is that pair inverted, so the agent is never a second copy of
+    a per-domain fact. A team several domains route to with DIFFERENT agents (`purchasing`
+    is both `general_enquiries` and `incoming_stock_enquiries`) cannot be answered by the
+    table, and a team no domain routes to at all (`purchasing_certification`, `it_admin`)
+    is not in it - both take the same default the parser's own chain ends in.
+    """
+    from app.services.chatbot.contracts import DOMAIN_SPEC
+    from app.services.chatbot.head.output_exchange import _AGENT_BY_DOMAIN, _DEFAULT_AGENT
+
+    wanted = jsc.nullish_str(team).strip().lower()
+    agents = {
+        _AGENT_BY_DOMAIN[domain]
+        for domain, spec in DOMAIN_SPEC.items()
+        if spec.escalation_team == wanted and _AGENT_BY_DOMAIN.get(domain)
+    }
+    return agents.pop() if len(agents) == 1 else _DEFAULT_AGENT
+
+
+def _landed_item(
+    context_item: dict[str, Any],
+    *,
+    ctx: dict[str, Any],
+    team: Any,
+    landed: Any,
+    product: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The item the assignment is built from: the LANDED team's axes, never the inherited.
+
+    Two corrections, both measured on the 21 Aug turn (`ESCALATE TO MARKETING FOR
+    SRTWB8004`, previous turn an order thread on customer_service):
+
+    * the brand / company axes are re-derived against the team the ladder LANDED on (D3),
+      so a carried brand only survives when the previous turn was already on that team;
+    * the agent is the landed team's own, not the one inherited beside the old team -
+      `order_enquiries` on a marketing_product assignment names an agent that team does
+      not have.
+
+    The brand the PRODUCT resolved wins over both, because it is this turn's own evidence
+    (plan steps 1 to 3). The COMPANY never is: it is the contact's, resolved by
+    `next_assignee` from the phone number, and a Mocha-brand product living under the
+    Sorento company is why (D7, AC-1122) - 1,264 rows on this install.
+    """
+    item = context_item
+    same = jsc.nullish_str(team).strip().lower() == jsc.nullish_str(landed).strip().lower()
+    if not same:
+        item = escalation_context(item, ctx=ctx, team=landed)
+        item = {**item, "agent_code": _agent_for_team(landed)}
+    if product is not None:
+        item = {
+            **item,
+            "brand_code": product["brand_code"],
+            "routing_source": (
+                "resolved_product" if product["brand_code"] else item.get("routing_source")
+            ),
+        }
+    return item
 
 
 def _parser_team(ctx: dict[str, Any], team: Any) -> Any:
@@ -1046,7 +1211,13 @@ def _assign(
     clock still starts, because the escalation is just as real.
     """
     if assignee is None:
-        assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
+        # The body's team is the LANDED one, named here as well as on the item so the two
+        # cannot drift: `_landed_item` re-derives the axes for it, and a caller that hands
+        # `_assign` a team without going through that helper (the dry-run preview does not
+        # reach here at all) still gets a body that agrees with the customer copy.
+        assignee = services.next_assignee(
+            {**_next_assignee_body(ctx, context_item), "team_code": team}
+        )
     sla = services.sla_create(_sla_body(ctx, context_item, assignee))
     return _assignment_actions(
         ctx,
@@ -1167,8 +1338,17 @@ def _next_assignee_body(ctx: dict[str, Any], context_item: dict[str, Any]) -> di
     literals so a change to them is a change to this file and shows up in a diff.
     """
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    # `agent_code` is the LANDED team's own agent when the ladder moved the turn off the
+    # inherited team (`_landed_item`), and the turn's inherited agent otherwise. Reading
+    # `routing.suggested_agent` unconditionally is what put `order_enquiries` on a
+    # marketing_product assignment (AC-1129).
+    agent_code = jsc.get(context_item, "agent_code")
     return {
-        "agent_code": jsc.get(jsc.get(output, "routing"), "suggested_agent"),
+        "agent_code": (
+            agent_code
+            if jsc.truthy(agent_code)
+            else jsc.get(jsc.get(output, "routing"), "suggested_agent")
+        ),
         "team_code": jsc.get(context_item, "team"),
         "contact_phone_number": jsc.get(jsc.get(ctx, "contact"), "phone"),
         "policy_code": NEXT_ASSIGNEE_POLICY_CODE,

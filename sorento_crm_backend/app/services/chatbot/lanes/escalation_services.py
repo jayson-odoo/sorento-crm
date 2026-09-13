@@ -10,7 +10,7 @@ is what lets the 66-fixture replay run as JSON in, JSON out.
 | `get-round-robin-assignee` (httpRequest) | `next_assignee` | `POST /api/v1/external/next-assignee`'s own handler |
 | (the same node, previewed) | `preview_assignee` | the same handler with `preview: true` |
 | `conversation-sla-tracking-create` (httpRequest) | `sla_create` | `ConversationSLATrackingService.create_tracking` |
-| (B-HB-1, not live) | `resolve_and_gate` | S6a's `business.run_until_exit` |
+| `Call 'sub-resolve-and-gate'` | `resolve_and_gate` | the business lane's own resolver |
 | (the member roster) | `team_members` | `app.api.v1.external.team_members` |
 | (new, 6 Sep 2026) | `staff_lookup` | `users` x `team_members` x `agent_teams`, read here |
 
@@ -20,10 +20,14 @@ the owner adds `out_of_scope` to `system_settings.chatbot_completed_lanes` - wit
 CRM services stubbed at their own boundary, because a seam nothing ever executes is where
 a typo waits for production.
 
-`team_members` is declared and NOT wired. It is not spare machinery: `test_no_hard_default_
-team` (xfail `strict=True`) names it as the roster read the B-TEAM-1' promotion needs, and
-the field is what its stub duck-types against. Like `resolve_and_gate` it raises rather
-than half-working, so promoting the build without wiring it is a loud failure.
+`team_members` is declared and NOT wired, and it is the only one left that way. The team
+ladder this lane runs (`escalation._person_routing`) asks over the CATALOGUE, which is a
+constant, never over a fetched roster - so there is nothing for it to read. It raises
+rather than half-working, so a future arm that does need a roster fails loudly instead of
+silently asking over the wrong list.
+
+`resolve_and_gate` IS wired as of PLAN-chatbot-escalation-routing (H26 closed): the
+escalation lane resolves the product THIS turn named so the assignment can name its brand.
 """
 from __future__ import annotations
 
@@ -38,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class EscalationServices:
-    """One bundle, four callables. `resolve_and_gate` is never called on the live graph."""
+    """One bundle, six callables. `team_members` is the only one not wired (see above)."""
 
     resolve_and_gate: Any
     next_assignee: Any
@@ -186,6 +190,78 @@ def _staff_lookup(db: Any):
     return call
 
 
+def _product_rows(payload: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """`(resolved, did_you_mean)` out of one resolver payload. Pure.
+
+    The resolver answers per TOKEN with `matches` and `alternatives`, each row carrying
+    `uuid`, `canonical_code`, `company_id`, `company_name`, `match_tier` and `display`
+    (`app/services/entity_resolver.py`'s `as_dict`). The escalation lane wants one fact off
+    it - the brand of the product the customer named - so the split is two rules:
+
+    * `resolved` - PRODUCT rows at the `exact` tier. That is the same test the business
+      lane's did-you-mean planner uses to decide a token resolved (`miss_suggest._is_exact`),
+      so the two lanes cannot disagree about whether a code is known.
+    * `did_you_mean` - every other product row, matches and alternatives alike, in the order
+      the resolver ranked them (variants first, then by similarity). These are the rows the
+      customer is offered when the code they typed does not exist.
+
+    Product rows only: an escalation turn commonly names a category beside the code ("BIDET
+    SEAT COVER FOR SRTWC60630-SH") and a category has no brand to route by. De-duplicated by
+    uuid on the resolved side and by code on the offer side, which is what the customer can
+    tell apart on screen.
+    """
+    resolved: dict[str, dict[str, Any]] = {}
+    offers: dict[str, dict[str, Any]] = {}
+    for resolution in (payload or {}).get("resolutions") or []:
+        if not isinstance(resolution, dict):
+            continue
+        rows = [
+            row
+            for key in ("matches", "alternatives")
+            for row in (resolution.get(key) or [])
+            if isinstance(row, dict)
+        ]
+        for row in rows:
+            if str(row.get("entity_type") or "").lower() != "product":
+                continue
+            code = row.get("canonical_code")
+            if str(row.get("match_tier") or "").lower() == "exact":
+                uuid = str(row.get("uuid") or code or "")
+                if uuid and uuid not in resolved:
+                    resolved[uuid] = row
+            elif code and code not in offers:
+                offers[str(code)] = row
+    return list(resolved.values()), list(offers.values())
+
+
+def _resolve_and_gate(db: Any):
+    def call(ctx: Any, _item: Any = None) -> dict[str, Any]:
+        """The turn's product, resolved by the BUSINESS LANE's resolver (H26).
+
+        One round trip, the same body the business lane sends
+        (`resolve_gate.resolve_entity_body`), through the same seam
+        (`business.services.production_services(db).resolve_entity`) - which is the route
+        function behind `POST /api/v1/system/references/resolve`, so the spec-search
+        fallback and the brand stamp are the ones every other lane gets rather than a second
+        resolver that drifts. The session is the lane's own, and it carries the contact's
+        company scope (H56), which is the scope AC-1142 names.
+
+        `sub-resolve-and-gate`'s gate is deliberately NOT run over the answer. The gate's
+        job is to decide which entity types a DOMAIN serves and to build the roster axes for
+        an offer; an escalation turn has no domain of its own and is not offering a roster,
+        and the one fact this lane needs is on the resolver rows already. Running the gate
+        would add a probe (an MCP call) that nothing here reads.
+        """
+        from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
+        from app.services.chatbot.lanes.business.services import production_services
+
+        payload = production_services(db).resolve_entity(resolve_entity_body(ctx))
+        resolved, did_you_mean = _product_rows(payload if isinstance(payload, dict) else {})
+        return {"resolved": resolved, "did_you_mean": did_you_mean}
+
+    return call
+
+
 def _not_live(name: str):
     def call(*_args: Any, **_kwargs: Any) -> Any:
         raise NotImplementedError(
@@ -245,7 +321,7 @@ def build(db: Any) -> EscalationServices:
     session now belongs to `production_session()`, whose `with` block is the unit of work.
     """
     return EscalationServices(
-        resolve_and_gate=_not_live("resolve_and_gate"),
+        resolve_and_gate=_resolve_and_gate(db),
         next_assignee=_next_assignee(db),
         preview_assignee=_preview_assignee(db),
         sla_create=_sla_create(db),
