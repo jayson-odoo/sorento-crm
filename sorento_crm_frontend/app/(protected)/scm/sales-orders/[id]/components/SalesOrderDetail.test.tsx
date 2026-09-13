@@ -2048,8 +2048,10 @@ describe('SalesOrderDetail - R4: footer totals exclude a cancelled line', () => 
   it('excludes a cancelled line from the Qty ordered and Outstanding footer totals', () => {
     const LINES: SalesOrderLine[] = [
       {
+        // 20 delivered, so Qty ordered (320) and Outstanding (300) print DIFFERENT
+        // figures - otherwise both totals read 320 and `getByText('320')` matches twice.
         id: 'l-1', sku: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm',
-        qty_ordered: 320, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+        qty_ordered: 320, qty_delivered: 20, uom: 'PCS', warehouse_code: 'BRW-BB',
         line_status: 'open', required_date: '2026-08-30',
       },
       {
@@ -2068,9 +2070,12 @@ describe('SalesOrderDetail - R4: footer totals exclude a cancelled line', () => 
     openTab('Lines');
 
     const foot = document.querySelector('tfoot') as HTMLElement;
-    // 320 only - not 392 (320 + the cancelled line's 72).
+    // Qty ordered: 320 only - not 392 (320 + the cancelled line's 72).
     expect(within(foot).getByText('320')).toBeInTheDocument();
     expect(within(foot).queryByText('392')).not.toBeInTheDocument();
+    // Outstanding: 300 (320 - 20 delivered) only - not 372 (300 + the cancelled line's 72).
+    expect(within(foot).getByText('300')).toBeInTheDocument();
+    expect(within(foot).queryByText('372')).not.toBeInTheDocument();
   });
 
   it('excludes a cancelled line from the Total (amount) footer', () => {
