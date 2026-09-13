@@ -243,9 +243,20 @@ DIVERGENCES: list[Divergence] = [
     # This is the owner REVERSING a decision, not a port defect: the old n8n
     # spine's own `compile-current-state.js` carries the same `... || null` reset
     # the port reproduced, so no capture can show the new behaviour and every
-    # capture of the shape shows the old one. Pinned by
-    # test_tail_units.py::TestTierAndPromoOffersCarryUntilOverwritten and
-    # ::TestTheMemberOfferCarryStopsAtTheAnswer.
+    # capture of the shape shows the old one.
+    #
+    # RE-RULED AND RE-PINNED (owner D19, 13 Sep 2026). The console pass on :3081
+    # found the lifetime had gone again - AC-1014's close-on-answer clause, 12 Sep
+    # - so rule 1 was restored as the STICKY ROSTER and now lives in the dialogue
+    # module rather than in `_offer_carry`'s label carry. The two classes this
+    # entry used to name (`test_tail_units.py::
+    # TestTierAndPromoOffersCarryUntilOverwritten` and
+    # `::TestTheMemberOfferCarryStopsAtTheAnswer`) retired with the TTL ladder and
+    # the 36-key wall (AC-1033 / D9). What pins the rule today:
+    # `tests/chatbot/test_sticky_roster_tail.py` (all five classes - the roster
+    # survives its own pick, non-roster kinds still consume, a new roster
+    # replaces, the offer rides, the merged question's yes and no) and
+    # `tests/chatbot/test_open_question.py::TestStickyRoster`.
     #
     # FIELD-SCOPED, deliberately: only the two fields the rule moves come off,
     # in both the sealed and the unwrapped shape, plus the `pending` marker the

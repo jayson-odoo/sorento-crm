@@ -259,6 +259,11 @@ def with_offer(roster: Any, offer_question: Any) -> dict[str, Any]:
     Idempotent by construction: a second offer on the same roster REPLACES `payload.offer`
     rather than nesting, so the team the customer is being asked about is always this
     turn's.
+
+    THE OFFER RECORDS ITS DOMAIN ONCE, on the offer and not again on every row. `ask`
+    stamps the question's domain onto rows that carry none, which is right for a roster
+    assembled across domains and pure duplication for an offer of one team; and a second
+    copy of a fact is a second thing that can disagree with the first.
     """
     if not isinstance(roster, dict):
         return roster
@@ -267,7 +272,10 @@ def with_offer(roster: Any, offer_question: Any) -> dict[str, Any]:
     offer = {
         "team": offer_payload.get("team"),
         "domain": offer_payload.get("domain"),
-        "options": _freeze(jsc.get(offer_question, "options")),
+        "options": [
+            {key: value for key, value in row.items() if key != "domain"}
+            for row in _freeze(jsc.get(offer_question, "options"))
+        ],
     }
     return {
         **roster,

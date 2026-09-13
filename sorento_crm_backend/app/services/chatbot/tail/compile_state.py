@@ -193,6 +193,48 @@ def _prev_context(prev_question: Any) -> str | None:
     return _SELECTION_CONTEXT_BY_KIND.get(kind)
 
 
+def _is_the_same_question_re_armed_empty(asked: Any, previous: Any) -> bool:
+    """Is this turn's ask the SAME question again, minus its rows? (D19 rule 1)
+
+    A ROSTER kind, the same kind and the same `expects`, the live one has rows and the
+    new one has none. That pair can only be a re-arm: a genuinely new roster has rows,
+    and a numbered list with no rows is not one the customer can answer.
+
+    ROSTER kinds only, and the exclusion is load-bearing rather than tidy. A `member_offer`
+    is re-offered with NO options on purpose - it is a plain accept or decline, and the two
+    company names the customer reads ride the composed text rather than a persisted roster
+    (`escalation`'s clarify arm, pinned by `test_s5_escalation_seams.py::
+    test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state` and
+    `test_s3_canned_and_ideate.py::TestOfferHold`) - so an empty re-offer there is the
+    question, not a re-arm of one. `expects` is in the test for the same class of reason:
+    the plain escalate offer (`team_pick`, `yes_no`) can never inherit the roster of a team
+    CLARIFY (`team_pick`, `pick`).
+    """
+    if not isinstance(asked, dict) or not isinstance(previous, dict):
+        return False
+    if asked.get("kind") not in pending_open_question.ROSTER_KINDS:
+        return False
+    if asked.get("kind") != previous.get("kind") or asked.get("expects") != previous.get("expects"):
+        return False
+    return not jsc.array(asked.get("options")) and len(jsc.array(previous.get("options"))) > 0
+
+
+def _offer_answer(qf: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The riding offer's yes or no, read back off the emission (D19 rule 3).
+
+    `apply_open_question_outcome` writes `escalation.is_escalation_confirmation` from the
+    SAME outcome that stamps `open_question_answered`, so where one is present so is the
+    other: True is the customer accepting the offer, False is them declining it. That is
+    what makes this a faithful reading rather than a second guess at the answer.
+    """
+    confirmed = jsc.get(jsc.get(qf, "escalation"), "is_escalation_confirmation")
+    if confirmed is True:
+        return {"yes_no": "yes"}
+    if confirmed is False:
+        return {"yes_no": "no"}
+    return None
+
+
 def _offer_rides_on_roster(asked: Any, previous: Any) -> bool:
     """Is the question this turn asked the ONE-TEAM escalate offer, over a live roster?
 
@@ -1110,6 +1152,15 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     )
     if isinstance(asked, dict) and asked.get("kind"):
         turn_no = int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0)
+        if _is_the_same_question_re_armed_empty(asked, previous):
+            # A RE-ARM IS NOT A NEW LIST (D19 rule 1). `_ask_for_turn` re-derives the
+            # label from keys THIS turn re-seated, so a menu whose lane did not run again
+            # comes back with no rows at all - and persisting that over the live roster
+            # threw away the very list the customer is looking at, which is what the
+            # owner's console pass saw on the promo tier menu: "1" answered, then "2"
+            # resolved nothing because the three tiers were gone. The rows the previous
+            # turn FROZE are the rows on the screen, so they are the rows that stand.
+            asked = {**asked, "options": previous["options"]}
         if pending_open_question.same_question(asked, previous) and isinstance(previous, dict):
             turn_no = int(previous.get("asked_at_turn", turn_no))
         if _offer_rides_on_roster(asked, previous):
@@ -1129,16 +1180,15 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         # roster whose riding offer the customer accepted. The rule is
         # `dialogue/open_question.carry_after_answer`; this is its one caller.
         # THE ANSWER THE HANDLER SAW, off the engine's own stamp, because only its
-        # `yes_no` tells an ACCEPTED riding offer (the question goes) from a declined one
-        # (the roster stays). The emission is the fallback for a caller that drove the
-        # tail without the engine - a replay fixture, a unit call - where the stamp is
-        # absent; it is the same object the stamp was normalised FROM, so the two cannot
-        # say different things.
+        # `yes_no` tells an ACCEPTED riding offer (the whole question goes) from a
+        # declined one (the roster stays). `_offer_answer` reads the same decision back
+        # off the emission for a caller that drove the tail without the engine - a replay
+        # fixture, a unit call - where the stamp is absent.
         answered_here = jsc.get(jsc.get(ctx, "parse"), "_answered")
         variables["open_question"] = pending_open_question.carry_after_answer(
             previous,
             jsc.get(qf, "open_question_answered"),
-            jsc.get(answered_here, "answer") or jsc.get(qf, "answers_open_question"),
+            jsc.get(answered_here, "answer") or _offer_answer(qf),
         )
     else:
         # Nothing asked this turn: the one the customer is still looking at stands.
