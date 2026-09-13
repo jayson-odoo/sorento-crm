@@ -17,7 +17,7 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Optional
 
-from sqlalchemy import case, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -25,8 +25,8 @@ from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderL
 from app.models.product import Product
 from app.services.error_handler import handle_not_found
 from app.services.order_service import (
-    _delivered_clause,
     _delivered_status_ids,
+    _outstanding_clause,
     resolve_warehouse_ids,
 )
 
@@ -64,6 +64,26 @@ def _qty(v: Any) -> int:
     `round`, whose bankers' rounding would print 2 for 2.5 and 4 for 3.5 in the same
     reply, which reads as an arithmetic error to whoever checks the column."""
     return int(_dec(v).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def _rank(rows: list[dict], *, outstanding_key: str, total_key: str, name_key: str) -> list[dict]:
+    """R10 (owner ruling, 13 Sep 2026): every breakdown group is ranked by OUTSTANDING
+    quantity descending, ties by the total descending, then by name ascending.
+
+    Sorted HERE, once, rather than in each renderer: the reply, a future screen and any
+    other reader all show the same order, and the presenter's contract is simply "print
+    them in the order given". A NULL name (`Unassigned`) takes its place by its numbers
+    like any other name - pinning it to an end would state a ranking the quantities do
+    not support.
+    """
+    return sorted(
+        rows,
+        key=lambda r: (
+            -_dec(r.get(outstanding_key)),
+            -_dec(r.get(total_key)),
+            str(r.get(name_key) or ""),
+        ),
+    )
 
 
 def _as_date(v: DateLike) -> Optional[date]:
@@ -257,22 +277,28 @@ def _fill_so(
         "order_date_min": min(dates) if dates else None,
         "order_date_max": max(dates) if dates else None,
     }
-    result["so_by_location"] = [
-        {
-            "code": v["code"],
-            "ordered_qty": _qty(v["ordered_qty"]),
-            "outstanding_qty": _qty(v["outstanding_qty"]),
-        }
-        for v in by_location.values()
-    ]
-    result["so_by_customer"] = [
-        {
-            "customer_name": v["customer_name"],
-            "ordered_qty": _qty(v["ordered_qty"]),
-            "outstanding_qty": _qty(v["outstanding_qty"]),
-        }
-        for v in by_customer.values()
-    ]
+    result["so_by_location"] = _rank(
+        [
+            {
+                "code": v["code"],
+                "ordered_qty": _qty(v["ordered_qty"]),
+                "outstanding_qty": _qty(v["outstanding_qty"]),
+            }
+            for v in by_location.values()
+        ],
+        outstanding_key="outstanding_qty", total_key="ordered_qty", name_key="code",
+    )
+    result["so_by_customer"] = _rank(
+        [
+            {
+                "customer_name": v["customer_name"],
+                "ordered_qty": _qty(v["ordered_qty"]),
+                "outstanding_qty": _qty(v["outstanding_qty"]),
+            }
+            for v in by_customer.values()
+        ],
+        outstanding_key="outstanding_qty", total_key="ordered_qty", name_key="customer_name",
+    )
     # AC-1114: one row per SO, lines rolled up; distinct warehouse codes joined
     # by ", "; sorted by order_date asc then so_number.
     so_rows = [
@@ -302,30 +328,25 @@ def _fill_do(
     order_date_from: DateLike,
     order_date_to: DateLike,
 ) -> None:
-    """AC-1115, REWRITTEN THREE TIMES by the owner's own testing, 13 Sep 2026.
+    """AC-1115, REWRITTEN FOUR TIMES by the owner's own testing, 13 Sep 2026. R11 is
+    the settled one: "the breakdown list should tally with whatever reported at the
+    summary at the top."
 
-    TWO populations in ONE pass over the same rows, because the owner asked two
-    different questions of this block:
+    ONE population - DOs that are still outstanding (`_outstanding_clause`, the null-safe
+    negation of the canonical delivered predicate) - and every figure in the block is
+    computed over exactly it: `do_count` counts them, `do_qty` sums their line quantity,
+    `pending_qty` is what is still outstanding on them, `delivered_qty` is the difference
+    (the part-delivered portion, 0 while a DO is outstanding as a whole), the date range
+    spans them, the breakdowns name them and the detail list is them.
 
-    * **Every DO in scope** (pending AND delivered), which is what `do_qty` sums
-      and `delivered_qty` is the rest of - R6: "need to show the delivered also,
-      so the by location and by customer needs to be the DO qty (O/S: {pending})
-      so DO qty minus pending should be those quantity delivered."
-    * **Pending DOs only** (`_delivered_clause`'s null-safe negation), which is
-      what `pending_qty` sums and what `do_count`, the date range and `do_rows[]`
-      are computed over - R1 stands there: "most of the DO are delivered right so
-      what's outstanding? I thought outstanding means still got some pending
-      quantity." A delivered DO is never counted, never dates the window and
-      never gets a row.
-
-    `do_qty == delivered_qty + pending_qty` therefore holds on the block and on
-    every breakdown row by construction, the same way the SO identity does, while
-    the COUNT still answers "how many DOs are still outstanding". A location or
-    customer that only ever had a delivered DO still gets a breakdown row, with
-    `pending_qty` 0 - printed, never elided (R6).
+    So every number tallies with every other by construction: the breakdown quantities
+    sum to the block's, the brackets sum to its Outstanding, and a fully delivered DO
+    appears nowhere - not as a total, not as a name with `(O/S: 0)` beside it, not as a
+    row. R6's two-population block (totals over every DO, count over the outstanding
+    ones) is what made the breakdown disagree with the summary above it.
     """
     delivered_status_ids = _delivered_status_ids(db)
-    delivered_clause = _delivered_clause(delivered_status_ids)
+    outstanding_clause = _outstanding_clause(delivered_status_ids)
 
     q = (
         db.query(
@@ -335,13 +356,16 @@ def _fill_do(
             Customer.customer_name,
             Warehouse.warehouse_code,
             OrderLine.quantity,
-            case((delivered_clause, True), else_=False).label("is_delivered"),
         )
         .join(OrderLine, OrderLine.order_id == Order.id)
         .outerjoin(Customer, Customer.id == Order.customer_id)
         .outerjoin(Warehouse, Warehouse.id == OrderLine.warehouse_id)
         .filter(Order.deleted_at.is_(None), OrderLine.product_id == product.id)
     )
+    # `None` means no delivered status is configured at all, so every DO is outstanding
+    # and no filter is needed (`_outstanding_clause`'s own docstring).
+    if outstanding_clause is not None:
+        q = q.filter(outstanding_clause)
     if customer_query:
         q = q.filter(
             Customer.customer_name.ilike(
@@ -367,27 +391,22 @@ def _fill_do(
     for r in q.all():
         qty = _dec(r.quantity)
         do_qty_total += qty
+        pending_total += qty
 
         loc = by_location.setdefault(
             r.warehouse_code,
             {"code": r.warehouse_code, "do_qty": Decimal(0), "pending_qty": Decimal(0)},
         )
         loc["do_qty"] += qty
+        loc["pending_qty"] += qty
 
         cust = by_customer.setdefault(
             r.customer_name,
             {"customer_name": r.customer_name, "do_qty": Decimal(0), "pending_qty": Decimal(0)},
         )
         cust["do_qty"] += qty
-
-        if r.is_delivered:
-            continue
-
-        # Pending only, from here down: the outstanding total, the window, the count and
-        # the rows (R1, which R6 left standing for exactly these).
-        pending_total += qty
-        loc["pending_qty"] += qty
         cust["pending_qty"] += qty
+
         if r.order_date:
             dates.append(r.order_date)
 
@@ -411,22 +430,28 @@ def _fill_do(
         "do_date_min": min(dates) if dates else None,
         "do_date_max": max(dates) if dates else None,
     }
-    result["do_by_location"] = [
-        {
-            "code": v["code"],
-            "do_qty": _qty(v["do_qty"]),
-            "pending_qty": _qty(v["pending_qty"]),
-        }
-        for v in by_location.values()
-    ]
-    result["do_by_customer"] = [
-        {
-            "customer_name": v["customer_name"],
-            "do_qty": _qty(v["do_qty"]),
-            "pending_qty": _qty(v["pending_qty"]),
-        }
-        for v in by_customer.values()
-    ]
+    result["do_by_location"] = _rank(
+        [
+            {
+                "code": v["code"],
+                "do_qty": _qty(v["do_qty"]),
+                "pending_qty": _qty(v["pending_qty"]),
+            }
+            for v in by_location.values()
+        ],
+        outstanding_key="pending_qty", total_key="do_qty", name_key="code",
+    )
+    result["do_by_customer"] = _rank(
+        [
+            {
+                "customer_name": v["customer_name"],
+                "do_qty": _qty(v["do_qty"]),
+                "pending_qty": _qty(v["pending_qty"]),
+            }
+            for v in by_customer.values()
+        ],
+        outstanding_key="pending_qty", total_key="do_qty", name_key="customer_name",
+    )
     # R3 (owner testing round 2, 13 Sep 2026): "need to show delivered also, doesn't
     # mean if it is 0 then we don't show, if it is 0 then we show 0, don't hide." The
     # ROWS carry `do_qty` and `delivered_qty` again - only the rows: the block and the
