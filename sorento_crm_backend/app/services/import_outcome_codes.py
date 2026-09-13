@@ -45,6 +45,15 @@ WAREHOUSE_NOT_FOUND = "warehouse_not_found"
 GRN_HEADER_NOT_FOUND = "grn_header_not_found"
 PACKING_LIST_NOT_FOUND = "packing_list_not_found"
 ORDER_NOT_IN_MASTER = "order_not_in_master"
+#: The sheet names a sales order the CRM holds, but no line of it fits the row. Three
+#: reasons, reported as the FIRST filter that refused it, because they send the reader to
+#: three different places: the catalogue, the warehouse, or the quantity on the order.
+NO_LINE_FOR_ITEM = "no_line_for_item"
+LOCATION_DIFFERS = "location_differs"
+QTY_EXCEEDS_ORDERED = "qty_exceeds_ordered"
+#: The sales order is not project demand, so it is not planned here and no order inquiry
+#: row can hang off it.
+ORDER_NOT_PLANNABLE = "order_not_plannable"
 
 # --- written, and destructive: the half a job detail exists to show ------
 #: An order line that is no longer on the uploaded book, so the upload closed it. Its own
@@ -74,6 +83,10 @@ DUPLICATE_LINE = "duplicate_line"
 #: GRN/SPO importers depend on that existing meaning (UAC AC-6.2).
 DUPLICATE_IN_FILE = "duplicate_in_file"
 ALREADY_EXISTS = "already_exists"
+#: The sales order line this row names already carries an order inquiry row, raised by the
+#: board or by an earlier upload. Left exactly as it is, links included: the sheet is a
+#: migration, not a second opinion about a row somebody has since worked on.
+ALREADY_RAISED = "already_raised"
 ALREADY_RECEIVED_GUARD = "already_received_guard"
 #: Real money on the document with no product behind it (handling, transport, misc). Counted
 #: on the order and never written as a stock line: a quantity of 1 "HANDLING CHARGES" is not
@@ -146,6 +159,10 @@ LABELS: dict[str, str] = {
     GRN_HEADER_NOT_FOUND: "GRN header not found",
     PACKING_LIST_NOT_FOUND: "Packing list not found for container",
     ORDER_NOT_IN_MASTER: "Order not found in Master sheet",
+    NO_LINE_FOR_ITEM: "No sales order line for this item",
+    LOCATION_DIFFERS: "No line for this item at that stock location",
+    QTY_EXCEEDS_ORDERED: "Quantity exceeds what the line ordered",
+    ORDER_NOT_PLANNABLE: "Not project demand, so it is not planned here",
     LINE_CLOSED: "Closed: no longer on the uploaded book",
     LINE_WITHDRAWN: "Withdrawn: this sheet no longer lists it",
     REORDER_LEVEL_CLEARED: "Reorder level cleared: blank in the file",
@@ -153,6 +170,7 @@ LABELS: dict[str, str] = {
     DUPLICATE_LINE: "Identical line already exists on this order",
     DUPLICATE_IN_FILE: "The same row appears earlier in this file",
     ALREADY_EXISTS: "Already exists",
+    ALREADY_RAISED: "Left alone: this line already carries an order inquiry",
     ALREADY_RECEIVED_GUARD: "Blocked: quantity already received",
     CHARGE_LINE: "Charge line: money on the order, no product",
     DOCUMENT_OWNED_ELSEWHERE: "Left alone: another upload owns this document",
