@@ -271,6 +271,24 @@ describe('the change indicator, lightbox and one shortfall line (owner feedback 
     expect(within(dialog).getByText('Buy 334 (was 234)')).toBeInTheDocument();
   });
 
+  /**
+   * Radix's `Dialog.Content` auto-generates an `aria-describedby` pointing at a
+   * `Dialog.Description` it expects to exist, and warns on the console when nothing with
+   * that id is rendered - `DialogContent` here carries a `DialogHeader`/`DialogTitle` and a
+   * `DialogBody`, but no `DialogDescription` (grepped `BoardChangeTable.tsx` - absent), so
+   * the dialog's own `aria-describedby` resolves to nothing on the page.
+   */
+  it('carries an aria-describedby that resolves to a real element, so Radix stops warning', async () => {
+    render(<BoardChangeTable annotation={sampleAnnotation()} />);
+
+    fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo'));
+    const dialog = await screen.findByRole('dialog');
+
+    const describedBy = dialog.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy as string)).not.toBeNull();
+  });
+
   it('AC-C10: an unchanged field is omitted from the dialog entirely', async () => {
     // Only the date moved this time; qty and decision are the SAME on both sides.
     render(

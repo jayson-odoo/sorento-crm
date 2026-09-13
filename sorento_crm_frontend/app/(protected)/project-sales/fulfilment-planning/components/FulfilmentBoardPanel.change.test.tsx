@@ -130,7 +130,10 @@ import {
   buildBoard,
   type BoardDemandLine,
 } from '../../_shared/lib/__testsupport__/boardFixture';
-import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
+import {
+  MOCK_PLANNING_CHANGE_BATCH_PENDING,
+  MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+} from '../../_shared/__mocks__/planningChanges';
 
 const TODAY = '2026-08-18';
 
@@ -299,6 +302,143 @@ describe('the changed cell shows the hazard icon and lightbox (owner feedback 13
     const icons = screen.getAllByTestId('board-change-icon-pcr-381895-1');
     const columns = icons.map((icon) => icon.getAttribute('data-column')).sort();
     expect(columns).toEqual(['outstanding', 'required_date']);
+  });
+});
+
+/**
+ * S7 (AC-C5), through the FULL panel this time - `BoardChangeTable.suggestion.test.tsx`'s
+ * own S7 test calls `annotationOf` directly and never exercises `annotationsByCell`'s real
+ * cell-keying. Tester two saw SO400884's product-changed line render with NO icon at all in
+ * the live walk: the board's live line carries the NEW product code (B2155-NL-WHITE, what
+ * the SO now says) while the row (`pcr-s7`, reused verbatim from `MOCK_PLANNING_CHANGE_
+ * BATCH_PENDING`) carries the SAME new code as `item_code` and the OLD one only on
+ * `from.item_code` (`outstanding_diff.py`'s `_change_for_pair`: `Change.item_code` is always
+ * the AFTER side) - the fixture the captain asked for, run through the real pipeline rather
+ * than asserted as an isolated annotation.
+ */
+describe('the product-changed row, through the full panel (S7)', () => {
+  const ROW_S7 = MOCK_PLANNING_CHANGE_BATCH_PENDING.orders
+    .find((order) => order.so_number === 'SO400875')!
+    .rows.find((row) => row.id === 'pcr-s7')!;
+
+  function renderProductChangedPanel() {
+    getPlanningChangeBatch.mockResolvedValue({
+      ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+      id: 'pcb-so400875',
+      orders: [
+        {
+          ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.orders[0],
+          project_sales_order_id: 'pso-400875',
+          so_number: 'SO400875',
+          core_sales_order_id: 'so-400875',
+          rows: [ROW_S7],
+        },
+      ],
+    });
+    getPlanningBoard.mockResolvedValue(
+      buildBoard(
+        [
+          demand({
+            sales_order_id: 'so-400875',
+            so_number: 'SO400875',
+            line_no: 2,
+            // The board's live line: the product the SO says TODAY - the NEW one, the same
+            // code `pcr-s7.item_code` carries (never the one on `from.item_code`).
+            item_code: 'B2155-NL-WHITE',
+            qty: '134',
+            project_line_id: 'pl-400875-2',
+          }),
+        ],
+        { today: TODAY, freeStock: {}, granularity: 'week' },
+      ),
+    );
+    return renderPanel('pcb-so400875', ['SO400875']);
+  }
+
+  it('shows the icon on the product row in the grid', async () => {
+    renderProductChangedPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(await screen.findByTestId('board-change-icon-pcr-s7')).toBeInTheDocument();
+  });
+
+  it('shows the icon in the List view, on the Outstanding or Suggested column', async () => {
+    renderProductChangedPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SO400875');
+
+    const icons = screen.getAllByTestId('board-change-icon-pcr-s7');
+    expect(icons.length).toBeGreaterThan(0);
+    const columns = icons.map((icon) => icon.getAttribute('data-column'));
+    expect(columns.some((column) => column === 'outstanding' || column === 'suggested')).toBe(
+      true,
+    );
+  });
+
+  /**
+   * Measured, not assumed: with `project_line_id` set (as the fixture above does), the List
+   * view already finds the icon - `annotationsByLine` keys directly off it. The genuine red
+   * is the row this order's OWN header already states is possible: `SO400875` in the shared
+   * mock reads `is_adopted: false`, meaning a project_line_id is exactly what a row on an
+   * unadopted order does NOT reliably carry. `annotationsByCell` (the grid) has a FALLBACK
+   * for this - the FIRST cell of the same (so_number, item_code) pair - but `annotationsByLine`
+   * (`_shared/lib/boardChangeAnnotations.ts` ~348-364) has none: `if (!lineId) continue;`
+   * drops the row on the floor. This is the shape closest to tester two's "no icon at all" -
+   * the List view is silent on a changed line the grid still manages to show.
+   */
+  it('still shows the icon in the List view when the row carries no project_line_id (an unadopted order)', async () => {
+    getPlanningChangeBatch.mockResolvedValue({
+      ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+      id: 'pcb-so400875',
+      orders: [
+        {
+          ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.orders[0],
+          project_sales_order_id: 'pso-400875',
+          so_number: 'SO400875',
+          core_sales_order_id: 'so-400875',
+          rows: [{ ...ROW_S7, project_line_id: null }],
+        },
+      ],
+    });
+    getPlanningBoard.mockResolvedValue(
+      buildBoard(
+        [
+          demand({
+            sales_order_id: 'so-400875',
+            so_number: 'SO400875',
+            line_no: 2,
+            item_code: 'B2155-NL-WHITE',
+            qty: '134',
+          }),
+        ],
+        { today: TODAY, freeStock: {}, granularity: 'week' },
+      ),
+    );
+    renderPanel('pcb-so400875', ['SO400875']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    // The grid still finds it (its own cellByOrderItem fallback), so this is not a data gap.
+    expect(await screen.findByTestId('board-change-icon-pcr-s7')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SO400875');
+
+    expect(screen.queryByTestId('board-change-icon-pcr-s7')).toBeInTheDocument();
+  });
+
+  it('reads "Product changed, was <old item code>" then the sourcing lines in the dialog', async () => {
+    renderProductChangedPanel();
+    const icon = await screen.findByTestId('board-change-icon-pcr-s7');
+    fireEvent.click(icon);
+
+    const dialog = await screen.findByTestId('board-change-dialog');
+    expect(within(dialog).getByText(/Product changed, was B2155-NL-BLUE/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Release 134 B2155-NL-BLUE, free at BRW-IB'),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Buy 134 B2155-NL-WHITE for 4 Sep'),
+    ).toBeInTheDocument();
   });
 });
 

@@ -1135,6 +1135,47 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     ).not.toBeInTheDocument();
   });
 
+  /**
+   * A "Changed" link (the sales-order list's own badge, or the planning-changes list) deep-
+   * links `?orders=<so>&batch=<id>`. Clicking a SECOND such link while this screen is already
+   * open is a SAME-ROUTE navigation - only the query string moves - and today `boardOrders`
+   * (FulfilmentPlanningClient.tsx ~147-156) is a `React.useState` LAZY INITIALIZER that reads
+   * `urlOrders`/`batchId` once, at mount: a lazy initializer never re-runs on a later render,
+   * so the worklist stays on screen instead of opening the board for the new order. A full
+   * reload (a fresh mount) works, which is why this only reproduces on a rerender of the SAME
+   * instance, not a fresh `renderClient()` call.
+   */
+  it('opens the board for a new order when a same-route link only changes ?orders=/?batch=', async () => {
+    currentSearchParams = new URLSearchParams('orders=SO100001&batch=batch-1');
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1), planned(2)]));
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    });
+    const tree = (
+      <QueryClientProvider client={client}>
+        <FulfilmentPlanningClient />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree);
+
+    await screen.findByText('Planning 1 sales orders together');
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100001'], 'week', false, {}),
+    );
+
+    getPlanningBoard.mockClear();
+    // The SAME route, a DIFFERENT order and batch - what clicking a second "Changed" link
+    // does, without ever unmounting this screen.
+    currentSearchParams = new URLSearchParams('orders=SO100002&batch=batch-2');
+    rerender(tree);
+
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(['SO100002'], 'week', false, {}),
+    );
+  });
+
   it('writes the selection into the URL when the board is opened', async () => {
     listFulfilmentPlanning.mockResolvedValue(envelope([planned(1), planned(2)]));
     getPlanningBoard.mockReturnValue(new Promise(() => {}));
