@@ -1776,10 +1776,13 @@ def _outstanding_location_header(token: Any, codes: Any) -> str:
 def _outstanding_so_block(so: dict, by_location: list, by_customer: list) -> str:
     lines = [
         "*Sales order outstanding*",
+        # R7 (owner testing round 3, 13 Sep 2026): the COUNT opens both blocks, then the
+        # quantities, then the window - one line order for the two, so the reader learns
+        # it once.
+        f"Sales orders: {_outstanding_fmt_int(so.get('so_count'))}",
         f"Ordered: {_outstanding_fmt_int(so.get('ordered_qty'))}",
         f"Transferred to DO: {_outstanding_fmt_int(so.get('transferred_qty'))}",
         f"Outstanding: {_outstanding_fmt_int(so.get('outstanding_qty'))}",
-        f"Sales orders: {_outstanding_fmt_int(so.get('so_count'))}",
         f"Order date range: {_outstanding_date_range(so.get('order_date_min'), so.get('order_date_max'))}",
         "*_By location_*",
     ]
@@ -1800,28 +1803,37 @@ def _outstanding_so_block(so: dict, by_location: list, by_customer: list) -> str
 
 
 def _outstanding_do_block(do: dict, by_location: list, by_customer: list) -> str:
-    """Owner ruling, 13 Sep 2026: this block is DOs that still have pending quantity,
-    so every number in it is a pending figure. `DO qty:` and `Delivered:` are gone (a
-    delivered DO is not in the population at all), and the breakdown lines drop the
-    `(O/S: ...)` suffix the SO block keeps - that suffix exists to show pending
-    ALONGSIDE a bigger total, and there is no bigger total here to show it against."""
+    """R6/R7 (owner testing round 3, 13 Sep 2026): the DO block says OUTSTANDING, never
+    "pending", and states the delivered figure beside it - "need to show the delivered
+    also, so the by location and by customer needs to be the DO qty (O/S: {pending}) so
+    DO qty minus pending should be those quantity delivered".
+
+    Same five-line order as the SO block above (count, quantities, window), and the same
+    `name: total (O/S: outstanding)` breakdown shape - over EVERY DO in scope here, so a
+    location or customer whose outstanding is 0 still prints `(O/S: 0)` rather than being
+    dropped. `Delivery orders` stays the count of DOs still outstanding, which is what the
+    detail list below then shows."""
     lines = [
-        "*Delivery order pending*",
-        f"Pending: {_outstanding_fmt_int(do.get('pending_qty'))}",
+        "*Delivery order outstanding*",
         f"Delivery orders: {_outstanding_fmt_int(do.get('do_count'))}",
+        f"DO qty: {_outstanding_fmt_int(do.get('do_qty'))}",
+        f"Delivered: {_outstanding_fmt_int(do.get('delivered_qty'))}",
+        f"Outstanding: {_outstanding_fmt_int(do.get('pending_qty'))}",
         f"DO date range: {_outstanding_date_range(do.get('do_date_min'), do.get('do_date_max'))}",
         "*_By location_*",
     ]
     for row in by_location:
         lines.append(
             f"{_outstanding_label(row.get('code'))}: "
-            f"{_outstanding_fmt_int(row.get('pending_qty'))}"
+            f"{_outstanding_fmt_int(row.get('do_qty'))} "
+            f"(O/S: {_outstanding_fmt_int(row.get('pending_qty'))})"
         )
     lines.append("*_By customer_*")
     for row in by_customer:
         lines.append(
             f"{_outstanding_label(row.get('customer_name'))}: "
-            f"{_outstanding_fmt_int(row.get('pending_qty'))}"
+            f"{_outstanding_fmt_int(row.get('do_qty'))} "
+            f"(O/S: {_outstanding_fmt_int(row.get('pending_qty'))})"
         )
     return "\n".join(lines)
 
@@ -1855,7 +1867,7 @@ def _outstanding_report(report: dict) -> str:
     do = report.get("do")
     if do is not None:
         if not do.get("do_count"):
-            blocks.append("*Delivery order pending*\nNo pending delivery order.")
+            blocks.append("*Delivery order outstanding*\nNo outstanding delivery order.")
         else:
             blocks.append(
                 _outstanding_do_block(
@@ -1901,7 +1913,8 @@ _OUTSTANDING_DO_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("Location", "location", "label"),
     ("DO Qty", "do_qty", "qty"),
     ("Delivered", "delivered_qty", "qty"),
-    ("Pending", "pending_qty", "qty"),
+    # R7: the row says "Outstanding" like the block; the JSON field stays `pending_qty`.
+    ("Outstanding", "pending_qty", "qty"),
     ("DO Date", "do_date", "date"),
 )
 

@@ -30,11 +30,17 @@ class OutstandingSOBlock(BaseModel):
 
 
 class OutstandingDOBlock(BaseModel):
-    """Delivery orders that still have pending quantity, and nothing else (owner
-    ruling, 13 Sep 2026: "I thought outstanding means still got some pending
-    quantity"). A delivered DO is not in the population, so there is no total to
-    sum it into: `do_qty` and `delivered_qty` do not exist on this route."""
+    """Two populations, one block (owner rulings R1 then R6, 13 Sep 2026).
 
+    `do_qty` sums EVERY DO in scope and `delivered_qty` is the rest of it, so
+    `do_qty == delivered_qty + pending_qty` holds. `pending_qty`, `do_count` and the
+    date range cover DOs that are still outstanding only - "most of the DO are
+    delivered right so what's outstanding?" - so the count answers how many DOs are
+    still open while the quantities also state what has gone out.
+    """
+
+    do_qty: int
+    delivered_qty: int
     pending_qty: int
     do_count: int
     do_date_min: Optional[date] = None
@@ -54,12 +60,19 @@ class OutstandingSOCustomerRow(BaseModel):
 
 
 class OutstandingDOLocationRow(BaseModel):
+    """`do_qty` over every DO at this location, `pending_qty` over the outstanding ones
+    (R6). A location that only ever had delivered DOs still gets a row, `pending_qty` 0."""
+
     code: Optional[str] = None
+    do_qty: int
     pending_qty: int
 
 
 class OutstandingDOCustomerRow(BaseModel):
+    """As `OutstandingDOLocationRow`, per customer."""
+
     customer_name: Optional[str] = None
+    do_qty: int
     pending_qty: int
 
 

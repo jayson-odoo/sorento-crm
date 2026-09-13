@@ -265,16 +265,17 @@ def test_order_date_window_filters_so_and_do(client, db):
     assert sum(row["ordered_qty"] for row in body["so_by_location"]) == 6
     assert [row["order_date"] for row in body["so_rows"]] == ["2026-06-01"]
 
-    # R1: the DO block covers pending DOs only - both seeded DOs are pending
-    # (`actual_delivery_date=None`), so the pending figure is unchanged in value,
-    # only the field name changes (`do_qty` is gone from the response entirely).
+    # R1 then R6 (13 Sep 2026): `pending_qty` covers outstanding DOs only, while
+    # `do_qty` covers every DO in scope. Both seeded DOs here are pending
+    # (`actual_delivery_date=None`), so the two figures coincide and `delivered_qty`
+    # is 0 - the window assertion below is about the DATE filter either way.
     assert body["do"]["pending_qty"] == 25
     assert body["do"]["do_count"] == 1
     assert [row["pending_qty"] for row in body["do_rows"]] == [25]
     assert sum(row["pending_qty"] for row in body["do_by_location"]) == 25
     assert sum(row["pending_qty"] for row in body["do_by_customer"]) == 25
-    assert "do_qty" not in body["do"]
-    assert "delivered_qty" not in body["do"]
+    assert body["do"]["do_qty"] == 25
+    assert body["do"]["delivered_qty"] == 0
 
 
 # --------------------------------------------------------------------- AC-1112
@@ -309,8 +310,8 @@ def test_warehouse_codes_filter_and_null_bucket(client, db):
     fbody = filtered.json()
     assert fbody["so"]["ordered_qty"] == 10  # the NULL-warehouse line is excluded
     assert {row["code"] for row in fbody["so_by_location"]} == {"ZZT-BRW-IB"}
-    assert fbody["do"]["pending_qty"] == 7  # R1: the seeded DO is pending, do_qty is gone
-    assert "do_qty" not in fbody["do"]
+    assert fbody["do"]["pending_qty"] == 7  # the seeded DO is pending, so do_qty matches it
+    assert fbody["do"]["do_qty"] == 7
     assert {row["code"] for row in fbody["do_by_location"]} == {"ZZT-BRW-IB"}
 
 

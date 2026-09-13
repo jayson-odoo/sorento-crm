@@ -17,7 +17,7 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Optional
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -25,8 +25,8 @@ from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderL
 from app.models.product import Product
 from app.services.error_handler import handle_not_found
 from app.services.order_service import (
+    _delivered_clause,
     _delivered_status_ids,
-    _outstanding_clause,
     resolve_warehouse_ids,
 )
 
@@ -302,22 +302,30 @@ def _fill_do(
     order_date_from: DateLike,
     order_date_to: DateLike,
 ) -> None:
-    """AC-1115, REWRITTEN (owner ruling, 13 Sep 2026): "most of the DO are
-    delivered right so what's outstanding? I thought outstanding means still
-    got some pending quantity."
+    """AC-1115, REWRITTEN THREE TIMES by the owner's own testing, 13 Sep 2026.
 
-    "Delivery order pending" means exactly that: the population is DOs matching
-    `_outstanding_clause` (`order_service.py`, the null-safe negation of the
-    canonical delivered predicate) and NOTHING else. A delivered DO contributes
-    to no figure on this route - not a total, not a breakdown line, not a row -
-    so there is no `do_qty` to sum it into and no `delivered_qty` to state it
-    as, and both are gone from the response. Every number the block carries is
-    a pending quantity, which is why the reply's breakdown lines print
-    `name: pending` with no `(O/S: ...)` suffix: there is nothing left to
-    disambiguate them from.
+    TWO populations in ONE pass over the same rows, because the owner asked two
+    different questions of this block:
+
+    * **Every DO in scope** (pending AND delivered), which is what `do_qty` sums
+      and `delivered_qty` is the rest of - R6: "need to show the delivered also,
+      so the by location and by customer needs to be the DO qty (O/S: {pending})
+      so DO qty minus pending should be those quantity delivered."
+    * **Pending DOs only** (`_delivered_clause`'s null-safe negation), which is
+      what `pending_qty` sums and what `do_count`, the date range and `do_rows[]`
+      are computed over - R1 stands there: "most of the DO are delivered right so
+      what's outstanding? I thought outstanding means still got some pending
+      quantity." A delivered DO is never counted, never dates the window and
+      never gets a row.
+
+    `do_qty == delivered_qty + pending_qty` therefore holds on the block and on
+    every breakdown row by construction, the same way the SO identity does, while
+    the COUNT still answers "how many DOs are still outstanding". A location or
+    customer that only ever had a delivered DO still gets a breakdown row, with
+    `pending_qty` 0 - printed, never elided (R6).
     """
     delivered_status_ids = _delivered_status_ids(db)
-    pending_clause = _outstanding_clause(delivered_status_ids)
+    delivered_clause = _delivered_clause(delivered_status_ids)
 
     q = (
         db.query(
@@ -327,16 +335,13 @@ def _fill_do(
             Customer.customer_name,
             Warehouse.warehouse_code,
             OrderLine.quantity,
+            case((delivered_clause, True), else_=False).label("is_delivered"),
         )
         .join(OrderLine, OrderLine.order_id == Order.id)
         .outerjoin(Customer, Customer.id == Order.customer_id)
         .outerjoin(Warehouse, Warehouse.id == OrderLine.warehouse_id)
         .filter(Order.deleted_at.is_(None), OrderLine.product_id == product.id)
     )
-    # `None` from `_outstanding_clause` means no delivered status is configured at
-    # all, so every DO is pending and no filter is needed (its own docstring).
-    if pending_clause is not None:
-        q = q.filter(pending_clause)
     if customer_query:
         q = q.filter(
             Customer.customer_name.ilike(
@@ -352,6 +357,7 @@ def _fill_do(
     if order_date_to is not None:
         q = q.filter(Order.order_date <= order_date_to)
 
+    do_qty_total = Decimal(0)
     pending_total = Decimal(0)
     dates: list[date] = []
     by_location: dict = {}
@@ -360,19 +366,30 @@ def _fill_do(
 
     for r in q.all():
         qty = _dec(r.quantity)
-        pending_total += qty
-        if r.order_date:
-            dates.append(r.order_date)
+        do_qty_total += qty
 
         loc = by_location.setdefault(
-            r.warehouse_code, {"code": r.warehouse_code, "pending_qty": Decimal(0)}
+            r.warehouse_code,
+            {"code": r.warehouse_code, "do_qty": Decimal(0), "pending_qty": Decimal(0)},
         )
-        loc["pending_qty"] += qty
+        loc["do_qty"] += qty
 
         cust = by_customer.setdefault(
-            r.customer_name, {"customer_name": r.customer_name, "pending_qty": Decimal(0)}
+            r.customer_name,
+            {"customer_name": r.customer_name, "do_qty": Decimal(0), "pending_qty": Decimal(0)},
         )
+        cust["do_qty"] += qty
+
+        if r.is_delivered:
+            continue
+
+        # Pending only, from here down: the outstanding total, the window, the count and
+        # the rows (R1, which R6 left standing for exactly these).
+        pending_total += qty
+        loc["pending_qty"] += qty
         cust["pending_qty"] += qty
+        if r.order_date:
+            dates.append(r.order_date)
 
         do_acc = per_do.setdefault(
             r.do_id,
@@ -387,17 +404,27 @@ def _fill_do(
             do_acc["_locations"].add(r.warehouse_code)
 
     result["do"] = {
+        "do_qty": _qty(do_qty_total),
+        "delivered_qty": _qty(do_qty_total - pending_total),
         "pending_qty": _qty(pending_total),
         "do_count": len(per_do),
         "do_date_min": min(dates) if dates else None,
         "do_date_max": max(dates) if dates else None,
     }
     result["do_by_location"] = [
-        {"code": v["code"], "pending_qty": _qty(v["pending_qty"])}
+        {
+            "code": v["code"],
+            "do_qty": _qty(v["do_qty"]),
+            "pending_qty": _qty(v["pending_qty"]),
+        }
         for v in by_location.values()
     ]
     result["do_by_customer"] = [
-        {"customer_name": v["customer_name"], "pending_qty": _qty(v["pending_qty"])}
+        {
+            "customer_name": v["customer_name"],
+            "do_qty": _qty(v["do_qty"]),
+            "pending_qty": _qty(v["pending_qty"]),
+        }
         for v in by_customer.values()
     ]
     # R3 (owner testing round 2, 13 Sep 2026): "need to show delivered also, doesn't
