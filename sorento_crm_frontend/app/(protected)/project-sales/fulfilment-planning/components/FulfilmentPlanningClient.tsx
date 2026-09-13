@@ -144,16 +144,41 @@ export function FulfilmentPlanningClient() {
     () => searchParams.get('batch')?.trim() || null,
     [searchParams],
   );
-  const [boardOrders, setBoardOrders] = React.useState<string[] | null>(() =>
-    // THE CAP DOES NOT APPLY TO A BATCH. It exists because a selection the sender did not
-    // choose is not the set they meant to share - but a batch IS a chosen set: one book
-    // upload, the orders it moved, and the only screen those changes can be decided on. A
-    // 60-order upload dead-ended on "too many orders" with nowhere else to go, because the
-    // separate batch page is retired.
-    urlOrders.length > 0 && (batchId !== null || urlOrders.length <= MAX_BOARD_SELECTION)
-      ? urlOrders
-      : null,
+  /**
+   * The board the URL is asking for, or null.
+   *
+   * THE CAP DOES NOT APPLY TO A BATCH. It exists because a selection the sender did not
+   * choose is not the set they meant to share - but a batch IS a chosen set: one book
+   * upload, the orders it moved, and the only screen those changes can be decided on. A
+   * 60-order upload dead-ended on "too many orders" with nowhere else to go, because the
+   * separate batch page is retired.
+   */
+  const urlBoardOrders = React.useMemo(
+    () =>
+      urlOrders.length > 0 && (batchId !== null || urlOrders.length <= MAX_BOARD_SELECTION)
+        ? urlOrders
+        : null,
+    [urlOrders, batchId],
   );
+  const [boardOrders, setBoardOrders] = React.useState<string[] | null>(urlBoardOrders);
+  /**
+   * A SECOND deep link, on the route this screen is already on, opens the board it names
+   * (R3, the SO400884 walk).
+   *
+   * `?orders=`/`?batch=` used to be read by a lazy `useState` initialiser, which runs once,
+   * at mount - so clicking a "Changed" badge while this screen was open changed the query
+   * string and nothing else, and the worklist sat there until somebody reloaded the page.
+   * An effect on what the URL asks for follows it instead. It fires only when that ASK
+   * changes, so a board opened by a tick (whose own `router.replace` may land a moment
+   * later) is not torn down and rebuilt underneath the planner.
+   */
+  const urlBoardKey = `${urlBoardOrders?.join(',') ?? ''}|${batchId ?? ''}`;
+  const lastUrlBoardKey = React.useRef(urlBoardKey);
+  React.useEffect(() => {
+    if (urlBoardKey === lastUrlBoardKey.current) return;
+    lastUrlBoardKey.current = urlBoardKey;
+    if (urlBoardOrders) setBoardOrders(urlBoardOrders);
+  }, [urlBoardKey, urlBoardOrders]);
   /** A link that asked for too many, so the refusal can be stated on the worklist. */
   const [refusedLink] = React.useState(() =>
     urlOrders.length > MAX_BOARD_SELECTION && batchId === null ? urlOrders.length : 0,
