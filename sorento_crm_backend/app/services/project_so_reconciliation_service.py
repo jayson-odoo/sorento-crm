@@ -473,13 +473,21 @@ class ProjectSOReconciliationService:
         review state (AC-A03), and linking its lines to a core sales order it has not been
         published against would be the system deciding something on its own.
 
-        An ADOPTED order is read and nothing else HERE, for a different reason: its
-        reconciliation is a one-way SYNC of the mirror against the book (plan section 5.1
-        `resync`), not the two-pass mapping below, and running the authored mapping over
-        mirror lines that already carry their core link would be answering a question
-        nobody asked. Until the sync lands, `evaluate` is the honest answer.
+        An ADOPTED order runs the one sync it actually has HERE - `mirror_missing_lines`
+        (AC-FP12), the same additive re-sync `ProjectSOAdoptionService.adopt`'s own
+        already-adopted branch runs - rather than the two-pass authored mapping below:
+        running that over mirror lines that already carry their core link would be
+        answering a question nobody asked. Measured live (attempt 7 browser walk,
+        SO419851): an AutoCount re-ingest closes the core lines an adopted order's mirror
+        already points at and inserts brand-new open ones nobody mirrors, and pressing
+        Re-sync used to leave `lines_linked` and the exception list untouched - the board's
+        own notice names Re-sync as the remedy, so this is what makes that name true.
         """
         if order.status == SO_STATUS_ADOPTED:
+            from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+            ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
+            self.db.flush()
             return self.evaluate(order)
         if order.status not in LIVE_SO_STATUSES:
             return self.evaluate(order)

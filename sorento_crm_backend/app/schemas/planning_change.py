@@ -155,6 +155,18 @@ class PlanningChangeSuggestion(BaseModel):
     shortfall_qty: Optional[str] = None
 
 
+class PlanningChangeRowResult(BaseModel):
+    """What Apply wrote for this row alone (D5, D7), read back beside `applied_reason` on
+    the batch page after Apply. `executed_reallocations` says where a moved quantity
+    actually went, in the sentence the label used; `released_documents` names a document
+    given back rather than moved (a freed SPO share, or a cancelled line's placement with
+    nobody to redeal it to and no pool to carry it - R3). Both empty on a row nothing was
+    reallocated for."""
+
+    executed_reallocations: List[str] = Field(default_factory=list)
+    released_documents: List[str] = Field(default_factory=list)
+
+
 class PlanningChangeRow(BaseModel):
     id: str
     #: The planning mirror line this row is about, so a board cell can be matched exactly
@@ -185,6 +197,10 @@ class PlanningChangeRow(BaseModel):
     composition: Optional[ConfirmLine] = None
     applied_state: PlanningChangeAppliedState = "pending"
     applied_reason: Optional[str] = None
+    #: What Apply wrote for this row (`result_json`), `None` until Apply has run - the
+    #: `response_model` lesson: an undeclared field is dropped silently, so this must be
+    #: named here, not merely written by the service, for a reader of the wire to see it.
+    result: Optional[PlanningChangeRowResult] = None
     board_link: str
 
     model_config = {"populate_by_name": True}

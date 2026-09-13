@@ -2252,6 +2252,11 @@ def row_out(db: Session, row: PlanningChangeRow) -> dict:
         "composition": row.composition_json,
         "applied_state": applied_state,
         "applied_reason": row.applied_reason,
+        # What Apply wrote for this row alone (D5, D7) - `None` before Apply has run,
+        # never an empty dict, so the wire tells "nothing happened yet" apart from
+        # "Apply ran and moved nothing" (review round, attempt 7 browser walk: the wire
+        # never carried this at all, `response_model` silently dropping it).
+        "result": row.result_json or None,
         "board_link": row.board_link,
     }
 
