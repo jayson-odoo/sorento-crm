@@ -87,6 +87,13 @@ ROUTED_TO_PIC_BRAND = " handling {brand}"
 MALAYSIA = timezone(timedelta(hours=8))
 RESPOND_INBOX_URL = "https://app.respond.io/space/{space_id}/inbox/{contact_id}#{message_id}"
 
+# The one word in the catalogue that Title Case gets wrong: `it_admin` is IT, an initialism, not
+# the pronoun "It" (owner ruling, 13 Sep 2026). A map rather than a branch because the shape is
+# "word -> how that word is spelled", and a second acronym team would be one entry and no new code.
+# Keyed on the TITLE-CASED word, which is what the split above produces.
+TEAM_INITIALISMS: dict[str, str] = {"It": "IT"}
+
+
 # A CODE THE CUSTOMER TYPED, BOUNDED BEFORE IT BECOMES TEXT. `raw` on a product entity is
 # the parser's echo of the customer's own message, and it reaches two sinks that outlive the
 # turn: the respond.io comment the PIC reads, and the reply `tail/compile_state` persists as
@@ -492,7 +499,9 @@ def _pretty_team(team: Any) -> str:
     """
     from app.services.chatbot.tail.outcome import pretty_team
 
-    return pretty_team(team).title()
+    return " ".join(
+        TEAM_INITIALISMS.get(word, word) for word in pretty_team(team).title().split(" ")
+    )
 
 
 def _malaysia(value: Any) -> str:

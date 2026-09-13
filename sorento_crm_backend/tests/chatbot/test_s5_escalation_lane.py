@@ -2015,9 +2015,25 @@ class TestAnAcceptanceIsNeverAskedWhichTeam:
         # AC-822: the marker carries the teams the ask OFFERED, slug beside label, so the
         # answer has something to resolve against. Nothing narrowed this one, so it is the
         # whole vocabulary.
+        #
+        # SPELLED OUT rather than derived from the slugs: the labels are customer-facing copy
+        # (Title Case, owner ruling 13 Sep 2026) and `it_admin` is the one whose display name a
+        # rule cannot produce - IT is an initialism, not the word "It". A derived expectation
+        # would have to repeat the exception and would then agree with any casing the code
+        # happened to emit.
         assert result["pending"]["options"] == [
-            {"team": t, "label": t.replace("_", " ").title()} for t in SUGGESTED_TEAMS
+            {"team": "purchasing", "label": "Purchasing"},
+            {"team": "purchasing_certification", "label": "Purchasing Certification"},
+            {"team": "customer_service", "label": "Customer Service"},
+            {"team": "marketing_product", "label": "Marketing Product"},
+            {"team": "marketing_form", "label": "Marketing Form"},
+            {"team": "warehouse", "label": "Warehouse"},
+            {"team": "marketing_promotion", "label": "Marketing Promotion"},
+            {"team": "it_admin", "label": "IT Admin"},
         ], result["pending"]["options"]
+        # The list is still the WHOLE vocabulary, in catalogue order - asserted against the
+        # contract so a new team cannot be added without this ask learning about it.
+        assert [row["team"] for row in result["pending"]["options"]] == list(SUGGESTED_TEAMS)
         services.next_assignee.assert_not_called()
 
     def test_an_ambiguous_team_word_with_no_offer_still_asks(self) -> None:
