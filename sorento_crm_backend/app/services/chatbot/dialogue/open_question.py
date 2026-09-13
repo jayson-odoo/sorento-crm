@@ -235,6 +235,10 @@ def carry_after_answer(
     """
     if not isinstance(question, dict) or question.get("kind") not in ROSTER_KINDS:
         return None
+    # `team_pick` OVER A ROSTER KIND CAN ONLY BE THE RIDING OFFER, and that holds because
+    # `team_pick` is not in `ROSTER_KINDS`: the line above has already returned for a
+    # question that IS a team_pick, so a team_pick HANDLER here means `resolve` dispatched
+    # to it through `payload.offer` (D19 rule 3) rather than on the question's own kind.
     if outcome_handler == "team_pick" and (answer or {}).get("yes_no") == "yes":
         return None
     payload = {
