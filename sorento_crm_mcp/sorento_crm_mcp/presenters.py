@@ -1708,6 +1708,10 @@ def present_response(tool_name: str, raw: str) -> str:
 #     already echoes because they are what it filtered on.
 # `so_refused` is the third echo-only key: D13 withheld the SO block, and the one
 # sentence that says so prints between the header and the DO block.
+# The `do` half is PENDING DOs only (owner ruling, 13 Sep 2026) - `pending_qty`,
+# `do_count`, the date range and the two breakdowns, every one of them a pending
+# figure; a delivered DO reaches none of them, so no `do_qty` / `delivered_qty`
+# exists to print.
 # `so` / `do` is `None` when that scope was not asked (D1); present with
 # `so_count`/`do_count` == 0 keeps the block's own title but collapses its body to
 # one miss line (AC-1107, "the approved shape keeps the block titles") and drops
@@ -1792,10 +1796,13 @@ def _outstanding_so_block(so: dict, by_location: list, by_customer: list) -> str
 
 
 def _outstanding_do_block(do: dict, by_location: list, by_customer: list) -> str:
+    """Owner ruling, 13 Sep 2026: this block is DOs that still have pending quantity,
+    so every number in it is a pending figure. `DO qty:` and `Delivered:` are gone (a
+    delivered DO is not in the population at all), and the breakdown lines drop the
+    `(O/S: ...)` suffix the SO block keeps - that suffix exists to show pending
+    ALONGSIDE a bigger total, and there is no bigger total here to show it against."""
     lines = [
         "*Delivery order pending*",
-        f"DO qty: {_outstanding_fmt_int(do.get('do_qty'))}",
-        f"Delivered: {_outstanding_fmt_int(do.get('delivered_qty'))}",
         f"Pending: {_outstanding_fmt_int(do.get('pending_qty'))}",
         f"Delivery orders: {_outstanding_fmt_int(do.get('do_count'))}",
         f"DO date range: {_outstanding_date_range(do.get('do_date_min'), do.get('do_date_max'))}",
@@ -1804,15 +1811,11 @@ def _outstanding_do_block(do: dict, by_location: list, by_customer: list) -> str
     for row in by_location:
         lines.append(
             f"{_outstanding_location_label(row.get('code'))}: "
-            f"{_outstanding_fmt_int(row.get('do_qty'))} "
-            f"(O/S: {_outstanding_fmt_int(row.get('pending_qty'))})"
+            f"{_outstanding_fmt_int(row.get('pending_qty'))}"
         )
     lines.append("*_By customer_*")
     for row in by_customer:
-        lines.append(
-            f"{row.get('customer_name')}: {_outstanding_fmt_int(row.get('do_qty'))} "
-            f"(O/S: {_outstanding_fmt_int(row.get('pending_qty'))})"
-        )
+        lines.append(f"{row.get('customer_name')}: {_outstanding_fmt_int(row.get('pending_qty'))}")
     return "\n".join(lines)
 
 
@@ -1884,8 +1887,6 @@ _OUTSTANDING_DO_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("DO Number", "do_number", "text"),
     ("Customer", "customer_name", "text"),
     ("Location", "location", "location"),
-    ("DO Qty", "do_qty", "qty"),
-    ("Delivered", "delivered_qty", "qty"),
     ("Pending", "pending_qty", "qty"),
     ("DO Date", "do_date", "date"),
 )
