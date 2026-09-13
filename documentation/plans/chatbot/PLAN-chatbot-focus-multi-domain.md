@@ -1,6 +1,6 @@
 # PLAN - Chatbot focus + multi-domain: one dialogue state, then fan-out
 
-Status: APPROVED by owner 12 Sep 2026 on the lavish page ("best quality and the shortest time"); lane 1 `feat/chatbot-focus` S0 to S4 BUILT 13 Sep (backend green on the lane DB, replay 1791, one head 517), S5: reviews CLOSED 13 Sep, pre-PR gate green at 09d5a3af3, DRAFT PR opening 13 Sep; browser verification + owner console pass PENDING (frontend slot); lane 2 `feat/chatbot-multi-domain` stacked after. Two lanes, two PRs.
+Status: APPROVED by owner 12 Sep 2026 on the lavish page ("best quality and the shortest time"); lane 1 `feat/chatbot-focus` S0 to S4 BUILT 13 Sep (backend green on the lane DB, replay 1791, one head 517), S5: reviews CLOSED 13 Sep, pre-PR gate green at 09d5a3af3, DRAFT PR opening 13 Sep; browser verification + owner console pass PENDING (frontend slot); lane 2 `feat/chatbot-multi-domain` stacked after. Two lanes, two PRs. S6 sticky roster (D19) BUILDING 13 Sep.
 UAC: `chatbot-focus-multi-domain-acceptance-criteria.md` (AC-10xx).
 Supersedes: Slice B of `PLAN-chatbot-growth-r1.md`. CORRECTION 12 Sep: its lane
 `feat/chatbot-growth-dialogue` WAS built, locally, never pushed: 14 commits, 42 files,
@@ -47,6 +47,7 @@ owner ask, made on 12 Sep 2026, recorded as such.
 | D15 | The low-signal clarifier receives `focus_hints`. `casual` still receives nothing. |
 | D16 | No fan-out cap. |
 | D17 | Deferred, triggers unchanged: episodes (L2 retrieval), profile, learning from corrections, answer LLM (D1 of growth-r1 stands: no answer LLM). |
+| D19 | Owner, 13 Sep 2026, after the console pass on :3081 ("why my dym pick does not stick like before" / "need to restore"): a pick does NOT consume its roster. Restores ruling K rule 1 (6 Sep, AC-816) and the 7 Sep deviation 5, superseding AC-1014's close-on-answer clause the 12 Sep UAC introduced. A ROSTER question (`product_pick`, `customer_pick`, `tier_pick`) stays open after a pick, options frozen, `asked_at_turn` unchanged; a later bare number re-resolves against the same frozen roster. It clears only by the existing rules (a newer question of another kind, `topic_reset`, a message naming its own subject, conversation-closed). The one-team yes/no escalate offer that a pick's rerun-miss produces RIDES on the roster question instead of replacing it: `kind`/`options`/`asked_at_turn` stay the roster's, `expects` becomes `pick_or_yes_no`, `payload.offer` carries `{team, domain, options}`; a number re-picks, `yes` runs escalation and consumes the whole question, `no` declines and the roster stays with the offer stripped. Non-roster kinds (`team_pick` clarify, `company_pick`, `member_offer`) keep today's consume-on-answer behaviour. `OPEN_QUESTION_EXPECTS` gains `pick_or_yes_no` (`contracts.py`). |
 
 ## What exists (origin/main 62e911e, 12 Sep 2026)
 
