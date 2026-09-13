@@ -10,8 +10,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
-  ArrowDown,
-  ArrowUp,
   Check,
   Copy,
   Download,
@@ -608,49 +606,83 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
    *  dialog only and is never stored (ADR 0008) - no field in `DraftLine`
    *  reads it. Reads the SAME matches `handleAIExtracted` already resolved,
    *  rather than looking every code up a second time. */
-  const handleAIExtractApply = useCallback((payload: AIExtractApplyPayload) => {
-    const matches = aiMatchesRef.current;
-    const newLines: DraftLine[] = [];
-    const notFoundCodes: string[] = [];
-    payload.productLines.forEach((p) => {
-      const code = (p.product_code ?? '').trim();
-      const match = matches[normalizeAiCode(code)];
-      if (!match) {
-        if (code) notFoundCodes.push(code);
-        return;
-      }
-      const qty = p.quantity != null ? Math.max(1, Math.round(p.quantity)) : 1;
-      newLines.push({
-        key: `draft-${Date.now()}-${newLines.length}-${Math.random().toString(36).slice(2, 8)}`,
-        line_type: match.kind,
-        product_id: match.kind === 'product' ? match.id : null,
-        product_set_id: match.kind === 'product_set' ? match.id : null,
-        name: match.name || match.code,
-        code: match.code,
-        quantity: qty,
-        alternatives: [],
-        included_accessories: '',
-        remarks: p.notes ?? '',
-        guard_error: null,
+  const handleAIExtractApply = useCallback(
+    (payload: AIExtractApplyPayload) => {
+      const matches = aiMatchesRef.current;
+      const notFoundCodes: string[] = [];
+      // R3-7: a matched row whose product/set is already on the request -
+      // an existing line, or an earlier row in this SAME batch - merges
+      // into it (quantity summed, remarks joined) instead of adding a
+      // second line the server would refuse (DUPLICATE_LINE).
+      const merged: DraftLine[] = lines.map((l) => ({ ...l }));
+      let addedCount = 0;
+      let mergedCount = 0;
+      payload.productLines.forEach((p) => {
+        const code = (p.product_code ?? '').trim();
+        const match = matches[normalizeAiCode(code)];
+        if (!match) {
+          if (code) notFoundCodes.push(code);
+          return;
+        }
+        const qty = p.quantity != null ? Math.max(1, Math.round(p.quantity)) : 1;
+        const existingIndex = merged.findIndex((l) =>
+          match.kind === 'product'
+            ? l.product_id === match.id
+            : l.product_set_id === match.id,
+        );
+        if (existingIndex >= 0) {
+          const existing = merged[existingIndex];
+          merged[existingIndex] = {
+            ...existing,
+            quantity: existing.quantity + qty,
+            remarks: [existing.remarks, p.notes]
+              .filter((v) => v && v.trim())
+              .join('; '),
+          };
+          mergedCount += 1;
+          return;
+        }
+        merged.push({
+          key: `draft-${Date.now()}-${merged.length}-${Math.random().toString(36).slice(2, 8)}`,
+          line_type: match.kind,
+          product_id: match.kind === 'product' ? match.id : null,
+          product_set_id: match.kind === 'product_set' ? match.id : null,
+          name: match.name || match.code,
+          code: match.code,
+          quantity: qty,
+          alternatives: [],
+          included_accessories: '',
+          remarks: p.notes ?? '',
+          guard_error: null,
+        });
+        addedCount += 1;
       });
-    });
-    if (newLines.length > 0) {
-      setLines((prev) => [...prev, ...newLines]);
-      toast.success(
-        `Added ${newLines.length} line${newLines.length === 1 ? '' : 's'} from the sales order.`,
-      );
-    }
-    if (notFoundCodes.length > 0) {
-      toast.error(`Not found: ${notFoundCodes.join(', ')}`);
-    }
-    // The dialog's own alsoAttach checkbox (checked by default): the file(s)
-    // read for extraction join the SAME pending/flush path a Sales Order
-    // drop uses, so Save Draft/Submit upload them once - not here, and not
-    // twice.
-    if (payload.alsoAttach && payload.files.length > 0) {
-      setPendingFiles((prev) => [...prev, ...payload.files]);
-    }
-  }, []);
+      if (addedCount > 0 || mergedCount > 0) {
+        setLines(merged);
+        const parts: string[] = [];
+        if (addedCount > 0) {
+          parts.push(`${addedCount} line${addedCount === 1 ? '' : 's'}`);
+        }
+        if (mergedCount > 0) {
+          parts.push(
+            `${mergedCount} merged into existing line${mergedCount === 1 ? '' : 's'}`,
+          );
+        }
+        toast.success(`Added ${parts.join(', ')} from the sales order.`);
+      }
+      if (notFoundCodes.length > 0) {
+        toast.error(`Not found: ${notFoundCodes.join(', ')}`);
+      }
+      // The dialog's own alsoAttach checkbox (checked by default): the file(s)
+      // read for extraction join the SAME pending/flush path a Sales Order
+      // drop uses, so Save Draft/Submit upload them once - not here, and not
+      // twice.
+      if (payload.alsoAttach && payload.files.length > 0) {
+        setPendingFiles((prev) => [...prev, ...payload.files]);
+      }
+    },
+    [lines],
+  );
 
   // ---- Line management ----
   const addLine = useCallback(() => {
@@ -670,16 +702,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [],
   );
 
-  const moveLine = useCallback((index: number, direction: 'up' | 'down') => {
-    setLines((prev) => {
-      const next = [...prev];
-      const target = direction === 'up' ? index - 1 : index + 1;
-      if (target < 0 || target >= next.length) return prev;
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  }, []);
-
   // ---- One picker, both kinds (D47) ----
   // The chosen option decides the line's type; the payload the server reads is
   // unchanged, still line_type plus whichever of the two ids matches it.
@@ -697,6 +719,21 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       }
       const [kind, id] = option.value.split(':');
       const isSet = kind === 'product_set';
+      const code = (option.description ?? '').split(' - ').slice(1).join(' - ');
+      // R3-7: refuse a product/set already on another line, inline - the
+      // same guard the backend now enforces (DUPLICATE_LINE), so a save
+      // never round-trips just to be told this.
+      const duplicate = lines.some(
+        (l) =>
+          l.key !== key &&
+          (isSet ? l.product_set_id === id : l.product_id === id),
+      );
+      if (duplicate) {
+        updateLine(key, {
+          guard_error: `${code || option.label} is already on this request.`,
+        });
+        return;
+      }
       updateLine(key, {
         line_type: isSet ? 'product_set' : 'product',
         product_id: isSet ? null : id,
@@ -704,7 +741,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         name: option.label,
         // The description reads "Set - CODE" / "Product - CODE"; the code is what
         // the row shows, so it is stored without the word in front of it.
-        code: (option.description ?? '').split(' - ').slice(1).join(' - '),
+        code,
         // A set is priced and printed as one thing, so any OR choices typed
         // against a product line stop applying the moment it becomes a set.
         // Spread, not a key set to undefined, which would wipe it on a product.
@@ -712,7 +749,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         guard_error: null,
       });
     },
-    [updateLine],
+    [updateLine, lines],
   );
 
   // ---- What there is to save, and what Submit still needs (D48) ----
@@ -1581,12 +1618,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       key={line.key}
                       line={line}
                       index={index}
-                      total={lines.length}
                       fetchItemOptions={fetchItemOptions}
                       onItemSelect={handleItemSelect}
                       onUpdate={updateLine}
                       onRemove={removeLine}
-                      onMove={moveLine}
                     />
                   ))}
                 </tbody>
@@ -1832,12 +1867,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 interface LineRowProps {
   line: DraftLine;
   index: number;
-  total: number;
   fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
   onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
-  onMove: (index: number, direction: 'up' | 'down') => void;
 }
 
 /**
@@ -1847,12 +1880,10 @@ interface LineRowProps {
 function LineRow({
   line,
   index,
-  total,
   fetchItemOptions,
   onItemSelect,
   onUpdate,
   onRemove,
-  onMove,
 }: LineRowProps) {
   const isSet = line.line_type === 'product_set';
   const picked = itemValue(line);
@@ -1907,28 +1938,6 @@ function LineRow({
         </td>
         <td className="px-2 py-2">
           <div className="flex items-center justify-end gap-0.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              disabled={index === 0}
-              onClick={() => onMove(index, 'up')}
-              title="Move up"
-              aria-label={`Move line ${index + 1} up`}
-            >
-              <ArrowUp className="size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              disabled={index === total - 1}
-              onClick={() => onMove(index, 'down')}
-              title="Move down"
-              aria-label={`Move line ${index + 1} down`}
-            >
-              <ArrowDown className="size-3.5" />
-            </Button>
             {/* No confirm: the row is unsaved form state, not a record. */}
             <Button
               variant="ghost"

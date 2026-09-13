@@ -19,6 +19,7 @@ import {
   FileText,
   History,
   Info,
+  PencilLine,
   Plus,
   Sparkles,
   Trash2,
@@ -103,7 +104,6 @@ import { AsyncCombobox } from './AsyncCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
 import { MultiPillInput } from './MultiPillInput';
-import { ReviseAction } from './ReviseAction';
 import { RevisionHistory } from './RevisionHistory';
 import {
   InquiryFormTableRow,
@@ -468,6 +468,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     [detail],
   );
   const revisionPolicy = detail?.revision ?? null;
+  // R3-5: the one-line revision status, moved into the header beside the form
+  // number and the prev/next counter - the ONLY place it renders now, not a
+  // second gear row's own budget text.
+  const revisionStatusText = revisionPolicy
+    ? revisionPolicy.allowed
+      ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
+      : (revisionPolicy.blocked_reason ?? null)
+    : null;
   // Where the revision actually lands, named by the backend from this type's
   // config (UAC E1a). The generic sentence is the fallback for when there is
   // nothing to name - not the target copy - because a purchase request restarting
@@ -1456,17 +1464,6 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           This submission is not editable.
         </div>
       )}
-      {submissionId && !reviseMode && (
-        <ReviseAction
-          variant="menu"
-          policy={revisionPolicy}
-          onRevise={() => {
-            setReviseMode(true);
-            setReason('');
-            setReasonError(null);
-          }}
-        />
-      )}
       {submissionId && !reviseMode && detail?.revision_draft?.stale && (
         <Alert
           variant="warning"
@@ -1946,14 +1943,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     // M6-02: dvh - phone-facing portal form, so a `vh` shell that sits under
     // mobile Safari's dynamic toolbar clips the form the reader is filling in.
     <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" asChild>
+      <div className="flex items-center justify-between gap-3">
+        <Button variant="ghost" size="sm" asChild className="shrink-0">
           <Link href={portalHomePath({ type: kind })}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Link>
         </Button>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           {editing && (
             <Button
               type="button"
@@ -1961,31 +1958,50 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               size="sm"
               onClick={() => setAiExtractOpen(true)}
               data-testid="ai-extract-trigger"
+              className="shrink-0"
             >
               <Sparkles className="h-4 w-4 mr-2 text-primary" />
               AI Extract
             </Button>
           )}
-          {detail?.reference && (
-            <span className="text-sm text-muted-foreground">
-              {detail.reference}
+          {/* R3-5: form number, revision status and the prev/next counter
+              share ONE truncating line - the revision budget/blocked
+              sentence used to live in its own gear row below the tabs. */}
+          {(detail?.reference || revisionStatusText || neighbours) && (
+            <span className="min-w-0 truncate text-sm text-muted-foreground">
+              {detail?.reference}
+              {submissionId && !reviseMode && revisionStatusText && (
+                <>
+                  {/* Separator as its own node (not concatenated into the
+                      text span itself), so "2 / 5" etc stays exact for
+                      anything that queries that leaf's own text. */}
+                  {detail?.reference && <span aria-hidden> · </span>}
+                  <span className="text-xs text-muted-foreground/70">
+                    {revisionStatusText}
+                  </span>
+                </>
+              )}
               {neighbours && (
-                <span className="ml-2 text-xs text-muted-foreground/70">
-                  {neighbours.position} / {neighbours.total}
-                </span>
+                <>
+                  {(detail?.reference || revisionStatusText) && (
+                    <span aria-hidden> · </span>
+                  )}
+                  <span className="text-xs text-muted-foreground/70">
+                    {neighbours.position} / {neighbours.total}
+                  </span>
+                </>
               )}
             </span>
           )}
-          {!detail?.reference && neighbours && (
-            <span className="text-xs text-muted-foreground/70">
-              {neighbours.position} / {neighbours.total}
-            </span>
-          )}
-          {/* View-page gear (D-D1): today's only item is Duplicate. Read-only
-              view only - the form itself (new or editing) has nothing to
-              duplicate FROM yet. */}
+          {/* View-page gear (D-D1, R3-5): one gear, every action - Duplicate
+              plus Revise when the policy allows it. Read-only view only -
+              the form itself (new or editing) has nothing to duplicate or
+              revise FROM yet. */}
           {detail && !editing && (
-            <DetailActionsMenu ariaLabel={`${SUBMISSION_LABELS[kind]} actions`}>
+            <DetailActionsMenu
+              ariaLabel={`${SUBMISSION_LABELS[kind]} actions`}
+              className="shrink-0"
+            >
               <DropdownMenuItem
                 onSelect={() => {
                   router.push(portalDuplicatePath(kind, detail.id, slug));
@@ -1994,6 +2010,18 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                 <Copy className="h-4 w-4" />
                 Duplicate
               </DropdownMenuItem>
+              {revisionPolicy?.allowed && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setReviseMode(true);
+                    setReason('');
+                    setReasonError(null);
+                  }}
+                >
+                  <PencilLine className="h-4 w-4" />
+                  Revise
+                </DropdownMenuItem>
+              )}
             </DetailActionsMenu>
           )}
         </div>

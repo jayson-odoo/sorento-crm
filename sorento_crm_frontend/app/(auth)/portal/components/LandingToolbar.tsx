@@ -6,7 +6,7 @@
  * the Link + label for it). Filter and Sort share one field descriptor table
  * (landing-fields.ts) so they never offer different fields for the same kind.
  */
-import { ArrowDownUp, Filter as FilterIcon } from 'lucide-react';
+import { ArrowDown, ArrowDownUp, ArrowUp, Filter as FilterIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,10 +14,7 @@ import { Label } from '@/components/ui/label';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -127,28 +124,39 @@ export function LandingToolbar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-[12rem]">
-          <DropdownMenuRadioGroup
-            value={`${sort.key}:${sort.dir}`}
-            onValueChange={(v) => {
-              const idx = v.lastIndexOf(':');
-              const key = v.slice(0, idx);
-              const dir = v.slice(idx + 1) as 'asc' | 'desc';
-              onSortChange({ key, dir });
-            }}
-          >
-            {fields.map((field, idx) => (
-              <div key={field.key}>
-                {idx > 0 && <DropdownMenuSeparator />}
-                <DropdownMenuLabel>{field.label}</DropdownMenuLabel>
-                <DropdownMenuRadioItem value={`${field.key}:asc`}>
-                  Ascending
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value={`${field.key}:desc`}>
-                  Descending
-                </DropdownMenuRadioItem>
-              </div>
-            ))}
-          </DropdownMenuRadioGroup>
+          {/* R3-3: one row per field, not an Ascending/Descending pair - the
+              active field shows its own direction as an arrow; tapping it
+              flips that direction, tapping another field selects it at its
+              type's natural default (dates newest first, text A to Z). */}
+          {fields.map((field) => {
+            const isActive = sort.key === field.key;
+            return (
+              <DropdownMenuItem
+                key={field.key}
+                onSelect={(e) => {
+                  e.preventDefault();
+                  onSortChange({
+                    key: field.key,
+                    dir: isActive
+                      ? sort.dir === 'asc'
+                        ? 'desc'
+                        : 'asc'
+                      : field.type === 'date'
+                        ? 'desc'
+                        : 'asc',
+                  });
+                }}
+              >
+                <span className="flex-1">{field.label}</span>
+                {isActive &&
+                  (sort.dir === 'asc' ? (
+                    <ArrowUp className="size-3.5 text-muted-foreground" />
+                  ) : (
+                    <ArrowDown className="size-3.5 text-muted-foreground" />
+                  ))}
+              </DropdownMenuItem>
+            );
+          })}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -173,6 +181,9 @@ function FilterField({
     return (
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">{field.label}</Label>
+        {/* R3-4: `min-w-0 flex-1` on both inputs - a native date input's
+            intrinsic width otherwise pushed the row past the popover edge
+            at 375px (and cramped it at 1280). */}
         <div className="flex items-center gap-2">
           <Input
             type="date"
@@ -181,9 +192,9 @@ function FilterField({
             onChange={(e) =>
               onChange({ ...range, from: e.target.value || undefined })
             }
-            className="h-9"
+            className="h-9 min-w-0 flex-1"
           />
-          <span className="text-xs text-muted-foreground">to</span>
+          <span className="shrink-0 text-xs text-muted-foreground">to</span>
           <Input
             type="date"
             aria-label={`${field.label} to`}
@@ -191,7 +202,7 @@ function FilterField({
             onChange={(e) =>
               onChange({ ...range, to: e.target.value || undefined })
             }
-            className="h-9"
+            className="h-9 min-w-0 flex-1"
           />
         </div>
       </div>

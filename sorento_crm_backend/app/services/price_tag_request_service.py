@@ -225,7 +225,14 @@ class PriceTagRequestService:
         marketing_override_reason)`` map here, since the form payload has no
         field for either - a re-save with just a new remark used to silently
         wipe a marketing-set override on the same product/set.
+
+        Raises 422 ``DUPLICATE_LINE`` (round 3, R3-7/AC-R4) naming the code
+        the FIRST time the same product or set repeats within ``lines`` -
+        before any insert, so the table's own
+        ``uq_ptag_line_request_product`` / ``uq_ptag_line_request_set``
+        constraints never get the chance to answer with a 500.
         """
+        PriceTagRequestService._raise_on_duplicate_line(db, lines)
         show_promo_price = request.price_mode == "selling"
         carry_overrides = carry_overrides or {}
         for idx, line_data in enumerate(lines):
@@ -248,6 +255,52 @@ class PriceTagRequestService:
                     marketing_override_reason=override_reason,
                 )
             )
+
+    @staticmethod
+    def _raise_on_duplicate_line(db: Session, lines: list[dict]) -> None:
+        """The first repeated product or set in ``lines``, named by code, as a
+        422 - before ``_add_lines`` inserts a second row the table's own
+        unique constraint would otherwise refuse with an unhandled 500."""
+        seen_products: set[str] = set()
+        seen_sets: set[str] = set()
+        for line_data in lines:
+            product_id = line_data.get("product_id")
+            if product_id:
+                if product_id in seen_products:
+                    raise PriceTagRequestService._duplicate_line_refusal(
+                        db, product_id=product_id
+                    )
+                seen_products.add(product_id)
+            set_id = line_data.get("product_set_id")
+            if set_id:
+                if set_id in seen_sets:
+                    raise PriceTagRequestService._duplicate_line_refusal(
+                        db, product_set_id=set_id
+                    )
+                seen_sets.add(set_id)
+
+    @staticmethod
+    def _duplicate_line_refusal(
+        db: Session,
+        *,
+        product_id: str | None = None,
+        product_set_id: str | None = None,
+    ) -> AppException:
+        from app.models.product import Product
+        from app.models.product_set import ProductSet
+
+        if product_id:
+            row = db.query(Product).filter(Product.id == product_id).first()
+            code = row.product_code if row else product_id
+        else:
+            row = db.query(ProductSet).filter(ProductSet.id == product_set_id).first()
+            code = row.set_code if row else product_set_id
+        return AppException(
+            status_code=422,
+            message=f"{code} appears twice; merge the quantities.",
+            detail="lines",
+            code="DUPLICATE_LINE",
+        )
 
     @staticmethod
     def replace_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:
