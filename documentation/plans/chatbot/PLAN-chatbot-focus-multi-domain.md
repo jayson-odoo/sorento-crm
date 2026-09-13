@@ -46,6 +46,7 @@ owner ask, made on 12 Sep 2026, recorded as such.
 | D14 | `intent_hint` is dropped from the parser, the state and the trace. Every domain has exactly one intent (measured 13:13). |
 | D15 | The low-signal clarifier receives `focus_hints`. `casual` still receives nothing. |
 | D16 | No fan-out cap. |
+| D19 | **A ROSTER IS STICKY** (13 Sep 2026, owner console pass on :3081). A `product_pick`, `customer_pick` or `tier_pick` is NOT consumed by a pick: the numbered list is still on the customer's screen, so a later bare number re-resolves against the same frozen rows and reruns the alive `focus.domains` for that row. It clears only by the existing routes (a newer question of another kind, `topic_reset`, a message naming its own subject, the conversation closing). The one-team yes/no escalate offer the pick's rerun produces RIDES on the roster (`expects: pick_or_yes_no`, `payload.offer`) instead of replacing it: a number re-picks, `yes` escalates and consumes the whole question, `no` declines and leaves the roster with the offer taken off. `team_pick` clarify, `company_pick` and `member_offer` keep today's consume-on-answer. This restores ruling K rule 1 (6 Sep, AC-816) and the 7 Sep deviation 5, and SUPERSEDES the close-on-answer clause of AC-1014. |
 | D17 | Deferred, triggers unchanged: episodes (L2 retrieval), profile, learning from corrections, answer LLM (D1 of growth-r1 stands: no answer LLM). |
 
 ## What exists (origin/main 62e911e, 12 Sep 2026)
@@ -261,6 +262,7 @@ equality, `yes` re-asks with the same buttons (handler outcome `reask`).
 | L1-S3 | Engine wiring (`received`, `understood`, `answered`, focus apply), business lane reads focus, `compile_current_state` writes the five keys, delete the carry rules and `tail/pending.py`; world grader mapping; divergences; trace population | AC-1006, 1007, 1009, 1014, 1015, 1018, 1025, 1032, 1033, 1035, 1036 |
 | L1-S4 | Shadow: enqueue, `ingress = shadow`, list filter + summary, FE chip + badge + summary line + drawer column | AC-1027, 1029, 1030, 1031 |
 | L1-S5 | Owner console pass (`console_cases/2026-09-xx-focus.yaml`), guide, DoD | AC-1037 |
+| L1-S6 | Sticky roster (D19): `pick_or_yes_no`, `open_question.ROSTER_KINDS` / `carry_after_answer` / `with_offer`, the tail's carry, the offer merge in `_arm_cross_domain_offer`, `offer_is_open` | AC-1014 (amended), AC-1018, AC-1020 |
 
 L1-S3 is the slice that changes reply semantics. Rule for the 72 test files importing
 `output_exchange`: the `tester` lists, before the coder starts S3, which tests assert a

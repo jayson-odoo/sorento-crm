@@ -3382,6 +3382,13 @@ def _arm_cross_domain_offer(
 
     THE CLOCK DOES NOT RESTART: an offer re-made on a later turn keeps the turn it was
     first asked on, which is what `same_question` is for.
+
+    AND IT RIDES ON A LIVE ROSTER RATHER THAN REPLACING ONE (owner ruling D19 rule 3).
+    This is the arm the owner's console pass caught: the pick reran, the rerun missed, the
+    offer was appended here, and writing it as the open question threw away the numbered
+    list the customer was still looking at - so their "2" and "3" were answered about the
+    first product all over again. `with_offer` merges the two, and the roster the tail
+    carried (`compile_state`) is the one it merges onto.
     """
     team = jsc.get(offer, "team")
     if not jsc.truthy(team):
@@ -3401,9 +3408,30 @@ def _arm_cross_domain_offer(
         payload={"team": team, "domain": domain},
     )
     previous = jsc.get(parse, "_open_question_before") or variables.get("open_question")
+    roster = _live_roster(variables.get("open_question"), previous)
+    if roster is not None:
+        variables["open_question"] = open_question_mod.with_offer(roster, question)
+        return
     if open_question_mod.same_question(question, previous) and isinstance(previous, dict):
         question["asked_at_turn"] = int(previous.get("asked_at_turn", question["asked_at_turn"]))
     variables["open_question"] = question
+
+
+def _live_roster(carried: Any, previous: Any) -> dict[str, Any] | None:
+    """The numbered list still on the customer's screen, or None (D19).
+
+    The TAIL's answer wins over the head's: `compile_state` has already decided what
+    survives this turn - a roster it carried through a pick, a roster it replaced, or
+    nothing - and `_open_question_before` is only consulted for the case where the tail
+    wrote no question at all.
+    """
+    for question in (carried, previous):
+        if (
+            isinstance(question, dict)
+            and question.get("kind") in open_question_mod.ROSTER_KINDS
+        ):
+            return question
+    return None
 
 
 def run_tail(

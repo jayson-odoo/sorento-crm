@@ -864,9 +864,20 @@ def offer_is_open(state: Any) -> bool:
     # NO LIFETIME (D9, AC-1019). The member offer's TTL went with every other counter: the
     # question is cleared when it is answered, replaced, or asked past, and those are
     # things that happened rather than a number nobody can see.
+    #
+    # A ROSTER CARRYING AN OFFER counts too (D19 rule 3, `expects: pick_or_yes_no`). The
+    # offer is on the screen beside the numbered list, so a bare "yes" is an escalation
+    # confirmation there exactly as it is under the plain offer - which is the whole
+    # reason the two were merged into one question instead of the offer replacing the
+    # list.
     question = open_question_of(state)
     kind = jsc.get(question, "kind")
-    if kind == "member_offer" or (kind == "team_pick" and jsc.get(question, "expects") == "yes_no"):
+    expects = jsc.get(question, "expects")
+    if (
+        kind == "member_offer"
+        or (kind == "team_pick" and expects == "yes_no")
+        or expects == "pick_or_yes_no"
+    ):
         return True
     response = jsc.get(state, "response")
     return bool(

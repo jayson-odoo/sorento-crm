@@ -101,8 +101,20 @@ console.
   numbered from 1 across the whole roster. Evidence: pytest on the contract; one handler per
   kind in `dialogue/open_question.py`.
 - AC-1014 [T] A picker of 3 products is offered; "2" resolves to the second frozen option even
-  if the product list would resolve differently today; "2" again after the pick, with no open
-  question alive, is treated as a new message. Evidence: world.
+  if the product list would resolve differently today. AMENDED by owner ruling D19 (13 Sep
+  2026, console pass): the roster is NOT consumed by the pick, so "3" next re-resolves against
+  the same frozen rows and reruns the alive domains for the third row. Evidence: world.
+- AC-1014a [T] (D19) A roster (`product_pick`, `customer_pick`, `tier_pick`) survives its own
+  pick with its `options` and `asked_at_turn` unchanged, and clears only by the AC-1020 routes:
+  a newer question of a kind other than the one-team escalate offer, `topic_reset`, a message
+  naming its own subject, the conversation closing. `team_pick` clarify, `company_pick` and
+  `member_offer` are still consumed by being answered. Evidence: pytest per kind, worlds.
+- AC-1014b [T] (D19) The one-team yes/no escalate offer a pick's rerun produces RIDES on the
+  roster rather than replacing it: `expects` becomes `pick_or_yes_no` and `payload.offer` is
+  `{team, domain, options}`. A number re-picks; `yes` runs the escalation lane and consumes the
+  whole question; `no` renders the declined copy and leaves the roster with the offer removed
+  and `expects` back to `pick`. A `yes` on a roster with no offer resolves nothing. Evidence:
+  pytest on the handler, two worlds.
 - AC-1015 [T] Escalate offer with one team, then "yes" runs the escalation lane; "no" renders
   the declined copy; "SRTWC8517 stock?" instead is a new ask: the offer is cleared with a
   trace line at `received` and the stock is answered. Evidence: three worlds.

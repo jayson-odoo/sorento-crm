@@ -181,11 +181,31 @@ def _prev_context(prev_question: Any) -> str | None:
     `None` for the plain escalate offer: it is a `team_pick` with `expects: yes_no` (D5),
     and the legacy shape gave it no `selection_context` at all - it lived on the `pending`
     marker - which is what kept a yes/no offer out of every roster carry in this file.
+
+    A roster CARRYING an offer (`expects: pick_or_yes_no`, D19) keeps its own label, and
+    that is the point of merging rather than replacing: the rows are still the rows, so
+    the picker carry below goes on re-seating them and the answer that comes back is still
+    resolved against the list the customer read.
     """
     kind = jsc.nullish_str(jsc.get(prev_question, "kind") or "")
     if kind == "team_pick" and jsc.get(prev_question, "expects") == "yes_no":
         return None
     return _SELECTION_CONTEXT_BY_KIND.get(kind)
+
+
+def _offer_rides_on_roster(asked: Any, previous: Any) -> bool:
+    """Is the question this turn asked the ONE-TEAM escalate offer, over a live roster?
+
+    That is the only pair that merges (D19 rule 3). Any other question the turn asked -
+    a new picker, a tier menu, a team clarify - REPLACES what was open, because it is a
+    different thing to be looking at; and an offer with no roster under it is the plain
+    yes/no it has always been.
+    """
+    if not isinstance(asked, dict) or not isinstance(previous, dict):
+        return False
+    if asked.get("kind") != "team_pick" or asked.get("expects") != "yes_no":
+        return False
+    return previous.get("kind") in pending_open_question.ROSTER_KINDS
 
 
 def _ask_for_turn(
@@ -1092,10 +1112,27 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         turn_no = int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0)
         if pending_open_question.same_question(asked, previous) and isinstance(previous, dict):
             turn_no = int(previous.get("asked_at_turn", turn_no))
-        variables["open_question"] = {**asked, "asked_at_turn": turn_no}
+        if _offer_rides_on_roster(asked, previous):
+            # THE OFFER RIDES, IT DOES NOT REPLACE (owner ruling D19 rule 3). A pick whose
+            # rerun missed ends with "shall I escalate?", and arming that as the open
+            # question threw the roster away for one yes/no - so the customer's next "2"
+            # had no list to count. Merged, the roster keeps its rows and its clock and
+            # the offer keeps its yes and its no.
+            variables["open_question"] = pending_open_question.with_offer(previous, asked)
+        else:
+            variables["open_question"] = {**asked, "asked_at_turn": turn_no}
     elif jsc.truthy(jsc.get(qf, "open_question_answered")):
-        # CONSUMED. A question the customer has answered is never re-armed.
-        variables["open_question"] = None
+        # ANSWERED, WHICH IS NOT THE SAME AS GONE (owner ruling D19). A ROSTER is still on
+        # the customer's screen after they pick from it, so it survives its own pick with
+        # its rows and its `asked_at_turn` untouched and the next number resolves against
+        # the same list. Every other kind is consumed, exactly as before, and so is a
+        # roster whose riding offer the customer accepted. The rule is
+        # `dialogue/open_question.carry_after_answer`; this is its one caller.
+        variables["open_question"] = pending_open_question.carry_after_answer(
+            previous,
+            jsc.get(qf, "open_question_answered"),
+            jsc.get(jsc.get(jsc.get(ctx, "parse"), "_answered"), "answer"),
+        )
     else:
         # Nothing asked this turn: the one the customer is still looking at stands.
         variables["open_question"] = previous if isinstance(previous, dict) else None

@@ -664,7 +664,15 @@ OpenQuestionKind = Literal[OPEN_QUESTION_KINDS]  # type: ignore[valid-type]
 # What KIND of answer resolves the question. A pick resolves against the frozen
 # `options` rows by position; a yes/no resolves against `answers_open_question.yes_no`;
 # `free` takes the customer's own words through `free_text`.
-OPEN_QUESTION_EXPECTS = ("pick", "yes_no", "free")
+#
+# `pick_or_yes_no` is a ROSTER with an escalate offer riding on it (owner ruling D19,
+# 13 Sep 2026). A roster is not consumed by being picked from - it is still on the
+# customer's screen, so a later "2" must still mean the second row - and the offer the
+# rerun of that pick produced ("shall I escalate to purchasing?") is a second thing on
+# the SAME screen. Two answers, one question: a number re-picks, a yes or no answers the
+# offer. It is one `expects` rather than two questions because only one question is ever
+# open (D6), which is what keeps the numbers from colliding.
+OPEN_QUESTION_EXPECTS = ("pick", "yes_no", "pick_or_yes_no", "free")
 OpenQuestionExpects = Literal[OPEN_QUESTION_EXPECTS]  # type: ignore[valid-type]
 
 
@@ -733,6 +741,12 @@ class OpenQuestion(BaseModel):
     `member_offer`, which used to live 3 turns, follows the same rule as the rest. An offer
     the customer can still see on their screen is still answerable, and a counter was only
     ever a guess at when they had stopped looking.
+
+    A ROSTER is not consumed by being answered (owner ruling D19, 13 Sep 2026): the
+    numbered list is still on the customer's screen after "1", so "2" and "3" have to go
+    on meaning the second and the third row. `dialogue/open_question.ROSTER_KINDS` names
+    the three kinds this applies to and `carry_after_answer` is the rule; the other kinds
+    are consumed as before.
     """
 
     model_config = ConfigDict(extra="forbid")

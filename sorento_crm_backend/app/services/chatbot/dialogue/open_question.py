@@ -5,12 +5,14 @@ handler each, and a dispatcher that never guesses:
 
 | kind             | expects     | options                        | outcome                       |
 |------------------|-------------|--------------------------------|-------------------------------|
-| `product_pick`   | pick        | frozen rows: uuid, code, label | focus.products, source `pick` |
-| `customer_pick`  | pick        | family rows with company codes | focus.customer                |
+| `product_pick`   | pick (+)    | frozen rows: uuid, code, label | focus.products, source `pick` |
+| `customer_pick`  | pick (+)    | family rows with company codes | focus.customer                |
 | `team_pick`      | pick/yes_no | the teams the ask OFFERED      | routing set, escalation on    |
 | `company_pick`   | pick        | the ledgers the ask offered    | routing set, escalation on    |
-| `tier_pick`      | pick        | tiers                          | focus.tier, promotion rerun   |
+| `tier_pick`      | pick (+)    | tiers                          | focus.tier, promotion rerun   |
 | `member_offer`   | yes_no      | family members                 | yes: business lane over them  |
+
+(+) reads `pick_or_yes_no` while an escalate offer RIDES on the roster (D19, below).
 
 **`escalate_yes_no` is gone, and nothing the customer sees changed** (D5). An escalate offer
 naming ONE team is a `team_pick` carrying that one team as its single option, with
@@ -23,6 +25,28 @@ when a newer one replaces it, or when the customer asks something else instead
 (`dialogue/clearing.py`); `member_offer`'s TTL of 3 went with the rest. An offer the
 customer can still see is still answerable, and a counter was only ever a guess at when
 they stopped looking.
+
+**A ROSTER IS NOT CONSUMED BY BEING PICKED FROM** (owner ruling D19, 13 Sep 2026, which
+restores ruling K rule 1 of 6 Sep). The customer typed "1", read the answer, and the
+numbered list is STILL ON THEIR SCREEN - so "2" and "3" have to go on meaning the second
+and the third row, which is what the owner's console pass found broken: after the pick
+the question was cleared, and the next two numbers were answered about the first product
+all over again. `ROSTER_KINDS` names the three kinds it applies to; `carry_after_answer`
+is the rule, and it lives here rather than in the tail so the tail stays a caller. The
+roster is carried UNCHANGED - the same frozen rows, the same `asked_at_turn` - because a
+list whose numbering moved is a different list (`same_question`). It still clears by
+every existing route: a newer question of another kind, a topic reset, a message naming
+its own subject, the conversation closing.
+
+**AND THE OFFER THE PICK PRODUCED RIDES ON IT** (D19 rule 3). A pick whose rerun misses
+ends with "Would you like me to escalate to purchasing team?", which is a second thing on
+the same screen and used to REPLACE the roster - the whole list, gone, for one yes/no.
+`with_offer` merges it instead: the roster keeps its kind, its rows and its clock,
+`expects` becomes `pick_or_yes_no`, and `payload.offer` carries the team and the one
+option row the plain offer would have carried. A number re-picks, a yes escalates and
+consumes the whole question, a no declines and leaves the roster with the offer taken off
+it. One question, two answers, and the numbers still cannot collide because there is
+still only one question open.
 
 **WHICH rows, on a partial-miss turn.** Two rosters can be live at once and they are not
 interchangeable: the numbered suggestions the reply printed, and the ANSWER's own rows
@@ -68,6 +92,14 @@ KIND_SPEC: dict[str, dict[str, Any]] = {
     "tier_pick": {"expects": "pick"},
     "member_offer": {"expects": "yes_no"},
 }
+
+# The kinds that are a NUMBERED LIST the customer can still see, and therefore the kinds
+# a pick does not consume (D19). The other three are questions, not lists: a `team_pick`
+# clarify and a `company_pick` are answered once and gone, and a `member_offer` is the
+# arming pin on the CS-assign path, where re-arming it invisibly is how a later bare "yes"
+# assigns a human to somebody who already declined (`tail/compile_state._picker_carry`).
+ROSTER_KINDS = ("product_pick", "customer_pick", "tier_pick")
+
 
 # The three legacy JOIN MAPS are gone with `from_state` (L1-S3d step 4):
 # `KIND_BY_SELECTION_CONTEXT`, `KIND_BY_PENDING_KIND` and `SELECTION_CONTEXT_BY_KIND`
@@ -177,6 +209,73 @@ def _identities(options: Any) -> list[str]:
     return out
 
 
+def carry_after_answer(
+    question: Any, outcome_handler: Any, answer: Any = None
+) -> dict[str, Any] | None:
+    """What is left open AFTER the customer answered - the whole of ruling D19.
+
+    THE RULE, and it is three lines because it is three cases:
+
+    * a ROSTER survives its own pick, unchanged, with any spent offer taken off it. The
+      list is still on the customer's screen and the numbers still mean what they were
+      printed to mean; a rerun that produces a NEW offer merges it back on through
+      `with_offer`, which is why the spent one comes off here rather than being left to
+      go stale.
+    * a roster whose riding offer was ACCEPTED is consumed whole. The escalation lane
+      runs, a human has the conversation, and a numbered list of products is not what the
+      customer is looking at any more.
+    * every other kind is consumed by being answered, exactly as before. A `team_pick`
+      clarify, a `company_pick` and a `member_offer` are questions rather than lists, and
+      the member offer in particular must never be re-armed by a carry (the hazard is
+      written out on `tail/compile_state._picker_carry`: a later bare "yes" assigns a
+      human to somebody who already declined).
+
+    `answer` is the normalised `answers_open_question` the handler saw. Only its `yes_no`
+    is read, and only to tell an accepted offer from a declined one.
+    """
+    if not isinstance(question, dict) or question.get("kind") not in ROSTER_KINDS:
+        return None
+    if outcome_handler == "team_pick" and (answer or {}).get("yes_no") == "yes":
+        return None
+    payload = {
+        key: value
+        for key, value in (question.get("payload") or {}).items()
+        if key != "offer"
+    }
+    return {**question, "expects": "pick", "payload": payload}
+
+
+def with_offer(roster: Any, offer_question: Any) -> dict[str, Any]:
+    """The one-team escalate offer, merged ONTO the roster instead of over it (D19 r3).
+
+    The roster wins every field that says WHICH QUESTION THIS IS - kind, options,
+    `asked_at_turn` - because it is the same question it was before the offer arrived, and
+    re-stamping the clock would say the bot asked for the list again when it did not. The
+    offer contributes exactly what answering it needs: the team, the domain it was made
+    about, and the single option row `_ask_for_turn` builds for the plain offer, so a
+    customer who reads the numbered offer row and types "1" is not silently re-picking a
+    product instead.
+
+    Idempotent by construction: a second offer on the same roster REPLACES `payload.offer`
+    rather than nesting, so the team the customer is being asked about is always this
+    turn's.
+    """
+    if not isinstance(roster, dict):
+        return roster
+    offer_payload = jsc.get(offer_question, "payload")
+    offer_payload = offer_payload if isinstance(offer_payload, dict) else {}
+    offer = {
+        "team": offer_payload.get("team"),
+        "domain": offer_payload.get("domain"),
+        "options": _freeze(jsc.get(offer_question, "options")),
+    }
+    return {
+        **roster,
+        "expects": "pick_or_yes_no",
+        "payload": {**(roster.get("payload") or {}), "offer": offer},
+    }
+
+
 # `from_state` is DELETED (L1-S3d step 4). It derived the open question from the legacy
 # session keys - `pending`, `selection_context`, `dym_offer`, the two result sets - for the
 # release in which both shapes existed. Migration `517_chatbot_session_5key` converted every
@@ -197,11 +296,33 @@ def resolve(
     `"yes"`, `"no"` or None. An unknown kind returns an unresolved outcome rather than
     raising: the question came out of a customer's stored session, and a session written by
     a build this one does not know must not fail the turn.
+
+    **`payload.offer` is the second answer** (D19). A roster with an escalate offer riding
+    on it takes a NUMBER as a pick and a YES or NO as the answer to the offer, so the
+    dispatch asks what the customer said before it asks what kind the question is. A
+    number wins: it is unambiguous, and the roster is what the number was printed against.
+    A yes or no on a roster with NO offer resolves nothing at all - there is nothing on
+    that screen to say yes to - and the question stays open.
     """
+    answer = answer or {}
+    payload = dict(payload or {})
+    offer = payload.get("offer")
+    if (
+        isinstance(offer, dict)
+        and not (answer.get("picks") or [])
+        and answer.get("yes_no") in ("yes", "no")
+    ):
+        # The offer's OWN row and the offer's OWN team, because `_team_pick` reads both:
+        # the roster's options are products, and `payload.team` is what a yes assigns.
+        return _team_pick(
+            answer,
+            _freeze(offer.get("options")),
+            {**payload, "team": offer.get("team"), "domain": offer.get("domain")},
+        )
     handler = _HANDLERS.get(kind)
     if handler is None:
         return Outcome(handler="unknown", outcome=f"No handler for {kind!r}.")
-    return handler(answer or {}, _freeze(options), dict(payload or {}))
+    return handler(answer, _freeze(options), payload)
 
 
 # --------------------------------------------------------------------------- #
