@@ -1751,10 +1751,13 @@ def _outstanding_date_range(from_iso: Any, to_iso: Any) -> str:
     return _outstanding_ddmmyyyy(from_iso or to_iso)
 
 
-def _outstanding_location_label(code: Any) -> str:
-    """NULL warehouse renders as ``Unassigned`` (D8 transparency) - never hidden,
-    never elided."""
-    return str(code) if _filled(code) else "Unassigned"
+def _outstanding_label(value: Any) -> str:
+    """A missing warehouse or a missing CUSTOMER renders as ``Unassigned`` (D8
+    transparency) - never hidden, never elided, and never Python's ``None``, which is
+    what the owner's smoke test read under *_By customer_* on 13 Sep 2026
+    (``None: 178 (O/S: 178)``). One word for both, because to the reader they are the
+    same fact: this row belongs to nobody the record names."""
+    return str(value) if _filled(value) else "Unassigned"
 
 
 def _outstanding_location_header(token: Any, codes: Any) -> str:
@@ -1782,14 +1785,15 @@ def _outstanding_so_block(so: dict, by_location: list, by_customer: list) -> str
     ]
     for row in by_location:
         lines.append(
-            f"{_outstanding_location_label(row.get('code'))}: "
+            f"{_outstanding_label(row.get('code'))}: "
             f"{_outstanding_fmt_int(row.get('ordered_qty'))} "
             f"(O/S: {_outstanding_fmt_int(row.get('outstanding_qty'))})"
         )
     lines.append("*_By customer_*")
     for row in by_customer:
         lines.append(
-            f"{row.get('customer_name')}: {_outstanding_fmt_int(row.get('ordered_qty'))} "
+            f"{_outstanding_label(row.get('customer_name'))}: "
+            f"{_outstanding_fmt_int(row.get('ordered_qty'))} "
             f"(O/S: {_outstanding_fmt_int(row.get('outstanding_qty'))})"
         )
     return "\n".join(lines)
@@ -1810,12 +1814,15 @@ def _outstanding_do_block(do: dict, by_location: list, by_customer: list) -> str
     ]
     for row in by_location:
         lines.append(
-            f"{_outstanding_location_label(row.get('code'))}: "
+            f"{_outstanding_label(row.get('code'))}: "
             f"{_outstanding_fmt_int(row.get('pending_qty'))}"
         )
     lines.append("*_By customer_*")
     for row in by_customer:
-        lines.append(f"{row.get('customer_name')}: {_outstanding_fmt_int(row.get('pending_qty'))}")
+        lines.append(
+            f"{_outstanding_label(row.get('customer_name'))}: "
+            f"{_outstanding_fmt_int(row.get('pending_qty'))}"
+        )
     return "\n".join(lines)
 
 
@@ -1873,11 +1880,12 @@ def _outstanding_report(report: dict) -> str:
     return text
 
 
-# field order fixed by scope (AC-1106); `kind` picks the value formatter below.
+# field order fixed by scope (AC-1106); `kind` picks the value formatter below
+# (`label` is the Unassigned-when-missing one, shared by Customer and Location).
 _OUTSTANDING_SO_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("SO Number", "so_number", "text"),
-    ("Customer", "customer_name", "text"),
-    ("Location", "location", "location"),
+    ("Customer", "customer_name", "label"),
+    ("Location", "location", "label"),
     ("Ordered", "ordered_qty", "qty"),
     ("Transferred to DO", "transferred_qty", "qty"),
     ("Outstanding", "outstanding_qty", "qty"),
@@ -1885,8 +1893,8 @@ _OUTSTANDING_SO_FIELDS: tuple[tuple[str, str, str], ...] = (
 )
 _OUTSTANDING_DO_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("DO Number", "do_number", "text"),
-    ("Customer", "customer_name", "text"),
-    ("Location", "location", "location"),
+    ("Customer", "customer_name", "label"),
+    ("Location", "location", "label"),
     ("Pending", "pending_qty", "qty"),
     ("DO Date", "do_date", "date"),
 )
@@ -1940,8 +1948,8 @@ def _outstanding_detail(report: dict, scope: str) -> str:
             value = row.get(key)
             if kind == "qty":
                 value = _outstanding_fmt_int(value)
-            elif kind == "location":
-                value = _outstanding_location_label(value)
+            elif kind == "label":
+                value = _outstanding_label(value)
             elif kind == "date" and _filled(value):
                 value = _outstanding_ddmmyyyy(value)
             field_lines.append(f"*{label}:* {value}")

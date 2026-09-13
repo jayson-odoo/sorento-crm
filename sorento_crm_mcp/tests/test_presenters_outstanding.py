@@ -154,6 +154,34 @@ def test_fourteen_customers_render_without_elision():
     assert "Unassigned: 14,000 (O/S: 14,000)" in rendered
 
 
+def test_null_customer_prints_unassigned_in_both_blocks():
+    """Owner smoke test, 13 Sep 2026: `SRTWT7443 outstanding both` printed
+    `None: 178 (O/S: 178)` under *_By customer_* - a sales order with no customer
+    rendered Python's `None` at the reader. A missing customer prints `Unassigned`,
+    the SAME word a NULL warehouse already uses, in both blocks."""
+    report = copy.deepcopy(_MOCK)
+    report["so_by_customer"] = [
+        {"customer_name": None, "ordered_qty": 178, "outstanding_qty": 178},
+    ]
+    report["do_by_customer"] = [{"customer_name": None, "pending_qty": 640}]
+    rendered = _outstanding_report(report)
+    assert "Unassigned: 178 (O/S: 178)" in rendered, rendered
+    assert "Unassigned: 640" in rendered, rendered
+    assert "None" not in rendered, rendered
+
+
+@pytest.mark.parametrize("scope", ["so", "do"])
+def test_null_customer_prints_unassigned_in_the_detail_rows(scope: str):
+    """The same word in the detail list's Customer field, for both scopes - the row
+    is one SO / one pending DO, and `None` is not a customer."""
+    report = copy.deepcopy(_MOCK)
+    report["so_rows"] = [{**report["so_rows"][0], "customer_name": None}]
+    report["do_rows"] = [{**report["do_rows"][0], "customer_name": None}]
+    rendered = _outstanding_detail(report, scope)
+    assert "*Customer:* Unassigned" in rendered, rendered
+    assert "None" not in rendered, rendered
+
+
 def test_null_warehouse_prints_unassigned():
     report = copy.deepcopy(_MOCK)
     report["do"] = None

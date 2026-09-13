@@ -368,13 +368,16 @@ REPORT_HIT = {
         "order_date_min": "2026-01-01", "order_date_max": "2026-01-01",
     },
     "do": {
-        "do_qty": 12, "delivered_qty": 5, "pending_qty": 7, "do_count": 1,
+        # R1 (owner ruling, 13 Sep 2026): the DO block is pending DOs only, so the route
+        # no longer returns `do_qty` / `delivered_qty` at all - a double that still
+        # carried them would be claiming a wire shape production does not produce.
+        "pending_qty": 7, "do_count": 1,
         "do_date_min": "2026-02-03", "do_date_max": "2026-02-03",
     },
     "so_by_location": [{"code": "BRW-IB", "ordered_qty": 10, "outstanding_qty": 7}],
     "so_by_customer": [{"customer_name": CUSTOMER_NAME, "ordered_qty": 10, "outstanding_qty": 7}],
-    "do_by_location": [{"code": "BRW-IB", "do_qty": 12, "pending_qty": 7}],
-    "do_by_customer": [{"customer_name": CUSTOMER_NAME, "do_qty": 12, "pending_qty": 7}],
+    "do_by_location": [{"code": "BRW-IB", "pending_qty": 7}],
+    "do_by_customer": [{"customer_name": CUSTOMER_NAME, "pending_qty": 7}],
     "so_rows": [
         {
             "so_number": "SO1", "customer_name": CUSTOMER_NAME, "location": "BRW-IB",
@@ -384,7 +387,7 @@ REPORT_HIT = {
     "do_rows": [
         {
             "do_number": "DO1", "customer_name": CUSTOMER_NAME, "location": "BRW-IB",
-            "do_qty": 12, "delivered_qty": 5, "pending_qty": 7, "do_date": "2026-02-03",
+            "pending_qty": 7, "do_date": "2026-02-03",
         }
     ],
 }
@@ -398,7 +401,7 @@ REPORT_MISS = {
         "order_date_min": None, "order_date_max": None,
     },
     "do": {
-        "do_qty": 0, "delivered_qty": 0, "pending_qty": 0, "do_count": 0,
+        "pending_qty": 0, "do_count": 0,
         "do_date_min": None, "do_date_max": None,
     },
     "so_by_location": [], "so_by_customer": [], "do_by_location": [], "do_by_customer": [],

@@ -430,6 +430,27 @@ def test_do_block_covers_pending_dos_only(client, db):
     assert "delivered_qty" not in pending_row
 
 
+def test_a_sales_order_with_no_customer_echoes_null_not_the_string_none(client, db):
+    """Owner smoke test, 13 Sep 2026: the reply printed `None: 178 (O/S: 178)` under
+    *_By customer_*. The rendering is the presenter's job, but the WIRE has to carry a
+    real null for it to render anything sensible - a serialized "None" string would be
+    indistinguishable from a customer actually called None."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    _so_line(db, product_id=prod.id, ordered=178, delivered=0, customer_id=None)
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "so"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [row["customer_name"] for row in body["so_by_customer"]] == [None], (
+        f"a NULL customer must stay null on the wire: {body['so_by_customer']}"
+    )
+    assert body["so_rows"][0]["customer_name"] is None, body["so_rows"]
+    assert "None" not in resp.text, (
+        f"nothing in the body may carry the literal string 'None': {resp.text}"
+    )
+
+
 # --------------------------------------------------------------------- AC-1116
 
 
