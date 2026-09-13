@@ -1588,7 +1588,12 @@ class TestTotalMissEscalates:
 # --------------------------------------------------------------------------- #
 
 
-def _seed_open_outstanding_detail(session_factory) -> None:
+def _seed_open_outstanding_detail(
+    session_factory,
+    *,
+    filters: dict[str, Any] | None = None,
+    rows: list[dict[str, Any]] | None = None,
+) -> None:
     _seed_contact(
         session_factory,
         variables={
@@ -1596,11 +1601,13 @@ def _seed_open_outstanding_detail(session_factory) -> None:
             "domain_hint": "order",
             "entities": [],
             "selection_context": "outstanding_detail",
-            "last_result_set": [
+            "last_result_set": rows
+            or [
                 {"idx": 1, "label": "Sales order list", "value": "so"},
                 {"idx": 2, "label": "Delivery order list", "value": "do"},
             ],
-            "outstanding_filters": {
+            "outstanding_filters": filters
+            or {
                 "product_code": PRODUCT_CODE,
                 "date_filter_start": None,
                 "date_filter_end": None,
@@ -2722,3 +2729,399 @@ class TestCustomerOnlyOutstandingAskReachesTheReport:
             f"a customer ask with no outstanding word must stay on the plain order "
             f"lane: {name}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# R15 (owner ruling, 13 Sep 2026) - a turn under an open outstanding question
+# that PICKS nothing but carries its OWN filter (dates, a warehouse, a
+# customer on a product-subject report) is a REFINEMENT, not an answer and
+# not a new ask: the parser's own verdict decides it (`entity_op: "reuse"`, or
+# `replace_combine` naming a filter on a DIFFERENT axis from the stored
+# subject) - never a bespoke "dates-only" special case, per the owner's
+# "too many hardcoding" pushback mid-round. The SAME report re-runs with the
+# stored subject overlaid by this turn's own filter, and the SAME offer is
+# re-armed with the new window/location - never re-printed unchanged.
+# --------------------------------------------------------------------------- #
+
+
+class TestDateNarrowingUnderAnOpenOffer:
+    """AC-1157/AC-1158. Traced from the owner's own turn on the lane stack, 13 Sep
+    2026: `outstanding dealer quantity for CNK HARDWARE` -> scope `3` (both) -> the
+    detail offer -> `i want to see this month only` (parser: casual, no entities, no
+    reference_positions, `date_filter_start/end` on September, `entity_op: "reuse"`)
+    RE-PRINTED the offer instead of narrowing it. "you are anticipating me to reply
+    for the detail list after offering me the detail list, but i just want to shrink
+    the search by date."
+    """
+
+    def test_a_date_only_turn_under_the_detail_offer_reruns_the_report_with_the_new_window(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_detail(
+            session_factory,
+            filters={
+                "product_code": None,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [CUSTOMER_UUID],
+                "warehouse_codes": [],
+                "location_token": None,
+                "scope": "both",
+            },
+            rows=[
+                {"idx": 1, "label": "Sales order list", "value": "so"},
+                {"idx": 2, "label": "Delivery order list", "value": "do"},
+                {"idx": 3, "label": "Both lists", "value": "both"},
+            ],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], entity_op="reuse", broaden_axis="date",
+                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
+                user_goal="trying to see this month only",
+            ),
+            text_body="i want to see this month only",
+            msg_id="ZZT-outstanding-date-narrow-detail-1",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+        )
+        assert len(captured) == 1, (
+            f"exactly one report call, no re-parse of the carried subject: {captured}"
+        )
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", name
+        assert args.get("order_date_from") == "2026-09-01", (
+            f"this turn's own window must reach the tool: {args}"
+        )
+        assert args.get("order_date_to") == "2026-09-30", args
+        assert args.get("scope") == "both", (
+            f"the carried scope must survive the date narrowing: {args}"
+        )
+        assert args.get("customer_ids") == [CUSTOMER_UUID], (
+            f"the carried customer subject must survive: {args}"
+        )
+        assert "detail" not in args, (
+            f"a date-only refinement re-runs the REPORT, not a detail pick: {args}"
+        )
+        assert not args.get("product_code"), (
+            f"no product was ever named on this offer, so none must appear now: {args}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "*Sales order outstanding*" in reply, (
+            f"the reply must be the report, not the re-printed offer alone: {reply!r}"
+        )
+        assert "1. Sales order list" in reply and "2. Delivery order list" in reply, (
+            f"the re-run must re-arm the detail offer: {reply!r}"
+        )
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
+            stored.get("pending")
+        )
+        filters_out = stored.get("outstanding_filters") or {}
+        assert filters_out.get("date_filter_start") == "2026-09-01", filters_out
+        assert filters_out.get("date_filter_end") == "2026-09-30", filters_out
+        assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
+
+    def test_a_pick_after_the_narrowing_lists_the_new_window_only(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_detail(
+            session_factory,
+            filters={
+                "product_code": None,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [CUSTOMER_UUID],
+                "warehouse_codes": [],
+                "location_token": None,
+                "scope": "both",
+            },
+            rows=[
+                {"idx": 1, "label": "Sales order list", "value": "so"},
+                {"idx": 2, "label": "Delivery order list", "value": "do"},
+                {"idx": 3, "label": "Both lists", "value": "both"},
+            ],
+        )
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], entity_op="reuse", broaden_axis="date",
+                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
+                user_goal="trying to see this month only",
+            ),
+            text_body="i want to see this month only",
+            msg_id="ZZT-outstanding-date-narrow-detail-2a",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+        )
+        _result2, captured2 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-date-narrow-detail-2b",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+        )
+        assert captured2, "the pick after the narrowing must still resolve"
+        _name, args2 = captured2[0]
+        assert args2.get("detail") == "so", f"'1' must give the SO detail: {args2}"
+        assert args2.get("order_date_from") == "2026-09-01", (
+            f"the pick must run over the NARROWED window, not the original one: {args2}"
+        )
+        assert args2.get("order_date_to") == "2026-09-30", args2
+
+    def test_a_date_only_turn_under_the_detail_offer_keeps_a_product_subject(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_detail(
+            session_factory,
+            filters={
+                "product_code": PRODUCT_CODE,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [],
+                "warehouse_codes": [],
+                "location_token": None,
+                "scope": "so",
+            },
+            rows=[
+                {"idx": 1, "label": "Sales order list", "value": "so"},
+            ],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], entity_op="reuse", broaden_axis="date",
+                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
+                user_goal="trying to see this month only",
+            ),
+            text_body="just this month",
+            msg_id="ZZT-outstanding-date-narrow-product-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the date-only refinement must re-run the report"
+        _name, args = captured[0]
+        assert args.get("product_code") == PRODUCT_CODE, (
+            f"the carried product subject must survive the date narrowing: {args}"
+        )
+        assert args.get("scope") == "so", args
+        assert args.get("order_date_from") == "2026-09-01", args
+        assert args.get("order_date_to") == "2026-09-30", args
+        assert "detail" not in args, args
+        reply = (result.reply or {}).get("text") or ""
+        assert reply.startswith(f"Product: {PRODUCT_CODE}\n"), (
+            f"the re-run must print the report's own header: {reply!r}"
+        )
+
+    def test_a_date_only_turn_under_the_scope_question_reasks_with_the_new_window(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_open_outstanding_scope(
+            session_factory,
+            filters={
+                "product_code": None,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [CUSTOMER_UUID],
+                "warehouse_codes": [],
+                "location_token": None,
+            },
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[], entity_op="reuse", broaden_axis="date",
+                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
+                user_goal="trying to see this month only",
+            ),
+            text_body="i want to see this month only",
+            msg_id="ZZT-outstanding-date-narrow-scope-1",
+            attributes=["sales_orders.outstanding"],
+        )
+        assert captured == [], (
+            f"a date-only turn under an open SCOPE question must not fetch anything: {captured}"
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" in reply, reply
+        assert "1. Sales orders" in reply and "2. Delivery orders" in reply, reply
+        assert "Order date: 01/09/2026 to 30/09/2026" in reply, (
+            f"the re-asked scope question must show the NEW window, in the real "
+            f"presenter format: {reply!r}"
+        )
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
+            stored.get("pending")
+        )
+        filters_out = stored.get("outstanding_filters") or {}
+        assert filters_out.get("date_filter_start") == "2026-09-01", filters_out
+        assert filters_out.get("date_filter_end") == "2026-09-30", filters_out
+        assert filters_out.get("customer_ids") == [CUSTOMER_UUID], (
+            f"the customer subject must be unchanged by the date narrowing: {filters_out}"
+        )
+
+    def test_a_pick_carrying_its_own_dates_still_picks(self, session_factory, monkeypatch) -> None:
+        """Regression guard (N2's existing rule): a turn that BOTH picks (a
+        `reference_positions`) AND carries its own dates is an ANSWER, not a
+        refinement - the pick wins and the dates narrow the same re-run. Kept here
+        deliberately alongside R15's new tests, since the two rules share the same
+        `_apply_outstanding_pending` code path and a fix for one must not break the
+        other. May already be green today (grep `names_own_dates` /
+        `test_a_date_in_the_answering_turn_wins_over_the_carried_one`) - if so this
+        is a guard, not a red test, and the report says so."""
+        _seed_open_outstanding_detail(session_factory)
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[2],
+                date_filter_start="2026-09-01", date_filter_end="2026-09-30",
+            ),
+            text_body="2, but only September",
+            msg_id="ZZT-outstanding-pick-own-dates-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the pick must still resolve"
+        _name, args = captured[0]
+        assert args.get("detail") == "do", f"'2' must give the DO detail: {args}"
+        assert args.get("order_date_from") == "2026-09-01", (
+            f"the pick's own dates must reach the re-run: {args}"
+        )
+        assert args.get("order_date_to") == "2026-09-30", args
+
+    def test_a_location_only_turn_under_the_detail_offer_narrows_by_location(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """A warehouse entity under a customer-subject offer is a filter on a
+        DIFFERENT axis from the stored subject (customer) - a REFINEMENT, not a new
+        ask, even though `entity_op` here is `replace_combine` (the prompt's own
+        rule for a bare value under a business domain, not `reuse`)."""
+        from app.models.inventory import Warehouse
+
+        db = session_factory()
+        db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW", warehouse_name="BRW", is_active=True))
+        db.commit()
+        _seed_open_outstanding_detail(
+            session_factory,
+            filters={
+                "product_code": None,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [CUSTOMER_UUID],
+                "warehouse_codes": [],
+                "location_token": None,
+                "scope": "both",
+            },
+            rows=[
+                {"idx": 1, "label": "Sales order list", "value": "so"},
+                {"idx": 2, "label": "Delivery order list", "value": "do"},
+                {"idx": 3, "label": "Both lists", "value": "both"},
+            ],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", intent_hint=None, domain_hint=None,
+                entity_op="replace_combine",
+                entities=[
+                    {
+                        "raw": "BRW", "hint": "warehouse", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+                reference_positions=[],
+            ),
+            text_body="only BRW",
+            msg_id="ZZT-outstanding-location-narrow-detail-1",
+            attributes=["sales_orders.outstanding"],
+            mcp_response=REPORT_HIT,
+        )
+        assert len(captured) == 1, (
+            f"exactly one report call, the location refines the SAME offer: {captured}"
+        )
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (name, args)
+        assert args.get("warehouse_codes") == ["BRW"], (
+            f"the location word must reach the tool as warehouse_codes: {args}"
+        )
+        assert args.get("customer_ids") == [CUSTOMER_UUID], (
+            f"the carried customer subject must survive a location refinement: {args}"
+        )
+        assert args.get("scope") == "both", args
+        assert "detail" not in args, (
+            f"a location-only refinement re-runs the REPORT, not a detail pick: {args}"
+        )
+        _result_unused = result
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
+            stored.get("pending")
+        )
+        filters_out = stored.get("outstanding_filters") or {}
+        assert filters_out.get("warehouse_codes") == ["BRW"], filters_out
+        assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
+
+    def test_a_replacing_product_under_a_product_offer_is_still_a_new_ask(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Guard: a DIFFERENT product named under an open PRODUCT-subject offer is
+        still a new ask (never a "refinement" of the product axis - there is only
+        ever one product subject), so the old offer must be gone afterwards. Checked
+        against `test_detail_offer_drops_on_a_new_ask` (same file) first: that test
+        runs a second "2" turn and asserts only on the SECOND turn's captured call
+        and reply text, never on the stored `pending` right after the replacing
+        turn itself - so this is not a duplicate, it pins the intermediate state
+        that test never reads."""
+        _seed_open_outstanding_detail(session_factory)
+        other_uuid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        other_code = "SRTWC999"
+        other_hit = {**REPORT_HIT, "product_code": other_code}
+        _result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", intent_hint="check_order", domain_hint="order",
+                entity_op="replace_combine",
+                entities=[
+                    {
+                        "raw": other_code, "hint": "product", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                ],
+                order_status="outstanding_both",
+            ),
+            text_body=f"{other_code} outstanding both",
+            msg_id="ZZT-outstanding-guard-replace-product-1",
+            attributes=["sales_orders.outstanding"],
+            matches={other_code: {"uuid": other_uuid, "entity_type": "product", "canonical_code": other_code}},
+            mcp_response=other_hit,
+        )
+        stored = _session_of(session_factory)["variables"]
+        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail" or (
+            stored.get("outstanding_filters") or {}
+        ).get("product_code") != PRODUCT_CODE, (
+            f"a different product replaces the offer, it does not extend it: "
+            f"{stored.get('pending')!r} {stored.get('outstanding_filters')!r}"
+        )
+        if captured:
+            _name, args = captured[0]
+            assert args.get("product_code") != PRODUCT_CODE, (
+                f"the OLD product's offer must not answer for the new one: {captured}"
+            )

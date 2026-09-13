@@ -421,6 +421,33 @@ resolution and the filter set in the console trace.
   the product-subject path. A customer ask that names NO outstanding/scope word at all stays
   on the plain order lane, unchanged (regression lock - this is what R13 does NOT touch).
   Evidence: pytest (`run_fetch` + a full turn arming the scope question) + a console case.
+- **AC-1157 [BE]** NEW (R15, owner ruling, 13 Sep 2026). Under an OPEN `outstanding_detail`
+  offer, a turn that PICKS nothing (no `reference_positions`, no scope word) but the PARSER'S
+  OWN verdict says it is keeping the previous subject - `entity_op: "reuse"`, or
+  `replace_combine` naming a filter on a DIFFERENT axis from the stored subject (a date, a
+  warehouse, a customer on a product-subject report) - is a REFINEMENT: the SAME
+  `crm_outstanding_report` call re-runs with the stored subject (product_code / customer_ids /
+  warehouse_codes / location_token / scope) overlaid by this turn's own filter, no `detail`
+  argument, and the reply is the report followed by the detail offer again, re-armed with the
+  new filter set. The mechanism reads the parser's classification, never a bespoke "dates-only"
+  special case - "too many hardcoding... LLM is supposed to help us eliminate these hard
+  coding" (owner, 13 Sep 2026). A turn that instead NAMES A NEW SUBJECT (a different product
+  under a product-subject offer) stays a new ask and drops the offer, unchanged. Evidence:
+  pytest, `TestDateNarrowingUnderAnOpenOffer` (`tests/chatbot/test_outstanding_lane.py`) -
+  `test_a_date_only_turn_under_the_detail_offer_reruns_the_report_with_the_new_window`,
+  `test_a_pick_after_the_narrowing_lists_the_new_window_only`,
+  `test_a_date_only_turn_under_the_detail_offer_keeps_a_product_subject`,
+  `test_a_location_only_turn_under_the_detail_offer_narrows_by_location`,
+  `test_a_pick_carrying_its_own_dates_still_picks` (regression guard),
+  `test_a_replacing_product_under_a_product_offer_is_still_a_new_ask` (regression guard).
+- **AC-1158 [BE]** NEW (R15, owner ruling, 13 Sep 2026). The same refinement rule applies
+  under an OPEN `outstanding_scope` question: a turn that picks nothing but carries its own
+  filter (by the same parser-verdict test as AC-1157) does NOT fetch anything - it RE-ASKS the
+  scope question, with the stored `outstanding_filters` overlaid by this turn's own filter (so
+  a following "1"/"2"/"3" runs over the narrowed window/location), and the re-asked question's
+  own text names the new window (`Order date: <range>`, the report's own date-range format) so
+  the customer sees what changed. Evidence: pytest,
+  `test_a_date_only_turn_under_the_scope_question_reasks_with_the_new_window`.
 
 ## Out of scope (backlog)
 
