@@ -1171,10 +1171,45 @@ def apply_open_question_outcome(
     products = outcome.focus.get("products")
     customer = outcome.focus.get("customer")
     entities = [*(products or []), *([customer] if customer else [])]
+    # EVERY KEPT ENTITY, not only the products among them (issue #708, the other half).
+    # `payload.keep` is what ALREADY resolved on the turn the picker was raised for, and the
+    # focus can only carry the product-shaped ones: `_product_pick` folds those into
+    # `focus.products` and `_is_product` drops the rest, so an `attachment_type` was computed,
+    # carried on the outcome and then read by nobody.
+    #
+    # Measured on the stack, 13 Sep 2026 (turns 42267ebd -> 5ed9f861): "photo for
+    # srtwc60630-sh" offered three codes and kept `Product Photos`; picking 1 scoped the turn
+    # to the product ALONE, so the gate answered "'product_attachment' requires
+    # [attachment_type] but none resolved" and the bot asked for the attachment type the
+    # customer had already named. This is the FIRST turn on that install whose `keep` held a
+    # non-product, which is why it surfaced now and not with the three picks an hour earlier
+    # (their `keep` was empty).
+    #
+    # De-duplicated against what the focus already supplied, by hint and code, so a product
+    # sibling is not added twice.
+    seen = {
+        (
+            jsc.lower_or_empty(jsc.get(e, "hint")),
+            jsc.lower_or_empty(jsc.get(e, "canonical_code") or jsc.get(e, "raw")),
+        )
+        for e in entities
+        if jsc.truthy(e)
+    }
+    for kept in outcome.keep or []:
+        if not isinstance(kept, dict):
+            continue
+        key = (
+            jsc.lower_or_empty(jsc.get(kept, "hint")),
+            jsc.lower_or_empty(jsc.get(kept, "canonical_code") or jsc.get(kept, "raw")),
+        )
+        if key in seen or not key[1]:
+            continue
+        seen.add(key)
+        entities.append(kept)
     if entities:
         # "replace", not "replace_combine": the picks ARE the scope (owner ruling B,
-        # console pass 3). `outcome.keep` has already folded in the siblings issue #708
-        # says must survive, so asking the executor to combine again could only put the
+        # console pass 3). `outcome.keep` is folded in above - every kept entity, products
+        # and the rest - so asking the executor to combine again could only put the
         # replaced token back.
         o["entities"] = entities
         o["entity_op"] = "replace"
