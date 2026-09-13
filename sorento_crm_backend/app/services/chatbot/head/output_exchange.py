@@ -1004,42 +1004,6 @@ _SCOPE_BY_ORDER_STATUS: dict[str, str] = {
     "outstanding_both": "both",
 }
 
-#: D16 (AC-1144/AC-1145, owner testing round 2, 13 Sep 2026): the words a customer
-#: answers EITHER outstanding question with, when they type no number at all - the owner
-#: typed "all" at the scope question and "DO list" at the detail offer, and both fell
-#: through. ONE table for both questions, because both offer the same three things, and
-#: the option rows already carry which of them are on offer (`last_result_set[].value`).
-#:
-#: Order is the precedence: "the delivery order list" names a DO even though it contains
-#: "order", and "both" wins over either single scope. Word boundaries throughout, so
-#: "delivery" is not read as a "do".
-_OUTSTANDING_WORD_VALUES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\b(both|all|everything)\b"), "both"),
-    (re.compile(r"\b(do|dos|delivery|deliveries)\b"), "do"),
-    (re.compile(r"\b(so|sos|sale|sales)\b"), "so"),
-)
-
-#: A pick is a short reply. Longer than this and the message is a sentence of its own,
-#: which the `own_question` rule below is the judge of - the same reason the CS member
-#: pick caps its own bare-number scan at a handful of words.
-_OUTSTANDING_WORD_MAX_WORDS = 6
-
-
-def _outstanding_word_pick(message: Any) -> str | None:
-    """Which option a WORD answer names ("all" -> both, "DO list" -> do), or None.
-
-    Says nothing about whether that option is ON OFFER - the caller checks the stored
-    rows for that, because a word naming a scope the report never offered is a re-print,
-    not a pick (AC-1145)."""
-    text = jsc.nullish_str(message, "").strip().lower()
-    if not text or len(text.split()) > _OUTSTANDING_WORD_MAX_WORDS:
-        return None
-    for pattern, value in _OUTSTANDING_WORD_VALUES:
-        if pattern.search(text):
-            return value
-    return None
-
-
 def _outstanding_scope_pick(prev_state: Any, o: Any) -> str | None:
     """AC-1132/AC-1138: which option this turn answered an OPEN `outstanding_scope` or
     `outstanding_detail` ask with, or None (out of range / not answered) - the SAME
@@ -1053,9 +1017,7 @@ def _outstanding_scope_pick(prev_state: Any, o: Any) -> str | None:
     return None
 
 
-def _apply_outstanding_pending(
-    o: dict, *, prev_state: Any, prev_pending: Any, message: Any = None
-) -> None:
+def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -> None:
     """S4 points 4/5 (PLAN-chatbot-outstanding-report.md): resolve an OPEN
     `outstanding_scope` or `outstanding_detail` ask against this turn, mutating `o` in
     place. Idempotent - called twice (once early, once as the final pass right before
@@ -1077,26 +1039,6 @@ def _apply_outstanding_pending(
         # direct ask uses, so there is nothing extra to teach it.
         picked = _SCOPE_BY_ORDER_STATUS.get(jsc.js_string(o.get("order_status") or ""))
 
-    # D16 (AC-1144/AC-1145): the bare word, off the customer's own message. The parser
-    # emits no `reference_positions` for "all" or "DO list" (there is no number to find)
-    # and no `order_status` either (it reads them as casual), so neither read above can
-    # see them. `word_pick` names a scope; whether that scope is ON OFFER is decided
-    # below against the stored rows.
-    word_pick = _outstanding_word_pick(message) if picked is None else None
-    if (
-        word_pick is not None
-        and jsc.truthy(o.get("domain_hint"))
-        and jsc.js_string(o.get("domain_hint")) != "order"
-    ):
-        # A turn that names ANOTHER domain is a new ask whatever words it happens to
-        # contain - "ok so what about the stock" carries a stray "so" and is not a pick.
-        word_pick = None
-    offered = {
-        jsc.get(row, "value")
-        for row in jsc.array(jsc.get(prev_state, "last_result_set"))
-        if jsc.truthy(row)
-    }
-
     # D2/D9: a turn that brings its OWN business question - a new entity, or its own
     # domain - is a NEW ask, not an answer to "1"/"2"/"3", and the pending is DROPPED
     # rather than mis-resolved (`_team_clarify_pick` makes the same "own_question"
@@ -1116,9 +1058,12 @@ def _apply_outstanding_pending(
     already_applied = jsc.truthy(o.get("outstanding_answer_applied"))
 
     named_entities = jsc.array(o.get("entities"))
-    names_product = any(
-        jsc.js_string(jsc.get(e, "hint") or "") == "product" for e in named_entities
-    )
+    # D17 point 3: ANY entity, not just a product. A turn that names a customer, an
+    # order, a warehouse - anything of its own - is asking something new, and stays a
+    # new ask even if a stray `reference_positions` rides along with it. The parser is
+    # told never to emit both ("delivery to hanlim" names a customer, so it is not an
+    # answer); this is the head's own structural guard for when it does anyway.
+    names_entity = bool(named_entities)
     names_own_dates = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))
 
     own_question = bool(named_entities) or jsc.truthy(o.get("domain_hint"))
@@ -1136,7 +1081,6 @@ def _apply_outstanding_pending(
         not already_applied
         and kind == "outstanding_detail"
         and picked is None
-        and word_pick is None
         and not has_positions
         and not own_question
     ):
@@ -1146,16 +1090,7 @@ def _apply_outstanding_pending(
         # into the carried outstanding ask would answer a question nobody asked.
         return
     if not already_applied and (
-        names_product
-        or (
-            own_question
-            # D16: a word answer IS an answer, and a turn carrying one names no product
-            # (that case is `names_product` above), so a bare domain hint on "DO list"
-            # must not turn it into a new ask - which is exactly how the owner's own
-            # "DO list" fell into the generic order lane.
-            and word_pick is None
-            and (kind == "outstanding_detail" or picked is None)
-        )
+        names_entity or (own_question and (kind == "outstanding_detail" or picked is None))
     ):
         # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask is
         # DROPPED here, and every later reader of `prev_pending` this turn has to see that
@@ -1165,12 +1100,6 @@ def _apply_outstanding_pending(
         # question on the NEXT bare-word ask, however many turns later.
         o["outstanding_pending_dropped"] = True
         return
-
-    # AC-1144/AC-1145: a word naming an OFFERED option answers the question; a word
-    # naming one that was never offered leaves `picked` as None, and the branches below
-    # re-ask (the scope question) or re-print the offer (the detail list).
-    if picked is None and word_pick is not None and word_pick in offered:
-        picked = word_pick
 
     o["outstanding_answer_applied"] = True
     o["domain_hint"] = "order"
@@ -1379,12 +1308,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # there assign `entities`/`domain_hint`.
     prev_state = parent_input.get("previous_conversation_state")
     prev_pending = jsc.get(prev_state, "pending") if prev_state is not None else None
-    _apply_outstanding_pending(
-        o,
-        prev_state=prev_state,
-        prev_pending=prev_pending,
-        message=_split_reply_to(parent_input.get("latest_user_message")),
-    )
+    _apply_outstanding_pending(o, prev_state=prev_state, prev_pending=prev_pending)
     stale_outstanding_ask_open = jsc.get(prev_pending, "kind") in (
         "outstanding_scope",
         "outstanding_detail",
@@ -3598,12 +3522,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # above and here, and the positional-pick resolution in particular resets
     # `entities` to this turn's OWN (empty) list when the pick was out of range.
     # Re-applied here, where it is final by definition.
-    _apply_outstanding_pending(
-        o,
-        prev_state=prev_state,
-        prev_pending=prev_pending,
-        message=_split_reply_to(parent_input.get("latest_user_message")),
-    )
+    _apply_outstanding_pending(o, prev_state=prev_state, prev_pending=prev_pending)
 
     output["_parser_raw"] = parser_raw_snapshot
     return output

@@ -698,15 +698,14 @@ class TestExactProductCodeWinsOverSiblings:
             session_factory,
             monkeypatch,
             qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None,
-                entities=[
-                    # The live parser hints the answer word itself as an entity (console
-                    # run 4, finding 6) - it is the ANSWER, never a filter.
-                    {
-                        "raw": "Both", "hint": "order", "canonical_code": None,
-                        "current_message": True, "confident": True,
-                    },
-                ],
+                # D17 (owner design ruling, 13 Sep 2026) replaced this turn's shape: the
+                # parser used to hint the answer word itself as an entity (console run 4,
+                # finding 6) and is now instructed to emit the POSITION and nothing else,
+                # which is also what the head's structural new-ask guard now requires - an
+                # entity beats a position, so a junk entity here would be a new ask. The
+                # assertions below are unchanged: the typed code on the answering turn
+                # (finding 5) and no "Couldn't find" echo (finding 6).
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
                 reference_positions=[3],
             ),
             text_body="3",

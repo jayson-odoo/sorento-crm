@@ -409,6 +409,33 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
     return str(kind) if kind else None
 
 
+#: The pending kinds whose answer is a POSITION against a roster the assistant printed
+#: (D17, 13 Sep 2026). Only these surface their options to the parser: every other kind
+#: either has no roster (`escalation_offer`) or already has its own resolution path, and
+#: attaching options to those would change a prompt this ruling is not about.
+_OPTION_PENDING_KINDS = ("outstanding_scope", "outstanding_detail")
+
+
+def _pending_options(variables: dict[str, Any]) -> list[str] | None:
+    """D17: the OPEN question's own numbered options, for the parser's user block.
+
+    The parser reads the customer's words against the options the assistant actually
+    offered and answers with a position; the deterministic head then maps that position
+    back through the SAME `last_result_set` (`head/output_exchange.py::
+    _outstanding_scope_pick`). One roster, read by both halves, so they cannot disagree
+    about what was on the screen.
+    """
+    if _pending_kind(variables) not in _OPTION_PENDING_KINDS:
+        return None
+    options: list[str] = []
+    for row in jsc.array(variables.get("last_result_set")):
+        label = jsc.get(row, "label")
+        if not jsc.truthy(label):
+            continue
+        options.append(f"{jsc.js_string(jsc.get(row, 'idx'))}. {jsc.js_string(label)}")
+    return options or None
+
+
 # --------------------------------------------------------------------------- #
 # Reads (session-bound, short)
 # --------------------------------------------------------------------------- #
@@ -1206,6 +1233,7 @@ def _run_stages(  # noqa: PLR0915
         previous_response=variables.get("response"),
         latest_user_message=latest_user_message,
         pending_kind=_pending_kind(variables),
+        pending_options=_pending_options(variables),
     )
     # G6: a dry run may supply the emission instead of paying for it. The mock goes
     # through the SAME `post_process` + `suggest_follow_up` the real parse takes, so a
