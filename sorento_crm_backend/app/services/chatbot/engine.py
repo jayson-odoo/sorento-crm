@@ -1320,6 +1320,30 @@ def _resolve_open_question(
         ]
         if positions:
             answer = {**answer, "resolved": True, "picks": positions}
+        elif jsc.get(question, "expects") == "yes_no" and isinstance(
+            jsc.get(parser_raw, "is_affirmative"), bool
+        ):
+            # THE OTHER HALF OF THE v1 PATH, and without it a yes was not an answer at all.
+            # Owner console pass, 13 Sep 2026, journey step 5: "photo for SRTWB8004" left a
+            # one-team `team_pick` open (`expects: yes_no`, `options[0].team:
+            # marketing_product`), the customer said "yes", and the conversation was assigned
+            # to CUSTOMER SERVICE - the hard default - because nothing here resolved the
+            # answer. `answers_open_question` is a prompt-v3 key and the promoted prompt is
+            # v1, so `signals` says `resolved: False`; the numbered fallback above does not
+            # fire on a bare yes; and the legacy reader that used to catch it
+            # (`_team_clarify_pick`, keyed on `pending.kind` / `selection_context`) went with
+            # the five-key session. So `_team_pick`'s yes arm - which returns exactly the
+            # offered team - was unreachable under the prompt production runs.
+            #
+            # `is_affirmative` is the PARSER's own boolean, not a reading of the customer's
+            # words (D11), and it is the same signal the post-processor's own offer arms
+            # already trust for a bare yes. A question that expects yes or no is answered by
+            # it; positions still win, because a numbered reply to a one-team offer is a pick.
+            answer = {
+                **answer,
+                "resolved": True,
+                "yes_no": "yes" if jsc.get(parser_raw, "is_affirmative") is True else "no",
+            }
     out: dict[str, Any] = {
         "question": question,
         "answer": answer,
