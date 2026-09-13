@@ -61,6 +61,7 @@ from tests.test_planning_changes import (  # noqa: F401  (api is the fixture)
     _project_line,
     _project_so,
     _uid,
+    _warehouse,
 )
 from tests.scm.test_planning_change_recompute_and_diff import (
     _only_row,
@@ -114,16 +115,20 @@ def _links_of(db, row_id) -> list:
     return db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_id).all()
 
 
-def _wholly_placed_buy_world(api, *, qty="34"):
+def _wholly_placed_buy_world(api, *, qty="34", warehouse=None):
     """A single held Buy line, its WHOLE quantity placed on a real PO - no remainder, no
     other line of the order carrying this product. The removal shape rule 6 has to answer:
     a line's whole placement has to move somewhere when the line itself goes, never simply
     released for nothing (`_place_row_on_a_real_po`'s own shape, reused rather than copied
-    for the qty-down world since this needs the WHOLE quantity placed, not a partial)."""
+    for the qty-down world since this needs the WHOLE quantity placed, not a partial).
+
+    `warehouse` defaults to `world.own_wh` (which carries a pool link) - passed explicitly
+    as a no-pool warehouse for the "no pool configured" shape (R3)."""
     client, world = api
     db = world.db
+    wh = warehouse or world.own_wh
     core_so = _core_so(db, world.company_id)
-    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered=qty,
+    core_line = _core_line(db, core_so, world.product, wh, qty_ordered=qty,
                             required_date=date(2027, 3, 1))
     order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
     line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
@@ -148,7 +153,7 @@ def _wholly_placed_buy_world(api, *, qty="34"):
     db.flush()
     po_line = PurchaseOrderLine(
         id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
-        product_id=world.product.id, warehouse_id=world.own_wh.id,
+        product_id=world.product.id, warehouse_id=wh.id,
         qty_ordered=Decimal(qty), qty_received=Decimal("0"), line_status="open",
     )
     db.add(po_line)
@@ -163,17 +168,21 @@ def _wholly_placed_buy_world(api, *, qty="34"):
     return world, core_so, core_line, order, line, po, po_line
 
 
-def _cancel_the_line(db, world, core_so, core_line):
+def _cancel_the_line(db, world, core_so, core_line, *, location=None):
     """Write-first (the book removes the line), then a CLOSED Change fed to build_batch -
-    the same shape `_so400884_shape`'s own "line 1 is removed - cancelled" save uses."""
+    the same shape `_so400884_shape`'s own "line 1 is removed - cancelled" save uses.
+
+    `location` defaults to `world.own_wh`'s own code - passed explicitly when the line
+    being cancelled sits at a different warehouse (R3's no-pool shape)."""
+    loc = location or world.own_wh.warehouse_code
     old_qty = float(core_line.qty_ordered)
     core_line.line_status = "cancelled"
     db.flush()
     before = Line(doc_number=core_so.so_number, item_code=world.product.product_code,
-                  location=world.own_wh.warehouse_code, qty=old_qty,
+                  location=loc, qty=old_qty,
                   required_date=core_line.required_date, row_ref=str(core_line.id))
     change = Change(CLOSED, core_so.so_number, world.product.product_code,
-                     world.own_wh.warehouse_code, before=before, after=None)
+                     loc, before=before, after=None)
     batch = planning_change_service.build_batch(
         db, Diff(scope_documents=(core_so.so_number,), changes=[change]),
         applied_line_ids={id(change): str(core_line.id)},
@@ -182,6 +191,81 @@ def _cancel_the_line(db, world, core_so, core_line):
     )
     db.commit()
     return batch
+
+
+def _two_lines_split_po_world(api, *, warehouse=None):
+    """One order, two lines, same product. Line 1 = Buy 34, its WHOLE quantity placed
+    across TWO real purchase-order lines of 17 each (`_document_links_by_row`'s own
+    per-po-line split shape - one line's placement routinely sits on several purchase-
+    order lines). Line 2 = Buy 17, held but left UNPLACED - the only same-order survivor,
+    with exactly 17 of headroom, no more and no less: enough to take ONE of line 1's two
+    links whole, nothing left over for the other."""
+    client, world = api
+    db = world.db
+    wh = warehouse or world.own_wh
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, wh, qty_ordered="34",
+                              required_date=date(2027, 3, 1))
+    core_line_2 = _core_line(db, core_so, world.product, wh, qty_ordered="17",
+                              required_date=date(2027, 3, 1))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line_1 = _project_line(db, order, line_no=1, product=world.product, core_line=core_line_1)
+    line_2 = _project_line(db, order, line_no=2, product=world.product, core_line=core_line_2)
+    db.commit()
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line_1.id, buy_qty="34", buy_reason="ZZT no stock anywhere"),
+        _line_payload(line_2.id, buy_qty="17", buy_reason="ZZT no stock anywhere"),
+    ]})
+    row_1 = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_1.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    row_2 = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_2.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    supplier = Supplier(
+        id=_uid(), company_id=world.company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} supplier",
+    )
+    po = PurchaseOrder(
+        id=_uid(), company_id=world.company_id, po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([supplier, po])
+    db.flush()
+    po_line_a = PurchaseOrderLine(
+        id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+        product_id=world.product.id, warehouse_id=wh.id,
+        qty_ordered=Decimal("17"), qty_received=Decimal("0"), line_status="open",
+    )
+    po_line_b = PurchaseOrderLine(
+        id=_uid(), company_id=world.company_id, purchase_order_id=po.id,
+        product_id=world.product.id, warehouse_id=wh.id,
+        qty_ordered=Decimal("17"), qty_received=Decimal("0"), line_status="open",
+    )
+    db.add_all([po_line_a, po_line_b])
+    db.commit()
+    ProjectOrderInquiryService(db).place_on_po_allocations(
+        row_1.id,
+        [
+            {"po_line_id": po_line_a.id, "qty": "17"},
+            {"po_line_id": po_line_b.id, "qty": "17"},
+        ],
+        actor_user_id=world.actor,
+    )
+    db.commit()
+    db.expire_all()
+    row_1 = db.get(OrderInquiryRow, row_1.id)
+    assert row_1.state == INQUIRY_PLACED, row_1.state
+    return {
+        "world": world, "core_so": core_so, "core_line_1": core_line_1,
+        "core_line_2": core_line_2, "order": order, "line_1": line_1, "line_2": line_2,
+        "po": po, "po_line_a": po_line_a, "po_line_b": po_line_b, "row_1": row_1,
+        "row_2": row_2,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -1136,3 +1220,174 @@ def test_a_cancelled_lines_placed_quantity_lands_on_a_pool_row_when_nobody_needs
     assert any(po.po_number in item and "34" in item and "pool" in item.lower()
                for item in executed), fresh.result_json
     assert not any(po.po_number in item for item in released), fresh.result_json
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer blocker B1: every link of a cancelled row finds a taker
+# --------------------------------------------------------------------------- #
+
+def test_every_link_of_a_cancelled_row_finds_a_taker_survivor_and_cross_order(api):
+    """Line 1's placement sits on TWO purchase-order lines of 17 each. Line 2 (same order)
+    has exactly 17 of headroom - enough to take ONE of the two links whole, nothing left
+    for the other. Order B elsewhere has a raised, unlinked ORDER row for the product.
+    Cancelling line 1 must move BOTH links: one to line 2 (the same-order survivor), the
+    other cross-order to B - never leave one stranded on the row that no longer owes
+    anybody anything.
+
+    Today `_shift_links_off_retired_lines` decides per LINK (line 2 takes link A, link B is
+    correctly left "for rule six" since nobody else on this order can take it) but
+    `_apply_one_order` passes `shifted_by_line.keys()` - keyed per LINE, not per link - as
+    `already_shifted_line_ids` to `_execute_reallocations`. Because line 1's key IS in
+    `shifted_by_line` (link A succeeded), the WHOLE row is excluded from that cascade, so
+    link B is never picked up by anybody and stays linked to the now-cancelled row.
+    """
+    fixture = _two_lines_split_po_world(api)
+    world = fixture["world"]
+    db = world.db
+    client = api[0]
+    core_so = fixture["core_so"]
+    core_line_1 = fixture["core_line_1"]
+    po = fixture["po"]
+    row_1 = fixture["row_1"]
+    row_2 = fixture["row_2"]
+
+    other_so = _core_so(db, world.company_id)
+    other_line_core = _core_line(db, other_so, world.product, world.own_wh, qty_ordered="17",
+                                  required_date=date(2027, 3, 1))
+    other_order = _project_so(db, world.project, so_id=other_so.id,
+                               autocount_doc_no=other_so.so_number)
+    other_project_line = _project_line(db, other_order, line_no=1, product=world.product,
+                                        core_line=other_line_core)
+    db.commit()
+    _confirm(client, other_order.id, {"lines": [
+        _line_payload(other_project_line.id, buy_qty="17", buy_reason="Nothing free elsewhere."),
+    ]})
+    other_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == other_project_line.id,
+                OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+
+    batch = _cancel_the_line(db, world, core_so, core_line_1)
+    row = _only_row(db, batch)
+    _, result = _confirm_row_and_apply(db, batch, world.actor)
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    cancelled_row = db.get(OrderInquiryRow, row_1.id)
+    remaining_links = _links_of(db, cancelled_row.id)
+    assert remaining_links == [], (
+        "every link of a cancelled row must find a taker - none may stay on the row that "
+        "no longer owes anybody anything",
+        remaining_links,
+    )
+
+    survivor_row = db.get(OrderInquiryRow, row_2.id)
+    survivor_links = _links_of(db, survivor_row.id)
+    assert len(survivor_links) == 1, survivor_links
+    assert sum(Decimal(str(l.qty)) for l in survivor_links) == Decimal("17"), survivor_links
+
+    other_row = db.get(OrderInquiryRow, other_row.id)
+    other_links = _links_of(db, other_row.id)
+    assert sum(Decimal(str(l.qty)) for l in other_links) == Decimal("17"), other_links
+    assert other_row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED), other_row.state
+    assert other_row.note and f"Found: {po.po_number} 17" in other_row.note, other_row.note
+
+    from app.models.planning_change import PlanningChangeRow
+
+    fresh = db.get(PlanningChangeRow, row.id)
+    executed = (fresh.result_json or {}).get("executed_reallocations") or []
+    released = (fresh.result_json or {}).get("released_documents") or []
+    assert len(executed) == 2, (
+        "both the survivor shift AND the cross-order deal must be reported", fresh.result_json
+    )
+    assert released == [], fresh.result_json
+
+
+def test_every_link_of_a_cancelled_row_finds_a_taker_survivor_then_release_when_nobody_needs_it(
+    api,
+):
+    """Same shape, no order B, no pool warehouse configured for this line's location: the
+    link line 2 cannot take must be RELEASED (unlinked, named in `released_documents`) -
+    never left stranded on the cancelled row either.
+    """
+    no_pool_wh = _warehouse(api[1].db, f"ZZT-NOPOOL-{_uid()[:4]}", segment="project")
+    fixture = _two_lines_split_po_world(api, warehouse=no_pool_wh)
+    world = fixture["world"]
+    db = world.db
+    core_so = fixture["core_so"]
+    core_line_1 = fixture["core_line_1"]
+    row_1 = fixture["row_1"]
+    row_2 = fixture["row_2"]
+
+    batch = _cancel_the_line(db, world, core_so, core_line_1, location=no_pool_wh.warehouse_code)
+    row = _only_row(db, batch)
+    _, result = _confirm_row_and_apply(db, batch, world.actor)
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    cancelled_row = db.get(OrderInquiryRow, row_1.id)
+    remaining_links = _links_of(db, cancelled_row.id)
+    assert remaining_links == [], (
+        "every link of a cancelled row must find a taker or be released - none may stay "
+        "on the row that no longer owes anybody anything",
+        remaining_links,
+    )
+
+    survivor_row = db.get(OrderInquiryRow, row_2.id)
+    survivor_links = _links_of(db, survivor_row.id)
+    assert len(survivor_links) == 1, survivor_links
+    assert sum(Decimal(str(l.qty)) for l in survivor_links) == Decimal("17"), survivor_links
+
+    from app.models.planning_change import PlanningChangeRow
+
+    fresh = db.get(PlanningChangeRow, row.id)
+    executed = (fresh.result_json or {}).get("executed_reallocations") or []
+    released = (fresh.result_json or {}).get("released_documents") or []
+    assert len(executed) == 1, (
+        "only the survivor shift is an executed reallocation", fresh.result_json
+    )
+    assert len(released) == 1, (
+        "the link nobody could take must be released and named", fresh.result_json
+    )
+
+
+def test_a_cancelled_lines_placed_buy_with_no_pool_configured_is_released_not_executed(api):
+    """R3: a cancelled line's placed Buy, no same-order survivor, no waiting row anywhere,
+    and NO pool warehouse configured for its location - the link is removed (not stranded),
+    and the sentence names it in `released_documents`, never `executed_reallocations`.
+
+    Today `_redeal_document`'s no-pool branch (~3274) appends the "Release ... unallocated
+    for purchasing" sentence, but its caller (`_execute_reallocations`, ~3623) always
+    extends `done[row_id]["executed_reallocations"]` with whatever `_redeal_document`
+    returns - so a release sentence lands in the wrong list.
+    """
+    no_pool_wh = _warehouse(api[1].db, f"ZZT-NOPOOL2-{_uid()[:4]}", segment="project")
+    world, core_so, core_line, order, line, po, po_line = _wholly_placed_buy_world(
+        api, warehouse=no_pool_wh
+    )
+    db = world.db
+
+    batch = _cancel_the_line(db, world, core_so, core_line, location=no_pool_wh.warehouse_code)
+    row = _only_row(db, batch)
+    _, result = _confirm_row_and_apply(db, batch, world.actor)
+    assert result["failed_orders"] == [], result["failed_orders"]
+
+    db.expire_all()
+    cancelled_row = db.query(OrderInquiryRow).filter(
+        OrderInquiryRow.so_line_id == line.id
+    ).one()
+    assert _links_of(db, cancelled_row.id) == [], _links_of(db, cancelled_row.id)
+
+    from app.models.planning_change import PlanningChangeRow
+
+    fresh = db.get(PlanningChangeRow, row.id)
+    executed = (fresh.result_json or {}).get("executed_reallocations") or []
+    released = (fresh.result_json or {}).get("released_documents") or []
+    assert not any("unallocated for purchasing" in item for item in executed), (
+        "a release sentence must never land in executed_reallocations", fresh.result_json
+    )
+    assert any(
+        po.po_number in item and "unallocated for purchasing" in item for item in released
+    ), fresh.result_json

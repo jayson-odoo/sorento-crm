@@ -1856,3 +1856,60 @@ def test_a_pending_product_changed_row_on_a_closed_and_delivered_line_still_appe
     assert matches[0]["line_no"] == project_line.line_no, matches[0]
     assert matches[0]["qty"] == "0", matches[0]
 
+
+
+# ---------------------------------------------------------------------------
+# Reviewer guard: a covered line is not a non-open row
+# ---------------------------------------------------------------------------
+
+
+def test_a_covered_open_line_still_owed_is_not_returned_by_the_non_open_read(api):
+    """R2: an OPEN line, still owed (qty_ordered 10, qty_delivered 0), with purchasing's
+    OWN `purchasing_status = 'covered'` ruling ("no purchase needed", a person's decision -
+    never "the book closed this line") - a pending change row about it must NOT surface
+    through `_cancelled_pending_change_rows` (project_fulfilment_board_service.py ~1402).
+
+    Today that read is scoped to `~is_open_demand()`, and `is_open_demand()` folds
+    `purchasing_status != 'covered'` into its own predicate - so a covered-but-open,
+    still-owed line reads as "not open demand" and is wrongly admitted here. The correct
+    ruling for THIS read is pure book status: `line_status != 'open' OR demand_qty() <= 0`.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                            required_date=WAS_1)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                         autocount_doc_no=core_so.so_number)
+    project_line = _project_line(db, order, line_no=1, product=world.product,
+                                  core_line=core_line)
+    db.commit()
+
+    response = _confirm(client, order.id, [
+        _line_payload(project_line.id, buy_qty="10", buy_reason="ZZT no stock anywhere"),
+    ])
+    assert response.status_code == 200, response.text
+
+    core_line.purchasing_status = "covered"
+    db.commit()
+
+    core_line.required_date = NOW
+    db.commit()
+    change = _change(DATE_MOVED, core_line, so_number=core_so.so_number, old_date=WAS_1,
+                     new_date=NOW, old_qty="10", new_qty="10")
+    batch = _build(world, [change], core_so, [str(core_line.id)])
+    assert batch is not None
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    contributions = response.json()["contributions"]
+
+    matches = [
+        c for c in contributions if c.get("pending_change_batch_id") == str(batch.id)
+    ]
+    assert matches == [], (
+        "a covered-but-open, still-owed line must not surface as a non-open/cancelled "
+        "contribution", contributions,
+    )
