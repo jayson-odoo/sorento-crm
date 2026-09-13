@@ -936,7 +936,12 @@ def build_batch(
     # upload naming the order again, is not a second change to review, it is more of the
     # first one. Newest wins where an order somehow has more than one candidate (there
     # should only ever be one - this IS the invariant), matching `pending_batch_id_by_
-    # sales_order`'s own "newest wins" rule.
+    # sales_order`'s own "newest wins" rule. `id.desc()` breaks a `created_at` tie
+    # deterministically (the reviewer's own suspicion, R1 review round) - two batches born
+    # the same sub-second must not resolve differently between this lookup and `pending_
+    # batch_id_by_sales_order`'s identical ordering. Company scoping needs no extra filter
+    # here: both models are `CompanyScopedMixin` and the session's own scope listener
+    # already narrows every query on them to the caller's company.
     open_batch_id_by_order: Dict[str, str] = {}
     if by_order:
         for pso_id_found, batch_id_found in (
@@ -947,7 +952,7 @@ def build_batch(
                 PlanningChangeBatch.applied_at.is_(None),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
             )
-            .order_by(PlanningChangeBatch.created_at.desc())
+            .order_by(PlanningChangeBatch.created_at.desc(), PlanningChangeBatch.id.desc())
             .all()
         ):
             open_batch_id_by_order.setdefault(str(pso_id_found), str(batch_id_found))
@@ -1142,7 +1147,11 @@ def pending_batch_id_by_sales_order(
             PlanningChangeBatch.applied_at.is_(None),
             PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
         )
-        .order_by(PlanningChangeBatch.created_at.desc())
+        # `id.desc()` breaks a `created_at` tie deterministically, matching `build_batch`'s
+        # own open-batch lookup exactly - two batches born the same sub-second must resolve
+        # the same way here as there, or a caller reading straight after a write can pick
+        # a different "newest" batch than `build_batch` itself just chose as primary.
+        .order_by(PlanningChangeBatch.created_at.desc(), PlanningChangeBatch.id.desc())
         .all()
     )
     result: Dict[str, str] = {}
