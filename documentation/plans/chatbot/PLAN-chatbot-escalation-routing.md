@@ -1,6 +1,6 @@
 # PLAN - Chatbot escalation routing: verb, team and brand from one source each
 
-Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477; review follow-ups S9, N15, S11 and S12 on top (cf5e10f3d, c79377c63). FOUR owner console passes, each finding one defect, each fixed with the tester's real-shape tests merged - the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), the miss lane's combined did-you-mean plus escalate offer (b6e108634), a pick dropping the non-product entity it had kept (bd815fcc8), and a parser-named team not answering the team question (13f91a219). Owner ruling D8 from the same pass is built: the routed-to-PIC copy names the brand for the two marketing teams (52a9c09a8). S1 to S6, three review rounds, the tester's nine rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. All four console root causes are #863's - see "Found on the console pass". Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
+Status: READY 13 Sep 2026. Reviewer and security verdicts READY on c329fd477; review follow-ups S9, N15, S11, S12 and the yes/no guard on top (cf5e10f3d, c79377c63, 09f9b6532). FOUR owner console passes, each finding one defect, each fixed with the tester's real-shape tests merged - the yes/no answer under the promoted parser (ec2b3bb7b) with the family-narrowing source beside it (36e24e928), the miss lane's combined did-you-mean plus escalate offer (b6e108634), a pick dropping the non-product entity it had kept (bd815fcc8), and a parser-named team not answering the team question (13f91a219). Owner ruling D8 from the same pass is built: the routed-to-PIC copy names the brand for the two marketing teams (52a9c09a8). S1 to S6, three review rounds, the tester's nine rounds folded in, guide written. `feat/chatbot-focus` merged in at the pre-PR gate (one hand-resolved conflict, in `head/output_exchange.py`), single alembic head `517_chatbot_session_5key`, this lane adds no migration. All four console root causes are #863's - see "Found on the console pass". Lane `feat/chatbot-escalation-routing`, stacked on `feat/chatbot-focus` (#863); PR after #863 merges. APPROVED by owner 13 Sep 2026 on the lavish page (`.lavish/chatbot-escalation-routing.html`, revision 4).
 UAC: `chatbot-escalation-routing-acceptance-criteria.md` (AC-11xx).
 Predecessors: `PLAN-chatbot-focus-multi-domain.md` (lane 1, the dialogue state this lane's open questions live in), `PLAN-chatbot-turn-engine.md` S5 (the escalation lane port, hazards H26 / H27 / H37).
 Issue: #865 (13 Sep 2026).
@@ -204,15 +204,22 @@ this question offered - normalising both sides the way `escalation._catalogue_te
 label matching, no text, no regex, no similarity; a family word that equals no option stays
 unresolved and the lane's narrowing handles it.
 
-**And it is bounded to a turn that said nothing else, because a coincidence is not an answer.**
-The first cut fired on any team word, and the world corpus caught it: under the older prompt
-bodies `routing.suggested_team` was DERIVED FROM THE DOMAIN, so a plain stock question emits
-`warehouse`, and with a one-team warehouse offer open the slug equals the option - the next
+**And it is bounded to a turn that names no domain of its own, because a coincidence is not an
+answer.** The first cut fired on any team word, and the world corpus caught it: under the older
+prompt bodies `routing.suggested_team` was DERIVED FROM THE DOMAIN, so a plain stock question
+emits `warehouse`, and with a one-team warehouse offer open the slug equals the option - the next
 ordinary question would have been read as accepting the offer. Chain 900000006 (three stock
 turns, each `business_query` / `inventory` / one product entity, each carrying `warehouse`)
 stopped grading at turn 2, which is how it surfaced: `test_worlds.py` went 38 passed / 184
-skipped to 37 / 185. An answer to "which team" carries no domain and no current-message entity
-of its own, and that is the gate.
+skipped to 37 / 185.
+
+Review follow-ups on that rung, both measured: the gate is the DOMAIN alone (S11, cf5e10f3d - the
+entity half only lost answers, "marketing product srtwb8004" being a team answer that happens to
+name a product), and neither inferring rung may override an explicit v3
+`answers_open_question: {resolved: false}` (S12 and the captain's widening of it to the yes/no
+rung, c79377c63 and 09f9b6532 - the key's ABSENCE is the test, so a v3 prompt that has not
+implemented it still gets both rungs, and POSITIONS stay ungated because a number is not an
+inference).
 
 ### Not built, with the reason
 
