@@ -1177,3 +1177,80 @@ def test_by_product_ranked_and_tallies_with_the_block(client, db):
     ], f"so_by_product must rank by outstanding_qty desc: {body['so_by_product']}"
     assert sum(r["ordered_qty"] for r in body["so_by_product"]) == body["so"]["ordered_qty"]
     assert sum(r["outstanding_qty"] for r in body["so_by_product"]) == body["so"]["outstanding_qty"]
+
+
+# --------------------------------------------------------------------------- #
+# AC-1169 (R23, owner ruling, 13 Sep 2026, live): the owner's own SO detail list
+# came out 14/12/2022, 01/08/2024, 09/08/2024, 20/08/2024 - ASCENDING. "it need
+# to be the recent [order] not the old one, since if it is a long list, I want
+# to see the recent one." R10 already assigns sorting to the ROUTE (the
+# presenter prints in the order given, never re-sorting) - so the fix is here,
+# not in `sorento_crm_mcp`. `so_rows[]` / `do_rows[]` sort by their own date
+# DESCENDING, ties by the document number DESCENDING (a later/higher number is
+# the later document).
+# --------------------------------------------------------------------------- #
+
+
+def test_so_rows_print_latest_order_date_first(client, db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    _so_line(
+        db, product_id=prod.id, ordered=1, delivered=0,
+        order_date=date(2022, 12, 14), so_number="ZZT-R23-SO-2022",
+    )
+    _so_line(
+        db, product_id=prod.id, ordered=1, delivered=0,
+        order_date=date(2024, 8, 1), so_number="ZZT-R23-SO-2024A",
+    )
+    # A tie pair on the SAME (latest) date, different numbers - the higher number
+    # (the later document) must print first.
+    _so_line(
+        db, product_id=prod.id, ordered=1, delivered=0,
+        order_date=date(2024, 8, 9), so_number="ZZT-R23-SO-2024B-1",
+    )
+    _so_line(
+        db, product_id=prod.id, ordered=1, delivered=0,
+        order_date=date(2024, 8, 9), so_number="ZZT-R23-SO-2024B-2",
+    )
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "so"})
+    assert resp.status_code == 200, resp.text
+    numbers = [row["so_number"] for row in resp.json()["so_rows"]]
+    assert numbers == [
+        "ZZT-R23-SO-2024B-2",
+        "ZZT-R23-SO-2024B-1",
+        "ZZT-R23-SO-2024A",
+        "ZZT-R23-SO-2022",
+    ], f"so_rows must print latest order_date first, ties by so_number descending: {numbers}"
+
+
+def test_do_rows_print_latest_do_date_first(client, db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
+    _do(
+        db, product_id=prod.id, warehouse_id=wh.id, qty=1,
+        order_date=date(2022, 12, 14), number="ZZT-R23-DO-2022",
+    )
+    _do(
+        db, product_id=prod.id, warehouse_id=wh.id, qty=1,
+        order_date=date(2024, 8, 1), number="ZZT-R23-DO-2024A",
+    )
+    _do(
+        db, product_id=prod.id, warehouse_id=wh.id, qty=1,
+        order_date=date(2024, 8, 9), number="ZZT-R23-DO-2024B-1",
+    )
+    _do(
+        db, product_id=prod.id, warehouse_id=wh.id, qty=1,
+        order_date=date(2024, 8, 9), number="ZZT-R23-DO-2024B-2",
+    )
+    db.commit()
+
+    resp = client.get(BASE, params={"product_code": prod.product_code, "scope": "do"})
+    assert resp.status_code == 200, resp.text
+    numbers = [row["do_number"] for row in resp.json()["do_rows"]]
+    assert numbers == [
+        "ZZT-R23-DO-2024B-2",
+        "ZZT-R23-DO-2024B-1",
+        "ZZT-R23-DO-2024A",
+        "ZZT-R23-DO-2022",
+    ], f"do_rows must print latest do_date first, ties by do_number descending: {numbers}"

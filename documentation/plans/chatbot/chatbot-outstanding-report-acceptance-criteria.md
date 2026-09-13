@@ -589,6 +589,21 @@ resolution and the filter set in the console trace.
   `TestDetailOfferIsSticky::test_detail_offer_survives_a_casual_turn` (existing,
   unmodified - already pins "one unreadable turn, then a pick still works").
 
+- **AC-1169 [BE]** NEW (R23, owner ruling, 13 Sep 2026, live: the owner's own SO detail
+  list printed 14/12/2022, 01/08/2024, 09/08/2024, 20/08/2024 - ASCENDING. "it need to be
+  the recent [order] not the old one, since if it is a long list, I want to see the
+  recent one"). R10 already assigns sorting to the ROUTE service, the presenter prints in
+  the order given and never re-sorts - so the fix is `app/services/outstanding_report_
+  service.py` where `so_rows[]` / `do_rows[]` are built. Both sort by their own date
+  DESCENDING (`order_date` for SO, `do_date` for DO), ties by the document number
+  DESCENDING (a later/higher number is the later document). Evidence: pytest,
+  `tests/test_outstanding_report.py::test_so_rows_print_latest_order_date_first`,
+  `test_do_rows_print_latest_do_date_first`. The MCP presenter's own golden fixtures
+  (`sorento_crm_mcp/tests/fixtures/outstanding/outstanding-detail-so.txt` /
+  `-do.txt`) each carry exactly ONE row and so exercise no multi-row ordering at all -
+  confirmed unaffected (`sorento_crm_mcp/tests/test_presenters_outstanding.py`, 44
+  passed, unmodified), consistent with R10's "the presenter prints in the order given."
+
 ## Out of scope (backlog)
 
 - A date clarifying question. Trigger to build it: a replayed real message whose parsed
