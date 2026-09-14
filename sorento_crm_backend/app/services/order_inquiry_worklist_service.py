@@ -692,28 +692,36 @@ class OrderInquiryWorklistService:
             else:
                 base = base.filter(OrderInquiryRow.ack_state == ack)
         if query:
-            like = f"%{query.strip()}%"
-            base = base.filter(
-                or_(
-                    OrderInquiryRow.item_code.ilike(like),
-                    OrderInquiryRow.spo_ref.ilike(like),
-                    # Purchasing is asked about "OI-000123" by name; without this the row is
-                    # reachable only by knowing which sales order raised it.
-                    OrderInquiry.inquiry_no.ilike(like),
-                    cast(_SO_NUMBER, String).ilike(like),
-                    Product.product_name.ilike(like),
-                    Product.product_code.ilike(like),
-                    Customer.customer_name.ilike(like),
-                    Project.title.ilike(like),
-                    Project.project_code.ilike(like),
-                    # The CS who raised it. By name, and by the FRONT of the email
-                    # address rather than anywhere inside it: a buyer types "cindy",
-                    # and matching `%cindy%` across a whole address would also return
-                    # every row whose raiser happens to work at cindy.com.
-                    User.name.ilike(like),
-                    User.email.ilike(f"{query.strip()}%"),
+            # ONE FILTER PER WORD (S2, AC-2.1): an order has forty lines and a product sits
+            # on twenty orders, so "SO366990 SRTWT6801" typed as one phrase matched nothing
+            # and either word alone answers the wrong question. Each token may still hit any
+            # of the columns below (the OR), and every token has to hit something (the AND),
+            # which is what makes the pair of them name one row. No tokens - a blank or
+            # all-space box - filters nothing, the same as no query at all.
+            for token in str(query).split():
+                like = f"%{token}%"
+                base = base.filter(
+                    or_(
+                        OrderInquiryRow.item_code.ilike(like),
+                        OrderInquiryRow.spo_ref.ilike(like),
+                        # Purchasing is asked about "OI-000123" by name; without this the row
+                        # is reachable only by knowing which sales order raised it.
+                        OrderInquiry.inquiry_no.ilike(like),
+                        cast(_SO_NUMBER, String).ilike(like),
+                        Product.product_name.ilike(like),
+                        Product.product_code.ilike(like),
+                        Customer.customer_name.ilike(like),
+                        Project.title.ilike(like),
+                        Project.project_code.ilike(like),
+                        # The CS who raised it. By name, and by the FRONT of the email
+                        # address rather than anywhere inside it: a buyer types "cindy",
+                        # and matching `%cindy%` across a whole address would also return
+                        # every row whose raiser happens to work at cindy.com. The rule
+                        # belongs to the TOKEN, not to the whole box.
+                        User.name.ilike(like),
+                        User.email.ilike(f"{token}%"),
+                    )
                 )
-            )
         return base
 
     def list_rows(
