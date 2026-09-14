@@ -60,3 +60,25 @@ exercised and pass; this detail-list-pick behaviour is noted for the captain.
 - merge-C.png - chain C 10-row picker + SRTWC286-SH-NEW answer (1280 wide)
 - merge-D.png - chain D outstanding report (DO-only, SO gated) (1280 wide)
 - merge-E.png - chain E customer picker + report scoped to picked customer (1280 wide)
+
+## Detail-pick fix re-verify at 00b2e0b29
+
+Re-verified on the local stack (FE :3081, BE :8081, MCP :8765) serving feat/chatbot-focus at
+00b2e0b29. Contact Jayson, prompt version v15. No console errors, no page errors.
+
+Chain 1/2 - outstanding detail pick (the fix): PASS
+- "SRTWT2634 outstanding" -> DO-outstanding report (6 DOs, 66 qty, all outstanding), ending with
+  the offer line "Reply 1 for the delivery order list."
+- "1" -> the per-DO ROW LIST now renders (regressed to an empty re-ask under the five-key merge;
+  fixed). Six numbered rows, each with DO Number / Customer / Product / Location / DO Qty /
+  Delivered / Outstanding / DO Date, e.g. row 1 "202604-4130 / JUNGLE BATH GALLERY SDN BHD
+  [A/C I] / SRTWT2634 / BRW / DO Qty 7 / Outstanding 7 / 28/04/2026". NOT the offer line repeated,
+  NOT an empty re-ask.
+
+Chain 3 - customer-picker transition (regression guard): PASS
+- "outstanding for chin" -> "Which customer do you mean?" picker with 8 CHIN/hardware options.
+- "1" -> report scoped to "CHIN CHUN HARDWARE SDN BHD - [A/C I]" (2 DOs, 4 qty), scope preserved,
+  not dropped.
+
+Evidence:
+- detail-pick-fix.png - chain 1/2 transcript (1280 wide)
