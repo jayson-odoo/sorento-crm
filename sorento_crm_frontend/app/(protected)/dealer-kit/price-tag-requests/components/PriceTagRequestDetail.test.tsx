@@ -83,6 +83,7 @@ import {
   listPriceTagRequests,
   type PriceTagRequestDetail as PriceTagRequestDetailType,
   type PriceTagRequestLine,
+  type PriceTagRequestTag,
 } from '../../services/priceTagRequestService';
 import PriceTagRequestDetail from './PriceTagRequestDetail';
 import { priceTagActions } from './priceTagRequestActions';
@@ -136,25 +137,64 @@ function requestWith(
   };
 }
 
-function lineWith(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine {
+/**
+ * The rail/table label for a line's default tag.
+ *
+ * The product builds "1a"/"1b" from the line's position plus a letter; a
+ * fixture only needs two lines' tag rows to be separately addressable, so the
+ * label reuses the line id's own suffix ('line-2' -> '2a').
+ */
+function tagLabelFor(lineId: string): string {
+  return `${lineId.split('-').pop() ?? '1'}a`;
+}
+
+/**
+ * The one tag a line carries by default (S3, AC-S3-1). Its id IS the line id:
+ * submit mints exactly one tag per line, and only a Split gives a line a
+ * second one. The override and its reason live HERE now, not on the line.
+ */
+function tagWith(
+  lineId: string,
+  overrides: Partial<PriceTagRequestTag> = {},
+): PriceTagRequestTag {
   return {
-    id: 'line-1',
-    line_type: 'product',
-    product_id: 'prod-1',
-    product_set_id: null,
-    name: 'Kitchen Sink',
-    code: 'SRT-1',
-    show_promo_price: false,
-    quantity: 1,
-    alternatives: [],
-    included_accessories: null,
+    id: lineId,
     sort_order: 0,
+    label: tagLabelFor(lineId),
+    quantity: 1,
+    choices: {},
+    choices_display: [],
+    open_groups: [],
     marketing_price_override: null,
     marketing_override_reason: null,
     list_price: 100,
     sell_price: null,
     ...overrides,
   };
+}
+
+function lineWith(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine {
+  const merged = {
+    id: 'line-1',
+    line_type: 'product' as const,
+    product_id: 'prod-1' as string | null,
+    product_set_id: null as string | null,
+    name: 'Kitchen Sink',
+    code: 'SRT-1',
+    show_promo_price: false,
+    quantity: 1,
+    included_accessories: null as string | null,
+    sort_order: 0,
+    list_price: 100 as number | null,
+    sell_price: null as number | null,
+    parts: [],
+    package_warning: null,
+    ...overrides,
+  };
+  return {
+    ...merged,
+    tags: overrides.tags ?? [tagWith(merged.id, { quantity: merged.quantity })],
+  } as PriceTagRequestLine;
 }
 
 beforeEach(() => {
@@ -413,9 +453,11 @@ describe('PriceTagRequestDetail - tabs', () => {
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Design SRT-2' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: `Design tag ${tagLabelFor('line-2')}` }),
+    );
     expect(push).toHaveBeenCalledWith(
-      '/dealer-kit/price-tag-requests/req-1/design?line=line-2',
+      '/dealer-kit/price-tag-requests/req-1/design?tag=line-2',
     );
   });
 
@@ -444,7 +486,7 @@ describe('PriceTagRequestDetail - tabs', () => {
             {
               id: 'tag-1',
               template_id: 'tmpl-1',
-              request_line_id: 'line-1',
+              request_tag_id: 'line-1',
               x_mm: 0,
               y_mm: 0,
               width_mm: 85,
@@ -460,12 +502,14 @@ describe('PriceTagRequestDetail - tabs', () => {
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
-    const line1Row = (await screen.findByText('SRT-1')).closest('tr');
-    const line2Row = screen.getByText('SRT-2').closest('tr');
-    expect(line1Row).not.toBeNull();
-    expect(line2Row).not.toBeNull();
-    expect(within(line1Row as HTMLElement).getByText('Designed')).toBeTruthy();
-    expect(within(line2Row as HTMLElement).getByText('No tag')).toBeTruthy();
+    // Designed/No tag is a TAG fact since S3, so it is read off the tag row
+    // nested under each line, not off the line row.
+    const tag1Row = (await screen.findByText(tagLabelFor('line-1'))).closest('tr');
+    const tag2Row = screen.getByText(tagLabelFor('line-2')).closest('tr');
+    expect(tag1Row).not.toBeNull();
+    expect(tag2Row).not.toBeNull();
+    expect(within(tag1Row as HTMLElement).getByText('Designed')).toBeTruthy();
+    expect(within(tag2Row as HTMLElement).getByText('No tag')).toBeTruthy();
   });
 
   // Review: the row Design action was ungated - it rendered on every line
@@ -499,7 +543,9 @@ describe('PriceTagRequestDetail - tabs', () => {
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
-    expect(await screen.findByRole('button', { name: 'Design SRT-1' })).toBeTruthy();
+    expect(
+      await screen.findByRole('button', { name: `Design tag ${tagLabelFor('line-1')}` }),
+    ).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy();
   });
 });

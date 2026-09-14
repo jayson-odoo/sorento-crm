@@ -20,7 +20,7 @@ import type {
 import { IMPOSITION_PRESETS, defaultTextProps } from './tag-template-types';
 import { PRODUCT_BLOCK_SIZE, SET_BLOCK_SIZE } from './product-block';
 import {
-  applyDesignToAllLines,
+  applyDesignToAllTags,
   applyDesignToSiblings,
   autoArrange,
   copiesOf,
@@ -35,11 +35,12 @@ import {
   resizeTag,
   resolveTagSize,
   starterTemplateFor,
-  tagForLine,
+  tagForTag,
   tagSizeBounds,
   tagSizePresets,
   templateFromTag,
 } from './request-tags';
+import type { TagRequestTag } from './request-tags';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -122,6 +123,17 @@ function setLine(id: string, quantity = 1) {
   };
 }
 
+// A line carries tags since S3 (D3). The everyday case is one tag per line, so
+// the tag reuses the line's id: the ids these tests assert on stay the ones the
+// pre-S3 suite asserted on, and what they guarded stays guarded.
+function productTag(id: string, quantity = 1): TagRequestTag {
+  return { id, quantity, line: productLine(id, quantity) };
+}
+
+function setTag(id: string, quantity = 1): TagRequestTag {
+  return { id, quantity, line: setLine(id, quantity) };
+}
+
 // A4, 3mm bleed, 2mm gap - the everyday page geometry most of this file's
 // fixtures arrange onto. Named PAGE_A4 rather than after a preset because S6
 // removed the presets: every `ImpositionConfig` now lays out the same way,
@@ -170,7 +182,11 @@ describe('defaultTemplateFor', () => {
 
 function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
   return {
+    tag_id: 'l1',
     line_id: 'l1',
+    tag_label: '1a',
+    open_groups: [],
+    parts: [],
     code: 'SRT-1234',
     name: 'Kitchen Sink',
     dimensions: '800 x 500 x 220 mm',
@@ -320,18 +336,18 @@ describe('starterTemplateFor', () => {
 });
 
 // ---------------------------------------------------------------------------
-// tagForLine
+// tagForTag
 // ---------------------------------------------------------------------------
 
-describe('tagForLine', () => {
+describe('tagForTag', () => {
   it('clones the template layers and binds the group to the line item', () => {
     const source = TEMPLATES[0];
-    const tag = tagForLine(productLine('l1'), source, 'tag-1');
+    const tag = tagForTag(productTag('l1'), source, 'tag-1');
 
     expect(tag).toMatchObject({
       id: 'tag-1',
       template_id: 't-sink',
-      request_line_id: 'l1',
+      request_tag_id: 'l1',
       x_mm: 0,
       y_mm: 0,
       width_mm: 60,
@@ -342,7 +358,7 @@ describe('tagForLine', () => {
   });
 
   it('binds a set line to the product set', () => {
-    const tag = tagForLine(setLine('l2'), TEMPLATES[2], 'tag-2');
+    const tag = tagForTag(setTag('l2'), TEMPLATES[2], 'tag-2');
     const group = tag.layers.find((l) => l.props.kind === 'group');
     expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l2' } });
   });
@@ -350,7 +366,7 @@ describe('tagForLine', () => {
   it('never writes back into the template it was cloned from', () => {
     const source = template('t-copy', 'wc');
     const before = JSON.stringify(source.doc.layers);
-    const tag = tagForLine(productLine('l3'), source, 'tag-3');
+    const tag = tagForTag(productTag('l3'), source, 'tag-3');
 
     tag.layers[0].x_mm = 99;
     tag.layers[0].text_override = 'typed over';
@@ -362,7 +378,7 @@ describe('tagForLine', () => {
     const source = template('t-big', 'mirror', { width_mm: 100, height_mm: 70 });
     source.doc.width_mm = 10;
     source.doc.height_mm = 10;
-    const tag = tagForLine(productLine('l4'), source, 'tag-4');
+    const tag = tagForTag(productTag('l4'), source, 'tag-4');
     expect(tag.width_mm).toBe(100);
     expect(tag.height_mm).toBe(70);
   });
@@ -480,11 +496,11 @@ describe('normaliseImpositionPreset', () => {
 // copiesOf and autoArrange
 // ---------------------------------------------------------------------------
 
-function placed(id: string, lineId: string, templateId = 't-sink'): PlacedTag {
+function placed(id: string, tagId: string, templateId = 't-sink'): PlacedTag {
   return {
     id,
     template_id: templateId,
-    request_line_id: lineId,
+    request_tag_id: tagId,
     x_mm: 0,
     y_mm: 0,
     width_mm: 60,
@@ -568,7 +584,7 @@ describe('autoArrange', () => {
     const sheets = autoArrange([{ tag: placed('a', 'l1', 't-wc'), quantity: 2 }], PAGE_A4);
     for (const tag of sheets[0].tags) {
       expect(tag.template_id).toBe('t-wc');
-      expect(tag.request_line_id).toBe('l1');
+      expect(tag.request_tag_id).toBe('l1');
       expect(tag.layers).toHaveLength(1);
     }
   });
@@ -611,7 +627,7 @@ describe('autoArrange', () => {
       ],
       tiny,
     );
-    expect(sheets.flatMap((s) => s.tags).map((t) => t.request_line_id)).toEqual(['l1', 'l2']);
+    expect(sheets.flatMap((s) => s.tags).map((t) => t.request_tag_id)).toEqual(['l1', 'l2']);
   });
 });
 
@@ -621,13 +637,13 @@ describe('autoArrange', () => {
 
 describe('pinKeyForPlacement', () => {
   it('reads the copy index off the placement id', () => {
-    expect(pinKeyForPlacement({ id: 'tag-9-c2', request_line_id: 'l1' })).toBe(
+    expect(pinKeyForPlacement({ id: 'tag-9-c2', request_tag_id: 'l1' })).toBe(
       placementKey('l1', 2),
     );
   });
 
   it('treats a placement written before copy ids as the first copy', () => {
-    expect(pinKeyForPlacement({ id: 't-1756-3', request_line_id: 'l1' })).toBe(
+    expect(pinKeyForPlacement({ id: 't-1756-3', request_tag_id: 'l1' })).toBe(
       placementKey('l1', 0),
     );
   });
@@ -798,12 +814,12 @@ describe('autoArrange with resized tags (AC-S9-3)', () => {
     const dragged = { [placementKey('l2', 0)]: { sheet: 0, x_mm: 12, y_mm: 34 } };
     const sheets = autoArrange(items, PAGE_A4, dragged);
 
-    const line2Tag = sheets[0].tags.find((t) => t.request_line_id === 'l2');
+    const line2Tag = sheets[0].tags.find((t) => t.request_tag_id === 'l2');
     expect(line2Tag).toMatchObject({ x_mm: 12, y_mm: 34, width_mm: 95, height_mm: 44.5 });
 
     // The unpinned line still flows through the slot grid, unaffected by the
     // other line's resize.
-    const line1Tag = sheets[0].tags.find((t) => t.request_line_id === 'l1');
+    const line1Tag = sheets[0].tags.find((t) => t.request_tag_id === 'l1');
     expect(line1Tag?.pinned).not.toBe(true);
   });
 });
@@ -860,7 +876,7 @@ describe('templateFromTag', () => {
     return {
       id: 'tag-1',
       template_id: 't-sink',
-      request_line_id: 'l1',
+      request_tag_id: 'l1',
       x_mm: 0,
       y_mm: 0,
       width_mm: 72,
@@ -934,15 +950,15 @@ describe('templateFromTag', () => {
 });
 
 // ---------------------------------------------------------------------------
-// applyDesignToAllLines - "Apply this design to all lines" (S5, D3, AC-S5-2/5/6)
+// applyDesignToAllTags - "Apply this design to all lines" (S5, D3, AC-S5-2/5/6)
 // ---------------------------------------------------------------------------
 
-describe('applyDesignToAllLines', () => {
+describe('applyDesignToAllTags', () => {
   function sourceTag(overrides: Partial<PlacedTag> = {}): PlacedTag {
     return {
       id: 'tag-src',
       template_id: 't-sink',
-      request_line_id: 'l1',
+      request_tag_id: 'l1',
       x_mm: 0,
       y_mm: 0,
       width_mm: 95,
@@ -957,9 +973,9 @@ describe('applyDesignToAllLines', () => {
 
   it('clones the source tag to every OTHER line, rebound to each line\'s own product', () => {
     const tags = { l1: sourceTag() };
-    const lines = [productLine('l1'), productLine('l2'), productLine('l3')];
+    const requestTags = [productTag('l1'), productTag('l2'), productTag('l3')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     expect(next.l2).toBeDefined();
     expect(next.l3).toBeDefined();
@@ -971,9 +987,9 @@ describe('applyDesignToAllLines', () => {
 
   it('copies template_id and size from the source onto every other line', () => {
     const tags = { l1: sourceTag() };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     expect(next.l2).toMatchObject({
       template_id: 't-sink',
@@ -984,9 +1000,9 @@ describe('applyDesignToAllLines', () => {
 
   it('copies a hand-typed text_override VERBATIM (D3) - no stripping, unlike templateFromTag', () => {
     const tags = { l1: sourceTag() };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     const codeLayer = next.l2.layers.find((l) => l.slot_binding === 'code');
     expect(codeLayer?.text_override).toBe('Hand typed');
@@ -994,9 +1010,9 @@ describe('applyDesignToAllLines', () => {
 
   it('gives every clone fresh layer ids, sharing none with the source or with each other', () => {
     const tags = { l1: sourceTag() };
-    const lines = [productLine('l1'), productLine('l2'), productLine('l3')];
+    const requestTags = [productTag('l1'), productTag('l2'), productTag('l3')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     const l2Ids = next.l2.layers.map((l) => l.id);
     const l3Ids = next.l3.layers.map((l) => l.id);
@@ -1007,9 +1023,9 @@ describe('applyDesignToAllLines', () => {
 
   it("remaps a group's children to the same fresh ids their layers got", () => {
     const tags = { l1: sourceTag() };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     const remappedCodeId = next.l2.layers.find((l) => l.slot_binding === 'code')?.id;
     const group = next.l2.layers.find((l) => l.props.kind === 'group');
@@ -1021,9 +1037,9 @@ describe('applyDesignToAllLines', () => {
       l1: sourceTag(),
       l2: { ...placed('old-l2', 'l2'), x_mm: 12, y_mm: 34, pinned: true },
     };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34, pinned: true });
   });
@@ -1033,18 +1049,18 @@ describe('applyDesignToAllLines', () => {
       l1: sourceTag(),
       l2: { ...placed('old-l2', 'l2'), x_mm: 12, y_mm: 34, pinned: true },
     };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     expect(next.l2.id).not.toBe('old-l2');
   });
 
   it('a line with no tag yet gets one too, so it never re-clones from the default template later (AC-S5-5)', () => {
     const tags = { l1: sourceTag() };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     expect(next.l2).toBeDefined();
     expect(next.l2.layers.length).toBeGreaterThan(0);
@@ -1053,25 +1069,25 @@ describe('applyDesignToAllLines', () => {
   it('never touches the source line\'s own tag', () => {
     const source = sourceTag();
     const tags = { l1: source };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     expect(next.l1).toBe(source);
   });
 
   it('answers the map unchanged when the source line has no tag', () => {
     const tags = {};
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    expect(applyDesignToAllLines(tags, lines, 'l1', newId)).toBe(tags);
+    expect(applyDesignToAllTags(tags, requestTags, 'l1', newId)).toBe(tags);
   });
 
   it('binds a set line to its own product set, not the source line\'s binding', () => {
     const tags = { l1: sourceTag() };
-    const lines = [productLine('l1'), setLine('l2')];
+    const requestTags = [productTag('l1'), setTag('l2')];
 
-    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+    const next = applyDesignToAllTags(tags, requestTags, 'l1', newId);
 
     const group = next.l2.layers.find((l) => l.props.kind === 'group');
     expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l2' } });
@@ -1088,7 +1104,7 @@ describe('applyDesignToSiblings', () => {
     return {
       id: 'tag-src',
       template_id: 't-sink',
-      request_line_id: 'l1',
+      request_tag_id: 'l1',
       x_mm: 0,
       y_mm: 0,
       width_mm: 95,
@@ -1107,9 +1123,9 @@ describe('applyDesignToSiblings', () => {
       l2: placed('old-l2', 'l2', 't-sink'),
       l3: placed('old-l3', 'l3', 't-sink'),
     };
-    const lines = [productLine('l1'), productLine('l2'), productLine('l3')];
+    const requestTags = [productTag('l1'), productTag('l2'), productTag('l3')];
 
-    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+    const next = applyDesignToSiblings(tags, requestTags, 'l1', 't-sink', newId);
 
     expect(next.l2.template_id).toBe('t-sink');
     expect(next.l2.width_mm).toBe(95);
@@ -1122,18 +1138,18 @@ describe('applyDesignToSiblings', () => {
   it('leaves a line on a DIFFERENT template untouched', () => {
     const other = placed('old-l2', 'l2', 't-wc');
     const tags = { l1: sourceTag(), l2: other };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+    const next = applyDesignToSiblings(tags, requestTags, 'l1', 't-sink', newId);
 
     expect(next.l2).toBe(other);
   });
 
   it('leaves a line with NO tag at all untouched - Update never gives a line its first tag', () => {
     const tags = { l1: sourceTag() };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+    const next = applyDesignToSiblings(tags, requestTags, 'l1', 't-sink', newId);
 
     expect(next.l2).toBeUndefined();
   });
@@ -1141,9 +1157,9 @@ describe('applyDesignToSiblings', () => {
   it("never touches the source line's own tag", () => {
     const source = sourceTag();
     const tags = { l1: source, l2: placed('old-l2', 'l2', 't-sink') };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+    const next = applyDesignToSiblings(tags, requestTags, 'l1', 't-sink', newId);
 
     expect(next.l1).toBe(source);
   });
@@ -1153,9 +1169,9 @@ describe('applyDesignToSiblings', () => {
       l1: sourceTag(),
       l2: { ...placed('old-l2', 'l2', 't-sink'), x_mm: 12, y_mm: 34, pinned: true },
     };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+    const next = applyDesignToSiblings(tags, requestTags, 'l1', 't-sink', newId);
 
     expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34, pinned: true });
   });
@@ -1165,9 +1181,9 @@ describe('applyDesignToSiblings', () => {
       l1: sourceTag(),
       l2: placed('old-l2', 'l2', 't-sink'),
     };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+    const next = applyDesignToSiblings(tags, requestTags, 'l1', 't-sink', newId);
 
     expect(next.l2.id).not.toBe('old-l2');
     const l2Ids = next.l2.layers.map((l) => l.id);
@@ -1179,9 +1195,9 @@ describe('applyDesignToSiblings', () => {
       l1: sourceTag(),
       l2: placed('old-l2', 'l2', 't-sink'),
     };
-    const lines = [productLine('l1'), setLine('l2')];
+    const requestTags = [productTag('l1'), setTag('l2')];
 
-    const next = applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId);
+    const next = applyDesignToSiblings(tags, requestTags, 'l1', 't-sink', newId);
 
     const group = next.l2.layers.find((l) => l.props.kind === 'group');
     expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l2' } });
@@ -1189,8 +1205,8 @@ describe('applyDesignToSiblings', () => {
 
   it('answers the map unchanged when the source line has no tag', () => {
     const tags = { l2: placed('old-l2', 'l2', 't-sink') };
-    const lines = [productLine('l1'), productLine('l2')];
+    const requestTags = [productTag('l1'), productTag('l2')];
 
-    expect(applyDesignToSiblings(tags, lines, 'l1', 't-sink', newId)).toBe(tags);
+    expect(applyDesignToSiblings(tags, requestTags, 'l1', 't-sink', newId)).toBe(tags);
   });
 });

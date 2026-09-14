@@ -197,7 +197,13 @@ vi.mock('../../../../services/tagTemplateService', () => ({
   publishTemplate: vi.fn(),
 }));
 vi.mock('../../../../services/priceTagRequestService', () => ({
-  resolveRequestLines: vi.fn(),
+  // One row per TAG since S3 (D3) - `resolveRequestTags` is gone with the
+  // line-keyed document. The four below it are what the rail's Split / Pick
+  // one actions and the post-split reload call.
+  resolveRequestTags: vi.fn(),
+  getPriceTagRequest: vi.fn(),
+  splitRequestTag: vi.fn(),
+  updateRequestTag: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
 }));
@@ -221,41 +227,86 @@ vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
 }));
 
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
-import { resolveRequestLines } from '../../../../services/priceTagRequestService';
+import { resolveRequestTags } from '../../../../services/priceTagRequestService';
 import { RequestTagDesigner } from './RequestTagDesigner';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
+  PriceTagRequestTag,
 } from '../../../../services/priceTagRequestService';
 import type { TagSizeRecord } from '../../../../services/tagSizeService';
 import type { LineTagData, TagSheetDoc, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 
 const mockListTemplates = vi.mocked(listPublishedTemplates);
-const mockResolveRequestLines = vi.mocked(resolveRequestLines);
+const mockResolveRequestTags = vi.mocked(resolveRequestTags);
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function line(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine {
+/**
+ * The rail row label for a line's default tag.
+ *
+ * The product builds "1a"/"1b" from the line's position plus a letter; a
+ * fixture only needs two lines' tag rows to be separately clickable, so the
+ * label reuses the line id's own suffix ('line-b' -> 'ba'). The rail selects a
+ * TAG now, not a line - the line header is no longer a button - so every test
+ * that used to click a line's code or name clicks its tag row instead.
+ */
+function tagLabelFor(lineId: string): string {
+  return `${lineId.split('-').pop() ?? '1'}a`;
+}
+
+/**
+ * The one tag a line carries by default (S3, AC-S3-1).
+ *
+ * Its id IS the line id, so every id these tests already assert on stays the
+ * id they assert on: submit mints exactly one tag per line, and only a Split
+ * ever gives a line a second one.
+ */
+function requestTag(
+  lineId: string,
+  quantity: number,
+  overrides: Partial<PriceTagRequestTag> = {},
+): PriceTagRequestTag {
   return {
-    id: 'line-1',
-    line_type: 'product',
-    product_id: 'prod-1',
-    product_set_id: null,
-    name: 'Kitchen Sink',
-    code: 'SRT-1234',
-    show_promo_price: false,
-    quantity: 1,
-    alternatives: [],
-    included_accessories: null,
+    id: lineId,
     sort_order: 0,
+    label: tagLabelFor(lineId),
+    quantity,
+    choices: {},
+    choices_display: [],
+    open_groups: [],
     marketing_price_override: null,
     marketing_override_reason: null,
     list_price: 1599,
     sell_price: null,
     ...overrides,
   };
+}
+
+function line(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine {
+  const merged = {
+    id: 'line-1',
+    line_type: 'product' as const,
+    product_id: 'prod-1' as string | null,
+    product_set_id: null as string | null,
+    name: 'Kitchen Sink',
+    code: 'SRT-1234',
+    show_promo_price: false,
+    quantity: 1,
+    included_accessories: null as string | null,
+    sort_order: 0,
+    list_price: 1599 as number | null,
+    sell_price: null as number | null,
+    parts: [],
+    package_warning: null,
+    ...overrides,
+  };
+  return {
+    ...merged,
+    tags: overrides.tags ?? [requestTag(merged.id, merged.quantity)],
+  } as PriceTagRequestLine;
 }
 
 function request(overrides: Partial<PriceTagRequestDetail> = {}): PriceTagRequestDetail {
@@ -281,7 +332,15 @@ function request(overrides: Partial<PriceTagRequestDetail> = {}): PriceTagReques
 }
 
 function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
+  // One row per TAG since S3. The everyday request has one tag per line and the
+  // tag's id is the line's, so a row named by `line_id` keys on the same id it
+  // always did.
+  const lineId = overrides.line_id ?? 'line-1';
   return {
+    tag_id: lineId,
+    tag_label: '1a',
+    open_groups: [],
+    parts: [],
     line_id: 'line-1',
     code: 'SRT-1234',
     name: 'Kitchen Sink',
@@ -371,7 +430,7 @@ beforeEach(() => {
   canvasDocs.length = 0;
   canvasMountCount = 0;
   mockListTemplates.mockReset();
-  mockResolveRequestLines.mockReset();
+  mockResolveRequestTags.mockReset();
   searchParams = new URLSearchParams();
   push.mockReset();
   replace.mockReset();
@@ -385,7 +444,7 @@ beforeEach(() => {
 describe('RequestTagDesigner - which template a line clones', () => {
   it('clones the product-block starter exactly when templates loaded empty (AC-S3-1)', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner();
 
@@ -398,7 +457,7 @@ describe('RequestTagDesigner - which template a line clones', () => {
 
   it('clones the real published template when one exists (AC-S3-4)', async () => {
     mockListTemplates.mockResolvedValue([realTemplate()]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner();
 
@@ -412,7 +471,7 @@ describe('RequestTagDesigner - which template a line clones', () => {
 
   it('binds the starter to the line\'s REAL product id, not the line id (review #2, #3)', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner(request({ lines: [line({ id: 'line-1', product_id: 'prod-1' })] }));
 
@@ -426,7 +485,7 @@ describe('RequestTagDesigner - which template a line clones', () => {
 
   it('builds a set-block starter, bound to the real set id, for a product_set line (review #1)', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({
         line_id: 'line-2',
         code: 'BF-SET-01',
@@ -470,7 +529,7 @@ describe('RequestTagDesigner - which template a line clones', () => {
 describe('RequestTagDesigner - full screen (AC-S6-1)', () => {
   it('wraps the canvas in the shared FocusShell, and Escape exits', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner();
 
@@ -497,7 +556,7 @@ describe('RequestTagDesigner - full screen (AC-S6-1)', () => {
 describe('RequestTagDesigner - one CTA in the request bar (S7, AC-S7-1)', () => {
   it('the request bar holds exactly one button in designing state - Mark design ready', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner(request({ status: 'designing' }));
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
@@ -521,7 +580,7 @@ describe('RequestTagDesigner - one CTA in the request bar (S7, AC-S7-1)', () => 
 
   it('Full screen, the Template dropdown and Save are all found INSIDE the canvas toolbar (AC-S7-6)', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner();
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
@@ -534,7 +593,7 @@ describe('RequestTagDesigner - one CTA in the request bar (S7, AC-S7-1)', () => 
 
   it('the Design/Arrange mode toggle and Back stay in the request bar - navigation, not the CTA', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner();
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
@@ -565,7 +624,7 @@ const hasAddedLayer = () =>
 describe('RequestTagDesigner - design survives a mode toggle (Fix B)', () => {
   it('keeps a layer added in Design after toggling to Arrange and back', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner();
 
@@ -585,7 +644,7 @@ describe('RequestTagDesigner - design survives a mode toggle (Fix B)', () => {
 
   it('keeps a design cleared to 0 layers, then switched to another line and back, then rebuilt to 3 layers, across a mode toggle', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-1', code: 'SRT-1' }),
       lineTagData({ line_id: 'line-2', code: 'SRT-2', name: 'Bath Tap' }),
     ]);
@@ -607,9 +666,9 @@ describe('RequestTagDesigner - design survives a mode toggle (Fix B)', () => {
     // Switch to line-2 (clones its own starter) and back to line-1 - the
     // canvas remounts on the tag id both times (existing behaviour, not part
     // of Fix B), so the clear must still be there when line-1 reopens.
-    fireEvent.click(screen.getByText('SRT-2'));
+    fireEvent.click(screen.getByText(tagLabelFor('line-2')));
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('SRT-1'));
+    fireEvent.click(screen.getByText(tagLabelFor('line-1')));
     await waitFor(() => expect(drawnLayers()).toHaveLength(0));
 
     // Add 3 layers back.
@@ -635,7 +694,7 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
     mockListTemplates.mockReturnValue(
       templatesGate.promise as unknown as ReturnType<typeof listPublishedTemplates>,
     );
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner();
 
@@ -651,8 +710,8 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
   it('says "Resolving prices..." once templates have loaded but prices have not', async () => {
     mockListTemplates.mockResolvedValue([realTemplate()]);
     const pricesGate = deferred<LineTagData[]>();
-    mockResolveRequestLines.mockReturnValue(
-      pricesGate.promise as unknown as ReturnType<typeof resolveRequestLines>,
+    mockResolveRequestTags.mockReturnValue(
+      pricesGate.promise as unknown as ReturnType<typeof resolveRequestTags>,
     );
 
     renderDesigner();
@@ -666,7 +725,7 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
 
   it('shows an explicit error with Retry when the template fetch fails, and Retry recovers it', async () => {
     mockListTemplates.mockRejectedValueOnce(new Error('network down'));
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner();
 
@@ -685,7 +744,7 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
 
   it('shows an explicit error with Retry when price resolution fails, and Retry recovers it (review #5)', async () => {
     mockListTemplates.mockResolvedValue([realTemplate()]);
-    mockResolveRequestLines.mockRejectedValueOnce(new Error('network down'));
+    mockResolveRequestTags.mockRejectedValueOnce(new Error('network down'));
 
     renderDesigner();
 
@@ -696,17 +755,17 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
     // at all until prices are either resolved or explicitly retried.
     expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument();
 
-    mockResolveRequestLines.mockResolvedValueOnce([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValueOnce([lineTagData()]);
     fireEvent.click(retryButton);
 
-    expect(mockResolveRequestLines).toHaveBeenCalledTimes(2);
+    expect(mockResolveRequestTags).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
     expect(screen.queryByText('Failed to resolve prices.')).not.toBeInTheDocument();
   });
 
   it('says there is nothing to design when the request has no lines', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([]);
+    mockResolveRequestTags.mockResolvedValue([]);
 
     renderDesigner(request({ lines: [], line_count: 0 }));
 
@@ -725,11 +784,11 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
 // ---------------------------------------------------------------------------
 
 describe("RequestTagDesigner - a line the request's company cannot resolve", () => {
-  it('shows a "Product not found in this company" chip once prices have loaded, for the line resolveRequestLines skipped', async () => {
+  it('shows a "Product not found in this company" chip once prices have loaded, for the line resolveRequestTags skipped', async () => {
     mockListTemplates.mockResolvedValue([]);
     // Only line-1 comes back - line-2's product 404d under this request's
     // company and resolve_request_line_data silently skips it.
-    mockResolveRequestLines.mockResolvedValue([lineTagData({ line_id: 'line-1' })]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData({ line_id: 'line-1' })]);
 
     renderDesigner(
       request({
@@ -748,8 +807,8 @@ describe("RequestTagDesigner - a line the request's company cannot resolve", () 
   it('the chip never appears while prices are still resolving (the rail is gated behind pricesStatus === loaded)', async () => {
     mockListTemplates.mockResolvedValue([]);
     const prices = deferred<LineTagData[]>();
-    mockResolveRequestLines.mockReturnValue(
-      prices.promise as unknown as ReturnType<typeof resolveRequestLines>,
+    mockResolveRequestTags.mockReturnValue(
+      prices.promise as unknown as ReturnType<typeof resolveRequestTags>,
     );
 
     renderDesigner(
@@ -779,7 +838,7 @@ describe("RequestTagDesigner - a line the request's company cannot resolve", () 
 describe('RequestTagDesigner - LINES rail duplicate name (S2, AC-S2-1)', () => {
   it('shows the code once for a line whose name equals its code', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ code: 'SK-1234', name: 'SK-1234' }),
     ]);
 
@@ -792,7 +851,7 @@ describe('RequestTagDesigner - LINES rail duplicate name (S2, AC-S2-1)', () => {
 
   it('still shows both the code and the name for a line whose name differs (AC-S2-1)', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
 
     renderDesigner();
 
@@ -818,7 +877,7 @@ describe('RequestTagDesigner - autosave (D22, AC-S8-3)', () => {
   /** Mount with templates and prices settled, and nothing saved yet. */
   async function mountQuiet(overrides: Partial<PriceTagRequestDetail> = {}) {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
     const onSave = vi.fn(async () => {});
     const onAutosave = vi.fn<AutosaveFn>(async () => {});
 
@@ -937,7 +996,7 @@ describe('RequestTagDesigner - autosave (D22, AC-S8-3)', () => {
 describe('RequestTagDesigner - old imposition presets migrate on load (S3, AC-S6-4)', () => {
   it("normalises a pre-S6 'a4_3up' preset to 'auto' so the next autosave catches it up", async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
     const onAutosave = vi.fn<AutosaveFn>(async () => {});
 
     render(
@@ -988,7 +1047,7 @@ describe('RequestTagDesigner - the starter clone is not a user change (S3)', () 
     const lineA = line({ id: 'line-a', product_id: 'prod-a', code: 'AAA-1' });
     const lineB = line({ id: 'line-b', product_id: 'prod-b', code: 'BBB-2', name: 'Basin' });
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
       lineTagData({ line_id: 'line-b', code: 'BBB-2', name: 'Basin' }),
     ]);
@@ -1007,7 +1066,7 @@ describe('RequestTagDesigner - the starter clone is not a user change (S3)', () 
 
     // Line B has no tag either - switching to it clones one, which must be as
     // silent as opening was.
-    fireEvent.click(screen.getByText('Basin'));
+    fireEvent.click(screen.getByText(tagLabelFor('line-b')));
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
 
     // Well past the debounce, on real timers, so a scheduled save would have
@@ -1026,7 +1085,7 @@ describe('RequestTagDesigner - the starter clone is not a user change (S3)', () 
 describe('RequestTagDesigner - manual Save (S4)', () => {
   it('flushes the pending autosave, then snapshots exactly once', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
     const order: string[] = [];
     const onSave = vi.fn(async () => {
       order.push('version');
@@ -1062,7 +1121,7 @@ describe('RequestTagDesigner - manual Save (S4)', () => {
 
   it('leaving the page flushes the last edit, keepalive so it survives teardown', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
     const onSave = vi.fn(async () => {});
     const onAutosave = vi.fn<AutosaveFn>(async () => {});
 
@@ -1090,7 +1149,7 @@ describe('RequestTagDesigner - manual Save (S4)', () => {
 
   it('with nothing pending, Save is a single request', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
     const onSave = vi.fn(async () => {});
     const onAutosave = vi.fn<AutosaveFn>(async () => {});
 
@@ -1122,7 +1181,7 @@ describe('RequestTagDesigner - ?line= preselection', () => {
 
   it('defaults to the first line when there is no ?line= param', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
       lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
     ]);
@@ -1139,7 +1198,7 @@ describe('RequestTagDesigner - ?line= preselection', () => {
   it('preselects the line named by ?line=, not the first one', async () => {
     searchParams = new URLSearchParams('line=line-b');
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
       lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
     ]);
@@ -1156,7 +1215,7 @@ describe('RequestTagDesigner - ?line= preselection', () => {
   it('falls back to the first line when ?line= names a line not on this request', async () => {
     searchParams = new URLSearchParams('line=not-a-real-line');
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
       lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
     ]);
@@ -1173,7 +1232,7 @@ describe('RequestTagDesigner - ?line= preselection', () => {
   it('strips ?line= from the URL once applied, so a refresh does not snap back to it', async () => {
     searchParams = new URLSearchParams('line=line-b');
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
       lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
     ]);
@@ -1189,7 +1248,7 @@ describe('RequestTagDesigner - ?line= preselection', () => {
 
   it('leaves the URL alone when there was no ?line= to strip', async () => {
     mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
       lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
     ]);
@@ -1211,7 +1270,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
 
   it('editing W/H resizes the selected line\'s tag and every one of its copies', async () => {
     mockListTemplates.mockResolvedValue([realTemplate()]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
     ]);
     const onSave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
@@ -1237,13 +1296,13 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalled());
 
     const doc = onSave.mock.calls[onSave.mock.calls.length - 1][0];
-    const tag = doc.sheets[0].tags.find((t) => t.request_line_id === 'line-a');
+    const tag = doc.sheets[0].tags.find((t) => t.request_tag_id === 'line-a');
     expect(tag).toMatchObject({ width_mm: 95, height_mm: 44.5 });
   });
 
   it('"Apply to all lines" resizes every line\'s tag, not only the selected one', async () => {
     mockListTemplates.mockResolvedValue([realTemplate()]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
       lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
     ]);
@@ -1260,7 +1319,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
     // Line B needs a tag of its own before "apply to all" has two lines to
     // reach - selecting it clones one the same way selecting line A already did.
-    fireEvent.click(screen.getByText('BBB-2'));
+    fireEvent.click(screen.getByText(tagLabelFor('line-b')));
     await waitFor(() =>
       expect(canvasDocs[canvasDocs.length - 1].doc.width_mm).toBe(60),
     );
@@ -1293,7 +1352,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
 
   it('typing into H commits on blur, never remounts the editor, and never loses focus (S9 review B1)', async () => {
     mockListTemplates.mockResolvedValue([realTemplate()]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
     ]);
     const onSave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
@@ -1327,7 +1386,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalled());
 
     const doc = onSave.mock.calls[onSave.mock.calls.length - 1][0];
-    const tag = doc.sheets[0].tags.find((t) => t.request_line_id === 'line-a');
+    const tag = doc.sheets[0].tags.find((t) => t.request_tag_id === 'line-a');
     expect(tag?.height_mm).toBe(44.5);
     // Committing the resize (a live prop update, not a remount) still must
     // not have unmounted/remounted the editor.
@@ -1342,7 +1401,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
   it('applying a size to all lines also sets the default for a line opened LATER (S9 review B2)', async () => {
     mockListTemplates.mockResolvedValue([realTemplate()]);
     const lineC = line({ id: 'line-c', product_id: 'prod-c', code: 'CCC-3' });
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
       lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
       lineTagData({ line_id: 'line-c', code: 'CCC-3' }),
@@ -1370,7 +1429,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
 
     // Open line C for the FIRST time - it must clone at the request's
     // default size (95x44.5), not its template's own print_size (60x40).
-    fireEvent.click(screen.getByText('CCC-3'));
+    fireEvent.click(screen.getByText(tagLabelFor('line-c')));
     await waitFor(() => {
       const drawn = canvasDocs[canvasDocs.length - 1].doc;
       expect(drawn.width_mm).toBe(95);
@@ -1385,7 +1444,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
 
   it('refuses a size that does not fit the sheet, with an inline reason and no toast (400mm refused)', async () => {
     mockListTemplates.mockResolvedValue([realTemplate()]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
     ]);
     const onSave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
@@ -1411,7 +1470,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     const doc = onSave.mock.calls[onSave.mock.calls.length - 1][0];
-    const tag = doc.sheets[0].tags.find((t) => t.request_line_id === 'line-a');
+    const tag = doc.sheets[0].tags.find((t) => t.request_tag_id === 'line-a');
     // Refused - the tag keeps its ORIGINAL width (the template's print_size).
     expect(tag?.width_mm).toBe(60);
   });
@@ -1449,7 +1508,7 @@ describe('RequestTagDesigner - tag size dropdown grouping (S5, AC-S4-3/S4-4)', (
   async function mountWithSavedSizes(saved: TagSizeRecord[]) {
     mockUseTagSizesQuery.mockReturnValue({ data: saved });
     mockListTemplates.mockResolvedValue([realTemplate()]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
     ]);
 
