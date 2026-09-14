@@ -188,7 +188,9 @@ class DownloadService:
         return row
 
     def mark_ready(
-        self, download_id: str, *, storage_provider: str, storage_key: str, filename: Optional[str] = None
+        self, download_id: str, *, storage_provider: str, storage_key: str,
+        filename: Optional[str] = None,
+        row_count_low: Optional[int] = None, row_count_all: Optional[int] = None,
     ) -> Optional[UserDownload]:
         row = self.get(download_id)
         if row is None:
@@ -198,6 +200,14 @@ class DownloadService:
         row.storage_key = storage_key
         if filename:
             row.filename = filename
+        # PLAN-low-stock-report S3/S5 (reviewer S3): the row counts flip to READY in the
+        # SAME transaction as the status, so a poll can never read `ready` with NULL
+        # counts. Only the low stock export passes them; every other kind leaves the two
+        # columns NULL, which is what they mean for it.
+        if row_count_low is not None:
+            row.row_count_low = row_count_low
+        if row_count_all is not None:
+            row.row_count_all = row_count_all
         row.error = None
         row.ready_at = _utc_naive_now()
         self.db.commit()

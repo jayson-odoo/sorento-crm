@@ -704,16 +704,16 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
         )
 
         counts = low_stock_report_service.row_counts(db, run_id=run_id)
-        ready = svc.mark_ready(
+        # reviewer S3: status and counts flip together, one transaction - a poll never
+        # sees `ready` with NULL counts.
+        svc.mark_ready(
             download_id,
             storage_provider=provider,
             storage_key=stored_key,
             filename=filename,
+            row_count_low=counts["low"],
+            row_count_all=counts["all"],
         )
-        if ready is not None:
-            ready.row_count_low = counts["low"]
-            ready.row_count_all = counts["all"]
-            db.commit()
         logger.info(
             "generate_low_stock_report: download %s ready (%d bytes, %d low of %d)",
             download_id, len(file_bytes), counts["low"], counts["all"],
