@@ -168,7 +168,11 @@ All line refs are `origin/main` at ae0831776.
 - D10 System Settings > General: "Auto-mark price tags collected after" integer days, 0 = off,
   default 7. Column `system_settings.price_tag_auto_collect_days INT NOT NULL DEFAULT 7`,
   bounds 0..90, added to `GET /settings/`, `PUT /settings/general`, `SystemSettingUpdate`,
-  FE `layout.tsx` mapping + `page.tsx` field (both manual dict builders, per LESSONS).
+  AND the narrow `GET /settings/app-config` projection (the CRM detail card reads it and
+  marketing does not hold `user_management.settings.view`), FE `layout.tsx` mapping +
+  `page.tsx` field (both manual dict builders, per LESSONS). Collection steps use the
+  existing CRM transition route; the portal gets `POST .../collect`; the office fixes
+  `print_by` through `PATCH /dealer-kit/price-tag-requests/{id}`.
 - D11 Scheduled task `price_tag_auto_collect` (handler in `task_scheduler.py`, service in
   `price_tag_request_service.py`): every hour, for each request `ready_for_collection` with
   `ready_for_collection_at < now - days` and days > 0, transition to `collected` with

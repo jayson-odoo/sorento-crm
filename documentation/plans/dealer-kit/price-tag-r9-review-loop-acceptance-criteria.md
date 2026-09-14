@@ -82,8 +82,8 @@ tell them.
   `request_tag_sheet_export` leaves the status unchanged and accepts approved /
   ready_for_collection / collected.
 - AC-S3-4 Self print: after the salesperson approves, the request stays `approved`, is
-  terminal (no primary CTA in CRM beyond Export PDF in the gear), and the PDF appears under
-  Download PDF once exported.
+  terminal (Export PDF is the only action left and renders as the primary button, no gear,
+  no Void), and the PDF appears under Download PDF once exported.
 - AC-S3-5 Office print: at `approved` the CRM primary CTA is `Mark ready for collection`;
   pressing it sets `ready_for_collection` and `ready_for_collection_at`. The CTA is hidden when
   Printing is not set.
