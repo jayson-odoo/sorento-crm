@@ -44,6 +44,9 @@ CHATBOT_TOOL_DOMAINS: dict[str, str] = {
     "crm_forms_management_forms_list": "forms",
     "crm_inventory_stock_balance_list": "inventory",
     "crm_inventory_warehouses_list": "inventory",
+    # Same domain as the stock tools it sits beside (PLAN-low-stock-report S6, AC-62);
+    # the low stock INTENT is what picks it, not the domain.
+    "crm_low_stock_report": "inventory",
     "crm_order_management_orders_list": "order",
     "crm_order_management_orders_by_product_list": "order",
     "crm_outstanding_report": "order",

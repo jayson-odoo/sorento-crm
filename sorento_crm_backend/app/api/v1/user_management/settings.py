@@ -148,6 +148,11 @@ class SystemSettingUpdate(BaseModel):
     media_sync_wait_seconds: Optional[int] = Field(None, ge=5, le=90)
     media_extraction_timeout_seconds: Optional[int] = Field(None, ge=5, le=110)
     media_max_entities: Optional[int] = Field(None, ge=1, le=100)
+    # How long the low stock report route holds a chat turn open before it answers
+    # `pending` and leaves delivery to the worker push (PLAN-low-stock-report S5, AC-43).
+    # The same 5..90 band the media wait carries, and for the same reason: a turn held
+    # longer than the chatbot's own queue-wait budget is a turn nobody is waiting on.
+    low_stock_sync_wait_seconds: Optional[int] = Field(None, ge=5, le=90)
     chatbot_stock_denial_enabled: Optional[bool] = None
     # AC-304 (D5): the unsupported-domain list. `List[str]`, so an owner cannot save a
     # bare string that would then be iterated one CHARACTER at a time by the route's
@@ -376,6 +381,9 @@ async def get_settings(
                 "media_sync_wait_seconds": getattr(settings, "media_sync_wait_seconds", 30) if settings else None,
                 "media_extraction_timeout_seconds": getattr(settings, "media_extraction_timeout_seconds", 45) if settings else None,
                 "media_max_entities": getattr(settings, "media_max_entities", 10) if settings else None,
+                # PLAN-low-stock-report S5 (AC-43/AC-48): in BOTH manual builders, or the
+                # System Settings screen never sees the column at all.
+                "low_stock_sync_wait_seconds": getattr(settings, "low_stock_sync_wait_seconds", 40) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
                 "chatbot_unsupported_domains": getattr(settings, "chatbot_unsupported_domains", None) if settings else None,
                 "chatbot_crossdomain_ladder": getattr(settings, "chatbot_crossdomain_ladder", None) if settings else None,

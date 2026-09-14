@@ -42,6 +42,11 @@ export const KIND_LABEL: Record<string, string> = {
   quotation_pdf: 'Quotation PDF',
   quotation_xlsx: 'Quotation Excel',
   report_xlsx: 'Report Excel',
+  // The reorder plan's three printable views. The first two shipped without a label and
+  // rendered their raw kind whenever the row carried no filename yet (AC-3).
+  order_sheet_pdf: 'Order sheet PDF',
+  order_sheet_xlsx: 'Order sheet Excel',
+  low_stock_xlsx: 'Low stock report',
 };
 
 export function StatusBadge({ status }: { status: MyDownload['status'] }) {

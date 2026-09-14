@@ -52,6 +52,10 @@ DOMAIN_SWITCH_WORDS_BEFORE = {
     "stok": "inventory",
     "qty": "inventory",
     "quantity": "inventory",
+    # PLAN-low-stock-report.md S6 (AC-62): the low stock vocabulary, on the same row.
+    "low stock": "inventory",
+    "reorder report": "inventory",
+    "below level": "inventory",
     "order": "order",
     "orders": "order",
     "outstanding": "order",
@@ -123,6 +127,9 @@ INTENT_HINTS_BEFORE = (
     "submit_idea",
     "check_po",
     "check_po_cost",
+    # PLAN-low-stock-report.md S6 (AC-62): a SECOND intent on the `inventory` row - the
+    # ask is about stock, and the escalation team is the warehouse's either way.
+    "low_stock_report",
 )
 
 CHATBOT_READ_ONLY_TOOLS_BEFORE = frozenset(
@@ -153,6 +160,11 @@ CHATBOT_READ_ONLY_TOOLS_BEFORE = frozenset(
         # override lives in `lanes/business/__init__.py::run_fetch`, never in
         # `select_tool`'s own `tools[0]` pick.
         "crm_outstanding_report",
+        # PLAN-low-stock-report.md S6 (AC-62): allow-list member only - like the
+        # outstanding report above, the override lives in
+        # `lanes/business/__init__.py::run_fetch` and never in `select_tool`'s `tools[0]`
+        # pick, so a plain stock ask cannot start a reorder run.
+        "crm_low_stock_report",
         "crm_portal_link_get",
         "crm_procurement_po_placed_list",
         "crm_procurement_po_last_cost_list",

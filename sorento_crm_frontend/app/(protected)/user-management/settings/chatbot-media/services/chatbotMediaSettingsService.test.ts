@@ -139,6 +139,7 @@ describe('saveChatbotMediaSettings', () => {
       media_sync_wait_seconds: 30,
       media_extraction_timeout_seconds: 45,
       media_max_entities: 10,
+      low_stock_sync_wait_seconds: 40,
       ...overrides,
     };
   }

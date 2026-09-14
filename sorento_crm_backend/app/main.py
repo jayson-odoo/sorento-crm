@@ -422,6 +422,12 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Outstanding report bootstrap failed at startup: {str(e)}", exc_info=True)
 
+    # AC-65 STRUCK (security N4, Phase 3): `crm_low_stock_report` is deliberately NOT added
+    # to the in-app assistant's `enabled_tools`. The assistant force-empties
+    # `contact_id`/`space_id`, which this route requires (422), so the tool could only ever
+    # 403/422 there - and a SIDE-EFFECTING tool (it creates a reorder run) must not sit on
+    # the assistant's read list at all. No bootstrap.
+
     try:
         from app.database import SessionLocal
         from app.services import project_seed_service
