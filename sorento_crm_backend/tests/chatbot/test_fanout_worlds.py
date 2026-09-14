@@ -35,6 +35,7 @@ covers it.
 """
 from __future__ import annotations
 
+import itertools
 import json
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -63,6 +64,9 @@ _PROMO_TOOL = DOMAIN_SPEC["promotion"].tools[0]
 _PO_TOOL = DOMAIN_SPEC["purchase_order"].tools[0]
 _COST_TOOL = DOMAIN_SPEC["purchase_cost"].tools[0]
 
+# One monotonic messageId source across every driven turn in this module (Fix B).
+_MSG_SEQ = itertools.count(1)
+
 
 def _uuid_for(code: str) -> str:
     """A stable pseudo-uuid per code, so `product_ids` on a recorded call is checkable."""
@@ -71,13 +75,20 @@ def _uuid_for(code: str) -> str:
 
 
 def _found(code: str, *, label: str = "Product Code") -> dict[str, Any]:
+    """A found single-row envelope, the shape `output_structurer` reads as a HIT.
+
+    The hit/miss signal a fan section reads is the SAME as the single-domain lane's:
+    `output_structurer(envelope).has_result`, and `_extract_envelope` only treats a payload
+    as a rendered result when it carries an `items` LIST (an `answers`-only payload reads as
+    a MISS). Row shape mirrors `tests/chatbot/test_s6c_answer_lane.py::_row`.
+    """
     return {
-        "answers": [{"fields": [{"key": "product_code", "label": label, "value": code}]}],
+        "items": [{"fields": [{"key": "product_code", "label": label, "value": code}]}],
         "has_result": True,
     }
 
 
-_MISS = {"answers": [], "has_result": False}
+_MISS = {"items": [], "has_result": False}
 
 
 def _ask(domain: str | None, *codes: str) -> dict[str, Any]:
@@ -164,7 +175,9 @@ def _configure(session_factory) -> None:
     set_chatbot_switches(session_factory, business_lane=True)
     db = session_factory()
     for row in db.query(SystemSetting).all():
-        row.chatbot_completed_lanes = ["business_query"]
+        # `check_promotion` too: a promotion ask routes to that branch_kind, so without it
+        # AC-1045's turn 2 ("promo for X") delegates instead of completing in-process.
+        row.chatbot_completed_lanes = ["business_query", "check_promotion"]
         row.chatbot_crossdomain_ladder = {
             "inventory": ["incoming", "purchase_order"],
             "incoming": ["inventory", "purchase_order"],
@@ -247,7 +260,12 @@ def _drive(
     stub_parser(emission, emits_v3=True)
     stub_access(attributes=list(grants) if grants is not None else None)
 
-    result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+    # A UNIQUE messageId per driven turn: `run_turn` is idempotent on (contact, message_id),
+    # so a second `_drive` call reusing `_envelope`'s fixed "ZZT-msg-1" would return turn 1's
+    # cached result and never run - every two-turn world would grade turn 1 twice.
+    envelope = _envelope()
+    envelope.message["message"]["messageId"] = f"ZZT-fanout-msg-{next(_MSG_SEQ)}"
+    result = engine_mod.run_turn(envelope, session_factory=session_factory)
     row = (
         session_factory()
         .query(ChatbotTurn)
@@ -914,7 +932,7 @@ def _session_variables(session_factory) -> dict[str, Any]:
     db = session_factory()
     row = db.execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-        {"c": CONTACT_ID},
+        {"c": str(CONTACT_ID)},
     ).first()
     raw = row.session_vars if row is not None else {}
     stored = json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -929,7 +947,7 @@ def _arm_session(session_factory, patch: dict[str, Any]) -> None:
     db = session_factory()
     row = db.execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-        {"c": CONTACT_ID},
+        {"c": str(CONTACT_ID)},
     ).first()
     raw = row.session_vars if row is not None else {}
     stored = json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -940,7 +958,7 @@ def _arm_session(session_factory, patch: dict[str, Any]) -> None:
             "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
             "WHERE respond_io_id = :c"
         ),
-        {"c": CONTACT_ID, "sv": json.dumps({**stored, "variables": variables})},
+        {"c": str(CONTACT_ID), "sv": json.dumps({**stored, "variables": variables})},
     )
     db.commit()
 
