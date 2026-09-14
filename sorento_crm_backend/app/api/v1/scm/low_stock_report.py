@@ -38,8 +38,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
@@ -68,6 +69,17 @@ DEFAULT_SYNC_WAIT_SECONDS = 40
 #: workbook rendered at second 3 does not wait until second 4 to be answered with.
 _POLL_SECONDS = 0.25
 
+#: B2 (security review): per-contact rate limit on this side-effecting route - three fresh
+#: plans in ten minutes is generous for a person and a firm bound on a runaway caller.
+#: `rate_limit.hit` fails OPEN (allows) when Redis is unreachable, so an infra blip never
+#: locks a staffer out of the report.
+_RATE_LIMIT = 3
+_RATE_WINDOW_SECONDS = 600
+
+#: N5: a chat scope is a handful of codes, never a list. Capped so a malformed tool call
+#: cannot hand `create_run` thousands of codes to resolve.
+_MAX_CODES = 100
+
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
@@ -82,7 +94,7 @@ def _csv_list(values: Optional[list[str]]) -> Optional[list[str]]:
         return None
     out = [part.strip() for value in values for part in str(value).split(",")]
     out = [part for part in out if part]
-    return out or None
+    return out[:_MAX_CODES] or None
 
 
 def _sync_wait_seconds(db: Session) -> int:
@@ -99,7 +111,7 @@ def _sync_wait_seconds(db: Session) -> int:
 
 
 def _adopt_company_scope(db: Session, *, resolved_contact_id: Optional[str],
-                         owner_user_id: str) -> str:
+                         owner_user_id: str) -> Optional[str]:
     """Resolve the company this chat turn writes under, and stamp it on the session.
 
     An API-key request has no company scope of its own - `_resolve_api_key_scope` reads the
@@ -123,10 +135,13 @@ def _adopt_company_scope(db: Session, *, resolved_contact_id: Optional[str],
        when it is still granted, else the single grant, else the lowest granted id: the
        fail-closed tail of `company_scope_resolver._resolve_user_scope`, minus the JWT
        claim, because an API-key request carries no token to read one from.
-    3. **Neither** -> 400 `company_unresolved`, nothing written. A run stamped with a
-       guessed company would plan another company's book.
+    3. **Neither** -> return None, nothing written. `_prepare` turns that into the error
+       miss shape (reviewer S1/AC-44a) rather than an HTTP 400, so the bot says "Could not
+       run the low stock report right now." instead of surfacing a status code. A run
+       stamped with a guessed company would plan another company's book.
 
-    Returns the company id, and leaves it set on `db` for the caller's own writes.
+    Returns the company id (and leaves it set on `db` for the caller's own writes), or
+    None when no company could be resolved.
     """
     from app.models.base import get_company_scope, set_company_scope
     from app.models.company import RespondContactCompany
@@ -165,11 +180,7 @@ def _adopt_company_scope(db: Session, *, resolved_contact_id: Optional[str],
             company_id = sorted(grants)[0]
 
     if not company_id:
-        raise AppException(
-            status_code=400,
-            message="No company could be resolved for this contact.",
-            code="company_unresolved",
-        )
+        return None
     set_company_scope(db, frozenset({company_id}))
     return company_id
 
@@ -244,6 +255,184 @@ def _ready_payload(db: Session, *, run_id: str, download_id: str) -> Optional[di
     }
 
 
+@dataclass
+class _Prepared:
+    """The handoff from `_prepare` (the blocking phase) to the wait. Everything the caller
+    needs is copied out here BEFORE the wait, so nothing reads the request session across
+    it (security B1)."""
+
+    run_id: str
+    download_id: str
+    resolved_contact_id: str
+    sync_wait_seconds: int
+
+
+def _error_answer() -> dict:
+    """The one answer the bot gives when the report could not be produced at all - a company
+    it cannot resolve, an excluded named product, a broker that would not take the job, or a
+    run the worker marked `failed` (over the row cap, a render error). The presenter renders
+    it as a MISS ("Could not run the low stock report right now."), never as `pending`
+    (reviewer S1 / AC-44a): a failure that reads as "on its way" leaves the contact waiting
+    for a file that is never coming. A fresh dict per call, so no caller can mutate a shared
+    one."""
+    return {"status": "error", "message": "Could not run the low stock report right now."}
+
+
+def _prepare(
+    db: Session,
+    *,
+    warehouse_codes: Optional[list[str]],
+    product_codes: Optional[list[str]],
+    date_from: Optional[date],
+    date_to: Optional[date],
+    contact_id: str,
+    space_id: str,
+    principal_id: str,
+) -> Union[dict, _Prepared]:
+    """Every BLOCKING step of a turn, in ONE function run on a worker thread (security B1 /
+    reviewer S4): the reveal-key read, the rate-limit hit, the company resolve, `create_run`,
+    the download-row insert and both `enqueue_job` calls. The async handler runs this via
+    `asyncio.to_thread`, so none of it occupies the event loop - the shape
+    `app/api/v1/external/media.py::_decide_meter_record_and_enqueue` uses.
+
+    `create_run` and `DownloadService.create` commit, which returns the request session's
+    connection to the pool; the handler then waits on `_await_download`, which polls its OWN
+    short-lived sessions, so the request connection is not HELD across the wait either.
+
+    Returns a terminal answer dict (`busy` / `error`) to send at once, or a `_Prepared` the
+    caller waits on. Raises `AppException(403)` for the no-key refusal (AC-41), which stays
+    an HTTP status; the lane maps it to its own refusal line.
+    """
+    from app.services import rate_limit
+    from app.services.contact_field_reveal_service import granted_keys
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_low_stock_report
+    from app.tasks.reorder_tasks import run_reorder_job
+
+    # --- the second gate (AC-41) ------------------------------------------------------
+    resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=contact_id, space_id=space_id
+    )
+    keys = granted_keys(db, resolved_contact_id) if resolved_contact_id else []
+    if LOW_STOCK_GRANT not in keys:
+        raise AppException(
+            status_code=403,
+            message="Low stock report is not enabled for your account.",
+            code="low_stock_report_not_enabled",
+        )
+    include_supplier = SUPPLIER_GRANT in keys
+
+    # --- B2: per-contact rate limit, before anything is created -----------------------
+    if not rate_limit.hit(
+        "low_stock_report", resolved_contact_id,
+        limit=_RATE_LIMIT, window_seconds=_RATE_WINDOW_SECONDS,
+    ).allowed:
+        return {"status": "busy"}
+
+    # --- who owns the run and the file (AC-42) ----------------------------------------
+    # The CRM user the chatting contact is linked to, so the workbook lands in THEIR My
+    # Downloads and the plan says who asked for it; no link falls back to the authenticated
+    # principal (the act-as user). security N2: ACTIVE only, ordered, so a deactivated or
+    # duplicate link resolves deterministically to a live owner.
+    owner_user_id = str(db.execute(text(
+        "SELECT id FROM users WHERE respond_contact_id = :c AND status = 'ACTIVE' "
+        "ORDER BY created_at, id LIMIT 1"
+    ), {"c": resolved_contact_id}).scalar() or principal_id)
+
+    # --- the company this run belongs to (400 avoided; see `_adopt_company_scope`) -----
+    company_id = _adopt_company_scope(
+        db, resolved_contact_id=resolved_contact_id, owner_user_id=owner_user_id,
+    )
+    if company_id is None:
+        # reviewer S1 / AC-44a: an unresolved company is an error the bot says, not a 400.
+        return _error_answer()
+
+    # --- the fresh run ----------------------------------------------------------------
+    try:
+        created = reorder_run_service.create_run(
+            db,
+            _csv_list(warehouse_codes),
+            "warehouse",
+            actor=owner_user_id,
+            enqueue=False,
+            product_codes=_csv_list(product_codes),
+            plan_horizon_start=date_from,
+            plan_horizon_date=date_to,
+            requested_via="chat",
+            refuse_if_in_flight=True,
+        )
+    except AppException as e:
+        if e.status_code == 409:
+            return {"status": "busy"}  # B2 / AC-49: a plan is already running
+        if e.status_code == 422:
+            # An excluded named product (N5) or any other create-time refusal is an error
+            # the bot reports, never a pending line.
+            return _error_answer()
+        raise
+    run_id = created["run_id"]
+
+    download = DownloadService(db).create(
+        user_id=owner_user_id,
+        kind="low_stock_xlsx",
+        source_entity_type="reorder_run",
+        source_entity_id=run_id,
+        filename=None,
+    )
+    download_id = str(download.id)
+
+    # The run job first, then the export with `depends_on` it: the workbook has to be
+    # rendered from a COMPLETED plan, not a half-frozen one. `enqueue_job` forwards
+    # `**kwargs` to `Queue.enqueue`, and RQ honours `depends_on` natively.
+    try:
+        run_job = enqueue_job(run_reorder_job, run_id, queue_name="imports")
+        enqueue_job(
+            generate_low_stock_report,
+            download_id,
+            run_id,
+            owner_user_id,
+            include_supplier=include_supplier,
+            queue_name="imports",
+            job_timeout=600,
+            depends_on=run_job,
+        )
+    except Exception:  # noqa: BLE001 - a broker that will not take the job is an error the
+        # bot reports, not a 500. The run/download rows exist; the delegated sweep and a
+        # manual retry cover them.
+        log.exception("low_stock_report: could not enqueue jobs for run %s", run_id)
+        return _error_answer()
+
+    sync_wait = _sync_wait_seconds(db)
+    db.commit()
+    return _Prepared(
+        run_id=run_id,
+        download_id=download_id,
+        resolved_contact_id=str(resolved_contact_id),
+        sync_wait_seconds=sync_wait,
+    )
+
+
+def _claim_delivery(db: Session, prepared: _Prepared) -> dict:
+    """Hand delivery to the worker (AC-44), or answer with the file if the row won the race.
+
+    ONE conditional UPDATE: `WHERE status <> 'ready'` makes this exclusive with the task's
+    own claim. 0 rows means the row turned ready in the same breath and this turn LOST the
+    race - so answer with the file rather than promising a push the task will never make
+    (its claim would find `deliver_to_contact_id IS NULL`).
+    """
+    claimed = db.execute(text(
+        "UPDATE user_downloads SET deliver_to_contact_id = :c "
+        "WHERE id = :id AND status <> 'ready'"
+    ), {"c": prepared.resolved_contact_id, "id": prepared.download_id}).rowcount
+    db.commit()
+    if not claimed:
+        won = _ready_payload(db, run_id=prepared.run_id, download_id=prepared.download_id)
+        if won is not None:
+            return won
+    return {"status": "pending", "run_id": prepared.run_id,
+            "download_id": prepared.download_id}
+
+
 @router.get("/low-stock-report")
 async def low_stock_report(
     warehouse_codes: Optional[list[str]] = Query(None),
@@ -261,125 +450,50 @@ async def low_stock_report(
     chatbot and for nothing else, and without a contact there is nobody to check the reveal
     key against or to push the file to (AC-40).
 
-    Three answers, all HTTP 200, because each is something the bot can SAY:
+    Four answers, all HTTP 200, because each is something the bot can SAY:
       * `ready`   - the workbook landed inside the budget; the turn carries it.
       * `pending` - it did not; the worker will push it when it does (AC-44).
-      * `busy`    - run creation refused with its own one-in-flight 409; "a plan is
-                    already running" is an answer, an HTTP error is not (AC-49).
+      * `busy`    - a plan is already running, or the contact is over the rate limit (AC-49).
+      * `error`   - it could not be produced (no company, excluded product, broker down, or
+                    the worker marked the run `failed`); the bot says so, never `pending`
+                    (reviewer S1 / AC-44a).
+
+    Every blocking step runs off the event loop via `asyncio.to_thread` (security B1); the
+    request session's connection is returned to the pool by `_prepare`'s commit and is not
+    used again until after the wait, and the wait polls on its own short-lived sessions.
     """
-    from app.services.contact_field_reveal_service import granted_keys
-    from app.services.field_access import resolve_contact_with_null_workspace_fallback
-
-    # --- the second gate (AC-41) ------------------------------------------------------
-    resolved_contact_id = resolve_contact_with_null_workspace_fallback(
-        db, contact_id=contact_id, space_id=space_id
+    prepared = await asyncio.to_thread(
+        _prepare, db,
+        warehouse_codes=warehouse_codes, product_codes=product_codes,
+        date_from=date_from, date_to=date_to,
+        contact_id=contact_id, space_id=space_id,
+        principal_id=str(current_user["id"]),
     )
-    keys = granted_keys(db, resolved_contact_id) if resolved_contact_id else []
-    if LOW_STOCK_GRANT not in keys:
-        raise AppException(
-            status_code=403,
-            message="Low stock report is not enabled for your account.",
-            code="low_stock_report_not_enabled",
-        )
-    include_supplier = SUPPLIER_GRANT in keys
-
-    # --- who owns the run and the file (AC-42) ----------------------------------------
-    # The CRM user the chatting contact is linked to, so the workbook lands in THEIR My
-    # Downloads and the plan says who asked for it. No link (a contact who is not a CRM
-    # user) falls back to the principal this request authenticated as - the act-as user
-    # behind the API key - and the file still reaches them over chat.
-    owner_user_id = db.execute(text(
-        "SELECT id FROM users WHERE respond_contact_id = :c LIMIT 1"
-    ), {"c": resolved_contact_id}).scalar() or str(current_user["id"])
-    owner_user_id = str(owner_user_id)
-
-    # --- the company this run belongs to ----------------------------------------------
-    # An X-API-Key request carries NO company scope of its own, and both writes below are
-    # company-scoped (`scm.reorder_run` and the `user_downloads` row's own run pointer), so
-    # without this the very first insert answers 400 `company_scope_required` - which is
-    # what the 14 Sep console run hit on every scoped turn. Resolved and STAMPED before
-    # anything is written; the worker adopts the run's own company later
-    # (`reorder_run_service._adopt_run_company_scope`), so the export renders under the
-    # same company the plan was built for.
-    _adopt_company_scope(
-        db,
-        resolved_contact_id=resolved_contact_id,
-        owner_user_id=owner_user_id,
-    )
-
-    # --- the fresh run ----------------------------------------------------------------
-    try:
-        created = reorder_run_service.create_run(
-            db,
-            _csv_list(warehouse_codes),
-            "warehouse",
-            actor=owner_user_id,
-            enqueue=False,
-            product_codes=_csv_list(product_codes),
-            plan_horizon_start=date_from,
-            plan_horizon_date=date_to,
-            requested_via="chat",
-        )
-    except AppException as e:
-        if e.status_code == 409:
-            return {"status": "busy"}
-        raise
-    run_id = created["run_id"]
-
-    download = DownloadService(db).create(
-        user_id=owner_user_id,
-        kind="low_stock_xlsx",
-        source_entity_type="reorder_run",
-        source_entity_id=run_id,
-        filename=None,
-    )
-    download_id = str(download.id)
-
-    # The run job first, then the export with `depends_on` it: the workbook has to be
-    # rendered from a COMPLETED plan, not a half-frozen one. `enqueue_job` forwards
-    # `**kwargs` to `Queue.enqueue`, and RQ honours `depends_on` natively.
-    from app.services.queue_service import enqueue_job
-    from app.tasks.export_tasks import generate_low_stock_report
-    from app.tasks.reorder_tasks import run_reorder_job
-
-    run_job = enqueue_job(run_reorder_job, run_id, queue_name="imports")
-    enqueue_job(
-        generate_low_stock_report,
-        download_id,
-        run_id,
-        owner_user_id,
-        include_supplier=include_supplier,
-        queue_name="imports",
-        job_timeout=600,
-        depends_on=run_job,
-    )
+    if isinstance(prepared, dict):
+        return prepared
 
     # --- the bounded wait (AC-43) -----------------------------------------------------
     try:
-        await asyncio.wait_for(_await_download(download_id), _sync_wait_seconds(db))
+        snapshot = await asyncio.wait_for(
+            _await_download(prepared.download_id), prepared.sync_wait_seconds
+        )
     except asyncio.TimeoutError:
-        pass
-    except Exception:  # noqa: BLE001 - a failed poll is a pending answer, never a 500
-        log.exception("low_stock_report: waiting on download %s failed", download_id)
+        snapshot = None
+    except Exception:  # noqa: BLE001 - a failed poll falls through to the claim, never a 500
+        log.exception(
+            "low_stock_report: waiting on download %s failed", prepared.download_id
+        )
+        snapshot = None
 
-    ready = _ready_payload(db, run_id=run_id, download_id=download_id)
+    # reviewer S1 / AC-44a: a run the worker marked `failed` (over MAX_LOW_STOCK_ROWS, a
+    # render error) is an ERROR the bot must NOT report as pending.
+    if snapshot is not None and snapshot.get("status") == "failed":
+        return _error_answer()
+
+    ready = await asyncio.to_thread(
+        _ready_payload, db, run_id=prepared.run_id, download_id=prepared.download_id
+    )
     if ready is not None:
         return ready
 
-    # --- hand delivery to the worker (AC-44) ------------------------------------------
-    # ONE conditional UPDATE, on the REQUEST session: `WHERE status <> 'ready'` is what
-    # makes this exclusive with the task's own claim. 0 rows means the row turned ready in
-    # the same breath and this turn LOST the race - so answer with the file rather than
-    # promising a push the task will never make (its claim would find
-    # `deliver_to_contact_id IS NULL`).
-    claimed = db.execute(text(
-        "UPDATE user_downloads SET deliver_to_contact_id = :c "
-        "WHERE id = :id AND status <> 'ready'"
-    ), {"c": resolved_contact_id, "id": download_id}).rowcount
-    db.commit()
-    if not claimed:
-        won = _ready_payload(db, run_id=run_id, download_id=download_id)
-        if won is not None:
-            return won
-
-    return {"status": "pending", "run_id": run_id, "download_id": download_id}
+    return await asyncio.to_thread(_claim_delivery, db, prepared)
