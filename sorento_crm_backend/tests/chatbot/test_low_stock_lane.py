@@ -339,3 +339,65 @@ class TestOutputStructurer:
             f"the presenter's text is used verbatim: {out.get('response')!r}"
         )
         assert out.get("has_result") is True, out
+
+
+# --------------------------------------------------------------------------- #
+# Console round 2, finding 1 - a BARE ask needs no filter
+#
+# CODER-AUTHORED (14 Sep 2026), a gap in the red set: every test above hands the lane at
+# least one entity, so none of them could see that a scope-less "low stock report" never
+# reached the tool at all. On the lane stack it answered "That would search every stock we
+# have - I need at least one filter to narrow it down", which is the inventory domain's
+# `ALLOWS_EMPTY: False` rule firing in `gate.run_gate` BEFORE the fetch step - the low
+# stock override never ran. Owner ruling: a bare ask runs every site-pool warehouse and
+# every admitted product, which is the UAC journey's own first phrasing.
+# --------------------------------------------------------------------------- #
+
+
+class TestABareAskNeedsNoFilter:
+    def test_the_gate_passes_a_scopeless_low_stock_ask(self) -> None:
+        """The seam the reply came from. `inventory` keeps `ALLOWS_EMPTY: False` - a bare
+        "stock?" must still be asked which product - so the exemption is keyed on the
+        INTENT, and a plain `check_stock` turn with no entities still fails the gate."""
+        from app.services.chatbot.lanes.business import gate as gate_mod
+
+        low_stock = gate_mod.run_gate(
+            {}, parser=_qf(entities=[]), resolver={"resolutions": []}
+        )
+        assert low_stock["gate_passed"] is True, low_stock["gate_reason"]
+        assert "requires a scoping entity" not in low_stock["gate_reason"]
+
+        plain_stock = gate_mod.run_gate(
+            {},
+            parser=_parser_output(
+                domain_hint="inventory", intent_hint="check_stock", entities=[]
+            ),
+            resolver={"resolutions": []},
+        )
+        assert plain_stock["gate_passed"] is False, (
+            "a plain stock ask with no product must still be asked to narrow it down: "
+            f"{plain_stock['gate_reason']}"
+        )
+
+    def test_the_bare_ask_calls_the_tool_with_no_scope(self, session_factory) -> None:
+        """End of the same path: with the grant and NO entities, the tool is called and
+        neither scope param is sent - `create_run` reads a missing list as "plan
+        everything", which is exactly the whole-book answer the journey asks for."""
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp(READY_ENVELOPE)
+        run_fetch(
+            _payload(attributes=[GRANT_KEY], entities=[]),
+            services=FetchServices(mcp_call=call),
+        )
+
+        assert captured, "a bare low stock ask never reached the tool"
+        name, args = captured[0]
+        assert name == TOOL, name
+        assert not args.get("warehouse_codes"), (
+            f"a bare ask must send no warehouse scope: {args.get('warehouse_codes')!r}"
+        )
+        assert not args.get("product_codes"), (
+            f"a bare ask must send no product scope: {args.get('product_codes')!r}"
+        )
+        assert args.get("contact_id") and args.get("space_id"), args
