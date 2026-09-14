@@ -1514,3 +1514,127 @@ def test_ac_r_33_bought_beats_open_but_not_cancelled():
             "the row was linked through a cancelled line's reference"
         )
         assert result["links_written"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# 7.2 and 7.4: no double count, and the line's own delivery date              #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_r_34_po_line_capacity_excludes_what_its_own_spo_carries():
+    """AC-R-34. A purchase order line and the shipping order it BECAME are one supply, not
+    two (`PLAN-scm-oi-sheet-pairing-repair.md` 7.2, owner 14 Sep evening).
+
+    Measured on the 3am copy after the upload: 555 rows carry a link to a PO line AND a link
+    to that same line's own allocation, 23,187 units counted twice. SO368872 / SRTWC286-SH is
+    the owner's example - 62 on PO 202510-S0078 and 62 on SPO-2026/04-0043, which is that
+    very line shipped. D10 links the shipping order first and the purchase order line "for
+    the remainder", but the remainder was computed against the PO line's whole `qty_ordered`,
+    so the same 62 units were owed twice.
+
+    The owner: "we definitely cannot double count, but by this linking it helps us to know
+    the PO and SPO corresponding to this order inquiry" - hence the FE half of 7.2, which
+    keeps both numbers on screen without a second link.
+    """
+    with world() as w:
+        ref = _ref()
+        po_line_ref = f"AED_SORENTO:{_n()}:62"
+        order = w.order()
+        _with_ref(w, w.line(order, qty_ordered="400"), ref)
+        po, po_line = w.po_line(qty_ordered="62")
+        po_line.source_ref = po_line_ref
+        w.db.flush()
+        _names(w, po_line, ref)
+        shipped = _allocation(
+            w, spo_number=f"SPO-2026/04-{_n():04d}", line_number=1, quantity=62,
+            from_po_number=po.po_number, from_po_line_ref=po_line_ref,
+        )
+        data = sheet([
+            (order.so_number, w.product.product_code, 364, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        _apply(w, data)
+
+        links = w.links(w.one_row())
+        assert len(links) == 1, [
+            (link.document, str(link.qty)) for link in links
+        ]
+        assert str(links[0].spo_allocation_id) == str(shipped.id)
+        assert Decimal(str(links[0].qty)) == Decimal("62")
+        assert all(
+            str(link.po_line_id or "") != str(po_line.id) for link in links
+        ), "the purchase order line was linked for units already on its own ship"
+
+    with world() as w:
+        # The same, but the ship carries only 40 of the 62 the order bought: the purchase
+        # order line answers for the 22 that have NOT sailed, and not one unit more.
+        ref = _ref()
+        po_line_ref = f"AED_SORENTO:{_n()}:62"
+        order = w.order()
+        _with_ref(w, w.line(order, qty_ordered="400"), ref)
+        po, po_line = w.po_line(qty_ordered="62")
+        po_line.source_ref = po_line_ref
+        w.db.flush()
+        _names(w, po_line, ref)
+        shipped = _allocation(
+            w, spo_number=f"SPO-2026/04-{_n():04d}", line_number=1, quantity=40,
+            from_po_number=po.po_number, from_po_line_ref=po_line_ref,
+        )
+        data = sheet([
+            (order.so_number, w.product.product_code, 364, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        _apply(w, data)
+
+        links = w.links(w.one_row())
+        assert [Decimal(str(link.qty)) for link in links] == [
+            Decimal("40"), Decimal("22"),
+        ], [(link.document, str(link.qty)) for link in links]
+        assert str(links[0].spo_allocation_id) == str(shipped.id)
+        assert str(links[1].po_line_id) == str(po_line.id)
+
+
+def test_ac_r_37_row_takes_the_sales_order_lines_delivery_date():
+    """AC-R-37. The raised row carries the SALES ORDER LINE's required date, not the
+    sheet's (7.4, owner: "we need to follow the sales order delivery date").
+
+    SO325661 / SRTWT167 on prod: the line is required 01/01/2030 and the sheet row said
+    05/01/2026, and the inquiry showed the sheet's - so the worklist, the month grouping and
+    the export all read a delivery the book does not promise. The sheet's date still decides
+    which line the row matches and whether two rows restate one instruction; it just stops
+    being what the row REPORTS.
+    """
+    sheet_date = date(2026, 1, 5)
+    line_date = date(2030, 1, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="50", required_date=line_date)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert str(row.so_line_id) == str(w.mirror_of(line).id)
+        assert row.delivery_date == line_date, (
+            "the row reports a delivery the sales order line does not promise"
+        )
+
+    with world() as w:
+        # A line with no required date has nothing to lend, so the sheet's date stands.
+        order = w.order()
+        w.line(order, qty_ordered="50", required_date=None)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        assert w.one_row().delivery_date == sheet_date

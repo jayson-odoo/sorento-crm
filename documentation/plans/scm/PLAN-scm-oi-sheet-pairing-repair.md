@@ -348,3 +348,52 @@ restatement key, the rollback script and the worklist are untouched.
 Tests: AC-R-32, AC-R-33 in the UAC. Verification: the replay on the 3am copy must land the
 SO395635 Nov row on `...44290050` and link it, and the 220 must drop to zero (re-run the
 count query in the PR).
+
+### 7.2 No double count, both documents still shown (owner, 14 Sep evening)
+
+Measured on the 3am copy after the upload: 555 rows carry a link to a PO line AND a link
+to that same PO line's own SPO allocation (`from_po_line_ref` = the PO line's
+`source_ref`, or `from_po_number` = its PO), 23,187 units counted twice. Example
+SO368872 / SRTWC286-SH: 62 on PO 202510-S0078 and 62 on SPO-2026/04-0043, which is that
+PO line shipped. D10 links the SPO first and the PO line "for the remainder", but the PO
+line's capacity in `_target_facts` is its whole `qty_ordered`, never less what its own
+allocations already carry.
+
+Owner: "we definitely cannot double count, but by this linking it helps us to know the PO
+and SPO corresponding to this order inquiry."
+
+**Change (importer):** a PO line's capacity = `qty_ordered` less the `allocated_quantity`
+of the visible allocations that came from it (`from_po_line_ref == source_ref`, else
+`from_po_number == po_number` when the allocation names no line), computed in
+`_target_facts` from the rows `_chain_allocations` already fetched. The remainder rule then
+links the PO line only for units not yet on a ship. No second link for the same units.
+
+**Change (worklist, FE only):** the PO column lists the distinct PO numbers of the row's
+`po` links PLUS the `source_po_number` of its `spo` links, so a row whose whole quantity is
+on a shipment still names the PO it came from. Same pill and lightbox. The Use PO card
+keeps counting only `po` link quantity (the units not yet shipped), which is what "no
+double count" means for the cards.
+
+### 7.3 Buy never exceeds what the sales order line still owes
+
+Buy = `row qty - linked - bundled` ignores delivery. SO368872 / SRTWC286-SH: line 364
+ordered, 352 delivered, 12 outstanding; the row shows Buy 240. Measured: capping by the
+line's outstanding moves the copy's Buy total only from 154,618 to 153,124 (138 rows sit on
+partly delivered lines), so this is a correctness fix, not the big number.
+
+**Change (worklist service):** `_UNLINKED_QTY` becomes
+`greatest(least(row qty, core line outstanding) - linked - bundled, 0)` where the core line
+outstanding is `scm/demand.py`'s own outstanding expression over the joined core line
+(`qty_ordered - qty_delivered`, floored at zero); a row whose mirror has no core line keeps
+today's reading. Cards, `kind=buy` filter and the matrix all read the one expression.
+
+### 7.4 The row's delivery date is the sales order line's
+
+Owner: "we need to follow the sales order delivery date." SO325661 / SRTWT167: line
+required date 01/01/2030, the sheet row said 05/01/2026 and the inquiry shows the sheet's.
+
+**Change (importer):** `delivery_date = core_line.required_date or row.delivery_date`
+(the sheet's date only when the line carries none). The sheet's date still drives the
+restatement key and the "required date equals the sheet date" rank term, so matching is
+unchanged. Rows already on prod are corrected by the rollback + re-upload the owner does
+after this lane deploys.
