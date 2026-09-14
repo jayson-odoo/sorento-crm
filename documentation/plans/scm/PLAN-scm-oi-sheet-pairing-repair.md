@@ -1,8 +1,8 @@
 # PLAN: order inquiry sheet pairing repair - pair on AutoCount's own line ref
 
-Status: IMPLEMENTED 14 Sep 2026, review pending. Owner go given ("we should do like 1 and
-2 ... let's move forward"). Repairs the pairing #875 shipped. Lane
-`fix/oi-sheet-pairing-direct-ref`.
+Status: VERIFIED 14 Sep 2026, PR pending. Browser evidence in
+`evidence/oi-sheet-pairing-repair/`. Owner go given ("we should do like 1 and 2 ... let's
+move forward"). Repairs the pairing #875 shipped. Lane `fix/oi-sheet-pairing-direct-ref`.
 
 UAC: `scm-oi-sheet-pairing-repair-acceptance-criteria.md`.
 
