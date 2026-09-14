@@ -469,6 +469,8 @@ describe('SupplierCodesTab - Remembered', () => {
     expect(screen.getByText('Nothing remembered for this supplier yet')).toBeInTheDocument();
   });
 
+  // S5/S6 (14 Sep feedback batch): "Matched to" is the code alone and the How column is
+  // gone - the rung is still on the row, it just has no column of its own any more.
   it('lists a product match, a set match and a dismissal with the right columns', () => {
     state.aliases = [
       alias(),
@@ -493,11 +495,12 @@ describe('SupplierCodesTab - Remembered', () => {
     renderTab();
 
     expect(screen.getByText('Remembered (3)')).toBeInTheDocument();
-    expect(screen.getByText('SRTWC8357-300-RL - One piece toilet')).toBeInTheDocument();
-    expect(screen.getByText('Manual')).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'How' })).toBeNull();
+    expect(screen.getByText('SRTWC8357-300-RL')).toBeInTheDocument();
+    expect(screen.queryByText('SRTWC8357-300-RL - One piece toilet')).toBeNull();
 
-    expect(screen.getByText('CWC605-RL - Close-coupled WC')).toBeInTheDocument();
-    expect(screen.getByText('Same tokens')).toBeInTheDocument();
+    expect(screen.getByText('CWC605-RL')).toBeInTheDocument();
+    expect(screen.queryByText('Same tokens')).toBeNull();
 
     expect(screen.getByText('THEIR-OWN-SPARE')).toBeInTheDocument();
     expect(screen.getAllByText('Dismissed').length).toBeGreaterThanOrEqual(1);

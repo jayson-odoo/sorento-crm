@@ -263,6 +263,7 @@ def apply(
     supplier_id: str,
     as_of: Optional[date] = None,
     actor: Optional[str] = None,
+    actor_label: Optional[str] = None,
     loading_plan_id: Optional[str] = None,
 ) -> dict:
     """Replace a snapshot with the file. Does not commit.
@@ -273,6 +274,13 @@ def apply(
     - it replaces the rows no plan owns (`loading_plan_id IS NULL`), which is what "the
     supplier's snapshot" has meant since 454: a plan's rows belong to that plan, and a
     standalone upload must not delete them.
+
+    TWO provenance values, because two columns answer two different questions. `actor` is the
+    caller's ID and it is what `supplier_inventory.uploaded_by` records - a principal
+    reference an audit trail joins back to a user row. `actor_label` is their NAME, and it is
+    what the ladder stamps on any alias it remembers along the way, because that column is
+    read straight off the screen by a buyer. Without the label the ladder fell back to the
+    id and the Remembered table printed a UUID at her.
     """
     parsed = _parse(db, data)
     if not parsed.ok:
@@ -287,7 +295,10 @@ def apply(
     summary = _summarise(db, parsed, supplier_id, check_supplier=False)
     stamp = as_of or datetime.now().date()
     known = _products_by_code(
-        db, {r.item_code for r in parsed.rows}, supplier_id=supplier_id, actor=actor
+        db,
+        {r.item_code for r in parsed.rows},
+        supplier_id=supplier_id,
+        actor=actor_label or actor,
     )
 
     scope = db.query(SupplierInventory).filter(

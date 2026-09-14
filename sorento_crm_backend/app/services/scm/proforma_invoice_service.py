@@ -3386,7 +3386,13 @@ def serialize(
     out["source_files"] = [
         {
             "id": str(link.id),
+            # The ATTACHMENT's id, not the link's: preview and download act on the file,
+            # and handing them the link id asks the attachments API about a record that
+            # does not exist (S8, AC-8.3).
+            "attachment_id": str(link.attachment_id),
             "name": getattr(link.attachment, "original_filename", None),
+            "file_size_bytes": link.attachment.file_size_bytes,
+            "mime_type": link.attachment.mime_type,
             "type": (
                 link.attachment.attachment_type.type_name
                 if link.attachment and link.attachment.attachment_type
