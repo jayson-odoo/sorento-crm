@@ -5,6 +5,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -63,6 +64,11 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
         <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>Add combo</DialogTitle>
+            {/* sr-only: Radix warns without one, and the visible form needs no
+                explanation (AC-X-3). Same shape PromotionTypeFormModal uses. */}
+            <DialogDescription className="sr-only">
+              Name a catalogue package on this product.
+            </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4">
             <div className="space-y-1.5">
