@@ -262,6 +262,56 @@ Browser (agent-browser, lane stack): full journey portal submit (office) -> clai
 approve -> Mark ready for collection -> portal Mark collected; self-print journey ends at
 approved with Download PDF; product edit -> label -> Update -> version -> Restore.
 
+## Captain's test list (one line per AC id, tester writes these red before the coder's Phase 2)
+
+Contracts: `lib/dealer-kit/design-payload.ts`, `lib/dealer-kit/review-comments.ts`,
+`lib/dealer-kit/print-collection.ts` (+ S5's file), the service files they sit beside, and the
+portal service `app/(auth)/portal/lib/price-tag-request-service.ts`. Backend tests on the
+private DB `sorento_ptag9_ci` (never the shared dev DB), Postgres only.
+
+S1
+- AC-S1-1 `pytest test_portal_design_payload_media`: portal GET design for a proof_ready request returns `assets` (every asset id referenced by the doc), `images` (every attachment id on the lines), `fonts`, and they equal the print payload for the same page; draft-only page or `designing` status returns 404.
+- AC-S1-1b `pytest test_crm_design_payload_media`: CRM GET design returns the same keys (draft-first) for a processor; no page = 404.
+- AC-S1-2 `vitest PriceTagRequestForm.sectionOrder`: Design first after status at proof_ready; absent at new; CRM detail Request tab renders `RequestDesignSection` first, empty state at new.
+- AC-S1-3 `vitest DesignViewer`: image layers render `<img src>` from the media maps; pager only when sheetCount > 1; one Open button.
+- AC-S1-4 `vitest AttachmentPreviewModal` + `PreviewModalChrome`: header title/counter/zoom/actions render for both consumers.
+- AC-S1-5 `vitest DesignLightbox`: ctrl+wheel changes zoom and keeps the cursor point; plain wheel does not; `+ - 0` keys; drag moves scroll.
+- AC-S1-6 `vitest DesignViewer`: Download PDF disabled with "PDF is being generated" when `has_completed_export` false.
+
+S2
+- AC-S2-1/2 `vitest DesignPinLayer`: click adds a point draft (w=h=0) and opens the box; drag adds a rect within 0..1; Escape/empty discards; Send button hidden at 0 drafts, `Send 1 change request` at 1.
+- AC-S2-3 `pytest test_request_changes_creates_comments`: POST with comments[] + note creates N+1 rows (fractions, line_id, round, author_contact_id), transitions to changes_requested, `notes` unchanged; non-owner 404; wrong status 409.
+- AC-S2-4 `vitest review-comments.tagRectsForSheet/canvasPinsForLine`: fractions map to the same mm point at two scales.
+- AC-S2-5 `pytest test_review_comment_resolve_permission`: PATCH resolved by processor sets resolved_by/at; portal contact 403; GET list on both surfaces returns the rows.
+- AC-S2-6 `vitest RequestTagDesigner` + `TagCanvasEditor`: markers for the selected line, Comments toggle hides them, rail badge count; clicking a marker does not change selection.
+- AC-S2-7 `pytest test_round_increments`: round = number of proof_ready snapshots at send; `vitest priceTagActions`: `Mark design ready (2 open)` label, action still enabled.
+- AC-S2-8 `pytest test_request_changes_legacy_note`: body `{note}` only creates one general row.
+
+S3
+- AC-S3-1 `pytest test_submit_requires_print_by`: submit without print_by = 422 PRINT_BY_REQUIRED; with = ok; `vitest PriceTagRequestForm.validation`: inline gap text.
+- AC-S3-2 `pytest test_patch_print_by`: processor PATCH sets print_by while not terminal; terminal 409; response carries it.
+- AC-S3-3 `pytest test_migration_ready_to_approved` + `test_export_does_not_transition`: export accepts approved/ready_for_collection/collected and leaves status; `vitest price-tag-status`: no `ready` key, labels for the two new ones.
+- AC-S3-4/5/6 `pytest test_collection_transitions`: approved+self -> ready_for_collection 409; approved+office -> ready_for_collection sets timestamp; -> collected sets collected_at + actor (user via CRM, contact via portal collect); collected terminal. `vitest priceTagActions` matrix by status x print_by.
+- AC-S3-7 `pytest test_setting_bounds`: 0..90 accepted, 91 rejected, default 7, present on GET settings AND app-config; `vitest settings mapping`.
+- AC-S3-8 `pytest test_auto_collect_handler`: flips only ready_for_collection older than N days, sets collected_auto, no-op at 0, seeded scheduled_tasks row.
+
+S4
+- AC-S4-1 `pytest test_notify_on_every_transition`: parametrised over every edge; notifier mock called once with event + link; notifier raising does not roll back.
+- AC-S4-2 `pytest test_pdf_ready_notification`: self-print export completion notifies; office does not.
+- AC-S4-3 `pytest test_notify_writes_integration_log`: IntegrationLog row business_table price_tag_requests with rendered text.
+- AC-S4-4 `pytest test_assignee_bell`: notifications rows for changes_requested and approved with CRM link; dedup on repeat.
+- AC-S4-5 `pytest test_sla_number_source`: form-SLA notification title carries PT-number and link path.
+- AC-S4-6 `pytest test_transition_note_persisted`: CRM reject with note creates a general review comment authored by the user.
+
+S5
+- AC-S5-1 `pytest test_pin_on_designing` + `test_pin_backfill_migration`: pins written at designing / line add; backfill covers non-terminal requests only.
+- AC-S5-2 `pytest test_render_uses_pin`: after a product edit, CRM design, portal design and print payload still show the pinned values.
+- AC-S5-3 `pytest test_data_changes_diff`: data_changes lists changed fields (price, barcode, spec, image, promotion ended); terminal request performs no live resolve (assert resolver not called).
+- AC-S5-4 `vitest ProductDataReviewDialog`: old/new rows, thumbnails, promotion-ended copy, Keep / Update buttons; `Update all` at N > 1.
+- AC-S5-5 `pytest test_pin_update_and_keep`: update writes a page_version with pinned_line_data and commit message prefix, replaces the pin, clears ack; keep sets ack hash and silences the diff.
+- AC-S5-6 `pytest test_request_versions_routes`: list newest first, get one, restore writes draft + pins and a new "Restored v<n>" version; `vitest RequestVersionsSheet`.
+- AC-S5-7 `pytest test_override_beats_pin`: marketing override wins over pinned offer.
+
 ## Risks
 
 - Pinned images: URLs re-signed from attachment ids at read; a deleted attachment shows as
