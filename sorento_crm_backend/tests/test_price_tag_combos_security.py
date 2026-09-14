@@ -43,7 +43,7 @@ from app.main import app  # noqa: E402
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
-from app.models.base import set_company_scope
+from app.models.base import company_scope, set_company_scope
 from app.models.company import Company
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.user import User, UserStatus
@@ -213,6 +213,35 @@ def _request_with_open_tag(db, *, company_id: str, candidates: int = 2):
     )
     db.commit()
     return request, basins
+
+
+def _revision_config(db):
+    """Revisions are OFF until the tenant enables them per entity type.
+
+    `PortalRevisionService.revise` refuses outright without this row, so the two
+    quantity cases below would fail on the config rather than on what they are
+    about. Seeded exactly as tests/test_portal_price_tag_revise.py does.
+    """
+    from app.models.portal import PortalRevisionConfig
+
+    existing = (
+        db.query(PortalRevisionConfig)
+        .filter(PortalRevisionConfig.source_entity_type == "price_tag_request")
+        .first()
+    )
+    if existing is not None:
+        return existing
+    row = PortalRevisionConfig(
+        id=_uid(),
+        source_entity_type="price_tag_request",
+        is_enabled=True,
+        max_revisions=None,
+        allowed_statuses=["new", "changes_requested"],
+        restart_stage_code=None,
+    )
+    db.add(row)
+    db.commit()
+    return row
 
 
 def _tags_of(db, request) -> list[PriceTagRequestTag]:
@@ -387,8 +416,15 @@ def test_cross_company_delete_leaves_the_saved_design_untouched(db, monkeypatch)
     assert client.delete(f"{_BASE}/{request.id}/tags/{tag.id}").status_code == 404
 
     db.expire_all()
-    fresh = db.query(Page).filter(Page.id == page.id).one()
-    assert json.dumps(fresh.draft_doc, sort_keys=True) == before
+    # The request left the SORENTO scope on this session, and `page` is
+    # company-owned - so an unscoped read-back finds nothing and `.one()` raises
+    # before the comparison it exists for. Read Mocha's row as Mocha. That is the
+    # harness, not the guard: what is under test is the document's CONTENT, and
+    # the 404 above is what proves the caller could not reach it.
+    with company_scope(db, frozenset({MOCHA})):
+        fresh = db.query(Page).filter(Page.id == page.id).one()
+        after = json.dumps(fresh.draft_doc, sort_keys=True)
+    assert after == before
 
 
 # --------------------------------------------------------------------------- B2
@@ -477,6 +513,12 @@ def test_a_combo_from_another_host_is_stored_as_null(db):
     cabinet = _product(db, "SRTBF11834", class_label="Bathroom Furniture")
     other_host = _product(db, "SRTBF99999", class_label="Bathroom Furniture")
     mirror = _product(db, "SRTMR502")
+    # The cabinet gets a combo of its OWN, so the warning that lands afterwards
+    # is "No package chosen" - which can only be true if the foreign combo_id was
+    # nulled. Without it the host would warn "No package defined" whatever was
+    # sent (D2's first branch), and the test would pass without proving anything
+    # about the foreign id.
+    _combo(db, cabinet, "3 in 1", [(mirror, None)])
     foreign_combo = _combo(db, other_host, "Somebody else's 3 in 1", [(mirror, None)])
     client = _portal_client(db, contact.id)
 
@@ -782,6 +824,7 @@ def test_revise_carries_the_quantity_onto_a_single_tag(db):
     from app.models.portal import PortalToken
     from app.services.portal_revision_service import PortalRevisionService
 
+    _revision_config(db)
     request, _basins = _request_with_open_tag(db, company_id=SORENTO)
     line = request.lines[0]
     product_id = line.product_id
@@ -815,6 +858,7 @@ def test_revise_leaves_a_split_lines_per_tag_quantities_alone(db):
     from app.models.portal import PortalToken
     from app.services.portal_revision_service import PortalRevisionService
 
+    _revision_config(db)
     request, basins = _request_with_open_tag(db, company_id=SORENTO)
     line = request.lines[0]
     product_id = line.product_id
