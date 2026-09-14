@@ -289,9 +289,15 @@ class TestSubmitRefusals:
         # needed_by_date is optional (D-P2b) - dropped from what "complete" requires.
         assert body["detail"] == "debtor_name,lines"
 
-    def test_submit_refuses_an_ala_carte_bathroom_furniture_line_by_row(self, client):
+    def test_submit_warns_about_an_unpackaged_guarded_line_and_still_submits(self, client):
+        """Was a `SET_GUARD_VIOLATION` 422 naming `line:1` (AC-S2-7).
+
+        Through the route rather than the service, because what this case has
+        always been about is the ROUTE's answer: the salesperson is told on the
+        row, and the row is now a warning they can send anyway.
+        """
         c, db, _ = client
-        ok_product = _seed_product(db)
+        ok_product = _seed_product(db, class_label="Accessories")
         bad_product = _seed_product(db, class_label="Bathroom Furniture")
         created = c.post(
             _BASE,
@@ -307,10 +313,10 @@ class TestSubmitRefusals:
 
         res = c.post(f"{_BASE}/{created['id']}/submit")
 
-        assert res.status_code == 422, res.text
+        assert res.status_code == 200, res.text
         body = res.json()
-        assert body["code"] == "SET_GUARD_VIOLATION"
-        assert body["detail"] == "line:1"
+        warnings = [line["package_warning"] for line in body["lines"]]
+        assert warnings == [None, "No package defined"]
 
     def test_a_complete_request_submits(self, client):
         c, db, _ = client
