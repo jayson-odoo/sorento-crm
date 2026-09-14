@@ -163,6 +163,9 @@ def _seed_request(
     )
     req.status = status
     req.portal_draft_at = portal_draft_at
+    # r9 D7: a submitted request has answered who prints, and a revise
+    # re-submits through the same completeness bar.
+    req.print_by = "office"
     # AC-R2: the model needs `revision_no` / `last_revised_at` (migration
     # ptag_0006_revisions) - this raises AttributeError today, which is the
     # right red reason: the column does not exist yet.

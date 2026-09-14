@@ -149,7 +149,13 @@ def client():
 
 
 def _create_draft(c, product_id: str, **extra) -> dict:
-    payload = {"lines": [{"line_type": "product", "product_id": product_id}]}
+    payload = {
+        "lines": [{"line_type": "product", "product_id": product_id}],
+        # r9 D7: every draft here goes on to be submitted, and submit refuses
+        # without a print choice. A test about the print choice itself passes
+        # its own value through `extra`.
+        "print_by": "office",
+    }
     payload.update(extra)
     res = c.post(_BASE, json=payload)
     assert res.status_code == 201, res.text
@@ -301,6 +307,8 @@ class TestSubmitTwiceStillRefused:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
@@ -331,6 +339,8 @@ class TestSellingWithoutPromotionNowSubmits:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "price_mode": "selling",
                 "lines": [
@@ -369,6 +379,8 @@ class TestNeedByOptionalAtSubmit:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "price_mode": "list",
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },

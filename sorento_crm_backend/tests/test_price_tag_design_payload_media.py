@@ -40,17 +40,26 @@ _CRM = "/api/v1/dealer-kit/price-tag-requests/{id}/design"
 MEDIA_KEYS = ("assets", "images", "fonts")
 
 
+def _sign(path, **_kwargs):
+    return f"https://signed.example.test/{path.rsplit('/', 1)[-1]}"
+
+
 @pytest.fixture(autouse=True)
 def signable_assets(monkeypatch):
     """Sign every stored path deterministically.
 
-    The real signer talks to S3/R2 and returns None in a test process, which
-    would leave ``assets`` empty for a reason that has nothing to do with the
-    route. A stub keeps the assertion about the ROUTE.
+    The real signer talks to S3/R2 and returns None in a test process (locally
+    it cannot even find the CloudFront private key), which would leave
+    ``assets`` and ``images`` empty for a reason that has nothing to do with the
+    route. BOTH names have to be patched: library artwork signs through
+    ``asset_service`` and product photos through ``product_images``, and each
+    module imported the function by name, so patching one leaves the other real.
     """
     monkeypatch.setattr(
-        "app.services.dealer_kit.asset_service.resolve_signed_url",
-        lambda path, **_kwargs: f"https://signed.example.test/{path.rsplit('/', 1)[-1]}",
+        "app.services.dealer_kit.asset_service.resolve_signed_url", _sign
+    )
+    monkeypatch.setattr(
+        "app.services.dealer_kit.product_images.resolve_signed_url", _sign
     )
 
 

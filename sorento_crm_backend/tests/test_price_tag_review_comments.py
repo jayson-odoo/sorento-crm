@@ -380,15 +380,36 @@ class TestDoneBelongsToMarketing:
         assert row.resolved_at is None
         assert row.resolved_by_id is None
 
-    def test_the_portal_contact_cannot_tick_their_own_change_request_off(self, portal):
-        """AC-S2-5: 403, not 404 - the row is theirs to read, not to close."""
-        client, db, contact_id = portal
+    def test_a_signed_in_user_without_the_permission_cannot_tick_it_off(self, crm):
+        """AC-S2-5: 403, not 404 - the row is readable, not closeable.
+
+        Asserted with a LOGGED IN user who lacks
+        ``dealer_kit.price_tag_requests.process`` rather than with the portal
+        contact: the portal carries no CRM principal at all, so that request is
+        401 before the permission is ever consulted, which proves nothing about
+        the gate.
+        """
+        client, db = crm
+        contact_id = seed.seed_portal_contact(db)
         request, comment = self._one_comment(db, contact_id)
 
-        response = client.patch(
-            f"{_CRM.format(id=request.id)}/review-comments/{comment.id}",
-            json={"resolved": True},
-        )
+        from app.dependencies import get_current_user, get_current_user_or_api_key
+
+        outsider = {"id": seed.OTHER_USER_ID, "email": "zzt-ptag-r9-other@test.com"}
+        app.dependency_overrides[get_current_user] = lambda: outsider
+        app.dependency_overrides[get_current_user_or_api_key] = lambda: outsider
+        try:
+            response = client.patch(
+                f"{_CRM.format(id=request.id)}/review-comments/{comment.id}",
+                json={"resolved": True},
+            )
+        finally:
+            principal = {
+                "id": seed.MARKETER_ID,
+                "email": "zzt-ptag-r9-marketer@test.com",
+            }
+            app.dependency_overrides[get_current_user] = lambda: principal
+            app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
 
         assert response.status_code == 403, response.text
         db.expire_all()

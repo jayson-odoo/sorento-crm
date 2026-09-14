@@ -186,6 +186,8 @@ def _submittable_payload(product_id: str) -> dict:
     return {
         "debtor_name": "ZZT Dealer",
         "needed_by_date": str(date.today() + timedelta(days=7)),
+        # r9 D7: who prints has no default and submit refuses without it.
+        "print_by": "office",
         "lines": [{"line_type": "product", "product_id": product_id}],
     }
 

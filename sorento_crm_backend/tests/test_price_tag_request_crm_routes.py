@@ -533,7 +533,7 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
 
     @pytest.mark.parametrize(
         "target_status",
-        ["void", "approved", "ready"],
+        ["void", "approved", "ready_for_collection"],
     )
     def test_refuses_to_save_once_the_request_has_moved_past_designing(
         self, api, target_status
@@ -545,10 +545,24 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
         # Walk the real transition graph to the target status rather than
         # writing the column directly, so this exercises exactly the states a
         # request can actually be in.
+        #
+        # r9 D8 retired `ready`: the office hand-over replaces it, and it is
+        # only reachable when somebody has said the OFFICE prints.
+        if target_status == "ready_for_collection":
+            from app.models.price_tag import PriceTagRequest
+
+            db.query(PriceTagRequest).filter(
+                PriceTagRequest.id == request.id
+            ).update({"print_by": "office"})
+            db.flush()
         path = {
             "void": ["void"],
             "approved": ["proof_ready", "approved"],
-            "ready": ["proof_ready", "approved", "ready"],
+            "ready_for_collection": [
+                "proof_ready",
+                "approved",
+                "ready_for_collection",
+            ],
         }[target_status]
         for status in path:
             PriceTagRequestService.transition_status(db, request.id, status)

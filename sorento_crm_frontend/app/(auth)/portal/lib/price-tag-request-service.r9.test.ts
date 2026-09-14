@@ -40,7 +40,17 @@ function ok(body: unknown) {
 }
 
 function fail(status: number, message: string) {
-  return { ok: false, status, json: async () => ({ message }) } as never;
+  // `extractApiError` reads `content-type` FIRST and only parses JSON when it
+  // says so; a stub without headers falls into the text branch and answers the
+  // fallback instead of the server's message (repo convention, see
+  // app/(protected)/sla-management/message-snippets/services/messageSnippetService.test.ts).
+  return {
+    ok: false,
+    status,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    json: async () => ({ message }),
+    text: async () => JSON.stringify({ message }),
+  } as never;
 }
 
 const PIN = {

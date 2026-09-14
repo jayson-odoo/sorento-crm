@@ -6,10 +6,10 @@
  * salesperson's pins over it and a Done toggle per pin, so a round of changes
  * is worked off one list rather than a paragraph of prose.
  *
- * One thing here is genuinely RED before the coder starts: viewing a version
- * must draw THAT VERSION's document. Phase 1 draws the current one under the
- * version's title, which is worse than not offering View at all - it says
- * "this is what v1 looked like" over something that is not.
+ * The one that matters most: viewing a version must draw THAT VERSION's
+ * document. Phase 1 drew the current one under the version's title, which is
+ * worse than not offering View at all - it says "this is what v1 looked like"
+ * over something that is not.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -32,6 +32,7 @@ vi.mock('../../services/priceTagReviewService', () => ({
 }));
 
 vi.mock('../../services/priceTagDataService', () => ({
+  getRequestVersion: vi.fn(),
   listRequestVersions: vi.fn(),
   restoreRequestVersion: vi.fn(),
 }));
@@ -75,6 +76,7 @@ import {
   setReviewCommentResolved,
 } from '../../services/priceTagReviewService';
 import {
+  getRequestVersion,
   listRequestVersions,
   restoreRequestVersion,
 } from '../../services/priceTagDataService';
@@ -85,6 +87,7 @@ const mockList = vi.mocked(listReviewComments);
 const mockResolve = vi.mocked(setReviewCommentResolved);
 const mockVersions = vi.mocked(listRequestVersions);
 const mockRestore = vi.mocked(restoreRequestVersion);
+const mockGetVersion = vi.mocked(getRequestVersion);
 
 function payload(version = 7) {
   return {
@@ -137,6 +140,8 @@ beforeEach(() => {
   mockPayload.mockResolvedValue(payload());
   mockList.mockResolvedValue([]);
   mockVersions.mockResolvedValue([]);
+  // The live design is version 7; a version read answers its OWN document.
+  mockGetVersion.mockResolvedValue(payload(1));
 });
 
 describe('loading the design (AC-S1-2)', () => {
@@ -307,11 +312,35 @@ describe('History (AC-S5-6)', () => {
 
     fireEvent.click(within(row).getByRole('button', { name: /View/ }));
 
+    await waitFor(() => expect(mockGetVersion).toHaveBeenCalledWith('req-1', 1));
     const lightbox = await screen.findByTestId('version-lightbox');
     expect(lightbox).toHaveTextContent('PT-202609-0001');
     expect(lightbox).toHaveTextContent('version 1');
-    // The live design is version 7. Drawing it here would tell the reader that
-    // v1 looked like today's draft.
+    // The lightbox draws the payload the VERSION read answered (1), not the
+    // live design's (7). Drawing the live one would tell the reader that v1
+    // looked like today's draft.
     expect(lightbox.getAttribute('data-version')).toBe('1');
+  });
+
+  it('a version that will not load says so rather than opening a blank sheet', async () => {
+    mockVersions.mockResolvedValue([
+      {
+        version: 1,
+        commit_message: 'First save',
+        created_by_name: 'Mei',
+        created_at: '2026-09-12T00:00:00Z',
+      },
+    ]);
+    mockGetVersion.mockRejectedValue(new Error('gone'));
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: /History/ }));
+    const row = await screen.findByTestId('request-version-1');
+
+    fireEvent.click(within(row).getByRole('button', { name: /View/ }));
+
+    await waitFor(() =>
+      expect(toasts.error).toHaveBeenCalledWith('Could not open that version'),
+    );
+    expect(screen.queryByTestId('version-lightbox')).toBeNull();
   });
 });

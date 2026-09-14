@@ -542,7 +542,9 @@ class TestAutoCollectSetting:
 
         full = client.get(_SETTINGS)
         assert full.status_code == 200, full.text
-        assert "price_tag_auto_collect_days" in full.json()
+        # `GET /settings/` answers `{"roles": [...], "settings": {...}}`; the
+        # blob is the nested half.
+        assert "price_tag_auto_collect_days" in full.json()["settings"]
 
         narrow = client.get(_APP_CONFIG)
         assert narrow.status_code == 200, narrow.text
@@ -557,7 +559,10 @@ class TestAutoCollectSetting:
         )
 
         assert response.status_code == 200, response.text
-        assert client.get(_SETTINGS).json()["price_tag_auto_collect_days"] == days
+        assert (
+            client.get(_SETTINGS).json()["settings"]["price_tag_auto_collect_days"]
+            == days
+        )
 
     @pytest.mark.parametrize("days", [-1, 91])
     def test_out_of_bounds_is_refused(self, settings_api, days):

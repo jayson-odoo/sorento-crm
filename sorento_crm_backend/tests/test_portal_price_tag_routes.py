@@ -140,6 +140,8 @@ class TestTheRouteThatServesTheRequest:
             json={
                 "debtor_code": "ZZT-D1",
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "notes": "ZZT",
                 "lines": [
@@ -279,7 +281,11 @@ class TestTheRouteThatServesTheRequest:
 class TestSubmitRefusals:
     def test_submit_refuses_an_empty_draft_and_names_every_field(self, client):
         c, _db, _ = client
-        created = c.post(_BASE, json={"notes": "ZZT nothing else"}).json()
+        # r9 D7: `print_by` is answered so this still tests the COMPLETENESS
+        # list - the print guard fires first and would otherwise shadow it.
+        created = c.post(
+            _BASE, json={"notes": "ZZT nothing else", "print_by": "office"}
+        ).json()
 
         res = c.post(f"{_BASE}/{created['id']}/submit")
 
@@ -297,6 +303,8 @@ class TestSubmitRefusals:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [
                     {"line_type": "product", "product_id": ok_product},
@@ -319,6 +327,8 @@ class TestSubmitRefusals:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
@@ -339,6 +349,8 @@ class TestSubmitRefusals:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
@@ -358,6 +370,8 @@ class TestSubmitRefusals:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
@@ -556,6 +570,8 @@ class TestPriceModeAndRemarks:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "price_mode": "selling",
                 "lines": [{"line_type": "product", "product_id": product_id}],
@@ -589,6 +605,8 @@ class TestPriceModeAndRemarks:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "promotion_id": promotion_id,
                 "price_mode": "selling",
@@ -774,6 +792,8 @@ class TestTheListTheSalespersonReads:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
         )

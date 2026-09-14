@@ -42,6 +42,20 @@ function ok(body: unknown) {
   return { ok: true, status: 200, json: async () => body } as never;
 }
 
+function fail(status: number, message: string) {
+  // `extractApiError` reads `content-type` FIRST and only parses JSON when it
+  // says so; a stub without headers falls into the text branch and answers the
+  // fallback instead of the server's message (repo convention, see
+  // app/(protected)/sla-management/message-snippets/services/messageSnippetService.test.ts).
+  return {
+    ok: false,
+    status,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    json: async () => ({ message }),
+    text: async () => JSON.stringify({ message }),
+  } as never;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -70,11 +84,7 @@ describe('listReviewComments', () => {
   });
 
   it('reports the server message rather than a blank list on failure', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status: 403,
-      json: async () => ({ message: 'You cannot see this request' }),
-    } as never);
+    mockFetch.mockResolvedValue(fail(403, 'You cannot see this request'));
 
     await expect(listReviewComments('req-1')).rejects.toThrow(
       'You cannot see this request',
@@ -109,11 +119,9 @@ describe('setReviewCommentResolved', () => {
   });
 
   it('surfaces the 403 a portal contact gets rather than pretending it worked', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status: 403,
-      json: async () => ({ message: 'Only the office can close a change request' }),
-    } as never);
+    mockFetch.mockResolvedValue(
+      fail(403, 'Only the office can close a change request'),
+    );
 
     await expect(
       setReviewCommentResolved('req-1', 'comment-1', true),

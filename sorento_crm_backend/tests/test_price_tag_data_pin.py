@@ -31,6 +31,7 @@ import glob
 import importlib.util
 import os
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,19 @@ def db_only():
     with blank_session() as db:
         seed.seed_marketer(db)
         yield db
+
+
+@pytest.fixture(autouse=True)
+def signable_images(monkeypatch):
+    """A product photo signs through ``product_images``, and the real signer
+    cannot find a CloudFront key in a test process - so an image DIFF would be
+    empty for a reason that has nothing to do with the diff."""
+    monkeypatch.setattr(
+        "app.services.dealer_kit.product_images.resolve_signed_url",
+        lambda path, **_kwargs: (
+            f"https://signed.example.test/{path.rsplit('/', 1)[-1]}"
+        ),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -379,10 +393,18 @@ class TestTheDiff:
 
     def test_an_offer_that_disappears_says_the_promotion_ended(self, db_only):
         """The one case with no obvious wording: the number did not change, the
-        REASON it existed did."""
-        from app.models.marketing import Promotion
-        from app.models.price_tag import PriceTagRequest
+        REASON it existed did.
 
+        The promotion has to RESOLVE an offer at pin time or there is nothing to
+        lose, so the chain is the real one: promotion -> group -> a
+        ``promotion_products`` row priced under list. ``is_active`` is then
+        flipped, which is exactly how somebody pulls a live offer in a hurry.
+        """
+        from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+        from app.models.price_tag import PriceTagRequest
+        from app.services.dealer_kit import tag_data_service
+
+        product = seed.seed_product(db_only, list_price=1000.00)
         promotion = Promotion(
             id=str(uuid.uuid4()),
             description="ZZT r9 promotion",
@@ -391,12 +413,54 @@ class TestTheDiff:
         )
         db_only.add(promotion)
         db_only.flush()
-        product = seed.seed_product(db_only, list_price=1000.00)
-        request, _product, _contact = _designing_request(db_only, product=product)
+        group = PromotionGroup(
+            id=uuid.uuid4(),
+            promotion_id=promotion.id,
+            group_name="ZZT r9 group",
+            sort_order=0,
+            company_id=seed.SORENTO,
+        )
+        db_only.add(group)
+        db_only.flush()
+        db_only.add(
+            PromotionProduct(
+                id=str(uuid.uuid4()),
+                promotion_id=promotion.id,
+                promotion_group_id=group.id,
+                product_id=product.id,
+                promo_selling_price=Decimal("799.00"),
+                company_id=seed.SORENTO,
+            )
+        )
+        db_only.flush()
+
+        contact_id = seed.seed_portal_contact(db_only)
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        request = seed.seed_request(
+            db_only,
+            contact_id,
+            status="new",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
         db_only.query(PriceTagRequest).filter(
             PriceTagRequest.id == request.id
         ).update({"promotion_id": promotion.id})
         db_only.commit()
+        db_only.expire_all()
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+        PriceTagRequestService.transition_status(
+            db_only, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db_only.commit()
+
+        # The pin has to have caught the offer, or "it disappeared" is vacuous.
+        pinned = _lines(db_only, request.id)[0].pinned_tag_data
+        assert float(pinned["sell_price"]) == 799.00, pinned
 
         promotion.is_active = False
         db_only.commit()
@@ -404,6 +468,15 @@ class TestTheDiff:
         request = db_only.query(PriceTagRequest).filter(
             PriceTagRequest.id == request.id
         ).first()
+        assert (
+            tag_data_service.product_tag_data(
+                db_only,
+                db_only.query(type(product)).filter_by(id=product.id).first(),
+                tag_data_service.staff_viewer(),
+                promotion.id,
+            )["offer_price"]
+            is None
+        ), "the promotion is still live, so nothing has disappeared"
 
         offer_changes = [
             change
