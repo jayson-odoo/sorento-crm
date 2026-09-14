@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.product import Product
@@ -131,11 +132,14 @@ class ProductComboService:
         if not cleaned:
             raise AppException(status_code=422, message="A combo needs a name")
 
+        # `lower(name) = lower(...)`, not `ilike`: a name containing `%` or `_`
+        # is a LIKE wildcard, so "3 in 1%" would have matched every other combo
+        # on the host and refused a name nobody had taken.
         taken = (
             self.db.query(ProductCombo)
             .filter(
                 ProductCombo.host_product_id == host_product_id,
-                ProductCombo.name.ilike(cleaned),
+                func.lower(ProductCombo.name) == cleaned.lower(),
             )
             .first()
         )
@@ -171,7 +175,7 @@ class ProductComboService:
                 self.db.query(ProductCombo)
                 .filter(
                     ProductCombo.host_product_id == combo.host_product_id,
-                    ProductCombo.name.ilike(cleaned),
+                    func.lower(ProductCombo.name) == cleaned.lower(),
                     ProductCombo.id != combo.id,
                 )
                 .first()

@@ -93,6 +93,7 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeControl';
 import { useAutosave } from '@/hooks/useAutosave';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { TemplatePickDialog } from './TemplatePickDialog';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
@@ -1569,7 +1570,7 @@ function TagRailRow({
         </p>
       </button>
       {openGroup && (
-        <div className="flex flex-wrap items-center gap-1 pb-1.5 pl-6 pr-2">
+        <div className="flex flex-wrap items-center gap-1.5 pb-1.5 pl-6 pr-2">
           <button
             type="button"
             className="rounded px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -1579,18 +1580,27 @@ function TagRailRow({
             {busy ? 'Working...' : `Split into ${openGroup.candidates.length} tags`}
           </button>
           <span className="text-2xs text-muted-foreground">or</span>
-          {openGroup.candidates.map((candidate) => (
-            <button
-              key={candidate.product_id}
-              type="button"
-              className="rounded border px-1.5 py-0.5 font-mono text-2xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-              title={`Pick ${candidate.code} for ${openGroup.role}`}
+          {/* One select, not N chips: every dropdown-select in this app is a
+              SearchableSelect (AC-X-1), and a row of four codes reads as four
+              buttons rather than as one choice with four answers. */}
+          <div className="min-w-0 flex-1">
+            <SearchableSelect
+              clearable
+              truncateTriggerLabel
+              size="sm"
+              value=""
+              onChange={(productId) => {
+                if (productId) onPickOne(tag.id, openGroup.role, productId);
+              }}
+              options={openGroup.candidates.map((candidate) => ({
+                value: candidate.product_id,
+                label: candidate.code,
+              }))}
+              placeholder="Pick one"
+              emptyMessage="No options."
               disabled={busy}
-              onClick={() => onPickOne(tag.id, openGroup.role, candidate.product_id)}
-            >
-              {candidate.code}
-            </button>
-          ))}
+            />
+          </div>
         </div>
       )}
       <button

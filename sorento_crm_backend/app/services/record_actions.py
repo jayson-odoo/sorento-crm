@@ -83,6 +83,20 @@ def _delete_product_combo_part(db: Session, payload: dict):
     return ProductComboService(db).delete_part(_entity_id(payload))
 
 
+def _delete_price_tag_request_tag(db: Session, payload: dict):
+    from app.models.price_tag import PriceTagRequestTag
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    tag = (
+        db.query(PriceTagRequestTag)
+        .filter(PriceTagRequestTag.id == _entity_id(payload))
+        .first()
+    )
+    if tag is None:
+        return None
+    return PriceTagRequestService.delete_tag(db, tag)
+
+
 def _set_order_status(db: Session, payload: dict):
     from app.schemas.order import OrderUpdate
     from app.services.order_service import OrderService
@@ -172,6 +186,21 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.products.edit",
         label="Remove part",
+    )
+)
+
+# AC-S3-6: removing a tag is a destructive action like any other, so it takes
+# the grace window rather than a dialog. The service refuses the line's LAST tag
+# with a 422 at commit time, which is the same answer the button already
+# prevents by disabling itself.
+register(
+    FormAction(
+        key="price_tag_request_tag.delete",
+        entity_types=("price_tag_request_tag",),
+        execute=_delete_price_tag_request_tag,
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.price_tag_requests.process",
+        label="Remove tag",
     )
 )
 

@@ -267,12 +267,6 @@ export type PriceTagRequestLineInput = {
   parts: LinePartIn[];
 };
 
-export interface SetGuardResult {
-  blocked: boolean;
-  message: string | null;
-  available_sets: { id: string; name: string }[];
-}
-
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -368,21 +362,6 @@ export async function lookupProductCombos(
     `${LOOKUPS}/product-combos/${encodeURIComponent(productId)}`,
   );
   return unwrap<ProductCombosLookup>(res, 'Failed to load the packages for this product');
-}
-
-// ---------------------------------------------------------------------------
-// Set guard
-// ---------------------------------------------------------------------------
-
-/**
- * Set guard check: client-side validation placeholder.
- * Server-side validation happens on submit.
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function checkSetGuard(productId: string): SetGuardResult {
-  // Validation is enforced server-side on submit. The client-side check is
-  // a no-op to avoid needing a dedicated endpoint.
-  return { blocked: false, message: null, available_sets: [] };
 }
 
 // ---------------------------------------------------------------------------

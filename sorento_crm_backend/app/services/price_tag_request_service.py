@@ -284,6 +284,15 @@ class PriceTagRequestService:
         rows = carried if carried else [
             {"sort_order": 0, "quantity": line.quantity or 1, "choices": {}}
         ]
+        # A line that was never split has exactly one tag, and that tag's
+        # quantity is not marketing's - it is the salesperson's number, seeded
+        # from the line. Without this, a draft saved at 1, changed to 5 and
+        # submitted (or revised to 9) kept a tag at 1 and printed one tile
+        # instead of five (review round 2, B1). A SPLIT line keeps its per-tag
+        # quantities: once marketing has divided the line up, those numbers are
+        # decisions, not a copy of anything.
+        if carried and len(rows) == 1:
+            rows = [{**rows[0], "quantity": line.quantity or 1}]
         for index, row in enumerate(rows):
             db.add(
                 PriceTagRequestTag(

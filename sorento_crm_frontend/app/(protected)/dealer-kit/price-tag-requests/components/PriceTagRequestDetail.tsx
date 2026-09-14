@@ -540,20 +540,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 )}
                               </td>
                               <td className="py-2 pr-3 text-right">{line.quantity}</td>
-                              <td className="py-2 pr-3 text-right">
-                                {line.list_price != null
-                                  ? `RM ${line.list_price.toFixed(2)}`
-                                  : '-'}
-                              </td>
-                              <td className="py-2 pr-3 text-right">
-                                {line.show_promo_price && line.sell_price != null ? (
-                                  <span className="text-green-700 font-medium">
-                                    RM {line.sell_price.toFixed(2)}
-                                  </span>
-                                ) : (
-                                  '-'
-                                )}
-                              </td>
+                              {/* Price is a TAG fact since D4 - the host plus that
+                                  tag's own resolved parts - so the line leaves both
+                                  money columns empty rather than repeating one
+                                  tag's figure as if it were the line's. */}
+                              <td className="py-2 pr-3" />
+                              <td className="py-2 pr-3" />
                               <td
                                 className="py-2 pr-3 text-muted-foreground text-xs truncate max-w-[160px]"
                                 title={line.remarks ?? undefined}

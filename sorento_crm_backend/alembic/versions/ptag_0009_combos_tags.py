@@ -44,6 +44,7 @@ Revision ID: ptag_0009_combos_tags
 Revises: 510_spec_visibility_policies
 Create Date: 2026-09-14
 """
+import json
 import logging
 
 from alembic import op
@@ -266,8 +267,6 @@ def _rekey_tag_sheet_docs(conn, tag_by_line: dict) -> tuple[int, int]:
     tells copy 0 (the master, whose layers are the design) from the rest, and
     renaming it would make every reopened sheet look undesigned.
     """
-    import json
-
     rewritten = 0
     orphans = 0
 
@@ -344,8 +343,6 @@ def _remap_r9_pins(conn, tag_by_line: dict) -> None:
     Whoever merges SECOND owns the remap (the plan's risk register). On a main
     without r9 every branch below is skipped and this is a documented no-op.
     """
-    import json
-
     inspector = sa.inspect(conn)
 
     if inspector.has_table("price_tag_review_comments"):
@@ -517,14 +514,21 @@ def downgrade() -> None:
         ):
             if column in tag_columns and column not in line_columns:
                 op.add_column("price_tag_request_lines", spec)
-        if "pinned_tag_data" in tag_columns and "pinned_tag_data" not in line_columns:
+        # One assignment per column that this database actually has. Written as
+        # one three-column UPDATE, it failed outright on a database carrying only
+        # some of r9's columns - which is every database that took this
+        # migration at a different point in the lane.
+        carried = [
+            column
+            for column in ("pinned_tag_data", "pinned_at", "data_change_ack_hash")
+            if column in tag_columns and column not in line_columns
+        ]
+        if carried:
+            assignments = ", ".join(f"{column} = t.{column}" for column in carried)
             conn.execute(
                 sa.text(
-                    "UPDATE price_tag_request_lines l "
-                    "SET pinned_tag_data = t.pinned_tag_data, pinned_at = t.pinned_at, "
-                    "    data_change_ack_hash = t.data_change_ack_hash "
-                    "FROM price_tag_request_tags t "
-                    "WHERE t.line_id = l.id AND t.pinned_tag_data IS NOT NULL"
+                    f"UPDATE price_tag_request_lines l SET {assignments} "  # noqa: S608
+                    "FROM price_tag_request_tags t WHERE t.line_id = l.id"
                 )
             )
         op.drop_table("price_tag_request_tags")

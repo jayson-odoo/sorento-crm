@@ -213,16 +213,23 @@ function ComboBlock({
         {combo.parts.length === 0 ? (
           <p className="text-sm text-muted-foreground">No parts yet.</p>
         ) : null}
-        {fixedParts.length > 0 ? <div className="space-y-3">{fixedParts.map(partRow)}</div> : null}
-        {groups.map((group) => (
-          <div key={group.label} className="space-y-3 rounded-md border border-dashed p-3">
-            <p className="text-xs text-muted-foreground">
-              {group.label}
-              {group.parts.length > 1 ? ' - pick one' : ''}
-            </p>
-            {group.parts.map(partRow)}
-          </div>
-        ))}
+        {/* Its own scrollport (AC-S1-9): a kitchen-sink combo runs to a dozen
+            parts and the page must not have to grow by a screen to hold one
+            card. The Add part picker below stays put outside it. */}
+        <div className="max-h-[22rem] space-y-3 overflow-y-auto">
+          {fixedParts.length > 0 ? (
+            <div className="space-y-3">{fixedParts.map(partRow)}</div>
+          ) : null}
+          {groups.map((group) => (
+            <div key={group.label} className="space-y-3 rounded-md border border-dashed p-3">
+              <p className="text-xs text-muted-foreground">
+                {group.label}
+                {group.parts.length > 1 ? ' - pick one' : ''}
+              </p>
+              {group.parts.map(partRow)}
+            </div>
+          ))}
+        </div>
         {canEdit ? (
           <div className="space-y-1.5">
             {/* The shared product search, server-searched and paged (AC-S1-3). It
@@ -324,15 +331,10 @@ export function ProductCombosSection({ productId }: { productId: string }) {
             Could not load combos. Try reloading the page.
           </p>
         ) : !combos || combos.length === 0 ? (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">No combos.</p>
-            {canEdit ? (
-              <Button type="button" size="sm" variant="outline" onClick={() => setAddOpen(true)}>
-                <Plus className="size-4" />
-                Add combo
-              </Button>
-            ) : null}
-          </div>
+          // The sentence only: the header's own Add combo is the ONE call to
+          // action, and a second button three lines under it reads as a second
+          // thing to do.
+          <p className="text-sm text-muted-foreground">No combos.</p>
         ) : (
           <div ref={containerRef} className="space-y-3">
             {combos.map((combo) => (

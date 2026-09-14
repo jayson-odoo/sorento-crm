@@ -131,7 +131,7 @@ export default function Page() {
   // so a static picker is the right shape (D2). A saved value that has since
   // disappeared from the list is kept by SearchableMultiSelect's own `value`,
   // so unsetting it stays possible.
-  const { data: classLabels = [] } = useQuery({
+  const { data: classLabels = [], isError: classLabelsFailed } = useQuery({
     queryKey: ['product-class-labels'],
     queryFn: () => getProductClassLabels(),
     staleTime: 5 * 60 * 1000,
@@ -1063,10 +1063,14 @@ export default function Page() {
                         emptyMessage="No class labels found."
                       />
                     </FormControl>
+                    {classLabelsFailed ? (
+                      <p className="text-sm text-destructive">
+                        Could not load the class list. Try reloading the page.
+                      </p>
+                    ) : null}
                     <FormDescription>
-                      A price tag request line whose product is in one of these
-                      classes carries a warning to marketing when its catalogue
-                      package is missing or incomplete. It is never refused.
+                      A line in one of these classes is flagged to marketing when
+                      its package is missing.
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

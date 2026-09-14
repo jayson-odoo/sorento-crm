@@ -129,14 +129,9 @@ class PriceTagRequestLineResponse(BaseModel):
     included_accessories: Optional[str] = None
     remarks: Optional[str] = None
     sort_order: int
-    # float, not Decimal, on every money field a CLIENT reads. Pydantic
-    # serialises a Decimal as a JSON string, and the detail page does
-    # `marketing_price_override.toFixed(2)` - which on a string is not a
-    # function, so the page threw the moment a line carried an override.
-    # ``ResolvedLineData`` already answers in float; these now agree with it.
-    marketing_price_override: Optional[float] = None
-    marketing_override_reason: Optional[str] = None
     # What gets printed for this line: one tag by default, N after a split (D3).
+    # The marketing override moved onto the TAG in S3 and its columns are dropped
+    # by the migration's step 4, so this model no longer carries either.
     tags: list[PriceTagRequestTagResponse] = Field(
         default_factory=list, validation_alias="__resolved_tags__"
     )

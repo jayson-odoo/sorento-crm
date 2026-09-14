@@ -293,7 +293,7 @@ def update_price_tag_request_tag(
     # The body is built BEFORE the commit: it goes back through the resolver, and
     # a failure there used to leave the write applied and answer 500.
     db.flush()
-    body = _tag_body(db, tag)
+    body = _tag_body(tag, _resolved_by_tag(db, request_id))
     db.commit()
     return body
 
@@ -321,7 +321,8 @@ def split_price_tag_request_tag(
     tag = _tag_or_404(db, request_id, tag_id)
     tags = PriceTagRequestService.split_tag(db, tag, payload.role)
     db.flush()
-    bodies = [_tag_body(db, row) for row in tags]
+    resolved = _resolved_by_tag(db, request_id)
+    bodies = [_tag_body(row, resolved) for row in tags]
     db.commit()
     return bodies
 
@@ -345,15 +346,27 @@ def delete_price_tag_request_tag(
     return None
 
 
-def _tag_body(db: Session, tag: PriceTagRequestTag) -> dict:
-    """One tag in the shape every surface reads, resolved through the ONE
-    resolver so the rail, the Lines tab and the PDF cannot disagree."""
-    request = PriceTagRequestService.get_request(db, tag.line.request_id)
-    rows = {
+def _resolved_by_tag(db: Session, request_id: str) -> dict:
+    """The resolver's rows for one request, keyed by tag id.
+
+    Resolved ONCE per response. `_tag_body` used to do this itself, so a split
+    into four candidates ran four full resolves of the whole request - four
+    passes over every line, every part and the pricing engine - to answer one
+    list (review round 2, S3).
+    """
+    request = PriceTagRequestService.get_request(db, request_id)
+    if request is None:
+        return {}
+    return {
         row["tag_id"]: row
         for row in tag_data_service.resolve_request_line_data(db, request)
     }
-    return PriceTagRequestService.tag_body(tag, rows.get(tag.id))
+
+
+def _tag_body(tag: PriceTagRequestTag, resolved: dict) -> dict:
+    """One tag in the shape every surface reads, off the ONE resolver so the
+    rail, the Lines tab and the PDF cannot disagree."""
+    return PriceTagRequestService.tag_body(tag, resolved.get(tag.id))
 
 
 # ---------------------------------------------------------------------------

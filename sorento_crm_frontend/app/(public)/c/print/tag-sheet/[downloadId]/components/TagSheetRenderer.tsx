@@ -54,9 +54,9 @@ import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/imag
 
 export interface ResolvedLineData {
   /** The TAG this row draws (D3). The payload's map is keyed on it. */
-  tag_id?: string;
-  /** "1a" - the tag's label. Absent on a payload written before S3. */
-  tag_label?: string;
+  tag_id: string;
+  /** "1a" - the tag's label. */
+  tag_label: string;
   /** Groups the tag has not resolved, for D4's `ROLE: CODE / CODE` text. */
   open_groups?: TagOpenGroup[];
   /** The parts printed under the host on this tag (D4). */
@@ -134,10 +134,9 @@ function bindingOf(resolved: ResolvedLineData | null): TagBindingData | null {
     kind: 'line',
     line: {
       ...resolved,
-      // Four fields the payload may omit, defaulted the same way the four
-      // above it are: a sheet exported before S3 has no tags of its own.
-      tag_id: resolved.tag_id ?? resolved.line_id,
-      tag_label: resolved.tag_label ?? '',
+      // `open_groups` / `parts` still default: the payload omits them for a set
+      // line. `tag_id` and `tag_label` do not - the map this row came out of is
+      // KEYED by tag id, so a row without one cannot have been looked up.
       open_groups: resolved.open_groups ?? [],
       parts: resolved.parts ?? [],
       set_members: resolved.set_members ?? '',

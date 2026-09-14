@@ -891,8 +891,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Packages and parts (D2) ----
 
   /** Which `<line key>:<product id>` pairs have already been asked about, so a
-   *  re-render mid-lookup does not fire the same call a second time. */
+   *  re-render mid-lookup does not fire the same call a second time. Cleared for
+   *  a line whenever its item changes - see `handleItemSelect`. */
   const combosAskedRef = useRef<Set<string>>(new Set());
+
+  const forgetCombosAsked = useCallback((key: string) => {
+    for (const entry of Array.from(combosAskedRef.current)) {
+      if (entry.startsWith(`${key}:`)) combosAskedRef.current.delete(entry);
+    }
+  }, []);
 
   /**
    * What the picked product is sold as, asked once per product on a line.
@@ -1054,6 +1061,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // unchanged, still line_type plus whichever of the two ids matches it.
   const handleItemSelect = useCallback(
     (key: string, option: SearchableSelectOption | null) => {
+      // The combos lookup remembers what it has already asked about, so the
+      // memory has to be forgotten the moment the row points somewhere else -
+      // otherwise re-picking a product this line held before left it
+      // `combos_loaded: false` forever, with no Package select, no parts and no
+      // warning (review round 2, S1).
+      forgetCombosAsked(key);
       if (!option) {
         updateLine(key, {
           product_id: null,
@@ -2403,12 +2416,17 @@ function PartRow({
   lineKey,
   lineIndex,
   part,
+  showOpenRowCopy,
   onResolvePart,
   onRemovePart,
 }: {
   lineKey: string;
   lineIndex: number;
   part: DraftPart;
+  /** The one sentence this form is allowed (AC-X-3), so it is rendered ONCE per
+   *  line - under the LAST open row - not once per open row. Three open groups
+   *  used to print it three times, which reads as three different instructions. */
+  showOpenRowCopy: boolean;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onRemovePart: (key: string, partKey: string) => void;
 }) {
@@ -2435,7 +2453,7 @@ function PartRow({
                   emptyMessage="No options."
                   size="sm"
                 />
-                {!part.product_id ? (
+                {showOpenRowCopy ? (
                   <p className="text-xs text-muted-foreground">{OPEN_ROW_COPY}</p>
                 ) : null}
               </div>
@@ -2494,6 +2512,10 @@ function LineRow({
   // leaves nothing to select.
   const showPackage = !isSet && line.combos.length > 1;
   const showParts = !isSet && !!line.product_id;
+  // The last row still waiting on a choice: the one the sentence sits under.
+  const lastOpenPartKey =
+    [...line.parts].reverse().find((part) => !part.product_id && part.candidates.length > 0)
+      ?.key ?? null;
   const picked = itemValue(line);
   const selectedItem: SearchableSelectOption | undefined = picked
     ? {
@@ -2596,6 +2618,7 @@ function LineRow({
           lineKey={line.key}
           lineIndex={index}
           part={part}
+          showOpenRowCopy={part.key === lastOpenPartKey}
           onResolvePart={onResolvePart}
           onRemovePart={onRemovePart}
         />
