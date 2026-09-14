@@ -685,22 +685,21 @@ def test_ac1053_a_four_domain_ask_makes_four_reads(
 
 
 # --------------------------------------------------------------------------- #
-# AC-1047 - both empty: the ladder climbs to PO and the closing line appears once
+# AC-1047 - the deduper + the closing ladder (review findings 4, 5, 6)
 # --------------------------------------------------------------------------- #
 
 
-def test_ac1047_both_empty_climbs_to_po_with_one_closing_line(
+def test_ac1047_both_empty_climbs_the_ladder_to_po_once(
     session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
 ) -> None:
-    """AC-1047 (the both-empty world): "stock and eta for X" with nothing in either asked
-    section climbs the ladder PAST the asked set to `purchase_order`, and the closing line
-    appears once. The deduper itself (keyed `(entity id, domain)`, shared by sections and
-    rungs) is pinned in `tests/chatbot/test_fanout.py`.
+    """AC-1047 (finding 4): "stock and eta for X" with BOTH sections empty must climb the
+    ladder PAST the asked set to `purchase_order` (a rung outside `{inventory, incoming}`),
+    and the closing escalate line must appear exactly once.
 
-    RED: today only the stock read runs, so the asked set is `{inventory}` and the existing
-    single-domain ladder still climbs to incoming as a NEW rung - here `incoming` was
-    ASKED, so it must not be re-climbed, and only `purchase_order` is a new rung. Asserting
-    both asked reads ran (two events) fails today.
+    RED: `fanout.ladder_rungs_outside` is defined but NEVER CALLED - the fan render
+    (`_render_fan_sections`) has no closing ladder at all, so the PO tool never fires on a
+    both-empty fan turn. Measured: the trace carries `[inventory, incoming]` and no PO
+    event.
     """
     code = "SRTWT2634"
     turn = _drive(
@@ -710,15 +709,87 @@ def test_ac1047_both_empty_climbs_to_po_with_one_closing_line(
         stub_access,
         emission=_v3_business([_ask("inventory", code), _ask("incoming", code)]),
         matches_by_code={code: _one_match(code)},
-        tool_responses={_INVENTORY_TOOL: _MISS, _INCOMING_TOOL: _MISS, _PO_TOOL: _MISS},
+        tool_responses={_INVENTORY_TOOL: _MISS, _INCOMING_TOOL: _MISS, _PO_TOOL: _found(code)},
         grants=["purchase_orders.placed"],
     )
     assert turn.result.status == "done", turn.result.error
-    assert turn.tool_events[:2] == [_INVENTORY_TOOL, _INCOMING_TOOL], (
-        f"both asked sections read before the ladder climbs - got {turn.tool_events!r}"
+    assert _PO_TOOL in turn.tool_events, (
+        "both asked sections empty must climb the ladder to purchase_order (outside the "
+        f"asked set) - the ladder never ran: {turn.tool_events!r}"
     )
-    assert turn.said.lower().count("no stock and no incoming") <= 1, (
-        "the closing miss line is printed once, not once per section"
+    reply = (turn.result.reply or {}).get("text") or ""
+    assert reply.lower().count("would you like me to escalate") == 1, (
+        f"the closing escalate line prints once, not per section: {reply!r}"
+    )
+
+
+def test_ac1047_stock_miss_with_incoming_folds_into_one_section(
+    session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+) -> None:
+    """AC-1047 (finding 5): "stock and eta for X", no stock but incoming EXISTS -> ONE Stock
+    section reading "No stock for X, but there is incoming: ..." and NO separate Incoming
+    section (the shared deduper omits the already-printed `(X, incoming)` key).
+
+    RED: the fan render prints a bare "No stock." miss line AND a separate "*Incoming:*"
+    section - the incoming is never folded into the stock miss, so the fold connective the
+    single-domain crossdomain path emits ("But there is INCOMING stock ...") is absent.
+    """
+    code = "SRTWT2634"
+    turn = _drive(
+        session_factory,
+        monkeypatch,
+        stub_parser,
+        stub_access,
+        emission=_v3_business([_ask("inventory", code), _ask("incoming", code)]),
+        matches_by_code={code: _one_match(code)},
+        tool_responses={_INVENTORY_TOOL: _MISS, _INCOMING_TOOL: _found(code)},
+    )
+    assert turn.result.status == "done", turn.result.error
+    reply = (turn.result.reply or {}).get("text") or ""
+    assert "there is incoming" in reply.lower(), (
+        "the stock miss must fold the incoming in ('...but there is incoming: ...'), not "
+        f"render a separate Incoming section: {reply!r}"
+    )
+
+
+def test_ac1047_consumed_pairs_are_recorded_on_the_trace(
+    session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+) -> None:
+    """AC-1047 (finding 6): the turn trace lists the consumed `(entity, domain)` pairs the
+    shared deduper printed, so the drawer's Cross-domain panel can show them (AC-1054).
+
+    RED: the fan render uses `fanout.Consumed` but never records the pairs as a `consumed`
+    trace event - the persisted trace carries only `focus`/`tool` events. (`consumed` is the
+    tester's chosen event kind where the plan under-specifies it; a rename is fine.)
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+
+    code = "SRTWT2634"
+    turn = _drive(
+        session_factory,
+        monkeypatch,
+        stub_parser,
+        stub_access,
+        emission=_v3_business([_ask("inventory", code), _ask("incoming", code)]),
+        matches_by_code={code: _one_match(code)},
+        tool_responses={_INVENTORY_TOOL: _found(code), _INCOMING_TOOL: _found(code)},
+    )
+    assert turn.result.status == "done", turn.result.error
+    row = (
+        session_factory()
+        .query(ChatbotTurn)
+        .filter(ChatbotTurn.id == turn.result.turn_id)
+        .first()
+    )
+    trace = [e for e in (row.trace or []) if isinstance(e, dict)]
+    consumed = [e for e in trace if e.get("kind") == "consumed"]
+    assert consumed, (
+        "the fan must record the consumed (entity, domain) pairs on the trace - only "
+        f"{sorted({e.get('kind') for e in trace if e.get('kind')})!r} were recorded"
+    )
+    blob = json.dumps(consumed)
+    assert "inventory" in blob and "incoming" in blob, (
+        f"the consumed pairs must name their domains: {consumed!r}"
     )
 
 
