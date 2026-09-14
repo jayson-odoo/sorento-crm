@@ -7,8 +7,8 @@ document ingest. What survives here is the Order Inquiry sheet, which Project
 Sales still owns (ADR 0010) behind the same `/api/v1/scm/order-inquiry/*`
 URLs the FE upload dialog already calls.
 
-The service suite (`test_order_inquiry_import`, `test_order_link_both_ways`) already proves
-the parsing, the write shape and the both-way linkage. Nothing here re-derives any of that.
+`tests/test_project_order_inquiry_import_migration.py` already proves the parsing, the
+matching and the write shape. Nothing here re-derives any of that.
 What is proved here is only what the WIRE has to carry:
 
 * preview writes nothing, and an unreadable file still comes back 200 so the screen can show
@@ -100,23 +100,15 @@ def _jobs(db) -> int:
 # order inquiry
 # --------------------------------------------------------------------------- #
 
-def test_order_inquiry_preview_reports_the_rows_and_writes_nothing(scm_app):
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    _seed_products(db, INQUIRY_ITEMS)
+def test_order_inquiry_apply_queues_the_import(scm_app, monkeypatch):
+    """The wire, and only the wire: 202, the task by name, and the job it queued.
 
-    before = db.execute(text("SELECT count(*) FROM scm.order_link_claim")).scalar()
-    r = TestClient(app).post("/api/v1/scm/order-inquiry/preview", files=_inquiry_file())
-    assert db.execute(text("SELECT count(*) FROM scm.order_link_claim")).scalar() == before
-
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["ok"] is True
-    assert body["rows"] >= 1
-    assert body["po_claims"] >= 1
-
-
-def test_order_inquiry_apply_claims_the_purchase_order_links(scm_app, monkeypatch):
+    What the task then WRITES is proved in
+    `tests/test_project_order_inquiry_import_migration.py`. The pair of cases that used to
+    assert `po_claims` on the preview and `claims_written` on the result went with the code
+    behind them - the sheet opens no claim of its own any more
+    (`PLAN-scm-oi-sheet-migration.md` AC-S1-21).
+    """
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     _seed_products(db, INQUIRY_ITEMS)
@@ -131,29 +123,42 @@ def test_order_inquiry_apply_claims_the_purchase_order_links(scm_app, monkeypatc
     run_enqueued(captured, db, monkeypatch)
 
     body = _upload_result(db, captured)
-    assert body["claims_written"] >= 1
-    assert db.execute(text("SELECT count(*) FROM scm.order_link_claim")).scalar() > before
-    assert "links" in body
+    assert body["ok"] is True
+    assert body["rows"] >= 1
+    assert db.execute(text("SELECT count(*) FROM scm.order_link_claim")).scalar() == before, (
+        "this feed opens no claim of its own"
+    )
 
 
-def test_open_claims_are_reportable_over_http(scm_app, monkeypatch):
+def test_open_claims_are_reportable_over_http(scm_app):
     """"34 sales orders name a purchase order we have not seen" is how somebody finds out the
-    PO book is a month behind."""
+    PO book is a month behind.
+
+    The claim is SEEDED rather than uploaded: the order inquiry sheet stopped writing claims
+    (AC-S1-21), and what this route has to prove is that an unresolved claim - whoever wrote
+    it - is reported with its document named.
+    """
+    from app.models.scm import OrderLinkClaim
+
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
-    _seed_products(db, INQUIRY_ITEMS)
-    captured = stub_queue(monkeypatch)
-    client = TestClient(app)
+    number = f"{MARKER}-PO-{uuid.uuid4().hex[:6]}".upper()
+    db.add(OrderLinkClaim(
+        id=_u(),
+        so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:6]}".upper(),
+        po_number=number,
+        item_code=INQUIRY_ITEMS[0],
+        source="order_inquiry",
+    ))
+    db.flush()
 
-    client.post("/api/v1/scm/order-inquiry/apply", files=_inquiry_file())
-    run_enqueued(captured, db, monkeypatch)
-    r = client.get("/api/v1/scm/order-links/open")
+    r = TestClient(app).get("/api/v1/scm/order-links/open")
 
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["open"] >= 1
     assert body["waiting_for_purchase_order"] >= 1
-    assert body["purchase_orders"], "the numbers are named, not only counted"
+    assert number in body["purchase_orders"], "the numbers are named, not only counted"
 
 
 # --------------------------------------------------------------------------- #

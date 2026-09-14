@@ -11,7 +11,7 @@
  * adds nothing to it and drops nothing from it.
  */
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { BoardChangeTable } from './BoardChangeTable';
@@ -311,19 +311,26 @@ describe('the change indicator, lightbox and one shortfall line (owner feedback 
   });
 
   it('AC-C10: Escape and the Close button both close the dialog', async () => {
+    // Both closings are AWAITED. A Radix dialog's exit is asynchronous - the content stays
+    // mounted through the exit animation and the aria-hidden unwind - so a single macrotask
+    // tick is a race, not a wait: it holds on a developer machine and loses on a loaded CI
+    // runner. This test failed exactly that way on CI twice before (4 and 5 Sep) and was
+    // fixed the same way, test only.
     render(<BoardChangeTable annotation={sampleAnnotation()} />);
 
     fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo'));
     const dialog = await screen.findByTestId('board-change-dialog');
     fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.queryByTestId('board-change-dialog')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByTestId('board-change-dialog')).not.toBeInTheDocument(),
+    );
 
     fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo'));
     const reopened = await screen.findByTestId('board-change-dialog');
     fireEvent.click(within(reopened).getByRole('button', { name: 'Close' }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.queryByTestId('board-change-dialog')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByTestId('board-change-dialog')).not.toBeInTheDocument(),
+    );
   });
 
   it('AC-C11: a shortfall renders exactly once, and the retired standalone Short paragraph is gone', async () => {
