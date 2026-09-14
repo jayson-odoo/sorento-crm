@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { mockPlanningBoard } from '@/lib/phase1-mock-planned-lines';
 import type {
   AdoptSalesOrderResult,
   BoardDecision,
@@ -462,7 +463,9 @@ export async function getPlanningBoard(
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));
-  return response.json();
+  // PHASE 1 ONLY (`PLAN-fulfilment-board-plans-delivered-lines.md` S3): a no-op unless
+  // `NEXT_PUBLIC_PHASE1_MOCK` is set. Deleted with the mock module when S2's backend lands.
+  return mockPlanningBoard(await response.json());
 }
 
 

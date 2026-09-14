@@ -1502,13 +1502,20 @@ export function FulfilmentBoardPanel({
         <Card>
           <CardContent className="px-6 py-10 text-center">
             <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
-            {/* No cells does NOT mean nothing is owed. A day window scrolled to a stretch
-                nobody owes has no cells while the selection still holds every one of its
-                lines, and "these orders owe nothing" would flatly contradict them. The
-                selection-scoped total is the only thing that can tell the two apart. */}
+            {/* No cells does NOT mean the selection is empty. A day window scrolled to a
+                stretch with nothing due has no cells while the selection still holds every
+                one of its lines, and "these orders have nothing to plan" would flatly
+                contradict them. The selection-scoped total is the only thing that can tell
+                the two apart.
+
+                NEITHER EMPTY STATE SPEAKS ABOUT DELIVERY ANY MORE (14 Sep 2026 ruling). The
+                board asks who decided where a line's stock comes from, not whether delivery
+                is still outstanding - a delivered line nobody decided is on this board - so
+                "Nothing is outstanding ..." named the wrong question and told a planner
+                looking at an unplanned completed order that there was nothing to do. */}
             {(board.data?.line_count ?? 0) > 0 ? (
               <>
-                <h3 className="mt-2 text-sm font-semibold">Nothing is outstanding in these dates</h3>
+                <h3 className="mt-2 text-sm font-semibold">No lines in these dates</h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                   {`The selection holds ${board.data?.line_count} lines on other dates.`}
                 </p>
@@ -1516,10 +1523,10 @@ export function FulfilmentBoardPanel({
             ) : (
               <>
                 <h3 className="mt-2 text-sm font-semibold">
-                  Nothing is outstanding on these sales orders that can be planned
+                  No lines to plan on these sales orders
                 </h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                  Every line of the selection is already delivered, closed or covered.
+                  Every line is cancelled or marked no purchase needed.
                 </p>
               </>
             )}

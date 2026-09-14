@@ -26,6 +26,7 @@ import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotat
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
   contributionDecision,
+  contributionInquiryDecision,
   contributionSuggestion,
   // Aliased the way `SalesOrderDetail` aliases it: bare `describe` is vitest's, and a file
   // that imports both reads as though the test runner were writing the column.
@@ -380,6 +381,19 @@ export function FulfilmentBoardListView({
           const drafted = draft[contribution.key] ?? null;
           const parts = contributionDecision(contribution, drafted);
           if (!parts) {
+            // DECIDED BY THE BOOK, not by a board (14 Sep 2026 ruling): a line carrying a
+            // live order inquiry row has no composition to print, so the slot names the
+            // instruction purchasing already holds. "Not decided" over it would invite a
+            // second Buy for a line somebody has already been told to buy.
+            const inquiry = contributionInquiryDecision(contribution);
+            if (inquiry) {
+              const text = inquiry.inquiry_no ?? 'Unnumbered inquiry';
+              return (
+                <span className="block min-w-0 truncate tabular-nums" title={text}>
+                  {text}
+                </span>
+              );
+            }
             return <span className="text-muted-foreground">Not decided</span>;
           }
           // The composition alone, in section 2's words. NOT "Confirmed rev 1 · Buy 43":

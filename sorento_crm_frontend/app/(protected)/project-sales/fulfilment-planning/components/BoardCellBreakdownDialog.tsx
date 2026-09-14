@@ -37,6 +37,7 @@ import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerb
 import {
   PILL_TONE,
   SHORT_LABELS,
+  contributionInquiryDecision,
   contributionSuggestion,
   decisionBreakdown,
   movesOf,
@@ -722,13 +723,27 @@ export function BoardCellBreakdownDialog({
             .join(' ');
           const share = shareNote(contribution);
           const unit = unitNote(contribution);
+          const inquiryDecision = contributionInquiryDecision(contribution);
           return (
             <div className="min-w-0">
               <div className="flex items-center gap-1">
                 {pills.length === 0 ? (
-                  <span className="text-sm text-muted-foreground">
-                    Cannot be sourced
-                  </span>
+                  // "Cannot be sourced" is about a line no ladder could answer. A line the
+                  // BOOK already decided - a live order inquiry row, no board composition
+                  // (14 Sep 2026 ruling) - was never walked, so the slot names the inquiry
+                  // purchasing holds instead of declaring the line unsourceable.
+                  inquiryDecision ? (
+                    <span
+                      className="min-w-0 truncate text-sm tabular-nums"
+                      title={inquiryDecision.inquiry_no ?? ''}
+                    >
+                      {inquiryDecision.inquiry_no ?? 'Unnumbered inquiry'}
+                    </span>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">
+                      Cannot be sourced
+                    </span>
+                  )
                 ) : (
                   <PillOverflow
                     items={pills}

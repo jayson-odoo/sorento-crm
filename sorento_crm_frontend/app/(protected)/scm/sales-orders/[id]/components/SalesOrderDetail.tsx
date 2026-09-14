@@ -75,6 +75,7 @@ import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { SoLineLinksBody } from './SoLineLinksBody';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
+import { salesOrderPlannedBadge } from '../../../lib/salesOrderPlanned';
 import {
   salesOrderPriorityVariant,
   salesOrderStatusLabel,
@@ -1379,6 +1380,18 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 <Badge variant={salesOrderStatusVariant(so.status)} appearance="light" size="md">
                   {salesOrderStatusLabel(so.status)}
                 </Badge>
+                {/* How far the order has been PLANNED, beside the status it keeps being
+                    confused with. The SAME chip the list carries, in the header rather than a
+                    tab body because it is read-only metadata about the whole record - so view
+                    and edit show it identically, with nothing to change about it here. */}
+                {(() => {
+                  const planned = salesOrderPlannedBadge(so.planned_lines, so.plannable_lines);
+                  return (
+                    <Badge variant={planned.variant} appearance="light" size="md">
+                      {planned.label}
+                    </Badge>
+                  );
+                })()}
               </div>
               {/* Read-only metadata belongs in the header, not a tab body - the project the
                   order carries, resolved from whichever source ranked highest. Nothing when
