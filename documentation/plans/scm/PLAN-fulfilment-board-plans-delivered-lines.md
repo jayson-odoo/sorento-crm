@@ -196,6 +196,22 @@ The rungs, the ranking and the policy do not change. Three inputs do:
 
 Plus one new read-only state on the board: a row decided by an inquiry with no composition.
 
+Two things the build found that this section did not say (coder, 14 Sep 2026):
+
+4. **"A live inquiry row" means one no board decision raised, and one no pending change has
+   re-opened.** The rule as written swallowed its own tail - a line whose decision a planning
+   change had just superseded still carried that decision's live row, so the board read it as
+   decided and stopped re-planning the line the change had re-opened. It is therefore narrowed
+   to rows with no `supply_decision_id` (the migrated sheet's rows are exactly that population)
+   and excludes any line a PENDING planning-change row names, because apply cancels and unlinks
+   that placed row and the book moving a line beats purchasing having been told.
+5. **`_decided_elsewhere` is NOT touched, contrary to the S2 bullet above.** It exists because a
+   decision-covered line already holds stock netted out of `_free_stock`, so counting its demand
+   again would subtract the same units twice - and an inquiry-decided line holds nothing at all.
+   Removing it from other lines' competing demand would release stock still owed to this line's
+   customer; AC-S2-7's "not in the pile queue" is met on the row itself, through `_apply_frozen`
+   nulling its own share fields.
+
 ## Out of scope, named
 
 - The planning worklist stays on `is_open_demand()`. Completed undecided orders are reached by
