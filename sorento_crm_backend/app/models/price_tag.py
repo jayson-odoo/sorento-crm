@@ -188,6 +188,18 @@ class PriceTagRequestLine(Base):
     show_promo_price = Column(Boolean, nullable=False, server_default="true")
     quantity = Column(Integer, nullable=False, server_default="1")
     alternatives = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # The catalogue package this line was asked for as (D2). SET NULL, not
+    # RESTRICT: deleting a combo is a change to how the product is packaged TODAY
+    # and must not be blocked by a request somebody sent last season - the line
+    # keeps its own part rows, which are what the salesperson actually asked for.
+    combo_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_combos.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # What the package guard found at submit, for marketing to read (D2). NULL =
+    # clean. Submit is never refused for a package reason.
+    package_warning = Column(Text, nullable=True)
     included_accessories = Column(Text, nullable=True)
     # Free-text note on the line (D6, r7).
     remarks = Column(Text, nullable=True)
@@ -215,4 +227,65 @@ class PriceTagRequestLine(Base):
         UniqueConstraint("request_id", "product_id", name="uq_ptag_line_request_product"),
         UniqueConstraint("request_id", "product_set_id", name="uq_ptag_line_request_set"),
         Index("ix_price_tag_request_lines_request_id", "request_id"),
+    )
+
+    parts = relationship(
+        "PriceTagRequestLinePart",
+        back_populates="line",
+        cascade="all, delete-orphan",
+        order_by="PriceTagRequestLinePart.sort_order",
+    )
+
+
+class PriceTagRequestLinePart(Base):
+    """One part under a request line - what the salesperson asked to come with it (D2).
+
+    Two shapes, and the CHECK is what keeps them apart:
+
+    * RESOLVED - `product_id` set, `candidates` empty. A specific product goes on
+      the tag.
+    * OPEN - `product_id` NULL, `candidates` holding the group's product ids. The
+      salesperson left the choice to marketing, who split it into one tag per
+      option (S3) or picked one.
+
+    `role` is the choice group's label on both, so a resolved row still says which
+    group it answered. RESTRICT on the product for the same reason a line's own
+    product is: a request naming a product is a record, not a soft reference.
+    """
+
+    __tablename__ = "price_tag_request_line_parts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("price_tag_request_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("products.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    role = Column(String(100), nullable=True)
+    candidates = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    created_at = Column(
+        DateTime(timezone=False), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=False),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    line = relationship("PriceTagRequestLine", back_populates="parts")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(product_id IS NOT NULL AND candidates = '[]'::jsonb) "
+            "OR (product_id IS NULL AND jsonb_array_length(candidates) > 0)",
+            name="ck_ptag_line_parts_resolved_or_open",
+        ),
+        Index("ix_price_tag_request_line_parts_line_id", "line_id"),
     )

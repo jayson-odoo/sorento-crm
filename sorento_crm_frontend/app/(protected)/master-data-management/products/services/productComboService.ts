@@ -5,11 +5,14 @@
  * Layering: UI -> hooks (useProductCombos) -> THIS service -> lib/api-client
  * -> backend. No component fetches directly.
  *
+ * Phase 2 (S1) built `product_combos` + `product_combo_parts` and these routes -
+ * this file no longer mocks anything, and the Phase-1 in-memory store that stood
+ * in for them is deleted.
+ *
  * Plan: `documentation/plans/dealer-kit/PLAN-price-tag-combos.md` D1 (slice S1).
  * UAC: `documentation/plans/dealer-kit/price-tag-combos-acceptance-criteria.md`.
  *
- * ── BACKEND CONTRACT (S1 Phase 2 builds this; everything below is served by the
- *    in-file mock at the bottom until then) ───────────────────────────────────
+ * ── BACKEND CONTRACT (built, S1 Phase 2) ────────────────────────────────────
  *
  * Router `app/api/v1/master_data/product_combos.py`, registered beside
  * `product_companions.py`, no dedicated permission slug (AC-X-5): reads take
@@ -66,23 +69,9 @@
  * A product named as a host or a part of a combo is RESTRICT on both FKs, so
  * deleting it is refused through the existing product-delete flow, not here.
  * ============================================================================
- *
- * ── PHASE 1 MOCK - DEBT, NOT DONE ──────────────────────────────────────────
- * Everything below `--- mock ---` is an in-memory store that lives as long as
- * the tab does. It exists so the Combos and Sold-with sections can be tuned and
- * browser-verified before any backend code is written (PRINCIPLES.md Phase 1),
- * and it is DELETED in Phase 2 when each function's body becomes the `apiFetch`
- * call its contract above describes.
- *
- * Two things the mock cannot stand in for, both Phase 2:
- *   * the two deferred-action keys (`product_combo.delete`,
- *     `product_combo_part.delete`) have to be registered in
- *     `app/services/record_actions.py` before a countdown can commit - the
- *     grace window is parked on the SERVER by design (D7), so there is nothing
- *     in the browser for a mock to intercept;
- *   * company scoping (AC-S1-7) is a server rule and is not simulated.
- * ============================================================================
  */
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type {
   ProductComboCreate,
   ProductComboPartCreate,
@@ -91,197 +80,88 @@ import type {
   ProductComboRow,
   ProductSoldWithRow,
 } from '../types/productCombo.types';
-import { getProduct } from './productService';
+
+const PRODUCTS = '/api/v1/master-data/products';
+const COMBOS = '/api/v1/master-data/product-combos';
+const PARTS = '/api/v1/master-data/product-combo-parts';
 
 export async function listProductCombos(productId: string): Promise<ProductComboRow[]> {
-  return mockListCombos(productId);
+  const res = await apiFetch(`${PRODUCTS}/${encodeURIComponent(productId)}/combos`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load combos'));
+  const body = (await res.json()) as { data?: ProductComboRow[] };
+  return body.data ?? [];
 }
 
 export async function listProductSoldWith(productId: string): Promise<ProductSoldWithRow[]> {
-  return mockListSoldWith(productId);
+  const res = await apiFetch(`${PRODUCTS}/${encodeURIComponent(productId)}/sold-with`);
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load what this is sold with'));
+  }
+  const body = (await res.json()) as { data?: ProductSoldWithRow[] };
+  return body.data ?? [];
 }
 
 export async function createProductCombo(
   productId: string,
   write: ProductComboCreate,
 ): Promise<ProductComboRow> {
-  return mockCreateCombo(productId, write);
+  const res = await apiFetch(`${PRODUCTS}/${encodeURIComponent(productId)}/combos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(write),
+  });
+  if (!res.ok) {
+    throw new Error(
+      await extractApiError(
+        res,
+        res.status === 409
+          ? 'This product already has a combo with that name'
+          : 'Failed to add the combo',
+      ),
+    );
+  }
+  return (await res.json()) as ProductComboRow;
 }
 
 export async function addProductComboPart(
   comboId: string,
   write: ProductComboPartCreate,
 ): Promise<ProductComboPartRow> {
-  return mockAddPart(comboId, write);
+  const res = await apiFetch(`${COMBOS}/${encodeURIComponent(comboId)}/parts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(write),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to add the part'));
+  return (await res.json()) as ProductComboPartRow;
 }
 
 export async function updateProductComboPart(
   partId: string,
   write: ProductComboPartUpdate,
 ): Promise<ProductComboPartRow> {
-  return mockUpdatePart(partId, write);
+  const res = await apiFetch(`${PARTS}/${encodeURIComponent(partId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(write),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the choice group'));
+  return (await res.json()) as ProductComboPartRow;
 }
 
 /**
  * The raw hard deletes. The UI never calls these - see the DELETE contract notes
- * above; `useDeferredRowAction` parks the removal and the server runs the real
- * service method when the window lapses. Kept for parity with
+ * above; `useDeferredRowAction` parks the removal and the server runs
+ * `ProductComboService.delete` / `.delete_part` when the window lapses
+ * (`app/services/record_actions.py`). Kept for parity with
  * `deleteProductCompanionRule`.
  */
 export async function deleteProductCombo(comboId: string): Promise<void> {
-  return mockDeleteCombo(comboId);
+  const res = await apiFetch(`${COMBOS}/${encodeURIComponent(comboId)}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the combo'));
 }
 
 export async function deleteProductComboPart(partId: string): Promise<void> {
-  return mockDeletePart(partId);
-}
-
-// ---------------------------------------------------------------------------
-// --- mock --- everything below goes away in Phase 2.
-// ---------------------------------------------------------------------------
-
-/** Enough latency for the section's own skeleton to be a real state, not a flash. */
-const MOCK_LATENCY_MS = 250;
-
-const combos: ProductComboRow[] = [];
-
-function sleep(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, MOCK_LATENCY_MS));
-}
-
-function newId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `mock-${Math.random().toString(36).slice(2)}`;
-}
-
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
-/** `800 x 500 x 220 mm`, the backend's `format_dimensions_mm` rule. */
-function formatDimensions(
-  length?: number | null,
-  width?: number | null,
-  height?: number | null,
-): string | null {
-  const parts = [length, width, height];
-  if (!parts.some((part) => part != null)) return null;
-  return `${parts.map((part) => (part == null ? '-' : String(part))).join(' x ')} mm`;
-}
-
-async function mockListCombos(productId: string): Promise<ProductComboRow[]> {
-  await sleep();
-  return clone(combos.filter((combo) => combo.host_product_id === productId));
-}
-
-async function mockListSoldWith(productId: string): Promise<ProductSoldWithRow[]> {
-  await sleep();
-  const rows: ProductSoldWithRow[] = [];
-  for (const combo of combos) {
-    if (!combo.parts.some((part) => part.product_id === productId)) continue;
-    // The real route resolves the host's own code and name; the mock asks the
-    // product endpoint, which is already live on the lane backend.
-    const host = await getProduct(combo.host_product_id);
-    rows.push({
-      host_product_id: combo.host_product_id,
-      host_code: host.product_code,
-      host_name: host.product_name,
-      combo_id: combo.id,
-      combo_name: combo.name,
-    });
-  }
-  return rows;
-}
-
-async function mockCreateCombo(
-  productId: string,
-  write: ProductComboCreate,
-): Promise<ProductComboRow> {
-  await sleep();
-  const name = write.name.trim();
-  const taken = combos.some(
-    (combo) =>
-      combo.host_product_id === productId &&
-      combo.name.toLowerCase() === name.toLowerCase(),
-  );
-  if (taken) throw new Error(`This product already has a combo called "${name}"`);
-  const now = new Date().toISOString();
-  const combo: ProductComboRow = {
-    id: newId(),
-    host_product_id: productId,
-    name,
-    sort_order: combos.filter((c) => c.host_product_id === productId).length,
-    parts: [],
-    created_at: now,
-    updated_at: now,
-  };
-  combos.push(combo);
-  return clone(combo);
-}
-
-async function mockAddPart(
-  comboId: string,
-  write: ProductComboPartCreate,
-): Promise<ProductComboPartRow> {
-  const combo = combos.find((c) => c.id === comboId);
-  if (!combo) throw new Error('That combo no longer exists');
-  if (write.part_product_id === combo.host_product_id) {
-    throw new Error('A product cannot be a part of its own combo');
-  }
-  if (combo.parts.some((part) => part.product_id === write.part_product_id)) {
-    throw new Error('That product is already on this combo');
-  }
-  // The real route reads the part's code, name and dimensions off the product
-  // row it just linked; the mock asks the live product endpoint for the same
-  // three, so the section renders real codes instead of invented ones.
-  const product = await getProduct(write.part_product_id);
-  const part: ProductComboPartRow = {
-    id: newId(),
-    combo_id: comboId,
-    product_id: write.part_product_id,
-    code: product.product_code,
-    product_name: product.product_name,
-    dimensions: formatDimensions(
-      product.dimensions_length,
-      product.dimensions_width,
-      product.dimensions_height,
-    ),
-    choice_group: write.choice_group?.trim() || null,
-    sort_order: combo.parts.length,
-  };
-  combo.parts.push(part);
-  combo.updated_at = new Date().toISOString();
-  return clone(part);
-}
-
-async function mockUpdatePart(
-  partId: string,
-  write: ProductComboPartUpdate,
-): Promise<ProductComboPartRow> {
-  await sleep();
-  for (const combo of combos) {
-    const part = combo.parts.find((p) => p.id === partId);
-    if (!part) continue;
-    if ('choice_group' in write) part.choice_group = write.choice_group?.trim() || null;
-    if (write.sort_order != null) part.sort_order = write.sort_order;
-    combo.updated_at = new Date().toISOString();
-    return clone(part);
-  }
-  throw new Error('That part no longer exists');
-}
-
-async function mockDeleteCombo(comboId: string): Promise<void> {
-  await sleep();
-  const index = combos.findIndex((combo) => combo.id === comboId);
-  if (index >= 0) combos.splice(index, 1);
-}
-
-async function mockDeletePart(partId: string): Promise<void> {
-  await sleep();
-  for (const combo of combos) {
-    const index = combo.parts.findIndex((part) => part.id === partId);
-    if (index >= 0) {
-      combo.parts.splice(index, 1);
-      return;
-    }
-  }
+  const res = await apiFetch(`${PARTS}/${encodeURIComponent(partId)}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to remove the part'));
 }

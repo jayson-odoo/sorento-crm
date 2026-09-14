@@ -71,6 +71,18 @@ def _delete_product_companion_rule(db: Session, payload: dict):
     return ProductCompanionService(db).delete(_entity_id(payload))
 
 
+def _delete_product_combo(db: Session, payload: dict):
+    from app.services.product_combo_service import ProductComboService
+
+    return ProductComboService(db).delete(_entity_id(payload))
+
+
+def _delete_product_combo_part(db: Session, payload: dict):
+    from app.services.product_combo_service import ProductComboService
+
+    return ProductComboService(db).delete_part(_entity_id(payload))
+
+
 def _set_order_status(db: Session, payload: dict):
     from app.schemas.order import OrderUpdate
     from app.services.order_service import OrderService
@@ -135,6 +147,31 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.products.edit",
         label="Delete rule",
+    )
+)
+
+# The two halves of AC-S1-5. A combo and a part are both deleted from the product
+# page's own Combos section, so both take the products edit slug and the destructive
+# window - there is nothing to un-delete once it lapses.
+register(
+    FormAction(
+        key="product_combo.delete",
+        entity_types=("product_combo",),
+        execute=_delete_product_combo,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Delete combo",
+    )
+)
+
+register(
+    FormAction(
+        key="product_combo_part.delete",
+        entity_types=("product_combo_part",),
+        execute=_delete_product_combo_part,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Remove part",
     )
 )
 
