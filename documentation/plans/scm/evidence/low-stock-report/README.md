@@ -51,3 +51,37 @@ present on the home page before any of this lane's code loads, unrelated.
 
 Not exercised in Phase 1, by design: the workbook itself, the My Downloads row label
 (`low_stock_xlsx` rows only exist once S3 writes them), and the `via chat` badge against real data.
+
+## Phase 3 - browser verification (INCOMPLETE, needs re-run / attestation)
+
+**This run was NOT completed or attested by the tester in-session.** The session limit cut the
+work short before a browser pass could be driven and written up. The artifacts below are
+committed as-is so nothing is lost, but no acceptance criterion should be treated as
+browser-verified on their strength alone - the captain should re-run the pass (or an attesting
+agent should confirm each shot against its AC) before the DoD gate.
+
+Artifacts present in this directory (inventory only - the tester cannot vouch for what drove
+them):
+
+| File | What the filename indicates it captures |
+| --- | --- |
+| `p3-01-plans-list-1280.png` | Reorder Planning list at 1280 |
+| `p3-02-actions-menu-1280.png` | plan Actions menu at 1280 (the three export items) |
+| `p3-03-toast-1280.png` | the "preparing" toast after clicking Low stock report |
+| `p3-04-my-downloads-1280.png` | My Downloads drawer row for the report |
+| `p3-05-plans-list-after-run-1280.png` | plans list after a chat-created run (the `via chat` badge) |
+| `p3-06-chatbot-media-wait-1280.png` | System Settings wait field beside the media wait |
+| `p3-07-wait-reject-4-1280.png` | the wait field refusing 4 (below the 5..90 bound) |
+| `p3-08-wait-60-after-reload-1280.png` | the wait value persisting at 60 after a reload |
+| `p3-09-settings-wait-375.png` | the wait field at 375 |
+| `p3-10-plans-list-375.png` | plans list at 375 |
+| `p3-11-actions-menu-375.png` | Actions menu at 375 (no clipping) |
+| `p3-12-toast-375.png` | the toast at 375 |
+| `p3-13-my-downloads-375.png` | My Downloads drawer at 375 |
+| `low-stock-14092026.xlsx` | a workbook produced during the run (two sheets, container in the incoming cell) |
+
+Which ACs a completed pass must still land, end to end in a real browser: AC-1 to AC-5 and AC-7
+(plan-view menu item, download label, `via chat` badge, 375/1280 layout, settings wait field),
+the S3 workbook opened and eyeballed (two sheets, sixteen columns, container line in BRW
+incoming qty), and the S5/S6/S7 chat path (grant the key, ask "low stock report", receive the
+xlsx or the pending line). None of these is attested here.
