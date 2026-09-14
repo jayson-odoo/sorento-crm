@@ -66,6 +66,22 @@ A packing list uploaded with no matching proforma invoice for that supplier is r
 supplier and the date on the file - upload it together with its invoice, or upload the invoice
 first and attach the packing list to it afterwards.
 
+## The Lines tab
+
+For lines with an item code, the **Product** column holds a dropdown (labeled **Search a product or set**)
+that works in both read and edit mode. Picking a product or set writes the supplier-code alias immediately
+with no Edit or Save step needed - a toast reports how many other lines on file were re-pointed to the
+same alias. Clearing the dropdown on a line with a remembered code starts a 5-second reversible countdown
+in the cell with a **Cancel** button; when the countdown lapses the alias is deleted and the line shows
+the placeholder again.
+
+A line with a blank item code (added manually before or after saving the invoice) keeps the old draft
+behaviour: picking a product in edit mode patches the draft, and Save persists it.
+
+**Access:** the **Product** column control is offered only to a user who holds both **scm.proforma_invoice.upload**
+(the invoice's own write permission) and **scm.reorder.run** (the supplier-code alias permission). A user
+lacking either permission sees the item code as read-only text.
+
 ## Convert to packing list
 
 Our own packing list is never created by this upload - it is born by converting proforma invoices,
@@ -83,11 +99,12 @@ or by hand with **Create Packing List** on the Packing Lists page.
    the draft carries both as two lines, and the printed packing list shows it the same way.
 5. Click **Convert**.
 
-## Source files
+## General tab - Source files
 
-A proforma invoice's **General** tab has a **Source files** section listing the file(s) it was
-read from - the invoice workbook and, once attached, the packing-list workbook - each with its
-kind and the date it was uploaded.
+A proforma invoice's **General** tab has a **Source files** section listing the file(s) it was read from:
+the invoice workbook and, once attached, the packing-list workbook. Each file appears as a card showing
+its name, type (e.g. "Proforma invoice workbook" or "Packing list workbook"), and file size. Icons above
+the name offer **Preview** (to open the file in your browser) and **Download** (to save it).
 
 ## Chinese wording and its English reading
 
