@@ -855,3 +855,189 @@ def test_confirming_the_line_replaces_the_saved_decision_with_the_confirmed_one(
     assert body["saved_by"] is None
     assert body["saved_stale"] is False
     assert body["decision_revision"] == 1
+
+
+# --------------------------------------------------------------------------------------- #
+# S4 - "Planned" on the sales orders list and detail header
+#
+# `PLAN-fulfilment-board-plans-delivered-lines.md` S4, UAC AC-S4-1 to AC-S4-5. Written
+# TEST-FIRST: `SalesOrderService.with_planning_state` does not exist yet, and neither field
+# is on either response.
+#
+# The owner's question off SO421404 (14 Sep 2026): "how do I know if the order is fully
+# planned from the list itself?" The Order inquiries column above answers what purchasing was
+# TOLD. Nothing answers whether anybody decided where the stock comes from - so a Completed
+# order with three delivered lines and no plan at all reads exactly like one that was planned.
+#
+# `plannable_lines` = the lines the BOARD would admit (`is_undecided_demand()`: not cancelled,
+#                     not `covered`, plan quantity above zero - delivery is not a decision).
+# `planned_lines`   = how many of those are decided: an active decision on the core line, or a
+#                     live order inquiry row on it (state not `cancelled`, ack not `rejected`).
+#
+# THE SAME two predicates the board uses, off one helper, or the list and the board come to
+# disagree about the same order.
+# --------------------------------------------------------------------------------------- #
+
+
+def _planning_line(
+    db,
+    core: SalesOrder,
+    *,
+    qty=3,
+    delivered=0,
+    line_status="open",
+    purchasing_status="not_reviewed",
+):
+    """`_core_line` with the three columns the board's admission predicate reads."""
+    from app.models.order import SalesOrderLine
+
+    line = SalesOrderLine(
+        id=_uid(),
+        sales_order_id=core.id,
+        product_id=_product(db).id,
+        qty_ordered=qty,
+        qty_delivered=delivered,
+        line_status=line_status,
+        purchasing_status=purchasing_status,
+        required_date=date(2026, 6, 30),
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
+def test_list_and_detail_carry_planned_counts(scm_app):
+    """AC-S4-1. BOTH manual dict builders, asserted over the WIRE: `response_model` silently
+    drops what it does not declare, so a field the service computes and the schema forgets
+    reaches the screen as `undefined` - which reads as a backend with no answer."""
+    app, db, _u = _as(scm_app)
+    core = _core_order(db)
+    _planning_line(db, core)
+
+    with TestClient(app) as c:
+        listed = c.get("/api/v1/scm/sales-orders", params={"query": core.so_number})
+        detail = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert listed.status_code == 200, listed.text
+    row = _row_for(listed.json(), core.so_number)
+    assert "planned_lines" in row, row.keys()
+    assert "plannable_lines" in row, row.keys()
+    assert isinstance(row["planned_lines"], int)
+    assert isinstance(row["plannable_lines"], int)
+
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert "planned_lines" in body, body.keys()
+    assert "plannable_lines" in body, body.keys()
+    assert (body["planned_lines"], body["plannable_lines"]) == (
+        row["planned_lines"], row["plannable_lines"]
+    ), "one order, one answer - the list and the detail read the same helper"
+
+
+def test_planned_counts_mixed(scm_app):
+    """AC-S4-2. Three admitted lines: one an active decision covers, one a live inquiry row
+    covers, one nobody has touched. Two of three planned.
+
+    Both readings of "decided" count, because both are what the BOARD holds read-only.
+    """
+    app, db, _u = _as(scm_app)
+    core = _core_order(db)
+    decided = _planning_line(db, core)
+    told = _planning_line(db, core)
+    _untouched = _planning_line(db, core)
+
+    pso = _planned(db, core)
+    _active_decision(db, pso, revision_no=1, core_line_ids=[decided.id])
+    inquiry = _inquiry(db, pso, number=f"{MARKER}-OI-S4", rows=())
+    _inquiry_row(db, inquiry, _mirror(db, pso, told, line_no=2))
+
+    with TestClient(app) as c:
+        res = c.get("/api/v1/scm/sales-orders", params={"query": core.so_number})
+
+    row = _row_for(res.json(), core.so_number)
+    assert row["plannable_lines"] == 3
+    assert row["planned_lines"] == 2
+
+
+def test_plannable_zero_when_all_cancelled_or_covered(scm_app):
+    """AC-S4-3. Nothing to plan is not "not planned": the pill reads a dash, off
+    `plannable_lines` being 0, and a green "Planned" there would claim a decision nobody
+    made."""
+    app, db, _u = _as(scm_app)
+    core = _core_order(db)
+    _planning_line(db, core, line_status="cancelled", delivered=1)
+    _planning_line(db, core, purchasing_status="covered")
+
+    with TestClient(app) as c:
+        res = c.get("/api/v1/scm/sales-orders", params={"query": core.so_number})
+
+    row = _row_for(res.json(), core.so_number)
+    assert row["plannable_lines"] == 0
+    assert row["planned_lines"] == 0
+
+
+def test_closed_delivered_order_without_plan_reads_zero_of_three(scm_app):
+    """AC-S4-4. SO421404's own shape - Completed, three of three delivered, no plan ever made.
+
+    Delivery is not a decision, so all three lines are still plannable and none is planned.
+    This is the row the owner was looking at when they asked the question.
+    """
+    app, db, _u = _as(scm_app)
+    core = _core_order(db)
+    core.status = "closed"
+    db.flush()
+    for _ in range(3):
+        _planning_line(db, core, qty=1, delivered=1, line_status="closed")
+
+    with TestClient(app) as c:
+        res = c.get("/api/v1/scm/sales-orders", params={"query": core.so_number})
+
+    row = _row_for(res.json(), core.so_number)
+    assert row["plannable_lines"] == 3
+    assert row["planned_lines"] == 0
+
+
+def test_planned_counts_are_one_query_per_page(scm_app):
+    """AC-S4-5. ONE grouped query for the page, never one per row.
+
+    The book holds 15,000 sales orders, so a per-row read is an N+1 that only shows itself in
+    production. Asserted as a CONSTANT rather than as an exact number: what must not happen is
+    the count growing with the page, and pinning "exactly 2" would break on any unrelated tidy
+    of the same helper.
+    """
+    from sqlalchemy import event
+
+    from app.services.scm.sales_order_service import SalesOrderService
+
+    _app, db, _u = _as(scm_app)
+    service = SalesOrderService(db)
+
+    rows = []
+    for _ in range(25):
+        core = _core_order(db)
+        _planning_line(db, core)
+        rows.append(service.serialize(core))
+
+    bind = db.get_bind()
+    counted = {"n": 0}
+
+    def _count(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        counted["n"] += 1
+
+    event.listen(bind, "before_cursor_execute", _count)
+    try:
+        counted["n"] = 0
+        service.with_planning_state(rows[:1])
+        for_one = counted["n"]
+
+        counted["n"] = 0
+        service.with_planning_state(rows)
+        for_twenty_five = counted["n"]
+    finally:
+        event.remove(bind, "before_cursor_execute", _count)
+
+    assert for_twenty_five == for_one, (
+        f"the page's planning state cost {for_twenty_five} statements for 25 orders and "
+        f"{for_one} for one - that is per ROW, not per page"
+    )
+    assert for_twenty_five <= 3, for_twenty_five
