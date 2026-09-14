@@ -844,13 +844,31 @@ def _record_domain(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
         return
     if _set_this_turn(focus, "domains", turn):
         return
-    _set(
-        focus,
-        "domains",
+    # Lane 2 (AC-1041, AC-1043): a BARE continuation that reused an alive MULTI-domain
+    # focus keeps the whole list, so the next fan-out re-runs every alive domain rather
+    # than only the head `_reuse_domain` derived `domain_hint` from. Single-domain focus
+    # (every v1/v2 emission, every replay capture) has one entry whose head IS
+    # `domain_hint`, so it records `[domain_hint]` exactly as before - the list is not
+    # widened, only preserved. Gated on the reuse having actually fired
+    # (`domain_inherited_compatible`) and on the alive list still leading with this
+    # domain, so a turn that concluded a NEW single domain never inherits a stale list.
+    alive = value_of(focus, "domains")
+    if (
+        jsc.truthy(turn.o.get("domain_inherited_compatible"))
+        and isinstance(alive, list)
+        and len(alive) >= 2
+        and jsc.js_string(alive[0]) == jsc.js_string(domain)
+    ):
+        recorded = [jsc.js_string(d) for d in alive if jsc.truthy(d)]
+    else:
         # A LIST of one: this arm records the single domain the turn CONCLUDED, which is
         # all a turn with no `asks` can carry. `domains_from_asks` is what writes several,
         # and it has already run and returned above when it did.
-        [jsc.js_string(domain)],
+        recorded = [jsc.js_string(domain)]
+    _set(
+        focus,
+        "domains",
+        recorded,
         turn,
         out,
         rule="record_domain",

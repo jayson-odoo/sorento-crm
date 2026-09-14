@@ -609,6 +609,394 @@ def _fetch_failure_outcome(tool_name: Any, exc: BaseException) -> str | None:
     return None
 
 
+def _fan_domain_list(parse_output: dict[str, Any], focus_block: Any) -> list[str]:
+    """The ordered domain list a fan-out turn reads, or one/zero for a single-domain turn.
+
+    `focus.domains` is the alive, ordered list lane 1 persists (set by `domains_from_asks`
+    and reused on a bare continuation), so it is the source: "PO?" after a stock answer has
+    one domain, "stock and eta for X" has two, and a bare "X" after a fan-out still carries
+    the whole list (AC-1043). The parser's own flattened `domains_from_asks` is the
+    fallback for a turn whose focus was not applied (this module's direct tests).
+    """
+    from app.services.chatbot import contracts
+
+    focus = focus_block if isinstance(focus_block, dict) else {}
+    domains = _slot_value(focus, "domains")
+    if not (isinstance(domains, list) and domains):
+        domains = parse_output.get("domains_from_asks")
+    if not (isinstance(domains, list) and domains):
+        return []
+    out: list[str] = []
+    for d in domains:
+        # nit4 (defence in depth): a domain outside the enum is coerced to null and
+        # dropped, so an unknown or injected value never picks a tool or prints a
+        # "No <garbage>." line. `coerce_domain_hint` is the same guard the parser emission
+        # and the carried memory already pass through.
+        coerced = contracts.coerce_domain_hint(jsc.js_string(d)) if jsc.truthy(d) else None
+        if jsc.truthy(coerced) and coerced not in out:
+            out.append(jsc.js_string(coerced))
+    return out
+
+
+def _codes_bound_to(domain: str, parse_output: dict[str, Any]) -> set[str] | None:
+    """The lowercased entity codes the MESSAGE bound to `domain` this turn, or None.
+
+    `intake.flatten` gives `{domain: [index into entities]}`; an entry names the entities
+    the dealer attached to that domain ("stock for A and eta for B"). `None` means the
+    domain was not bound at all - a bare code, or a domain reused off focus - and the caller
+    then reads every resolved entity for it (AC-1041's one-turn binding, and its release).
+    """
+    from app.services.chatbot.dialogue import intake as intake_mod
+
+    flat = intake_mod.flatten(parse_output)
+    binding = flat.get("binding") if isinstance(flat.get("binding"), dict) else {}
+    idxs = binding.get(domain)
+    if not (isinstance(idxs, list) and idxs):
+        return None
+    flat_entities = flat.get("entities") if isinstance(flat.get("entities"), list) else []
+    codes: set[str] = set()
+    for i in idxs:
+        if not isinstance(i, int) or i < 0 or i >= len(flat_entities):
+            continue
+        e = flat_entities[i]
+        code = (jsc.get(e, "canonical_code") or jsc.get(e, "raw")) if jsc.truthy(e) else None
+        if jsc.truthy(code):
+            codes.add(jsc.js_string(code).strip().lower())
+    return codes or None
+
+
+def _entities_for_domain(
+    domain: str, parse_output: dict[str, Any], entities: list[Any]
+) -> list[Any]:
+    """The resolved entities this domain's read is bound to (AC-1041).
+
+    A bound domain reads only the resolved entities whose code the message attached to it;
+    an unbound one reads them all. Matching is by code, the same identity `intake.flatten`
+    and `focus` compare on, so a binding and a resolution cannot disagree about a product.
+    """
+    codes = _codes_bound_to(domain, parse_output)
+    if codes is None:
+        return list(entities) if isinstance(entities, list) else []
+    bound: list[Any] = []
+    for e in entities if isinstance(entities, list) else []:
+        code = (jsc.get(e, "code") or jsc.get(e, "canonical_code")) if jsc.truthy(e) else None
+        if jsc.truthy(code) and jsc.js_string(code).strip().lower() in codes:
+            bound.append(e)
+    return bound
+
+
+def _trace_domain_reveals(trace: Any, envelope: Any, trigger: dict[str, Any]) -> None:
+    """The `reveals` + `spec_visibility` trace events for one read (A9, AC-17).
+
+    Lifted verbatim out of the single-domain read so the ONE shared read
+    (`_execute_domain_read`) records them for every domain, single-domain and fanned
+    alike - an operator reading a fanned turn's drawer sees the same restricted-field and
+    spec-visibility accounting a one-domain turn produces.
+    """
+    if trace is None:
+        return
+    restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
+    if isinstance(restricted, dict) and restricted:
+        access = trigger.get("access") if isinstance(trigger.get("access"), dict) else {}
+        granted_raw = access.get("attributes")
+        granted = list(granted_raw) if isinstance(granted_raw, list) else []
+        dropped = [k for k in restricted if restricted[k] not in granted]
+        axis_dropped = envelope.get("group_by_dropped") if isinstance(envelope, dict) else None
+        if axis_dropped:
+            dropped.append(f"group_by:{axis_dropped}")
+        trace.add(
+            "reveals",
+            {
+                "restricted_fields_seen": sorted(restricted.keys()),
+                "granted": sorted(granted),
+                "dropped": sorted(dropped),
+            },
+        )
+    is_product_envelope = (
+        isinstance(envelope, dict)
+        and jsc.js_string(envelope.get("result_type") or "") == "products"
+    )
+    if is_product_envelope:
+        access = trigger.get("access") if isinstance(trigger.get("access"), dict) else {}
+        hidden_raw = access.get("hidden_spec_keys")
+        hidden_list = sorted(hidden_raw) if isinstance(hidden_raw, list) else []
+        if hidden_list:
+            dropped_raw = envelope.get("spec_hidden_dropped")
+            dropped_list = sorted(dropped_raw) if isinstance(dropped_raw, list) else []
+            trace.add("spec_visibility", {"hidden": hidden_list, "dropped": dropped_list})
+
+
+def _execute_domain_read(
+    *,
+    tool_item: dict[str, Any],
+    tool_name: str,
+    entities: list[Any],
+    semantic_input: dict[str, Any],
+    contact_id: Any,
+    access: Any,
+    order_status_raw: str,
+    space_id: str | None,
+    services: FetchServices,
+    trace: Any,
+) -> dict[str, Any]:
+    """The ONE guarded MCP read every domain goes through - single-domain AND fan alike.
+
+    Extracted from `run_fetch`'s single-domain body so a fanned domain cannot skip a gate
+    the one-domain path applies (security review, lane 2). It enforces, in order:
+
+    * the SO-bucket narrowing (SB1): an `so_outstanding` order ask by a contact WITHOUT
+      `sales_orders.outstanding` is redirected to the DO bucket with `so_bucket_refused`,
+      never the SO quantities. `crm_outstanding_report` is not in `ORDER_TOOLS`, so this
+      standalone `if` is equivalent to the old `elif` on the outstanding-report override;
+    * `ENTITY_FILTER_REQUIRED_TOOLS` (SB2): a document/entity tool with no narrowing filter
+      is refused as an ABSENCE, never answered with the whole library, and
+      `PRODUCT_ID_REQUIRED_TOOLS` narrows that bar to `product_ids` for the cost tool (SS3),
+      both through `has_narrowing_filter(args, tool_name=...)`;
+    * the read, with `ToolNotAllowed` / failure handling and the tool / reveals /
+      spec-visibility trace events.
+
+    Returns a normalized dict: `{"kind": "error", "error", "outcome"}` for a refusal, or
+    `{"kind": "result", "tool_item", "envelope", "structured", "fetch"}`. The single-domain
+    caller maps the error arm back through `_error_fragment` with the SAME text and outcome,
+    so its fragment stays byte-identical (replay 1791). `semantic_input` MAY be mutated (the
+    SO-bucket narrowing), so a fan caller passes a per-section copy.
+    """
+    if tool_name in fetch_mod.ORDER_TOOLS and order_status_raw == "so_outstanding":
+        access_ctx = access if isinstance(access, dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = (
+            set(granted_raw)
+            if isinstance(granted_raw, (list, tuple, set, frozenset))
+            else set()
+        )
+        if _OUTSTANDING_SO_GRANT not in granted:
+            semantic_input["order_status"] = "outstanding"
+            semantic_input["so_bucket_refused"] = True
+
+    trigger = {
+        "tool": tool_name,
+        "entities": entities,
+        "semantic_input": semantic_input,
+        "contact_id": contact_id,
+        "access": access,
+    }
+    args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
+    if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(
+        args, tool_name=tool_name
+    ):
+        return {
+            "kind": "error",
+            "error": f"{tool_name} needs a document or entity filter and none could be built",
+            "outcome": "not_found",
+        }
+    _tool_started = time.perf_counter()
+    try:
+        raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
+    except fetch_mod.ToolNotAllowed as refused:
+        logger.warning("chatbot: refused MCP tool %s", tool_name)
+        return {"kind": "error", "error": str(refused), "outcome": "tool_not_allowed"}
+    except Exception as exc:  # noqa: BLE001 - `onError: continueErrorOutput`, verbatim
+        logger.warning("chatbot: MCP tool %s failed", tool_name, exc_info=True)
+        return {
+            "kind": "error",
+            "error": f"MCP tool {tool_name} failed: {exc}",
+            "outcome": _fetch_failure_outcome(tool_name, exc),
+        }
+
+    envelope = fetch_mod.parse_mcp_content(raw)
+    if trace is not None:
+        trace.add(
+            "tool",
+            {
+                "name": tool_name,
+                "args": args,
+                "envelope": envelope,
+                "ms": int((time.perf_counter() - _tool_started) * 1000),
+            },
+        )
+    if isinstance(envelope, dict) and isinstance(envelope.get("error"), str):
+        return {"kind": "error", "error": envelope["error"], "outcome": None}
+
+    structured = fetch_mod.output_structurer(envelope, trigger)
+    _trace_domain_reveals(trace, envelope, trigger)
+    item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
+    return {
+        "kind": "result",
+        "tool_item": tool_item,
+        "envelope": envelope,
+        "structured": structured,
+        "fetch": item,
+    }
+
+
+def _fetch_one_domain(
+    domain: str,
+    *,
+    bound_entities: list[Any],
+    ctx: dict[str, Any],
+    semantic_input: dict[str, Any],
+    contact_id: Any,
+    order_status_raw: str,
+    services: FetchServices,
+    space_id: str | None,
+    trace: Any,
+) -> dict[str, Any]:
+    """One domain's read in a fan-out: grant gate, pick the tool, then the SHARED read.
+
+    Returns a SECTION - `{domain, denied, error, has_result, tool_name, fetch, envelope}` -
+    which `complete_answer` renders in order. A denied domain (AC-1048) makes NO tool call
+    and records NO `tool` event; it carries the denial for the section renderer instead.
+    Every other section goes through `_execute_domain_read`, the SAME guarded read the
+    single-domain path uses, so the SO-bucket narrowing, the entity-filter refusal and the
+    product-id narrowing all apply in the fan (SB1/SB2/SS3). `semantic_input` is a
+    per-section copy, because that shared read may mutate it (the SO-bucket redirect) and
+    the other sections must not see it.
+    """
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    section: dict[str, Any] = {
+        "domain": domain,
+        "denied": False,
+        "error": False,
+        "has_result": False,
+        "tool_name": None,
+        "fetch": None,
+        "envelope": None,
+        # The REQUESTED codes (what the customer asked THIS domain about), off the bound
+        # entities - not the envelope, which carries none on a miss. The fold and the
+        # all-miss ladder key on these, so a domain that came back empty still knows which
+        # codes it missed (AC-1047).
+        "codes": _entity_codes(bound_entities),
+    }
+
+    need = answer_mod.DOMAIN_GRANT_REQUIRED.get(domain)
+    if need:
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, list) else set()
+        if need not in granted:
+            if trace is not None:
+                trace.add(
+                    "domain_grant",
+                    {"domain": domain, "skipped": "not_granted", "needs": need},
+                )
+            section["denied"] = True
+            section["denied_need"] = need
+            return section
+
+    has_product = (
+        any(isinstance(e, dict) and e.get("entity_type") == "product" for e in bound_entities)
+        if isinstance(bound_entities, list)
+        else None
+    )
+    pick = fetch_mod.tool_filter(fetch_mod.select_tool(domain), has_product=has_product)
+    if not pick.items:
+        section["error"] = True
+        section["outcome"] = "not_found"
+        return section
+    tool_item = pick.items[0]["json"]
+    tool_item.setdefault("_tool_pick", {})["source"] = "domain_spec"
+    tool_name = jsc.js_string(tool_item.get("name") or "")
+    section["tool_name"] = tool_name
+
+    read = _execute_domain_read(
+        tool_item=tool_item,
+        tool_name=tool_name,
+        entities=bound_entities,
+        semantic_input=dict(semantic_input),
+        contact_id=contact_id,
+        access=ctx.get("access"),
+        order_status_raw=order_status_raw,
+        space_id=space_id,
+        services=services,
+        trace=trace,
+    )
+    if read["kind"] == "error":
+        section["error"] = True
+        section["envelope"] = read.get("envelope")
+        section["outcome"] = read.get("outcome")
+        return section
+    section["envelope"] = read["envelope"]
+    section["structured"] = read["structured"]
+    section["fetch"] = read["fetch"]
+    section["has_result"] = _section_has_result(read["structured"])
+    return section
+
+
+def _section_has_result(structured: Any) -> bool:
+    """A section is a HIT iff the SINGLE-domain lane would call it one (AC-1047 parity).
+
+    The single-domain path decides hit vs miss in `answer.dispatch`, which reads
+    `validator(structured).has_result is True AND .is_valid is True`. `validator` leaves
+    `has_result` exactly as `output_structurer` set it and stamps `is_valid = True`
+    unconditionally, so the whole signal reduces to `output_structurer(envelope).has_result
+    is True` - the same value read here off the structured output, never the raw envelope
+    field (which the renderer never consults, so a fanned turn and a one-domain turn agree
+    on hit/miss for the same data).
+    """
+    return isinstance(structured, dict) and structured.get("has_result") is True
+
+
+def _run_fetch_fanout(
+    fan_domains: list[str],
+    payload: dict[str, Any],
+    *,
+    ctx: dict[str, Any],
+    parse_output: dict[str, Any],
+    entities: list[Any],
+    semantic_input: dict[str, Any],
+    contact_id: Any,
+    services: FetchServices,
+    space_id: str | None,
+    trace: Any,
+) -> dict[str, Any]:
+    """The fan-out fetch (AC-1040 to AC-1053): read every asked domain, in order.
+
+    One section per domain, one `tool` event each (none for a denied domain). The primary
+    `fetch` is the first section that actually read, so `complete_answer`'s existing arm
+    still has a `result` to enter on; the whole ordered list rides `delegate_payload` as
+    `fan_sections` for the per-section render and the missed-domain escalate offer.
+    """
+    order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
+    sections: list[dict[str, Any]] = []
+    for domain in fan_domains:
+        sections.append(
+            _fetch_one_domain(
+                domain,
+                bound_entities=_entities_for_domain(domain, parse_output, entities),
+                ctx=ctx,
+                semantic_input=semantic_input,
+                contact_id=contact_id,
+                order_status_raw=order_status_raw,
+                services=services,
+                space_id=space_id,
+                trace=trace,
+            )
+        )
+
+    primary = next(
+        (s for s in sections if isinstance(s.get("fetch"), dict)),
+        None,
+    )
+    primary_fetch = primary["fetch"] if primary is not None else fetch_mod.fetch_result(
+        {"has_result": False, "rows": []}
+    )
+    return {
+        "kind": "result",
+        "_fetch_arm": "result",
+        "delegate": DELEGATE,
+        "delegate_payload": {
+            **payload,
+            "fetch": primary_fetch,
+            "fan_sections": sections,
+            "fan_asked": list(fan_domains),
+        },
+        "fetch": primary_fetch,
+        "sections": sections,
+        "fan_asked": list(fan_domains),
+    }
+
+
 def run_fetch(
     payload: dict[str, Any],
     *,
@@ -744,6 +1132,29 @@ def run_fetch(
             "tier_probe": collected,
             "fetch": item,
         }
+
+    # ── the fan-out, lane 2 (AC-1040 to AC-1053) ─────────────────────────────
+    # A turn that named 2+ domains reads EACH one, in ask order, binding the entities the
+    # message bound to it (or every entity when unbound). Single-domain turns - every
+    # replay capture, every v1/v2 emission - fall straight through to the one-tool body
+    # below unchanged, so the corpus does not move. Gated on `focus.domains` (the alive,
+    # ordered list lane 1 persists); a bare code after a fan-out carries the whole list, so
+    # it re-runs every alive domain (AC-1043).
+    focus_block = (ctx.get("parse") or {}).get("_focus")
+    fan_domains = _fan_domain_list(parse_output, focus_block)
+    if len(fan_domains) >= 2:
+        return _run_fetch_fanout(
+            fan_domains,
+            payload,
+            ctx=ctx,
+            parse_output=parse_output,
+            entities=entities,
+            semantic_input=semantic_input,
+            contact_id=contact_id,
+            services=services,
+            space_id=space_id,
+            trace=trace,
+        )
 
     # ── tool selection ───────────────────────────────────────────────────────
     # ONE candidate, read off `DOMAIN_SPEC` - no embedding call, no database read, so
@@ -955,133 +1366,25 @@ def run_fetch(
             so_refused = order_status_raw != "outstanding"
         semantic_input["outstanding_scope"] = scope
         semantic_input["outstanding_so_refused"] = so_refused
-    elif tool_name in fetch_mod.ORDER_TOOLS and order_status_raw == "so_outstanding":
-        # S2 (security review, 13 Sep 2026), narrowed by R13: the LEGACY bucket now only
-        # catches an `so_outstanding` ask with NO subject at all (no product and no
-        # customer) - every ask with one goes to the report above. The redirect stays for
-        # exactly that remainder, because the bucket serves the same per-SO outstanding
-        # quantities D13 gates: without the grant, redirect to `outstanding` (the DO
-        # bucket) rather than call the SO bucket, and prefix the reply
-        # (`output_structurer`'s generic path reads `so_bucket_refused`).
-        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
-        granted_raw = access_ctx.get("attributes")
-        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
-        if _OUTSTANDING_SO_GRANT not in granted:
-            semantic_input["order_status"] = "outstanding"
-            semantic_input["so_bucket_refused"] = True
-
-    trigger = {
-        "tool": tool_name,
-        "entities": entities,
-        "semantic_input": semantic_input,
-        "contact_id": contact_id,
-        # A2 (chatbot-growth-r1): read by `output_structurer`'s restricted-field
-        # drop, which is the ONLY consumer of `access.attributes`. Slice C wires
-        # `check_access` to fill it from `contact_field_reveals`; until then it is
-        # always None, so every restricted field stays hidden by construction.
-        "access": ctx.get("access"),
-    }
-    args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
-    if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(
-        args, tool_name=tool_name
-    ):
-        # Nothing the customer named resolved, so no filter could be built, and the document
-        # tools answer an unfiltered call with the whole library. Refused as an ABSENCE (the
-        # question was understood and nothing narrows it), which is the miss lane's own
-        # not-found arm - never as a listing of every file the contact may see.
-        return _error_fragment(
-            f"{tool_name} needs a document or entity filter and none could be built",
-            outcome="not_found",
-        )
-    _tool_started = time.perf_counter()
-    try:
-        raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
-    except fetch_mod.ToolNotAllowed as refused:
-        # H58: the top hit was a WRITE tool and nothing was called. Recorded with its own
-        # outcome rather than as a tool failure, because the two need different reading:
-        # a failure means the read did not work and may work next time, this means the
-        # question routed somewhere the read-only chatbot must never go, and the tool's
-        # name on the trace is what tells whoever tunes the pool which one to look at.
-        logger.warning("chatbot: refused MCP tool %s", tool_name)
-        return _error_fragment(str(refused), outcome="tool_not_allowed")
-    except Exception as exc:  # noqa: BLE001 - `onError: continueErrorOutput`, verbatim
-        logger.warning("chatbot: MCP tool %s failed", tool_name, exc_info=True)
-        return _error_fragment(
-            f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
-        )
-
-    envelope = fetch_mod.parse_mcp_content(raw)
-    if trace is not None:
-        # A9: ONE call, ONE tool, ONE envelope this turn - the same "the read" this
-        # whole function is named for. `envelope` rides through `trace.add`'s own
-        # 32 KB cap, so a large result set never grows the trace unbounded.
-        trace.add(
-            "tool",
-            {
-                "name": tool_name,
-                "args": args,
-                "envelope": envelope,
-                "ms": int((time.perf_counter() - _tool_started) * 1000),
-            },
-        )
-    # The ERROR check comes BEFORE the render: an error envelope has no rows, and rendering
-    # it first would build a "No matching results found." message for a turn that failed.
-    if isinstance(envelope, dict) and isinstance(envelope.get("error"), str):
-        return _error_fragment(envelope["error"])
-
-    structured = fetch_mod.output_structurer(envelope, trigger)
-    if trace is not None:
-        restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
-        if isinstance(restricted, dict) and restricted:
-            access = trigger.get("access") if isinstance(trigger.get("access"), dict) else {}
-            granted_raw = access.get("attributes")
-            granted = list(granted_raw) if isinstance(granted_raw, list) else []
-            # A9: which restricted keys this turn's envelope carried, which the
-            # contact's access actually granted, and which were therefore dropped -
-            # the same "attributes is a list, today always None" contract A2 reads.
-            dropped = [k for k in restricted if restricted[k] not in granted]
-            # The GROUP AXIS, when `output_structurer` refused it (blocker 1, AC-907):
-            # a restricted value used as a section heading is a leak no field filter can
-            # reach, so the axis is dropped and the answer rendered flat - and the trace
-            # has to say which axis went, or the operator reads an ungrouped answer to a
-            # grouped question with no reason anywhere.
-            axis_dropped = envelope.get("group_by_dropped") if isinstance(envelope, dict) else None
-            if axis_dropped:
-                dropped.append(f"group_by:{axis_dropped}")
-            trace.add(
-                "reveals",
-                {
-                    "restricted_fields_seen": sorted(restricted.keys()),
-                    "granted": sorted(granted),
-                    "dropped": sorted(dropped),
-                },
-            )
-        # AC-17 (PLAN-spec-visibility-policy.md "Chatbot seam"), beside `reveals`:
-        # which spec keys this contact has hidden, and which of them the
-        # projection ACTUALLY REMOVED from this envelope (code review S2:
-        # `spec_hidden_dropped`, which `_project_product_specs` sets on `e` -
-        # the SAME object as `envelope`, `output_structurer`'s own `group_by_
-        # dropped` reads back the identical way - not vocabulary membership,
-        # which says nothing about whether the product this turn showed even
-        # carried the key). Only for a PRODUCT envelope: every other result
-        # type never runs the projection at all, so the entry would always be
-        # empty noise.
-        is_product_envelope = (
-            isinstance(envelope, dict)
-            and jsc.js_string(envelope.get("result_type") or "") == "products"
-        )
-        if is_product_envelope:
-            access = trigger.get("access") if isinstance(trigger.get("access"), dict) else {}
-            hidden_raw = access.get("hidden_spec_keys")
-            hidden_list = sorted(hidden_raw) if isinstance(hidden_raw, list) else []
-            if hidden_list:
-                dropped_raw = envelope.get("spec_hidden_dropped")
-                dropped_list = sorted(dropped_raw) if isinstance(dropped_raw, list) else []
-                trace.add(
-                    "spec_visibility",
-                    {"hidden": hidden_list, "dropped": dropped_list},
-                )
-    item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
+    # The guarded MCP read (SB1/SB2/SS3), shared with the fan loop. The SO-bucket
+    # narrowing that used to be the `elif` above now lives inside it as a standalone `if`
+    # (`crm_outstanding_report` is not an `ORDER_TOOL`, so the two are equivalent), which
+    # is what lets a fanned order section enforce it too.
+    read = _execute_domain_read(
+        tool_item=tool_item,
+        tool_name=tool_name,
+        entities=entities,
+        semantic_input=semantic_input,
+        contact_id=contact_id,
+        access=ctx.get("access"),
+        order_status_raw=order_status_raw,
+        space_id=space_id,
+        services=services,
+        trace=trace,
+    )
+    if read["kind"] == "error":
+        return _error_fragment(read["error"], outcome=read["outcome"])
+    item = read["fetch"]
     return {
         "kind": "result",
         "_fetch_arm": item["_fetch_arm"],
@@ -1116,6 +1419,422 @@ __all__ = [
     "run_fetch",
     "run_until_exit",
 ]
+
+
+# The plain-language noun each domain's section is headed with (D4). A label the customer
+# reads, never the internal slug; a domain missing here falls back to its slug with the
+# underscores spaced.
+_DOMAIN_LABEL: dict[str, str] = {
+    "inventory": "stock",
+    "incoming": "incoming",
+    "order": "orders",
+    "promotion": "promotions",
+    "purchase_order": "purchase orders",
+    "purchase_cost": "purchase cost",
+    "master_products": "product details",
+    "product_attachment": "product files",
+    "form": "forms",
+    "portal_link": "portal link",
+}
+
+
+def _domain_label(domain: str) -> str:
+    return _DOMAIN_LABEL.get(domain, jsc.js_string(domain).replace("_", " "))
+
+
+def _entity_codes(entities: Any) -> list[str]:
+    """The product codes a list of RESOLVED entities carries, in order, deduped. The
+    subject of a section - what the customer asked it about - independent of whether the
+    read found anything, so a miss still knows its codes (AC-1047)."""
+    codes: list[str] = []
+    for e in entities if isinstance(entities, list) else []:
+        if not isinstance(e, dict):
+            continue
+        code = jsc.js_string(e.get("code") or e.get("canonical_code") or "").strip()
+        if code and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def _section_rows(envelope: Any) -> list[Any]:
+    """The render-envelope's rows. Production and `output_structurer` read `items`; the
+    `answers` fallback keeps a demand-quantity-shaped envelope readable for its codes."""
+    if not isinstance(envelope, dict):
+        return []
+    rows = envelope.get("items")
+    if isinstance(rows, list):
+        return rows
+    rows = envelope.get("answers")
+    return rows if isinstance(rows, list) else []
+
+
+def _section_codes(envelope: Any) -> list[str]:
+    """The product codes a section's envelope named, in order, deduped."""
+    codes: list[str] = []
+    for row in _section_rows(envelope):
+        # A demand-quantity row carries the code as a bare `product`; a render row carries
+        # it in a `product_code` field.
+        if isinstance(row, dict) and jsc.truthy(row.get("product")):
+            value = jsc.js_string(row.get("product")).strip()
+            if value and value not in codes:
+                codes.append(value)
+        for field in (row.get("fields") if isinstance(row, dict) else None) or []:
+            if not isinstance(field, dict):
+                continue
+            key = jsc.js_string(field.get("key") or "").lower()
+            label = jsc.js_string(field.get("label") or "").lower()
+            if key == "product_code" or "product code" in label:
+                value = jsc.js_string(field.get("value") or "").strip()
+                if value and value not in codes:
+                    codes.append(value)
+    return codes
+
+
+def _render_found_section(domain: str, section: dict[str, Any], printed: Any, consume: Any) -> str:
+    """A found section's text: a header plus the SAME rendered body the single-domain lane
+    shows (`output_structurer.response`), deduped by (code, domain) (AC-1047, D12).
+
+    The deduper is shared across every section and rung. A section whose every code was
+    already printed for this domain is omitted; otherwise its codes are registered THROUGH
+    `consume` (so they land on the trace's consumed-pairs event, AC-1047 finding 6) and the
+    structured response - the identical text a one-domain turn would send - is headed and
+    returned.
+    """
+    codes = [jsc.js_string(c) for c in (section.get("codes") or [])] or _section_codes(
+        section.get("envelope")
+    )
+    if codes and all(printed.seen(c, domain) for c in codes):
+        return ""
+    for c in codes:
+        consume(c, domain)
+    fetch = section.get("fetch") if isinstance(section.get("fetch"), dict) else {}
+    body = jsc.js_string(fetch.get("response") or "").strip()
+    header = f"*{_domain_label(domain).title()}:*"
+    return f"{header}\n{body}" if body else header
+
+
+def _fanout_probe_rung(
+    rung: str,
+    *,
+    entities: list[Any],
+    contact_id: Any,
+    access: Any,
+    space_id: str | None,
+    services: Any,
+    trace: Any,
+) -> dict[str, Any] | None:
+    """Climb ONE ladder rung outside the asked set (AC-1047): probe its tool, gated by the
+    rung's own field-reveal grant, and record it as a `tool` event so the drawer shows the
+    climb. Returns `{tool, response, codes}` when the rung found rows, else None (the
+    closing miss line then stands on its own). Reuses the single-domain ladder's rung tool
+    and grant tables (`answer._CROSSDOMAIN_RUNG_TOOL` / `_CROSSDOMAIN_RUNG_GRANT`)."""
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    tool = answer_mod._CROSSDOMAIN_RUNG_TOOL.get(rung)
+    if not tool or not entities:
+        return None
+    need = answer_mod._CROSSDOMAIN_RUNG_GRANT.get(rung)
+    if need:
+        access_ctx = access if isinstance(access, dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if need not in granted:
+            return None
+    trigger = {
+        "tool": tool,
+        "entities": entities,
+        "semantic_input": {
+            "contact_id": jsc.js_string(contact_id) if contact_id is not None else None
+        },
+        "contact_id": contact_id,
+        "access": access,
+    }
+    args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
+    _started = time.perf_counter()
+    try:
+        probe = services.mcp_probe(tool, args)
+    except Exception:  # noqa: BLE001 - a failed rung is a silent no-op, never a dead turn
+        logger.warning("chatbot: fan-out ladder rung %s did not run", tool, exc_info=True)
+        return None
+    envelope = probe if isinstance(probe, dict) else {}
+    if trace is not None:
+        trace.add(
+            "tool",
+            {
+                "name": tool,
+                "args": args,
+                "envelope": envelope,
+                "ms": int((time.perf_counter() - _started) * 1000),
+            },
+        )
+    structured = fetch_mod.output_structurer(envelope, trigger)
+    if not _section_has_result(structured):
+        return None
+    return {"tool": tool, "response": jsc.js_string(structured.get("response") or "").strip(), "codes": _section_codes(envelope)}
+
+
+def _complete_answer_fanout(
+    sections: list[dict[str, Any]],
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    entities: list[Any],
+    contact_id: Any,
+    space_id: str | None,
+    crossdomain_ladder: dict[str, list[str]] | None,
+    services: Any,
+    session_factory: Any,
+    trace: Any,
+) -> dict[str, Any]:
+    """Render one section per asked domain and open at most one escalate offer (AC-1040+).
+
+    Sections render in ask order (D11). ONE general deduper keyed `(code, domain)`
+    (`fanout.Consumed`) is shared by every section AND every ladder rung (D12): a fact a
+    section printed is skipped by a later rung, and a section whose every code was already
+    printed is omitted. A missed code that ANOTHER asked domain FOUND folds the found data
+    into the miss line ("No stock for X, but there is incoming: ...") and the found section
+    is omitted (AC-1047). A code missed in EVERY asked section climbs the ladder PAST the
+    asked set (`fanout.ladder_rungs_outside`) to `purchase_order`, and the combined closing
+    ("No stock and no incoming for X") prints ONCE. A denied domain renders the existing
+    denial line and no rung (AC-1048). The offer opens only over the MISSED asked domains'
+    teams (AC-1051); the buttons ride the send action via `lane_quick_replies` (B1). The
+    consumed `(entity, domain)` pairs are recorded on the trace.
+    """
+    from app.services.chatbot import copy as copy_mod
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.lanes import canned as canned_lanes
+    from app.services.chatbot.lanes.business import fanout
+    from app.services.chatbot.tail.outcome import pretty_team
+
+    printed = fanout.Consumed()
+    consumed_pairs: list[dict[str, str]] = []
+
+    def _consume(code: Any, domain: Any) -> None:
+        if not printed.seen(code, domain):
+            printed.add(code, domain)
+            consumed_pairs.append(
+                {"entity": jsc.js_string(code), "domain": jsc.js_string(domain)}
+            )
+
+    asked = [jsc.js_string(s.get("domain") or "") for s in sections]
+    codes_of: dict[int, list[str]] = {
+        id(s): [jsc.js_string(c) for c in (s.get("codes") or [])] for s in sections
+    }
+    found_sections = {
+        jsc.js_string(s.get("domain") or ""): s
+        for s in sections
+        if s.get("has_result") and not s.get("denied")
+    }
+    found_codes = {c for s in found_sections.values() for c in codes_of[id(s)]}
+
+    # -- fold PRE-PASS: a missed (domain, code) whose code ANOTHER asked domain found folds
+    # that found data into the miss and OMITS the found section. Decided before rendering so
+    # the found section skips the folded code. One found fact folds into at most one miss.
+    fold_for: dict[tuple[str, str], str] = {}
+    folded_found: set[tuple[str, str]] = set()
+    for s in sections:
+        if s.get("denied") or s.get("has_result"):
+            continue
+        md = jsc.js_string(s.get("domain") or "")
+        for code in codes_of[id(s)]:
+            for fd in [d for d in asked if d in found_sections]:
+                if code in codes_of[id(found_sections[fd])] and (fd, code) not in folded_found:
+                    fold_for[(md, code)] = fd
+                    folded_found.add((fd, code))
+                    break
+    # A folded found fact is consumed under its OWN domain now, so its section skips it.
+    for (fd, code) in folded_found:
+        _consume(code, fd)
+
+    blocks: list[str] = []
+    missed_domains: list[str] = []
+    denial_text: str | None = None
+
+    for s in sections:
+        domain = jsc.js_string(s.get("domain") or "")
+        label = _domain_label(domain)
+        if s.get("denied"):
+            if denial_text is None:
+                db_session = session_factory()
+                try:
+                    denial_text = canned_lanes.field_grant_denied_text(
+                        copy_mod.resolve(db_session), label
+                    )
+                finally:
+                    db_session.close()
+            blocks.append(denial_text)
+            continue
+        if s.get("has_result"):
+            block = _render_found_section(domain, s, printed, _consume)
+            if block:
+                blocks.append(block)
+            continue
+        # a MISS section: fold what another domain found; defer the all-miss codes below
+        missed_domains.append(domain)
+        for code in codes_of[id(s)]:
+            fd = fold_for.get((domain, code))
+            if fd is None:
+                continue
+            found_resp = jsc.js_string(
+                (found_sections[fd].get("fetch") or {}).get("response") or ""
+            ).strip()
+            lead = f"No {label} for {code}, but there is {_domain_label(fd)}"
+            blocks.append(f"{lead}: {found_resp}" if found_resp else f"{lead}.")
+            _consume(code, domain)
+
+    # -- the codes missed in EVERY asked section: ONE combined closing, then the ladder PAST
+    # the asked set, once (AC-1047).
+    all_miss_codes: list[str] = []
+    all_miss_domains: list[str] = []
+    for s in sections:
+        if s.get("denied") or s.get("has_result"):
+            continue
+        md = jsc.js_string(s.get("domain") or "")
+        for code in codes_of[id(s)]:
+            if code in found_codes or (md, code) in fold_for:
+                continue
+            if code not in all_miss_codes:
+                all_miss_codes.append(code)
+            if md not in all_miss_domains:
+                all_miss_domains.append(md)
+    if all_miss_codes:
+        joined_codes = ", ".join(all_miss_codes)
+        miss_labels = [_domain_label(d) for d in all_miss_domains]
+        closing = "No " + " and no ".join(miss_labels) + f" for {joined_codes}"
+        miss_entities = [
+            e
+            for e in entities
+            if isinstance(e, dict)
+            and jsc.js_string(e.get("code") or e.get("canonical_code") or "") in all_miss_codes
+        ]
+        for rung in fanout.ladder_rungs_outside(asked, crossdomain_ladder or {}):
+            hit = _fanout_probe_rung(
+                rung,
+                entities=miss_entities,
+                contact_id=contact_id,
+                access=ctx.get("access"),
+                space_id=space_id,
+                services=services,
+                trace=trace,
+            )
+            if hit is not None:
+                closing += f", but there is {_domain_label(rung)}: {hit['response']}"
+                for code in hit["codes"]:
+                    _consume(code, rung)
+                break
+        blocks.append(f"{closing}.")
+        for code in all_miss_codes:
+            for md in all_miss_domains:
+                _consume(code, md)
+
+    teams = fanout.escalation_teams(missed_domains)
+    # B1: the buttons ride the SEND ACTION, so they reach the customer - not just the echo
+    # dict. `lane_quick_replies` is the documented channel `complete_turn` seeds onto the
+    # sealed reply AND the `send_message` action, and it is n8n's comma-joined STRING,
+    # never a list (AC-507: `sub-sendmsg` runs string methods on it).
+    lane_quick_replies: str | None = None
+    if teams:
+        pretties = [pretty_team(t).title() for t in teams]
+        if len(teams) == 1:
+            blocks.append(f"Would you like me to escalate to {pretties[0]} team?")
+            lane_quick_replies = "Yes escalate,No it's okay"
+        else:
+            joined = " or ".join(pretties)
+            blocks.append(f"Would you like me to escalate to {joined} team?")
+            lane_quick_replies = ",".join([*pretties, "No it's okay"])
+
+    if trace is not None and consumed_pairs:
+        trace.add("consumed", {"pairs": consumed_pairs})
+
+    text = "\n\n".join(b for b in blocks if b)
+    central = {"response": text}
+    answer = {
+        **central,
+        "outcome_fragment": {
+            "central-exchange": central,
+            "build-miss-member-offer": None,
+            "dym-annotate-partial": None,
+        },
+    }
+    completed = engine_mod.complete_turn(
+        turn_id,
+        {
+            "item": answer,
+            "ctx": ctx,
+            "answer": answer,
+            "lane_quick_replies": lane_quick_replies,
+        },
+        session_factory=session_factory,
+        compose_send_action=True,
+        lane_trace=trace,
+    )
+
+    if teams:
+        _arm_fanout_offer(
+            teams,
+            ctx=ctx,
+            session_factory=session_factory,
+            expects="yes_no" if len(teams) == 1 else "pick",
+        )
+    return {
+        "reply": completed.reply,
+        "actions": completed.actions,
+        "session_patch": completed.session_patch,
+        "status": completed.status,
+        "stage": completed.stage,
+    }
+
+
+def _arm_fanout_offer(
+    teams: list[str],
+    *,
+    ctx: dict[str, Any],
+    session_factory: Any,
+    expects: str,
+) -> None:
+    """Open the fan-out escalate offer as the session's `team_pick` (AC-1051).
+
+    One team is today's yes/no; two or more is a numbered pick, one option per team in
+    section order, plus the "No it's okay" decline the reply also carries. Merged onto the
+    session the tail just wrote so the turn's focus is preserved - the same read-merge-write
+    the head's own open_question arm makes, done here because the tail has no offer to arm.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+    from app.services.chatbot.tail.outcome import pretty_team
+    from app.services.conversation_variables_service import (
+        get_for_contact,
+        overwrite_for_contact,
+    )
+
+    contact_id = (ctx.get("contact") or {}).get("id")
+    if contact_id is None:
+        return
+    respond_io_id = jsc.js_string(contact_id)
+    turn_no = int(jsc.js_number(jsc.get(ctx.get("parse"), "_turn_no")) or 0)
+    options = [
+        {"idx": i + 1, "team": t, "label": pretty_team(t).title()}
+        for i, t in enumerate(teams)
+    ]
+    question = oq.ask(
+        "team_pick",
+        options=options,
+        turn_no=turn_no,
+        expects=expects,
+        payload={"team": teams[0], "teams": list(teams)},
+    )
+    db = session_factory()
+    try:
+        state = get_for_contact(db, respond_io_id=respond_io_id)
+        variables = dict(state.get("variables") or {})
+        variables["open_question"] = question
+        overwrite_for_contact(
+            db, respond_io_id=respond_io_id, state={**state, "variables": variables}
+        )
+    except Exception:  # noqa: BLE001 - the reply is sent regardless; a failed arm just
+        # means the next "yes" is unresolved, which the clearing rule already handles.
+        logger.warning("chatbot: fan-out offer arm did not write", exc_info=True)
+    finally:
+        db.close()
 
 
 def complete_answer(
@@ -1168,6 +1887,27 @@ def complete_answer(
     from app.services.chatbot.lanes.business import answer as answer_mod
     from app.services.chatbot.lanes.business import miss_suggest as miss_mod
     from app.services.chatbot.lanes.business import sub_answer as sub_answer_mod
+
+    # ── lane 2: the fan-out answer, one section per asked domain (AC-1040 to 1053) ──
+    # A fan-out turn read several domains; render one section each, in ask order, and open
+    # at most one escalate offer over the domains that missed. Gated on `fan_sections`,
+    # which `run_fetch` only produces for a 2+ domain turn, so every single-domain turn
+    # (and every replay capture) takes the untouched arm below.
+    fan_sections = payload.get("fan_sections")
+    if isinstance(fan_sections, list) and len(fan_sections) >= 2:
+        _gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
+        return _complete_answer_fanout(
+            fan_sections,
+            turn_id=turn_id,
+            ctx=ctx,
+            entities=_gate.get("compatible_entities") or [],
+            contact_id=(ctx.get("contact") or {}).get("id"),
+            space_id=space_id,
+            crossdomain_ladder=crossdomain_ladder,
+            services=services,
+            session_factory=session_factory,
+            trace=trace,
+        )
 
     parser = ((ctx.get("parse") or {}).get("output")) or {}
     session_block = ctx.get("session") or {}
