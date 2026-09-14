@@ -72,7 +72,7 @@ from app.services.chatbot.lanes.business.services import (
 )
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import customer as mc_customer
-from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output, seeded  # noqa: F401
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401
 
@@ -118,7 +118,7 @@ def _resolve_services(matches: dict[str, dict[str, Any]]) -> ResolveGateServices
 
     return ResolveGateServices(
         access_types=lambda **_: [{"name": "Sorento Dealer"}],
-        resolve_entity=_resolve_entity,
+        resolve_entity=validating_resolve_entity(_resolve_entity),
         probe=lambda **_: None,
     )
 
@@ -241,7 +241,7 @@ def _session_of(session_factory) -> dict:
     db = session_factory()
     row = db.execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
-        {"cid": CONTACT_ID},
+        {"cid": str(CONTACT_ID)},
     ).first()
     raw = row.session_vars if row is not None else {}
     return json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -273,7 +273,7 @@ def _seed_contact(session_factory, *, variables: dict[str, Any]) -> None:
             "  (SELECT id FROM respond_workspaces WHERE space_id = :sid LIMIT 1)"
             ")"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": variables}), "sid": _SPACE_ID},
+        {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": variables}), "sid": _SPACE_ID},
     )
     # S1 (security review, 13 Sep 2026): bound to Sorento so a REAL company-scoped
     # DB read this contact's turn makes (`crm_outstanding_report`'s warehouse
@@ -289,7 +289,7 @@ def _seed_contact(session_factory, *, variables: dict[str, Any]) -> None:
             "INSERT INTO respond_contact_companies (id, respond_contact_id, company_id) "
             "SELECT gen_random_uuid(), id, :company_id FROM respond_contacts WHERE respond_io_id = :cid"
         ),
-        {"cid": CONTACT_ID, "company_id": DEFAULT_COMPANY_ID},
+        {"cid": str(CONTACT_ID), "company_id": DEFAULT_COMPANY_ID},
     )
     db.commit()
 
@@ -3843,7 +3843,7 @@ def _ambiguous_hanlim_resolve_services(probe: Any) -> ResolveGateServices:
 
     return ResolveGateServices(
         access_types=lambda **_: [{"name": "Sorento Dealer"}],
-        resolve_entity=_resolve_entity,
+        resolve_entity=validating_resolve_entity(_resolve_entity),
         probe=probe,
     )
 

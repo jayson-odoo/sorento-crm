@@ -14,6 +14,10 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
 
 from app.services.chatbot import contracts
 
@@ -121,3 +125,50 @@ def test_contracts_is_the_only_module_declaring_a_literal_of_these_names() -> No
     assert not declared, (
         "a Literal vocabulary is declared outside contracts.py: " + ", ".join(sorted(declared))
     )
+
+
+class TestEnvelopeContactIdWireShape:
+    """The respond.io contact id is a NUMBER in the webhook body, and the Envelope
+    keeps it that way.
+
+    Pinned after #874: the lane fed `ctx.contact.id` into a `contact_id: str`
+    schema field raw and every `business_query` turn in production threw
+    `contact_id  Input should be a valid string ... input_type=int`. The repair
+    stringifies at the two seams that need a string (the resolve body, and the
+    text columns the engine writes), NOT here - stringifying on the way in would
+    hide the wire shape from every test again and re-open exactly this hole.
+    """
+
+    @staticmethod
+    def _payload(contact_id: Any) -> dict[str, Any]:
+        return {
+            "contact": {"id": contact_id, "firstName": "ZZT", "custom_fields": []},
+            "message": {
+                "event_type": "message.received",
+                "contact": {"id": contact_id},
+                "message": {
+                    "messageId": "ZZT-msg-wire-1",
+                    "contactId": contact_id,
+                    "channelId": "whatsapp",
+                    "traffic": "incoming",
+                    "message": {"type": "text", "text": "price for SRTWC8517"},
+                },
+            },
+        }
+
+    def test_an_integer_contact_id_is_accepted_and_stays_an_integer(self) -> None:
+        envelope = contracts.Envelope(**self._payload(437264483))
+
+        assert envelope.contact["id"] == 437264483
+        assert isinstance(envelope.contact["id"], int)
+
+    def test_a_string_contact_id_is_still_accepted_unchanged(self) -> None:
+        envelope = contracts.Envelope(**self._payload("ZZT-contact-1"))
+
+        assert envelope.contact["id"] == "ZZT-contact-1"
+
+    def test_a_missing_or_empty_contact_id_is_still_refused(self) -> None:
+        for missing in (None, ""):
+            with pytest.raises(ValidationError) as excinfo:
+                contracts.Envelope(**self._payload(missing))
+            assert "contact.id is required" in str(excinfo.value)

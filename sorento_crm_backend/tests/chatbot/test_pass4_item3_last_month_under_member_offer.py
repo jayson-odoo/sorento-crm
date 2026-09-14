@@ -48,7 +48,7 @@ def seeded(session_factory):
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+        {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
     )
     db.commit()
     return db
@@ -65,7 +65,7 @@ def _seed_member_offer(session_factory) -> None:
     db.execute(
         text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
         {
-            "cid": CONTACT_ID,
+            "cid": str(CONTACT_ID),
             "sv": json.dumps(
                 {
                     "variables": {

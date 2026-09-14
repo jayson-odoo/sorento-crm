@@ -77,7 +77,7 @@ def _session_vars(session_factory) -> Any:
         session_factory()
         .execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         )
         .scalar()
     )

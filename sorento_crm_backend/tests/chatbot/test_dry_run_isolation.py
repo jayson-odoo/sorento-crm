@@ -147,7 +147,7 @@ class TestIntegrationLogWritesRegardlessOfDryRun:
     ):
         before = session_factory().execute(
             text("SELECT COUNT(*) FROM integration_log WHERE external_reference = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
 
         envelope = _envelope()
@@ -165,7 +165,7 @@ class TestIntegrationLogWritesRegardlessOfDryRun:
 
         after = session_factory().execute(
             text("SELECT COUNT(*) FROM integration_log WHERE external_reference = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         assert after == before, (
             "a dry-run /chat/turn call must not write an integration_log row carrying "
@@ -184,7 +184,7 @@ class TestIntegrationLogWritesRegardlessOfDryRun:
 
         turn = ChatbotTurn(
             id=str(uuid.uuid4()),
-            contact_respond_id=CONTACT_ID,
+            contact_respond_id=str(CONTACT_ID),
             message_id="ZZT-msg-dry-complete-no-log",
             ingress="webhook",
             envelope={
@@ -372,7 +372,7 @@ class TestD15DedupRespectsIsTest:
     def _seed_test_row(self, session_factory) -> ChatbotTurn:
         row = ChatbotTurn(
             id=str(uuid.uuid4()),
-            contact_respond_id=CONTACT_ID,
+            contact_respond_id=str(CONTACT_ID),
             message_id=self.MESSAGE_ID,
             ingress="console",
             envelope={"message": {"messageId": self.MESSAGE_ID}, "contact": {"id": CONTACT_ID}},
@@ -432,7 +432,7 @@ class TestD15DedupRespectsIsTest:
             session_factory()
             .query(ChatbotTurn)
             .filter(
-                ChatbotTurn.contact_respond_id == CONTACT_ID,
+                ChatbotTurn.contact_respond_id == str(CONTACT_ID),
                 ChatbotTurn.message_id == self.MESSAGE_ID,
             )
             .all()
@@ -466,7 +466,7 @@ class TestD15DedupRespectsIsTest:
         rows = (
             session_factory()
             .query(ChatbotTurn)
-            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
             .all()
         )
         assert len(rows) == 1
@@ -689,14 +689,14 @@ class TestLiveTailSessionPatchAbsentIsPreserved:
                 "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
                 "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
             ),
-            {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": variables})},
+            {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": variables})},
         )
         db_session.commit()
 
     def _session_vars(self, session_factory) -> Any:
         return session_factory().execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
 
     @staticmethod

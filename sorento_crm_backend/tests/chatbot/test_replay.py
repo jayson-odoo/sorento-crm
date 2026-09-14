@@ -23,6 +23,7 @@ from __future__ import annotations
 import pytest
 
 from tests.chatbot import _corpus, divergences
+from tests.chatbot.conftest import validating_resolve_entity
 
 # --------------------------------------------------------------------------- #
 # One runner per ported node. The runner reproduces the node's n8n execution
@@ -294,7 +295,9 @@ def _run_whole_sub(fixture: _corpus.Fixture) -> list:
 
     services = ResolveGateServices(
         access_types=lambda **_: [{"name": n} for n in (aggregate.get("name") or [])],
-        resolve_entity=lambda _body: _corpus.json_round_trip(resolved),
+        resolve_entity=validating_resolve_entity(
+            lambda _body: _corpus.json_round_trip(resolved)
+        ),
         probe=lambda **kwargs: _corpus.json_round_trip(
             incoming if kwargs["tool"] == resolve_gate.INCOMING_PROBE_TOOL else customer
         ),

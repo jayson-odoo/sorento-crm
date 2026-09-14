@@ -21,7 +21,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import Envelope, TurnRequest
 from app.services.chatbot.head import parser as parser_mod
-from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures are used by name
     CONTACT_ID,
     _envelope,
@@ -40,7 +40,7 @@ def _only_row(session_factory) -> ChatbotTurn:
     rows = (
         session_factory()
         .query(ChatbotTurn)
-        .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+        .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
         .all()
     )
     assert len(rows) == 1, f"expected exactly one turn row, found {len(rows)}"
@@ -307,7 +307,7 @@ class TestDuplicateWhileTheFirstTurnIsStillRunning:
 
         db = session_factory()
         row = ChatbotTurn(
-            contact_respond_id=CONTACT_ID,
+            contact_respond_id=str(CONTACT_ID),
             message_id="ZZT-msg-1",
             ingress="webhook",
             envelope={},
@@ -387,11 +387,13 @@ class TestTheBusinessLaneWithTheSwitchOn:
             "production_services",
             lambda db, *, space_id=None: ResolveGateServices(
                 access_types=lambda **_: [],
-                resolve_entity=lambda body: {
-                    "tokens": [],
-                    "resolutions": [],
-                    "unresolved_tokens": [],
-                },
+                resolve_entity=validating_resolve_entity(
+                    lambda body: {
+                        "tokens": [],
+                        "resolutions": [],
+                        "unresolved_tokens": [],
+                    }
+                ),
                 probe=lambda **_: None,
             ),
         )

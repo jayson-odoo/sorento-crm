@@ -11,6 +11,7 @@ from typing import Any
 
 from app.services.chatbot.lanes.business import fetch
 from app.services.chatbot.lanes.business.gate import run_gate
+from tests.chatbot.conftest import validating_resolve_entity
 
 PRODUCT_UUID = "11111111-1111-1111-1111-111111111111"
 WAREHOUSE_UUID = "22222222-2222-2222-2222-222222222222"
@@ -247,7 +248,7 @@ def _services(db: Any, calls: list[dict[str, Any]]):
 
     return ResolveGateServices(
         access_types=lambda **_: [],
-        resolve_entity=resolve_entity,
+        resolve_entity=validating_resolve_entity(resolve_entity),
         probe=lambda **_: None,
     )
 
