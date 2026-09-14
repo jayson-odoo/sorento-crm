@@ -51,8 +51,9 @@ Nothing is asked of them that they did not already know. They pick the cabinet c
    * **Split into 4 tags** - the tag stays where it is, keeps its design, and takes the first candidate; the remaining candidates each get their own tag after it, with the design copied. Use this when the customer should see every colour. Toast: *"Split into one tag per basin."*
    * **Pick one** - a select beside it that resolves the group on this tag alone, leaving the line with a single tag.
 6. Design and arrange as usual. A tag's quantity follows the line the salesperson asked for; once a line is split, each tag keeps its own number, because those are your decisions rather than a copy of theirs. The sheet lays out one tile per tag, times that tag's quantity.
+7. To drop a tag you no longer want to print, use the bin on its row in the rail: it counts down for a few seconds with a **Cancel**, and removes the tag and its tile when the countdown runs out.
 
-A line always keeps at least one tag, so the last tag on a line cannot be taken away. A price override set on a tag shows on the rail as */ Override RM 1,280.00* and on the **Lines** tab as *Override: RM 1,280.00*; it replaces the **selling** price only, so the tag still prints what the package lists at.
+A line always keeps at least one tag, so the last tag on a line cannot be taken away - its bin is greyed out and says so. A price override set on a tag shows on the rail as */ Override RM 1,280.00* and on the **Lines** tab as *Override: RM 1,280.00*; it replaces the **selling** price only, so the tag still prints what the package lists at.
 
 ## What prints on the tag
 

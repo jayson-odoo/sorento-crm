@@ -49,6 +49,7 @@ import {
   Minimize2,
   Save,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
@@ -93,6 +94,7 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeControl';
 import { useAutosave } from '@/hooks/useAutosave';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { TemplatePickDialog } from './TemplatePickDialog';
@@ -861,9 +863,23 @@ export function RequestTagDesigner({
    * split tag keeps its id, and its new siblings clone from their template the
    * first time each is opened, exactly as any other untouched tag does.
    */
+  /**
+   * The request's tag set changed under us, so re-read it AND the per-tag
+   * resolver rows.
+   *
+   * Both, not just the request (tester defect D1): the rail's price, label and
+   * open-group pill all come from `resolvedRows`, so a split left 1a showing
+   * the figure it had while the basin was still open and 1b showing none at
+   * all until the page was reloaded. The two reads go together because they are
+   * one answer - what the tags are, and what each of them prints.
+   */
   const reloadRequest = useCallback(async () => {
-    const fresh = await getPriceTagRequest(request.id);
+    const [fresh, rows] = await Promise.all([
+      getPriceTagRequest(request.id),
+      resolveRequestTags(request.id).catch(() => null),
+    ]);
     if (fresh) setRequest(fresh);
+    if (rows) setResolvedRows(rows);
   }, [request.id]);
 
   const handleSplitTag = useCallback(
@@ -884,6 +900,33 @@ export function RequestTagDesigner({
       }
     },
     [request.id, flush, reloadRequest],
+  );
+
+  /**
+   * Removing a tag asks nothing (D7, AC-S3-6): the row parks the removal on the
+   * server for its grace window and a toast carries the countdown, the same way
+   * every other destructive action on this codebase does. The line's LAST tag is
+   * refused twice over - the button is disabled and says why, and the service
+   * answers `LAST_TAG` at commit time - so a stale screen cannot get past it.
+   */
+  const tagDeletion = useDeferredRowAction({
+    actionKey: 'price_tag_request_tag.delete',
+    entityType: 'price_tag_request_tag',
+    verb: 'Removing',
+    successMessage: 'Tag removed',
+    onCommitted: () => {
+      void reloadRequest();
+    },
+  });
+
+  const handleRemoveTag = useCallback(
+    (tag: PriceTagRequestTag) => {
+      // The placement goes with the tag, so whatever the canvas is holding has
+      // to be on the server before it rewrites the draft document underneath.
+      void flush();
+      tagDeletion.run({ id: tag.id, subject: `Tag ${tag.label}` });
+    },
+    [flush, tagDeletion],
   );
 
   const handlePickOne = useCallback(
@@ -1091,7 +1134,9 @@ export function RequestTagDesigner({
         onApplyToAll={handleApplyDesignToAll}
         onSplit={handleSplitTag}
         onPickOne={handlePickOne}
+        onRemoveTag={handleRemoveTag}
         busyTagId={tagActionId}
+        removingTagId={tagDeletion.isPending ? tagDeletion.targetId : null}
       />
       {selectedTag ? (
         <TagSizeControl
@@ -1360,7 +1405,9 @@ function LinesRail({
   onApplyToAll,
   onSplit,
   onPickOne,
+  onRemoveTag,
   busyTagId,
+  removingTagId,
 }: {
   lines: PriceTagRequestLine[];
   /** Resolved rows keyed by TAG id (D3). */
@@ -1375,7 +1422,9 @@ function LinesRail({
   onApplyToAll: () => void;
   onSplit: (tagId: string, role: string) => void;
   onPickOne: (tagId: string, role: string, productId: string) => void;
+  onRemoveTag: (tag: PriceTagRequestTag) => void;
   busyTagId: string | null;
+  removingTagId: string | null;
 }) {
   return (
     <div className="flex max-h-[45%] shrink-0 flex-col border-b border-r">
@@ -1482,10 +1531,13 @@ function LinesRail({
                         designed={Boolean(tags[tag.id])}
                         selected={selectedRequestTagId === tag.id}
                         busy={busyTagId === tag.id}
+                        canRemove={lineTags.length > 1}
+                        removing={removingTagId === tag.id}
                         onSelect={onSelect}
                         onUseTemplate={onUseTemplate}
                         onSplit={onSplit}
                         onPickOne={onPickOne}
+                        onRemove={onRemoveTag}
                       />
                     ))}
                   </div>
@@ -1514,20 +1566,28 @@ function TagRailRow({
   designed,
   selected,
   busy,
+  canRemove,
+  removing,
   onSelect,
   onUseTemplate,
   onSplit,
   onPickOne,
+  onRemove,
 }: {
   tag: PriceTagRequestTag;
   data: LineTagData | undefined;
   designed: boolean;
   selected: boolean;
   busy: boolean;
+  /** False on a line's ONLY tag: a line with no tags can never be printed and
+   *  never designed, so the server refuses that one (AC-S3-6). */
+  canRemove: boolean;
+  removing: boolean;
   onSelect: (tagId: string) => void;
   onUseTemplate: (tagId: string) => void;
   onSplit: (tagId: string, role: string) => void;
   onPickOne: (tagId: string, role: string, productId: string) => void;
+  onRemove: (tag: PriceTagRequestTag) => void;
 }) {
   const openGroup = tag.open_groups[0] ?? null;
   const chosen = tag.choices_display.map((choice) => choice.code).join(', ');
@@ -1603,15 +1663,30 @@ function TagRailRow({
           </div>
         </div>
       )}
-      <button
-        type="button"
-        className="absolute right-1 top-1 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-        title="Use template..."
-        aria-label={`Use template for tag ${tag.label}`}
-        onClick={() => onUseTemplate(tag.id)}
-      >
-        <LayoutTemplate className="size-3.5" />
-      </button>
+      <div className="absolute right-1 top-1 flex items-center">
+        <button
+          type="button"
+          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          title="Use template..."
+          aria-label={`Use template for tag ${tag.label}`}
+          onClick={() => onUseTemplate(tag.id)}
+        >
+          <LayoutTemplate className="size-3.5" />
+        </button>
+        {/* Disabled with a REASON: a disabled button with no explanation reads
+            as broken. The server answers this case with a named 422, and the UI
+            says the same thing before the click rather than after it. */}
+        <button
+          type="button"
+          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+          title={canRemove ? 'Remove tag' : "This is the line's only tag"}
+          aria-label={`Remove tag ${tag.label}`}
+          disabled={!canRemove || removing}
+          onClick={() => onRemove(tag)}
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      </div>
     </div>
   );
 }

@@ -253,7 +253,9 @@ class PriceTagRequestService:
                     product_set_id=line_data.get("product_set_id"),
                     show_promo_price=show_promo_price,
                     quantity=line_data.get("quantity", 1),
-                    combo_id=PriceTagRequestService._resolve_combo_id(db, line_data, idx),
+                    combo_id=PriceTagRequestService._resolve_combo_id(
+                        db, line_data, request.company_id
+                    ),
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
@@ -262,7 +264,11 @@ class PriceTagRequestService:
             db.add(line)
             db.flush()
             PriceTagRequestService._add_line_parts(
-                db, line, line_data.get("parts") or [], index=idx
+                db,
+                line,
+                line_data.get("parts") or [],
+                index=idx,
+                company_id=request.company_id,
             )
             PriceTagRequestService._add_line_tags(db, line, carry_tags.get(key))
 
@@ -306,7 +312,14 @@ class PriceTagRequestService:
             )
 
     @staticmethod
-    def _add_line_parts(db: Session, line, parts: list[dict], *, index: int = 0) -> None:
+    def _add_line_parts(
+        db: Session,
+        line,
+        parts: list[dict],
+        *,
+        index: int = 0,
+        company_id: str | None = None,
+    ) -> None:
         """The package under a line, written in the order the form sent it (AC-S2-8).
 
         Order is display order on the request, in the tag's parts text (D4) and in
@@ -357,12 +370,13 @@ class PriceTagRequestService:
             wanted.update(candidates)
 
         if wanted:
-            # Company-scoped through the ordinary ORM filter: another company's
-            # product reads exactly like one that does not exist.
-            found = {
-                pid
-                for (pid,) in db.query(Product.id).filter(Product.id.in_(wanted)).all()
-            }
+            # Scoped to the REQUEST's own company, not to whatever scope happens
+            # to be ambient: `submit_request` is TOLD which company it is
+            # creating for, and a portal contact resolving to another company
+            # would otherwise have every one of its own products refused here.
+            # Another company's product still reads exactly like one that does
+            # not exist, which is the answer that matters.
+            found = PriceTagRequestService._visible_product_ids(db, wanted, company_id)
             missing = wanted - found
             if missing:
                 raise AppException(
@@ -382,6 +396,22 @@ class PriceTagRequestService:
                     sort_order=position,
                 )
             )
+
+    @staticmethod
+    def _visible_product_ids(db: Session, wanted: set[str], company_id: str | None) -> set[str]:
+        """Which of `wanted` this REQUEST's company can see."""
+        from app.models.product import Product
+
+        def _query() -> set[str]:
+            return {
+                pid
+                for (pid,) in db.query(Product.id).filter(Product.id.in_(wanted)).all()
+            }
+
+        if not company_id:
+            return _query()
+        with company_scope(db, frozenset({company_id})):
+            return _query()
 
     @staticmethod
     def _part_uuid(value, index: int) -> str | None:
@@ -404,7 +434,7 @@ class PriceTagRequestService:
             ) from None
 
     @staticmethod
-    def _resolve_combo_id(db: Session, line_data: dict, index: int) -> str | None:
+    def _resolve_combo_id(db: Session, line_data: dict, company_id: str | None) -> str | None:
         """The package this line is asked for as, or None.
 
         Validated rather than trusted, same reason as the part ids: `combo_id`
@@ -417,6 +447,7 @@ class PriceTagRequestService:
         the S2 guard then says "No package chosen" on the row, which is the
         warn-and-allow rule the whole slice is built on (AC-S2-5).
         """
+        from app.models.product import Product
         from app.models.product_combo import ProductCombo
 
         raw = line_data.get("combo_id")
@@ -429,14 +460,25 @@ class PriceTagRequestService:
         product_id = line_data.get("product_id")
         if not product_id:
             return None
-        combo = (
-            db.query(ProductCombo)
-            .filter(
-                ProductCombo.id == combo_id,
-                ProductCombo.host_product_id == product_id,
+        # Joined to `Product` so the company predicate has something to attach
+        # to - `ProductCombo` is scoped only THROUGH its host - and scoped to the
+        # request's own company for the same reason the part ids are.
+        def _lookup():
+            return (
+                db.query(ProductCombo)
+                .join(Product, Product.id == ProductCombo.host_product_id)
+                .filter(
+                    ProductCombo.id == combo_id,
+                    ProductCombo.host_product_id == product_id,
+                )
+                .first()
             )
-            .first()
-        )
+
+        if company_id:
+            with company_scope(db, frozenset({company_id})):
+                combo = _lookup()
+        else:
+            combo = _lookup()
         return combo.id if combo is not None else None
 
     @staticmethod
