@@ -2013,8 +2013,19 @@ def _outstanding_envelope(report: dict) -> dict:
 #: The three lines the low stock report can answer with (AC-61). Written here, once, and
 #: handed to the lane verbatim: one writer, one wording.
 _LOW_STOCK_PENDING = "Preparing the low stock report - it will be sent here when ready."
-_LOW_STOCK_BUSY = "A plan is already running - try again in a minute."
+#: Both busy lines NAME the report (console round 3, defect C): "a plan is already running"
+#: alone left the reader - and the console assertion - guessing which plan, and the two
+#: busies have different fixes (wait a minute vs wait ten).
+_LOW_STOCK_BUSY_IN_FLIGHT = (
+    "A low stock report plan is already running - try again in a minute."
+)
+_LOW_STOCK_BUSY_RATE_LIMITED = (
+    "Too many low stock reports in the last 10 minutes - try again shortly."
+)
 _LOW_STOCK_ERROR = "Could not run the low stock report right now."
+#: defect D: a scope the plan admitted nothing for. Saying "Low: 0 of 0 planned products"
+#: beside an empty workbook reads as a broken report; this says what actually happened.
+_LOW_STOCK_EMPTY = "Nothing was planned for that scope - no low stock report to send."
 
 
 def _low_stock_as_of(iso: Any) -> str:
@@ -2040,7 +2051,10 @@ def _low_stock_envelope(payload: dict) -> dict:
                   race), so the count line is never rendered as "Low: None of None".
     * `pending` - the plan outran the turn; the worker pushes the file when it is ready
                   (AC-44), so the bot says so and stops.
-    * `busy`    - a plan is already running for the company (AC-49).
+    * `busy`    - one line, chosen by `reason`: a plan already running for the company
+                  (AC-49) or this contact over the rate limit. Both NAME the report.
+    * `ready` with `all_count == 0` (or no `as_of`) - the plan admitted nothing for that
+      scope: one line, no attachment, rather than "Low: 0 of 0" beside an empty workbook.
     * anything else (an `error` status, an error body carrying `message`/`code`, or a
       non-dict) - the report could not be produced (no company, an excluded product, a
       broker down, a run the worker marked failed). The bot says so and STOPS: the fixed
@@ -2058,6 +2072,16 @@ def _low_stock_envelope(payload: dict) -> dict:
     if status == "ready":
         low = payload.get("low_count")
         total = payload.get("all_count")
+        # defect D: the plan admitted NOTHING for this scope. The workbook is empty and
+        # `as_of` is null, so there is no report to send - say that in one line and send no
+        # attachment, rather than "Low: 0 of 0 planned products" beside an empty file.
+        if total == 0 or payload.get("as_of") in (None, ""):
+            return {
+                "result_type": "low_stock_report",
+                "response": _LOW_STOCK_EMPTY,
+                "attachments": [],
+                "has_result": True,
+            }
         # A ready row that somehow reached here without its counts (reviewer S3 guards this
         # server-side, but the presenter must not print "Low: None of None"): send the file,
         # drop the count line, and let the lane treat the shorter reply as a real answer.
@@ -2079,7 +2103,15 @@ def _low_stock_envelope(payload: dict) -> dict:
             "has_result": True,
         }
     if status == "busy":
-        return {"result_type": "low_stock_report", "response": _LOW_STOCK_BUSY,
+        # defect C: WHICH busy. `in_flight` clears in about a minute; `rate_limited` needs
+        # the window to roll. An unknown/absent reason keeps the in-flight wording, which
+        # is the one a caller hits without doing anything wrong.
+        reason = payload.get("reason") if isinstance(payload, dict) else None
+        busy_line = (
+            _LOW_STOCK_BUSY_RATE_LIMITED if reason == "rate_limited"
+            else _LOW_STOCK_BUSY_IN_FLIGHT
+        )
+        return {"result_type": "low_stock_report", "response": busy_line,
                 "attachments": [], "has_result": True}
     if status == "pending":
         return {"result_type": "low_stock_report", "response": _LOW_STOCK_PENDING,

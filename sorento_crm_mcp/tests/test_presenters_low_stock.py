@@ -98,12 +98,15 @@ def test_pending_envelope_one_line():
 
 def test_busy_envelope_one_line():
     """AC-61 / AC-49: a plan is already running for the company, so a second one cannot
-    start. The bot says when to come back rather than surfacing a 409."""
+    start. The bot says when to come back rather than surfacing a 409.
+
+    The line NAMES the report (console round 3, defect C): a bare "a plan is already
+    running" left the reader guessing which plan, and the console assertion with it."""
     env = _envelope(BUSY)
     assert env["result_type"] == "low_stock_report", env
     assert env["has_result"] is True, env
     assert env["response"] == (
-        "A plan is already running - try again in a minute."
+        "A low stock report plan is already running - try again in a minute."
     ), repr(env["response"])
 
 
@@ -161,3 +164,56 @@ def test_ready_without_counts_drops_the_count_line():
     assert env["has_result"] is True, env
     assert env["response"] == "Low stock report - as of 10/09/2026", repr(env["response"])
     assert env["attachments"] == [ATTACHMENT], env["attachments"]
+
+
+# --------------------------------------------------------------------------- #
+# Console round 3, defects C and D. CODER-AUTHORED.
+#
+# C: the two busies have different fixes (wait a minute vs wait for the window to roll),
+#    so they get different lines, and both name the report.
+# D: a scope the plan admitted nothing for rendered "Low: 0 of 0 planned products" next to
+#    an empty workbook, which reads as a broken report.
+# --------------------------------------------------------------------------- #
+
+
+def test_busy_rate_limited_says_so_and_names_the_window():
+    env = _envelope({"status": "busy", "reason": "rate_limited"})
+    assert env["has_result"] is True, env
+    assert env["response"] == (
+        "Too many low stock reports in the last 10 minutes - try again shortly."
+    ), repr(env["response"])
+    assert env.get("attachments") in ([], None), env.get("attachments")
+
+
+def test_busy_in_flight_reason_matches_the_default_wording():
+    """An explicit `in_flight` and an absent reason render the same line - an unknown
+    reason must not fall through to the rate-limit wording, which tells the caller to wait
+    ten minutes for something that clears in one."""
+    explicit = _envelope({"status": "busy", "reason": "in_flight"})
+    implicit = _envelope({"status": "busy"})
+    unknown = _envelope({"status": "busy", "reason": "something_new"})
+    for env in (explicit, implicit, unknown):
+        assert env["response"] == (
+            "A low stock report plan is already running - try again in a minute."
+        ), repr(env["response"])
+
+
+def test_empty_scope_sends_one_line_and_no_attachment():
+    """defect D: `all_count == 0` means the plan admitted nothing for that scope. One line,
+    no file - never "Low: 0 of 0 planned products" beside an empty workbook."""
+    env = _envelope({**READY, "low_count": 0, "all_count": 0, "as_of": "2026-09-14"})
+    assert env["has_result"] is True, env
+    assert env["response"] == (
+        "Nothing was planned for that scope - no low stock report to send."
+    ), repr(env["response"])
+    assert env["attachments"] == [], env["attachments"]
+
+
+def test_null_as_of_is_treated_as_an_empty_scope():
+    """A run that froze no rows has no as-of at all; rendering "as of -" beside a count
+    was the other half of the same defect."""
+    env = _envelope({**READY, "as_of": None, "low_count": 0, "all_count": 0})
+    assert env["response"] == (
+        "Nothing was planned for that scope - no low stock report to send."
+    ), repr(env["response"])
+    assert env["attachments"] == [], env["attachments"]
