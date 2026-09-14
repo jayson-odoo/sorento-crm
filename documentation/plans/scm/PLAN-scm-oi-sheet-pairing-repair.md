@@ -396,11 +396,29 @@ ordered, 352 delivered, 12 outstanding; the row shows Buy 240. Measured: capping
 line's outstanding moves the copy's Buy total only from 154,618 to 153,124 (138 rows sit on
 partly delivered lines), so this is a correctness fix, not the big number.
 
-**Change (worklist service):** `_UNLINKED_QTY` becomes
-`greatest(least(row qty, core line outstanding) - linked - bundled, 0)` where the core line
-outstanding is `scm/demand.py`'s own outstanding expression over the joined core line
-(`qty_ordered - qty_delivered`, floored at zero); a row whose mirror has no core line keeps
-today's reading. Cards, `kind=buy` filter and the matrix all read the one expression.
+**Change:** the row's quantity is capped at what its line still owes, and the cap reaches
+EVERY reader of that figure (reviewer S1, 15 Sep: capping the card alone leaves purchasing
+reading Remaining 302 beside Buy 0 while the engine buys the 302).
+
+Outstanding is `demand_qty()`'s own reading: `qty_required` when CS stated one, else
+`qty_ordered`, minus delivered, floored at zero. A row whose mirror names no core sales
+order line keeps today's reading - and the guard for that is a `CASE`, not a `COALESCE`,
+because Postgres `GREATEST()` ignores NULLs and the outstanding of a missing line therefore
+reads 0 rather than NULL.
+
+One expression per language, reused:
+
+* ORM, `order_inquiry_worklist_service._CAPPED_QTY`: the Buy card (`_kinds`), the
+  `kind=buy` filter and the Remaining column (`_quantity_flow_by_so_line`, which joins the
+  mirror and the core line for itself);
+* SQL, `demand._OWED_SQL` / `_OWED_FORM_SQL`: `scm.committed_v` (migration 511), the plan's
+  own `horizon_committed_select_sql`, and `horizon_project_need_dates_sql` - in the quantity
+  columns and in the "is this row still owed" predicates alike.
+
+The FORM legs reach the core line through their own outer join (`_FORM_CORE_LINE_JOIN_SQL`),
+because that is the leg a MIGRATED row travels on: the sheet raises rows with no supply
+decision. There is no matrix endpoint to change - the schedule matrix is a frontend
+component over these same endpoints.
 
 ### 7.4 The row's delivery date is the sales order line's
 
@@ -412,3 +430,17 @@ required date 01/01/2030, the sheet row said 05/01/2026 and the inquiry shows th
 restatement key and the "required date equals the sheet date" rank term, so matching is
 unchanged. Rows already on prod are corrected by the rollback + re-upload the owner does
 after this lane deploys.
+
+**What follows from it, stated rather than hidden** (reviewer S2, 15 Sep). Every planning
+and auto-place horizon reads the ROW's `delivery_date` (`delivery_date <= :horizon`), so:
+
+* a row on a line dated 01/01/2030 now sits OUTSIDE a horizon that ends this December,
+  where the sheet's own 05/01/2026 put it inside. That is the owner's ruling working as
+  asked - the book does not promise that delivery until 2030 - but it moves demand out of
+  the near plan, and a buyer who was seeing it will stop;
+* a migrated ORDER BACK row used to carry no date at all, and "no date" is always IN a
+  horizon; it now takes its line's date and can fall outside one.
+
+Both are consequences of following the sales order line, which is what was asked for. If
+the owner wants the near plan to keep them, the horizon rule is what to revisit, not the
+row's date.
