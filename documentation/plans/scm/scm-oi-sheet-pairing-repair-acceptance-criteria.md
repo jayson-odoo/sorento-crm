@@ -148,3 +148,46 @@ that file stays green unchanged.
   `order_link_service._purchase_side` answers with the OLDEST of them for both `by_key` and
   `by_number`, whatever order the database returns the rows in - an unordered read made the
   same file pair differently on its preview and on its apply.
+
+## Follow-up, 14 Sep evening: bought line first (plan section 7)
+
+* AC-R-32 Given a sales order with two open lines of the same item both fitting the row's
+  qty, line 1 with the earlier required date, a PO line naming line 2, and a sheet row with
+  NO remark, when applied, then the row is raised against line 2 and linked to that PO line.
+* AC-R-33 Given the same but line 2 is `closed` and line 1 is `open`, when applied, then
+  the row still lands on line 2 (bought beats open); and given line 2 is `cancelled`, the
+  row lands on line 1 (cancelled-last still comes before bought).
+* AC-R-34 [BE] Given a PO line of 62 naming the row's line and an SPO allocation of 62 with
+  `from_po_line_ref` = that PO line's `source_ref`, and a row of 364, when applied, then the
+  row gets ONE link, to the SPO allocation for 62, and no link to the PO line; given the
+  allocation is 40, the PO line is linked for 22 and no more.
+* AC-R-35 [FE] Given a row whose only link is an SPO allocation with `source_po_number`
+  `202510-S0078`, when the worklist renders, then the PO cell shows `202510-S0078` and the
+  SPO cell the SPO number; a row with a `po` link to `A` and an `spo` link from `A` shows
+  `A` once in the PO cell (no pill).
+* AC-R-36 [BE] Given a row of 364 on a core line with 364 ordered and 352 delivered and
+  links of 62, when the worklist summary and the `kind=buy` filter run, then Buy for that
+  row is 0 (`min(364, 12) - 62` floored) and the row is not in the `buy` set; given 300
+  delivered, Buy is 2.
+* AC-R-37 [BE] Given a sheet row dated 2026-01-05 matching a line whose required date is
+  2030-01-01, when applied, then the raised row's `delivery_date` is 2030-01-01; given the
+  line has no required date, the row carries the sheet's date.
+
+## Reviewer round on #904, 15 Sep
+
+* AC-R-34, second case [BE] Given ONE purchase order carrying line A (100, shipped in full
+  on an allocation somebody else already holds) and line B (50, the line that names this
+  row's sales order line), when applied, then the row is linked to B for 50: the deduction
+  a line takes for its own shipments is per LINE, and a sibling's containers are not
+  evidence that this line's units have sailed.
+* AC-R-37, third case [BE] Given an ORDER BACK sheet row on a line whose required date is
+  2030-01-01, when applied, then the raised row's `delivery_date` is 2030-01-01 too - the
+  words in the date cell are still never a date, and `verb` is what says the quantity is
+  owed against something already ordered.
+* AC-R-38 [BE] The Buy cap (7.3) is the FIGURE, not one card's arithmetic. Given a row of
+  364 on a core line ordered 364 / delivered 352 with links of 62, then the worklist's
+  Remaining column (`_quantity_flow_by_so_line`), `scm.committed_v`'s project leg and
+  `demand.horizon_committed_select_sql` - what a reorder run buys from - each read 0; given
+  300 delivered, each reads 2. A row that says "nothing left to buy" on the card and 302 to
+  the engine is worse than one that says 302 in both, because only one of the two is on a
+  screen anybody checks.

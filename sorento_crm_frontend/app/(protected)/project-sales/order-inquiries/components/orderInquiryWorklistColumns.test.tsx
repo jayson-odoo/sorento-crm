@@ -939,6 +939,75 @@ describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('AC-R-35: the PO cell names the purchase order behind a shipment, and names it once', () => {
+    // Plan 7.2, owner 14 Sep evening: "we definitely cannot double count, but by this
+    // linking it helps us to know the PO and SPO corresponding to this order inquiry".
+    // The importer stops linking a purchase order line for units already on its own ship,
+    // so a row whose whole quantity has sailed holds no `po` link at all - and the PO
+    // column would go blank on exactly the rows purchasing most wants to trace. It reads
+    // the `source_po_number` the SPO link already carries instead.
+    const shipped = worklistRow({
+      id: 'row-shipped',
+      qty: '62',
+      linked_qty: '62',
+      links: [
+        {
+          id: 'l1',
+          kind: 'spo',
+          document: 'SPO-2026/04-0043',
+          qty: '62',
+          location: 'BRW',
+          source_po_number: '202510-S0078',
+        },
+      ],
+    });
+
+    const po = renderRows([shipped]);
+    const poCell = screen.getByTestId('row-row-shipped');
+    const trigger = within(poCell).getByTestId('backing-documents-trigger-row-shipped');
+    expect(trigger.textContent).toBe('202510-S0078');
+    expect(within(poCell).queryByText(MUTED_DASH)).not.toBeInTheDocument();
+    expect(within(poCell).queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+    // The same lightbox the SPO number opens - one row, one set of backing documents.
+    fireEvent.click(trigger);
+    const dialog = screen.getByTestId('backing-documents-row-shipped');
+    expect(within(dialog).getByText('SPO-2026/04-0043')).toBeInTheDocument();
+    po.unmount();
+
+    renderRows([shipped], 'spo_number');
+    expect(
+      within(screen.getByTestId('row-row-shipped')).getByTestId(
+        'backing-documents-trigger-spo-row-shipped',
+      ).textContent,
+    ).toBe('SPO-2026/04-0043');
+  });
+
+  it('AC-R-35: a purchase order and its own shipment are ONE number in the PO cell', () => {
+    // The partly shipped case: 40 of the 62 sailed, so the row holds a `po` link for the
+    // 22 that did not AND an `spo` link whose source is that same purchase order. One
+    // document, named once - a `+1` pill here would be the screen inventing a second
+    // purchase order out of the two halves of one.
+    renderRows([
+      worklistRow({
+        id: 'row-part-shipped',
+        qty: '62',
+        linked_qty: '62',
+        links: [
+          { id: 'l1', kind: 'spo', document: 'SPO-2026/04-0043', qty: '40',
+            source_po_number: '202510-S0078' },
+          { id: 'l2', kind: 'po', document: '202510-S0078', qty: '22' },
+        ],
+      }),
+    ]);
+
+    const poCell = screen.getByTestId('row-row-part-shipped');
+    expect(within(poCell).getAllByText('202510-S0078')).toHaveLength(1);
+    expect(within(poCell).queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+    expect(
+      within(poCell).getByTestId('backing-documents-trigger-row-part-shipped').textContent,
+    ).toBe('202510-S0078');
+  });
+
   it('AC-R-31: the two columns carry the ids, header titles and explicit sizes a saved layout keys on', () => {
     const columns = columnDefs();
     const po = columns.find((column) => column.id === 'po_number');
