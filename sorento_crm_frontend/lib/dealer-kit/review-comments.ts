@@ -44,6 +44,15 @@ export interface ReviewComment {
   request_id: string;
   /** Null for a general comment - it points at no tag. */
   line_id: string | null;
+  /**
+   * The ONE placed copy of the tag this pin was clicked on, when a sheet
+   * prints the same line more than once (a quantity > 1, or "Apply to all
+   * lines"). Null on a general comment, a legacy pin sent before this field
+   * existed, or a copy the sheet no longer carries - any of those falls back
+   * to drawing on every copy of the line. Optional (not just nullable) so a
+   * pre-r9 caller that has not been told about it yet still type-checks.
+   */
+  placed_tag_id?: string | null;
   round: number;
   /** Fractions of the tag box, 0..1. Null on a general comment. */
   x: number | null;
@@ -63,6 +72,8 @@ export interface DraftPin {
   /** Client-side key, never an id the server knows. */
   key: string;
   line_id: string;
+  /** The placed copy that was clicked, or null when the line has only one. */
+  placed_tag_id?: string | null;
   x: number;
   y: number;
   w: number;
@@ -74,6 +85,7 @@ export interface DraftPin {
 export interface ChangeRequestPayload {
   comments: {
     line_id: string | null;
+    placed_tag_id?: string | null;
     x: number | null;
     y: number | null;
     w: number | null;
@@ -183,17 +195,32 @@ export interface CanvasReviewPin {
   caption: string;
 }
 
-/** This line's pinned comments, numbered the same way every other surface numbers them. */
+/**
+ * This line's pinned comments, numbered the same way every other surface
+ * numbers them.
+ *
+ * `placedTagId` is the ONE copy the canvas has open (the artboard IS that
+ * `PlacedTag`, owner round finding 1): when given, a pin anchored to a
+ * DIFFERENT copy of this line is left out, and a pin with no copy of its own
+ * (null - a general fallback or a legacy pin) still comes back, the same
+ * fallback `DesignPinLayer` draws on the sheet.
+ */
 export function canvasPinsForLine(
   comments: ReviewComment[],
   lineId: string | null,
+  placedTagId?: string | null,
 ): CanvasReviewPin[] {
   if (!lineId) return [];
   const { commentNumbers } = numberedPins(comments, []);
   return comments
     .filter(
       (comment) =>
-        comment.line_id === lineId && comment.x !== null && comment.y !== null,
+        comment.line_id === lineId &&
+        comment.x !== null &&
+        comment.y !== null &&
+        (!placedTagId ||
+          !comment.placed_tag_id ||
+          comment.placed_tag_id === placedTagId),
     )
     .map((comment) => ({
       id: comment.id,

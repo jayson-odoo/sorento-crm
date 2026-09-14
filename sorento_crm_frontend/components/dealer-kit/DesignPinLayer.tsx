@@ -58,6 +58,8 @@ const DRAG_THRESHOLD_PX = 4;
 
 interface Placing {
   lineId: string;
+  /** The ONE placed copy this pin is anchored to (owner round finding 1). */
+  tagId: string;
   /** Fractions of the tag box. */
   x: number;
   y: number;
@@ -111,6 +113,7 @@ export default function DesignPinLayer({
     }
     onPlace?.({
       line_id: placing.lineId,
+      placed_tag_id: placing.tagId,
       x: placing.x,
       y: placing.y,
       w: placing.w,
@@ -135,6 +138,7 @@ export default function DesignPinLayer({
       setBody('');
       setPlacing({
         lineId: rect.lineId,
+        tagId: rect.tagId,
         x,
         y,
         w: 0,
@@ -216,14 +220,20 @@ export default function DesignPinLayer({
           />
         ))}
 
-      {/* Sent pins, on every copy of their line: one comment is about one
-          line's tag, and a sheet may print that tag several times. */}
+      {/* Sent pins. A pin anchors to the ONE copy that was clicked
+          (`placed_tag_id`, owner round finding 1); a line printed more than
+          once (a quantity > 1, or "Apply to all lines") draws it there alone.
+          Null - or a copy the sheet no longer carries, re-arranged away -
+          falls back to every copy of the line, the pre-r9 behaviour. */}
       {comments.map((comment) => {
         if (!comment.line_id || comment.x === null || comment.y === null) return null;
         const number = commentNumbers.get(comment.id);
-        return rects
-          .filter((rect) => rect.lineId === comment.line_id)
-          .map((rect) => (
+        const lineRects = rects.filter((rect) => rect.lineId === comment.line_id);
+        const anchoredRects = comment.placed_tag_id
+          ? lineRects.filter((rect) => rect.tagId === comment.placed_tag_id)
+          : [];
+        const targetRects = anchoredRects.length > 0 ? anchoredRects : lineRects;
+        return targetRects.map((rect) => (
             <PinMarker
               key={`${comment.id}-${rect.tagId}`}
               testId={`pin-${comment.id}`}

@@ -1023,6 +1023,9 @@ class ReviewCommentPin(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     line_id: Optional[str] = None
+    #: The ONE placed copy of the tag that was clicked, when the sheet prints
+    #: this line more than once. Absent falls back to every copy of the line.
+    placed_tag_id: Optional[str] = Field(None, max_length=64)
     #: Fractions of the tag box, 0..1. Absent on a general comment.
     x: Optional[float] = Field(None, ge=0, le=1)
     y: Optional[float] = Field(None, ge=0, le=1)
@@ -1055,6 +1058,7 @@ class ReviewCommentResponse(BaseModel):
     id: str
     request_id: str
     line_id: Optional[str] = None
+    placed_tag_id: Optional[str] = None
     round: int
     x: Optional[float] = None
     y: Optional[float] = None

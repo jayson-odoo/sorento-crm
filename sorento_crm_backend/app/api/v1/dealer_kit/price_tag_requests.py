@@ -367,6 +367,45 @@ def list_line_data_changes(
     ]
 
 
+@router.post(
+    "/{request_id}/data-changes/recheck", response_model=list[LineDataChangeSet]
+)
+def recheck_line_data_changes(
+    request_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_PROCESS),
+):
+    """Forget every Keep on this request and re-run the product-data gate
+    (owner test round finding 3).
+
+    Keep current silenced ONE drift by recording its hash as the ack, and
+    there was no way to ask again - so a red dot silenced once stayed silent
+    forever, even for a later, unrelated edit that would have tripped the
+    gate on its own. Clearing every line's ack re-arms the comparison, then
+    answers the same shape ``GET .../data-changes`` does.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req:
+        raise AppException(
+            status_code=404, message="Price tag request not found.", code="NOT_FOUND"
+        )
+    for line in req.lines:
+        if line.data_change_ack_hash is not None:
+            line.data_change_ack_hash = None
+    db.commit()
+    return [
+        LineDataChangeSet(
+            line_id=row["line_id"],
+            code=row.get("code") or "",
+            name=row.get("name") or "",
+            changes=row.get("data_changes") or [],
+        )
+        for row in tag_data_service.resolve_request_line_data(db, req)
+        if row.get("data_changes")
+    ]
+
+
 @router.post("/{request_id}/lines/{line_id}/pin", response_model=LinePinResponse)
 def resolve_line_pin(
     request_id: str,

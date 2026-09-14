@@ -105,7 +105,7 @@ export default function RequestVersionsSheet({
                 <span className="text-sm font-medium">
                   Version {version.version}
                 </span>
-                <p className="mt-0.5 truncate text-sm text-muted-foreground">
+                <p className="mt-0.5 whitespace-pre-wrap text-sm text-muted-foreground">
                   {version.commit_message || 'No note'}
                 </p>
                 <p className="text-xs text-muted-foreground">

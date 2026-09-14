@@ -138,6 +138,10 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("round", sa.Integer(), nullable=False, server_default="1"),
+        # The ONE placed copy of the tag this pin was clicked on, when a sheet
+        # prints the same line more than once. Null falls back to drawing on
+        # every copy of the line (owner test round finding 1).
+        sa.Column("placed_tag_id", sa.String(64), nullable=True),
         # Fractions of the TAG box, never page millimetres.
         sa.Column("x", sa.Numeric(6, 4), nullable=True),
         sa.Column("y", sa.Numeric(6, 4), nullable=True),

@@ -127,6 +127,11 @@ def create_comments(
                 w=_fraction(pin.get("w"), "w"),
                 h=_fraction(pin.get("h"), "h"),
                 body=body,
+                # The ONE placed copy this pin was pointed at (owner round
+                # finding 1); null on a general comment or a pre-r9 client
+                # that has not reloaded, which falls back to every copy of
+                # the line (D5/D6).
+                placed_tag_id=pin.get("placed_tag_id"),
                 author_contact_id=author_contact_id,
                 author_user_id=author_user_id,
                 company_id=request.company_id,
@@ -248,6 +253,7 @@ def to_responses(db: Session, rows: Iterable[PriceTagReviewComment]) -> list[dic
             "id": row.id,
             "request_id": row.request_id,
             "line_id": row.line_id,
+            "placed_tag_id": row.placed_tag_id,
             "round": row.round,
             "x": None if row.x is None else float(row.x),
             "y": None if row.y is None else float(row.y),

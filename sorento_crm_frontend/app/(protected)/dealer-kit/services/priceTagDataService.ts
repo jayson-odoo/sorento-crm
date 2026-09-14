@@ -16,6 +16,11 @@
  *            overwrite the pin and clear the ack
  *   keep   = store the live hash as the ack, so the same change stops asking
  *
+ * POST /api/v1/dealer-kit/price-tag-requests/{id}/data-changes/recheck
+ *   200 [{ line_id, code, name, changes: LineDataChange[] }]
+ *   Clears every line's Keep ack and answers the same shape the GET does -
+ *   "Check product data" re-arms a gate a Keep silenced (owner round finding 3).
+ *
  * GET  /api/v1/dealer-kit/price-tag-requests/{id}/versions
  *   200 [{ version, commit_message, created_by_name, created_at }] newest first
  * GET  /api/v1/dealer-kit/price-tag-requests/{id}/versions/{version}
@@ -59,6 +64,24 @@ export async function listLineDataChanges(
   return unwrap<LineDataChangeSet[]>(
     response,
     'Failed to load the product changes',
+  );
+}
+
+/**
+ * "Check product data" (owner round finding 3): forgets every Keep on this
+ * request and re-runs the comparison, so a red dot silenced once is not
+ * silenced forever - a later, unrelated edit trips the gate again.
+ */
+export async function recheckLineDataChanges(
+  requestId: string,
+): Promise<LineDataChangeSet[]> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/data-changes/recheck`,
+    { method: 'POST' },
+  );
+  return unwrap<LineDataChangeSet[]>(
+    response,
+    'Failed to recheck the product data',
   );
 }
 

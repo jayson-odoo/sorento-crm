@@ -102,6 +102,7 @@ import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
 import {
   listLineDataChanges,
+  recheckLineDataChanges,
   resolveLinePin,
   updateAllLinePins,
 } from '../../services/priceTagDataService';
@@ -223,6 +224,27 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     },
     [requestId, loadDataChanges],
   );
+
+  /**
+   * "Check product data" (owner round finding 3): a Keep silences ONE drift
+   * by recording its hash, and there was no way to ask again, so a red dot
+   * silenced once stayed silent forever - even for a later, unrelated edit
+   * that would have tripped the gate on its own. This re-arms every line.
+   */
+  const recheckDataChanges = useCallback(async () => {
+    try {
+      const rows = await recheckLineDataChanges(requestId);
+      setDataChanges(rows);
+      const changed = rows.filter((set) => set.changes.length > 0).length;
+      toast.success(
+        changed > 0
+          ? `${changed} line${changed === 1 ? '' : 's'} changed`
+          : 'Product data is up to date',
+      );
+    } catch {
+      toast.error('Could not check product data');
+    }
+  }, [requestId]);
 
   const updateAllPins = useCallback(async () => {
     const ids = dataChanges
@@ -628,6 +650,18 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                       >
                         <PencilLine className="size-4" />
                         Edit request
+                      </DropdownMenuItem>
+                    )}
+                    {canEditRequest && (
+                      <DropdownMenuItem
+                        disabled={busy}
+                        onSelect={(event) => {
+                          event.preventDefault();
+                          void recheckDataChanges();
+                        }}
+                      >
+                        <RefreshCw className="size-4" />
+                        Check product data
                       </DropdownMenuItem>
                     )}
                     {secondary.map((spec) => {

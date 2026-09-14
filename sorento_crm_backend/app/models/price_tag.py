@@ -281,6 +281,12 @@ class PriceTagReviewComment(Base, CompanyScopedMixin):
     y = Column(Numeric(6, 4), nullable=True)
     w = Column(Numeric(6, 4), nullable=True)
     h = Column(Numeric(6, 4), nullable=True)
+    # The ONE placed copy of the tag this pin was clicked on, when a sheet
+    # prints the same line more than once (a quantity > 1, or "Apply to all
+    # lines"). Null on a general comment, or a copy the sheet no longer
+    # carries (re-arranged away) - either falls back to drawing on every copy
+    # of the line (owner test round finding 1).
+    placed_tag_id = Column(String(64), nullable=True)
     body = Column(Text, nullable=False)
     # Exactly one of the two is set: the salesperson who sent it, or the
     # staffer whose rejection note was persisted as a general comment (D14).

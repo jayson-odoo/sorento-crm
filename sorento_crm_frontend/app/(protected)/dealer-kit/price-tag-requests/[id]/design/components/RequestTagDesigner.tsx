@@ -109,6 +109,8 @@ import { listReviewComments } from '../../../../services/priceTagReviewService';
 import {
   listLineDataChanges,
   listRequestVersions,
+  getRequestVersion,
+  recheckLineDataChanges,
   resolveLinePin,
   restoreRequestVersion,
 } from '../../../../services/priceTagDataService';
@@ -116,7 +118,7 @@ import type { LineDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
 import RequestVersionsSheet from '@/components/dealer-kit/RequestVersionsSheet';
 import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
-import { designPayloadFromResponse } from '@/lib/dealer-kit/design-payload';
+import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import {
   canvasPinsForLine,
   openComments,
@@ -240,7 +242,12 @@ export function RequestTagDesigner({
   const [commentsVisible, setCommentsVisible] = useState(false);
   /** The request's design history (r9 S5/D19). */
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [viewingVersion, setViewingVersion] = useState<number | null>(null);
+  /** The version being read, and ITS own document - never the live one
+   *  (matches `RequestDesignSection`'s own History View). */
+  const [viewing, setViewing] = useState<{
+    version: number;
+    payload: TagSheetDesignPayload;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [printing, setPrinting] = useState(false);
@@ -344,6 +351,27 @@ export function RequestTagDesigner({
     }
     return map;
   }, [dataChanges]);
+
+  /**
+   * "Check product data" (owner round finding 3): a Keep silences ONE drift
+   * by recording its hash, and there was no way to ask again, so a red dot
+   * silenced once stayed silent forever - even for a later, unrelated edit
+   * that would have tripped the gate on its own. This re-arms every line.
+   */
+  const recheckDataChanges = useCallback(async () => {
+    try {
+      const rows = await recheckLineDataChanges(request.id);
+      setDataChanges(rows);
+      const changed = rows.filter((set) => set.changes.length > 0).length;
+      toast.success(
+        changed > 0
+          ? `${changed} line${changed === 1 ? '' : 's'} changed`
+          : 'Product data is up to date',
+      );
+    } catch {
+      toast.error('Could not check product data');
+    }
+  }, [request.id]);
 
   const decideLinePin = useCallback(
     async (lineId: string, action: 'update' | 'keep') => {
@@ -1026,6 +1054,12 @@ export function RequestTagDesigner({
         ]
       : []),
     {
+      id: 'check-product-data',
+      icon: RefreshCw,
+      label: 'Check product data',
+      onClick: () => void recheckDataChanges(),
+    },
+    {
       id: 'history',
       icon: History,
       label: 'History',
@@ -1287,7 +1321,13 @@ export function RequestTagDesigner({
         onOpenChange={setHistoryOpen}
         docNumber={request.doc_number}
         load={() => listRequestVersions(request.id)}
-        onView={(version) => setViewingVersion(version)}
+        onView={(version) => {
+          void getRequestVersion(request.id, version)
+            .then((versionPayload) =>
+              setViewing({ version, payload: versionPayload }),
+            )
+            .catch(() => toast.error('Could not open that version'));
+        }}
         onRestore={async (version) => {
           await restoreRequestVersion(request.id, version);
           const rows = await resolveRequestLines(request.id);
@@ -1296,21 +1336,20 @@ export function RequestTagDesigner({
         }}
       />
 
-      {/* A version, read-only, in the same lightbox the detail page uses.
-          PHASE 1: the version route does not exist, so this draws the CURRENT
-          document under the version's title. */}
-      {viewingVersion !== null && (
+      {/* A version, read-only, in the same lightbox the detail page uses (and
+          the CRM detail's own History View draws it: `RequestDesignSection`).
+          A request version IS a whole tag sheet document, so it answers the
+          same payload a live design does - drawing today's draft under a
+          version's name would tell the reader that v1 looked like something
+          it never looked like. */}
+      {viewing && (
         <DesignLightbox
           open
           onOpenChange={(next) => {
-            if (!next) setViewingVersion(null);
+            if (!next) setViewing(null);
           }}
-          title={`${request.doc_number} / version ${viewingVersion}`}
-          payload={designPayloadFromResponse({
-            doc,
-            lines: resolvedRows ?? [],
-            assets: library.assetUrls,
-          })}
+          title={`${request.doc_number} / version ${viewing.version}`}
+          payload={viewing.payload}
         />
       )}
 
