@@ -829,7 +829,8 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   designing: 'Designing',
   proof_ready: 'Design Ready',
   changes_requested: 'Changes Requested',
-  ready: 'Ready',
+  ready_for_collection: 'Ready for collection',
+  collected: 'Collected',
   void: 'Void',
 };
 

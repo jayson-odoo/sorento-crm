@@ -25,7 +25,6 @@ from typing import Iterable, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.dealer_kit import PageVersion
 from app.models.price_tag import PriceTagRequest, PriceTagReviewComment
 from app.services.error_handler import AppException
 
@@ -59,30 +58,16 @@ def _fraction(value, field: str) -> Optional[float]:
 def current_round(db: Session, request: PriceTagRequest) -> int:
     """How many proofs this design has been through, at least one.
 
-    The counter on the request (D4/R1). It used to be derived from the
-    ``Marked proof ready`` snapshots, and that snapshot is only written when a
-    draft exists - the designer's own CTA saves first, so the send skipped it
-    and every round after the first was numbered 1.
-
-    A request whose counter is still 0 reached proof_ready before the counter
-    existed (every row at deploy) and is read the old way, which is the only
-    history those rows have. A request with neither is on its first round:
-    numbering it 0 would read as "before the first round" rather than "during
-    it".
+    The counter on the request (D4/R1) is the ONLY source: a snapshot-count
+    fallback used to derive the round from the design's ``Marked proof ready``
+    page versions, and that snapshot is only written when a draft exists - the
+    designer's own CTA saves first, so a send skipped it and every round after
+    the first was numbered 1 again, deduplicating the assignee's bell and
+    mislabelling the salesperson's own confirmation. A row that predates the
+    counter gets its real value from the migration's
+    ``backfill_review_round``, not from a second, competing derivation here.
     """
-    if request.review_round:
-        return request.review_round
-    if not request.page_id:
-        return 1
-    proofs = (
-        db.query(PageVersion)
-        .filter(
-            PageVersion.page_id == request.page_id,
-            PageVersion.commit_message == PROOF_READY_COMMIT_MESSAGE,
-        )
-        .count()
-    )
-    return max(1, proofs)
+    return max(request.review_round or 0, 1)
 
 
 def create_comments(

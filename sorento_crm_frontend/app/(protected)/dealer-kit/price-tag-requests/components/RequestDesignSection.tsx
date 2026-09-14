@@ -41,6 +41,13 @@ interface Props {
   lineLabels: Map<string, string>;
   /** The page keeps the open count for the primary CTA's label (D6). */
   onCommentsChange?: (comments: ReviewComment[]) => void;
+  /**
+   * The request's own review round (D4/R1-R2). Passed straight to the pin
+   * layer so a pin from an earlier round renders grey the same way the
+   * portal does (`DesignReview.currentRound`), rather than the CRM reading
+   * every pin as live.
+   */
+  currentRound?: number;
 }
 
 export default function RequestDesignSection({
@@ -48,6 +55,7 @@ export default function RequestDesignSection({
   docNumber,
   lineLabels,
   onCommentsChange,
+  currentRound,
 }: Props) {
   const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -195,7 +203,7 @@ export default function RequestDesignSection({
         loading={loading}
         emptyMessage="No design yet"
         emptyHint="Claim the request and open the designer to draw the tags."
-        review={{ comments, drafts: [] }}
+        review={{ comments, drafts: [], currentRound }}
         footer={footer}
         headerActions={
           <Button

@@ -2242,6 +2242,12 @@ function DesignSection({
   const [drafts, setDrafts] = useState<DraftPin[]>([]);
   const [generalNote, setGeneralNote] = useState('');
   const [sending, setSending] = useState(false);
+  /** The footer rail: scrolled into view once, when the FIRST pin lands, so
+   *  the salesperson sees `Send N change requests` appear without hunting
+   *  for it - a later pin lands where they already are and must not yank
+   *  the page again. */
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const railScrolledRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -2274,6 +2280,13 @@ function DesignSection({
       cancelled = true;
     };
   }, [request.id]);
+
+  useEffect(() => {
+    if (drafts.length > 0 && !railScrolledRef.current) {
+      railScrolledRef.current = true;
+      railRef.current?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [drafts.length]);
 
   const { commentNumbers, draftNumbers } = numberedPins(comments, drafts);
   const lineLabel = useCallback(
@@ -2330,7 +2343,7 @@ function DesignSection({
   const sentThisDesign = comments.filter((comment) => comment.line_id !== null);
 
   const footer = reviewable ? (
-    <div className="mt-3 space-y-3 border-t pt-3">
+    <div ref={railRef} className="mt-3 space-y-3 border-t pt-3">
       {drafts.length > 0 && (
         <ul className="space-y-2">
           {drafts.map((draft) => (

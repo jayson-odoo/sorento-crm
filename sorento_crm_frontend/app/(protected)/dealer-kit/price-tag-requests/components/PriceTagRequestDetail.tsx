@@ -704,6 +704,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
             docNumber={request.doc_number}
             lineLabels={lineLabels}
             onCommentsChange={setReviewComments}
+            currentRound={request.review_round}
           />
 
           <Card>

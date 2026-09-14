@@ -62,10 +62,33 @@ router = APIRouter(prefix="/price-tag-requests", tags=["price-tag-requests"])
 _VIEW = require_permission_with_api_key("dealer_kit.price_tag_requests.view")
 _PROCESS = require_permission("dealer_kit.price_tag_requests.process")
 
-#: A tag sheet nobody has drawn on yet. Written only when a version has to
-#: exist and there is no document to put in it (R6) - what that version is
-#: FOR is the pins it carries, not the empty page.
-_EMPTY_SHEET_DOC = {"kind": "tag_sheet", "sheets": []}
+def _default_tag_sheet_doc() -> dict:
+    """A tag sheet nobody has drawn on yet, but one the designer can OPEN.
+
+    Written only when a version has to exist and there is no document to put
+    in it (R6) - what that version is FOR is the pins it carries, not the
+    empty page. The prior fallback (``{"kind": "tag_sheet", "sheets": []}``)
+    had no ``imposition`` key, and every reader of a tag_sheet doc
+    (``ScaledSheet``, ``TagSheetRenderer``) reads
+    ``doc.imposition.page_width_mm`` / ``page_height_mm`` unconditionally, so
+    a request whose FIRST design action was Update tag (not a CRM Claim,
+    which auto-creates the ``Page`` via ``ensure_tag_sheet_page`` but writes
+    no document at all until a save) left a document nothing could draw.
+    Values match the designer's own default (``IMPOSITION_PRESETS.auto``,
+    `lib/dealer-kit/tag-template-types.ts`), so the page this builds looks
+    exactly like the one a fresh claim opens on.
+    """
+    return {
+        "kind": "tag_sheet",
+        "imposition": {
+            "preset": "auto",
+            "page_width_mm": 210,
+            "page_height_mm": 297,
+            "bleed_mm": 3,
+            "gap_mm": 2,
+        },
+        "sheets": [],
+    }
 
 
 def _user_id(user: dict) -> str | None:
@@ -395,7 +418,11 @@ def resolve_line_pin(
         page = db.query(Page).filter(Page.id == req.page_id).first()
         if page is not None:
             latest = _latest_version(db, page)
-            doc = page.draft_doc or (latest.doc if latest else None) or _EMPTY_SHEET_DOC
+            doc = (
+                page.draft_doc
+                or (latest.doc if latest else None)
+                or _default_tag_sheet_doc()
+            )
             fields = ", ".join(
                 change["label"]
                 for change in (

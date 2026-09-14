@@ -80,6 +80,46 @@ def seed_auto_collect_task(bind) -> None:
     )
 
 
+def backfill_review_round(bind) -> int:
+    """``review_round`` for every row that predates the counter (r9 leftover R1).
+
+    The counter is the number of ``Marked proof ready`` page-version snapshots
+    this request's own design carries, floored at 1 once the request has
+    actually been sent for review (``proof_ready`` onward) - a floor of 0
+    there would read as "never sent" for a row that plainly was. A row that
+    never reached review, or is terminal with no design at all, keeps
+    whatever the snapshot count says, which is 0 when there is no design.
+
+    Returns the number of rows touched.
+    """
+    result = bind.execute(
+        text(
+            """
+            UPDATE price_tag_requests r
+            SET review_round = GREATEST(
+                COALESCE(
+                    (
+                        SELECT COUNT(*)
+                        FROM page_version pv
+                        WHERE pv.page_id = r.page_id
+                          AND pv.commit_message = 'Marked proof ready'
+                    ),
+                    0
+                ),
+                CASE
+                    WHEN r.status IN (
+                        'proof_ready', 'changes_requested', 'approved',
+                        'ready_for_collection', 'collected'
+                    ) THEN 1
+                    ELSE 0
+                END
+            )
+            """
+        )
+    )
+    return result.rowcount or 0
+
+
 def upgrade() -> None:
     # --- S2/D4: the pinned change requests themselves -----------------------
     op.create_table(
@@ -214,6 +254,7 @@ def upgrade() -> None:
     bind = op.get_bind()
     map_ready_rows_to_approved(bind)
     seed_auto_collect_task(bind)
+    backfill_review_round(bind)
 
 
 def downgrade() -> None:

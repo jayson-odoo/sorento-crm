@@ -205,7 +205,7 @@ export default function DesignPinLayer({
             key={`hit-${rect.tagId}`}
             role="presentation"
             data-testid={`pin-hit-${rect.lineId}`}
-            className="pointer-events-auto absolute cursor-crosshair"
+            className="pointer-events-auto absolute cursor-crosshair hover:ring-1 hover:ring-primary/40"
             style={{
               left: rect.left,
               top: rect.top,

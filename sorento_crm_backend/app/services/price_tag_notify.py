@@ -50,6 +50,8 @@ def _copy(event: str, *, doc_number: str, link: str, ctx: dict) -> Optional[str]
         return f"{doc_number} design is ready for your review.{tail}"
     if event == "changes_requested":
         count = ctx.get("count")
+        if count == 1:
+            return f"You sent 1 change request on {doc_number}.{tail}"
         if count:
             return f"You sent {count} change requests on {doc_number}.{tail}"
         return f"You sent change requests on {doc_number}.{tail}"

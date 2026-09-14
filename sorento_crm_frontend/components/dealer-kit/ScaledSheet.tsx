@@ -32,8 +32,8 @@ export function sheetPixelSize(doc: TagSheetDoc | null): {
   height: number;
 } {
   return {
-    width: (doc?.imposition.page_width_mm ?? 0) * PX_PER_MM,
-    height: (doc?.imposition.page_height_mm ?? 0) * PX_PER_MM,
+    width: (doc?.imposition?.page_width_mm ?? 0) * PX_PER_MM,
+    height: (doc?.imposition?.page_height_mm ?? 0) * PX_PER_MM,
   };
 }
 
@@ -76,6 +76,11 @@ export default function ScaledSheet({
 
   if (!singleSheetDoc) return null;
 
+  // A doc that reached here with sheets but no `imposition` (r9 review-round
+  // leftover: the backend's page-less-request fallback used to omit it) must
+  // still draw SOMETHING rather than throw - blank is fine, a crash is not.
+  if (!singleSheetDoc.imposition) return null;
+
   const natural = sheetPixelSize(doc);
 
   return (
@@ -96,8 +101,8 @@ export default function ScaledSheet({
         style={{
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
-          width: `${doc?.imposition.page_width_mm ?? 0}mm`,
-          height: `${doc?.imposition.page_height_mm ?? 0}mm`,
+          width: `${doc?.imposition?.page_width_mm ?? 0}mm`,
+          height: `${doc?.imposition?.page_height_mm ?? 0}mm`,
         }}
       >
         <TagSheetRenderer
