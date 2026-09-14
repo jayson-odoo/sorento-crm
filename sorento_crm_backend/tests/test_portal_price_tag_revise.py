@@ -956,23 +956,26 @@ class TestAttachmentGateRechecksPolicy:
         assert delete_res.status_code == 409, delete_res.text
 
 
-class TestReviseCarriesAlternativesAndAccessories:
+class TestReviseCarriesAccessories:
     """Gap D: ``_convert_ptag_revise_line`` only reads ``product_id`` /
     ``product_set_id`` / ``quantity`` / ``remarks`` off a revise payload
     line, so ``replace_lines`` -> ``_add_lines`` writes every revised line's
-    ``alternatives`` back as ``[]`` and ``included_accessories`` as ``None``
-    - the same "silently wipes a per-line detail on re-save" bug the
-    marketing-override carry-over already fixed, left open for these two
-    fields."""
+    ``included_accessories`` back as ``None`` - the same "silently wipes a
+    per-line detail on re-save" bug the marketing-override carry-over already
+    fixed, left open for this field.
 
-    def test_revise_carries_alternatives_and_accessories(self, db):
+    It used to cover ``alternatives`` beside it. S2 drops that column
+    (AC-S2-8), and what replaced it - the line's parts - carries over through
+    its own rows rather than through this one scalar, so only the accessories
+    half survives here."""
+
+    def test_revise_carries_accessories(self, db):
         from app.models.price_tag import PriceTagRequestLine
 
         contact, product_id, row = _setup(db)
         line = db.query(PriceTagRequestLine).filter(
             PriceTagRequestLine.request_id == row.id
         ).one()
-        line.alternatives = ["ALT-CODE-1", "ALT-CODE-2"]
         line.included_accessories = "Tap + waste kit"
         db.commit()
         token = _seed_token(contact)
@@ -990,7 +993,6 @@ class TestReviseCarriesAlternativesAndAccessories:
         fresh_line = (
             db.query(PriceTagRequestLine).filter(PriceTagRequestLine.request_id == row.id).one()
         )
-        assert fresh_line.alternatives == ["ALT-CODE-1", "ALT-CODE-2"]
         assert fresh_line.included_accessories == "Tap + waste kit"
 
 
