@@ -576,6 +576,9 @@ def portal_lookup_product_combos(
     from app.models.product import Product, ProductCategory
     from app.models.product_combo import ProductCombo, ProductComboPart
 
+    # Same first line as every other portal id route: a non-UUID path id reaches
+    # Postgres as a comparison it refuses, which is a 500 where a 404 belongs.
+    product_id = validate_uuid_path(product_id, resource="Product")
     _assert_visible(db, token.contact_id)
     with company_scope(db, frozenset({_resolve_company(db, token)})):
         product = db.query(Product).filter(Product.id == product_id).first()

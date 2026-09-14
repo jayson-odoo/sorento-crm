@@ -14,6 +14,7 @@ The status graph:
 """
 import copy
 import logging
+import uuid
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import Integer, cast, func, or_
@@ -252,7 +253,7 @@ class PriceTagRequestService:
                     product_set_id=line_data.get("product_set_id"),
                     show_promo_price=show_promo_price,
                     quantity=line_data.get("quantity", 1),
-                    combo_id=line_data.get("combo_id"),
+                    combo_id=PriceTagRequestService._resolve_combo_id(db, line_data, idx),
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
@@ -260,7 +261,9 @@ class PriceTagRequestService:
             )
             db.add(line)
             db.flush()
-            PriceTagRequestService._add_line_parts(db, line, line_data.get("parts") or [])
+            PriceTagRequestService._add_line_parts(
+                db, line, line_data.get("parts") or [], index=idx
+            )
             PriceTagRequestService._add_line_tags(db, line, carry_tags.get(key))
 
     @staticmethod
@@ -294,7 +297,7 @@ class PriceTagRequestService:
             )
 
     @staticmethod
-    def _add_line_parts(db: Session, line, parts: list[dict]) -> None:
+    def _add_line_parts(db: Session, line, parts: list[dict], *, index: int = 0) -> None:
         """The package under a line, written in the order the form sent it (AC-S2-8).
 
         Order is display order on the request, in the tag's parts text (D4) and in
@@ -307,27 +310,125 @@ class PriceTagRequestService:
         neither - no product and no candidates - is dropped rather than written,
         because the constraint would refuse it with a 500 the salesperson cannot
         act on and an empty row means nothing anyway.
+
+        EVERY id here comes from the portal, so every id is validated before it
+        is stored (security review B1). Two separate failures were reachable by
+        any portal contact:
+
+        * a non-UUID candidate is accepted by JSONB and then blows up
+          `Product.id.in_(...)` on EVERY later read of that request - a stored
+          denial of service on the request, the designer and the PDF alike;
+        * an id belonging to another company would be stored and then resolved,
+          leaking that product onto this company's tag.
+
+        One scoped query answers both: anything the caller cannot see simply is
+        not returned, and a 422 naming the row is what the form can act on.
         """
         from app.models.price_tag import PriceTagRequestLinePart
+        from app.models.product import Product
 
-        position = 0
+        cleaned: list[dict] = []
+        wanted: set[str] = set()
         for part in parts:
-            product_id = part.get("product_id")
-            candidates = [str(c) for c in (part.get("candidates") or []) if c]
+            product_id = PriceTagRequestService._part_uuid(part.get("product_id"), index)
+            candidates = [
+                PriceTagRequestService._part_uuid(candidate, index)
+                for candidate in (part.get("candidates") or [])
+                if candidate
+            ]
             if product_id:
                 candidates = []
             elif not candidates:
                 continue
+            cleaned.append(
+                {"product_id": product_id, "role": part.get("role"), "candidates": candidates}
+            )
+            if product_id:
+                wanted.add(product_id)
+            wanted.update(candidates)
+
+        if wanted:
+            # Company-scoped through the ordinary ORM filter: another company's
+            # product reads exactly like one that does not exist.
+            found = {
+                pid
+                for (pid,) in db.query(Product.id).filter(Product.id.in_(wanted)).all()
+            }
+            missing = wanted - found
+            if missing:
+                raise AppException(
+                    status_code=422,
+                    message="A product on this line's package could not be found.",
+                    detail=f"line:{index}",
+                    code="INVALID_PART",
+                )
+
+        for position, part in enumerate(cleaned):
             db.add(
                 PriceTagRequestLinePart(
                     line_id=line.id,
-                    product_id=product_id,
-                    role=part.get("role"),
-                    candidates=candidates,
+                    product_id=part["product_id"],
+                    role=part["role"],
+                    candidates=part["candidates"],
                     sort_order=position,
                 )
             )
-            position += 1
+
+    @staticmethod
+    def _part_uuid(value, index: int) -> str | None:
+        """A portal-supplied id, or a 422 naming the row it came from.
+
+        JSONB will store any string at all, and `candidates` is read back into
+        `Product.id.in_(...)`, where a non-UUID is a Postgres error rather than
+        an empty result - so the check has to happen on the way IN.
+        """
+        if value in (None, ""):
+            return None
+        try:
+            return str(uuid.UUID(str(value)))
+        except (ValueError, AttributeError, TypeError):
+            raise AppException(
+                status_code=422,
+                message="A product on this line's package is not a valid reference.",
+                detail=f"line:{index}",
+                code="INVALID_PART",
+            ) from None
+
+    @staticmethod
+    def _resolve_combo_id(db: Session, line_data: dict, index: int) -> str | None:
+        """The package this line is asked for as, or None.
+
+        Validated rather than trusted, same reason as the part ids: `combo_id`
+        arrives from the portal. It must be a real combo, visible to the caller
+        (the query is scoped through the host product), and it must belong to
+        THIS line's product - a combo id from another cabinet would price and
+        print somebody else's package on this one.
+
+        A combo that fails any of those is stored as None rather than refused:
+        the S2 guard then says "No package chosen" on the row, which is the
+        warn-and-allow rule the whole slice is built on (AC-S2-5).
+        """
+        from app.models.product_combo import ProductCombo
+
+        raw = line_data.get("combo_id")
+        if not raw:
+            return None
+        try:
+            combo_id = str(uuid.UUID(str(raw)))
+        except (ValueError, AttributeError, TypeError):
+            return None
+        product_id = line_data.get("product_id")
+        if not product_id:
+            return None
+        combo = (
+            db.query(ProductCombo)
+            .filter(
+                ProductCombo.id == combo_id,
+                ProductCombo.host_product_id == product_id,
+            )
+            .first()
+        )
+        return combo.id if combo is not None else None
 
     @staticmethod
     def _raise_on_duplicate_line(db: Session, lines: list[dict]) -> None:
@@ -801,6 +902,38 @@ Marketing's own work is not part of the form's payload, so it is captured
         }
 
     @staticmethod
+    def validate_choices(db: Session, tag, choices: dict) -> None:
+        """"Pick one" may only pick from what the line actually left open.
+
+        Unvalidated, `choices` was a free `{anything: anything}` write from a
+        marketing user: a role the line never opened, or a product id from
+        another company, would be stored and then resolved onto the tag - which
+        is how a cabinet ends up printing a basin nobody offered.
+
+        Both halves are checked against the LINE's own part rows, which is the
+        only place that says what was asked for.
+        """
+        open_groups = {}
+        for part in tag.line.parts or []:
+            if part.product_id or not part.role:
+                continue
+            open_groups[part.role] = {str(c) for c in (part.candidates or [])}
+
+        for role, product_id in (choices or {}).items():
+            if role not in open_groups:
+                raise AppException(
+                    status_code=422,
+                    message=f"This line has no open {role} to choose.",
+                    code="INVALID_CHOICE",
+                )
+            if str(product_id) not in open_groups[role]:
+                raise AppException(
+                    status_code=422,
+                    message=f"That product is not one of the {role} options on this line.",
+                    code="INVALID_CHOICE",
+                )
+
+    @staticmethod
     def split_tag(db: Session, tag, role: str) -> list:
         """"Split into N tags" (AC-S3-4).
 
@@ -1023,12 +1156,17 @@ Marketing's own work is not part of the form's payload, so it is captured
                     seen_groups.append(part.choice_group)
                 continue
             if part.part_product_id not in answered_products:
+                # Never the raw id as a fallback: this text is rendered on the
+                # portal row and in the CRM Lines tab, and no UUID reaches a
+                # screen (AC-X-2). A part whose product will not resolve is
+                # named by nothing rather than by its id.
                 code = (
                     part.part_product.product_code
                     if part.part_product is not None
-                    else part.part_product_id
+                    else ""
                 )
-                missing.append(code)
+                if code:
+                    missing.append(code)
         for group in seen_groups:
             # Neither a resolved nor an open row answers this group. A row
             # RESOLVED from the group keeps its `role`, which is why one check

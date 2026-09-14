@@ -94,22 +94,29 @@ class ProductComboService:
         for; one row would quietly hide the other cabinet.
         """
         self._host_or_404(part_product_id)
+        # Joined to `Product` on purpose, not just eager-loaded: `ProductCombo`
+        # is not company-scoped on its own (it hangs off the host, which is), so
+        # without a scoped entity in the query the company predicate never
+        # attaches and another company's combo comes back - with an empty code
+        # and name, because the eager load IS scoped, which leaked a bare host
+        # uuid onto the page (security review S1, and the no-UUID rule).
         rows = (
-            self.db.query(ProductCombo)
-            .options(joinedload(ProductCombo.host_product))
+            self.db.query(ProductCombo, Product)
+            .join(Product, Product.id == ProductCombo.host_product_id)
             .join(ProductComboPart, ProductComboPart.combo_id == ProductCombo.id)
             .filter(ProductComboPart.part_product_id == part_product_id)
             .order_by(ProductCombo.sort_order.asc(), ProductCombo.name.asc())
             .all()
         )
         out: List[Dict[str, Any]] = []
-        for combo in rows:
-            host = combo.host_product
+        for combo, host in rows:
+            if host is None:
+                continue
             out.append(
                 {
                     "host_product_id": combo.host_product_id,
-                    "host_code": host.product_code if host else "",
-                    "host_name": host.product_name if host else "",
+                    "host_code": host.product_code,
+                    "host_name": host.product_name,
                     "combo_id": combo.id,
                     "combo_name": combo.name,
                 }

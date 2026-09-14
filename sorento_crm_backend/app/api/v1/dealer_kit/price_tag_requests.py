@@ -229,12 +229,29 @@ def transition_price_tag_request(
 
 
 def _tag_or_404(db: Session, request_id: str, tag_id: str) -> PriceTagRequestTag:
+    """One tag of THIS request, or 404.
+
+    The request is resolved FIRST, through `get_request`, and that is what makes
+    this safe: neither `price_tag_request_tags` nor `price_tag_request_lines` is
+    company-scoped on its own (both hang off the request, which carries the
+    partition), so a query that named only those two had no scoped entity for
+    `do_orm_execute` to attach the company predicate to - and PATCH, split and
+    DELETE all worked across companies. DELETE went further and rewrote the
+    other company's draft document.
+
+    `get_request` returns None for a request outside the caller's scope, which
+    reads here exactly like one that does not exist. That is the correct answer:
+    never confirm another company's id is real.
+    """
+    request = PriceTagRequestService.get_request(db, request_id)
+    if request is None:
+        raise AppException(status_code=404, message="Tag not found.", code="NOT_FOUND")
     tag = (
         db.query(PriceTagRequestTag)
         .join(PriceTagRequestLine, PriceTagRequestLine.id == PriceTagRequestTag.line_id)
         .filter(
             PriceTagRequestTag.id == tag_id,
-            PriceTagRequestLine.request_id == request_id,
+            PriceTagRequestLine.request_id == request.id,
         )
         .first()
     )
@@ -271,9 +288,14 @@ def update_price_tag_request_tag(
     if data.get("choices") is not None:
         # MERGED, not replaced: a line may leave two groups open and Pick one
         # answers them one at a time.
+        PriceTagRequestService.validate_choices(db, tag, data["choices"])
         tag.choices = {**dict(tag.choices or {}), **data["choices"]}
+    # The body is built BEFORE the commit: it goes back through the resolver, and
+    # a failure there used to leave the write applied and answer 500.
+    db.flush()
+    body = _tag_body(db, tag)
     db.commit()
-    return _tag_body(db, tag)
+    return body
 
 
 @router.post(
@@ -298,8 +320,10 @@ def split_price_tag_request_tag(
     """
     tag = _tag_or_404(db, request_id, tag_id)
     tags = PriceTagRequestService.split_tag(db, tag, payload.role)
+    db.flush()
+    bodies = [_tag_body(db, row) for row in tags]
     db.commit()
-    return [_tag_body(db, row) for row in tags]
+    return bodies
 
 
 @router.delete("/{request_id}/tags/{tag_id}", status_code=204)

@@ -425,24 +425,23 @@ def _remap_r9_pins(conn, tag_by_line: dict) -> None:
             "WHERE pinned_line_data IS NOT NULL"
         )
     ).fetchall()
-    if True:
-        for row in versions:
-            mapping = dict(row._mapping)
-            raw = mapping["pinned_line_data"]
-            keyed = json.loads(raw) if isinstance(raw, str) else raw
-            if not isinstance(keyed, dict):
-                continue
-            rekeyed = {
-                tag_by_line.get(str(line_id), str(line_id)): value
-                for line_id, value in keyed.items()
-            }
-            conn.execute(
-                sa.text(
-                    f"UPDATE {versions_table} SET pinned_line_data = CAST(:d AS jsonb) "  # noqa: S608
-                    "WHERE id = :i"
-                ),
-                {"d": json.dumps(rekeyed), "i": mapping["id"]},
-            )
+    for row in versions:
+        mapping = dict(row._mapping)
+        raw = mapping["pinned_line_data"]
+        keyed = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(keyed, dict):
+            continue
+        rekeyed = {
+            tag_by_line.get(str(line_id), str(line_id)): value
+            for line_id, value in keyed.items()
+        }
+        conn.execute(
+            sa.text(
+                f"UPDATE {versions_table} SET pinned_line_data = CAST(:d AS jsonb) "  # noqa: S608
+                "WHERE id = :i"
+            ),
+            {"d": json.dumps(rekeyed), "i": mapping["id"]},
+        )
 
 
 def downgrade() -> None:

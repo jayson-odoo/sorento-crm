@@ -467,6 +467,12 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 # for the package: the revise composer has no field for it, so
                 # a revision that only changes a remark must not throw away the
                 # parts the salesperson asked for.
+                #
+                # These ids are re-validated by `_add_lines` on the way back in
+                # (`_resolve_combo_id` / `_add_line_parts`, security review B1),
+                # the same gate the create path takes - `_convert_ptag_revise_line`
+                # never lets a revise payload supply them directly, so the only
+                # source is this carry-over, and it is checked anyway.
                 line.setdefault("combo_id", combo_id)
                 line.setdefault("parts", parts)
     PriceTagRequestService.replace_lines(db, row, converted)
