@@ -6,6 +6,12 @@ import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ControllerRenderProps, FieldErrors, useForm } from 'react-hook-form';
 import { toast } from '@/lib/toast';
+import {
+  AUTO_COLLECT_DAYS_DEFAULT,
+  AUTO_COLLECT_DAYS_MAX,
+  AUTO_COLLECT_DAYS_MIN,
+  setAutoCollectDaysOverride,
+} from '@/lib/dealer-kit/print-collection';
 import { apiFetch } from '@/lib/api';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -240,6 +246,8 @@ export default function Page() {
     formSlaGraceSeconds: settings?.formSlaGraceSeconds ?? 0,
     deferredDeleteSeconds: settings?.deferredDeleteSeconds ?? 10,
     deferredActionSeconds: settings?.deferredActionSeconds ?? 5,
+    priceTagAutoCollectDays:
+      settings?.priceTagAutoCollectDays ?? AUTO_COLLECT_DAYS_DEFAULT,
     // The rollout default (plan 5.1) when the blob carries no value yet.
     planGrain: settings?.planGrain ?? 'product',
     purchaseRequestDefaultApproverUserId:
@@ -300,6 +308,8 @@ export default function Page() {
       formSlaGraceSeconds: settings.formSlaGraceSeconds ?? 0,
       deferredDeleteSeconds: settings.deferredDeleteSeconds ?? 10,
       deferredActionSeconds: settings.deferredActionSeconds ?? 5,
+      priceTagAutoCollectDays:
+        settings.priceTagAutoCollectDays ?? AUTO_COLLECT_DAYS_DEFAULT,
       planGrain: settings.planGrain ?? 'product',
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
@@ -342,6 +352,9 @@ export default function Page() {
         form_sla_grace_seconds: values.formSlaGraceSeconds,
         deferred_delete_seconds: values.deferredDeleteSeconds,
         deferred_action_seconds: values.deferredActionSeconds,
+        // r9 D10. PHASE 1: the column does not exist yet, so the backend
+        // ignores this key and the override below is what the FE reads back.
+        price_tag_auto_collect_days: values.priceTagAutoCollectDays,
         plan_grain: values.planGrain,
         purchase_request_default_approver_user_id:
           values.purchaseRequestDefaultApproverUserId ===
@@ -354,6 +367,10 @@ export default function Page() {
             ? null
             : values.sponsorshipFormDefaultApproverUserId,
       };
+
+      // PHASE 1 (r9 S3): remembered here so the field survives its own save
+      // and reload while the column is still to come.
+      setAutoCollectDaysOverride(values.priceTagAutoCollectDays);
 
       const response = await apiFetch('/api/user-management/settings/general', {
         method: 'POST',
@@ -883,6 +900,37 @@ export default function Page() {
                   <FormDescription>
                     The same wait for a change that can be set back again, such as
                     marking a delivery order as delivered.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="priceTagAutoCollectDays"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Auto-mark price tags collected after (days)
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={AUTO_COLLECT_DAYS_MIN}
+                      max={AUTO_COLLECT_DAYS_MAX}
+                      value={field.value}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '') return;
+                        const n = parseInt(v, 10);
+                        if (!Number.isNaN(n)) field.onChange(n);
+                      }}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    An office-printed request waiting to be picked up closes
+                    itself after this many days. 0 leaves it open.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

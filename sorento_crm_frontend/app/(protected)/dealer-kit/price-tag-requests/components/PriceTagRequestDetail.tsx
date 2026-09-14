@@ -28,14 +28,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
+import { apiFetch } from '@/lib/api';
 import {
   Download,
   Eye,
   FileText,
+  HandCoins,
   ListOrdered,
   Loader2,
+  Package,
   Paperclip,
   Palette,
+  PencilLine,
   UserPlus,
   XCircle,
 } from 'lucide-react';
@@ -53,6 +58,15 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -76,8 +90,20 @@ import {
   claimPriceTagRequest,
   transitionPriceTagRequest,
   exportTagSheet,
+  markReadyForCollection,
+  markCollected,
+  updatePriceTagPrintBy,
   type PriceTagRequestDetail as PriceTagRequestDetailType,
 } from '../../services/priceTagRequestService';
+import {
+  AUTO_COLLECT_DAYS_DEFAULT,
+  autoCollectOn,
+  isTerminalPriceTagStatus,
+  printByLabel,
+  readAutoCollectDaysOverride,
+  type PrintBy,
+} from '@/lib/dealer-kit/print-collection';
+import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
 import RequestDesignSection from './RequestDesignSection';
 import {
   openComments,
@@ -98,6 +124,8 @@ const ACTION_ICON: Record<PriceTagAction, typeof UserPlus> = {
   claim: UserPlus,
   design: Palette,
   mark_proof_ready: Eye,
+  mark_ready_for_collection: Package,
+  mark_collected: HandCoins,
   export: Download,
   void: XCircle,
 };
@@ -113,6 +141,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const [actionLoading, setActionLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
+  /** The gear's Edit request modal (r9 D7): today it holds the print choice. */
+  const [editOpen, setEditOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [tab, setTab] = useState<DetailTab>('request');
@@ -205,6 +235,52 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     }
   }, [requestId]);
 
+  const handleMarkReadyForCollection = useCallback(async () => {
+    setActionLoading(true);
+    try {
+      await markReadyForCollection(requestId);
+      toast.success('Marked ready for collection');
+      const data = await getPriceTagRequest(requestId);
+      setRequest(data);
+    } catch {
+      toast.error('Failed to mark the request ready for collection');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [requestId]);
+
+  const handleMarkCollected = useCallback(async () => {
+    setActionLoading(true);
+    try {
+      await markCollected(requestId);
+      toast.success('Marked collected');
+      const data = await getPriceTagRequest(requestId);
+      setRequest(data);
+    } catch {
+      toast.error('Failed to mark the request collected');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [requestId]);
+
+  const handleSavePrintBy = useCallback(
+    async (next: PrintBy | null) => {
+      setActionLoading(true);
+      try {
+        await updatePriceTagPrintBy(requestId, next);
+        const data = await getPriceTagRequest(requestId);
+        setRequest(data);
+        setEditOpen(false);
+        toast.success('Request updated');
+      } catch {
+        toast.error('Failed to update the request');
+      } finally {
+        setActionLoading(false);
+      }
+    },
+    [requestId],
+  );
+
   const handleVoid = useCallback(async () => {
     setActionLoading(true);
     try {
@@ -239,10 +315,21 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       if (action === 'claim') return void handleClaim();
       if (action === 'design') return openDesigner();
       if (action === 'mark_proof_ready') return void handleMarkProofReady();
+      if (action === 'mark_ready_for_collection') {
+        return void handleMarkReadyForCollection();
+      }
+      if (action === 'mark_collected') return void handleMarkCollected();
       if (action === 'export') return void handleExport();
       setVoidDialogOpen(true);
     },
-    [handleClaim, openDesigner, handleMarkProofReady, handleExport],
+    [
+      handleClaim,
+      openDesigner,
+      handleMarkProofReady,
+      handleMarkReadyForCollection,
+      handleMarkCollected,
+      handleExport,
+    ],
   );
 
   /** Line id -> its code, so a pin's rail entry never shows an id. */
@@ -266,6 +353,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
             request.status,
             request.assigned_to_id,
             openChangeRequests,
+            request.print_by ?? null,
           )
         : [],
     [request, openChangeRequests],
@@ -295,6 +383,47 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   );
 
   const busy = actionLoading || exportLoading;
+
+  /**
+   * How long an untouched hand-over waits before it closes itself (D10/D11).
+   *
+   * Read off the narrow app-config projection every authenticated user may
+   * read, not the settings blob - marketing works these requests without
+   * `user_management.settings.view`.
+   *
+   * PHASE 1: the key is not on the projection yet, so this falls through to
+   * whatever System Settings set in this tab, then to the shipped default.
+   */
+  const { data: appConfig } = useQuery({
+    queryKey: ['system-app-config'],
+    queryFn: async () => {
+      const response = await apiFetch('/api/user-management/settings/app-config');
+      if (!response.ok) throw new Error('Failed to load settings');
+      return response.json() as Promise<Record<string, unknown>>;
+    },
+    staleTime: 60_000,
+  });
+  const autoCollectDays =
+    typeof appConfig?.price_tag_auto_collect_days === 'number'
+      ? appConfig.price_tag_auto_collect_days
+      : (readAutoCollectDaysOverride() ?? AUTO_COLLECT_DAYS_DEFAULT);
+
+  /** The office may fix the print choice until the request is finished (D7). */
+  const canEditRequest =
+    !!request && !isTerminalPriceTagStatus(request.status, request.print_by);
+
+  /** "since 14/09/2026 / auto-collects 21/09/2026" under the record header. */
+  const collectionSubline = (() => {
+    if (!request || request.status !== 'ready_for_collection') return null;
+    const since = request.ready_for_collection_at
+      ? formatDate(new Date(request.ready_for_collection_at))
+      : null;
+    const auto = autoCollectOn(request.ready_for_collection_at, autoCollectDays);
+    if (!since) return null;
+    return auto
+      ? `Ready since ${since} \u00b7 auto-collects ${formatDate(auto)}`
+      : `Ready since ${since}`;
+  })();
 
   // Back carries the list query the row click wrote, so the reader returns to the
   // page, sort, search and status filter they left (S3-01).
@@ -366,7 +495,24 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                   : '-'}
                 {' · '}
                 Assigned to: {request.assigned_to_name ?? 'Unclaimed'}
+                {' · '}
+                Printing: {printByLabel(request.print_by)}
               </p>
+              {collectionSubline && (
+                <p className="text-sm text-muted-foreground">
+                  {collectionSubline}
+                </p>
+              )}
+              {request.status === 'collected' && request.collected_at && (
+                <p className="text-sm text-muted-foreground">
+                  Collected {formatDate(new Date(request.collected_at))}
+                  {request.collected_auto
+                    ? ' automatically'
+                    : request.collected_by_name
+                      ? ` by ${request.collected_by_name}`
+                      : ''}
+                </p>
+              )}
             </div>
             {/* The workflow gear, not a record action set: which verbs exist depends
                 on the status and on who claimed it, which `priceTagActions` decides. */}
@@ -379,8 +525,20 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               }}
               gearLabel="Price tag request actions"
               gear={
-                secondary.length > 0 ? (
+                secondary.length > 0 || canEditRequest ? (
                   <DetailActionsMenu ariaLabel="Price tag request actions">
+                    {canEditRequest && (
+                      <DropdownMenuItem
+                        disabled={busy}
+                        onSelect={(event) => {
+                          event.preventDefault();
+                          setEditOpen(true);
+                        }}
+                      >
+                        <PencilLine className="size-4" />
+                        Edit request
+                      </DropdownMenuItem>
+                    )}
                     {secondary.map((spec) => {
                       const Icon = ACTION_ICON[spec.action];
                       return (
@@ -484,6 +642,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                       ? 'Selling price'
                       : 'List price'}
                   </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block">Printing</span>
+                  {/* A request from before the choice existed reads "Not set",
+                      and the collection CTA stays hidden until it is (D7). */}
+                  <p className="font-medium">{printByLabel(request.print_by)}</p>
                 </div>
               </div>
               <div className="mt-4">
@@ -690,6 +854,33 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Edit request (r9 D7): the office fixing the print choice, in a modal
+          the way every other edit in this app is. One field today; the rest of
+          a request is the salesperson's to change through a revision. */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit request</DialogTitle>
+            <DialogDescription>{request.doc_number}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label id="edit-print-by-label">Printing</Label>
+            <PrintBySelect
+              aria-labelledby="edit-print-by-label"
+              value={(request.print_by as PrintBy | null) ?? null}
+              disabled={busy}
+              onChange={(next) => void handleSavePrintBy(next)}
+              onClear={() => void handleSavePrintBy(null)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

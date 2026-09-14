@@ -8,6 +8,11 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import {
+  applyCollectionOverride,
+  setCollectionOverride,
+  type PrintBy,
+} from '@/lib/dealer-kit/print-collection';
+import {
   designPayloadFromResponse,
   type TagSheetDesignPayload,
   type TagSheetDesignResponse,
@@ -85,6 +90,14 @@ export interface PriceTagRequestSummary {
   assigned_to_id: string | null;
   assigned_to_name: string | null;
   contact_name: string | null;
+  /** Who prints (r9 D7). Null on every row created before the choice existed. */
+  print_by?: PrintBy | null;
+  /** When the office said the tags were ready to pick up (D9). */
+  ready_for_collection_at?: string | null;
+  collected_at?: string | null;
+  collected_by_name?: string | null;
+  /** True when the auto-collect sweep closed it rather than a person (D11). */
+  collected_auto?: boolean;
 }
 
 export interface PriceTagRequestDetail extends PriceTagRequestSummary {
@@ -169,7 +182,68 @@ export async function getPriceTagRequest(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load price tag request'));
   }
-  return response.json();
+  const request: PriceTagRequestDetail = await response.json();
+  // PHASE 1: the print choice and the two collection statuses do not exist
+  // server-side yet, so whatever this tab set is merged back over the read.
+  // One line to delete once the column and the graph land.
+  return applyCollectionOverride(request);
+}
+
+/**
+ * Change the print choice from the office side (r9 D7).
+ *
+ * ```
+ * PATCH /api/v1/dealer-kit/price-tag-requests/{id}   { print_by }
+ *   200 the updated request. 409 once the request is terminal.
+ * ```
+ *
+ * PHASE 1: remembered in this tab only - the column does not exist yet.
+ */
+export async function updatePriceTagPrintBy(
+  id: string,
+  printBy: PrintBy | null,
+): Promise<void> {
+  setCollectionOverride(id, { print_by: printBy });
+}
+
+/**
+ * The office has printed: the tags are on the counter (r9 D8/D9).
+ *
+ * ```
+ * POST /api/v1/dealer-kit/price-tag-requests/{id}/transition
+ *   { status: "ready_for_collection" }
+ *   200 { status, ready_for_collection_at }
+ *   409 unless the request is `approved` AND print_by = "office".
+ * ```
+ *
+ * PHASE 1: the status is not in the graph yet, so a real call would 409.
+ */
+export async function markReadyForCollection(id: string): Promise<void> {
+  setCollectionOverride(id, {
+    status: 'ready_for_collection',
+    ready_for_collection_at: new Date().toISOString(),
+  });
+}
+
+/**
+ * Somebody took them (r9 D8/D9).
+ *
+ * ```
+ * POST /api/v1/dealer-kit/price-tag-requests/{id}/transition
+ *   { status: "collected" }
+ *   200 { status, collected_at, collected_by_name }
+ *   409 unless the request is `ready_for_collection`.
+ * ```
+ *
+ * PHASE 1: as above.
+ */
+export async function markCollected(id: string): Promise<void> {
+  setCollectionOverride(id, {
+    status: 'collected',
+    collected_at: new Date().toISOString(),
+    collected_by_name: 'You',
+    collected_auto: false,
+  });
 }
 
 export async function claimPriceTagRequest(

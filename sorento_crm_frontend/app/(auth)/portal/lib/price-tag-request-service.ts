@@ -7,6 +7,11 @@
 
 import { extractApiError } from '@/lib/api-client';
 import {
+  applyCollectionOverride,
+  setCollectionOverride,
+  type PrintBy,
+} from '@/lib/dealer-kit/print-collection';
+import {
   mockCreateReviewComments,
   mockListReviewComments,
   type ChangeRequestPayload,
@@ -71,6 +76,11 @@ export interface PriceTagRequestSummary {
   created_at: string;
   /** Set while the request is a draft the salesperson has not submitted. */
   portal_draft_at?: string | null;
+  /** Who prints (r9 D7). Null until the salesperson says, and required at submit. */
+  print_by?: PrintBy | null;
+  /** Set when the office marked the tags ready to pick up (D9). */
+  ready_for_collection_at?: string | null;
+  collected_at?: string | null;
   /** R3-1: the same revision fields the legacy kinds' own summaries carry. */
   revision_no?: number;
   last_revised_at?: string | null;
@@ -361,7 +371,10 @@ export async function getRequest(id: string): Promise<PriceTagRequestDetail | nu
   if (res.status === 404) return null;
   // D-P6/S8: `is_editable` is the server's own field now (AC-B6) - true for a
   // draft, or a submitted request at New / Changes requested. No FE mock left.
-  return unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
+  const request = await unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
+  // PHASE 1 (r9 S3): the print choice and the collection statuses are not
+  // stored yet, so whatever this tab knows is merged back over the read.
+  return applyCollectionOverride(request);
 }
 
 /**
@@ -376,6 +389,12 @@ export interface CreatePriceTagRequestInput {
   needed_by_date: string | null;
   notes: string | null;
   price_mode: PriceMode;
+  /**
+   * Who prints (r9 D7). Null on a draft; `submit` refuses with 422
+   * `PRINT_BY_REQUIRED` while it is still null, because the answer decides
+   * whether the request ends at approved or waits for a collection.
+   */
+  print_by: PrintBy | null;
   // `show_promo_price` is NOT sent (D5, review fix): the service derives it
   // on every line save from the header's own `price_mode`, so a value the
   // client sent was always dead weight, immediately overridden either way.
@@ -393,7 +412,16 @@ export async function createRequest(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to create request');
+  const created = await unwrapNamingFields<PriceTagRequestDetail>(
+    res,
+    'Failed to create request',
+  );
+  // PHASE 1 (r9 S3): the column does not exist, so the server drops
+  // `print_by`. Remembered here so the next read still shows the choice.
+  if (data.print_by !== undefined) {
+    setCollectionOverride(created.id, { print_by: data.print_by });
+  }
+  return created;
 }
 
 export async function updateRequest(
@@ -408,7 +436,36 @@ export async function updateRequest(
       body: JSON.stringify(data),
     },
   );
-  return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to update request');
+  const updated = await unwrapNamingFields<PriceTagRequestDetail>(
+    res,
+    'Failed to update request',
+  );
+  // PHASE 1: as in `createRequest` above.
+  if (data.print_by !== undefined) {
+    setCollectionOverride(id, { print_by: data.print_by });
+  }
+  return updated;
+}
+
+/**
+ * The salesperson confirming they have the tags (r9 D8).
+ *
+ * ```
+ * POST /api/v1/public/portal/submissions/price_tag_request/{id}/collect
+ *   200 { status: "collected", collected_at }
+ *   409 unless the request is `ready_for_collection`.
+ * ```
+ *
+ * PHASE 1: the status is not in the graph yet, so this is remembered locally.
+ */
+export async function collectRequest(id: string): Promise<{ status: string }> {
+  setCollectionOverride(id, {
+    status: 'collected',
+    collected_at: new Date().toISOString(),
+    collected_by_name: 'You',
+    collected_auto: false,
+  });
+  return { status: 'collected' };
 }
 
 export async function submitRequest(id: string): Promise<{ status: string }> {

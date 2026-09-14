@@ -73,6 +73,7 @@ import {
   approveRequest,
   requestChanges,
   listReviewComments,
+  collectRequest,
   downloadPriceTagPdf,
 } from '../lib/price-tag-request-service';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
@@ -98,6 +99,11 @@ import {
   type PortalSubmissionNeighbours,
 } from '../lib/portal-client';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
+import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
+import {
+  printByLabel,
+  type PrintBy,
+} from '@/lib/dealer-kit/print-collection';
 import { cn } from '@/lib/utils';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
@@ -187,14 +193,17 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
 const MISSING_DEBTOR = 'Select the dealer these tags are for.';
 const MISSING_DEADLINE = 'Pick the date you need them by.';
 const MISSING_LINES = 'Add at least one line.';
+const MISSING_PRINT_BY = 'Say who prints these tags.';
 const EMPTY_LINE = 'Pick a set or a product for this line.';
 
-/** Statuses the real design (D11) is visible at, once one exists to show. */
+/** Statuses the real design (D11) is visible at, once one exists to show.
+ *  `ready` is retired (r9 D8); the two collection statuses take its place. */
 const DESIGN_PREVIEW_STATUSES = new Set([
   'proof_ready',
   'changes_requested',
   'approved',
-  'ready',
+  'ready_for_collection',
+  'collected',
 ]);
 
 /**
@@ -310,6 +319,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // modal is the read-only AttachmentDropzone's own (D-P5) - no separate
   // state needed here anymore. ----
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [collecting, setCollecting] = useState(false);
   const [gearOpen, setGearOpen] = useState(false);
 
   // ---- What Submit found wrong, where it found it (D48b) ----
@@ -319,6 +329,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     debtor?: string;
     neededBy?: string;
     lines?: string;
+    printBy?: string;
   }>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
 
@@ -333,6 +344,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ever turns on via the header gear's own Revise item (same hooks
   // `SubmissionForm` reads for the legacy kinds), never from status/draft
   // state directly, so Cancel puts the read view back with no round trip.
+  /** Who prints (r9 D7). No default: the salesperson has to answer. */
+  const [printBy, setPrintBy] = useState<PrintBy | null>(null);
   const [reviseMode, setReviseMode] = useState(false);
   const [reviseReason, setReviseReason] = useState('');
   const showEditForm = isEditable || reviseMode;
@@ -482,6 +495,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setPriceModeChosen(true);
     setNeededByDate(data.needed_by_date ?? '');
     setNotes(data.notes ?? '');
+    setPrintBy((data.print_by as PrintBy | null) ?? null);
     setLines(data.lines.map(lineToDraft));
     setAttachments(data.attachments ?? []);
   }, []);
@@ -565,6 +579,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setPriceModeChosen(true);
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
+        setPrintBy((data.print_by as PrintBy | null) ?? null);
         // A duplicate's lines are new, unsaved rows with no identity of
         // their own yet (nit, review round 2) - the source request's own
         // line ids have no business surviving as this draft's React keys.
@@ -845,14 +860,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // the reader already closed by hand.
   const openSectionForProblems = useCallback(
     (
-      fields: { debtor?: string; neededBy?: string; lines?: string },
+      fields: {
+        debtor?: string;
+        neededBy?: string;
+        lines?: string;
+        printBy?: string;
+      },
       hasRowProblems: boolean,
     ) => {
       if (fields.debtor) {
         toggleSection('customer', true);
       } else if (fields.lines || hasRowProblems) {
         toggleSection('sales_order', true);
-      } else if (fields.neededBy) {
+      } else if (fields.printBy || fields.neededBy) {
         toggleSection('need_by', true);
       }
     },
@@ -897,14 +917,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
    *  optional (D-P2b) - only a server refusal can still name it, until the
    *  backend rule drops too. */
   const collectProblems = useCallback(() => {
-    const next: { debtor?: string; neededBy?: string; lines?: string } = {};
+    const next: {
+      debtor?: string;
+      neededBy?: string;
+      lines?: string;
+      printBy?: string;
+    } = {};
     if (!debtorCode) next.debtor = MISSING_DEBTOR;
     if (lines.length === 0) next.lines = MISSING_LINES;
+    // Required at submit, never at Save Draft (D7): a draft is whatever has
+    // been filled in so far.
+    if (!printBy) next.printBy = MISSING_PRINT_BY;
     const emptyRows = lines
       .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
       .filter((index) => index >= 0);
     return { next, emptyRows };
-  }, [debtorCode, lines]);
+  }, [debtorCode, lines, printBy]);
 
   /** How many things the form is currently complaining about, for the one line
    *  above the actions. */
@@ -915,14 +943,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // is the same failure as not showing one at all.
   useEffect(() => {
     setFieldErrors((prev) => {
-      if (!prev.debtor && !prev.neededBy && !prev.lines) return prev;
+      if (!prev.debtor && !prev.neededBy && !prev.lines && !prev.printBy) return prev;
       const next = { ...prev };
       if (next.debtor && debtorCode) delete next.debtor;
       if (next.neededBy && neededByDate) delete next.neededBy;
       if (next.lines && lines.length > 0) delete next.lines;
+      if (next.printBy && printBy) delete next.printBy;
       return next;
     });
-  }, [debtorCode, neededByDate, lines.length]);
+  }, [debtorCode, neededByDate, lines.length, printBy]);
 
   // D-P2 (owner ruling): Selling with no promotion is a valid end state now -
   // clearing the promotion no longer flips the mode back to List. Switching
@@ -975,6 +1004,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         needed_by_date: neededByDate || null,
         notes: notes || null,
         price_mode: priceMode,
+        print_by: printBy,
         lines: payloadLines(),
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
@@ -1118,6 +1148,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         needed_by_date: neededByDate || null,
         notes: notes || null,
         price_mode: priceMode,
+        print_by: printBy,
         lines: payloadLines(),
       };
       // Same reasoning as Save Draft: a retry after a create succeeded but the
@@ -1164,6 +1195,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       toast.error('Failed to approve');
     }
   }, [requestId, router, slug]);
+
+  // ---- Mark collected (r9 D8): the salesperson has the tags ----
+  const handleCollect = useCallback(async () => {
+    if (!requestId) return;
+    setCollecting(true);
+    try {
+      await collectRequest(requestId);
+      toast.success('Marked collected');
+      const data = await getRequest(requestId);
+      if (data) setRequest(data);
+    } catch {
+      toast.error('Failed to mark this collected');
+    } finally {
+      setCollecting(false);
+    }
+  }, [requestId]);
 
   // ---- Request changes (r9 D5) ----
   //
@@ -1251,6 +1298,31 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             Created {new Date(request.created_at).toLocaleDateString()}
           </p>
         </div>
+
+        {/* Ready to pick up (r9 D8): the one thing the salesperson can do
+            here, said where the status is said. */}
+        {request.status === 'ready_for_collection' && (
+          <div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm">
+              {request.ready_for_collection_at
+                ? `Ready to collect since ${new Date(request.ready_for_collection_at).toLocaleDateString()}`
+                : 'Ready to collect'}
+            </p>
+            <Button
+              size="sm"
+              disabled={collecting}
+              onClick={() => void handleCollect()}
+              data-testid="portal-mark-collected"
+            >
+              {collecting ? (
+                <Loader2 className="size-4 mr-1 animate-spin" />
+              ) : (
+                <Check className="size-4 mr-1" />
+              )}
+              Mark collected
+            </Button>
+          </div>
+        )}
 
         {/* The design comes FIRST from `proof_ready` onward (r9 D3): it is what
             the salesperson opened the request to look at, and their own
@@ -1395,6 +1467,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           open={sectionOpen.need_by}
           onOpenChange={(next) => toggleSection('need_by', next)}
         >
+          <div className="space-y-1.5">
+            <Label>Printing</Label>
+            <p className="text-sm font-medium py-2">
+              {printByLabel(request.print_by)}
+            </p>
+          </div>
           <div className="space-y-1.5">
             <Label>Need by</Label>
             <p className="text-sm font-medium py-2">
@@ -1856,6 +1934,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         open={sectionOpen.need_by}
         onOpenChange={(next) => toggleSection('need_by', next)}
       >
+        <div
+          className="space-y-1.5"
+          {...(fieldErrors.printBy ? { 'data-error-anchor': 'print_by' } : {})}
+        >
+          <Label id="print-by-label">Printing</Label>
+          <PrintBySelect
+            aria-labelledby="print-by-label"
+            value={printBy}
+            onChange={setPrintBy}
+            error={fieldErrors.printBy ?? null}
+          />
+        </div>
+
         <div
           className="space-y-1.5"
           {...(fieldErrors.neededBy

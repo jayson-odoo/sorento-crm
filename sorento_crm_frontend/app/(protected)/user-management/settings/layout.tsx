@@ -25,6 +25,10 @@ import { Container } from '@/components/common/container';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SystemSetting } from '@/app/models/system';
+import {
+  AUTO_COLLECT_DAYS_DEFAULT,
+  readAutoCollectDaysOverride,
+} from '@/lib/dealer-kit/print-collection';
 import { SettingsProvider } from './components/settings-context';
 
 type NavRoutes = Record<
@@ -81,6 +85,14 @@ function mapSettingsFromApi(
     deferredActionSeconds:
       typeof raw.deferred_action_seconds === 'number' ? raw.deferred_action_seconds : 5,
     // A new settings column reaches the FE only if it is in this manual mapper too.
+    //
+    // PHASE 1 (r9 S3): the column does not exist yet, so a value saved in this
+    // tab is remembered by the override and everything else falls back to the
+    // shipped default. Drop the override half once the column lands.
+    priceTagAutoCollectDays:
+      typeof raw.price_tag_auto_collect_days === 'number'
+        ? raw.price_tag_auto_collect_days
+        : (readAutoCollectDaysOverride() ?? AUTO_COLLECT_DAYS_DEFAULT),
     planGrain: raw.plan_grain === 'location' ? 'location' : 'product',
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
@@ -193,6 +205,7 @@ function createDefaultSettings(): SystemSetting {
     formSlaGraceSeconds: 0,
     deferredDeleteSeconds: 10,
     deferredActionSeconds: 5,
+    priceTagAutoCollectDays: AUTO_COLLECT_DAYS_DEFAULT,
     planGrain: 'product',
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,

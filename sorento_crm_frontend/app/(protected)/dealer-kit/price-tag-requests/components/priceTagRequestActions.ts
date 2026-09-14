@@ -7,10 +7,17 @@
  * Kept out of the component so the whole table can be asserted without a DOM.
  */
 
+import {
+  isTerminalPriceTagStatus,
+  type PrintBy,
+} from '@/lib/dealer-kit/print-collection';
+
 export type PriceTagAction =
   | 'claim'
   | 'design'
   | 'mark_proof_ready'
+  | 'mark_ready_for_collection'
+  | 'mark_collected'
   | 'export'
   | 'void';
 
@@ -22,7 +29,10 @@ export interface PriceTagActionSpec {
 }
 
 /** Statuses where a request is finished or abandoned: nothing left to do. */
-const CLOSED = new Set(['void', 'rejected']);
+const CLOSED = new Set(['void', 'rejected', 'collected']);
+
+/** The three statuses a finished design can be exported from (D8). */
+const EXPORTABLE = new Set(['approved', 'ready_for_collection', 'collected']);
 
 export function priceTagActions(
   status: string | null | undefined,
@@ -35,6 +45,13 @@ export function priceTagActions(
    * design back.
    */
   openChangeRequests = 0,
+  /**
+   * Who prints (r9 D7). `approved` means two different things depending on it:
+   * the end of the line for a salesperson printing their own tags, and the
+   * moment the office starts printing for everyone else. Null (a row from
+   * before the choice existed) offers neither, and the card says so.
+   */
+  printBy: PrintBy | null | undefined = null,
 ): PriceTagActionSpec[] {
   const current = (status ?? '').trim().toLowerCase();
   const actions: PriceTagActionSpec[] = [];
@@ -65,11 +82,33 @@ export function priceTagActions(
     });
   }
 
-  if (current === 'approved' || current === 'ready') {
+  // The office hand-over (D8): only an office print reaches it, and only once
+  // somebody has said so - a request with no choice on it offers nothing here
+  // rather than guessing.
+  if (current === 'approved' && printBy === 'office') {
+    actions.push({
+      action: 'mark_ready_for_collection',
+      label: 'Mark ready for collection',
+    });
+  }
+
+  if (current === 'ready_for_collection') {
+    actions.push({ action: 'mark_collected', label: 'Mark collected' });
+  }
+
+  if (EXPORTABLE.has(current)) {
     actions.push({ action: 'export', label: 'Export PDF' });
   }
 
-  if (current && current !== 'ready' && !CLOSED.has(current)) {
+  // Void is still legal wherever the graph allows a transition out. It does
+  // not at `ready_for_collection` (whose only exit is `collected`), nor once
+  // the request is terminal for its own print choice.
+  if (
+    current &&
+    !CLOSED.has(current) &&
+    current !== 'ready_for_collection' &&
+    !isTerminalPriceTagStatus(current, printBy)
+  ) {
     actions.push({ action: 'void', label: 'Void', destructive: true });
   }
 
