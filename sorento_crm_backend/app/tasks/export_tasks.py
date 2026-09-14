@@ -589,16 +589,29 @@ def _push_low_stock_to_chat(db, download_id: str, *, provider: str, key: str) ->
     inside the turn, and pushing it would send the same workbook twice. `delivered_at IS
     NULL` in the same predicate is what makes a RETRIED RQ job harmless.
 
-    A refusal from Respond is SWALLOWED. A closed 24 h window is a hard 422
-    (`attachment_window_closed`) - Respond has no attachment-carrying template - and the
-    send is already recorded in the outbox by `log_respond_send`. Raising would poison the
-    job for a file that rendered perfectly well, and the row stays `ready` either way: the
+    A refusal from Respond is SWALLOWED rather than raised: raising would poison the job
+    for a file that rendered perfectly well, and the row stays `ready` either way - the
     workbook exists and is still in My Downloads.
+
+    **But a swallowed failure must never be silent** (console round 4, measured: download
+    96f3c045 read `status=ready, delivered_at set, error empty` with NO `integration_log`
+    row at all - the row said delivered, the contact got nothing, and nothing anywhere said
+    otherwise). The earlier claim that "the send is already recorded in the outbox by
+    `log_respond_send`" is FALSE on the refusal path: `send_chat_attachment_for` checks the
+    24 h window UPFRONT and raises `AppException(422, attachment_window_closed)` before it
+    ever reaches its own logging. So both except branches below do the recording
+    themselves: the reason goes onto `user_downloads.error`, and an outbox row goes into
+    `integration_log` like every other Respond failure.
+
+    `delivered_at` is deliberately LEFT SET. It means "this worker has taken its one shot",
+    which is what makes delivery exactly-once against a retried RQ job; the `error` column
+    is what says the shot missed.
     """
     from sqlalchemy import text as _text
 
     from app.services import respond_chat_template_service
     from app.services.error_handler import AppException
+    from app.services.integration_service import log_respond_send
     from app.services.scm import low_stock_report_service
 
     claimed = db.execute(_text(
@@ -620,25 +633,71 @@ def _push_low_stock_to_chat(db, download_id: str, *, provider: str, key: str) ->
         )
         return
 
+    url = low_stock_report_service.attachment_url(provider, key)
+
+    def _record_push_failure(exc: BaseException, reason: str) -> None:
+        """Leave the failure where an operator will find it: on the row AND in the outbox.
+
+        Both are best-effort and each is tried on its own - a logging failure must never be
+        the reason the export job dies, and one of the two landing is better than neither.
+        """
+        try:
+            db.execute(_text(
+                "UPDATE user_downloads SET error = :err WHERE id = :id"
+            ), {"err": f"chat push failed: {reason}"[:500], "id": str(download_id)})
+            db.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "generate_low_stock_report: could not record the push failure on %s",
+                download_id,
+            )
+            db.rollback()
+        try:
+            log_respond_send(
+                db,
+                business_table="user_downloads",
+                business_id=str(download_id),
+                identifier=str(respond_io_id),
+                request_payload={
+                    "message": {
+                        "type": "attachment",
+                        "attachment": {"type": "file", "url": url},
+                    }
+                },
+                exc=exc,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "generate_low_stock_report: could not write the outbox row for %s",
+                download_id,
+            )
+
     try:
         respond_chat_template_service.send_chat_attachment_for(
             db,
             identifier=str(respond_io_id),
             respond_contact_id=str(claimed),
             attachment_type="file",
-            url=low_stock_report_service.attachment_url(provider, key),
+            url=url,
             business_table="user_downloads",
             business_id=str(download_id),
         )
     except AppException as e:
+        # `AppException` carries `code`/`message` inside `detail`, not as attributes -
+        # reading them off the instance silently yields None and the row would record
+        # "chat push failed: None".
+        detail = e.detail if isinstance(getattr(e, "detail", None), dict) else {}
+        code = detail.get("code") or e.status_code
         logger.warning(
             "generate_low_stock_report: push for download %s refused (%s); the file is "
-            "still ready in My Downloads", download_id, getattr(e, "code", e.status_code),
+            "still ready in My Downloads", download_id, code,
         )
-    except Exception:  # noqa: BLE001 - a broken send never fails a rendered export
+        _record_push_failure(e, f"{code}: {detail.get('message') or ''}".strip())
+    except Exception as e:  # noqa: BLE001 - a broken send never fails a rendered export
         logger.exception(
             "generate_low_stock_report: push for download %s failed", download_id
         )
+        _record_push_failure(e, f"{type(e).__name__}: {e}")
 
 
 def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,

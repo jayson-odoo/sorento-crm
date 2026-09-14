@@ -189,6 +189,14 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   `respond_chat_template_service.send_chat_attachment_for` for that contact with the CDN URL;
   the send logs its outbox row. A closed 24 h window surfaces as the existing
   `attachment_window_closed` outcome in the log, never an exception into RQ.
+- **AC-45a [BE]** A swallowed push failure is never silent: both except branches in
+  `_push_low_stock_to_chat` write `user_downloads.error = "chat push failed: <code>: <message>"`
+  (status stays `ready` - the workbook exists and My Downloads still serves it - and
+  `delivered_at` stays set, because it means this worker took its one shot) AND write their
+  own `integration_log` row via `log_respond_send`, because `send_chat_attachment_for`
+  checks the 24 h window UPFRONT and raises before reaching its own logging (console round
+  4: a delivered-looking row with no outbox entry and no error, and a contact who got
+  nothing).
 - **AC-46 [BE]** The two conditional updates make the outcome exactly one of: the turn returns
   the attachment, or the worker pushes it. Test both interleavings (worker ready before the
   route's claim; route's claim before ready).

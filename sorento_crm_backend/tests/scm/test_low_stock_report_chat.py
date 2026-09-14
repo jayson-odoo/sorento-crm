@@ -1121,3 +1121,89 @@ def test_a_short_setting_still_wins_over_the_transport_cap(scm_app, monkeypatch)
 
     assert resp.status_code == 200, resp.text
     assert 5 in budgets, f"the configured 5 s is already inside the cap: {budgets}"
+
+
+# =========================================================================== #
+# Console round 4, AC-45a - a swallowed push is never silent
+#
+# CODER-AUTHORED. Measured on the stack: download 96f3c045 read `status=ready,
+# delivered_at set, error empty` with NO integration_log row for it. The 24 h window on
+# that copy is stale, so `send_chat_attachment_for` raises its UPFRONT
+# AppException(422, attachment_window_closed) BEFORE reaching its own `log_respond_send` -
+# and `_push_low_stock_to_chat` swallowed it. The row said delivered, the contact got
+# nothing, and nothing anywhere said otherwise. The claim-before-send ordering stays (it is
+# what makes delivery exactly-once); what changes is that the failure is now recorded.
+# =========================================================================== #
+
+def _integration_logs_for(db, download_id) -> list[dict]:
+    return [dict(r) for r in db.execute(text(
+        "SELECT error_message, business_table FROM integration_log "
+        "WHERE business_table = 'user_downloads' AND business_id = :id"
+    ), {"id": str(download_id)}).mappings().all()]
+
+
+def test_a_closed_window_push_leaves_an_error_and_an_outbox_row(scm_app, monkeypatch):
+    """AC-45a: status stays `ready` (the workbook exists and My Downloads still serves it)
+    and `delivered_at` stays set (this worker has taken its one shot), but the REASON is on
+    the row and in the outbox - the two places an operator looks."""
+    from app.services import respond_chat_template_service
+
+    export_tasks, task_fn = _task()
+    app, db, _key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db)
+    db.flush()
+    _patch_task_render(monkeypatch, export_tasks)
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+    def _closed(db_, **kw):
+        raise AppException(
+            status_code=422,
+            message="Cannot send an attachment outside the 24h messaging window.",
+            code="attachment_window_closed",
+        )
+
+    monkeypatch.setattr(respond_chat_template_service, "send_chat_attachment_for", _closed)
+
+    run_id, dl_id = _seed_claimed_download(db, contact, claimed=True)
+    result = task_fn(dl_id, run_id, str(_download_row(db, dl_id)["user_id"]))
+
+    assert result["status"] == "ready", (
+        f"a closed window must not fail the export itself: {result}"
+    )
+    row = _download_row(db, dl_id)
+    assert row["status"] == "ready", row["status"]
+    assert row["delivered_at"] is not None, (
+        "delivered_at stays set - it means this worker took its one shot, which is what "
+        "keeps a retried RQ job from sending twice"
+    )
+    error = db.execute(text(
+        "SELECT error FROM user_downloads WHERE id = :id"
+    ), {"id": dl_id}).scalar() or ""
+    assert error.startswith("chat push failed: attachment_window_closed"), repr(error)
+
+    logs = _integration_logs_for(db, dl_id)
+    assert len(logs) == 1, f"exactly one outbox row for the failed push: {logs}"
+    assert logs[0]["error_message"], f"the outbox row must carry the reason: {logs[0]}"
+
+
+def test_a_successful_push_leaves_no_error_on_the_row(scm_app, monkeypatch):
+    """The other half: the failure recording must not fire on the happy path, or every
+    delivered report would look broken."""
+    from app.services import respond_chat_template_service
+
+    export_tasks, task_fn = _task()
+    app, db, _key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db)
+    db.flush()
+    _patch_task_render(monkeypatch, export_tasks)
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+    monkeypatch.setattr(respond_chat_template_service, "send_chat_attachment_for",
+                        lambda db_, **kw: {"status": "sent"})
+
+    run_id, dl_id = _seed_claimed_download(db, contact, claimed=True)
+    task_fn(dl_id, run_id, str(_download_row(db, dl_id)["user_id"]))
+
+    error = db.execute(text(
+        "SELECT error FROM user_downloads WHERE id = :id"
+    ), {"id": dl_id}).scalar()
+    assert not error, f"a delivered push must leave no error: {error!r}"
