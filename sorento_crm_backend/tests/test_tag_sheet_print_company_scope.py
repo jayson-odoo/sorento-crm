@@ -178,7 +178,10 @@ def test_the_payload_carries_this_company_and_no_other(db: Session, client: Test
         },
     )
     db.flush()
-    line_ids = {line.product_id: line.id for line in request.lines}
+    # `resolvedData` is keyed by TAG id since S3 (AC-S3-8): a line may print
+    # several tags, so a line id could no longer name one tile's data. One tag
+    # per line exists from creation, so the line's first tag IS its key here.
+    tag_ids = {line.product_id: line.tags[0].id for line in request.lines}
 
     download_id = _tag_sheet_download(db, request, _SORENTO)
     db.flush()
@@ -192,11 +195,11 @@ def test_the_payload_carries_this_company_and_no_other(db: Session, client: Test
     resolved = payload["resolvedData"]
 
     # This company's line is there...
-    assert line_ids[mine.id] in resolved
-    assert resolved[line_ids[mine.id]]["code"] == mine.product_code
+    assert tag_ids[mine.id] in resolved
+    assert resolved[tag_ids[mine.id]]["code"] == mine.product_code
     # `_resolved_payload` builds this dict by hand (not a `response_model`), so
     # nothing catches a field dropped on a future edit except a test naming it.
-    assert "barcode" in resolved[line_ids[mine.id]]
+    assert "barcode" in resolved[tag_ids[mine.id]]
     # ...and the other company's is not, by id or by code.
-    assert line_ids[theirs.id] not in resolved
+    assert tag_ids[theirs.id] not in resolved
     assert theirs.product_code not in response.text

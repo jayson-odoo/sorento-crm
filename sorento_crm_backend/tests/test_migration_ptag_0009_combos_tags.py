@@ -255,8 +255,16 @@ def _read_json(db, sql: str, params: dict):
 
 
 def _tags_of(db, line_id: str) -> list[dict]:
+    """The line's tags, with `id` as a STRING.
+
+    Raw SQL hands a uuid column back as `uuid.UUID`, and the document these ids
+    are compared against holds JSON strings - so an un-cast id fails every
+    `request_tag_id ==` check below while looking identical when printed. Every
+    id this file creates goes through `_uid()`, which is `str(uuid.uuid4())`,
+    for the same reason.
+    """
     return [
-        dict(row._mapping)
+        {**dict(row._mapping), "id": str(row._mapping["id"])}
         for row in db.execute(
             text(
                 "SELECT id, line_id, sort_order, quantity, choices, "
