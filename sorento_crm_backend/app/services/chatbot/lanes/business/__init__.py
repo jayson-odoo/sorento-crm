@@ -768,22 +768,24 @@ def _fetch_one_domain(
         section["error"] = True
         return section
     structured = fetch_mod.output_structurer(envelope, trigger)
+    section["structured"] = structured
     section["fetch"] = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
-    section["has_result"] = _section_has_result(envelope, structured)
+    section["has_result"] = _section_has_result(structured)
     return section
 
 
-def _section_has_result(envelope: Any, structured: Any) -> bool:
-    """Did this section find anything (AC-1047)? `has_result: true`, or any rendered row."""
-    if isinstance(envelope, dict) and envelope.get("has_result") is True:
-        return True
-    if isinstance(structured, dict):
-        rows = structured.get("rows")
-        if isinstance(rows, list) and rows:
-            return True
-        if structured.get("has_result") is True:
-            return True
-    return False
+def _section_has_result(structured: Any) -> bool:
+    """A section is a HIT iff the SINGLE-domain lane would call it one (AC-1047 parity).
+
+    The single-domain path decides hit vs miss in `answer.dispatch`, which reads
+    `validator(structured).has_result is True AND .is_valid is True`. `validator` leaves
+    `has_result` exactly as `output_structurer` set it and stamps `is_valid = True`
+    unconditionally, so the whole signal reduces to `output_structurer(envelope).has_result
+    is True` - the same value read here off the structured output, never the raw envelope
+    field (which the renderer never consults, so a fanned turn and a one-domain turn agree
+    on hit/miss for the same data).
+    """
+    return isinstance(structured, dict) and structured.get("has_result") is True
 
 
 def _run_fetch_fanout(
@@ -1397,12 +1399,29 @@ def _domain_label(domain: str) -> str:
     return _DOMAIN_LABEL.get(domain, jsc.js_string(domain).replace("_", " "))
 
 
+def _section_rows(envelope: Any) -> list[Any]:
+    """The render-envelope's rows. Production and `output_structurer` read `items`; the
+    `answers` fallback keeps a demand-quantity-shaped envelope readable for its codes."""
+    if not isinstance(envelope, dict):
+        return []
+    rows = envelope.get("items")
+    if isinstance(rows, list):
+        return rows
+    rows = envelope.get("answers")
+    return rows if isinstance(rows, list) else []
+
+
 def _section_codes(envelope: Any) -> list[str]:
     """The product codes a section's envelope named, in order, deduped."""
     codes: list[str] = []
-    answers = envelope.get("answers") if isinstance(envelope, dict) else None
-    for ans in answers if isinstance(answers, list) else []:
-        for field in (ans.get("fields") if isinstance(ans, dict) else None) or []:
+    for row in _section_rows(envelope):
+        # A demand-quantity row carries the code as a bare `product`; a render row carries
+        # it in a `product_code` field.
+        if isinstance(row, dict) and jsc.truthy(row.get("product")):
+            value = jsc.js_string(row.get("product")).strip()
+            if value and value not in codes:
+                codes.append(value)
+        for field in (row.get("fields") if isinstance(row, dict) else None) or []:
             if not isinstance(field, dict):
                 continue
             key = jsc.js_string(field.get("key") or "").lower()
@@ -1414,36 +1433,24 @@ def _section_codes(envelope: Any) -> list[str]:
     return codes
 
 
-def _render_found_section(domain: str, envelope: Any, printed: Any) -> str:
-    """A found section's text: a header plus each answer's fields, deduped by (code, domain).
+def _render_found_section(domain: str, section: dict[str, Any], printed: Any) -> str:
+    """A found section's text: a header plus the SAME rendered body the single-domain lane
+    shows (`output_structurer.response`), deduped by (code, domain) (AC-1047, D12).
 
-    The deduper (`fanout.Consumed`) is shared across every section and rung, so a fact a
-    prior section already printed for the same (code, domain) is skipped here (D12).
+    The deduper is shared across every section and rung. A section whose every code was
+    already printed for this domain is omitted; otherwise its codes are registered and the
+    structured response - the identical text a one-domain turn would send - is headed and
+    returned.
     """
-    lines: list[str] = [f"*{_domain_label(domain).title()}:*"]
-    answers = envelope.get("answers") if isinstance(envelope, dict) else None
-    for ans in answers if isinstance(answers, list) else []:
-        fields = (ans.get("fields") if isinstance(ans, dict) else None) or []
-        code = ""
-        for field in fields:
-            if not isinstance(field, dict):
-                continue
-            key = jsc.js_string(field.get("key") or "").lower()
-            if key == "product_code" or "product code" in jsc.js_string(field.get("label") or "").lower():
-                code = jsc.js_string(field.get("value") or "").strip()
-                break
-        if code and printed.seen(code, domain):
-            continue
-        if code:
-            printed.add(code, domain)
-        rendered = "\n".join(
-            f"- *{jsc.js_string(f.get('label'))}:* {jsc.js_string(f.get('value'))}"
-            for f in fields
-            if isinstance(f, dict) and jsc.truthy(f.get("value"))
-        )
-        if rendered:
-            lines.append(rendered)
-    return "\n".join(lines)
+    codes = _section_codes(section.get("envelope"))
+    if codes and all(printed.seen(c, domain) for c in codes):
+        return ""
+    for c in codes:
+        printed.add(c, domain)
+    fetch = section.get("fetch") if isinstance(section.get("fetch"), dict) else {}
+    body = jsc.js_string(fetch.get("response") or "").strip()
+    header = f"*{_domain_label(domain).title()}:*"
+    return f"{header}\n{body}" if body else header
 
 
 def _complete_answer_fanout(
@@ -1489,7 +1496,7 @@ def _complete_answer_fanout(
             blocks.append(denial_text)
             continue
         if section.get("has_result"):
-            blocks.append(_render_found_section(domain, section.get("envelope"), printed))
+            blocks.append(_render_found_section(domain, section, printed))
         else:
             codes = _section_codes(section.get("envelope"))
             tail = f" for {', '.join(codes)}" if codes else ""
