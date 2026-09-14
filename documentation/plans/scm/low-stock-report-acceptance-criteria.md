@@ -249,6 +249,14 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   granted contact gets an xlsx attachment or the pending line; ungranted contact gets the
   refusal. Recorded agent-browser run: plan view Actions -> Low stock report -> My Downloads
   shows it ready; open the file, two sheets, container in the incoming cell.
+- **AC-74 [BE]** Migration `517_chatbot_low_stock_vocab` publishes BOTH parser prompt
+  bodies carrying `LOW_STOCK_ADDENDUM` as new UNLABELLED `chatbot_semantic_parser`
+  versions (idempotent on template text, `seed_prompt_registry` first, insert in a
+  module-level `publish(session)`), because `ai_prompt_registry.render()` reads the
+  published version and never the Python constant - without it the words reach no live
+  turn. The owner promotes the `production` label after deploy: a POST-DEPLOY step,
+  recorded in `n8n-changes.md` S-low-stock Step 2 and in the PR body, and no label is
+  moved by the migration itself.
 
 ## Not in scope (backlog)
 

@@ -291,8 +291,19 @@ optional query params on body tools.
   code a `product` entity, a date phrase fills `date_filter_start/end`. Golden fixtures for
   the four journey phrasings. `test_parser_prompt_is_live.py` / `test_parser_user_block_parity.py`
   stay green.
+- **The constant is not the live prompt.** `ai_prompt_registry.render()` reads the
+  PUBLISHED `chatbot_semantic_parser` version (the `production` label) and falls back to
+  the Python constant only when no DB row exists at all - so the addendum reaches no live
+  turn until a migration publishes it. Found on the lane's own console run, 14 Sep: "low
+  stock report" parsed as `check_stock` and "reorder report" as a form lookup with every
+  parser test green. Migration `517_chatbot_low_stock_vocab` mirrors
+  `514_chatbot_outstanding_vocab` line for line: BOTH bodies (FULL and SLIM - prod's
+  label is on one, dev's on the other) land as the next versions with NO label, idempotent
+  on template text, `seed_prompt_registry` first, and the insert lives in a module-level
+  `publish(session)` so it can be run outside alembic. **The owner promotes the
+  `production` label after deploy** - a post-deploy step, not the migration's job.
 - `documentation/plans/chatbot/n8n-changes.md`: `## S-low-stock` with the standard seven
-  sub-headings; the only operational step is granting the key.
+  sub-headings; the operational steps are granting the key and promoting the prompt label.
 - Console case `tests/chatbot/console_cases/2026-09-1x-low-stock-report.yaml`.
 
 ## Slices and order

@@ -1356,6 +1356,13 @@ The only operational step is a GRANT, done on the CRM screen, per contact:
    `EXTERNAL_API_KEY_ACT_AS_USER_ID` (or the integration's own `act_as_user_id`) names.
    Without it every contact - granted or not - gets a 403 from the first gate and the
    feature is silently off.
+3. **Promote the parser prompt label** (System > AI prompts > `chatbot_semantic_parser`):
+   migration `517_chatbot_low_stock_vocab` publishes both bodies carrying the low stock
+   words as new UNLABELLED versions, and `ai_prompt_registry.render()` reads the version
+   the `production` label points at - never the Python constant. Until the label is moved
+   onto the newest FULL body, "low stock report" still parses as `check_stock` and the
+   intent never fires, exactly as the 14 Sep console run found. Move it after reading the
+   diff; rolling back is the reverse move.
 
 ### Step 3 - watch one turn end to end
 
@@ -1374,7 +1381,10 @@ nothing to retire.
 ### Rollback
 
 Untick **Low stock report over chat** for every contact. Effective on the next turn, no
-deploy: the lane refuses before any fetch, exactly as it did before the grant.
+deploy: the lane refuses before any fetch, exactly as it did before the grant. Move the
+`chatbot_semantic_parser` `production` label back to the previous version as well if the
+new vocabulary needs to go with it - the published versions are immutable, so a rollback
+is one label move either way.
 
 ### Not covered by this slice
 
