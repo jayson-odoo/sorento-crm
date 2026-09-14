@@ -158,6 +158,8 @@ All on SO419772 / B2155-NL-BLUE, own location BRW-IB, pool BRW, unless another o
 ## See also
 
 * [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md)
+* [Plan a sales order nobody decided](plan-undecided-lines.md) (a pending change puts a line
+  carrying an order inquiry back in play)
 * [Upload the data a reorder plan is built from](upload-plan-data.md) (the sales order book this
   flow reacts to)
 * [Run a reorder plan](run-a-reorder-plan.md)
