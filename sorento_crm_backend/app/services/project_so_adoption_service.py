@@ -60,14 +60,19 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
 )
 from app.services.error_handler import AppException
-from app.services.scm.demand import PROJECT_CLASS, is_open_demand
+from app.services.scm.demand import PROJECT_CLASS, is_undecided_demand
 
 logger = logging.getLogger(__name__)
 
-#: The header half of "outstanding" (plan section 3). `is_open_demand()` is the line half
-#: and is imported rather than restated, so this worklist and the SCM sales-order book
-#: cannot disagree about which orders are still owed.
-_OPEN = "open"
+#: The header half of what the BOARD may plan, and since the 14 September 2026 ruling that
+#: is two statuses rather than one. `is_undecided_demand()` is the line half and is imported
+#: rather than restated, so adoption and the board cannot disagree about which lines exist to
+#: be planned - a Completed order whose stock shipped with nothing behind it could not be
+#: adopted at all, so CS had no record to confirm the order-back against.
+#:
+#: `cancelled` is deliberately absent. A closed book is one that shipped; a cancelled one says
+#: the demand went away, and there is nothing to put back for it.
+_PLANNABLE_STATUSES = ("open", "closed")
 
 #: Sorts an undated line last without ever comparing `None` to a date.
 _EARLIEST = date.min
@@ -245,7 +250,7 @@ class ProjectSOAdoptionService:
         the problem - a bare "cannot adopt" sends somebody to ask.
         """
         self._assert_project_class(core)
-        if core.status != _OPEN:
+        if core.status not in _PLANNABLE_STATUSES:
             raise AppException(
                 409,
                 f"Sales order {core.so_number} is not open, so there is nothing to plan.",
@@ -254,8 +259,8 @@ class ProjectSOAdoptionService:
         if not self._open_core_lines(str(core.id)):
             raise AppException(
                 409,
-                f"Every line of sales order {core.so_number} is already delivered, closed "
-                "or covered, so there is nothing to plan.",
+                f"Every line of sales order {core.so_number} is cancelled or marked no "
+                "purchase needed, so there is nothing to plan.",
                 code="sales_order_nothing_outstanding",
             )
 
@@ -386,17 +391,23 @@ class ProjectSOAdoptionService:
     # ---------------------------------------------------------------- lookups
 
     def _open_core_lines(self, sales_order_id: str) -> List[SalesOrderLine]:
-        """The still-owed lines, by `is_open_demand()` verbatim (plan section 3).
+        """The lines the BOARD will walk, by `is_undecided_demand()` verbatim.
 
-        Imported, never restated: this is the predicate `scm.committed_v` counts and the
-        one the SCM sales-order screen's `outstanding=true` filter already means, so the
-        book and the planning sheet cannot disagree about which lines are owed.
+        Imported, never restated, and it is the BOARD's predicate rather than the netting
+        one since the 14 September 2026 ruling: the mirror is how a confirmation names a
+        line, so a line the board shows and the mirror omits cannot be confirmed at all.
+        A delivered line nobody sourced is exactly that line.
+
+        `covered` and `cancelled` lines are still left out, for the same reason the board
+        leaves them out - somebody already ruled on them - and because a mirror line no
+        screen accounts for moves the record's reconciliation figures
+        (`_authored_line_totals` sums mirror `qty` with no status filter).
         """
         return (
             self.db.query(SalesOrderLine)
             .filter(
                 SalesOrderLine.sales_order_id == str(sales_order_id),
-                is_open_demand(),
+                is_undecided_demand(),
             )
             .all()
         )

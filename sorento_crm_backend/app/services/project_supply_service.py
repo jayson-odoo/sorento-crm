@@ -429,6 +429,24 @@ def _open_of(core: Optional[SalesOrderLine]) -> Decimal:
     return max(_dec(core.qty_ordered) - _dec(core.qty_delivered), _ZERO)
 
 
+def plan_qty_of(core: Optional[SalesOrderLine]) -> Decimal:
+    """What the BOARD plans one line for: `coalesce(qty_required, qty_ordered)`.
+
+    The Python twin of `demand.plan_qty()`, and the 14 September 2026 ruling in one line:
+    NOT the still-owed figure `_open_of` states. A delivered unit nobody ever sourced is a
+    unit to put back, so the ladder is asked for the whole quantity and a Buy on it raises
+    the order-back row. A CANCELLED line plans nothing, exactly as it owes nothing.
+
+    `_open_of` keeps its own readers, all of which genuinely mean "what is still owed": the
+    hold cap (S1), `project_line_draft_service`'s saved snapshot and `sales_order_service
+    .is_stale`.
+    """
+    if core is None or (core.line_status or "open") == "cancelled":
+        return _ZERO
+    required = getattr(core, "qty_required", None)
+    return max(_dec(core.qty_ordered if required is None else required), _ZERO)
+
+
 class SupplyLinesRefused(AppException):
     """A refusal that names its lines (AC-C02).
 
@@ -446,6 +464,16 @@ class SupplyLinesRefused(AppException):
     ):
         super().__init__(status_code=status_code, message=message, code=code)
         self.detail["failing_lines"] = list(failing_lines)
+
+    @property
+    def failing_lines(self) -> List[Dict[str, Any]]:
+        """The refused lines under the name this class's own docstring gives them.
+
+        The wire shape is `detail["failing_lines"]` and stays that way - it is what the
+        frontend reads. This is the same list for a Python caller, so a test or a service
+        catching the refusal asks for it by name instead of reaching into the envelope.
+        """
+        return list(self.detail.get("failing_lines") or [])
 
 
 class ReserveOverHand(SupplyLinesRefused):
@@ -7406,7 +7434,7 @@ class ProjectSupplyService:
                 line_no=line.line_no,
                 item_code=codes.get(product_id or ""),
                 product_id=product_id,
-                open_qty=_open_of(core),
+                open_qty=plan_qty_of(core),
                 required_date=required_date,
                 warehouse=warehouse,
                 pool=pool,
