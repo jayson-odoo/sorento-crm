@@ -1275,15 +1275,24 @@ def test_a_contribution_states_the_sales_order_quantities_by_name():
         assert contribution["qty_ordered"] == "28"
         assert contribution["qty_delivered"] == "8"
         assert contribution["qty_outstanding"] == "20"
-        # The owed quantity is what the board plans against, never the original order.
-        assert contribution["qty"] == contribution["qty_outstanding"]
+        # AC-S2-4: the PLAN quantity is what the board plans against, and it is the ordered
+        # (or required) figure, not the still-owed one - a delivered unit nobody sourced is a
+        # unit to put back. The two are asserted BY NAME rather than against each other,
+        # because an equality between them is the retired rule restated: they differ the
+        # moment a delivery is part-made, which is the whole of this slice.
+        assert contribution["qty"] == "28"
+        assert contribution["qty"] != contribution["qty_outstanding"]
 
 
 def test_a_contribution_states_the_proposal_by_name():
     """Ladder v2's whole-line rule (section E rule 6): `_quantity_world` has no pool, so the
     5 free at the own location and the 7 arriving in time can never together reach the whole
-    20 owed - every partial component is dropped, not mixed in, and the WHOLE line is bought,
-    including the incoming portion that would have covered part of it on its own."""
+    28 the line PLANS for - every partial component is dropped, not mixed in, and the WHOLE
+    line is bought, including the incoming portion that would have covered part of it on its
+    own.
+
+    28, not the 20 still owed (AC-S2-4): 8 of those units have shipped with nothing behind
+    them, and buying only what is still to ship would leave them never put back."""
     with blank_session() as db:
         order, product, _warehouse = _quantity_world(db)
 
@@ -1292,13 +1301,15 @@ def test_a_contribution_states_the_proposal_by_name():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         assert contribution["qty_proposed_reserve"] == "0"
         assert contribution["qty_proposed_incoming"] == "0"
-        assert contribution["qty_proposed_buy"] == "20"
-        # And they still add up to what is owed, which is the invariant the sheet also keeps.
+        assert contribution["qty_proposed_buy"] == "28"
+        # And they still add up to the quantity being PLANNED, which is the invariant the
+        # sheet also keeps - stated against `qty` now, since that is what the ladder was
+        # asked about.
         assert (
             int(contribution["qty_proposed_reserve"])
             + int(contribution["qty_proposed_incoming"])
             + int(contribution["qty_proposed_buy"])
-        ) == int(contribution["qty_outstanding"])
+        ) == int(contribution["qty"])
 
 
 def test_a_cells_location_states_the_availability_not_only_the_demand():
@@ -1306,9 +1317,13 @@ def test_a_cells_location_states_the_availability_not_only_the_demand():
 
     The raw stock/incoming facts are read-only strip figures and stay exactly what the pile
     holds, whether or not the ladder ever draws on them. Ladder v2's whole-line rule (no pool
-    here) means it never does: 5 free plus 7 incoming still falls short of the 20 owed, so the
-    whole line is bought and the PROPOSED figures read 0/0/20 while the STOCK figures stay
-    30/25/5/7.
+    here) means it never does: 5 free plus 7 incoming still falls short of the 28 being
+    planned, so the whole line is bought and the PROPOSED figures read 0/0/28 while the STOCK
+    figures stay 30/25/5/7.
+
+    `qty_demand` is the PLAN quantity too (AC-S2-4). The strip answers "how much is wanted
+    here", and what is wanted at this bin is every unit nobody decided a source for - the 8
+    already shipped included.
     """
     with blank_session() as db:
         order, product, warehouse = _quantity_world(db)
@@ -1317,7 +1332,7 @@ def test_a_cells_location_states_the_availability_not_only_the_demand():
 
         location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
         assert location["location"] == warehouse.warehouse_code
-        assert location["qty_demand"] == "20"
+        assert location["qty_demand"] == "28"
         assert location["qty_on_hand"] == "30"
         assert location["qty_reserved"] == "25"
         # What this engine may actually use, after existing holds - the number the strip was
@@ -1326,7 +1341,7 @@ def test_a_cells_location_states_the_availability_not_only_the_demand():
         assert location["qty_incoming"] == "7"
         assert location["qty_proposed_reserve"] == "0"
         assert location["qty_proposed_incoming"] == "0"
-        assert location["qty_proposed_buy"] == "20"
+        assert location["qty_proposed_buy"] == "28"
 
 
 def test_a_cells_location_names_the_incoming_document_and_its_arrival_date():
@@ -3880,7 +3895,8 @@ def test_the_trail_asks_the_four_questions_in_order_and_then_buy():
 
 def test_every_row_of_the_proof_answers_yes_or_no_and_says_what_it_took():
     """AC-V1's shape: one word, one quantity, one place, one sentence. `_quantity_world` has
-    7 on the water against 20 owed and no pool, so every question but Buy answers No."""
+    7 on the water against the 28 the line plans for (AC-S2-4, not the 20 still owed) and no
+    pool, so every question but Buy answers No."""
     with blank_session() as db:
         order, product, _warehouse = _quantity_world(db)
 
@@ -3899,7 +3915,7 @@ def test_every_row_of_the_proof_answers_yes_or_no_and_says_what_it_took():
         ]
         buy = _step(contribution, "buy")
         assert buy["location"] is None
-        assert buy["took"] == "20"
+        assert buy["took"] == "28"
         assert not any(step["kind"] == "incoming" for step in _trail(contribution)), (
             "there is no row named Incoming under ladder v5"
         )
@@ -4393,8 +4409,9 @@ def test_a_hot_selling_rung_still_names_the_classification_in_the_pool_sentence(
 
 
 def test_the_supply_on_the_water_is_inside_question_ones_own_offer():
-    """AC-V2 on the board. `_quantity_world` has 7 open on ZZT-SPO-0001 against 20 owed and
-    no pool, so the group can offer 12 of the 20 and the whole-line rule buys the lot.
+    """AC-V2 on the board. `_quantity_world` has 7 open on ZZT-SPO-0001 against the 28 the
+    line plans for (AC-S2-4, not the 20 still owed) and no pool, so the group cannot cover it
+    and the whole-line rule buys the lot.
 
     What is pinned is that there is NO row named Incoming and no rung of its own for the
     document: the water is inside question 1's offer, and question 1's sentence names the
@@ -4411,7 +4428,7 @@ def test_the_supply_on_the_water_is_inside_question_ones_own_offer():
             "pool", "own", "order_borrow", "supply_borrow", "buy",
         ]
         assert "group nets" in _step(contribution, "own")["why"]
-        assert _step(contribution, "buy")["took"] == "20"
+        assert _step(contribution, "buy")["took"] == "28"
 
 
 # --------------------------------------------------------------------------- #
