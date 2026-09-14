@@ -33,7 +33,7 @@ cannot drift about what a seeded world is.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -41,7 +41,7 @@ import sqlalchemy as sa
 
 from app.models.base import company_scope
 from app.models.order import SalesOrderLine
-from app.models.procurement import PurchaseOrderLine
+from app.models.procurement import PurchaseOrderLine, SPOAllocation
 from app.models.project_so import (
     OrderInquiry,
     OrderInquiryLink,
@@ -1099,3 +1099,268 @@ def test_ac_r_20_rollback_refuses_a_run_spanning_companies():
 
         assert counts["rows"] == 1, counts
         assert _rows_of(w, "a.xlsx") == []
+
+
+# --------------------------------------------------------------------------- #
+# reviewer round, 15 Sep 2026: the exact line, and refs that name too much     #
+# --------------------------------------------------------------------------- #
+
+
+def _sibling_po_line(
+    w: World,
+    po,
+    *,
+    qty_ordered: str,
+    source_ref: str | None = None,
+    from_so_line_ref: str | None = None,
+    product=None,
+) -> PurchaseOrderLine:
+    """A SECOND line on an EXISTING purchase order.
+
+    `World.po_line` mints a new document each time, and `po_number` is one document: two
+    lines of one purchase order is the whole shape these criteria are about.
+    """
+    line = PurchaseOrderLine(
+        id=_uid(),
+        company_id=w.company_id,
+        purchase_order_id=po.id,
+        product_id=(product or w.product).id,
+        warehouse_id=w.warehouse.id,
+        qty_ordered=Decimal(qty_ordered),
+        qty_received=Decimal("0"),
+        expected_date=date(2026, 9, 1),
+        line_status="open",
+        source_ref=source_ref,
+        from_so_line_ref=from_so_line_ref,
+    )
+    w.db.add(line)
+    w.db.flush()
+    return line
+
+
+def _allocation(
+    w: World,
+    *,
+    spo_number: str,
+    line_number: int,
+    quantity: int,
+    from_po_number: str,
+    from_po_line_ref: str,
+) -> SPOAllocation:
+    """One container of a shipping order, stating the purchase order LINE it came from.
+
+    Built here rather than through `World.spo_allocation`, which numbers every allocation
+    line 1: two containers of ONE shipping order is the shape AC-R-21 is about, and
+    `(company, spo_number, spo_line_number)` is unique, so the line number has to be right
+    at insert.
+    """
+    row = SPOAllocation(
+        id=_uid(),
+        company_id=w.company_id,
+        spo_number=spo_number,
+        spo_line_number=line_number,
+        product_id=w.product.id,
+        warehouse_id=w.warehouse.id,
+        location_code=w.warehouse.warehouse_code,
+        allocated_quantity=quantity,
+        quantity_received=0,
+        receipt_status="pending",
+        line_status="open",
+        source_system="autocount",
+        issue_date=date(2026, 6, 1),
+        expected_date=date(2026, 9, 1),
+        supplier_id=w.supplier().id,
+        from_po_number=from_po_number,
+        from_po_line_ref=from_po_line_ref,
+    )
+    w.db.add(row)
+    w.db.flush()
+    return row
+
+
+def test_ac_r_21_chain_walks_the_exact_po_line():
+    """AC-R-21. One purchase order, two lines of the same item, one shipping order carrying
+    a container for each: the quantity is owed against the container that holds THIS line.
+
+    On the 3am 14 Sep prod copy SPO-2026/01-0140 carries five CB2154-DIY allocations from
+    202511-S0097 - 300, 87, 1, 10 and 2 - each raised for a different sales order line. A
+    walk that knows only the document number lands the owner's 87 on the 300 that belongs to
+    somebody else, and the worklist then shows a container this order has no claim on. Every
+    allocation that names a source purchase order names its LINE too
+    (`spo_allocations.from_po_line_ref`, quoting that line's `source_ref`), so the finer key
+    is available wherever the coarser one is.
+    """
+    with world() as w:
+        ref = _ref()
+        first_po_ref = f"AED_SORENTO:{_n()}:1"
+        second_po_ref = f"AED_SORENTO:{_n()}:2"
+        order = w.order()
+        _with_ref(w, w.line(order, qty_ordered="100"), ref)
+
+        po, big_line = w.po_line(qty_ordered="300")
+        big_line.source_ref = first_po_ref
+        w.db.flush()
+        exact_line = _sibling_po_line(
+            w, po, qty_ordered="87", source_ref=second_po_ref, from_so_line_ref=ref,
+        )
+
+        spo_number = f"SPO-2026/01-{_n():04d}"
+        big_allocation = _allocation(
+            w, spo_number=spo_number, line_number=1, quantity=300,
+            from_po_number=po.po_number, from_po_line_ref=first_po_ref,
+        )
+        exact_allocation = _allocation(
+            w, spo_number=spo_number, line_number=2, quantity=87,
+            from_po_number=po.po_number, from_po_line_ref=second_po_ref,
+        )
+        data = sheet([
+            (order.so_number, w.product.product_code, 87, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        links = w.links(w.one_row())
+        assert len(links) == 1, _documents(links)
+        assert str(links[0].spo_allocation_id) == str(exact_allocation.id), (
+            "the walk landed on the container raised for another sales order line"
+        )
+        assert Decimal(str(links[0].qty)) == Decimal("87")
+        assert all(
+            str(link.spo_allocation_id) != str(big_allocation.id) for link in links
+        )
+        assert str(exact_line.id) not in {str(link.po_line_id) for link in links}, (
+            "the allocation covered the whole need, so the purchase order line takes none"
+        )
+
+
+def test_ac_r_22_ambiguous_ref_never_promotes_a_ghost():
+    """AC-R-22. A reference that names more than one sales order line names none of them.
+
+    `sales_order_lines.source_ref` is not unique: the August extract wrote bare ordinals, and
+    `'1'` alone sits on 3,364 lines across 3,364 different sales orders on the prod copy. The
+    pairing already drops an ambiguous ref before it links anything; the LINE PICK has to
+    drop it too, or a cancelled ghost carrying the ordinal is "named by the cited document"
+    and outranks the real line the operator meant - which is the very row this lane was
+    opened for (tab "JAN - APR 26" row 772).
+    """
+    with world() as w:
+        order = w.order()
+        ghost = _with_ref(
+            w,
+            w.line(order, qty_ordered="50", required_date=D_OCT, line_status="cancelled"),
+            "1",
+        )
+        real = _with_ref(
+            w,
+            w.line(
+                order, qty_ordered="50", required_date=D_OCT,
+                line_status="closed", qty_delivered="50",
+            ),
+            _ref(),
+        )
+        # The same ordinal on ANOTHER sales order is what makes it ambiguous.
+        elsewhere = w.order()
+        _with_ref(w, w.line(elsewhere, qty_ordered="50"), "1")
+
+        cited, cited_line = w.po_line(qty_ordered="50")
+        _names(w, cited_line, "1")
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, cited.po_number),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        mirror = w.mirror_of(real)
+        assert mirror is not None, (
+            "the real line was never mirrored: the ordinal promoted the cancelled ghost"
+        )
+        assert str(row.so_line_id) == str(mirror.id), (
+            "an ambiguous ref made the cancelled ghost the line the citation names"
+        )
+        ghost_mirror = w.mirror_of(ghost)
+        assert ghost_mirror is None or str(row.so_line_id) != str(ghost_mirror.id)
+        links = w.links(row)
+        assert [str(link.po_line_id) for link in links] == [str(cited_line.id)], (
+            _documents(links)
+        )
+        assert result["links_from_autocount"] == 0, (
+            "the ambiguous ref paired the row as though the book had stated it"
+        )
+        assert links[0].auto is False
+
+
+def test_ac_r_23_lent_citation_picks_the_line_before_matching():
+    """AC-R-23. The citation a restatement lends has to reach the LINE PICK, not just the
+    pairing.
+
+    The customer's month tab carries the delivery with no remark and the roll-up tab carries
+    the same delivery with the purchase order number on it. AC-R-12 already says the number
+    is merged onto the row that was kept - but a merge that happens after that row has been
+    matched changes only which document it links to, and the row is by then already on the
+    wrong line. Which tab holds the remark is an accident of how the book is kept; it must
+    not decide which line of the order the quantity lands on.
+    """
+    with world() as w:
+        order = w.order()
+        first = w.line(order, qty_ordered="50", required_date=D_OCT)
+        second = _with_ref(
+            w, w.line(order, qty_ordered="50", required_date=D_NOV), _ref()
+        )
+        cited, cited_line = w.po_line(qty_ordered="50")
+        _names(w, cited_line, second.source_ref)
+        blank = (order.so_number, w.product.product_code, 30, D_OCT,
+                 w.warehouse.warehouse_code, "")
+        naming = (order.so_number, w.product.product_code, 30, D_OCT,
+                  w.warehouse.warehouse_code, cited.po_number)
+
+        result = _apply(w, book(JAN26=[blank], ROLLUP=[naming]))
+
+        assert result["rows"] == 2, result
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        mirror = w.mirror_of(second)
+        assert mirror is not None, "the line the lent citation names was never mirrored"
+        assert str(row.so_line_id) == str(mirror.id), (
+            "the row was matched before the roll-up tab lent it the purchase order number"
+        )
+        assert w.mirror_of(first) is None or str(row.so_line_id) != str(
+            w.mirror_of(first).id
+        )
+        links = w.links(row)
+        assert [str(link.po_line_id) for link in links] == [str(cited_line.id)], (
+            _documents(links)
+        )
+
+
+def test_ac_r_24_ref_shared_by_two_orders_pairs_nothing():
+    """AC-R-24. An ordinal on two sales orders is not a statement about either of them.
+
+    Silence is the only honest answer: a purchase order line carrying `'1'` in
+    `from_so_line_ref` would otherwise pair itself to all 3,364 lines that carry `'1'`, and
+    the operator would get a worklist full of confident links to documents nobody bought for
+    them. The row is still raised - the instruction is real - it simply carries no pairing.
+    """
+    with world() as w:
+        order = w.order()
+        _with_ref(w, w.line(order, qty_ordered="50"), "1")
+        twin = w.order()
+        _with_ref(w, w.line(twin, qty_ordered="50"), "1")
+        _po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, "1")
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert w.links(row) == [], "an ambiguous ref paired the row anyway"
+        assert result["links_written"] == 0
+        assert result["links_from_autocount"] == 0

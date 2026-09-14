@@ -104,3 +104,47 @@ that file stays green unchanged.
   needs no flag. (The script runs under the system scope - `None`, all companies - which is
   what lets one stamp be found at all, and equally what would let one company's operator take
   another company's rows out unnoticed.)
+
+## Slice S3, PO and SPO columns on the worklist [FE]
+
+* AC-R-26 Given a row linked to one PO line and nothing else, when the worklist renders,
+  then the PO cell shows that PO number as a clickable link and no pill, the SPO cell
+  shows a muted dash, and neither cell prints the coverage headline or an info icon.
+* AC-R-27 Given a row linked to two allocations of the SAME SPO number and one PO line,
+  then the SPO cell shows that number once with no pill (distinct numbers, not links) and
+  the PO cell shows the PO number.
+* AC-R-28 Given a row linked to three distinct SPO numbers, then the SPO cell shows the
+  first (in link order) and a `+2` pill; clicking the number or the pill opens the
+  Backing documents lightbox listing all three (the existing dialog, AC-A5 unchanged).
+* AC-R-29 Given a row with no links, then the PO cell reads `Not found (new order)` and
+  the SPO cell a muted dash; nothing is clickable.
+* AC-R-30 Given a fully bundled row, then the PO cell reads exactly what it reads today
+  (`Included with ...`, bundled trigger) and the SPO cell a muted dash.
+* AC-R-31 Both columns carry explicit `size`, the number is `truncate` + `title`, the
+  column ids are `po_number` and `spo_number`, and the header titles are `PO` and `SPO`.
+
+## Reviewer round, 15 Sep 2026 (S1 importer)
+
+* AC-R-21 Given a cited or referenced purchase order with TWO lines of the same product,
+  and a shipping order carrying one allocation per purchase order LINE
+  (`spo_allocations.from_po_line_ref` quoting that line's `source_ref`), when the row's
+  sales order line is named by the SECOND purchase order line, then the link lands on THAT
+  line's allocation - not on the first allocation of the document. (Prod: SPO-2026/01-0140
+  carries five CB2154-DIY allocations from 202511-S0097, one per sales order line.)
+* AC-R-22 Given a `from_so_line_ref` whose value names MORE THAN ONE sales order line - the
+  August extract wrote bare ordinals, and `'1'` sits on 3,364 lines - when the sheet cites
+  that document, then the ambiguous ref does not make any line "named" for the line pick:
+  the row still lands on the real line rather than on a cancelled ghost that happens to
+  carry the ordinal, and no link is written from the reference (source 1). The citation is
+  still tried as source 3.
+* AC-R-23 Given the FIRST of two restating rows has a blank remark and the SECOND cites a
+  purchase order whose line names a DIFFERENT sales order line from the one the first row
+  would otherwise match, when applied, then the one raised row is on the line the citation
+  names - the lent citation reaches the line pick, not only the pairing.
+* AC-R-24 Given two sales orders each holding a line with the same ambiguous `source_ref`,
+  and a purchase order line naming that ref, when applied with no citation, then the row is
+  raised and NOTHING is linked.
+* AC-R-25 Given one purchase order with several lines of the same item,
+  `order_link_service._purchase_side` answers with the OLDEST of them for both `by_key` and
+  `by_number`, whatever order the database returns the rows in - an unordered read made the
+  same file pair differently on its preview and on its apply.
