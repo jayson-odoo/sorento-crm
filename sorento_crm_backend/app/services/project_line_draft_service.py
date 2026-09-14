@@ -34,7 +34,7 @@ from app.models.project_so import (
 )
 from app.models.user import User
 from app.services.error_handler import AppException
-from app.services.project_supply_service import _open_of
+from app.services.project_supply_service import plan_qty_of
 from app.services.scm.demand import is_undecided_demand
 from app.services.scm.front_planning_engine import qty_text
 
@@ -207,9 +207,16 @@ def _line_snapshot(line: SalesOrderLine) -> Dict[str, Any]:
     `open_qty` and `required_date` - never the proposal: the proposal depends on which
     orders share the board, its granularity and its window, so a snapshot of it flipped
     stale falsely the moment a planner opened a different view of the same line.
+
+    `open_qty` IS THE PLAN QUANTITY (AC-S2-17), the figure the board shows and the figure a
+    composition is balanced against. Frozen as `_open_of` it read 0 on a 3-ordered,
+    3-delivered line while the board compared it against 3, so a draft was stale the instant
+    it was saved: the pill read "Suggestion changed" and `lineFor` dropped the line, leaving
+    Confirm at 0 on the order this lane exists for. What makes a draft stale is the line's
+    ASK moving, not a delivery against it.
     """
     return {
-        "open_qty": qty_text(_open_of(line)),
+        "open_qty": qty_text(plan_qty_of(line)),
         "required_date": line.required_date.isoformat() if line.required_date else None,
     }
 

@@ -923,14 +923,17 @@ class SalesOrderService:
 
         Delegates to `project_line_draft_service.is_stale` - the SAME predicate the
         planning board judges a draft by, so this page and the board cannot disagree about
-        which saved line the numbers have moved under. Judged on the line's own outstanding
+        which saved line the numbers have moved under. Judged on the line's own PLAN
         quantity and required date, never the proposal - see that function's own docstring
         for why.
         """
         from app.services.project_line_draft_service import is_stale
-        from app.services.project_supply_service import _open_of
+        from app.services.project_supply_service import plan_qty_of
 
-        return is_stale(saved_entry.get("line_snapshot"), _open_of(ln), ln.required_date)
+        # THE PLAN QUANTITY, the same figure the writer freezes and the board compares
+        # (AC-S2-17). Judged on `_open_of` against a snapshot taken with `plan_qty_of`, every
+        # draft on a delivered line read stale the moment it was saved.
+        return is_stale(saved_entry.get("line_snapshot"), plan_qty_of(ln), ln.required_date)
 
     @staticmethod
     def _saved_components(decision: dict) -> list[dict]:

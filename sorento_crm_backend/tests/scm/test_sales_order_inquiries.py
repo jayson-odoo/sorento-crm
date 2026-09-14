@@ -804,8 +804,14 @@ def test_a_line_with_no_saved_decision_reads_null(scm_app):
 
 
 def test_a_saved_decision_whose_line_has_since_moved_reads_stale(scm_app):
-    """AC-4.4's own predicate, read on this page too: the line's own outstanding quantity
-    moved since the save (a re-upload, say), never the proposal."""
+    """AC-4.4's own predicate, read on this page too: the line's own PLAN QUANTITY moved
+    since the save (a re-upload, say), never the proposal.
+
+    AC-S2-17: the ask is `coalesce(qty_required, qty_ordered)`, and a change to it is the
+    thing a saved suggestion can go out of date against - the planner decided supply for 10
+    units and there are 25 to find. The trigger below is exactly that change and is unchanged
+    by the plan-qty rule; what moved is the word for the figure.
+    """
     app, db, uid = _as(scm_app)
     core = _core_order(db)
     core.demand_class = "project"
@@ -822,6 +828,51 @@ def test_a_saved_decision_whose_line_has_since_moved_reads_stale(scm_app):
 
     body = next(l for l in res.json()["lines"] if l["id"] == line.id)
     assert body["saved_stale"] is True
+
+
+def test_a_saved_decision_on_a_delivered_line_is_not_stale_on_the_detail_page(scm_app):
+    """AC-S2-17's coupling, guarded on the surface that will break if only one side moves.
+
+    GREEN, AND THAT IS THE POINT. Three places decide whether a saved suggestion is out of
+    date, and they have to name the same figure:
+
+      * the WRITER, `project_line_draft_service._line_snapshot`, which freezes the line's own
+        facts at save time;
+      * the BOARD's reader, `project_fulfilment_board_service._attach_drafts`, which passes
+        `row.qty`;
+      * THIS PAGE's reader, `sales_order_service._saved_is_stale`.
+
+    All three read the plan quantity. The board moved there first, under the 14 September
+    ruling; the writer and this page followed. Move any one of them back and the line below
+    breaks: the snapshot would say 3 while the comparison said 0, so EVERY saved decision on a
+    delivered line would read stale on the sales order detail - a warning about a change
+    nobody made, on the very lines this lane exists to plan, and CS sent to re-decide them.
+
+    The line is SO421404's own shape, 3 ordered and 3 delivered, because that is where the
+    still-owed figure and the plan quantity differ. On a line with nothing delivered the two
+    coincide and a test there would pass whichever figure either side named, which is the
+    same as not having the test at all.
+    """
+    app, db, uid = _as(scm_app)
+    core = _core_order(db)
+    core.demand_class = "project"
+    core.status = "closed"
+    line = _planning_line(db, core, qty=3, delivered=3, line_status="closed")
+    db.flush()
+    item_code = line.product.product_code
+
+    _save_draft(db, core, 1, item_code, decision=SAVED_DECISION, saved_by=uid)
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["supply_saved"] is not None, "sanity: the draft reached this page at all"
+    assert body["saved_stale"] is False, (
+        "nothing changed since the save; the snapshot and this page's reader have to be "
+        "comparing the same figure"
+    )
 
 
 def test_confirming_the_line_replaces_the_saved_decision_with_the_confirmed_one(scm_app):
