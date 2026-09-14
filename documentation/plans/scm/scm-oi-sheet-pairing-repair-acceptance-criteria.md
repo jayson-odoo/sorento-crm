@@ -172,3 +172,22 @@ that file stays green unchanged.
 * AC-R-37 [BE] Given a sheet row dated 2026-01-05 matching a line whose required date is
   2030-01-01, when applied, then the raised row's `delivery_date` is 2030-01-01; given the
   line has no required date, the row carries the sheet's date.
+
+## Reviewer round on #904, 15 Sep
+
+* AC-R-34, second case [BE] Given ONE purchase order carrying line A (100, shipped in full
+  on an allocation somebody else already holds) and line B (50, the line that names this
+  row's sales order line), when applied, then the row is linked to B for 50: the deduction
+  a line takes for its own shipments is per LINE, and a sibling's containers are not
+  evidence that this line's units have sailed.
+* AC-R-37, third case [BE] Given an ORDER BACK sheet row on a line whose required date is
+  2030-01-01, when applied, then the raised row's `delivery_date` is 2030-01-01 too - the
+  words in the date cell are still never a date, and `verb` is what says the quantity is
+  owed against something already ordered.
+* AC-R-38 [BE] The Buy cap (7.3) is the FIGURE, not one card's arithmetic. Given a row of
+  364 on a core line ordered 364 / delivered 352 with links of 62, then the worklist's
+  Remaining column (`_quantity_flow_by_so_line`), `scm.committed_v`'s project leg and
+  `demand.horizon_committed_select_sql` - what a reorder run buys from - each read 0; given
+  300 delivered, each reads 2. A row that says "nothing left to buy" on the card and 302 to
+  the engine is worse than one that says 302 in both, because only one of the two is on a
+  screen anybody checks.

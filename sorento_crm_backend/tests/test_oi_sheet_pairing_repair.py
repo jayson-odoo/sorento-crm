@@ -43,6 +43,7 @@ from app.models.base import company_scope
 from app.models.order import SalesOrderLine
 from app.models.procurement import PurchaseOrderLine, SPOAllocation
 from app.models.project_so import (
+    IV_ORDER_BACK,
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRow,
@@ -52,7 +53,7 @@ from app.services import project_order_inquiry_import_service as importer
 from app.services.import_outcome import ImportOutcome
 from app.services.project_so_adoption_service import ProjectSOAdoptionService
 
-from ._pg_fixture import blank_session
+from ._pg_fixture import blank_session, pg_session
 from .test_project_order_inquiry_import_migration import (  # the seeded world, not copied
     D_NOV,
     D_OCT,
@@ -118,14 +119,17 @@ def _apply(w: World, data: bytes, *, file_name: str | None = None, outcome=None)
 def _link_row(
     w: World,
     *,
-    po_line: PurchaseOrderLine,
     document: str,
     qty: str,
+    po_line: PurchaseOrderLine | None = None,
+    allocation: SPOAllocation | None = None,
 ) -> OrderInquiryLink:
-    """An EXISTING link from somebody else's row, occupying that PO line's capacity.
+    """An EXISTING link from somebody else's row, occupying that target's capacity.
 
     Seeded through a second sales order and the board's own writer, so the occupied
-    capacity is the same fact `_claimed_capacity` reads for any other link.
+    capacity is the same fact `_claimed_capacity` reads for any other link. Either target
+    may be named - a purchase order line or a shipping order allocation - because both can
+    be full when this row arrives.
     """
     other = w.order()
     other_line = w.line(other, qty_ordered="50")
@@ -135,7 +139,8 @@ def _link_row(
         id=_uid(),
         company_id=w.company_id,
         row_id=held.id,
-        po_line_id=po_line.id,
+        po_line_id=po_line.id if po_line is not None else None,
+        spo_allocation_id=allocation.id if allocation is not None else None,
         document=document,
         qty=Decimal(qty),
         linked_by=w.actor,
@@ -1626,6 +1631,25 @@ def test_ac_r_37_row_takes_the_sales_order_lines_delivery_date():
         )
 
     with world() as w:
+        # An ORDER BACK row too (reviewer round on #904): the words in the date cell are
+        # still never a date, and `verb` is what says the quantity is owed against something
+        # already ordered - so there is no reason for it to report a different delivery from
+        # any other row on the same line.
+        order = w.order()
+        w.line(order, qty_ordered="50", required_date=line_date)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, "ORDER BACK",
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert row.verb == IV_ORDER_BACK
+        assert row.delivery_date == line_date
+
+    with world() as w:
         # A line with no required date has nothing to lend, so the sheet's date stands.
         order = w.order()
         w.line(order, qty_ordered="50", required_date=None)
@@ -1638,3 +1662,193 @@ def test_ac_r_37_row_takes_the_sales_order_lines_delivery_date():
 
         assert result["rows_raised"] == 1, result
         assert w.one_row().delivery_date == sheet_date
+
+
+def test_ac_r_34b_sibling_lines_shipment_does_not_zero_the_named_line():
+    """AC-R-34, second case (reviewer round on #904). The deduction is per LINE, and a line
+    that has shipped nothing must not be emptied by its sibling's containers.
+
+    One purchase order, two lines of the same item: line A (100) shipped in full, line B (50)
+    the one that names this row's sales order line. `_less_own_shipments` looks for the
+    allocations quoting B's own `source_ref` and, finding none, falls back to the document's
+    whole shipment set - which is A's 100. B's capacity goes to zero and the row is raised
+    with nothing at all, when the purchase order the book raised FOR IT has 50 sitting on it.
+
+    The fallback is right only where the feed named no line; where it named a different one,
+    that is a statement about the sibling, not silence.
+    """
+    with world() as w:
+        ref = _ref()
+        shipped_ref = f"AED_SORENTO:{_n()}:A"
+        named_ref = f"AED_SORENTO:{_n()}:B"
+        order = w.order()
+        _with_ref(w, w.line(order, qty_ordered="400"), ref)
+
+        po, shipped_line = w.po_line(qty_ordered="100")
+        shipped_line.source_ref = shipped_ref
+        w.db.flush()
+        named_line = _sibling_po_line(
+            w, po, qty_ordered="50", source_ref=named_ref, from_so_line_ref=ref,
+        )
+        allocation = _allocation(
+            w, spo_number=f"SPO-2026/05-{_n():04d}", line_number=1, quantity=100,
+            from_po_number=po.po_number, from_po_line_ref=shipped_ref,
+        )
+        # Somebody else already holds every unit of that shipment, so it has nothing to
+        # give this row - and the row's own purchase order line is all that is left.
+        _link_row(w, allocation=allocation, document=allocation.spo_number, qty="100")
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 50, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        # `_link_row` seeded a board row of its own to occupy the shipment, so the migrated
+        # row is picked out by its stamp rather than by being the only one there.
+        mine = [
+            r for r in w.rows()
+            if (r.note or "").startswith(importer._MIGRATION_STAMP)
+        ]
+        assert len(mine) == 1, [r.item_code for r in mine]
+        links = w.links(mine[0])
+        assert len(links) == 1, [
+            (link.document, str(link.qty)) for link in links
+        ]
+        assert str(links[0].po_line_id) == str(named_line.id), (
+            "the line the book raised for this row was emptied by its SIBLING's shipment"
+        )
+        assert Decimal(str(links[0].qty)) == Decimal("50")
+        assert result["links_from_autocount"] == 1
+
+
+def _committed(db, product_id: str, *, planned: bool) -> Decimal:
+    """The project leg for one product, as the VIEW says it and as the PLAN's own SELECT
+    does (the shape `tests/test_order_inquiry_handshake.py::_project_committed` uses).
+
+    Keyed on the product because this runs on the REAL database, where the tables are not
+    empty: the seeded product is what makes the figure this test's own.
+    """
+    from app.services.scm import demand
+
+    if planned:
+        sql = (
+            "SELECT COALESCE(SUM(project_committed), 0) FROM ("
+            f"{demand.horizon_committed_select_sql()}) cv WHERE cv.product_id = :pid"
+        )
+        params = {"pid": str(product_id), "horizon": None, "horizon_start": None}
+    else:
+        sql = (
+            "SELECT COALESCE(SUM(project_committed), 0) FROM scm.committed_v "
+            "WHERE product_id = :pid"
+        )
+        params = {"pid": str(product_id)}
+    return Decimal(str(db.execute(sa.text(sql), params).scalar() or 0))
+
+
+def _remaining_open(db, row) -> Decimal:
+    """The worklist's Remaining column for this row's sales order line."""
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+    flow = OrderInquiryWorklistService(db)._quantity_flow_by_so_line([row])
+    return Decimal(str((flow.get(str(row.so_line_id)) or {}).get("remaining", 0)))
+
+
+def _seed_partly_delivered(w, *, delivered: str):
+    """One migrated row of 364 on a line that has already delivered most of itself, with
+    62 of the rest on a purchase order the sheet cites."""
+    order = w.order()
+    line = w.line(order, qty_ordered="364", qty_delivered=delivered)
+    # A document number from a year no real book holds. This test runs on the REAL
+    # database (the view), which on a developer's machine is a copy of production and
+    # already carries every `2026MM-Snnnn` the parent file's `_po_number()` can mint -
+    # `uq_purchase_orders_company_po_number` then aborts the seed, on that machine only.
+    po, _po_line = w.po_line(qty_ordered="62", number=f"209901-S{_n():04d}")
+    result = _apply(w, sheet([
+        (order.so_number, w.product.product_code, 364, D_OCT,
+         w.warehouse.warehouse_code, po.po_number),
+    ]))
+    assert result["rows_raised"] == 1, result
+    assert result["links_written"] == 1, result
+    # Read by THIS test's own item code: on the real database the tables are not empty.
+    rows = (
+        w.db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.item_code == w.product.product_code)
+        .all()
+    )
+    assert len(rows) == 1, [r.item_code for r in rows]
+    row = rows[0]
+    assert Decimal(str(sum(Decimal(str(l.qty)) for l in w.links(row)))) == Decimal("62")
+    return line, row
+
+
+def test_ac_r_38a_the_remaining_column_is_capped():
+    """AC-R-38, the Remaining column (`_quantity_flow_by_so_line`).
+
+    The captain, 20 Aug: "show the quantity, quantity taken from PO, and the remaining
+    quantity, cause this is what flows to reorder planning". So this figure and the Buy card
+    have to agree, and the cap 7.3 put on the card belongs here too.
+
+    Green at e9690a0e5 - 55f1d0d57 capped this reader along with the card - and kept as the
+    pin that says so, because the two readers below are where it did not reach.
+
+    On the REAL database (`pg_session`): `scm.committed_v`, which the sibling tests read, is
+    installed by a migration and the blank scratch schema has no view, so all three share the
+    one substrate and the one seed.
+    """
+    with world(pg_session) as w:
+        line, row = _seed_partly_delivered(w, delivered="352")
+
+        assert Decimal(str(line.qty_ordered)) - Decimal(str(line.qty_delivered)) == (
+            Decimal("12")
+        ), "twelve of the 364 are still owed"
+        assert _remaining_open(w.db, row) == Decimal("0"), (
+            "the Remaining column offers more than the sales order line still owes"
+        )
+
+    with world(pg_session) as w:
+        _line, row = _seed_partly_delivered(w, delivered="300")
+
+        assert _remaining_open(w.db, row) == Decimal("2")
+
+
+def test_ac_r_38b_committed_v_is_capped():
+    """AC-R-38, `scm.committed_v`.
+
+    The view is what every stock screen reads "committed" off. A row that says nothing left
+    to buy on the worklist and 302 in the view is worse than one that says 302 in both,
+    because only one of the two is on a screen somebody checks.
+    """
+    with world(pg_session) as w:
+        _line, _row = _seed_partly_delivered(w, delivered="352")
+
+        assert _committed(w.db, w.product.id, planned=False) == Decimal("0"), (
+            "the view counts demand the customer has already been given"
+        )
+
+    with world(pg_session) as w:
+        _line, _row = _seed_partly_delivered(w, delivered="300")
+
+        assert _committed(w.db, w.product.id, planned=False) == Decimal("2")
+
+
+def test_ac_r_38c_the_plans_own_select_is_capped():
+    """AC-R-38, `demand.horizon_committed_select_sql` - what a reorder run actually buys
+    from.
+
+    This is the reader that spends money. Uncapped, the plan proposes 302 of an item the
+    sales order line owes twelve of, and 62 of those twelve are already on a purchase order.
+    """
+    with world(pg_session) as w:
+        _line, _row = _seed_partly_delivered(w, delivered="352")
+
+        assert _committed(w.db, w.product.id, planned=True) == Decimal("0"), (
+            "the reorder run would buy 302 of something twelve of which is owed"
+        )
+
+    with world(pg_session) as w:
+        _line, _row = _seed_partly_delivered(w, delivered="300")
+
+        assert _committed(w.db, w.product.id, planned=True) == Decimal("2")
