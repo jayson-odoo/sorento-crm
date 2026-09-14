@@ -1088,6 +1088,55 @@ class SalesOrderService:
                 inquiry.pop("_is_amendment", None)
         return rows
 
+    def with_planning_state(self, rows: list[dict]) -> list[dict]:
+        """How much of each order anybody has DECIDED, in two counts, ONE query for the page.
+
+        The owner, 14 September 2026, looking at SO421404: "how do I know if the order is
+        fully planned from the list itself?" The Order inquiries column says what purchasing
+        was told; nothing said whether anybody had decided where the stock comes from. That
+        order read Completed, three of three delivered, and had never been planned.
+
+        `plannable_lines` is how many lines the fulfilment board would ADMIT and
+        `planned_lines` how many of those are settled - both by the board's own predicates
+        (`is_undecided_demand()` and `is_decided_demand()`), imported rather than restated, so
+        an order cannot read "2 of 3 planned" here and open a board that disagrees.
+
+        ONE GROUPED QUERY over the page's lines, never one per row: the book holds 15,000
+        sales orders and a per-row read is an N+1 that only shows itself in production. An
+        order with no admitted line at all is `0` and `0` - the pill reads a dash, because
+        nothing to plan is not the same answer as nothing planned.
+        """
+        for row in rows:
+            row["planned_lines"] = 0
+            row["plannable_lines"] = 0
+        by_id = {r["id"]: r for r in rows}
+        if not by_id:
+            return rows
+
+        from app.services.scm.demand import is_decided_demand, is_undecided_demand
+
+        decided = is_decided_demand()
+        counted = (
+            self.db.query(
+                SalesOrderLine.sales_order_id,
+                func.count(SalesOrderLine.id),
+                func.count(SalesOrderLine.id).filter(decided),
+            )
+            .filter(
+                SalesOrderLine.sales_order_id.in_(list(by_id)),
+                is_undecided_demand(),
+            )
+            .group_by(SalesOrderLine.sales_order_id)
+            .all()
+        )
+        for sales_order_id, plannable, planned in counted:
+            row = by_id.get(str(sales_order_id))
+            if row is None:
+                continue
+            row["plannable_lines"] = int(plannable or 0)
+            row["planned_lines"] = int(planned or 0)
+        return rows
+
     def with_planning_changes(self, rows: list[dict]) -> list[dict]:
         """The PENDING planning-change batch each order is in, for the SCM Sales Orders list.
 
@@ -1130,8 +1179,10 @@ class SalesOrderService:
         # helper: a second query for the same fact is how two screens start disagreeing.
         # `line_planning` is the per-LINE half of the same question, and only this read
         # pays for it - the list renders neither column.
-        return self.with_order_inquiries(
-            [self.serialize(self._get_or_404(so_id), line_planning=True)]
+        return self.with_planning_state(
+            self.with_order_inquiries(
+                [self.serialize(self._get_or_404(so_id), line_planning=True)]
+            )
         )[0]
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,

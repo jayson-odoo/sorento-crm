@@ -650,7 +650,10 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       {
         id: 'planned',
         accessorFn: (row) => row.planned_lines ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="Planned" column={column} />,
+        // A PLAIN TITLE, not `DataGridColumnHeader` (AC-S4-8). That primitive renders a
+        // button whatever `enableSorting` says, so the header read as a control that does
+        // nothing when clicked.
+        header: () => <span>Planned</span>,
         // BESIDE STATUS, because it is the question Status keeps being read as answering and
         // does not: Completed says the book shipped it, this says whether anybody ever decided
         // where the stock came from. SO421404 read Completed, 3 of 3 delivered, and had never
