@@ -793,8 +793,20 @@ def _push_low_stock_to_chat(db, download_id: str, *, provider: str, key: str) ->
         return
 
     url = low_stock_report_service.attachment_url(provider, key)
+    # Security SF-2: the outbox payload carries the STORAGE KEY, never the URL. On R2 that
+    # URL is unauthenticated and never expires (see `attachment_url`), and
+    # `GET /api/v1/integrations/logs/` hands `request_payload` to any authenticated user,
+    # so logging it would turn an operator's debug view into a link to the workbook. The
+    # key is what an operator actually needs to find the object; anyone who may fetch it
+    # can mint the URL from the key.
+    #
+    # NOT fixed here: `send_chat_attachment_for` builds its OWN `request_payload` from the
+    # `url=` argument and logs that on success and on a 502. That row is written by the
+    # shared sender every chat attachment in the product goes through, so redacting it is
+    # a change to every caller, not to this lane - filed with the logs-route finding.
     payload = {"message": {"type": "attachment",
-                           "attachment": {"type": "file", "url": url}}}
+                           "attachment": {"type": "file", "url": "<stored>",
+                                          "key": str(key)}}}
 
     try:
         respond_chat_template_service.send_chat_attachment_for(
@@ -908,9 +920,8 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
             "generate_low_stock_report: download %s ready (%d bytes, %d low of %d)",
             download_id, len(file_bytes), counts["low"], counts["all"],
         )
-        _push_low_stock_to_chat(db, download_id, provider=provider, key=stored_key)
-        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes),
-                "row_count_low": counts["low"], "row_count_all": counts["all"]}
+        ready = {"download_id": download_id, "status": "ready", "bytes": len(file_bytes),
+                  "row_count_low": counts["low"], "row_count_all": counts["all"]}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_low_stock_report failed for download %s", download_id)
         _record_failure(db, svc, download_id, e, "generate_low_stock_report")
@@ -920,6 +931,15 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
         # a plan-view export (nobody waiting) sends nothing.
         _tell_chat_the_report_failed(db, download_id)
         return {"download_id": download_id, "status": "failed", "error": str(e)}
+    else:
+        # Security N-d: the push sits OUTSIDE the try. Inside it, a DB blip in the claim
+        # update was caught by the `except` above, which then marked a download that had
+        # just been stored and flipped to `ready` as `failed` and texted the contact an
+        # apology for a file that exists. The push has its own belt and braces already -
+        # every send failure is swallowed and recorded by `_record_chat_failure` - so
+        # nothing here needs the outer handler.
+        _push_low_stock_to_chat(db, download_id, provider=provider, key=stored_key)
+        return ready
     finally:
         set_company_scope(db, caller_scope)
         db.close()

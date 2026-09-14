@@ -248,6 +248,10 @@ optional query params on body tools.
   [{url, filename, mimeType, attachmentType: "file"}]}`. URL: R2 -> `cdn_base_url(provider,
   quote(key, safe="/"))`; S3 -> `get_signed_url(key, 7 days)` (the exact branch
   `upload_chat_attachment` L666-676 uses; the storage key already ends in the filename).
+  The R2 URL is unauthenticated and never expires - it dies when `purge_expired_downloads`
+  deletes the object with its `user_downloads` row at 30 days, the same mechanism every
+  chat attachment already relies on (security N-c). It is therefore kept OUT of the outbox
+  rows this lane writes (SF-2): they carry the storage key instead.
   `low_count`/`all_count` are written onto the download row by the task (two new nullable
   int columns, or read back from the workbook? -> **columns**: `row_count_low`, `row_count_all`,
   so the route never opens the file).

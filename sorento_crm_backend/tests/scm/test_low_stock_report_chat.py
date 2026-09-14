@@ -1333,3 +1333,100 @@ def test_a_502_push_failure_is_not_logged_twice(scm_app, monkeypatch):
     assert _integration_logs_for(db, dl_id) == [], (
         "the sender already logged this one - a second row would double-count the send"
     )
+
+
+# =========================================================================== #
+# Phase 3 security re-pass, 14 Sep 2026. CODER-AUTHORED.
+#
+# SF-2: `GET /api/v1/integrations/logs/` serves `request_payload` to any authenticated
+#       user with no permission slug (pre-existing, filed separately), and on R2 the
+#       workbook URL is unauthenticated and never expires. The outbox row this module
+#       writes therefore carries the storage KEY, never the URL.
+# N-b:  when a contact maps to SEVERAL companies, the owner's grants are intersected with
+#       the contact's own. An empty intersection is a refusal - a contact must never be
+#       sent a company book they are not a member of.
+# =========================================================================== #
+
+def test_a_refused_push_logs_the_key_not_the_url(scm_app, monkeypatch):
+    """SF-2: the reason is still in the outbox, the link is not."""
+    from app.services import respond_chat_template_service
+
+    export_tasks, task_fn = _task()
+    app, db, _key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db)
+    db.flush()
+    _patch_task_render(monkeypatch, export_tasks)
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+    def _closed(db_, **kw):
+        raise AppException(
+            status_code=422,
+            message="Cannot send an attachment outside the 24h messaging window.",
+            code="attachment_window_closed",
+        )
+
+    monkeypatch.setattr(respond_chat_template_service, "send_chat_attachment_for", _closed)
+
+    run_id, dl_id = _seed_claimed_download(db, contact, claimed=True)
+    task_fn(dl_id, run_id, str(_download_row(db, dl_id)["user_id"]))
+
+    payloads = [str(r) for r in db.execute(text(
+        "SELECT request_payload::text FROM integration_log "
+        "WHERE business_table = 'user_downloads' AND business_id = :id"
+    ), {"id": dl_id}).scalars().all()]
+    assert payloads, "the refusal must still leave an outbox row"
+    for payload in payloads:
+        assert "http" not in payload.lower(), (
+            f"the outbox must not carry a fetchable workbook URL: {payload}"
+        )
+        assert "exports/low-stock/" in payload, (
+            f"it must still carry the storage key an operator needs: {payload}"
+        )
+
+
+def _company(db, code_stem: str) -> str:
+    from app.models.company import Company
+
+    company_id = _u()
+    db.add(Company(id=company_id, name=f"{MARKER} {code_stem}",
+                   code=f"{MARKER[:4]}{code_stem}{uuid.uuid4().hex[:4]}", is_active=True))
+    db.flush()
+    return company_id
+
+
+def test_a_contact_in_two_companies_never_gets_a_company_it_is_not_in(scm_app, monkeypatch):
+    """N-b: the contact belongs to two companies, the act-as principal is granted a THIRD.
+
+    Before the intersection, the owner's lone grant won and the run was stamped with a
+    company the contact is not a member of - whose stock, suppliers and dealer outstanding
+    would then have been sent to their phone. The intersection is empty here, so the turn
+    refuses and writes nothing.
+    """
+    from app.models.company import UserCompany
+    from app.services.company_scope_resolver import apply_company_scope
+
+    app, db, key, act_as_id = _api_key_caller(scm_app)
+    app.dependency_overrides.pop(apply_company_scope, None)
+
+    contact = _contact(db)
+    _contact_company(db, contact, company_id=_company(db, "A"))
+    _contact_company(db, contact, company_id=_company(db, "B"))
+    owners_own = _company(db, "C")
+    db.add(UserCompany(id=_u(), user_id=act_as_id, company_id=owners_own))
+    db.flush()
+
+    runs_before, downloads_before = _counts(db)
+    _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(contact))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "error", (
+        f"no company both sides may see is an error, never a plan: {body}"
+    )
+    assert _counts(db) == (runs_before, downloads_before), (
+        "nothing may be written when the company cannot be resolved"
+    )

@@ -181,8 +181,12 @@ def _adopt_company_scope(db: Session, *, resolved_contact_id: Optional[str],
        CRM user linked to the contact, else the act-as principal. `last_active_company_id`
        when it is still granted, else the single grant, else the lowest granted id: the
        fail-closed tail of `company_scope_resolver._resolve_user_scope`, minus the JWT
-       claim, because an API-key request carries no token to read one from.
-    3. **Neither** -> return None, nothing written. `_prepare` turns that into the error
+       claim, because an API-key request carries no token to read one from. When the
+       contact DOES carry companies (just not exactly one), those grants are first
+       INTERSECTED with the contact's own companies (security N-b): the owner may be the
+       act-as principal, whose grants say nothing about this contact, and a company only
+       the owner can see would put another company's book on that contact's phone.
+    3. **Neither, or an empty intersection** -> return None, nothing written. `_prepare` turns that into the error
        miss shape (reviewer S1/AC-44a) rather than an HTTP 400, so the bot says "Could not
        run the low stock report right now." instead of surfacing a status code. A run
        stamped with a guessed company would plan another company's book.
@@ -216,6 +220,16 @@ def _adopt_company_scope(db: Session, *, resolved_contact_id: Optional[str],
         company_id = contact_companies[0]
     else:
         grants = {str(g) for g in resolve_user_grant_ids(db, owner_user_id)}
+        # Security N-b: when the contact maps to SEVERAL companies, the choice is made
+        # from the INTERSECTION of the owner's grants and the contact's own companies -
+        # never from the owner's grants alone. The owner here can be the act-as principal,
+        # whose grants have nothing to do with this contact, so the unintersected rule
+        # could pick a company the contact is not a member of and push them its book. An
+        # EMPTY intersection is a refusal, not a fallback: there is no company both sides
+        # may see. A contact with NO companies at all keeps the owner's grants, which is
+        # the pre-existing unlinked-contact path and leaks nothing new.
+        if contact_companies:
+            grants &= set(contact_companies)
         last_active = db.query(User.last_active_company_id).filter(
             User.id == owner_user_id
         ).scalar()
@@ -232,31 +246,47 @@ def _adopt_company_scope(db: Session, *, resolved_contact_id: Optional[str],
     return company_id
 
 
-async def _await_download(download_id: str) -> Optional[dict]:
-    """Poll `user_downloads` until the row is `ready`, through SHORT-LIVED sessions.
+def _read_download_row(download_id: str) -> Optional[dict]:
+    """ONE poll of `user_downloads`, on its OWN short-lived session.
 
     Its own session per read, not the request's: the request session sits inside the
     transaction that created the download row, and the worker's `mark_ready` commits on a
     different connection - re-reading through the request session would keep returning the
     snapshot this turn started with and never see it land.
 
-    The caller bounds this with `asyncio.wait_for`, so this loop has no timeout of its own;
-    it returns only when the row is ready (or terminal), and is cancelled otherwise.
+    Synchronous on purpose: `_await_download` hands it to `asyncio.to_thread`, because
+    opening a connection and running a query are both blocking calls and this loop runs
+    inside a chat turn's request handler.
     """
     from app.database import SessionLocal
 
+    db = SessionLocal()
+    try:
+        row = db.execute(text(
+            "SELECT status, storage_provider, storage_key, filename, "
+            "       row_count_low, row_count_all "
+            "FROM user_downloads WHERE id = :id"
+        ), {"id": str(download_id)}).mappings().first()
+    finally:
+        db.close()
+    return dict(row) if row else None
+
+
+async def _await_download(download_id: str) -> Optional[dict]:
+    """Poll `user_downloads` until the row is terminal, every read OFF the event loop.
+
+    Security SF-1: the read itself is `_read_download_row`, dispatched through
+    `asyncio.to_thread`. It used to run inline - `SessionLocal()` plus a query, both
+    blocking - so up to fourteen times a turn this coroutine stalled the whole loop, which
+    is exactly what security B1 moved every other blocking step out of.
+
+    The caller bounds this with `asyncio.wait_for`, so this loop has no timeout of its own;
+    it returns only when the row is ready (or terminal), and is cancelled otherwise.
+    """
     while True:
-        db = SessionLocal()
-        try:
-            row = db.execute(text(
-                "SELECT status, storage_provider, storage_key, filename, "
-                "       row_count_low, row_count_all "
-                "FROM user_downloads WHERE id = :id"
-            ), {"id": str(download_id)}).mappings().first()
-        finally:
-            db.close()
+        row = await asyncio.to_thread(_read_download_row, download_id)
         if row and row["status"] in ("ready", "failed"):
-            return dict(row)
+            return row
         await asyncio.sleep(_POLL_SECONDS)
 
 
@@ -357,10 +387,25 @@ def _prepare(
     from app.tasks.export_tasks import generate_low_stock_report
     from app.tasks.reorder_tasks import run_reorder_job
 
-    # --- the second gate (AC-41) ------------------------------------------------------
     resolved_contact_id = resolve_contact_with_null_workspace_fallback(
         db, contact_id=contact_id, space_id=space_id
     )
+
+    # --- B2: per-contact rate limit, BEFORE the gate (security N-e) -------------------
+    # Metered ahead of the 403, not after it: a refusal that costs nothing lets a key
+    # holder walk a contact list for free and read off which contacts hold the grant (403
+    # vs an answer). Now the walk runs out of budget after five. Keyed on the resolved id
+    # when there is one, else on the raw `contact_id`, so an unresolvable contact is
+    # metered too rather than being the free path.
+    if not rate_limit.hit(
+        "low_stock_report", str(resolved_contact_id or contact_id),
+        limit=_RATE_LIMIT, window_seconds=_RATE_WINDOW_SECONDS,
+    ).allowed:
+        # The `reason` is what lets the presenter say WHICH busy this is (defect C) - "too
+        # many in the last 10 minutes" reads very differently from "a plan is running".
+        return {"status": "busy", "reason": "rate_limited"}
+
+    # --- the second gate (AC-41) ------------------------------------------------------
     keys = granted_keys(db, resolved_contact_id) if resolved_contact_id else []
     if LOW_STOCK_GRANT not in keys:
         raise AppException(
@@ -369,15 +414,6 @@ def _prepare(
             code="low_stock_report_not_enabled",
         )
     include_supplier = SUPPLIER_GRANT in keys
-
-    # --- B2: per-contact rate limit, before anything is created -----------------------
-    if not rate_limit.hit(
-        "low_stock_report", resolved_contact_id,
-        limit=_RATE_LIMIT, window_seconds=_RATE_WINDOW_SECONDS,
-    ).allowed:
-        # The `reason` is what lets the presenter say WHICH busy this is (defect C) - "too
-        # many in the last 10 minutes" reads very differently from "a plan is running".
-        return {"status": "busy", "reason": "rate_limited"}
 
     # --- who owns the run and the file (AC-42) ----------------------------------------
     # The CRM user the chatting contact is linked to, so the workbook lands in THEIR My
@@ -508,9 +544,28 @@ async def low_stock_report(
                     the worker marked the run `failed`); the bot says so, never `pending`
                     (reviewer S1 / AC-44a).
 
-    Every blocking step runs off the event loop via `asyncio.to_thread` (security B1); the
-    request session's connection is returned to the pool by `_prepare`'s commit and is not
-    used again until after the wait, and the wait polls on its own short-lived sessions.
+    Every blocking step runs off the event loop via `asyncio.to_thread` (security B1 and
+    SF-1, which moved the poll's own `SessionLocal()` + query out too); the request
+    session's connection is returned to the pool by `_prepare`'s commit and is not used
+    again until after the wait, and the wait polls on its own short-lived sessions.
+
+    SECURITY - the trust boundary (security note N-a, 14 Sep)
+    --------------------------------------------------------
+    `contact_id` is BOTH the authorisation subject and the delivery target. The caller
+    names a contact; this route checks THAT contact's reveal key and then sends THAT
+    contact the workbook. So a holder of `EXTERNAL_API_KEY` whose act-as principal has
+    `scm.reorder.run` can cause an unsolicited push to any contact that holds
+    `scm.low_stock_report` - the contact did not ask, and a report arrives on their phone.
+
+    What that caller CANNOT do is choose whose data it is: the book is always the
+    contact's own company (`_adopt_company_scope`, and N-b's intersection above), the
+    Supplier column still depends on that contact's own `purchase_orders.supplier` key,
+    and the rate limit caps the volume at five per contact per ten minutes.
+
+    This is accepted because `EXTERNAL_API_KEY` is a STAFF-LEVEL credential, not a
+    per-contact one: it already reaches every read tool in the MCP catalog. If the key is
+    ever handed to something less trusted, this route needs a per-contact proof of intent
+    (a signed turn id, or the contact's own inbound message id) before it sends anything.
     """
     prepared = await asyncio.to_thread(
         _prepare, db,

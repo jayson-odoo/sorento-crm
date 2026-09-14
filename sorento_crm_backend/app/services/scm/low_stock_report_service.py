@@ -70,6 +70,16 @@ def attachment_url(provider: Optional[str], key: str) -> str:
 
     Shared by the route (the turn's own answer) and the worker's push, so the contact gets
     the same URL whichever path delivers the file.
+
+    SECURITY (note N-c, 14 Sep): on R2 this URL is UNAUTHENTICATED and NEVER EXPIRES -
+    anyone holding it can fetch the workbook, which carries supplier names, PO and SPO
+    numbers and dealer outstanding quantities. It stops working only when the object is
+    deleted, which `purge_expired_downloads` does with the `user_downloads` row at 30 days.
+    That is the same mechanism every chat attachment in this product already relies on (a
+    WhatsApp message body is itself an unauthenticated copy of the link), so this route
+    does not invent a weaker rule - but it is why the URL is kept out of the outbox
+    payloads this lane writes (security SF-2, `export_tasks._push_low_stock_to_chat`). The
+    S3 branch is a 7-day signed URL and expires on its own.
     """
     from app.services.storage_router import PROVIDER_R2, cdn_base_url, get_backend
 
