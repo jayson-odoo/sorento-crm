@@ -306,7 +306,8 @@ def _ready_payload(db: Session, *, run_id: str, download_id: str) -> Optional[di
     `row_count_low` / `row_count_all` are stamped by `generate_low_stock_report` at
     `mark_ready` for exactly this reason (AC-43): the route is holding a chat turn open and
     has no business parsing a spreadsheet on the request thread. Returns None when the row
-    is not ready, so the caller can fall through to the pending path.
+    is not ready, so the caller can fall through to the pending path, and the `error` answer
+    when the row IS ready but no URL can be minted for it.
     """
     row = db.execute(text(
         "SELECT status, storage_provider, storage_key, filename, "
@@ -317,6 +318,19 @@ def _ready_payload(db: Session, *, run_id: str, download_id: str) -> Optional[di
         return None
     key = row["storage_key"]
     filename = key.rsplit("/", 1)[-1] or (row["filename"] or "low-stock.xlsx")
+    try:
+        url = low_stock_report_service.attachment_url(row["storage_provider"], key)
+    except Exception:  # noqa: BLE001 - a chat turn must never answer with a 500
+        # `r2_service` / `s3_service` raise a bare `ValueError` when their credentials are
+        # incomplete, which would leave this handler as an unhandled 500: the lane would
+        # render its generic failure line and, worse, the turn would never claim delivery,
+        # so the worker's file would reach nobody. AC-44a's rule applies - something the
+        # route cannot produce is `error`, said plainly, once.
+        log.exception(
+            "low_stock_report: no attachment URL for download %s (provider %s)",
+            download_id, row["storage_provider"],
+        )
+        return _error_answer()
     return {
         "status": "ready",
         "run_id": run_id,
@@ -324,7 +338,7 @@ def _ready_payload(db: Session, *, run_id: str, download_id: str) -> Optional[di
         "low_count": row["row_count_low"],
         "all_count": row["row_count_all"],
         "attachments": [{
-            "url": low_stock_report_service.attachment_url(row["storage_provider"], key),
+            "url": url,
             "filename": filename,
             "mimeType": MIME_XLSX,
             "attachmentType": "file",

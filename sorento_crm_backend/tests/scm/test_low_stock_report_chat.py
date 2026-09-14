@@ -65,6 +65,40 @@ def _u() -> str:
     return str(uuid.uuid4())
 
 
+CDN_HOST = "https://cdn.test.invalid"
+
+
+class _CdnBackend:
+    """A storage backend that mints URLs without credentials.
+
+    `attachment_url` reaches the REAL `r2_service` / `s3_service`, each of which raises
+    `ValueError: ... configuration incomplete` when its five env vars are unset. That is
+    correct of them and wrong of a test: CI has no cloud credentials, so eleven tests in
+    this file passed only on a developer machine whose `.env` happened to hold real ones
+    (caught by the lane's first CI run, 14 Sep). Patching `storage_router.get_backend` is
+    the house pattern for this - `test_plan_product_images`, `test_chat_attachment_filename`
+    and `test_supplier_notice_channels` all do it - and it keeps `attachment_url`'s own
+    branch under test (R2 -> CDN URL, S3 -> signed URL), which stubbing `attachment_url`
+    itself would not.
+    """
+
+    def get_cdn_base_url(self, key: str) -> str:
+        return f"{CDN_HOST}/{key}"
+
+    def get_cloudfront_base_url(self, key: str) -> str:
+        return f"{CDN_HOST}/{key}"
+
+    def get_signed_url(self, key: str, expires_in: int = 0) -> str:
+        return f"{CDN_HOST}/{key}?signed={expires_in}"
+
+
+@pytest.fixture(autouse=True)
+def _no_cloud_credentials_needed(monkeypatch):
+    from app.services import storage_router
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _CdnBackend())
+
+
 # --------------------------------------------------------------------------- #
 # the module, the task - imported per test so a missing file is ONE red test
 # rather than a collection error that hides every other test in this file
