@@ -69,16 +69,24 @@ DEFAULT_SYNC_WAIT_SECONDS = 40
 #: workbook rendered at second 3 does not wait until second 4 to be answered with.
 _POLL_SECONDS = 0.25
 
-#: B2 (security review): per-contact rate limit on this side-effecting route - three fresh
-#: plans in ten minutes is generous for a person and a firm bound on a runaway caller.
+#: B2 (security review): per-contact rate limit on this side-effecting route.
 #: `rate_limit.hit` fails OPEN (allows) when Redis is unreachable, so an infra blip never
 #: locks a staffer out of the report.
-_RATE_LIMIT = 3
+#:
+#: FIVE, not three (console round 3, defect C): a real session is a bare ask, a scoped ask
+#: and a corrected scope before anyone has done anything wrong - three would lock the
+#: staffer out on their first ordinary conversation, and the console case alone makes four.
+_RATE_LIMIT = 5
 _RATE_WINDOW_SECONDS = 600
 
 #: N5: a chat scope is a handful of codes, never a list. Capped so a malformed tool call
 #: cannot hand `create_run` thousands of codes to resolve.
 _MAX_CODES = 100
+
+#: Console round 3, defect A: how far INSIDE the lane's MCP client timeout this route must
+#: answer, so `pending` + the delivery claim land before the client hangs up. See
+#: `_sync_wait_seconds`.
+_TRANSPORT_MARGIN_SECONDS = 3
 
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -98,16 +106,43 @@ def _csv_list(values: Optional[list[str]]) -> Optional[list[str]]:
 
 
 def _sync_wait_seconds(db: Session) -> int:
-    """`system_settings.low_stock_sync_wait_seconds`, read LIVE per request (AC-43).
+    """How long to hold the turn: `system_settings.low_stock_sync_wait_seconds`, read LIVE
+    per request (AC-43), CAPPED BY THE TRANSPORT TIMEOUT.
 
     Not cached, and not a constant: the owner asked for a System Setting on the lavish
     page, so moving it must take effect on the next turn rather than on the next deploy.
+
+    **The cap is the whole point** (console round 3, defect A, measured 14 Sep). The
+    chatbot lane's MCP client gives up after `settings.chatbot_mcp_timeout_seconds`
+    (10 s by default, `lanes/business/services.py`), which is SHORTER than this setting's
+    40 s default. A full unscoped run took over 10 s: the lane raised `httpx.ReadTimeout`
+    and rendered its generic "ran into a problem" line, while this route - still waiting -
+    never reached its own timeout branch and so never set `deliver_to_contact_id`. The
+    worker then built a workbook nobody delivered. Answering `pending` BEFORE the lane
+    hangs up is what makes the claim happen, so the worker pushes the file.
+
+    `chatbot_mcp_timeout_seconds` is deliberately NOT raised here: it is every tool's knob,
+    and lengthening it would slow every other turn's failure. The MCP server's own
+    CRM-facing timeout (`CRM_MCP_TIMEOUT`, default 60 s) is far longer than either, so the
+    lane's client is the binding one; if it is ever lowered below this cap it becomes
+    binding instead and this margin has to follow it.
     """
+    from app.config import settings as app_settings
     from app.models.user import SystemSetting
 
     row = db.query(SystemSetting).first()
     value = getattr(row, "low_stock_sync_wait_seconds", None) if row else None
-    return int(value) if value else DEFAULT_SYNC_WAIT_SECONDS
+    configured = int(value) if value else DEFAULT_SYNC_WAIT_SECONDS
+
+    transport = int(getattr(app_settings, "chatbot_mcp_timeout_seconds", 0) or 10)
+    # Three seconds of margin: enough for the route to build the pending answer, claim
+    # delivery and get the response back over the wire before the lane's client gives up.
+    capped = transport - _TRANSPORT_MARGIN_SECONDS
+    if capped < 1:
+        # A pathologically small transport timeout - never wait a negative or zero budget;
+        # one second still lets a fast run answer `ready` in the turn.
+        capped = 1
+    return min(configured, capped)
 
 
 def _adopt_company_scope(db: Session, *, resolved_contact_id: Optional[str],
@@ -328,7 +363,9 @@ def _prepare(
         "low_stock_report", resolved_contact_id,
         limit=_RATE_LIMIT, window_seconds=_RATE_WINDOW_SECONDS,
     ).allowed:
-        return {"status": "busy"}
+        # The `reason` is what lets the presenter say WHICH busy this is (defect C) - "too
+        # many in the last 10 minutes" reads very differently from "a plan is running".
+        return {"status": "busy", "reason": "rate_limited"}
 
     # --- who owns the run and the file (AC-42) ----------------------------------------
     # The CRM user the chatting contact is linked to, so the workbook lands in THEIR My
@@ -364,7 +401,8 @@ def _prepare(
         )
     except AppException as e:
         if e.status_code == 409:
-            return {"status": "busy"}  # B2 / AC-49: a plan is already running
+            # B2 / AC-49: a plan is already running for this company.
+            return {"status": "busy", "reason": "in_flight"}
         if e.status_code == 422:
             # An excluded named product (N5) or any other create-time refusal is an error
             # the bot reports, never a pending line.

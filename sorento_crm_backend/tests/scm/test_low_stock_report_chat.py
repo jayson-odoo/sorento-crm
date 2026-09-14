@@ -877,7 +877,9 @@ def test_busy_maps_the_in_flight_run_409_to_status_busy(scm_app, monkeypatch):
     assert resp.status_code == 200, (
         f"busy is an ANSWER the bot can say, not an HTTP error: {resp.text}"
     )
-    assert resp.json() == {"status": "busy"}, resp.text
+    # The `reason` rides along (console round 3, defect C) so the presenter can say WHICH
+    # busy this is - an in-flight plan clears in a minute, a rate limit needs the window.
+    assert resp.json() == {"status": "busy", "reason": "in_flight"}, resp.text
     assert calls == [], "a busy answer must not enqueue anything"
     assert db.execute(text(
         "SELECT count(*) FROM user_downloads WHERE kind = 'low_stock_xlsx'"
@@ -941,3 +943,89 @@ def test_the_run_takes_the_contacts_company_with_no_ambient_scope(scm_app, monke
     assert db.execute(text(
         "SELECT count(*) FROM user_downloads WHERE source_entity_id = :r"
     ), {"r": run_id}).scalar() == 1, "the download row was not created either"
+
+
+# =========================================================================== #
+# Console round 3, defect A - the wait is capped by the TRANSPORT timeout
+#
+# CODER-AUTHORED. Measured on the stack: a full unscoped run took >10 s, the lane's MCP
+# client (`chatbot_mcp_timeout_seconds`, 10 s) gave up first with httpx.ReadTimeout, and
+# because this route was still inside its own 40 s budget it never reached the timeout
+# branch - so `deliver_to_contact_id` was never set and the worker built a workbook nobody
+# delivered. The route must answer `pending` (and claim delivery) BEFORE the lane hangs up.
+# =========================================================================== #
+
+def test_the_wait_is_capped_by_the_mcp_transport_timeout(scm_app, monkeypatch):
+    """setting 40 s, transport 10 s -> the route waits 7 (transport minus the 3 s margin it
+    needs to build the answer and claim delivery on the wire), never the configured 40."""
+    import asyncio as _asyncio
+
+    from app.config import settings as app_settings
+    from app.models.user import SystemSetting
+
+    app, db, key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db)
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting(id=_u(), name=f"{MARKER} settings")
+        db.add(row)
+    row.low_stock_sync_wait_seconds = 40
+    db.flush()
+    monkeypatch.setattr(app_settings, "chatbot_mcp_timeout_seconds", 10, raising=False)
+
+    _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    budgets: list[float] = []
+    real_wait_for = _asyncio.wait_for
+
+    async def _spy(awaitable, timeout=None, **kwargs):
+        budgets.append(timeout)
+        return await real_wait_for(awaitable, timeout, **kwargs)
+
+    monkeypatch.setattr(_asyncio, "wait_for", _spy)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(contact))
+
+    assert resp.status_code == 200, resp.text
+    assert 7 in budgets, (
+        f"the wait must be min(40, 10 - 3) = 7 so `pending` wins the race: {budgets}"
+    )
+    assert 40 not in budgets, f"the uncapped setting must never be the budget: {budgets}"
+
+
+def test_a_short_setting_still_wins_over_the_transport_cap(scm_app, monkeypatch):
+    """The cap is a ceiling, not a floor: an owner who sets 5 s gets 5, not 7."""
+    import asyncio as _asyncio
+
+    from app.config import settings as app_settings
+    from app.models.user import SystemSetting
+
+    app, db, key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db)
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting(id=_u(), name=f"{MARKER} settings")
+        db.add(row)
+    row.low_stock_sync_wait_seconds = 5
+    db.flush()
+    monkeypatch.setattr(app_settings, "chatbot_mcp_timeout_seconds", 10, raising=False)
+
+    _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    budgets: list[float] = []
+    real_wait_for = _asyncio.wait_for
+
+    async def _spy(awaitable, timeout=None, **kwargs):
+        budgets.append(timeout)
+        return await real_wait_for(awaitable, timeout, **kwargs)
+
+    monkeypatch.setattr(_asyncio, "wait_for", _spy)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(contact))
+
+    assert resp.status_code == 200, resp.text
+    assert 5 in budgets, f"the configured 5 s is already inside the cap: {budgets}"

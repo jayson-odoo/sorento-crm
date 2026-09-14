@@ -165,7 +165,14 @@ suggestion even with no open sales order. Dead products (no outbound movement in
 - **AC-43 [BE]** The route waits up to `system_settings.low_stock_sync_wait_seconds` (new
   column, default 40, validated 5..90 on PUT like `media_sync_wait_seconds`, read live, shown
   on the System Settings page beside the media wait, present in the settings GET/PUT dict
-  builders) polling the download row. The task writes `row_count_low` / `row_count_all` onto the row at
+  builders) polling the download row. **The effective wait is
+  `min(low_stock_sync_wait_seconds, chatbot_mcp_timeout_seconds - 3)`** (console round 3,
+  defect A): the chatbot lane's MCP client hangs up after `chatbot_mcp_timeout_seconds`
+  (10 s default), so a longer wait means the lane times out first, the route never reaches
+  its own timeout branch, `deliver_to_contact_id` is never set and the worker builds a
+  workbook nobody delivers. `chatbot_mcp_timeout_seconds` is NOT raised to suit this route
+  (it is every tool's knob), and the MCP server's `CRM_MCP_TIMEOUT` (60 s) is longer than
+  both, so the lane's client is the binding timeout. The task writes `row_count_low` / `row_count_all` onto the row at
   `mark_ready` so the route never opens the file. When it turns `ready` in time, the
   response is `{status: "ready", run_id, as_of, low_count, all_count, attachments: [{url, filename,
   mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

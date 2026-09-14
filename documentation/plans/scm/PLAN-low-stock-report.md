@@ -221,7 +221,20 @@ optional query params on body tools.
   on the System Settings page beside the media wait, and added to BOTH manual dict builders
   (`get_me` is not involved; `system_settings` GET/PUT are). This is how long the route
   holds the chat turn open waiting for run + export before it answers "pending" and leaves
-  delivery to the worker push; 40 s sits under the chatbot's own 45 s queue-wait budget.
+  delivery to the worker push.
+- **The setting is CAPPED BY THE TRANSPORT TIMEOUT** (console round 3, 14 Sep, defect A -
+  measured data loss). The effective wait is
+  `min(low_stock_sync_wait_seconds, chatbot_mcp_timeout_seconds - 3)`. The chatbot lane's
+  MCP client gives up after `settings.chatbot_mcp_timeout_seconds` (10 s default,
+  `lanes/business/services.py`), which is SHORTER than the 40 s default: a full unscoped
+  run (>10 s measured; 2-product 2.7 s, BRW-scoped 8.7 s) made the lane raise
+  `httpx.ReadTimeout` and render its generic failure line while the route, still waiting,
+  never reached its timeout branch and so never set `deliver_to_contact_id` - the worker
+  built a workbook nobody delivered. Answering `pending` INSIDE the client's budget is what
+  makes the claim happen. `chatbot_mcp_timeout_seconds` is deliberately NOT raised: it is
+  every tool's knob. The MCP server's own CRM-facing timeout (`CRM_MCP_TIMEOUT`, default
+  60 s, `sorento_crm_mcp/settings.py`) is far longer than either, so the LANE's client is
+  the binding one; if it is ever lowered below this cap it becomes binding instead.
 - Ready in time -> `{status: "ready", run_id, as_of, low_count, all_count, attachments:
   [{url, filename, mimeType, attachmentType: "file"}]}`. URL: R2 -> `cdn_base_url(provider,
   quote(key, safe="/"))`; S3 -> `get_signed_url(key, 7 days)` (the exact branch
