@@ -4410,8 +4410,14 @@ def test_a_hot_selling_rung_still_names_the_classification_in_the_pool_sentence(
 
 def test_the_supply_on_the_water_is_inside_question_ones_own_offer():
     """AC-V2 on the board. `_quantity_world` has 7 open on ZZT-SPO-0001 against the 28 the
-    line plans for (AC-S2-4, not the 20 still owed) and no pool, so the group cannot cover it
-    and the whole-line rule buys the lot.
+    line plans for (AC-S2-4, not the 20 still owed).
+
+    The group HAS stock to give - it nets 17 and leaves 12 for this line, 5 free at the bin
+    and the 7 on the water - and 12 cannot cover 28, so the whole-line rule takes none of it
+    and buys the lot. Said this way because the sentence matters: while `owed_qty` was never
+    wired through to the board the offer read 0 and this test passed for the wrong reason,
+    "the group cannot cover it" (review round 2, N1). There is no pool, which is why the
+    only stock in play is the group's own.
 
     What is pinned is that there is NO row named Incoming and no rung of its own for the
     document: the water is inside question 1's offer, and question 1's sentence names the
@@ -7814,4 +7820,82 @@ def test_a_delivered_line_does_not_inflate_its_groups_offer():
         assert fact.group_offer == Decimal("9"), (
             "the group offers what it holds; un-netting the plan quantity offered 33"
         )
+        assert str(own.warehouse_code).endswith(fact.group_code or "")
+
+
+def _board_facts(service, so_numbers):
+    """The `_LineFacts` the board actually built, captured off the call it makes.
+
+    Through the real `build()` and the real payload, because the defect N1 names lives in
+    the WIRING between the two: a fact constructed here by hand would carry every field the
+    board forgot to send and prove nothing.
+    """
+    from unittest.mock import patch
+
+    from app.services.project_supply_service import ProjectSupplyService
+
+    seen = {}
+    original = ProjectSupplyService.demand_facts
+
+    def spy(self, rows, **kw):
+        built = original(self, rows, **kw)
+        seen["rows"] = rows
+        seen["facts"] = built
+        return built
+
+    with patch.object(ProjectSupplyService, "demand_facts", spy):
+        service.build(list(so_numbers), granularity="week", as_of=TODAY)
+    return seen["rows"], seen["facts"]
+
+
+def test_the_board_un_nets_each_lines_own_owed_quantity_from_its_group():
+    """Review round 2, N1. The `owed_qty` fix was INERT on the board.
+
+    `_group_offer` adds this line's own demand back because the group net already subtracted
+    it, and review round 1 moved that un-net from `open_qty` to `owed_qty`. The board builds
+    its facts through `demand_facts`, which carried no `owed_qty` at all - so every board row
+    un-netted ZERO and the offer collapsed to the raw group net, offering a group's own line
+    nothing it could actually have.
+
+    `_quantity_world` is 28 ordered and 8 delivered: 20 owed, a group netting 17, and an
+    offer of 17 + 20 = 37.
+    """
+    with blank_session() as db:
+        order, _product, _warehouse = _quantity_world(db)
+
+        service = _service(db)
+        rows, facts = _board_facts(service, [order.so_number])
+        fact = next(iter(facts.values()))
+
+        assert "owed_qty" in rows[0], "the board has to SEND it, not only read it"
+        assert fact.open_qty == Decimal("28"), "the line asks for its ordered quantity"
+        assert fact.owed_qty == Decimal("20"), (
+            "and owes 20 - the figure the netting engine actually subtracted"
+        )
+        assert fact.group_net == Decimal("17")
+        assert fact.group_offer == Decimal("37"), (
+            "the group's net plus this line's own owed quantity; 17 was the defect"
+        )
+
+
+def test_a_board_group_offer_covers_a_line_the_group_can_actually_meet():
+    """Review round 2, N1, on the ownership-group world: 10 on hand, 1 owed by an earlier
+    order, 9 asked for here and all 9 still owed.
+
+    The group nets 0 - its whole 10 is spoken for once this line's own 9 is counted - and
+    offers this line 9 once its own demand is added back. Un-netting nothing left the offer
+    at 0, which says a group holding 10 can give one of its own lines nothing.
+    """
+    with blank_session() as db:
+        _group, _product, own, mine = _group_world(
+            db, on_hand=10, other_qty=1, own_qty="9"
+        )
+
+        service = _service(db)
+        _rows, facts = _board_facts(service, [mine.so_number])
+        fact = next(iter(facts.values()))
+
+        assert fact.owed_qty == Decimal("9")
+        assert fact.group_net == Decimal("0")
+        assert fact.group_offer == Decimal("9")
         assert str(own.warehouse_code).endswith(fact.group_code or "")

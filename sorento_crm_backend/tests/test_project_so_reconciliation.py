@@ -1056,3 +1056,77 @@ def test_no_exception_message_names_a_uuid(seeded):
     assert {"missing", "surplus"} <= kinds
     for exc in summary["exceptions"]:
         assert not _UUID_RE.search(exc["message"])
+
+
+# --------------------------------------------------------------------------- #
+# Review round 2, N2: what the authored arm counts
+# --------------------------------------------------------------------------- #
+
+
+def test_an_authored_records_unreconciled_lines_keep_their_own_outstanding(seeded):
+    """N2. An UNRECONCILED mirror line is this record's only book, so its own `qty` and
+    `delivery_date` are the answer.
+
+    Round 1 filtered the authored totals to the population arm 1 counts - correct, because
+    the two arms print into one column - and reached for the mirror's own figures with
+    `coalesce(demand_qty(), qty)`. Postgres `greatest()` IGNORES nulls, so on an outer-joined
+    row with no core line `demand_qty()` is 0 rather than NULL and the coalesce never falls
+    through: every authored line contributed 0, and three real records on the 0907 copy went
+    2,666 / 27,888 / 11,364 to nothing.
+    """
+    db, company_id, owner = seeded
+    with company_scope(db, frozenset({company_id})):
+        product = _product(db)
+        project = _project(db, company_id, owner)
+        record = _project_order(db, project)
+        _project_line(db, record, product, line_no=1, qty="7", delivery_date=date(2026, 5, 4))
+        _project_line(db, record, product, line_no=2, qty="5", delivery_date=date(2026, 3, 2))
+        db.flush()
+
+        totals = ProjectSOReconciliationService(db)._authored_line_totals([str(record.id)])
+
+        earliest, outstanding, lines = totals[str(record.id)]
+        assert Decimal(outstanding) == Decimal("12"), "7 + 5 off the record's own lines"
+        assert earliest == date(2026, 3, 2), "the earliest of its own delivery dates"
+        assert lines == 2
+
+
+def test_a_reconciled_mirror_line_is_counted_on_its_core_line(seeded):
+    """N2, the other half. A mirror line RECONCILED to a core line is measured on that core
+    line under `is_open_demand()`, the same predicate arm 1 aggregates - so a line the book
+    has fully delivered contributes nothing here either.
+
+    Both halves in one record, because it is the MIX that the `coalesce` got wrong: the
+    reconciled line has a core row to read and the authored one does not.
+    """
+    db, company_id, owner = seeded
+    with company_scope(db, frozenset({company_id})):
+        product = _product(db)
+        project = _project(db, company_id, owner)
+        core = _core_order(
+            db, so_number=f"ZZT-SO-{_uid()[:8]}", company_id=company_id,
+            demand_class="project",
+        )
+        delivered = _core_line(
+            db, core, product, required_date=date(2026, 7, 1), qty="9"
+        )
+        delivered.qty_delivered = Decimal("9")
+        delivered.line_status = "closed"
+        db.flush()
+
+        record = _project_order(db, project, so_id=str(core.id))
+        _project_line(
+            db, record, product, line_no=1, qty="9", delivery_date=date(2026, 7, 1),
+            core_sales_order_line_id=str(delivered.id),
+        )
+        _project_line(db, record, product, line_no=2, qty="4", delivery_date=date(2026, 6, 1))
+        db.flush()
+
+        totals = ProjectSOReconciliationService(db)._authored_line_totals([str(record.id)])
+
+        earliest, outstanding, lines = totals[str(record.id)]
+        assert Decimal(outstanding) == Decimal("4"), (
+            "the delivered core line owes nothing; the authored line still owes its 4"
+        )
+        assert earliest == date(2026, 6, 1)
+        assert lines == 1, "a fully delivered core line is not an open line here either"

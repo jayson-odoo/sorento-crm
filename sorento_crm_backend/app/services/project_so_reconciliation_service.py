@@ -56,7 +56,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1688,10 +1688,20 @@ class ProjectSOReconciliationService:
         ids = [str(value) for value in order_ids if value]
         if not ids:
             return {}
-        owed_date = func.coalesce(
-            SalesOrderLine.required_date, ProjectSalesOrderLine.delivery_date
+        # BRANCH ON THE JOIN, never `coalesce` on the expression. Postgres `greatest()`
+        # IGNORES nulls, so `demand_qty()` on an outer-joined row with no core line is 0 and
+        # not NULL - a coalesce behind it never fires, and every unreconciled authored line
+        # contributed nothing (review round 2, N2: three real records went 2,666 / 27,888 /
+        # 11,364 to 0). The same trap `owed_qty_expr()` names in the supply service.
+        unreconciled = ProjectSalesOrderLine.core_sales_order_line_id.is_(None)
+        owed_date = case(
+            (unreconciled, ProjectSalesOrderLine.delivery_date),
+            else_=SalesOrderLine.required_date,
         )
-        owed_qty = func.coalesce(demand_qty(), ProjectSalesOrderLine.qty)
+        owed_qty = case(
+            (unreconciled, ProjectSalesOrderLine.qty),
+            else_=demand_qty(),
+        )
         rows = (
             self.db.query(
                 ProjectSalesOrderLine.project_sales_order_id,

@@ -449,7 +449,11 @@ export function BoardCellBreakdownDialog({
    */
   const context = [
     cell.location_group ? `${cell.location_group} group` : null,
-    `${cell.total_qty} outstanding`,
+    // "to plan", not "outstanding": `total_qty` sums what each line ASKS FOR, which since
+    // the 14 Sep 2026 ruling is the plan quantity. Beside a column headed Outstanding
+    // reading 2 on the same delivered line, "3 outstanding" was the one screen stating two
+    // different numbers under one word.
+    `${cell.total_qty} to plan`,
     `${decided} decided`,
   ]
     .filter(Boolean)

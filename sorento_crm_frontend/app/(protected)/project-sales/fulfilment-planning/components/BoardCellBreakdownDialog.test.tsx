@@ -1271,7 +1271,7 @@ describe('BoardCellBreakdownDialog: the family lightbox, and its two tabs', () =
     // The ownership GROUP leads: it is the pile step 1 draws from, and nothing else on this
     // screen prints its name - the stock table below only speaks up when there is none.
     expect(screen.getByTestId('cell-dialog-context')).toHaveTextContent(
-      'BB group · 100 outstanding · 0 decided',
+      'BB group · 100 to plan · 0 decided',
     );
   });
 
@@ -1281,7 +1281,7 @@ describe('BoardCellBreakdownDialog: the family lightbox, and its two tabs', () =
     renderDialog([demand()]);
 
     expect(screen.getByTestId('cell-dialog-context')).toHaveTextContent(
-      '100 outstanding · 0 decided',
+      '100 to plan · 0 decided',
     );
     expect(screen.getByTestId('cell-dialog-context').textContent).not.toContain(
       'group',

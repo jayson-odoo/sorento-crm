@@ -2314,6 +2314,11 @@ class FulfilmentBoardService:
                     "product_id": row.product_id,
                     "warehouse_id": row.warehouse_id,
                     "open_qty": row.qty,
+                    # What the line is still OWED, beside what it asks for. `_group_offer`
+                    # un-nets this one - the group net subtracted `demand_qty()`, so adding
+                    # the ask back would return more than was ever taken - and a payload
+                    # without it left every board row un-netting zero.
+                    "owed_qty": row.qty_outstanding,
                     "required_date": row.required_date,
                     "order_date": row.order_date,
                     "payment_terms_days": row.payment_terms_days,

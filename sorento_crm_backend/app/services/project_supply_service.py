@@ -3558,6 +3558,10 @@ class ProjectSupplyService:
                 item_code=row.get("item_code"),
                 product_id=product_id,
                 open_qty=_dec(row.get("open_qty")),
+                # The still-owed figure `_group_offer` un-nets. Absent from the payload it
+                # defaulted to zero, which silently turned the offer into the raw group net
+                # for every board row (review round 2, N1).
+                owed_qty=_dec(row.get("owed_qty")),
                 required_date=required_date,
                 warehouse=warehouse,
                 pool=pool,
@@ -3648,7 +3652,7 @@ class ProjectSupplyService:
             )
 
     def _group_offer(self, fact: _LineFacts, group: Any) -> Decimal:
-        """What the group's net leaves for this line: `max(group_net + its own open
+        """What the group's net leaves for this line: `max(group_net + its own OWED
         quantity, 0)`.
 
         THE CAPTAIN'S RULE, 26 August 2026, stated in the plan and in AC-L7: a group that
