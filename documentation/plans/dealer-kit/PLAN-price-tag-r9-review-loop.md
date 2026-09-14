@@ -136,8 +136,10 @@ All line refs are `origin/main` at ae0831776.
 - D6 Pins after Send: read-only for the salesperson; new rounds show earlier rounds grey
   (resolved or not). Marketing: CRM detail Design section shows the same overlay plus a
   list with a Done toggle per pin (`PATCH .../review-comments/{id}` resolved). Designer:
-  markers as a Konva Group over the matching `KonvaTagLayer` tag rect using the same
-  fractions, toggled by a `Comments` trailing toolbar button (default on while open pins
+  markers as a DOM overlay in the editor's existing pan/zoom coordinate space (the same
+  space as the inline text editor and the whole-tag eye; a Konva node would sit inside stage
+  hit-testing, which D6 then has to fight) using the same fractions, drawn on every copy of
+  the line on the sheet, toggled by a `Comments` trailing toolbar button (default on while open pins
   exist); clicking a marker opens the comment popover, never selects a layer. LINES rail:
   orange count badge on lines with open pins. `Mark design ready` label becomes
   `Mark design ready (2 open)` while pins are open; not blocked (D2).
