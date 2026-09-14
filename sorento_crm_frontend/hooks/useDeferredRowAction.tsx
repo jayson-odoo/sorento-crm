@@ -1,6 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
@@ -46,6 +53,13 @@ export interface UseDeferredRowActionInput {
   invalidateKeys?: readonly (readonly unknown[])[];
   /** Called after the server applied it, for a caller that has to move on. */
   onCommitted?: () => void;
+  /**
+   * Where the countdown goes. A list row has nowhere to put one, so the default is
+   * the toast this hook was written for; `inline` hands it back as `countdown` for a
+   * caller whose row HAS the room - the proforma invoice's Product cell, where the
+   * control that started it is the same control the countdown replaces.
+   */
+  surface?: 'inline' | 'toast';
 }
 
 export interface UseDeferredRowActionResult {
@@ -54,6 +68,8 @@ export interface UseDeferredRowActionResult {
   /** The row currently counting down, so a caller can disable its own control. */
   targetId: string | null;
   isPending: boolean;
+  /** The countdown to render in the row, on the `inline` surface. Null otherwise. */
+  countdown: ReactNode;
 }
 
 export function useDeferredRowAction(
@@ -66,6 +82,7 @@ export function useDeferredRowAction(
     successMessage,
     invalidateKeys,
     onCommitted,
+    surface = 'toast',
   } = input;
 
   // The nonce, not the id, is what says "this click has not been parked yet": a
@@ -83,7 +100,7 @@ export function useDeferredRowAction(
     entityId: target?.id,
     verb,
     subject: target?.subject ?? '',
-    surface: 'toast',
+    surface,
     successMessage,
     payload: target?.payload,
     invalidateKeys,
@@ -107,15 +124,15 @@ export function useDeferredRowAction(
   }, []);
 
   const targetId = target?.id ?? null;
-  const { isPending } = action;
+  const { isPending, countdown } = action;
 
   // Memoised, and load-bearing. Every migrated list reads `run` from inside its
   // `columns` useMemo, so this object is one of that memo's dependencies: a fresh
   // literal per render would rebuild `columns` on every render, and a TanStack table
   // handed new columns every render never settles - the grid renders nothing at all.
   return useMemo(
-    () => ({ run, targetId, isPending }),
-    [run, targetId, isPending],
+    () => ({ run, targetId, isPending, countdown }),
+    [run, targetId, isPending, countdown],
   );
 }
 
