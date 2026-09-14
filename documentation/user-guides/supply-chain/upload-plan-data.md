@@ -189,8 +189,7 @@ stated, the instruction it was raised with, and the note naming the file it came
 
 ### Who can upload it
 
-Anybody who can run a reorder plan. It is the same permission, so no new access is needed to
-migrate the sheet.
+Anybody who can run a reorder plan.
 
 ## Upload reorder levels
 

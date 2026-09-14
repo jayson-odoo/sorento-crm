@@ -78,9 +78,8 @@ the placeholder again.
 A line with a blank item code (added manually before or after saving the invoice) keeps the old draft
 behaviour: picking a product in edit mode patches the draft, and Save persists it.
 
-**Access:** the **Product** column control is offered only to a user who holds both **scm.proforma_invoice.upload**
-(the invoice's own write permission) and **scm.reorder.run** (the supplier-code alias permission). A user
-lacking either permission sees the item code as read-only text.
+**Access:** the **Product** column control is offered only to a user who holds both the proforma invoice upload
+and reorder permissions. A user lacking either permission sees the item code as read-only text.
 
 ## Convert to packing list
 
