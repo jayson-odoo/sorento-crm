@@ -21,14 +21,14 @@ Every column is additive and nullable (or defaulted), so the downgrade is a plai
 no data is rewritten either way.
 
 Revision ID: 516_low_stock_report
-Revises: 510_spec_visibility_policies
+Revises: 511_committed_v_line_owed
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "516_low_stock_report"
-down_revision = "510_spec_visibility_policies"
+down_revision = "511_committed_v_line_owed"
 branch_labels = None
 depends_on = None
 
