@@ -404,33 +404,66 @@ class TestABareAskNeedsNoFilter:
 
 
 # --------------------------------------------------------------------------- #
-# Phase 3, reviewer S1 / N6 - a failed call is a MISS, not pending
+# Phase 3, reviewer S1 / N6 (refined by console round 3) - a failed call states the error
+# line, never pending and never the generic inventory miss
 #
-# CODER-AUTHORED: the red set had no error-envelope case, so nothing caught that the
-# structurer would read an unknown/error payload as an answer. The presenter renders an
-# error as `has_result: False`; the lane's output must carry that through so the miss
-# path (team picker) fires instead of the pending line.
+# CODER-AUTHORED: the red set had no error case. The presenter renders an error as the
+# "could not run" line with has_result True (a terminal answer, like busy/pending); the
+# structurer must carry that text and flag through verbatim, so the bot says this tool's own
+# words rather than the pending line or the inventory domain's generic miss.
 # --------------------------------------------------------------------------- #
 
 
-class TestErrorEnvelopeIsAMiss:
+class TestErrorEnvelopeStatesTheErrorLine:
     _ERROR_ENVELOPE = {
         "result_type": "low_stock_report",
         "response": "Could not run the low stock report right now.",
-        "has_result": False,
+        "has_result": True,
         "attachments": [],
     }
 
-    def test_error_envelope_carries_has_result_false_and_no_attachment(self) -> None:
+    def test_error_envelope_carries_the_line_and_no_attachment(self) -> None:
         out = fetch_mod.output_structurer(self._ERROR_ENVELOPE, {"tool": TOOL})
-        assert out.get("has_result") is False, out
+        assert out.get("has_result") is True, out
         assert out.get("attachments") == [], out
         assert out.get("response") == "Could not run the low stock report right now.", out
 
-    def test_unrendered_raw_body_is_a_miss_never_an_answer(self) -> None:
+    def test_unrendered_raw_body_states_the_error_line(self) -> None:
         """The render-never-happened fallback (a raw route body reached the lane): a
-        side-effecting tool has no safe default text, so it is a miss - never a stringified
-        status dict read as `has_result`."""
+        side-effecting tool has no safe default text, so it states the error line verbatim
+        rather than stringing a raw status dict into the reply or dropping into the generic
+        inventory miss."""
         out = fetch_mod.output_structurer({"status": "error"}, {"tool": TOOL})
-        assert out.get("has_result") is False, out
+        assert out.get("has_result") is True, out
         assert "Could not run the low stock report" in out.get("response", ""), out
+
+
+# --------------------------------------------------------------------------- #
+# Console round 3, #892 - the ids must reach the tool
+#
+# CODER-AUTHORED: the red set checked that the tool is PICKED and that no scope is sent on
+# a bare ask, but never that contact_id + space_id actually reach the call. The console
+# found the tool invoked with them MISSING, so the route 422'd and the turn rendered as the
+# generic inventory miss. This pins that they flow, exactly as the working outstanding tool
+# does.
+# --------------------------------------------------------------------------- #
+
+
+class TestTheIdsReachTheTool:
+    def test_bare_ask_calls_the_tool_with_contact_and_space(self, session_factory) -> None:
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp(READY_ENVELOPE)
+        run_fetch(
+            _payload(attributes=[GRANT_KEY], entities=[]),
+            services=FetchServices(mcp_call=call),
+        )
+
+        assert captured, "the tool was never called"
+        name, args = captured[0]
+        assert name == TOOL, name
+        assert args.get("contact_id") == str(CONTACT_ID), (
+            f"contact_id must reach the tool (the route 422s without it): {args}"
+        )
+        assert args.get("space_id"), f"space_id must reach the tool: {args}"
+        assert args.get("view") == "render", args

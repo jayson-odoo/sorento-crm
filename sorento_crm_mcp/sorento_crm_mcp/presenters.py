@@ -2042,13 +2042,17 @@ def _low_stock_envelope(payload: dict) -> dict:
                   (AC-44), so the bot says so and stops.
     * `busy`    - a plan is already running for the company (AC-49).
     * anything else (an `error` status, an error body carrying `message`/`code`, or a
-      non-dict) - the report could not be produced. Rendered as a MISS (reviewer S1 /
-      AC-44a / N6): `has_result` False, so the lane's team picker takes over, NEVER the
-      pending line, which would leave the contact waiting for a file that is not coming.
+      non-dict) - the report could not be produced (no company, an excluded product, a
+      broker down, a run the worker marked failed). The bot says so and STOPS: the fixed
+      "could not run" line, verbatim, `has_result` True.
 
-    `has_result` is True only on ready-with-counts, pending and busy - each IS the answer
-    to what was asked. No UUID reaches the text - the payload carries `run_id` and
-    `download_id`, and neither is a thing to say to a customer.
+    `has_result` is True on every branch - each IS a terminal answer the bot gives. It is
+    NOT the miss path (reviewer S1 / AC-44a / N6 wanted "never pending"; the console then
+    found that a `has_result` False here routes into the inventory domain's GENERIC miss,
+    "Could not find inventory - escalate to warehouse team?", which is the wrong wording
+    for a run that failed). Rendering the error line verbatim, like busy / pending, is what
+    keeps the bot on THIS tool's own words. No UUID reaches the text - the payload carries
+    `run_id` and `download_id`, and neither is a thing to say to a customer.
     """
     status = payload.get("status") if isinstance(payload, dict) else None
     if status == "ready":
@@ -2080,9 +2084,10 @@ def _low_stock_envelope(payload: dict) -> dict:
     if status == "pending":
         return {"result_type": "low_stock_report", "response": _LOW_STOCK_PENDING,
                 "attachments": [], "has_result": True}
-    # Unknown / error / a raw error body: a miss, never pending.
+    # Unknown / error / a raw error body: the error line verbatim, never pending and never
+    # the generic inventory miss.
     return {"result_type": "low_stock_report", "response": _LOW_STOCK_ERROR,
-            "attachments": [], "has_result": False}
+            "attachments": [], "has_result": True}
 
 
 _OUTSTANDING_BOTH_HEADINGS = {"so": "*Sales order list*", "do": "*Delivery order list*"}

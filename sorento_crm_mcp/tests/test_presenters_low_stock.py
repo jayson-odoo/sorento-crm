@@ -121,31 +121,34 @@ def test_no_uuid_in_any_line():
 
 
 # --------------------------------------------------------------------------- AC-44a
-# CODER-AUTHORED (Phase 3, reviewer S1 / N6): the error shape. Added because the red set
-# covered only ready/pending/busy - and the console found a 400 rendering as the pending
-# line, which leaves the contact waiting for a file that never comes.
+# CODER-AUTHORED (Phase 3, reviewer S1 / N6, refined by console round 3): the error shape.
+# The red set covered only ready/pending/busy. First the console found a 400 rendering as
+# pending; then it found that a has_result-False error routes into the inventory domain's
+# GENERIC miss ("Could not find inventory - escalate to warehouse team?"). So an error is a
+# TERMINAL answer rendered verbatim (has_result True), like busy/pending - the bot's own
+# words, never pending and never the generic miss.
 
 ERROR = {"status": "error", "message": "Could not run the low stock report right now."}
 
 
-def test_error_status_renders_as_a_miss():
-    """An `error` payload is a MISS: the fixed "could not run" line, `has_result` False (so
-    the lane's team picker takes over), and no attachment."""
+def test_error_status_renders_the_error_line_verbatim():
+    """An `error` payload is the fixed "could not run" line, `has_result` True so the lane
+    states it verbatim rather than dropping into the generic inventory miss; no attachment."""
     env = _envelope(ERROR)
     assert env["result_type"] == "low_stock_report", env
-    assert env["has_result"] is False, env
+    assert env["has_result"] is True, env
     assert env["response"] == "Could not run the low stock report right now.", repr(
         env["response"]
     )
     assert env.get("attachments") in ([], None), env.get("attachments")
 
 
-def test_unknown_status_and_raw_error_body_are_a_miss_never_pending():
+def test_unknown_status_and_raw_error_body_render_the_error_line_never_pending():
     """A status the presenter does not know (a raw route error body, a shape drift) must
-    NOT fall through to the pending line - the exact bug this branch closes."""
+    NOT fall through to the pending line, and must show this tool's own error wording."""
     for payload in ({"status": "boom"}, {"message": "x", "code": "company_unresolved"}, {}):
         env = _envelope(payload)
-        assert env["has_result"] is False, (payload, env)
+        assert env["has_result"] is True, (payload, env)
         assert env["response"] == "Could not run the low stock report right now.", (
             payload, env["response"],
         )

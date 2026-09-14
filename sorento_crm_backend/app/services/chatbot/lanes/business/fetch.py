@@ -632,6 +632,18 @@ def entity_ids_transformer(
                 product_codes.append(jsc.js_string(code))
         if product_codes:
             out["product_codes"] = product_codes
+        # #892 (console, 14 Sep): this tool REQUIRES both ids - the route 422s without
+        # them, and they drive the company scope the write needs - so it must NOT depend on
+        # the shared tail below surviving a refactor or a None `semantic_input`. Carry them
+        # explicitly here, from the trigger first (`run_fetch` stamps `contact_id` on it),
+        # then `semantic_input`, exactly the resolution the bottom of this function uses.
+        _lsr_contact = trig.get("contact_id")
+        if _lsr_contact is None:
+            _lsr_contact = jsc.get(semantic_input, "contact_id")
+        out["contact_id"] = jsc.nullish_str(_lsr_contact).strip()
+        out["space_id"] = space_id_or_default(
+            space_id if space_id is not None else jsc.get(semantic_input, "space_id")
+        )
 
     # S2 (review round, 13 Sep 2026): a warehouse entity on a PLAIN order ask.
     # `TYPE_TO_PARAM` maps it to `warehouse_ids`, which NEITHER order-list tool declares
@@ -1720,9 +1732,12 @@ def _low_stock_report_output(result: Any) -> dict[str, Any]:
     `sorento_crm_mcp`, so a second rendering here could disagree with the text the customer
     is reading and nothing would catch it.
 
-    `has_result` comes off the wire: True on `ready` / `pending` / `busy` (each an ANSWER),
-    and False on the presenter's error envelope (reviewer S1/N6), which drops the turn onto
-    the lane's own miss path with its team picker rather than reading the failure as pending.
+    `has_result` comes off the wire and is True on every presenter branch - ready, pending,
+    busy and error are all terminal answers the bot gives verbatim. The presenter renders an
+    error as the "could not run" line (reviewer S1/N6, refined by the console: a False here
+    routes into the inventory domain's GENERIC miss, the wrong wording for a failed run), so
+    the lane must NOT force the turn onto the miss path; it carries the presenter's text and
+    `has_result` through unchanged.
     """
     envelope = result if isinstance(result, dict) else {}
     if "response" in envelope:
@@ -1730,13 +1745,13 @@ def _low_stock_report_output(result: Any) -> dict[str, Any]:
         has_result = envelope.get("has_result") is True
         attachments = envelope.get("attachments")
     else:
-        # N6: the render never happened (an MCP that returned a RAW route body - `{status:
+        # The render never happened (an MCP that returned a RAW route body - `{status:
         # error|busy|...}` - or a failure fallback). This tool has a side effect and no
-        # safe default text, so an unrendered payload is a MISS, never an answer: stringing
-        # a raw status dict into the reply would read as gibberish, and treating it as
-        # `has_result` would suppress the escalate the customer needs.
+        # safe default text, so state the error line verbatim as a terminal answer rather
+        # than stringing a raw status dict into the reply or dropping into the generic
+        # inventory miss.
         text = _LOW_STOCK_ERROR_TEXT
-        has_result = False
+        has_result = True
         attachments = None
     return {
         "response": text,
