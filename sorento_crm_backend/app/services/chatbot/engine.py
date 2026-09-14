@@ -2093,6 +2093,12 @@ def _run_stages(  # noqa: PLR0915
                         )
                     else:
                         delegate_payload = {**payload, "fetch": fetch_fragment.get("fetch")}
+                        # Lane 2: a fan-out read carries one section per asked domain, which
+                        # `complete_answer` renders in order. Only present on a multi-domain
+                        # turn, so a single-domain turn's payload is byte-identical.
+                        if fetch_fragment.get("sections") is not None:
+                            delegate_payload["fan_sections"] = fetch_fragment.get("sections")
+                            delegate_payload["fan_asked"] = fetch_fragment.get("fan_asked")
                         if fetch_fragment.get("kind") == "error":
                             # The `error` arm carries TWO different events and they get
                             # two different answers (captain's ruling, round 2):
