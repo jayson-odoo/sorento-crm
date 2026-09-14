@@ -176,7 +176,7 @@ drop `alternatives`. `_add_lines` / `replace_lines` write parts in order.
 Portal lookup gains combos: `GET /portal/lookups/price-tag-items?q=` unchanged; a new
 `GET /portal/lookups/product-combos/{product_id}` returns `{host_guarded, combos:[{combo_id,
 name, parts:[{product_id, code, name, choice_group}]}]}` under the same `_assert_visible`
-gate. (`host_guarded` added in S1 Phase 1, coder deviation, captain to ratify: the
+gate. (`host_guarded` added in S1 Phase 1, coder deviation, ratified by the captain 14 Sep: the
 client-side warning below needs to know whether this product's `class_label` is in
 `price_tag_guarded_classes`, and answering it on the call the form already makes beats a
 second round trip and keeps the tenant's settings list off the portal wire. The server

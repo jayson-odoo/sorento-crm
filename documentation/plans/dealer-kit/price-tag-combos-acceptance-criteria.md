@@ -75,8 +75,9 @@ answers, which still answer for the cabinet alone.
 - AC-S2-7 The old hard refusal `SET_GUARD_VIOLATION` no longer fires for product lines. WC
   product-set lines keep their existing path unchanged. `pytest`: the two former 422 cases
   now return 201 with `package_warning`.
-- AC-S2-8 Submit payload per line: `{line_type, product_id, combo_id?, quantity,
-  show_promo_price, remarks, parts: [{product_id?, role?, candidates?}]}`; the API stores
+- AC-S2-8 Submit payload per line: `{line_type, product_id, combo_id?, quantity, remarks,
+  parts: [{product_id?, role?, candidates?}]}` (`show_promo_price` stays derived from the
+  header `price_mode`, r7 D5; `alternatives` is gone); the API stores
   parts in order; the portal read view shows the parts under each line and the warning pill.
   `pytest`: parts persisted in order with roles and candidates. `[BE]`
 - AC-S2-9 Draft save and reload keeps parts, package choice and open rows. `[E2E]`
