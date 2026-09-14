@@ -43,6 +43,7 @@ FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
     ("purchase_orders.placed", "PO placed (on order) on stock answers"),
     ("purchase_orders.supplier", "PO supplier"),
     ("purchase_orders.cost", "Last purchase cost"),
+    ("sales_orders.outstanding", "Sales order outstanding"),
 )
 
 

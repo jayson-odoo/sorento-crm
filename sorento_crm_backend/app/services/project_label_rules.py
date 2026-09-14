@@ -16,6 +16,14 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+#: The longest label ever written, and the longest input any rule reads (security review,
+#: SPL-S2). `apply_project_label` is the one choke point every writer - the AutoCount
+#: ingest, the Order Inquiry importer, migration 511's backfill - already goes through, so
+#: capping there bounds all three without a truncation of its own in each; the same bound
+#: caps `label_from_inquiry_cell`'s operator-typed INPUT before it reaches a regex
+#: (AC-S1-44). Declared here because the first of those two uses is at the top of the file.
+_MAX_LABEL_LENGTH = 200
+
 #: Highest wins. `apply_project_label` refuses to overwrite a stored label with one from a
 #: lower-ranked source; equal rank overwrites, so a re-run of the same source lands a
 #: correction.
@@ -38,6 +46,11 @@ def label_from_inquiry_cell(cell: Optional[str]) -> Optional[str]:
     """
     if not cell:
         return None
+    # Capped BEFORE the slash normalisation below (security review N5, 14 Sep): the cell is
+    # operator-typed and reaches a regex that scans every character, and the sibling
+    # `label_from_note` has carried the same cap since it was written. A label longer than
+    # this is not a project name anyway - it is a paragraph in the wrong column.
+    cell = cell[:_MAX_LABEL_LENGTH]
     if "/" not in cell:
         return None
     _customer, remainder = cell.split("/", 1)
@@ -193,13 +206,6 @@ def label_from_ref(ref: Optional[str]) -> Optional[str]:
     if trimmed.upper() in _NON_PROJECT_REFS:
         return None
     return trimmed
-
-
-#: The longest label ever written, and the single place that bound is enforced (security
-#: review, SPL-S2) - `apply_project_label` is the one choke point every writer (the
-#: AutoCount ingest, the Order Inquiry importer, migration 511's backfill) already goes
-#: through, so capping here bounds all three without a truncation of its own in each.
-_MAX_LABEL_LENGTH = 200
 
 
 def apply_project_label(order, label: Optional[str], source: Optional[str]) -> bool:

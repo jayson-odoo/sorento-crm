@@ -810,6 +810,7 @@ def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]
             OrderLinkClaim.po_number,
             OrderLinkClaim.source,
             OrderLinkClaim.so_line_id,
+            OrderLinkClaim.claimed_at,
             SalesOrder.order_date,
             SalesOrderLine.qty_ordered,
             SalesOrderLine.qty_delivered,
@@ -836,7 +837,7 @@ def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]
     rows = []
     for (
         claim_id, po_line_id, spo_allocation_id, so_number, po_number, source,
-        so_line_id, order_date, qty_ordered, qty_delivered, line_status,
+        so_line_id, claimed_at, order_date, qty_ordered, qty_delivered, line_status,
     ) in query.all():
         target_id = str(po_line_id or spo_allocation_id or "")
         if not target_id:
@@ -848,6 +849,11 @@ def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]
             "po_number": po_number,
             "source": source,
             "so_line_id": str(so_line_id),
+            # When the pairing was stated. Additive (ruling 14 Sep,
+            # `PLAN-scm-oi-sheet-migration.md` AC-S1-32): the order inquiry migration
+            # follows several stated pairings on one line and takes the earliest first
+            # within a kind, so "which was stated first" has to travel with the row.
+            "claimed_at": claimed_at,
             "so_date": order_date,
             # The claiming line's LIVE outstanding (G7): a fulfilled or cancelled line
             # reserves nothing, whatever the claim still names, and the claim row is never

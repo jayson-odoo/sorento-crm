@@ -81,6 +81,7 @@ needed either way.
 
 ## See also
 
+* [Chatbot - outstanding report (sales order backlog and delivery order pending)](chatbot-outstanding-report.md)
 * [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
 * [Chatbot - product spec visibility](chatbot-spec-visibility.md) - a different, per-contact
   chatbot gate, on this same contact's **Profile** tab rather than **Access**.

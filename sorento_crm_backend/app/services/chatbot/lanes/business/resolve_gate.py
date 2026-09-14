@@ -39,6 +39,7 @@ from typing import Any
 
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import EXIT_CONTRACT_FIELDS
+from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import pickers
 from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.services import ResolveGateServices
@@ -53,6 +54,15 @@ _PRODUCT_FOLD = re.compile(r"[-\s]+")
 # `tool` parameters. Not a registry: two literals, named where they are used.
 INCOMING_PROBE_TOOL = "crm_incoming_stock_list"
 CUSTOMER_PROBE_TOOL = "crm_order_management_orders_list"
+
+#: R20 (owner round 7, 13 Sep 2026): the `order_status` values that make a turn an
+#: OUTSTANDING ask, which is the one ask the customer picker must not offer a delivery
+#: hint on - see the `If-customer-picker` arm. The three scope words come from
+#: `fetch.ORDER_STATUS_TO_SCOPE` rather than being spelled again, and bare `outstanding`
+#: is added because that table deliberately omits it (the field-reveal gate resolves it).
+OUTSTANDING_ORDER_STATUS: frozenset[str] = frozenset(
+    {"outstanding", *fetch_mod.ORDER_STATUS_TO_SCOPE}
+)
 
 # The probe's injected default window, from `probe-customer-orders`' semantic_input
 # expression (`$now.minus({days: 90})`). `annotate-customer-picker` mirrors this rule to
@@ -841,18 +851,42 @@ def run(
     # ── If-customer-picker ──────────────────────────────────────────────────
     if if_customer_picker(picker_gate):
         entities = jsc.get(picker_gate, "customer_probe_entities")
-        probe = _run_probe(
-            services,
-            ctx=ctx,
-            tool=CUSTOMER_PROBE_TOOL,
-            entities=entities,
-            aggregate=aggregate,
-            default_start=probe_default_start,
-            space_id=space_id,
+        # R20 (owner round 7, 13 Sep 2026): an OUTSTANDING ask does not probe, and so
+        # gets no delivery hint. `CUSTOMER_PROBE_TOOL` measures orders with an
+        # `actual_delivery_date` - DELIVERED DOs, the owner's own 6 Sep ruling for
+        # delivery enquiries - which is the OPPOSITE population from the outstanding
+        # report's DO block (DOs not yet delivered). So the picker stamped "- no DO" on
+        # every line and "None of these have a matching DO.", and the report two turns
+        # later showed a DO with 5 outstanding: "it is still kinda strange for me though,
+        # to say no DO, then later when i get the summary, there is DO." The hint cannot
+        # be made true for this ask by rewording it, and there is nothing here worth
+        # measuring, so neither happens. Decided on the ask's OWN `order_status`, not on
+        # the domain: every other order-domain picker keeps today's hint.
+        outstanding_ask = (
+            jsc.js_string(jsc.get(parser, "order_status") or "").strip() in OUTSTANDING_ORDER_STATUS
+        )
+        probe = (
+            None
+            if outstanding_ask
+            else _run_probe(
+                services,
+                ctx=ctx,
+                tool=CUSTOMER_PROBE_TOOL,
+                entities=entities,
+                aggregate=aggregate,
+                default_start=probe_default_start,
+                space_id=space_id,
+            )
         )
         annotated = pickers.annotate_customer(
             _snapshot(picker_gate), probe=probe, parser=parser
         )
+        if outstanding_ask:
+            # The annotator's UNPROBED arm renders exactly what R20 wants - the bare
+            # picker, no suffixes, no closing claim - so its wording is untouched. Only
+            # its reason is, because "probe_unavailable" would tell the operator a probe
+            # failed when one was deliberately not run.
+            annotated["customer_probe_skip_reason"] = "outstanding_ask"
         # `annotate_incoming` stays NULL on this arm: the customer annotator is not the
         # incoming one, and `sub-main-processing`'s `annotate-incoming-gate` reads exactly
         # that key to decide whether its stand-in executes.

@@ -149,6 +149,10 @@ CHATBOT_READ_ONLY_TOOLS_BEFORE = frozenset(
         # `crm_order_analytics` left the pool on 8 Sep 2026 (see the `order` row).
         "crm_order_management_orders_by_product_list",
         "crm_order_management_orders_list",
+        # PLAN-chatbot-outstanding-report.md, S4 point 2: allow-list member only - the
+        # override lives in `lanes/business/__init__.py::run_fetch`, never in
+        # `select_tool`'s own `tools[0]` pick.
+        "crm_outstanding_report",
         "crm_portal_link_get",
         "crm_procurement_po_placed_list",
         "crm_procurement_po_last_cost_list",
