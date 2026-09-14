@@ -409,12 +409,21 @@ class TestReviseValidatesLines:
         assert fresh.lines[0].product_id == product_id
 
     def test_override_survives_when_the_same_product_is_revised(self, db):
+        """Marketing's own work is not in the form's payload, so a re-save must not wipe it.
+
+        The override lives on the line's TAG since S3 (D3), and `replace_lines`
+        carries the whole tag set onto whichever new row keeps the same product.
+        The rule being pinned has not moved: a salesperson changing a quantity
+        must not silently reset a price marketing set by hand.
+        """
         from app.models.price_tag import PriceTagRequestLine
 
         contact, product_id, row = _setup(db)
         line = db.query(PriceTagRequestLine).filter(PriceTagRequestLine.request_id == row.id).one()
-        line.marketing_price_override = 42.50
-        line.marketing_override_reason = "Marketing override ZZT"
+        # One tag per line exists from creation (`_add_lines`).
+        tag = line.tags[0]
+        tag.marketing_price_override = 42.50
+        tag.marketing_override_reason = "Marketing override ZZT"
         db.commit()
         token = _seed_token(contact)
 
@@ -427,8 +436,10 @@ class TestReviseValidatesLines:
         fresh_line = (
             db.query(PriceTagRequestLine).filter(PriceTagRequestLine.request_id == row.id).one()
         )
-        assert float(fresh_line.marketing_price_override or 0) == pytest.approx(42.50)
-        assert fresh_line.marketing_override_reason == "Marketing override ZZT"
+        assert len(fresh_line.tags) == 1, "a surviving line keeps its tag set, not a fresh one"
+        fresh_tag = fresh_line.tags[0]
+        assert float(fresh_tag.marketing_price_override or 0) == pytest.approx(42.50)
+        assert fresh_tag.marketing_override_reason == "Marketing override ZZT"
 
 
 # =========================================================================== #
