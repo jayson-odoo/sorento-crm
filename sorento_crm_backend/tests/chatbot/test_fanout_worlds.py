@@ -864,9 +864,17 @@ def test_ac1051_two_missed_sections_offer_a_numbered_team_pick(
     assert teams == ["warehouse", "purchasing"], (
         f"the deduped missed-domain teams, in section order - got {teams!r}"
     )
-    quick = [q.lower() for q in ((turn.result.reply or {}).get("quick_replies") or [])]
-    assert any("no it's okay" in q or "no it" in q for q in quick), (
-        f"a 'No it's okay' reply rides the numbered team offer - got {quick!r}"
+    # `quick_replies` is n8n's comma-STRING by contract (AC-507), never a list:
+    # `console_service._quick_replies` drops a non-str and the escalation lane joins with
+    # ", ". Iterating it would walk characters, so the string is coerced the same way the
+    # send-action test (test_fanout.py) reads it.
+    qr = (turn.result.reply or {}).get("quick_replies")
+    quick = (qr if isinstance(qr, str) else ",".join(qr or [])).lower()
+    assert "no it's okay" in quick, (
+        f"a 'No it's okay' reply rides the numbered team offer - got {qr!r}"
+    )
+    assert "warehouse" in quick and "purchasing" in quick, (
+        f"the two team labels ride the numbered offer - got {qr!r}"
     )
 
 
