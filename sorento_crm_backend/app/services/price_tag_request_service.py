@@ -12,12 +12,14 @@ The status graph:
 ``void`` and ``rejected`` are reachable from any non-terminal status.
 ``ready`` is terminal - once exported, no further transitions.
 """
+import copy
 import logging
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import Integer, cast, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.base import company_scope
 from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
@@ -213,7 +215,7 @@ class PriceTagRequestService:
         request: PriceTagRequest,
         lines: list[dict],
         *,
-        carry_overrides: dict[tuple, tuple] | None = None,
+        carry_tags: dict[tuple, list[dict]] | None = None,
     ) -> None:
         """Append lines in the order given, which is the order the form shows.
 
@@ -223,11 +225,12 @@ class PriceTagRequestService:
         from whatever the header says right now, so a header flip never leaves
         a stale line behind.
 
-        ``carry_overrides`` (review round 2): ``replace_lines`` passes the old
-        table's ``(product_id, product_set_id) -> (marketing_price_override,
-        marketing_override_reason)`` map here, since the form payload has no
-        field for either - a re-save with just a new remark used to silently
-        wipe a marketing-set override on the same product/set.
+        Every line gets its TAGS here too (D3): exactly one, carrying the line's
+        quantity and an empty `choices`, unless ``carry_tags`` hands over the set
+        a surviving line already had. ``replace_lines`` passes that map, keyed by
+        ``(product_id, product_set_id)``, since the form payload has no field for
+        any of it - a re-save with just a new remark used to silently wipe a
+        marketing-set override, and would now silently un-split the line.
 
         Raises 422 ``DUPLICATE_LINE`` (round 3, R3-7/AC-R4) naming the code
         the FIRST time the same product or set repeats within ``lines`` -
@@ -237,11 +240,10 @@ class PriceTagRequestService:
         """
         PriceTagRequestService._raise_on_duplicate_line(db, lines)
         show_promo_price = request.price_mode == "selling"
-        carry_overrides = carry_overrides or {}
+        carry_tags = carry_tags or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
             key = (line_data.get("product_id"), line_data.get("product_set_id"))
-            override_price, override_reason = carry_overrides.get(key, (None, None))
             line = (
                 PriceTagRequestLine(
                     request_id=request.id,
@@ -254,13 +256,42 @@ class PriceTagRequestService:
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
-                    marketing_price_override=override_price,
-                    marketing_override_reason=override_reason,
                 )
             )
             db.add(line)
             db.flush()
             PriceTagRequestService._add_line_parts(db, line, line_data.get("parts") or [])
+            PriceTagRequestService._add_line_tags(db, line, carry_tags.get(key))
+
+    @staticmethod
+    def _add_line_tags(db: Session, line, carried: list[dict] | None = None) -> None:
+        """The tags that will be printed for this line (D3, AC-S3-1).
+
+        Exactly ONE at submit, carrying the line's quantity and an empty
+        `choices`: not zero (the designer would have nothing to key its document
+        on) and not one per candidate (auto-split was rejected by the owner -
+        marketing decides in the designer).
+
+        `carried` is a surviving line's existing tag set, handed over by
+        `replace_lines`, so a revision that changes a remark keeps the split
+        marketing already made.
+        """
+        from app.models.price_tag import PriceTagRequestTag
+
+        rows = carried if carried else [
+            {"sort_order": 0, "quantity": line.quantity or 1, "choices": {}}
+        ]
+        for index, row in enumerate(rows):
+            db.add(
+                PriceTagRequestTag(
+                    line_id=line.id,
+                    sort_order=row.get("sort_order", index),
+                    quantity=row.get("quantity") or 1,
+                    choices=row.get("choices") or {},
+                    marketing_price_override=row.get("marketing_price_override"),
+                    marketing_override_reason=row.get("marketing_override_reason"),
+                )
+            )
 
     @staticmethod
     def _add_line_parts(db: Session, line, parts: list[dict]) -> None:
@@ -353,23 +384,32 @@ class PriceTagRequestService:
         the relationship keeps ``delete-orphan`` in charge, so nothing is left
         pointing at the request.
 
-        Marketing's own per-line override (review round 2) is not part of the
-        form's payload, so it is captured from the OLD rows, keyed by product /
-        set, before they are cleared, and carried onto whichever new row keeps
-        the same product or set.
+Marketing's own work is not part of the form's payload, so it is captured
+        from the OLD rows before they are cleared and carried onto whichever new
+        row keeps the same product or set. Since S3 that work lives on the TAGS
+        (D3), so what is carried is the tag set itself - its split, its choices,
+        its quantities and its overrides - rather than one override per line: a
+        salesperson fixing a typo in a remark must not un-split a line marketing
+        already turned into four tags.
         """
-        carry_overrides = {
-            (old.product_id, old.product_set_id): (
-                old.marketing_price_override,
-                old.marketing_override_reason,
-            )
+        carry_tags = {
+            (old.product_id, old.product_set_id): [
+                {
+                    "sort_order": tag.sort_order,
+                    "quantity": tag.quantity,
+                    "choices": dict(tag.choices or {}),
+                    "marketing_price_override": tag.marketing_price_override,
+                    "marketing_override_reason": tag.marketing_override_reason,
+                }
+                for tag in sorted(
+                    old.tags or [], key=lambda t: (t.sort_order or 0, t.id)
+                )
+            ]
             for old in request.lines
-            if old.marketing_price_override is not None
-            or old.marketing_override_reason is not None
         }
         request.lines.clear()
         db.flush()
-        PriceTagRequestService._add_lines(db, request, lines, carry_overrides=carry_overrides)
+        PriceTagRequestService._add_lines(db, request, lines, carry_tags=carry_tags)
         db.flush()
         # `_add_lines` inserts the new rows via `db.add(...)`, not
         # `request.lines.append(...)`, so the in-memory collection is left
@@ -718,6 +758,193 @@ class PriceTagRequestService:
                 for row in rows
             ]
 
+    # ------------------------------------------------------------------- tags
+
+    @staticmethod
+    def tag_body(tag, resolved: dict | None) -> dict:
+        """One tag in the shape every surface reads (D3).
+
+        `choices_display` resolves the stored `{role: product_id}` map to codes -
+        the raw map is never rendered (AC-X-2) - and the prices come off the ONE
+        resolver, so the rail, the Lines tab and the PDF cannot disagree.
+        """
+        chosen = dict(tag.choices or {})
+        by_id = {}
+        for group in (resolved or {}).get("open_groups") or []:
+            for candidate in group.get("candidates") or []:
+                by_id[candidate["product_id"]] = candidate["code"]
+        # A resolved choice is no longer an open group, so its code comes off the
+        # tag's own resolved parts instead.
+        parts = (resolved or {}).get("parts") or []
+        return {
+            "id": tag.id,
+            "line_id": tag.line_id,
+            "sort_order": tag.sort_order or 0,
+            "label": (resolved or {}).get("tag_label", ""),
+            "quantity": tag.quantity,
+            "choices": chosen,
+            "choices_display": [
+                {
+                    "role": role,
+                    "code": by_id.get(
+                        str(product_id),
+                        PriceTagRequestService._code_from_parts(parts, str(product_id)),
+                    ),
+                }
+                for role, product_id in chosen.items()
+            ],
+            "open_groups": (resolved or {}).get("open_groups") or [],
+            "marketing_price_override": (
+                None
+                if tag.marketing_price_override is None
+                else float(tag.marketing_price_override)
+            ),
+            "marketing_override_reason": tag.marketing_override_reason,
+            "list_price": (resolved or {}).get("list_price"),
+            "sell_price": (resolved or {}).get("sell_price"),
+        }
+
+    @staticmethod
+    def _code_from_parts(parts: list[dict], product_id: str) -> str:
+        """The code of a chosen candidate, once it stopped being an open group.
+
+        The resolver lists it among the tag's own parts, which is the only place
+        a resolved choice's code survives - `choices` itself holds only the id.
+        """
+        # The parts list carries no id, so the fallback is the LAST part, which
+        # is where a resolved choice lands (fixed parts come first, in combo
+        # order). Good enough for a label; the printed text is D4's own job.
+        return parts[-1]["code"] if parts else ""
+
+    @staticmethod
+    def split_tag(db: Session, tag, role: str) -> list:
+        """"Split into N tags" (AC-S3-4).
+
+        The tag that is there resolves to candidate 1 and KEEPS ITS ID, so its
+        placed geometry and its review pins survive; N-1 siblings are inserted
+        after it, one per remaining candidate in combo order, and the draft
+        document gets a copy of the original's placement for each.
+        """
+        from app.models.price_tag import PriceTagRequestTag
+
+        line = tag.line
+        candidates: list[str] = []
+        for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+            if part.product_id or (part.role or "") != role:
+                continue
+            candidates = [str(c) for c in (part.candidates or [])]
+            break
+        if not candidates:
+            raise AppException(
+                status_code=422,
+                message=f"This line has no open {role} to split.",
+                code="NO_OPEN_GROUP",
+            )
+
+        siblings = sorted(line.tags or [], key=lambda t: (t.sort_order or 0, t.id))
+        after = [row for row in siblings if (row.sort_order or 0) > (tag.sort_order or 0)]
+        shift = len(candidates) - 1
+        for row in after:
+            row.sort_order = (row.sort_order or 0) + shift
+
+        tag.choices = {**dict(tag.choices or {}), role: candidates[0]}
+        created = []
+        for offset, candidate in enumerate(candidates[1:], start=1):
+            sibling = PriceTagRequestTag(
+                line_id=line.id,
+                sort_order=(tag.sort_order or 0) + offset,
+                quantity=tag.quantity,
+                choices={**dict(tag.choices or {}), role: candidate},
+                marketing_price_override=tag.marketing_price_override,
+                marketing_override_reason=tag.marketing_override_reason,
+            )
+            db.add(sibling)
+            created.append(sibling)
+        db.flush()
+
+        PriceTagRequestService._copy_placements_in_draft(
+            db, line.request_id, tag.id, [row.id for row in created]
+        )
+        db.flush()
+        db.expire(line, ["tags"])
+        return sorted(line.tags, key=lambda t: (t.sort_order or 0, t.id))
+
+    @staticmethod
+    def delete_tag(db: Session, tag) -> None:
+        """Remove one tag and its placements. Never the line's last (AC-S3-6)."""
+        line = tag.line
+        if len(line.tags or []) <= 1:
+            raise AppException(
+                status_code=422,
+                message="A line must keep at least one tag.",
+                code="LAST_TAG",
+            )
+        request_id, tag_id = line.request_id, tag.id
+        db.delete(tag)
+        db.flush()
+        PriceTagRequestService._drop_placements_in_draft(db, request_id, tag_id)
+        db.flush()
+
+    @staticmethod
+    def _tag_sheet_page(db: Session, request_id: str):
+        from app.models.dealer_kit import Page
+
+        return (
+            db.query(Page)
+            .filter(Page.request_id == request_id, Page.kind == "tag_sheet")
+            .first()
+        )
+
+    @staticmethod
+    def _copy_placements_in_draft(
+        db: Session, request_id: str, source_tag_id: str, new_tag_ids: list[str]
+    ) -> None:
+        """Give every new sibling the split tag's own geometry (AC-S3-4).
+
+        Marketing drew ONE tag and asked for four; landing three of them
+        unplaced would make the sheet look broken at the moment of the split.
+        The copies keep their own `-cN` suffix, which is how `tagsFromDoc` tells
+        copy 0 (the master, whose layers are the design) from the rest.
+        """
+        page = PriceTagRequestService._tag_sheet_page(db, request_id)
+        if page is None or not page.draft_doc or not new_tag_ids:
+            return
+        doc = copy.deepcopy(page.draft_doc)
+        changed = False
+        for sheet in doc.get("sheets") or []:
+            placed = sheet.get("tags") or []
+            sources = [p for p in placed if p.get("request_tag_id") == source_tag_id]
+            for source in sources:
+                suffix = str(source.get("id") or "")
+                copy_index = suffix.rsplit("-c", 1)[-1] if "-c" in suffix else "0"
+                for new_tag_id in new_tag_ids:
+                    clone = copy.deepcopy(source)
+                    clone["request_tag_id"] = new_tag_id
+                    clone["id"] = f"{new_tag_id}-c{copy_index}"
+                    placed.append(clone)
+                    changed = True
+            sheet["tags"] = placed
+        if changed:
+            page.draft_doc = doc
+            flag_modified(page, "draft_doc")
+
+    @staticmethod
+    def _drop_placements_in_draft(db: Session, request_id: str, tag_id: str) -> None:
+        """A deleted tag leaves no placement behind (AC-S3-6)."""
+        page = PriceTagRequestService._tag_sheet_page(db, request_id)
+        if page is None or not page.draft_doc:
+            return
+        doc = copy.deepcopy(page.draft_doc)
+        changed = False
+        for sheet in doc.get("sheets") or []:
+            kept = [p for p in (sheet.get("tags") or []) if p.get("request_tag_id") != tag_id]
+            if len(kept) != len(sheet.get("tags") or []):
+                changed = True
+            sheet["tags"] = kept
+        if changed:
+            page.draft_doc = doc
+            flag_modified(page, "draft_doc")
+
     @staticmethod
     def guarded_classes(db: Session) -> set[str]:
         """The product classes a missing package is worth warning about (D2).
@@ -931,17 +1158,38 @@ class PriceTagRequestService:
         ever disagreeing about what this request's PO files look like
         (PLAN-price-tag-feedback-r2 S1).
         """
-        from app.schemas.price_tag import PriceTagRequestAttachment, PriceTagRequestResponse
+        from app.schemas.price_tag import (
+            PriceTagRequestAttachment,
+            PriceTagRequestResponse,
+            PriceTagRequestTagResponse,
+        )
         from app.services.dealer_kit import tag_data_service
         from app.services.entity_attachment_service import list_attachments_for_entity
 
         response = PriceTagRequestResponse.model_validate(request)
-        resolved = {
-            row["line_id"]: row
-            for row in tag_data_service.resolve_request_line_data(db, request)
-        }
+        # One resolver row per TAG since S3 (D3). The line's own code, name and
+        # prices come off its FIRST tag - every tag on a line prints the same
+        # host product, so those three are a line fact even though the rows are
+        # per tag.
+        rows = tag_data_service.resolve_request_line_data(db, request)
+        by_tag = {row["tag_id"]: row for row in rows}
+        first_by_line: dict[str, dict] = {}
+        for row in rows:
+            first_by_line.setdefault(row["line_id"], row)
+        tags_by_line: dict[str, list] = {}
+        for line in request.lines:
+            tags_by_line[line.id] = sorted(
+                line.tags or [], key=lambda t: (t.sort_order or 0, t.id)
+            )
+
         for line in response.lines:
-            row = resolved.get(line.id)
+            line.tags = [
+                PriceTagRequestTagResponse(
+                    **PriceTagRequestService.tag_body(tag, by_tag.get(tag.id))
+                )
+                for tag in tags_by_line.get(line.id, [])
+            ]
+            row = first_by_line.get(line.id)
             if not row:
                 continue
             line.code = row["code"]

@@ -48,9 +48,44 @@ class PriceTagRequestLineCreate(BaseModel):
     sort_order: Optional[int] = None
 
 
-class PriceTagRequestLineUpdate(BaseModel):
+class PriceTagRequestTagUpdate(BaseModel):
+    """PATCH one tag (D3). Replaces the retired line-level update.
+
+    `choices` is `{role: product_id}` - what "Pick one" writes.
+    """
+
+    quantity: Optional[int] = Field(default=None, ge=1)
     marketing_price_override: Optional[Decimal] = None
     marketing_override_reason: Optional[str] = None
+    choices: Optional[dict[str, str]] = None
+
+
+class PriceTagRequestTagSplit(BaseModel):
+    role: str
+
+
+class PriceTagRequestTagResponse(BaseModel):
+    """One tag, as every surface reads it.
+
+    `choices_display` is the stored `{role: product_id}` map resolved to codes,
+    which is what the rail and the Lines tab show; the raw map is never
+    rendered. `list_price` / `sell_price` ride along because price is a TAG fact
+    since D4.
+    """
+
+    id: str
+    line_id: str
+    sort_order: int
+    #: "1a", "1b" - the line's position plus a letter. Never an id.
+    label: str = ""
+    quantity: int
+    choices: dict[str, str] = {}
+    choices_display: list[dict] = []
+    open_groups: list[TagOpenGroup] = []
+    marketing_price_override: Optional[float] = None
+    marketing_override_reason: Optional[str] = None
+    list_price: Optional[float] = None
+    sell_price: Optional[float] = None
 
 
 class LinePartCandidateResponse(BaseModel):
@@ -101,6 +136,10 @@ class PriceTagRequestLineResponse(BaseModel):
     # ``ResolvedLineData`` already answers in float; these now agree with it.
     marketing_price_override: Optional[float] = None
     marketing_override_reason: Optional[str] = None
+    # What gets printed for this line: one tag by default, N after a split (D3).
+    tags: list[PriceTagRequestTagResponse] = Field(
+        default_factory=list, validation_alias="__resolved_tags__"
+    )
     # The package under this line, in display order. Default empty rather than
     # omitted: the portal form and the CRM tab both read the key unconditionally.
     #
@@ -893,9 +932,41 @@ class ResolvePreviewOut(BaseModel):
     product_set: Optional[ProductSetTagData] = None
 
 
-class ResolvedLineData(BaseModel):
-    """Display data for one request line, for the designer and the print page."""
+class TagOpenGroupCandidate(BaseModel):
+    product_id: str
+    code: str
 
+
+class TagOpenGroup(BaseModel):
+    """A choice group this tag has not resolved (D3).
+
+    The candidate carries its id beside its code because "Pick one" has to name
+    it back to `PATCH .../tags/{tag_id}`, whose `choices` is `{role: product_id}`.
+    Only the code is ever rendered (AC-X-2).
+    """
+
+    role: str
+    candidates: list[TagOpenGroupCandidate] = []
+
+
+class TagPartData(BaseModel):
+    code: str
+    name: str
+    dimensions: str = ""
+
+
+class ResolvedLineData(BaseModel):
+    """Display data for one TAG, for the designer and the print page (D3).
+
+    One row per tag since S3, not per line: `line_id` says which line asked for
+    it and `tag_id` is what the document, the rail and the resolved-data map key
+    on.
+    """
+
+    tag_id: str
+    tag_label: str = ""
+    open_groups: list[TagOpenGroup] = []
+    parts: list[TagPartData] = []
     line_id: str
     code: str
     name: str

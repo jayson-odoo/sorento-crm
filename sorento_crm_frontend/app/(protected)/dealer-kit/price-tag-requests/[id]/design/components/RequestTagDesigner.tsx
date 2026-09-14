@@ -273,13 +273,13 @@ export function RequestTagDesigner({
   // leaves the canvas open on blank data with no visible cause.
   const loadPrices = useCallback(() => {
     setPricesStatus('loading');
-    resolveRequestTags(request.id, request)
+    resolveRequestTags(request.id)
       .then((rows) => {
         setResolvedRows(rows);
         setPricesStatus('loaded');
       })
       .catch(() => setPricesStatus('error'));
-  }, [request]);
+  }, [request.id]);
 
   useEffect(() => {
     loadPrices();
@@ -301,13 +301,13 @@ export function RequestTagDesigner({
     const now = Date.now();
     if (now - lastRefreshRef.current < 1000) return;
     lastRefreshRef.current = now;
-    resolveRequestTags(request.id, request)
+    resolveRequestTags(request.id)
       .then((rows) => setResolvedRows(rows))
       .catch(() => {
         // A background refresh that fails leaves the canvas showing whatever
         // it already had - the next focus/visibility change tries again.
       });
-  }, [request]);
+  }, [request.id]);
 
   useEffect(() => {
     const onFocus = () => refreshPricesSilently();

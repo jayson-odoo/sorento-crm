@@ -203,8 +203,6 @@ class PriceTagRequestLine(Base):
     # Free-text note on the line (D6, r7).
     remarks = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, server_default="0")
-    marketing_price_override = Column(Numeric(15, 2), nullable=True)
-    marketing_override_reason = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )
@@ -233,6 +231,12 @@ class PriceTagRequestLine(Base):
         back_populates="line",
         cascade="all, delete-orphan",
         order_by="PriceTagRequestLinePart.sort_order",
+    )
+    tags = relationship(
+        "PriceTagRequestTag",
+        back_populates="line",
+        cascade="all, delete-orphan",
+        order_by="PriceTagRequestTag.sort_order",
     )
 
 
@@ -287,4 +291,56 @@ class PriceTagRequestLinePart(Base):
             name="ck_ptag_line_parts_resolved_or_open",
         ),
         Index("ix_price_tag_request_line_parts_line_id", "line_id"),
+    )
+
+
+class PriceTagRequestTag(Base):
+    """One printed tag under a request line (D3, S3).
+
+    A LINE is what the salesperson asked for; a TAG is what gets printed. They
+    were the same object until S3. A line whose package leaves a choice group
+    open is split by marketing into one tag per candidate, each with its own
+    quantity, `choices`, geometry (in the tag sheet document, keyed on this id)
+    and marketing override.
+
+    `quantity` is seeded from the line's at submit and is marketing's to change
+    afterwards - the line keeps the salesperson's own number, so the request
+    still shows what was asked for.
+
+    `choices` is `{role: product_id}`: which candidate this tag resolved for
+    each choice group. `{}` means nothing has been decided yet, which is what a
+    tag looks like the moment it is created.
+
+    The override moved here from the line (migration step 2): two tags split off
+    one line print two different basins at two different prices, and a
+    line-level figure would put the same hand-set number on both.
+    """
+
+    __tablename__ = "price_tag_request_tags"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("price_tag_request_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    quantity = Column(Integer, nullable=False, server_default="1")
+    choices = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    marketing_price_override = Column(Numeric(15, 2), nullable=True)
+    marketing_override_reason = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=False), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=False),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    line = relationship("PriceTagRequestLine", back_populates="tags")
+
+    __table_args__ = (
+        Index("ix_price_tag_request_tags_line_id", "line_id"),
     )
