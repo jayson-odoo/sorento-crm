@@ -1227,8 +1227,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             : `${payload.comments.length} change requests sent`,
         );
         router.push(`${portalBase(slug)}?type=price_tag_request`);
-      } catch {
-        toast.error('Failed to send the change requests');
+      } catch (error) {
+        // Re-thrown, not swallowed: the Design section clears its pins on a
+        // resolved promise, so a refused Send used to take the whole round
+        // with it and leave the salesperson to place five pins again.
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Failed to send the change requests',
+        );
+        throw error;
       }
     },
     [requestId, router, slug],
@@ -2292,8 +2300,11 @@ function DesignSection({
         })),
         note: generalNote.trim() || undefined,
       });
+      // Only a round the server took is a round to forget.
       setDrafts([]);
       setGeneralNote('');
+    } catch {
+      // The caller has already said so; the pins stay exactly where they were.
     } finally {
       setSending(false);
     }

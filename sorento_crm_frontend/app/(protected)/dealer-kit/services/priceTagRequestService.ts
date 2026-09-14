@@ -423,11 +423,9 @@ export async function resolveRequestLines(
  * drawn rather than the last deliberate save - the office reads its own
  * work-in-progress, the salesperson reads the version that was sent to them.
  *
- * Phase 1 mock boundary: the route answers doc-only today, so the lines come
- * from `resolve-prices` (what the designer itself calls) and the media maps are
- * normalised by `designPayloadFromResponse` - `images` rebuilt off the lines,
- * `assets` and `fonts` empty until Phase 2 folds the print payload into this
- * one body. Nothing above this function changes when it does.
+ * ONE call: the route resolves the lines and the three media maps itself, from
+ * the same resolver the PDF reads, so the section never reaches for the asset
+ * library route marketing has no permission for.
  */
 export async function getRequestDesignPayload(
   requestId: string,
@@ -439,10 +437,7 @@ export async function getRequestDesignPayload(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load the design'));
   }
-  const body: TagSheetDesignResponse = await response.json();
-  const lines =
-    body.lines ?? (body.doc ? await resolveRequestLines(requestId) : []);
-  return designPayloadFromResponse({ ...body, lines });
+  return designPayloadFromResponse(await response.json());
 }
 
 // ---------------------------------------------------------------------------

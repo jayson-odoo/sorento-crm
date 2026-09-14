@@ -31,7 +31,12 @@ STATUS_DESIGNING = "designing"
 STATUS_PROOF_READY = "proof_ready"
 STATUS_CHANGES_REQUESTED = "changes_requested"
 STATUS_APPROVED = "approved"
+# r9 D8: `ready` is retired. It said a PDF existed and nothing about whether
+# anybody had the tags; the office print now records the hand-over instead.
+# The constant stays for the migration that maps the old rows over.
 STATUS_READY = "ready"
+STATUS_READY_FOR_COLLECTION = "ready_for_collection"
+STATUS_COLLECTED = "collected"
 STATUS_REJECTED = "rejected"
 STATUS_VOID = "void"
 

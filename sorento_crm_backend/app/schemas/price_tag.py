@@ -637,6 +637,31 @@ class TagSheetDocPayload(BaseModel):
     commit_message: Optional[str] = None
 
 
+class TagFont(BaseModel):
+    """A brand font the editor and the print page load through ``@font-face``."""
+
+    name: str
+    family: str
+    url: str
+
+
+class DesignMediaMixin(BaseModel):
+    """The three maps a tag sheet needs to DRAW itself (r9 S1/D1).
+
+    Declared once and inherited by both design responses, because
+    ``response_model`` drops an undeclared field without a word (LESSONS) and
+    the whole point of r9 S1 is that the two previews and the PDF read the same
+    three values.
+    """
+
+    #: assetId -> signed URL, for every library asset the document names.
+    assets: dict[str, str] = {}
+    #: attachmentId -> signed URL, for the bound products' own photos.
+    images: dict[str, str] = {}
+    #: Brand fonts, as same-origin paths (a signed CDN URL has no CORS header).
+    fonts: list[TagFont] = []
+
+
 class TagSheetDocResponse(BaseModel):
     """Response for getting/saving a tag sheet design."""
     page_id: str
@@ -650,6 +675,21 @@ class TagSheetDocResponse(BaseModel):
     # ``version`` above stays the number of the latest immutable version either
     # way, so a draft still reports the version it is sitting on top of.
     source: Literal["draft", "version"] = "version"
+
+
+class TagSheetDesignResponse(TagSheetDocResponse, DesignMediaMixin):
+    """What the CRM Design section reads (r9 S1/D1): the document, its resolved
+    lines and the three media maps, in ONE call.
+
+    Separate from ``TagSheetDocResponse`` because the two SAVE routes answer
+    that one and have no business resolving artwork; the read route answers
+    this. Before r9 the CRM section fetched the doc here and the artwork from
+    the asset library route, which is gated on ``dealer_kit.library.manage`` -
+    a permission marketing does not hold, so the section drew grey boxes for
+    the one role that needs it most.
+    """
+
+    lines: list[ResolvedLineData] = []
 
 
 # ---------------------------------------------------------------------------
@@ -853,25 +893,17 @@ class ResolvedLineData(BaseModel):
     barcode: Optional[str] = None
 
 
-class PortalTagSheetDesignResponse(BaseModel):
+class PortalTagSheetDesignResponse(DesignMediaMixin):
     """The portal's design preview (D11): the same doc `TagSheetDocResponse`
     carries, PLUS the resolved line data the CRM designer reads through a
     SEPARATE `/resolve-prices` call - the portal has no such second call, so
-    this route answers both in one response."""
+    this route answers both in one response, media included (r9 S1/D1)."""
 
     page_id: str
     version: int
     doc: Optional[dict] = None
     source: Literal["draft", "version"] = "version"
     lines: list[ResolvedLineData] = []
-
-
-class TagFont(BaseModel):
-    """A brand font the editor and the print page load through ``@font-face``."""
-
-    name: str
-    family: str
-    url: str
 
 
 class AssetResponse(BaseModel):

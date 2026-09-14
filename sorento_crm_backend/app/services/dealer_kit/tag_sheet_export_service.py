@@ -328,21 +328,54 @@ def resolve_tag_sheet_print_payload(db: Session, download_id: str) -> dict:
         return _resolved_payload(db, inputs)
 
 
-def _resolved_payload(db: Session, inputs: dict) -> dict:
-    """The payload itself, resolved under whatever scope the caller pinned."""
+def design_media(db: Session, request, doc: Optional[dict]) -> tuple[list[dict], dict]:
+    """Everything a tag sheet needs to DRAW itself, resolved once (r9 S1/D1).
+
+    Returns ``(rows, media)``: the resolver's own line rows, and the three maps
+    every surface that draws a sheet needs - ``assets`` (library artwork by
+    asset id), ``images`` (product photos by attachment id) and ``fonts``.
+
+    One function, three readers: the PDF payload below, the portal design
+    preview and the CRM design preview. Before r9 only the PDF had the maps, so
+    the two previews painted a grey box for every image layer and fell back to
+    a system sans for every brand face - the same document, drawn three
+    different ways. A second resolver anywhere here is how that comes back.
+    """
     from app.services.dealer_kit import asset_service, tag_data_service
 
+    rows = (
+        list(tag_data_service.resolve_request_line_data(db, request))
+        if request is not None
+        else []
+    )
+    images: dict[str, str] = {}
+    for row in rows:
+        for image in row["images"]:
+            images[image["attachment_id"]] = image["url"]
+
+    return rows, {
+        # assetId -> signed URL, for every library asset the document names.
+        "assets": asset_service.urls_for(
+            db, asset_service.tag_sheet_asset_ids(doc or {})
+        ),
+        # attachmentId -> signed URL, for every product photo a bound layer may
+        # be showing. Gated by `product_images` before it ever gets here.
+        "images": images,
+        # Brand fonts, loaded through @font-face before anything draws with them.
+        "fonts": asset_service.font_assets(db),
+    }
+
+
+def _resolved_payload(db: Session, inputs: dict) -> dict:
+    """The payload itself, resolved under whatever scope the caller pinned."""
     request = inputs["request"]
     doc = inputs["doc"] or {}
 
+    rows, media = design_media(db, request, doc)
     resolved_data: dict[str, dict] = {}
-    images: dict[str, str] = {}
 
-    if request is not None:
-        for row in tag_data_service.resolve_request_line_data(db, request):
-            for image in row["images"]:
-                images[image["attachment_id"]] = image["url"]
-            resolved_data[row["line_id"]] = {
+    for row in rows:
+        resolved_data[row["line_id"]] = {
                 "line_id": row["line_id"],
                 "code": row["code"],
                 "name": row["name"],
@@ -370,15 +403,7 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
     return {
         "doc": doc,
         "resolvedData": resolved_data,
-        # assetId -> signed URL, for every library asset the document names.
-        "assets": asset_service.urls_for(
-            db, asset_service.tag_sheet_asset_ids(doc)
-        ),
-        # attachmentId -> signed URL, for every product photo a bound layer may
-        # be showing. Gated by `product_images` before it ever gets here.
-        "images": images,
-        # Brand fonts, loaded through @font-face before the page reports ready.
-        "fonts": asset_service.font_assets(db),
+        **media,
         "requestDocNumber": request.doc_number if request is not None else "",
         "version": inputs["version"],
     }

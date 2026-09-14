@@ -42,7 +42,8 @@ from app.services.price_tag_request_service import (
     STATUS_CHANGES_REQUESTED,
     STATUS_NEW,
     STATUS_PROOF_READY,
-    STATUS_READY,
+    STATUS_READY_FOR_COLLECTION,
+    STATUS_COLLECTED,
 )
 from app.services.storage_router import get_backend
 from app.services.uuid_path_param import validate_uuid_path
@@ -149,7 +150,16 @@ def portal_get_price_tag_request(
 # designed, and still visible after approval so they can look at what they
 # approved (AC-S4-4).
 _DESIGN_VISIBLE_STATUSES = frozenset(
-    {STATUS_PROOF_READY, STATUS_CHANGES_REQUESTED, STATUS_APPROVED, STATUS_READY}
+    {
+        STATUS_PROOF_READY,
+        STATUS_CHANGES_REQUESTED,
+        STATUS_APPROVED,
+        # r9 D8: `ready` is retired and the office print's two closing steps
+        # take its place. The salesperson can still look at what they approved
+        # right up to the moment they collect it.
+        STATUS_READY_FOR_COLLECTION,
+        STATUS_COLLECTED,
+    }
 )
 
 
@@ -201,23 +211,34 @@ def portal_get_price_tag_design(
     # different document for the same page (module-cycle-free the same way
     # the export import below is).
     from app.api.v1.dealer_kit.price_tag_requests import resolve_tag_sheet_design
-    from app.services.dealer_kit import tag_data_service
+    from app.services.dealer_kit import tag_sheet_export_service
 
     # prefer="version": the salesperson must see what was deliberately
     # SAVED (and sent to them for review), never marketing's live
     # in-progress autosave - the CRM designer stays draft-first (B1's own
     # reasoning), this screen does not (review D11 follow-up).
     doc_fields = resolve_tag_sheet_design(db, page, prefer="version")
+    if doc_fields["doc"] is None:
+        # A page whose only document is an autosaved draft has nothing this
+        # reader was ever meant to see (r9 S1).
+        raise AppException(
+            status_code=404,
+            message="No design exists for this request yet.",
+            code="NOT_FOUND",
+        )
     # L3: same company scope as the sibling lookups (portal_lookup_tag_items,
     # portal_lookup_promotions) - unscoped, a two-company contact's line
     # resolution could read the OTHER company's product row for a duplicated
     # code instead of the one this request actually points at.
     with company_scope(db, frozenset({_resolve_company(db, token)})):
-        lines = [
-            ResolvedLineData.model_validate(row)
-            for row in tag_data_service.resolve_request_line_data(db, req)
-        ]
-    return PortalTagSheetDesignResponse(**doc_fields, lines=lines)
+        # The SAME resolver the PDF reads, media included (r9 S1/D1): without
+        # `assets`/`images`/`fonts` every image layer here painted a grey box
+        # and every brand face fell back to a system sans.
+        rows, media = tag_sheet_export_service.design_media(
+            db, req, doc_fields["doc"]
+        )
+    lines = [ResolvedLineData.model_validate(row) for row in rows]
+    return PortalTagSheetDesignResponse(**doc_fields, lines=lines, **media)
 
 
 # ---------------------------------------------------------------------------

@@ -47,6 +47,10 @@ export default function ProductDataReviewDialog({
     try {
       await onDecide(action);
       onOpenChange(false);
+    } catch {
+      // The decision did not happen, so the question has not been answered:
+      // the dialog stays open with both buttons live. The caller owns the
+      // message - closing here would report a change that was refused.
     } finally {
       setBusy(null);
     }

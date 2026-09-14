@@ -28,12 +28,13 @@ from app.schemas.price_tag import (
     PriceTagRequestListItem,
     PriceTagRequestResponse,
     TagSheetDocPayload,
+    TagSheetDesignResponse,
     TagSheetDocResponse,
     TagSheetExportIn,
     TagSheetExportOut,
     TransitionPayload,
 )
-from app.services.dealer_kit import tag_data_service
+from app.services.dealer_kit import tag_data_service, tag_sheet_export_service
 from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
@@ -357,7 +358,7 @@ def _snapshot_draft(
     return version
 
 
-@router.get("/{request_id}/design", response_model=TagSheetDocResponse)
+@router.get("/{request_id}/design", response_model=TagSheetDesignResponse)
 def get_tag_sheet_design(
     request_id: str,
     db: Session = Depends(get_db),
@@ -373,9 +374,20 @@ def get_tag_sheet_design(
     ``version`` reports the latest immutable version either way, so a draft says
     which version it is sitting on top of; ``source`` says which of the two the
     ``doc`` actually is.
+
+    It answers the LINES and the three media maps too (r9 S1/D1), from the same
+    resolver the PDF reads, so the Design section draws real artwork in one
+    call instead of reaching for the library route marketing has no permission
+    for.
     """
-    _req, page = _require_request_page(db, request_id)
-    return TagSheetDocResponse(**resolve_tag_sheet_design(db, page))
+    req, page = _require_request_page(db, request_id)
+    doc_fields = resolve_tag_sheet_design(db, page)
+    rows, media = tag_sheet_export_service.design_media(db, req, doc_fields["doc"])
+    return TagSheetDesignResponse(
+        **doc_fields,
+        lines=[ResolvedLineData.model_validate(row) for row in rows],
+        **media,
+    )
 
 
 @router.put("/{request_id}/design/draft", response_model=TagSheetDocResponse)
