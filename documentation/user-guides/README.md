@@ -7,7 +7,7 @@ End-user documentation organised by department. The AI assistant is intended to 
 * `**[_shared/](./_shared/)**` - flows reused by multiple departments (e.g. the generic Resource Management → Files upload flow). Department guides link here instead of repeating the same steps.
 * `**[purchasing/](./purchasing/)**` - packing list upload, proforma invoice upload (a supplier's own workbook, read line by line), translating a supplier's own wording into English on that invoice, product attachments, folder management, stock-inquiry review, product-master upload, SPO upload.
 * `**[warehouse/](./warehouse/)**` - GRN upload (header + lines), Delivery Order upload (tracking + lines).
-* `**[marketing/](./marketing/)**` - promotion upload, marketing-form upload.
+* `**[marketing/](./marketing/)**` - promotion upload, marketing-form upload, catalogue packages (Combos) on a product and the price tags they print.
 * `**[project-sales-admin/](./project-sales-admin/)**` - review submitted purchase requests / sponsorship forms and send them for approval.
 * `**[project-sales-manager/](./project-sales-manager/)**` - approve purchase requests / sponsorship forms via emailed token link, flow stock inquiries to purchasing.
 * `**[project-sales-rep/](./project-sales-rep/)**` - portal access (WhatsApp link + OTP) and how to file complaints / stock inquiries / purchase requests / sponsorship forms / price tag requests.
@@ -34,10 +34,10 @@ UI labels (menu items, page titles, button text, dialog titles) are quoted **ver
 
 * ✅ Purchasing - drafted, fact-checked against the codebase + verified live with Playwright.
 * ✅ Warehouse - drafted (GRN, Delivery Orders).
-* ✅ Marketing - drafted (Promotion, Marketing Form).
+* ✅ Marketing - drafted (Promotion, Marketing Form, catalogue packages on price tags: Combos and Sold with on the product, parts and the package warning on a request, one line many tags in the designer).
 * ✅ Project Sales Admin - drafted (review PR, review Sponsorship Form).
 * ✅ Project Sales Manager - drafted (approve via email, flow stock inquiry).
-* ✅ Project Sales Rep - drafted (portal overview: verify card, centred dashboard with Filter / Sort / view toggle including the List DataGrid, duplicate; submit via portal, including the sectioned Price Tag Request form, per-file AI extract, no line reorder, and Revise on a submitted request instead of post-submit edit).
+* ✅ Project Sales Rep - drafted (portal overview: verify card, centred dashboard with Filter / Sort / view toggle including the List DataGrid, duplicate; submit via portal, including the sectioned Price Tag Request form, per-file AI extract, no line reorder, packages and parts on a price tag line, and Revise on a submitted request instead of post-submit edit).
 * ✅ System Management - drafted (operational data reference, troubleshoot failed notifications, chatbot turn trace + retry, chatbot "last purchase cost" answer + Field reveal gate, chatbot outstanding report (sales order backlog / delivery order pending) + its Field reveal gate, chatbot spec visibility policy (Show only / Hide these, contact override / market segment / default), AutoCount integration contract, import column mappings).
 * ✅ Supply Chain - drafted (upload sales orders / purchase orders / order inquiry sheet / reorder levels; sales & purchase history uploads retired in favour of the AutoCount integration; run a reorder plan; print the order summary; Buy/borrow decisions on Fulfilment Planning, including the Local pill and the borrow-source Location table; sales order changes after planning, the board's composed suggestion and Confirm/Amend).
 * ✅ User Management - drafted (Configure Portal Revisions, naming the Price Tag Request row).
