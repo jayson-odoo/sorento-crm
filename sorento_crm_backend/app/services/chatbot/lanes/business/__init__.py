@@ -890,13 +890,26 @@ def run_fetch(
         # session carried in. Pruning the list (rather than publishing a second one) keeps
         # the transformer's own contract - it still reads product codes off the entities it
         # is handed - so every other tool's arg building is untouched.
+        #
+        # The match is SUBSTRING, not equality (reviewer round 3, item 2). The resolver
+        # answers a typed prefix with the full variant code, so "low stock for the CB100
+        # sink" arrives as raw "CB100" against a resolved "CB100-BL-DIY": equality pruned
+        # the very product the customer named and widened the run to the whole book - the
+        # opposite of what defect B's prune is for. Any token the CURRENT message carried
+        # is still the test, so a carried entity nothing was typed about still drops.
+        def _named_this_turn(entity: dict) -> bool:
+            codes = [
+                jsc.js_string(entity.get(field) or "").strip().casefold()
+                for field in ("code", "canonical_code")
+            ]
+            return any(
+                tok in code for code in codes if code for tok in current_tokens
+            )
+
         entities = [
             e
             for e in jsc.array(entities)
-            if isinstance(e, dict)
-            and jsc.js_string(
-                e.get("code") or e.get("canonical_code") or ""
-            ).strip().casefold() in current_tokens
+            if isinstance(e, dict) and _named_this_turn(e)
         ]
 
     order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()

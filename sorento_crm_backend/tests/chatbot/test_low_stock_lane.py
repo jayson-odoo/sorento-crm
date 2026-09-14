@@ -22,6 +22,12 @@ Two ways a test here is red, both legitimate:
 lines the presenter already renders (AC-61, pinned in the MCP suite), so a turn-level test
 would re-pin the same string through five more seams. The lane's own job - pick the tool,
 gate it, shape the args, pass the attachments through - is what this file asserts.
+
+**Run this file with `PYTHONPATH=<this worktree>/sorento_crm_mcp`.** The catalog assertion
+below falls back to `sys.path.append`, which puts the worktree's copy LAST - and the venv
+already has `sorento_crm_mcp` installed from the PRIMARY checkout, whose catalog predates
+this lane's tool. Without the env var the test reads that older catalog and fails on a
+tool it cannot see.
 """
 from __future__ import annotations
 
@@ -589,4 +595,37 @@ class TestCarriedEntitiesAreDropped:
         _name, args = captured[0]
         assert args.get("product_codes") == [PRODUCT_CODE], (
             f"the product named THIS turn must scope the run: {args}"
+        )
+
+    def test_a_product_named_by_prefix_this_turn_still_scopes_the_run(
+        self, session_factory
+    ) -> None:
+        """Reviewer round 3, item 2: the customer types a PREFIX and the resolver answers
+        with the full variant code. "low stock for the CB100 sink" carries raw "CB100"
+        against a resolved "CB100-BL-DIY", so an equality prune dropped the very product
+        that was named and widened the run to the whole book."""
+        from app.services.chatbot.lanes.business import run_fetch
+
+        resolved = [{
+            "uuid": PRODUCT_UUID,
+            "entity_type": "product",
+            "canonical_code": "CB100-BL-DIY",
+            "code": "CB100-BL-DIY",
+        }]
+        payload = _payload(attributes=[GRANT_KEY], entities=resolved)
+        payload["ctx"]["parse"]["output"] = _qf(entities=[{
+            "raw": "CB100",
+            "hint": "product",
+            "canonical_code": None,
+            "current_message": True,
+            "confident": True,
+        }])
+
+        call, captured = _capturing_mcp(READY_ENVELOPE)
+        run_fetch(payload, services=FetchServices(mcp_call=call))
+
+        assert captured, "the tool was never called"
+        _name, args = captured[0]
+        assert args.get("product_codes") == ["CB100-BL-DIY"], (
+            f"a product named by its prefix must still scope the run: {args}"
         )
