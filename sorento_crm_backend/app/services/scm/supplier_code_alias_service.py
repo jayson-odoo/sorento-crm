@@ -29,6 +29,7 @@ from app.models.scm import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import plan_statement
+from app.services.scm.actor_labels import actor_label, actor_labels
 from app.services.scm.supplier_code_matcher import resolve
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
@@ -495,6 +496,11 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
         )
         .all()
     )
+    # `created_by` is free text: refresh matching and the PI upload path write a name, and
+    # a stock-list upload used to write the caller's id (S4 fixed the route, but the rows it
+    # already wrote stay on file). One query for the whole page, none at all for a page that
+    # holds no ids.
+    labels = actor_labels(db, (alias.created_by for alias, _product, _set in rows))
     return [
         {
             "id": str(alias.id),
@@ -505,7 +511,7 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
             "set_name": product_set.name if product_set else None,
             "source": alias.source,
             "matched_by": alias.matched_by,
-            "created_by": alias.created_by,
+            "created_by": actor_label(alias.created_by, labels),
             "created_at": alias.created_at.isoformat() if alias.created_at else None,
         }
         for alias, product, product_set in rows
