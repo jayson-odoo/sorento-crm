@@ -249,14 +249,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   // `mutateAsync` off the hook, not the hook's result object: the object is a new one on
   // every render, and `columns` below depends on the writer.
   const writeMatch = matchCode.mutateAsync;
-  /** The supplier code a match is being written for, so only ITS select goes quiet. */
-  const [matchingCode, setMatchingCode] = useState<string | null>(null);
+  /** A ruling is being written, so the pickers go quiet until the server has answered
+   *  (AC-7.3) - one ruling at a time, and the answer re-points rows on other lines too. */
+  const matchPending = matchCode.isPending;
   const supplierId = data?.supplier_id ?? '';
   /** Record what the picked option means for this supplier's code (AC-7.3, AC-7.4). */
   const writeCodeMatch = useCallback(
     async (supplierCode: string, value: string) => {
       if (!supplierId || !value) return;
-      setMatchingCode(supplierCode);
       try {
         await writeMatch({
           supplier_id: supplierId,
@@ -265,8 +265,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         });
       } catch {
         // The hook toasts the refusal; the cell keeps whatever it already held.
-      } finally {
-        setMatchingCode(null);
       }
     },
     [supplierId, writeMatch],
@@ -647,7 +645,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 // Only a ruling can be withdrawn: a line the ladder has not answered has
                 // nothing to clear.
                 clearable={!!matchId}
-                disabled={matchingCode === supplierCode || line.removed}
+                disabled={matchPending || line.removed}
               />
             );
           }
@@ -1093,7 +1091,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       fetchProductOrSet,
       forgetMatch,
       forgetTargetId,
-      matchingCode,
+      matchPending,
       writeCodeMatch,
       uomSelectOptions,
     ],

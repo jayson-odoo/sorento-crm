@@ -66,10 +66,14 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+// `scm.proforma_invoice.upload` is the slug the permission registry actually holds
+// (`permission_registry.py:704`, seeded by migration 375) and the one this page has always
+// gated adjusting on. The UAC names it "adjust" in prose; there is no such permission, and
+// gating on it would take the picker away from everybody.
 const { perms } = vi.hoisted(() => ({ perms: { canAdjust: true } }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) =>
-    slug === 'scm.proforma_invoice.adjust' ? perms.canAdjust : true,
+    slug === 'scm.proforma_invoice.upload' ? perms.canAdjust : true,
 }));
 
 const push = vi.fn();
@@ -523,7 +527,7 @@ describe('ProformaInvoiceDetail - a pick writes the alias at once (AC-7.3)', () 
     await waitFor(() => expect(writes.matchCode).toHaveBeenCalledTimes(1));
     expect(writes.matchCode).toHaveBeenCalledWith({
       supplier_id: 'sup-1',
-      supplier_code: 'ITEM-1',
+      supplier_code: SUPPLIER_CODE,
       product_id: 'prod-99',
     });
     // The draft save path is not involved at all.
@@ -556,7 +560,7 @@ describe('ProformaInvoiceDetail - picking a set (AC-7.4)', () => {
     await waitFor(() => expect(writes.matchCode).toHaveBeenCalledTimes(1));
     expect(writes.matchCode).toHaveBeenCalledWith({
       supplier_id: 'sup-1',
-      supplier_code: 'ITEM-1',
+      supplier_code: SUPPLIER_CODE,
       product_set_id: 'set-7',
     });
   });
@@ -571,7 +575,9 @@ describe('ProformaInvoiceDetail - clearing the pick forgets the ruling (AC-7.5)'
     renderDetail();
     openTab('Lines');
 
-    fireEvent.click(within(readRow(SUPPLIER_CODE)).getByRole('button', { name: 'Clear selection' }));
+    fireEvent.pointerDown(
+      within(readRow(SUPPLIER_CODE)).getByRole('button', { name: 'Clear selection' }),
+    );
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     expect(createPendingAction).toHaveBeenCalledWith(
