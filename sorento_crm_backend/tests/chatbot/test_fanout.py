@@ -44,6 +44,22 @@ from app.services.chatbot.dialogue import open_question as oq
 from app.services.chatbot.lanes import business
 from app.services.chatbot.lanes.business.services import FetchServices
 from app.services.chatbot.trace import TurnTrace
+from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
+    seeded,
+    stub_access,
+    stub_parser,
+)
+from tests.chatbot.test_fanout_worlds import (  # noqa: F401 - engine harness reused
+    _INCOMING_TOOL as _WORLD_INCOMING_TOOL,
+    _INVENTORY_TOOL as _WORLD_INVENTORY_TOOL,
+    _PO_TOOL as _WORLD_PO_TOOL,
+    _ask,
+    _drive,
+    _MISS,
+    _found,
+    _one_match,
+    _v3_business,
+)
 
 # The two tools the stock/incoming pair answers from, off `DOMAIN_SPEC` (D9). Named here
 # so a test asserts the ORDER of the tool events by the tool the domain owns, never by a
@@ -393,3 +409,55 @@ class TestLadderOutsideTheAskedSet:
             )
             == []
         )
+
+
+# --------------------------------------------------------------------------- #
+# AC-1051 (finding 7) - the two-team offer's quick replies must reach the SEND
+# action, the channel the customer actually receives, not only the armed
+# open_question.options.
+# --------------------------------------------------------------------------- #
+
+
+def test_two_team_offer_quick_replies_reach_the_send_action(
+    session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+) -> None:
+    """A 2+ team escalate offer (both `inventory` and `incoming` missed -> Warehouse and
+    Purchasing) must put its numbered quick replies on the `send_message` action, not only
+    on the armed `open_question.options`.
+
+    RED: `_render_fan_sections` patches `quick_replies` onto a COPY of `completed.reply`
+    AFTER `complete_turn` has already composed the `send_message` action (with
+    `compose_send_action=True`), so the action the customer's channel receives carries
+    `quick_replies = None` - the buttons never reach WhatsApp.
+    """
+    code = "SRTWT2634"
+    turn = _drive(
+        session_factory,
+        monkeypatch,
+        stub_parser,
+        stub_access,
+        emission=_v3_business([_ask("inventory", code), _ask("incoming", code)]),
+        matches_by_code={code: _one_match(code)},
+        tool_responses={
+            _WORLD_INVENTORY_TOOL: _MISS,
+            _WORLD_INCOMING_TOOL: _MISS,
+            _WORLD_PO_TOOL: _MISS,
+        },
+        grants=["purchase_orders.placed"],
+    )
+    assert turn.result.status == "done", turn.result.error
+    send = next(
+        (
+            a
+            for a in (turn.result.actions or [])
+            if isinstance(a, dict) and a.get("kind") == "send_message"
+        ),
+        None,
+    )
+    assert send is not None, "the fan turn must emit a send_message action"
+    qr = send.get("quick_replies")
+    qr_text = qr if isinstance(qr, str) else ",".join(qr or [])
+    assert "Warehouse" in qr_text and "Purchasing" in qr_text, (
+        "the numbered team quick replies must ride the send_message action the customer "
+        f"actually receives, not only the armed open_question: {send!r}"
+    )
