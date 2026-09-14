@@ -312,8 +312,23 @@ the lane's dev server via the sidebar (Procurement > Supply Chain > Order Inquir
 
 ## 7. Follow-up, 14 Sep evening: a line the book bought for outranks one it did not (R2 finished)
 
-Status of this section: PLANNED 14 Sep 2026, owner go ("okay you fix this"). Branch
-`fix/oi-sheet-line-pick-bought-lines`, on top of #886.
+Status of this section: IMPLEMENTED 14 Sep 2026 (7.1 to 7.4), review pending. Owner go
+("okay you fix this"). Branch `fix/oi-sheet-line-pick-bought-lines`, on top of #886, issue
+#895.
+
+Replayed on the 3am prod copy with all four rulings in, the upload rolled back inside the
+same transaction: 15,797 rows, 8,256 raised, 5,639 linked (5,610 from the book), 554
+partial, 868 no line. Rows taking a purchase order line AND its own shipment 555 -> 0; rows
+raised unlinked beside a free bought sibling line 203 -> 16. SO395635 / SRTWC8317-RL's
+undated row lands on a line the book bought for and links to SPO-2026/08-0045; SO368872 /
+SRTWC286-SH takes one document, SPO-2026/04-0043 for 62.
+
+One deviation from the expectation written below: that row lands on
+`AED_SORENTO:44288418:44289745` (required 15/09/2026), not `...44290050`. Its sheet cell
+reads 16/11/**2025**, which no line's required date matches, so after the new "bought"
+term the existing "earliest required date" term chooses among the four bought lines. It is
+on a bought line and it is linked, which is what this section asked for; landing it on the
+November line would need the date terms revisited, which no ruling asks for.
 
 **Seen on prod after #886 deployed and the file re-uploaded:** SO395635 / SRTWC8317-RL has
 five open lines of the item (four of 32, one of 48); PO 202603-S0123 names four of them.
