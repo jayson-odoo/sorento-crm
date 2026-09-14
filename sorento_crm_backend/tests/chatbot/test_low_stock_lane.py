@@ -302,7 +302,11 @@ class TestTransformer:
         assert out.get("product_codes") == [PRODUCT_CODE], out
         assert out.get("date_from") == "2026-09-01", out
         assert out.get("date_to") == "2026-11-30", out
-        assert out.get("contact_id") == CONTACT_ID, out
+        # `str(...)`: `entity_ids_transformer` stringifies the contact id on the way out
+        # (`fetch.py`, `out["contact_id"] = jsc.nullish_str(raw_contact).strip()`) because
+        # n8n sends it as an int or a padded string. `CONTACT_ID` is the int the envelope
+        # carries; the wire value is always the string.
+        assert out.get("contact_id") == str(CONTACT_ID), out
         assert out.get("space_id") == "ZZTLSL-SPACE", out
         assert out.get("view") == "render", (
             "the lane always asks for the render envelope, or the presenter never runs"
