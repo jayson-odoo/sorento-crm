@@ -226,7 +226,8 @@ All line refs are `origin/main` at ae0831776.
   `_snapshot_draft` call fills it. Request Versions: `GET .../versions`, `GET .../versions/{n}`,
   `POST .../versions/{n}/restore` (writes draft_doc + pins from the version, then snapshots
   "Restored v<n>"). UI = `RequestVersionsSheet` lifted from `TemplateVersionsSheet` (newest
-  first, View via read-only `TagVersionViewer`, Restore), opened from the CRM Design section
+  first, View opens the version's own doc + pins in the shared `DesignLightbox` since a
+  request version is a whole `TagSheetDoc`, Restore adds a version and asks nothing), opened from the CRM Design section
   `History` button and the designer trailing toolbar `History` entry.
 
 ## Slices (one lane, one PR, commit per slice, S1 -> S5)
@@ -267,7 +268,10 @@ approved with Download PDF; product edit -> label -> Update -> version -> Restor
 Contracts: `lib/dealer-kit/design-payload.ts`, `lib/dealer-kit/review-comments.ts`,
 `lib/dealer-kit/print-collection.ts` (+ S5's file), the service files they sit beside, and the
 portal service `app/(auth)/portal/lib/price-tag-request-service.ts`. Backend tests on the
-private DB `sorento_ptag9_ci` (never the shared dev DB), Postgres only.
+private DB `sorento_ptag9_ci` (never the shared dev DB), Postgres only: the lane `.env` reads
+`DATABASE_URL=${PTAG9_DB_URL:-<shared dev url>}`, so run
+`PTAG9_DB_URL=postgresql://sorento_crm:<pw>@localhost:5432/sorento_ptag9_ci venv/bin/pytest ...`
+and the running :8080 stack (no var) stays on the shared DB.
 
 S1
 - AC-S1-1 `pytest test_portal_design_payload_media`: portal GET design for a proof_ready request returns `assets` (every asset id referenced by the doc), `images` (every attachment id on the lines), `fonts`, and they equal the print payload for the same page; draft-only page or `designing` status returns 404.
