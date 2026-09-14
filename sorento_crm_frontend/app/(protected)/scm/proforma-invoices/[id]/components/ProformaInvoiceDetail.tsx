@@ -42,6 +42,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Field } from '@/components/common/Field';
+import AttachmentFileCard from '@/components/common/AttachmentFileCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -1147,6 +1148,21 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     ? `Already converted to ${invoice.converted_shipments.map((s) => s.shipment_number ?? 'a packing list').join(', ')}`
     : undefined;
 
+  // The files the record actually LINKS (S8), and the two it can only name: a workbook
+  // uploaded before the link existed has no attachment to open, so it keeps the plain row
+  // it always had rather than vanishing from the section.
+  const sourceFiles = invoice.source_files ?? [];
+  const linkedNames = new Set(
+    sourceFiles.map((f) => (f.name ?? '').trim()).filter(Boolean),
+  );
+  const unlinkedSourceRef =
+    invoice.source_ref && !linkedNames.has(invoice.source_ref.trim())
+      ? invoice.source_ref
+      : null;
+  const packingFile = packing.data?.file ?? null;
+  const unlinkedPackingFile =
+    packingFile && !linkedNames.has((packingFile.name ?? '').trim()) ? packingFile : null;
+
   /** The placement, as one chip in the header - "Not converted", "Split", or the container. */
   const placementBadge =
     invoice.placement === 'not_converted' ? (
@@ -1403,36 +1419,49 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 <CardTitle>Source files</CardTitle>
               </CardHeading>
             </CardHeader>
-            <section aria-label="Source files" className="p-4">
-              {!invoice.source_ref && !packing.data?.file ? (
+            <section aria-label="Source files" className="space-y-2 p-4">
+              {sourceFiles.length === 0 && !unlinkedSourceRef && !unlinkedPackingFile ? (
                 <p className="text-sm text-muted-foreground">No source file on record.</p>
               ) : (
-                <ul className="divide-y divide-border rounded-lg border text-sm">
-                  {invoice.source_ref ? (
-                    <li className="flex items-center justify-between gap-2 p-2.5">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium" title={invoice.source_ref}>
-                          {invoice.source_ref}
-                        </p>
-                        <p className="text-2xs text-muted-foreground">
-                          Proforma invoice · {fmtDate(invoice.created_at)}
-                        </p>
-                      </div>
-                    </li>
+                <>
+                  {/* A linked file is the same row the packing list's own Documents card
+                      draws (S8): openable and downloadable, never merely named. Nothing is
+                      detached from here - the link IS what the invoice was read from. */}
+                  {sourceFiles.map((file) => (
+                    <AttachmentFileCard
+                      key={file.id}
+                      attachmentId={file.attachment_id}
+                      name={file.name ?? 'Source file'}
+                      typeLabel={file.type}
+                      sizeBytes={file.file_size_bytes ?? null}
+                    />
+                  ))}
+                  {/* A file uploaded before the link existed is still named here, with the
+                      date it arrived - there is no attachment to offer buttons for. */}
+                  {unlinkedSourceRef ? (
+                    <div className="rounded-lg border p-3">
+                      <p className="truncate text-sm font-medium" title={unlinkedSourceRef}>
+                        {unlinkedSourceRef}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Proforma invoice • {fmtDate(invoice.created_at)}
+                      </p>
+                    </div>
                   ) : null}
-                  {packing.data?.file ? (
-                    <li className="flex items-center justify-between gap-2 p-2.5">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium" title={packing.data.file.name}>
-                          {packing.data.file.name}
-                        </p>
-                        <p className="text-2xs text-muted-foreground">
-                          Packing list · {fmtDate(packing.data.file.uploaded_at)}
-                        </p>
-                      </div>
-                    </li>
+                  {unlinkedPackingFile ? (
+                    <div className="rounded-lg border p-3">
+                      <p
+                        className="truncate text-sm font-medium"
+                        title={unlinkedPackingFile.name}
+                      >
+                        {unlinkedPackingFile.name}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Packing list • {fmtDate(unlinkedPackingFile.uploaded_at)}
+                      </p>
+                    </div>
                   ) : null}
-                </ul>
+                </>
               )}
             </section>
           </Card>
