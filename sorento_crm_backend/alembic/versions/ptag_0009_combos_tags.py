@@ -41,7 +41,7 @@ honest:
   resolve nor delete.
 
 Revision ID: ptag_0009_combos_tags
-Revises: 510_spec_visibility_policies
+Revises: 517_chatbot_low_stock_vocab
 Create Date: 2026-09-14
 """
 import json
@@ -55,7 +55,7 @@ logger = logging.getLogger("alembic.runtime.migration")
 
 
 revision = "ptag_0009_combos_tags"
-down_revision = "510_spec_visibility_policies"
+down_revision = "517_chatbot_low_stock_vocab"
 branch_labels = None
 depends_on = None
 
