@@ -277,6 +277,15 @@ describe('PriceTagRequestDetail', () => {
     expect(gear.getByRole('menuitem', { name: /Void/ })).toBeTruthy();
   });
 
+  it('offers "Check product data" from the gear (owner round finding 3)', async () => {
+    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+    renderDetail();
+
+    await screen.findByTestId('gear-menu');
+    const gear = within(screen.getByTestId('gear-menu'));
+    expect(gear.getByRole('menuitem', { name: /Check product data/ })).toBeTruthy();
+  });
+
   it('has no gear at all when nothing is legal', async () => {
     mockGet.mockResolvedValue(requestWith({ status: 'void' }));
     renderDetail();

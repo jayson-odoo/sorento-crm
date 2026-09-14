@@ -314,3 +314,97 @@ describe('reading the pins that exist (AC-S2-2)', () => {
     expect(screen.queryByLabelText(/Change request/)).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Owner test round, finding 1 - a pin anchors to ONE placed copy, not every
+// copy of the line, once a sheet prints that line more than once.
+// ---------------------------------------------------------------------------
+
+/** Two copies of the SAME line on one sheet - what "Apply to all lines" or a
+ * quantity > 1 produces. Different `PlacedTag.id`s, same `request_line_id`. */
+const TWO_COPY_DOC = {
+  kind: 'tag_sheet',
+  imposition: { page_width_mm: 210, page_height_mm: 297 },
+  sheets: [
+    {
+      id: 'sheet-1',
+      tags: [
+        {
+          id: 'tag-a',
+          template_id: 'tmpl-1',
+          request_line_id: LINE,
+          x_mm: 0,
+          y_mm: 0,
+          width_mm: 80,
+          height_mm: 40,
+          layers: [],
+        },
+        {
+          id: 'tag-b',
+          template_id: 'tmpl-1',
+          request_line_id: LINE,
+          x_mm: 100,
+          y_mm: 0,
+          width_mm: 80,
+          height_mm: 40,
+          layers: [],
+        },
+      ],
+    },
+  ],
+} as never;
+
+function twoCopyHitAreas() {
+  const nodes = screen.getAllByTestId(`pin-hit-${LINE}`);
+  nodes[0].getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100 }) as DOMRect;
+  nodes[1].getBoundingClientRect = () =>
+    ({ left: 300, top: 0, width: 200, height: 100, right: 500, bottom: 100 }) as DOMRect;
+  return nodes;
+}
+
+describe('a pin anchors to the placed copy that was clicked (owner round finding 1)', () => {
+  it('placing a pin on the SECOND copy sends that copy id as placed_tag_id', () => {
+    const { onPlace } = renderLayer({ doc: TWO_COPY_DOC });
+    const [, second] = twoCopyHitAreas();
+
+    fireEvent.pointerDown(second, { clientX: 350, clientY: 50 });
+    fireEvent.pointerUp(second, { clientX: 350, clientY: 50 });
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Fix this one' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(onPlace).toHaveBeenCalledWith(
+      expect.objectContaining({ line_id: LINE, placed_tag_id: 'tag-b' }),
+    );
+  });
+
+  it('a sent pin with placed_tag_id draws on that copy only, the sibling stays empty', () => {
+    renderLayer({
+      doc: TWO_COPY_DOC,
+      comments: [comment({ placed_tag_id: 'tag-a' } as never)],
+    });
+
+    // One marker only - not one per copy of the line.
+    expect(screen.getAllByTestId('pin-comment-1')).toHaveLength(1);
+  });
+
+  it('placed_tag_id null falls back to every copy of the line', () => {
+    renderLayer({
+      doc: TWO_COPY_DOC,
+      comments: [comment({ placed_tag_id: null } as never)],
+    });
+
+    expect(screen.getAllByTestId('pin-comment-1')).toHaveLength(2);
+  });
+
+  it('a placed_tag_id no copy carries any more (re-arranged away) falls back to every copy', () => {
+    renderLayer({
+      doc: TWO_COPY_DOC,
+      comments: [comment({ placed_tag_id: 'tag-gone' } as never)],
+    });
+
+    expect(screen.getAllByTestId('pin-comment-1')).toHaveLength(2);
+  });
+});

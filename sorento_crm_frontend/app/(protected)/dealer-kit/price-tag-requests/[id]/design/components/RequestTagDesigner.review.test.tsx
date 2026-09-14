@@ -137,7 +137,25 @@ vi.mock('../../../../services/priceTagDataService', () => ({
   resolveLinePin: vi.fn(),
   updateAllLinePins: vi.fn(),
   listRequestVersions: vi.fn(async () => []),
+  getRequestVersion: vi.fn(),
   restoreRequestVersion: vi.fn(),
+  // Owner round finding 3: "Check product data" re-runs the comparison.
+  recheckLineDataChanges: vi.fn(),
+}));
+
+/** Owner round finding 2: what the lightbox was actually handed, per open. */
+const lightboxPayloads: unknown[] = [];
+
+vi.mock('@/components/dealer-kit/DesignLightbox', () => ({
+  __esModule: true,
+  default: ({ title, payload }: { title: string; payload: { version: number } | null }) => {
+    lightboxPayloads.push(payload);
+    return (
+      <div data-testid="version-lightbox" data-version={payload?.version}>
+        {title}
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
@@ -150,6 +168,9 @@ import { resolveRequestLines } from '../../../../services/priceTagRequestService
 import { listReviewComments } from '../../../../services/priceTagReviewService';
 import {
   listLineDataChanges,
+  listRequestVersions,
+  getRequestVersion,
+  recheckLineDataChanges,
   resolveLinePin,
 } from '../../../../services/priceTagDataService';
 import { RequestTagDesigner } from './RequestTagDesigner';
@@ -162,6 +183,9 @@ const mockResolveLines = vi.mocked(resolveRequestLines);
 const mockComments = vi.mocked(listReviewComments);
 const mockChanges = vi.mocked(listLineDataChanges);
 const mockDecide = vi.mocked(resolveLinePin);
+const mockListVersions = vi.mocked(listRequestVersions);
+const mockGetVersion = vi.mocked(getRequestVersion);
+const mockRecheck = vi.mocked(recheckLineDataChanges);
 
 function line(id: string, code: string, order: number): PriceTagRequestLine {
   return {
@@ -257,6 +281,7 @@ async function renderDesigner() {
 
 beforeEach(() => {
   pinRenders.length = 0;
+  lightboxPayloads.length = 0;
   vi.clearAllMocks();
   mockResolveLines.mockResolvedValue([
     tagData('line-1', 'SRT-1234'),
@@ -264,6 +289,7 @@ beforeEach(() => {
   ]);
   mockComments.mockResolvedValue([]);
   mockChanges.mockResolvedValue([]);
+  mockListVersions.mockResolvedValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -427,6 +453,27 @@ describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
     ).toBeNull();
   });
 
+  it('"Check product data" re-runs the comparison and the red dot returns (owner round finding 3)', async () => {
+    // Nothing on load - the salesperson already chose Keep current once.
+    mockChanges.mockResolvedValue([]);
+    mockRecheck.mockResolvedValue([CHANGED]);
+    await renderDesigner();
+
+    expect(
+      screen.queryByRole('button', { name: /Review product data changes/ }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check product data' }));
+
+    await waitFor(() => expect(mockRecheck).toHaveBeenCalledWith('req-1'));
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Review product data changes on SRT-1234',
+      }),
+    ).toBeInTheDocument();
+  });
+
   it('the dot opens the review dialog with that line old and new values', async () => {
     mockChanges.mockResolvedValue([CHANGED]);
     await renderDesigner();
@@ -487,5 +534,51 @@ describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(mockResolveLines).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Owner test round, finding 2 - History View draws the VERSION's own data
+// ---------------------------------------------------------------------------
+
+describe('History View draws the version, not the live doc (owner round finding 2)', () => {
+  it('View calls getRequestVersion and hands the lightbox that payload, never the live rows', async () => {
+    mockListVersions.mockResolvedValue([
+      {
+        version: 3,
+        commit_message: 'Marked proof ready',
+        created_by_name: 'Mei',
+        created_at: '2026-09-14T00:00:00Z',
+      },
+    ]);
+    const VERSION_PAYLOAD = {
+      page_id: 'page-1',
+      version: 3,
+      source: 'version',
+      doc: { kind: 'tag_sheet', imposition: { page_width_mm: 210, page_height_mm: 297 }, sheets: [] },
+      resolvedData: {},
+      assets: {},
+      images: {},
+      fonts: [],
+    } as never;
+    mockGetVersion.mockResolvedValue(VERSION_PAYLOAD);
+
+    await renderDesigner();
+
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+
+    const viewButton = await screen.findByRole('button', { name: /View/ });
+    fireEvent.click(viewButton);
+
+    await waitFor(() =>
+      expect(mockGetVersion).toHaveBeenCalledWith('req-1', 3),
+    );
+
+    const lightbox = await screen.findByTestId('version-lightbox');
+    expect(lightbox).toHaveAttribute('data-version', '3');
+    // The mocked version payload reached the lightbox - not a payload built
+    // from the live `doc` / `resolvedRows` (Phase 1's `designPayloadFromResponse`
+    // call), which never calls the version service at all.
+    expect(lightboxPayloads.at(-1)).toEqual(VERSION_PAYLOAD);
   });
 });

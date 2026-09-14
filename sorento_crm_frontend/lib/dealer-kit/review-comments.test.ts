@@ -235,4 +235,26 @@ describe('canvasPinsForLine (AC-S2-6)', () => {
   it('no selected line is no pins', () => {
     expect(canvasPinsForLine([comment()], null)).toEqual([]);
   });
+
+  it('filters by the copy id when given (owner round finding 1)', () => {
+    const onCopyA = { ...comment({ id: 'c1' }), placed_tag_id: 'tag-a' };
+    const onCopyB = { ...comment({ id: 'c2' }), placed_tag_id: 'tag-b' };
+
+    const pins = (canvasPinsForLine as unknown as (
+      comments: unknown[],
+      lineId: string | null,
+      placedTagId?: string | null,
+    ) => { id: string }[])([onCopyA, onCopyB], 'line-1', 'tag-a');
+
+    expect(pins.map((pin) => pin.id)).toEqual(['c1']);
+  });
+
+  it('with no copy id given, every pin on the line still comes back', () => {
+    const onCopyA = { ...comment({ id: 'c1' }), placed_tag_id: 'tag-a' };
+    const onCopyB = { ...comment({ id: 'c2' }), placed_tag_id: 'tag-b' };
+
+    const pins = canvasPinsForLine([onCopyA, onCopyB] as never, 'line-1');
+
+    expect(pins.map((pin) => pin.id).sort()).toEqual(['c1', 'c2']);
+  });
 });

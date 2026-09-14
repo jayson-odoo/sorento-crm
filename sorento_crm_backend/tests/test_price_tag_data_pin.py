@@ -1016,3 +1016,102 @@ class TestUpdateOnARequestWithNoPageBuildsAnOpenableDocument:
         )
         assert imposition["page_width_mm"] == 210
         assert imposition["page_height_mm"] == 297
+
+
+# ---------------------------------------------------------------------------
+# Owner test round, finding 3 - "Check product data" re-runs the gate
+# ---------------------------------------------------------------------------
+
+
+class TestRecheckProductData:
+    """After Keep current there was no way to re-run the comparison, so a red
+    dot silenced by Keep stayed silent forever - even for a later, unrelated
+    edit that would have tripped the gate on its own.
+
+    ``POST /{request_id}/data-changes/recheck`` clears ``data_change_ack_hash``
+    on every line of the request and answers the fresh ``data_changes`` per
+    line, the same shape ``GET /data-changes`` answers.
+    """
+
+    def test_recheck_clears_the_ack_and_the_diff_reappears(self, crm):
+        client, db = crm
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        line_id = request.lines[0].id
+
+        product.list_price = 1200.00
+        db.commit()
+
+        keep = client.post(
+            f"{_CRM.format(id=request.id)}/lines/{line_id}/pin",
+            json={"action": "keep"},
+        )
+        assert keep.status_code == 200, keep.text
+
+        # Silenced: Keep acknowledged this exact drift.
+        silenced = client.get(f"{_CRM.format(id=request.id)}/data-changes").json()
+        assert silenced == [], silenced
+
+        line = _lines(db, request.id)[0]
+        assert line.data_change_ack_hash is not None, (
+            "Keep must have recorded an ack, or this test proves nothing"
+        )
+
+        response = client.post(f"{_CRM.format(id=request.id)}/data-changes/recheck")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        changed_row = next(
+            (row for row in body if row["line_id"] == line_id), None
+        )
+        assert changed_row is not None, body
+        assert any(
+            change["field"] == "list_price" for change in changed_row["changes"]
+        ), changed_row
+
+        db.expire_all()
+        line = _lines(db, request.id)[0]
+        assert line.data_change_ack_hash is None, (
+            "recheck must clear the ack, not just answer a fresh diff once"
+        )
+
+        # The ordinary GET agrees - the clear was PERSISTED, not returned once
+        # and thrown away.
+        after = client.get(f"{_CRM.format(id=request.id)}/data-changes").json()
+        assert any(row["line_id"] == line_id for row in after), after
+
+    def test_recheck_404s_for_another_companys_request(self, crm):
+        client, db = crm
+        from app.models.company import Company
+        from app.models.price_tag import PriceTagRequest
+
+        other_company_id = str(uuid.uuid4())
+        db.execute(
+            Company.__table__.insert().values(
+                id=other_company_id,
+                name="ZZT Other Co",
+                code=seed.unique_code("OTH")[:20],
+                is_active=True,
+            )
+        )
+        db.flush()
+
+        contact_id = seed.seed_portal_contact(db)
+        product = seed.seed_product(db)
+        other_request = seed.seed_request(
+            db, contact_id, status="designing", products=[product]
+        )
+        db.query(PriceTagRequest).filter(
+            PriceTagRequest.id == other_request.id
+        ).update({"company_id": other_company_id})
+        db.commit()
+
+        response = client.post(
+            f"{_CRM.format(id=other_request.id)}/data-changes/recheck"
+        )
+
+        assert response.status_code == 404, response.text
+        # The APP's own NOT_FOUND, not a bare "no such route" 404 - the route
+        # must exist and be the thing that refuses this id, or the assertion
+        # above passes for a reason that has nothing to do with company scope.
+        assert response.json().get("code") == "NOT_FOUND", response.text

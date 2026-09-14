@@ -101,6 +101,26 @@ describe('the list (AC-S5-6)', () => {
     expect(screen.getByText(/Unknown/)).toBeInTheDocument();
   });
 
+  it('does not truncate a long commit message (owner round finding 4)', async () => {
+    const LONG_MESSAGE =
+      'Before product update: List price, Dimensions, Specs, Set members, Barcode';
+    renderSheet({
+      load: vi.fn(async () => [
+        {
+          version: 4,
+          commit_message: LONG_MESSAGE,
+          created_by_name: 'ZZT Marketing Mei',
+          created_at: '2026-09-14T03:00:00Z',
+        },
+      ]),
+    });
+
+    const message = await screen.findByText(LONG_MESSAGE);
+    expect(message).toBeInTheDocument();
+    expect(message.className).not.toMatch(/\btruncate\b/);
+    expect(message.className).not.toMatch(/overflow-hidden/);
+  });
+
   it('an empty history says what would create the first version', async () => {
     renderSheet({ load: vi.fn(async () => []) });
 

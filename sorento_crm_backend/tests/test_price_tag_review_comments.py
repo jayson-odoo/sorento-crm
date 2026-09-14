@@ -239,6 +239,92 @@ class TestSendCreatesTheRows:
 
 
 # ---------------------------------------------------------------------------
+# Owner test round, finding 1 - a pin anchors to the ONE placed copy that was
+# clicked, not to every copy of the line.
+# ---------------------------------------------------------------------------
+
+
+class TestPinsCarryThePlacedTagId:
+    """A sheet prints one LINE several times (a quantity > 1, or "Apply to all
+    lines"), each as its own ``PlacedTag`` with its own id. A click anchors to
+    the ONE copy the salesperson pointed at, so the portal sends that copy's
+    id as ``placed_tag_id`` with the pin, and both surfaces list it back so
+    the design layer can draw the pin on that copy alone rather than on every
+    copy of the line (see ``DesignPinLayer.test.tsx`` for the render half).
+    """
+
+    def test_create_comments_persists_the_placed_tag_id(self, portal):
+        """Service level, direct: pins the column down before any route or
+        schema has a chance to swallow it silently."""
+        from app.services import price_tag_review_service
+
+        client, db, contact_id = portal
+        request, _page, _doc = _proof_ready_request(db, contact_id)
+        line_id = request.lines[0].id
+
+        created = price_tag_review_service.create_comments(
+            db,
+            request,
+            comments=[
+                {
+                    "line_id": line_id,
+                    "placed_tag_id": "tag-b",
+                    "x": 0.25,
+                    "y": 0.5,
+                    "w": 0.0,
+                    "h": 0.0,
+                    "body": "Fix this copy",
+                }
+            ],
+            author_contact_id=contact_id,
+        )
+
+        assert created[0].placed_tag_id == "tag-b"
+
+    def test_the_portal_send_and_both_lists_carry_it(self, portal):
+        client, db, contact_id = portal
+        request, _page, _doc = _proof_ready_request(db, contact_id)
+        line_id = request.lines[0].id
+
+        response = client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={
+                "comments": [
+                    {
+                        "line_id": line_id,
+                        "placed_tag_id": "tag-1",
+                        "x": 0.25,
+                        "y": 0.5,
+                        "w": 0,
+                        "h": 0,
+                        "body": "On this copy",
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["comments"][0]["placed_tag_id"] == "tag-1"
+
+        portal_list = client.get(
+            f"{_PORTAL.format(id=request.id)}/review-comments"
+        ).json()
+        assert portal_list[0]["placed_tag_id"] == "tag-1"
+
+    def test_a_pin_with_no_placed_tag_id_lists_it_as_null(self, portal):
+        client, db, contact_id = portal
+        request, _page, _doc = _proof_ready_request(db, contact_id)
+
+        client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={"comments": [_pin(request.lines[0].id, "No copy given")]},
+        )
+
+        rows = client.get(f"{_PORTAL.format(id=request.id)}/review-comments").json()
+        assert rows[0]["placed_tag_id"] is None
+
+
+# ---------------------------------------------------------------------------
 # AC-S2-8 - the legacy body still works for one release
 # ---------------------------------------------------------------------------
 
