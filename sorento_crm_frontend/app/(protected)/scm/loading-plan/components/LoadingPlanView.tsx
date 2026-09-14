@@ -593,11 +593,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
                     <CardTitle>Plan</CardTitle>
                   </CardHeading>
                 </CardHeader>
-                <section
-                  aria-label="Plan"
-                  className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2"
-                  data-testid="plan-subtitle"
-                >
+                <section aria-label="Plan" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
                   <Field label="Status">
                     <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
                       {STATUS_LABEL[plan.status]}

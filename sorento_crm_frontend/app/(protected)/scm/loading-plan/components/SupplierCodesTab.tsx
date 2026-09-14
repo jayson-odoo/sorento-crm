@@ -451,26 +451,19 @@ export function SupplierCodesTab({
   // `CWC 250` finds the row both words describe rather than everything either of them does.
   // `rows` and `remembered` themselves stay whole: Confirm counts decisions, not what is on
   // screen, and a filter must not change what confirming writes.
-  const tokens = searchTokens(search);
-  const filtering = tokens.length > 0;
-  const visibleRows = React.useMemo(
-    () =>
-      tokens.length === 0
-        ? rows
-        : rows.filter((r) => matchesTokens(tokens, [r.item_code, saysText(r)])),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, search],
-  );
-  const visibleRemembered = React.useMemo(
-    () =>
-      tokens.length === 0
-        ? remembered
-        : remembered.filter((a) =>
-            matchesTokens(tokens, [a.supplier_code, a.product_code, a.set_code]),
-          ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [remembered, search],
-  );
+  const filtering = searchTokens(search).length > 0;
+  const visibleRows = React.useMemo(() => {
+    const tokens = searchTokens(search);
+    if (tokens.length === 0) return rows;
+    return rows.filter((r) => matchesTokens(tokens, [r.item_code, saysText(r)]));
+  }, [rows, search]);
+  const visibleRemembered = React.useMemo(() => {
+    const tokens = searchTokens(search);
+    if (tokens.length === 0) return remembered;
+    return remembered.filter((a) =>
+      matchesTokens(tokens, [a.supplier_code, a.product_code, a.set_code]),
+    );
+  }, [remembered, search]);
 
   const needsTable = useReactTable({
     columns: needsDecisionColumns,

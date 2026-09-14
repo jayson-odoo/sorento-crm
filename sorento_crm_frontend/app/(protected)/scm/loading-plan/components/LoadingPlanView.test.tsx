@@ -281,7 +281,7 @@ describe('LoadingPlanView (the record)', () => {
     expect(
       screen.getByRole('heading', { name: /CHAOZHOU JINBAICHUAN SANITARY WARE CO\., LTD/ }),
     ).toBeTruthy();
-    const subtitle = screen.getByTestId('plan-subtitle').textContent ?? '';
+    const subtitle = screen.getByTestId('plan-general').textContent ?? '';
     expect(subtitle).toContain('Started');
     // AC-N7: the window is worded like reorder planning's own (`describeWindow`); no start
     // on this plan's fixture, so it reads as an end-only window.

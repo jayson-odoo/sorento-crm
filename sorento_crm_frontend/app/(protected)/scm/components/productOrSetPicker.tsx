@@ -80,6 +80,7 @@ export async function fetchProductOrSetOptions(
     value: p.id,
     label: `${p.product_code} - ${p.product_name}`,
     searchText: `${p.product_code} ${p.product_name}`,
+    code: p.product_code,
   }));
 
   if (pageIndex > 0) return productOptions;
@@ -99,6 +100,7 @@ export async function fetchProductOrSetOptions(
       label: `${s.set_code} - ${s.name}`,
       searchText: `${s.set_code} ${s.name}`,
       description: 'Set',
+      code: s.set_code,
     }));
   } catch {
     setOptions = [];

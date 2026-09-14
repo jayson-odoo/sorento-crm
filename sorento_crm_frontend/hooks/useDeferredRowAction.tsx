@@ -93,6 +93,11 @@ export function useDeferredRowAction(
   );
   const nonceRef = useRef(0);
   const startedRef = useRef<number | null>(null);
+  //: WHICH parked action reached the server, by nonce. The target is only let go once
+  //: THIS click has been pending and stopped being pending: without the nonce, a second
+  //: row pressed while the first counts down (its own action not yet parked, so nothing
+  //: is pending for an instant) reads as the second one having already settled.
+  const reachedServerRef = useRef<number | null>(null);
 
   const action = useDeferredAction({
     actionKey,
@@ -125,6 +130,23 @@ export function useDeferredRowAction(
 
   const targetId = target?.id ?? null;
   const { isPending, countdown } = action;
+
+  // LET THE TARGET GO once the action has settled - committed, cancelled or refused.
+  // The hook used to hold the last row it acted on forever, which a toast surface never
+  // noticed (the toast is the countdown, and it dismisses itself) but an `inline` one
+  // cannot survive: the cell asks "is this row the target" to decide whether to draw the
+  // countdown, and after a Cancel the answer stayed yes with no countdown left to draw,
+  // so the cell went blank until the next refetch.
+  useEffect(() => {
+    if (!target) return;
+    if (isPending) {
+      reachedServerRef.current = target.nonce;
+      return;
+    }
+    if (reachedServerRef.current !== target.nonce) return;
+    reachedServerRef.current = null;
+    setTarget(null);
+  }, [target, isPending]);
 
   // Memoised, and load-bearing. Every migrated list reads `run` from inside its
   // `columns` useMemo, so this object is one of that memo's dependencies: a fresh

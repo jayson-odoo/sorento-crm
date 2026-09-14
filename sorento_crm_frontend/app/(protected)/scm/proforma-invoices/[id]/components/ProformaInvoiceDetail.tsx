@@ -41,6 +41,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { Field } from '@/components/common/Field';
 import AttachmentFileCard from '@/components/common/AttachmentFileCard';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -253,9 +254,21 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
    *  (AC-7.3) - one ruling at a time, and the answer re-points rows on other lines too. */
   const matchPending = matchCode.isPending;
   const supplierId = data?.supplier_id ?? '';
-  /** Record what the picked option means for this supplier's code (AC-7.3, AC-7.4). */
+  // Read through a ref by the writer below: `patchLine` is declared further down (it needs
+  // the draft state) and a fresh function every render would rebuild `columns` every
+  // render, which is the one thing this grid cannot survive.
+  const patchLineRef = useRef<(key: string, patch: Partial<DraftLine>) => void>(() => {});
+  /** Record what the picked option means for this supplier's code (AC-7.3, AC-7.4).
+   *
+   *  The DRAFT is patched with the same answer once the server has taken it: in read mode
+   *  the invalidated detail query brings the new binding back on its own, but an edit
+   *  session renders from `draftLines`, which no refetch touches - the cell would have
+   *  gone on showing the old code until Cancel. Patching it also makes the eventual Save
+   *  agree with what the server already holds, so the line is written back unchanged
+   *  rather than reverted. */
   const writeCodeMatch = useCallback(
-    async (supplierCode: string, value: string) => {
+    async (supplierCode: string, option: SearchableSelectOption, rowKey: string) => {
+      const value = option.value;
       if (!supplierId || !value) return;
       try {
         await writeMatch({
@@ -265,7 +278,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         });
       } catch {
         // The hook toasts the refusal; the cell keeps whatever it already held.
+        return;
       }
+      const set = isSetOption(value);
+      patchLineRef.current(rowKey, {
+        productId: set ? null : value,
+        productSetId: set ? value.slice(SET_OPTION_PREFIX.length) : null,
+        productCode: option.code ?? null,
+      });
     },
     [supplierId, writeMatch],
   );
@@ -368,6 +388,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const patchLine = (key: string, patch: Partial<DraftLine>) => {
     setDraftLines((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   };
+  patchLineRef.current = patchLine;
 
   const addLine = () => {
     setDraftLines((prev) => [
@@ -612,8 +633,12 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           }
 
           if (supplierCode) {
-            if (matchId && forgetTargetId === matchId) {
-              return <>{forgetCountdownRef.current}</>;
+            // The countdown, only while there IS one: `forgetTargetId` alone still named
+            // this row for a beat after Cancel, and the cell went blank with it.
+            const forgettingThis =
+              matchId && forgetTargetId === matchId ? forgetCountdownRef.current : null;
+            if (forgettingThis) {
+              return <>{forgettingThis}</>;
             }
             return (
               <SearchableSelect
@@ -621,7 +646,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 onChange={() => {}}
                 onOptionChange={(opt) => {
                   if (opt) {
-                    void writeCodeMatch(supplierCode, opt.value);
+                    void writeCodeMatch(supplierCode, opt, line.key);
                     return;
                   }
                   // Cleared: the ruling is withdrawn, not corrected - the code goes back to
@@ -663,15 +688,20 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 onOptionChange={(opt) => {
                   const v = opt?.value ?? '';
                   const set = !!v && isSetOption(v);
+                  // The option's own code, so a SET reads as its set code rather than
+                  // keeping whatever product code was there before it. `productCodes` is
+                  // still consulted for the UOM, which only a product has.
+                  const code = opt?.code ?? null;
                   const known = v && !set ? productCodes.current.get(v) : undefined;
                   patchLine(line.key, {
                     productId: set || !v ? null : v,
                     productSetId: set ? v.slice(SET_OPTION_PREFIX.length) : null,
-                    productCode: known?.code ?? (v ? line.productCode : null),
+                    productCode: code ?? (v ? line.productCode : null),
                     // Only where the operator has not written one themselves: the supplier's
                     // own spelling is the document of record, and overwriting it would make
-                    // our copy disagree with their paper.
-                    ...(known && !line.itemCode.trim() ? { itemCode: known.code } : {}),
+                    // our copy disagree with their paper. A hand-added row has no supplier
+                    // spelling at all, and a line with no code cannot be saved.
+                    ...(code && !line.itemCode.trim() ? { itemCode: code } : {}),
                     ...(known?.uom && !line.uom.trim() ? { uom: known.uom } : {}),
                   });
                 }}
@@ -697,7 +727,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
             <span className="text-muted-foreground">{EM_DASH}</span>
           );
         },
-        size: 230,
+        size: 240,
         enableSorting: false,
         meta: { headerTitle: 'Product' },
       },

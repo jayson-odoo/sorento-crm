@@ -309,16 +309,28 @@ describe('LoadingPlanView - the header is the name only (AC-3.1)', () => {
     ).toBeTruthy();
   });
 
+  // Scoped to the HEADER itself, on the tab that does carry these facts: asking the whole
+  // screen would pass for the wrong reason the day the default tab changes, or the day
+  // somebody puts the pill back on a tab body.
   it('carries no status badge and no Started / up to / Stock list line', () => {
+    currentSearchParams = new URLSearchParams('tab=general');
     renderView();
 
-    expect(screen.queryByTestId('plan-subtitle')).toBeNull();
+    const header = screen
+      .getByRole('heading', { name: /CHAOZHOU JINBAICHUAN SANITARY WARE CO\., LTD/ })
+      .closest('[data-slot="toolbar"]') as HTMLElement;
+    expect(header).not.toBeNull();
+
+    const inHeader = within(header);
     expect(
-      screen.queryAllByText('Planning').filter((el) => el.dataset.slot === 'badge'),
+      inHeader.queryAllByText('Planning').filter((el) => el.dataset.slot === 'badge'),
     ).toHaveLength(0);
-    expect(screen.queryByText(/Started 27\/08\/2026/)).toBeNull();
-    expect(screen.queryByText(/up to 30\/09\/2026/)).toBeNull();
-    expect(screen.queryByText(/Stock list 27\/07\/2026/)).toBeNull();
+    expect(inHeader.queryByText(/Started 27\/08\/2026/)).toBeNull();
+    expect(inHeader.queryByText(/up to 30\/09\/2026/)).toBeNull();
+    expect(inHeader.queryByText(/Stock list 27\/07\/2026/)).toBeNull();
+    // The facts themselves are on the General tab, which is open: the assertion above is
+    // about WHERE they are, so it has to be able to find them somewhere.
+    expect(screen.getByTestId('plan-general')).toBeInTheDocument();
   });
 });
 

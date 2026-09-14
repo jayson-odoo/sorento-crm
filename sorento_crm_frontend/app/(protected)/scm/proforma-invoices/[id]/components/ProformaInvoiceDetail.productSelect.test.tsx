@@ -22,20 +22,26 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-/* The grace window is the server's; what this file proves is that the control parks one. */
-const createPendingAction = vi.fn().mockResolvedValue({
-  id: 'pa-1',
-  action_key: 'proforma_invoice.delete',
-  entity_type: 'proforma_invoice',
-  entity_id: 'pi-1',
-  commit_at: '2026-08-30T10:00:10',
-  window_seconds: 10,
-});
+/* The grace window is the server's; what this file proves is that the control parks one -
+ * and, for AC-7.5, that Cancel gives the cell its picker back. So the service is stood in
+ * for rather than stubbed: it parks what it is asked to park, answers `current` off the
+ * same store, and forgets it on cancel. A fixed resolve cannot show a countdown at all -
+ * `useDeferredAction` ignores a parked action whose `action_key` is not the one it asked
+ * for. */
+const parkedActions = new Map<string, Record<string, unknown>>();
+const createPendingAction = vi.fn();
+const cancelPendingAction = vi.fn();
+const getCurrentPendingAction = vi.fn();
 vi.mock('@/services/pendingActionService', () => ({
   createPendingAction: (...args: unknown[]) => createPendingAction(...args),
-  cancelPendingAction: vi.fn(),
-  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+  cancelPendingAction: (...args: unknown[]) => cancelPendingAction(...args),
+  getCurrentPendingAction: (...args: unknown[]) => getCurrentPendingAction(...args),
 }));
+
+/** A naive-UTC timestamp `offsetMs` from now, the way the backend writes them. */
+function serverTime(offsetMs: number): string {
+  return new Date(Date.now() + offsetMs).toISOString().replace(/\.\d+Z$/, '');
+}
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -208,6 +214,8 @@ vi.mock('../../../hooks/useFulfilment', () => ({
   // dialog is opened with `supplierId` already fixed to the invoice's own.
   useFulfilmentSuppliers: () => ({ data: [], isLoading: false }),
 }));
+
+import { pendingEntityStore } from '@/lib/pending-entity-store';
 
 import { ProformaInvoiceDetail } from './ProformaInvoiceDetail';
 
@@ -387,7 +395,41 @@ beforeEach(() => {
     rebound_stock_rows: 0,
     rebound_invoice_lines: 1,
   });
-  createPendingAction.mockClear();
+  parkedActions.clear();
+  createPendingAction.mockReset().mockImplementation(
+    async ({
+      actionKey,
+      entityType,
+      entityId,
+    }: {
+      actionKey: string;
+      entityType: string;
+      entityId: string;
+    }) => {
+      const action = {
+        id: `pa-${entityId}`,
+        action_key: actionKey,
+        entity_type: entityType,
+        entity_id: entityId,
+        commit_at: serverTime(5_000),
+        window_seconds: 5,
+      };
+      parkedActions.set(entityId, action);
+      return action;
+    },
+  );
+  cancelPendingAction.mockReset().mockImplementation(async (id: string) => {
+    for (const [entityId, action] of parkedActions) {
+      if (action.id === id) parkedActions.delete(entityId);
+    }
+  });
+  getCurrentPendingAction
+    .mockReset()
+    .mockImplementation(async (_entityType: string, entityId: string) => ({
+      pending: parkedActions.get(entityId) ?? null,
+      last_outcome: null,
+    }));
+  pendingEntityStore.reset();
   matching.isPending = false;
   perms.canAdjust = true;
 });
@@ -589,6 +631,32 @@ describe('ProformaInvoiceDetail - clearing the pick forgets the ruling (AC-7.5)'
     );
   });
 
+  it('gives the picker back when the countdown is cancelled', async () => {
+    offerCatalogue();
+    state.data = coded({ match_id: 'alias-1', match_source: 'manual' });
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.pointerDown(
+      within(readRow(SUPPLIER_CODE)).getByRole('button', { name: 'Clear selection' }),
+    );
+
+    // The countdown takes the cell the picker was in, with its own Cancel (AC-7.5).
+    const cell = await screen.findByTestId('deferred-countdown');
+    expect(within(readRow(SUPPLIER_CODE)).getByTestId('deferred-countdown')).toBe(cell);
+
+    fireEvent.click(within(cell).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(cancelPendingAction).toHaveBeenCalledWith('pa-alias-1'));
+    // And the ruling is still on the line: the cell reads as the picker again, showing
+    // the code it was bound to - not as the blank it showed while the target was held
+    // after the window had closed.
+    await waitFor(() =>
+      expect(screen.queryByTestId('deferred-countdown')).not.toBeInTheDocument(),
+    );
+    expect(productSelect(SUPPLIER_CODE)).toHaveTextContent(OUR_CODE);
+  });
+
   it('offers no clear on a line with no remembered ruling behind it', () => {
     offerCatalogue();
     state.data = coded({
@@ -603,6 +671,41 @@ describe('ProformaInvoiceDetail - clearing the pick forgets the ruling (AC-7.5)'
     expect(
       within(readRow(SUPPLIER_CODE)).queryByRole('button', { name: 'Clear selection' }),
     ).toBeNull();
+  });
+});
+
+// S1 (review round 1): the same pick, made from an edit session.
+
+describe('ProformaInvoiceDetail - a pick made while editing (AC-7.3)', () => {
+  it('shows the new code at once and saves the line agreeing with the server', async () => {
+    offerCatalogue();
+    state.data = coded();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    const combo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    fireEvent.click(combo);
+    fireEvent.click(await screen.findByRole('option', { name: /NEWCODE - New product/ }));
+
+    await waitFor(() => expect(writes.matchCode).toHaveBeenCalledTimes(1));
+    // The draft renders the edit session, and no refetch touches it - without the patch
+    // the cell went on showing the old code until the edit was cancelled.
+    await waitFor(() =>
+      expect(
+        within(lineRow('Item code for line 1')).getAllByRole('combobox')[0],
+      ).toHaveTextContent('NEWCODE'),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    // Save writes back what the server already holds, rather than reverting it.
+    expect(lastSavePayload().lines?.[0]?.product_id).toBe('prod-99');
+    // The set binding was null before the pick and is null after it, so the key is left
+    // out of the payload entirely - the AC-B3 rule that stops a plain save unbinding a
+    // line still holds over a pick made this way.
+    expect(lastSavePayload().lines?.[0]).not.toHaveProperty('product_set_id');
   });
 });
 
@@ -629,6 +732,36 @@ describe('ProformaInvoiceDetail - an operator-added line keeps the draft (AC-7.6
 
     const row = screen.getByText('Hand written line').closest('tr') as HTMLElement;
     expect(within(row).queryAllByRole('combobox')).toHaveLength(0);
+  });
+
+  it('names the SET by its own code when one is picked, and saves the set binding', async () => {
+    offerCatalogue();
+    state.data = blank();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    const combo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    fireEvent.click(combo);
+    fireEvent.click(await screen.findByRole('option', { name: /CWC605-RL - Close-coupled WC/ }));
+
+    // The set's own code, not whatever product code the row carried before it - the cell
+    // has to survive a remount reading the same thing.
+    await waitFor(() =>
+      expect(
+        within(lineRow('Item code for line 1')).getAllByRole('combobox')[0],
+      ).toHaveTextContent('CWC605-RL'),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    expect(lastSavePayload().lines?.[0]?.product_set_id).toBe('set-7');
+    // Never bound to a product, so that key is left out rather than sent as null.
+    expect(lastSavePayload().lines?.[0]).not.toHaveProperty('product_id');
+    // The line carries the set's code now, which is what makes it saveable at all.
+    expect(lastSavePayload().lines?.[0]?.item_code).toBe('CWC605-RL');
+    expect(writes.matchCode).not.toHaveBeenCalled();
   });
 
   it('patches the draft in edit mode and persists it on Save, writing no alias', async () => {
