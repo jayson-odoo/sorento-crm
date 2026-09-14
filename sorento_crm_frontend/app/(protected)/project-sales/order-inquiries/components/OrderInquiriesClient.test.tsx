@@ -268,11 +268,11 @@ describe('OrderInquiriesClient: reading the page', () => {
     expect(screen.getByText('SRTWC8605-SC-RL')).toBeInTheDocument();
     expect(screen.getByText('Wall hung basin 5400')).toBeInTheDocument();
     expect(screen.getByText('DAFUYUAN')).toBeInTheDocument();
-    // AC-A6 (slice A, 8 Sep 2026 cut): the document number is no longer printed in the
-    // Outstanding PO/SPO cell, even for a row backing exactly one document - it moved
-    // behind the info icon. The coverage headline is what still shows here.
-    expect(screen.queryByText('202601-S0015')).not.toBeInTheDocument();
-    expect(screen.getByText('35 of 35')).toBeInTheDocument();
+    // AC-R-26 (owner ruling 14 Sep 2026, superseding the 8 Sep cut): the PO column prints
+    // the document NUMBER and that number is the lightbox trigger. The coverage headline
+    // `35 of 35` moved to the lightbox's own subtitle, so it is not on the list any more.
+    expect(screen.getByText('202601-S0015')).toBeInTheDocument();
+    expect(screen.queryByText('35 of 35')).not.toBeInTheDocument();
   });
 
   it("reads the columns in the sheet's own order, renamed (AC-D15)", async () => {
@@ -293,7 +293,11 @@ describe('OrderInquiriesClient: reading the page', () => {
       'Agent',
       'Location',
       'Supplier',
-      'Outstanding PO/SPO',
+      // Two columns since 14 Sep, side by side, where "Outstanding PO/SPO" used to be
+      // (AC-R-31). The id behind the first is still `po_number`, so a saved layout keeps
+      // its place.
+      'PO',
+      'SPO',
       'Taken by PO/SPO',
       'Remaining',
       'Instruction',
