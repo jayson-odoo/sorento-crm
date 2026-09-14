@@ -839,22 +839,20 @@ def _bought_refs(rows: Tuple[Sequence[Any], Sequence[Any]]) -> set:
 
 
 def _ref_targets(
-    db: Session,
-    core_lines: Sequence[SalesOrderLine],
-    rows: Optional[Tuple[Sequence[Any], Sequence[Any]]] = None,
+    rows: Tuple[Sequence[Any], Sequence[Any]],
 ) -> Tuple[Dict[tuple, List[str]], Dict[tuple, List[str]]]:
     """What AutoCount itself states is for each sales order line, per `(ref, product)`.
 
-    The rows `_plan` already read, grouped. `rows` is passed by every caller in this module;
-    the fallback re-reads them for a direct caller, so the contract does not depend on the
-    plan having run first.
+    The rows `_plan` already read (`_bought_rows`), grouped. Required rather than optional:
+    the plan always reads them, there is no other caller, and an optional fallback here would
+    be a second read nobody asks for (reviewer, 15 Sep).
 
     The product is part of the key as well as the ref: a ref names one line of one order, but
     a wrong or stale ref on a document for another item must not pull that document in. The
     map may be WIDER than the rows being paired (the plan reads over every candidate line of
     the file, not only the matched ones); a key nothing looks up costs nothing.
     """
-    allocations, po_lines = rows if rows is not None else _bought_rows(db, core_lines)
+    allocations, po_lines = rows
 
     by_allocation: Dict[tuple, List[str]] = {}
     for allocation in allocations:
@@ -929,9 +927,7 @@ def _chain_allocations(
 
 
 def _less_own_shipments(
-    facts: Dict[str, dict],
-    chain: Dict[tuple, List[str]],
-    chain_by_line: Dict[tuple, List[str]],
+    facts: Dict[str, dict], chain_by_line: Dict[tuple, List[str]]
 ) -> None:
     """A purchase order line answers only for what has NOT sailed yet (7.2, owner 14 Sep).
 
@@ -942,12 +938,20 @@ def _less_own_shipments(
     counted twice (SO368872 / SRTWC286-SH is the owner's own case, 62 on PO 202510-S0078 and
     62 on SPO-2026/04-0043, which IS that line shipped).
 
-    So the line's capacity drops by what its own allocations carry. The set deducted is
-    exactly the set `_through_po` walks before reaching the line - the allocations that quote
-    this line's `source_ref` in `from_po_line_ref`, or, when the feed named no line, the
-    document's own - so capacity and the walk cannot disagree, which is the whole point.
-    Floored at zero, and read off the facts already built for those allocations, so nothing
-    is queried again.
+    So the line's capacity drops by what its own allocations carry: ONLY the allocations
+    that quote this line's `source_ref` in `from_po_line_ref`, never the document's own
+    (reviewer B1, 15 Sep). Deducting the document's took a SIBLING line's shipment off this
+    line and left a row with no link at all when that sibling's allocation was already
+    occupied. On the 3am prod copy the fallback could not help anyway: 0 allocations carry a
+    `from_po_number` without a `from_po_line_ref`, and 0 purchase order lines have a blank
+    `source_ref`, so an allocation that really came from this line always names it.
+
+    `_through_po` still walks the document's allocations when the feed named no line, which
+    is D10 as it has always been (AC-R-2, AC-R-9). The two are not in conflict: an allocation
+    that does not name this line is not evidence that this line's units have sailed, so it
+    must not reduce the line, while taking it first is still the right walk when it is all
+    the feed states. Floored at zero, and read off the facts already built for those
+    allocations, so nothing is queried again.
 
     The owner still sees both documents: "we definitely cannot double count, but by this
     linking it helps us to know the PO and SPO corresponding to this order inquiry". The
@@ -959,7 +963,7 @@ def _less_own_shipments(
         document, product = str(fact["document"]), fact["product_id"]
         shipped_ids = chain_by_line.get(
             (document, str(fact.get("source_ref") or ""), product)
-        ) or chain.get((document, product), [])
+        ) or []
         shipped = sum(
             (facts[str(i)]["capacity"] for i in shipped_ids if str(i) in facts), _ZERO
         )
@@ -1049,9 +1053,7 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
         order_link_service._purchase_side(db, cited_numbers) if cited_numbers else ({}, {})
     )
 
-    ref_allocations, ref_po_lines = _ref_targets(
-        db, [m.core_line for _, m in wanted], plan.bought_rows
-    )
+    ref_allocations, ref_po_lines = _ref_targets(plan.bought_rows or ([], []))
 
     target_ids = {claim["target_id"] for claim in claims}
     target_ids |= {target for _side, target in by_key.values()}
@@ -1086,7 +1088,7 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
     # Now that the shipments are known, a purchase order line answers only for the units
     # that have not sailed (7.2). Before this, D10's "the line takes the remainder" measured
     # the remainder against the line's whole size and counted the same goods twice.
-    _less_own_shipments(facts, chain, chain_by_line)
+    _less_own_shipments(facts, chain_by_line)
 
     used = _claimed_capacity(db)
 
