@@ -714,7 +714,7 @@ def test_verb_from_date_cell():
 
 
 def test_identical_rows_across_tabs_raise_once():
-    """AC-S1-38 (D7). One instruction written on two tabs is ONE instruction.
+    """AC-S1-38 (D7), as amended by AC-R-11 (owner ruling R3, 14 Sep 2026).
 
     The customer keeps a month tab, a roll-up tab covering that month and a dated working
     snapshot in one book, so the same delivery is written out two and three times by
@@ -722,6 +722,15 @@ def test_identical_rows_across_tabs_raise_once():
     own code - and, crucially, the restatement does NOT take the line's quantity from the
     row it restates: 30 and 30 against a 50 line is one row of 30, not one row and one
     `qty_exceeds_ordered`.
+
+    The REMARK is not part of what makes two rows the same instruction. The owner:
+    "what we need from the order inquiries tab is just the sales order, location, quantity,
+    delivery date, product ... the remark doesn't really matter, differing remark is same
+    also as long as other keys are the same". So the second block here - a roll-up tab that
+    carries the purchase order number the month tab left blank - is the SAME restatement,
+    which is what this test used to read the other way round.
+    `tests/test_oi_sheet_pairing_repair.py::test_ac_r_12_restatement_lends_its_citation`
+    holds the other half of that ruling: the citation is merged onto the row that was kept.
     """
     with world() as w:
         order = w.order()
@@ -740,6 +749,24 @@ def test_identical_rows_across_tabs_raise_once():
         assert outcome.count_of("restates_an_instalment") == 1
         assert outcome.successful == 2, "a restatement is not a skip - its quantity is raised"
         assert [entry["code"] for entry in outcome.breakdown()["skipped"]] == []
+
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="50")
+        cited, _cited_line = w.po_line(qty_ordered="50")
+        blank = (order.so_number, w.product.product_code, 30, D_OCT,
+                 w.warehouse.warehouse_code, "")
+        remarked = (order.so_number, w.product.product_code, 30, D_OCT,
+                    w.warehouse.warehouse_code, cited.po_number)
+        outcome = ImportOutcome(None, persist=False)
+
+        result = w.apply(book(JAN26=[blank], ROLLUP=[remarked]), outcome=outcome)
+
+        assert result["rows"] == 2
+        assert result["rows_raised"] == 1, result
+        assert len(w.rows()) == 1
+        assert outcome.count_of("restates_an_instalment") == 1, outcome.breakdown()
+        assert result["rows_line_not_found"] == 0, "the restatement took the line's quantity"
 
 
 # --------------------------------------------------------------------------- #
