@@ -176,7 +176,10 @@ async def apply_supplier_inventory(
         db,
         upload.data,
         supplier_id=supplier_id,
-        actor=current_user.get("id"),
+        # The uploader's NAME (S4, AC-4.1): every alias the ladder remembers during an
+        # apply is stamped with this, and the Remembered table prints it. The id went in
+        # here for a while, and a buyer reading her own supplier's memory got a UUID.
+        actor=_actor(current_user),
         loading_plan_id=str(plan.id) if plan is not None else None,
     )
     if not out.get("readable"):
