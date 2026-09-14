@@ -912,9 +912,32 @@ jobs:
           command_timeout: 2m
           script: |
             set -e
-            # Frontend / backend via host nginx (public domain)
-            curl -fsS -o /dev/null https://fe-sorento.foundryx.my/ \
-              || curl -fsS -o /dev/null http://127.0.0.1/
+            # Frontend / backend via host nginx (public domain), with a WAIT.
+            #
+            # The nginx swap (step 4 of blue_green_deploy.sh) points the upstream at the
+            # new colour the moment its container reports healthy, and Next.js then needs
+            # a few seconds more before it answers the first request: on run 34855082817
+            # this check got six 504s over 30 seconds and failed a deploy that was
+            # entirely fine (blue healthy, nginx swapped, worker recreated, alembic at
+            # 511). So it now polls for up to 90 seconds, prints each attempt's code and
+            # the elapsed time, and only then tries local nginx and gives up. 90s plus
+            # the MCP check below sits inside this step's own `command_timeout: 2m`.
+            started=$(date +%s)
+            ok=""
+            while [ $(( $(date +%s) - started )) -lt 90 ]; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+                https://fe-sorento.foundryx.my/ || true)
+              waited=$(( $(date +%s) - started ))
+              echo "public URL: HTTP ${code:-000} after ${waited}s"
+              case "$code" in
+                2*|3*) ok="yes"; break;;
+              esac
+              sleep 5
+            done
+            if [ -z "$ok" ]; then
+              echo "public URL never answered in 90s, trying local nginx"
+              curl -fsS -o /dev/null http://127.0.0.1/
+            fi
             # MCP via host nginx (n8n entrypoint, port stays 8765 forever)
             code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/mcp || true)
             # 406 expected for plain GET (MCP demands SSE Accept header); means nginx reached MCP.
