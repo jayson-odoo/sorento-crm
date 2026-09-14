@@ -1,6 +1,6 @@
 /**
  * PLAN-low-stock-report S4 (AC-1/AC-2): the plan's Actions menu offers a THIRD export -
- * "Low stock report (Excel)" - directly under "Order sheet Excel", going through the same
+ * "Low stock report Excel" - directly under "Order sheet Excel", going through the same
  * async My Downloads pipeline as the two order sheet items.
  *
  * Same stand-ins as `ReorderPlanView.orderSheet.test.tsx`: `PlanLinesSection` renders the
@@ -103,10 +103,10 @@ describe('ReorderPlanView Actions menu - low stock report (AC-1/AC-2)', () => {
     toastError.mockClear();
   });
 
-  it('AC-1: offers "Low stock report (Excel)" directly under "Order sheet Excel"', async () => {
+  it('AC-1: offers "Low stock report Excel" directly under "Order sheet Excel"', async () => {
     renderView();
     expect(
-      await screen.findByRole('button', { name: 'Low stock report (Excel)' }),
+      await screen.findByRole('button', { name: 'Low stock report Excel' }),
     ).toBeInTheDocument();
 
     const exportKeys = renderedActions
@@ -123,7 +123,7 @@ describe('ReorderPlanView Actions menu - low stock report (AC-1/AC-2)', () => {
     const { invalidateQueries } = renderView();
     const user = userEvent.setup();
 
-    await user.click(await screen.findByRole('button', { name: 'Low stock report (Excel)' }));
+    await user.click(await screen.findByRole('button', { name: 'Low stock report Excel' }));
 
     await waitFor(() => expect(exportLowStockReport).toHaveBeenCalledWith('run-1'));
     // The order sheet is NOT started by this item.
@@ -147,7 +147,7 @@ describe('ReorderPlanView Actions menu - low stock report (AC-1/AC-2)', () => {
     renderView();
     const user = userEvent.setup();
 
-    await user.click(await screen.findByRole('button', { name: 'Low stock report (Excel)' }));
+    await user.click(await screen.findByRole('button', { name: 'Low stock report Excel' }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Narrow the plan first'));
   });
@@ -160,7 +160,7 @@ describe('ReorderPlanView Actions menu - low stock report (AC-1/AC-2)', () => {
     renderView();
     const user = userEvent.setup();
 
-    const lowStock = await screen.findByRole('button', { name: 'Low stock report (Excel)' });
+    const lowStock = await screen.findByRole('button', { name: 'Low stock report Excel' });
     const pdf = screen.getByRole('button', { name: 'Order sheet PDF' });
     const xlsx = screen.getByRole('button', { name: 'Order sheet Excel' });
     expect(lowStock).not.toBeDisabled();

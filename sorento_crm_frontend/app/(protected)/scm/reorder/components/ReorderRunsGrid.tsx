@@ -121,7 +121,12 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         header: ({ column }) => <DataGridColumnHeader title="Plan" visibility column={column} />,
         cell: ({ row }) => (
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium tabular-nums">
+            {/* `truncate` needs its `title`: the badges beside it eat into the column's
+                fixed width, so the timestamp is the part that clips. */}
+            <span
+              className="truncate text-sm font-medium tabular-nums"
+              title={runStartedLabel(row.original.started_at)}
+            >
               {runStartedLabel(row.original.started_at)}
             </span>
             {/* The scheduled run, told apart from one a person started. Absent until the

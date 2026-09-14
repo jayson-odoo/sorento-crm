@@ -320,7 +320,7 @@ export default function ChatbotMediaSettingsPage() {
           <NumberField
             id="low-stock-sync-wait"
             label="Low stock report chat wait (seconds)"
-            hint="How long a low stock report reply waits for the plan and its workbook before it answers pending and the worker sends the file instead."
+            hint="How long a low stock report reply waits for the plan and its workbook before it answers pending and the worker sends the file instead. Effective wait is capped at the chatbot MCP timeout minus 3 s (7 s today); higher values have no effect."
             value={draft.lowStockWaitSeconds}
             error={numberError.lowStockWaitSeconds}
             onChange={(v) => set('lowStockWaitSeconds', v)}

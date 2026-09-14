@@ -14,7 +14,7 @@ file when ready; access over chat is one new per-contact reveal key.
 ## Journey
 
 **Buyer, on the plan.** Procurement > Supply Chain > Reorder Planning > a run. Actions menu
-shows "Low stock report (Excel)" beside "Order sheet PDF" and "Order sheet Excel". One click. A
+shows "Low stock report Excel" beside "Order sheet PDF" and "Order sheet Excel". One click. A
 toast says it is being prepared and will appear in My Downloads. The drawer shows it preparing,
 then ready. The workbook has two sheets. "Low stock" lists every planned product whose BRW on
 hand is below its reorder level. "All" lists every product the run planned, the comfortably
@@ -41,7 +41,7 @@ suggestion even with no open sales order. Dead products (no outbound movement in
 ### Slice S4 - the menu item, the marker, the download label
 
 - **AC-1 [FE]** Given a plan view, when the buyer opens Actions, then a third item "Low stock
-  report (Excel)" sits directly under "Order sheet Excel", same icon family
+  report Excel" sits directly under "Order sheet Excel", same icon family
   (`FileSpreadsheet`), disabled while any export is pending, exactly as the two order sheet
   items are.
 - **AC-2 [FE]** Given the buyer clicks it, then the hook posts `{run_id, format: "low_stock_xlsx"}`

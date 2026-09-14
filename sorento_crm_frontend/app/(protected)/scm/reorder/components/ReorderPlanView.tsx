@@ -122,7 +122,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
       },
       {
         key: 'low_stock_xlsx',
-        label: 'Low stock report (Excel)',
+        label: 'Low stock report Excel',
         icon: FileSpreadsheet,
         onClick: () => exportLowStock.mutate(),
         disabled: exportPending,

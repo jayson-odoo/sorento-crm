@@ -120,6 +120,13 @@ describe('ReorderRunsGrid - the columns (A1)', () => {
     expect(within(row).getByText(/6,232,043/)).toBeInTheDocument();
   });
 
+  it('the plan timestamp carries a title, because the badges beside it clip the truncate', () => {
+    renderList();
+    const stamp = screen.getByText(/27\/08\/2026/);
+    expect(stamp).toHaveClass('truncate');
+    expect(stamp).toHaveAttribute('title', stamp.textContent as string);
+  });
+
   it('reads "All" for a plan that narrowed to no product list', () => {
     renderList([run({ product_count: null })]);
     expect(screen.getByText('All')).toBeInTheDocument();

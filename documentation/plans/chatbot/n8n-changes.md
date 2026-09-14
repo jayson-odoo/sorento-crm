@@ -1392,6 +1392,6 @@ is one label move either way.
   would silently plan everything. Backlogged.
 - **A PDF flavour** of the same report, and per-warehouse quantity columns on the All
   sheet. The workbook is what the client asked for.
-- **The plan-view export is unchanged.** The buyer's own "Low stock report (Excel)" item
+- **The plan-view export is unchanged.** The buyer's own "Low stock report Excel" item
   on the Actions menu goes through My Downloads, has no reveal key, and always includes
   the Supplier column - only the chat path narrows it.
