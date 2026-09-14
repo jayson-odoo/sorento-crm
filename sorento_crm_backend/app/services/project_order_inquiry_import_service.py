@@ -702,6 +702,12 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
     outstanding (AC-S1-12): the sheet is history, and a closed, fully received line is
     exactly what the rows being migrated are waiting on. What OTHER links already claim is
     subtracted by the caller.
+
+    A purchase order line's capacity has a second half, `_less_own_shipments` below: the
+    units of it that are already on a ship belong to that shipment, not to the line as well
+    (7.2). It is applied here rather than at the query because the shipments are only known
+    once `_chain_allocations` has run, and that read needs the document numbers this
+    function is what reads.
     """
     wanted = sorted(str(i) for i in target_ids if i)
     if not wanted:
@@ -922,6 +928,45 @@ def _chain_allocations(
     return held, by_line
 
 
+def _less_own_shipments(
+    facts: Dict[str, dict],
+    chain: Dict[tuple, List[str]],
+    chain_by_line: Dict[tuple, List[str]],
+) -> None:
+    """A purchase order line answers only for what has NOT sailed yet (7.2, owner 14 Sep).
+
+    A purchase order line and the shipping order it became are ONE supply. D10 links the
+    shipment first and the line "for the remainder", but the remainder was measured against
+    the line's whole `qty_ordered`, so the same units were owed twice: on the 3am prod copy
+    555 rows carried a link to a PO line AND to that line's own allocation, 23,187 units
+    counted twice (SO368872 / SRTWC286-SH is the owner's own case, 62 on PO 202510-S0078 and
+    62 on SPO-2026/04-0043, which IS that line shipped).
+
+    So the line's capacity drops by what its own allocations carry. The set deducted is
+    exactly the set `_through_po` walks before reaching the line - the allocations that quote
+    this line's `source_ref` in `from_po_line_ref`, or, when the feed named no line, the
+    document's own - so capacity and the walk cannot disagree, which is the whole point.
+    Floored at zero, and read off the facts already built for those allocations, so nothing
+    is queried again.
+
+    The owner still sees both documents: "we definitely cannot double count, but by this
+    linking it helps us to know the PO and SPO corresponding to this order inquiry". The
+    worklist's PO column names the source purchase order of a shipment it links (7.2, FE).
+    """
+    for fact in facts.values():
+        if fact["kind"] != _PO:
+            continue
+        document, product = str(fact["document"]), fact["product_id"]
+        shipped_ids = chain_by_line.get(
+            (document, str(fact.get("source_ref") or ""), product)
+        ) or chain.get((document, product), [])
+        shipped = sum(
+            (facts[str(i)]["capacity"] for i in shipped_ids if str(i) in facts), _ZERO
+        )
+        if shipped > _ZERO:
+            fact["capacity"] = max(fact["capacity"] - shipped, _ZERO)
+
+
 def _claimed_capacity(db: Session) -> Dict[str, Decimal]:
     """What every EXISTING link already claims, per target.
 
@@ -1038,6 +1083,10 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
     facts.update(
         {key: value for key, value in _target_facts(db, chained).items() if key not in facts}
     )
+    # Now that the shipments are known, a purchase order line answers only for the units
+    # that have not sailed (7.2). Before this, D10's "the line takes the remainder" measured
+    # the remainder against the line's whole size and counted the same goods twice.
+    _less_own_shipments(facts, chain, chain_by_line)
 
     used = _claimed_capacity(db)
 
