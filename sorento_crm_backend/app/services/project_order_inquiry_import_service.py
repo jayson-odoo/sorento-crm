@@ -327,6 +327,32 @@ def _cited_from(po_numbers: Sequence[str]) -> Tuple[str, ...]:
     return tuple(ordered)
 
 
+def _unambiguous_refs(db: Session, refs: set) -> set:
+    """Of these `sales_order_lines.source_ref` values, the ones that name exactly ONE line.
+
+    `source_ref` is not unique. The August extract wrote bare ordinals, so `'1'` sits on
+    3,364 lines across 3,364 different sales orders, and 25,771 lines on the prod copy share
+    a ref with another line. A ref that names 3,364 lines is not a statement about any of
+    them, whichever direction it is read in: it must neither pair a document to a line
+    (`_ref_targets`) nor tell the ranking that a cited document names one (`_named_lines`,
+    where it marked a cancelled August ghost as "named" and the row landed on the ghost -
+    reviewer finding B2, 15 Sep).
+
+    One query. Company scope applies, which is the right unit: the pairing it guards is
+    company-scoped too.
+    """
+    wanted = sorted({str(ref).strip() for ref in refs if str(ref or "").strip()})
+    if not wanted:
+        return set()
+    return {
+        str(ref)
+        for (ref,) in db.query(SalesOrderLine.source_ref)
+        .filter(SalesOrderLine.source_ref.in_(wanted))
+        .group_by(SalesOrderLine.source_ref)
+        .having(func.count(SalesOrderLine.id) == 1)
+    }
+
+
 def _named_lines(db: Session, numbers: set) -> Dict[str, set]:
     """Per cited document number, the `sales_order_lines.source_ref` values its purchase
     side names (`PLAN-scm-oi-sheet-pairing-repair.md` section 2.2, owner ruling R2).
@@ -341,7 +367,12 @@ def _named_lines(db: Session, numbers: set) -> Dict[str, set]:
     SO -> PO -> SPO chain read backwards, which is how the two feeds state it
     (`SPO-2026/01-0140 <- 202511-S0097 <- AED_SORENTO:41576559:41604391`).
 
-    Three queries for the whole file, computed once by `_plan`.
+    A ref that names more than one sales order line is dropped before the answer is
+    returned (`_unambiguous_refs`): an ordinal ref on a purchase order line would otherwise
+    mark thousands of unrelated lines, including cancelled August ghosts, as the line this
+    document names, and the ranking's first term would hand the row to one of them.
+
+    Four queries for the whole file, computed once by `_plan`.
     """
     if not numbers:
         return {}
@@ -384,18 +415,25 @@ def _named_lines(db: Session, numbers: set) -> Dict[str, set]:
         if po_number:
             spo_by_po.setdefault(str(po_number), set()).add(key)
 
-    for number, ref in _po_refs(list(spo_by_po)):
+    for number, ref in _po_refs(sorted(spo_by_po)):
         for spo_number in spo_by_po.get(str(number), ()):
             named.setdefault(spo_number, set()).add(str(ref))
-    return named
+
+    keep = _unambiguous_refs(db, {ref for refs in named.values() for ref in refs})
+    return {
+        number: refs & keep for number, refs in named.items() if refs & keep
+    }
 
 
-def _rank_for(row, named: Dict[str, set]) -> Callable[[tuple], tuple]:
+def _rank_for(row, named: Dict[str, set], cited: Sequence[str]) -> Callable[[tuple], tuple]:
     """The line this row means, when several fit (D1, AC-S1-8, amended by R2 on 14 Sep 2026).
 
-    The line the CITED document names, first of all: the remark is the operator saying which
+    The line the CITED documents name, first of all: the remark is the operator saying which
     delivery this is, and the document it names states the exact line on its own purchase
-    side. Then a real line before a cancelled one - 10,499 cancelled August-extract ghosts
+    side. `cited` is the instruction's WHOLE citation, merged across every tab that restates
+    it (`_plan`'s pre-pass, R3) - which tab carries the purchase order number is an accident
+    of how the book is kept, and a citation that only arrived on the second tab has to reach
+    the line pick of the first, not just its pairing (reviewer finding S1, 15 Sep). Then a real line before a cancelled one - 10,499 cancelled August-extract ghosts
     are still in the book, and a ghost is never what a live sheet row means while a real line
     fits. Then the three terms that were already here: the line whose required date IS the
     sheet's date, an open line before a closed one, the earliest required date (undated
@@ -410,15 +448,15 @@ def _rank_for(row, named: Dict[str, set]) -> Callable[[tuple], tuple]:
     preview and on the apply.
     """
     wanted = row.delivery_date
-    cited: set = set()
-    for number in _cited_from(row.po_numbers):
-        cited |= named.get(number, set())
+    named_refs: set = set()
+    for number in cited:
+        named_refs |= named.get(number, set())
 
     def key(candidate: tuple) -> tuple:
         line = candidate[0]
         ref = (line.source_ref or "").strip()
         return (
-            0 if (ref and ref in cited) else 1,
+            0 if (ref and ref in named_refs) else 1,
             0 if (line.line_status or "open") != "cancelled" else 1,
             0 if line.required_date == wanted else 1,
             0 if (line.line_status or "open") == "open" else 1,
@@ -437,6 +475,7 @@ def _match_row(
     taken: Dict[str, Decimal],
     already_raised: set,
     named: Dict[str, set],
+    cited: Sequence[str],
 ) -> Tuple[Optional[tuple], Optional[str]]:
     """The line for one sheet row, or the FIRST filter that refused it.
 
@@ -478,7 +517,7 @@ def _match_row(
     if not fits:
         return None, oc.QTY_EXCEEDS_ORDERED
 
-    found = sorted(fits, key=_rank_for(row, named))[0]
+    found = sorted(fits, key=_rank_for(row, named, cited))[0]
     if str(found[0].id) not in already_raised:
         taken[str(found[0].id)] = taken.get(str(found[0].id), _ZERO) + qty
     return found, None
@@ -546,30 +585,33 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     #: How much of each line this FILE has already spoken for, in file order.
     taken: Dict[str, Decimal] = {}
 
-    #: Every instruction this file has already stated, whichever tab stated it, against the
-    #: match that stated it first.
-    stated: Dict[tuple, _Match] = {}
+    #: Every document ANY tab names for one instruction, in the order the operator wrote
+    #: them, collected BEFORE a single row is matched (AC-R-12, reviewer finding S1). Merging
+    #: as the duplicate was reached came too late: the row that keeps the instruction is
+    #: matched when it is read, so a citation that only arrived on a later tab could pair the
+    #: row afterwards but never move it onto the line that citation names.
+    cited_by_key: Dict[tuple, Tuple[str, ...]] = {}
+    for row in parsed.rows:
+        merged = list(cited_by_key.get(_restates(row), ()))
+        for number in _cited_from(row.po_numbers):
+            if number not in merged:
+                merged.append(number)
+        cited_by_key[_restates(row)] = tuple(merged)
+
+    #: Every instruction this file has already stated, whichever tab stated it.
+    stated: set = set()
 
     for match in plan.matches:
         row = match.row
-        match.cited = _cited_from(row.po_numbers)
         key = _restates(row)
-        first = stated.get(key)
-        if first is not None:
+        match.cited = cited_by_key.get(key, ())
+        if key in stated:
             # Counted, never matched: a restatement must not take the line's quantity from
-            # the row it restates, or the second tab would read `qty_exceeds_ordered`.
+            # the row it restates, or the second tab would read `qty_exceeds_ordered`. Its
+            # citation is already on the row it restates, from the pre-pass above.
             match.duplicate = True
-            # Its citation is NOT discarded with it (AC-R-12). Which tab carries the
-            # purchase order number is an accident of how the customer keeps the book, so a
-            # roll-up row that names one lends it to the month row that left the remark
-            # blank, in the order the operator wrote them.
-            merged = list(first.cited)
-            for number in match.cited:
-                if number not in merged:
-                    merged.append(number)
-            first.cited = tuple(merged)
             continue
-        stated[key] = match
+        stated.add(key)
         if _dec(row.qty) <= _ZERO:
             # Never matched and never charged to the ledger (security review N2, 14 Sep):
             # a negative cell would otherwise hand capacity BACK to the line and let a later
@@ -584,7 +626,8 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
             match.code = oc.ORDER_NOT_PLANNABLE
             continue
         found, match.reason = _match_row(
-            row, lines.get(str(order.id)) or [], taken, raised_already, named
+            row, lines.get(str(order.id)) or [], taken, raised_already, named,
+            match.cited,
         )
         if found is not None:
             match.core_line, match.line_location = found[0], found[2] or None
@@ -698,15 +741,13 @@ def _ref_targets(
     a wrong or stale ref on a document for another item must not pull that document in.
 
     A ref that names MORE THAN ONE sales order line is dropped before either query runs
-    (security review, 14 Sep). `source_ref` is not unique: 25,771 lines on the prod copy share
-    one with another line, because the August extract wrote plain ordinals - `'1'` sits on
-    3,364 lines across 3,364 different sales orders - and a purchase document carrying `'1'`
-    in `from_so_line_ref` would otherwise pair itself to every one of them. Only a ref that
-    names exactly one line is a statement about that line.
+    (`_unambiguous_refs`, security review 14 Sep): a purchase document carrying the August
+    ordinal `'1'` in `from_so_line_ref` would otherwise pair itself to all 3,364 lines that
+    ordinal sits on.
 
-    Three queries for every raisable row of the file. Order is explicit on both sides -
-    shipping order then line number, purchase order line by age - so two runs of the same
-    sheet hand the quantity out the same way.
+    Three queries for the whole set of raisable rows, not per row. Order is explicit on both
+    sides - shipping order then line number, purchase order line by age - so two runs of the
+    same sheet hand the quantity out the same way.
     """
     refs = {(line.source_ref or "").strip() for line in core_lines}
     refs.discard("")
@@ -714,13 +755,7 @@ def _ref_targets(
     products.discard("")
     if not refs or not products:
         return {}, {}
-    refs = {
-        str(ref)
-        for (ref,) in db.query(SalesOrderLine.source_ref)
-        .filter(SalesOrderLine.source_ref.in_(sorted(refs)))
-        .group_by(SalesOrderLine.source_ref)
-        .having(func.count(SalesOrderLine.id) == 1)
-    }
+    refs = _unambiguous_refs(db, refs)
     if not refs:
         return {}, {}
     wanted, items = sorted(refs), sorted(products)

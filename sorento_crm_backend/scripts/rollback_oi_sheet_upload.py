@@ -41,6 +41,10 @@ re-upload rewrites them. Two consequences worth knowing before running it:
   the upload's rows were all it held), so the re-upload mints a NEW OI number for that sales
   order. The old number is not reused.
 
+A header that SURVIVES because another upload's rows are still on it has its `state`
+recomputed from what is left (`_refresh_inquiry_states`), which is the only header-level
+field derived from the rows.
+
 SAFETY / IDEMPOTENCY
 ---------------------
 `--dry-run` is the DEFAULT: without `--apply` the deletions are performed inside a SAVEPOINT
@@ -208,6 +212,18 @@ def _remove(db: Session, file_name: str, all_companies: bool) -> Dict[str, int]:
             .delete(synchronize_session=False)
         )
     db.flush()
+
+    # A header carries ONE derived field, `state`, and `_refresh_inquiry_states` computes it
+    # from the states of its rows: raised while anything on it still waits, actioned when
+    # nothing does. Pulling rows out in bulk changes that set without going through the
+    # writer, so a header that keeps ANOTHER file's rows would sit on a state its own rows no
+    # longer support (an upload's rows are born raised or actioned by `_close_history`, so
+    # the two mix on one header routinely). Recomputed for every header this pass touched;
+    # the ones it deleted are skipped by that reader's own missing-header check.
+    if inquiry_ids:
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        ProjectOrderInquiryService(db)._refresh_inquiry_states(set(inquiry_ids))
     return counts
 
 

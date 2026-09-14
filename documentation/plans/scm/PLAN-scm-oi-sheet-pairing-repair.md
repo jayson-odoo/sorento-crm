@@ -72,11 +72,16 @@ no new endpoint, no migration, no frontend change. Result contract (17 keys) unc
 
 `_restates(row)` returns `(so_number, item_code, qty, delivery_date, location)`. The
 remark, `po_numbers` and `order_back` leave the key (an ORDER BACK row has no delivery
-date, so the date already tells it from a dated row). When `_plan` finds a duplicate it
-extends the FIRST match's `cited` with any document numbers the restatement names that the
-first did not (`_cited_from` order preserved), so a roll-up tab that carries the remark the
-month tab left blank still lends its citation. The duplicate is still reported
-`RESTATES_AN_INSTALMENT`, unchanged.
+date, so the date already tells it from a dated row).
+
+The citations of every tab that states one instruction are merged in a PRE-PASS over
+`parsed.rows`, before any row is matched: `cited_by_key: Dict[key, Tuple[str, ...]]`, file
+order preserved, and each match takes its whole citation from it. Merging at the duplicate
+branch (the first shape of this plan) was too late - the row that KEEPS the instruction is
+matched the moment it is read, so a citation arriving on a later tab could pair that row
+afterwards but never move it onto the line the citation names (reviewer finding S1, 15 Sep:
+blank remark on the earlier tab, row landed on line 1 and linked to line 2's purchase
+order). The duplicate is still reported `RESTATES_AN_INSTALMENT`, unchanged.
 
 ### 2.2 Line pick (R2)
 
@@ -88,9 +93,18 @@ across the file, the set of `sales_order_lines.source_ref` values its purchase s
   the `from_so_line_ref` of the PO lines of every distinct `from_po_number` those
   allocations carry (the chain read backwards, one extra query over PO numbers).
 
-Two queries for the whole file (`_named_lines(db, numbers) -> Dict[str, set[str]]`).
+Four queries for the whole file (`_named_lines(db, numbers) -> Dict[str, set[str]]`): the
+cited purchase orders, the cited shipping orders, the purchase orders those shipping orders
+came from, and the ambiguity guard below.
 
-`_rank_for(row, named)` key becomes:
+**A ref that names more than one sales order line names nothing** (`_unambiguous_refs`, one
+`GROUP BY ... HAVING count(*) = 1` over the refs in hand, shared with `_ref_targets`).
+`sales_order_lines.source_ref` is not unique: the August extract wrote bare ordinals, `'1'`
+sits on 3,364 lines across 3,364 orders, and 25,771 lines share a ref. Without the guard a
+purchase order line carrying `'1'` marked a cancelled August ghost as "named", and rank term
+1 beat cancelled-last, so the row landed on the ghost (reviewer finding B2, 15 Sep).
+
+`_rank_for(row, named, cited)` key becomes:
 
 1. `0` if `line.source_ref` is in the union of `named[n]` for the row's cited numbers, else `1`;
 2. `0` if `line.line_status != "cancelled"`, else `1` (ghost last, never excluded: a lone
@@ -98,16 +112,19 @@ Two queries for the whole file (`_named_lines(db, numbers) -> Dict[str, set[str]
 3. the existing three: required date equals the sheet date, earliest required date (undated
    last), oldest `created_at`.
 
-The "open before closed" term stays where it was (between 2 and 3). `_match_row` signature
-gains `named: Dict[str, set]` (the row's cited numbers are on the row).
+The "open before closed" term stays where it was (between 2 and 3), and the line's own
+`id` has the last word so nothing is left to the read order. `_match_row` gains
+`named: Dict[str, set]` and `cited: Sequence[str]`, the merged citation from 2.1's
+pre-pass.
 
 ### 2.3 Pairing (R1)
 
 `_pair` source order per raisable row, `need = row.qty`, capacity rule and `take()`
 unchanged:
 
-**Source 1, the ref.** `_ref_targets(db, core_lines)`: two queries over the set of core
-line `source_ref` values (skip lines whose `source_ref` is NULL or empty):
+**Source 1, the ref.** `_ref_targets(db, core_lines)`: three queries over the set of core
+line `source_ref` values (skip lines whose `source_ref` is NULL or empty, and drop every ref
+`_unambiguous_refs` says names more than one line):
 
 * `spo_allocations` where `from_so_line_ref IN refs` and `product_id = line.product_id`,
   visible (`spo_supply.visible_line_clauses()`), ordered `spo_number, spo_line_number, id`;
@@ -140,32 +157,88 @@ by source 1 is skipped by `seen`.
 
 **Source 3, the sheet's citation.** Unchanged, `from_book=False`.
 
-`_target_facts` gains nothing: ref targets are fetched with their facts in the same query
-shape it already uses (reuse it: collect ids from source 1, feed `_target_facts`).
+`_target_facts` is reused as it stands for the ref targets (collect the ids from source 1,
+feed them in) and gains ONE field: `source_ref`, the target's own document key. That is what
+`_chain_allocations`'s finer key is looked up by, and there was nowhere else to read it from
+once a target is a fact dict rather than a row.
 
 ### 2.4 Rollback of a wrong upload [script]
 
-`scripts/rollback_oi_sheet_upload.py --file-name "<name as stamped>" [--apply]`, dry-run
-by default. For rows whose `order_inquiry_rows.note` starts with
-`"Migrated from order inquiry sheet <file-name>"` (the `_MIGRATION_STAMP` prefix, exact
-string match on the prefix, company-agnostic):
+`scripts/rollback_oi_sheet_upload.py --file-name "<name as stamped>" [--apply]
+[--all-companies]`, dry-run by default, `run(db, file_name, apply, all_companies)` under it.
+A row belongs to the upload when its `note` is exactly
+`"Migrated from order inquiry sheet <file-name>"` or that string followed by `";"` - the two
+shapes `_note_for` writes. A bare prefix match is NOT enough: `--file-name "JAN"` would take
+`JAN - DEC 2026 ORDER.xlsx`, which is the owner's own file (security review, 15 Sep). A blank
+or whitespace-only name is REFUSED (`ValueError`, and before the session opens in the CLI):
+it strips back to the bare stamp, which every migrated row ever raised begins with.
 
-1. delete their `order_inquiry_links`, and every `scm.order_link_claim` a deleted link's
-   `claim_id` names (source `order_inquiry`, the link's own audit claim);
-2. delete the rows;
-3. delete `order_inquiries` headers left with zero rows (same rule
-   `scripts/delete_empty_order_inquiries.py` applies; reuse its predicate if importable,
-   else restate it in one query).
+1. free each link's `scm.order_link_claim` through
+   `order_link_service.free_claim_if_orphaned` - the guard an Untag already uses: source must
+   be `order_inquiry`, and no link outside this pass may still lean on it. A bulk delete by
+   `claim_id` was wrong, because `claim_placed_on_po` is fill-never-repoint and returns
+   whatever claim already sat at `(company, so_number, po_number, item_code)` - often another
+   feed's `autocount` or August `po_history` row (4 of 28 existing links on the prod copy),
+   and one claim is shared by up to five links. The FK is `ON DELETE SET NULL`, so the wrong
+   deletion would have been silent. The count reports what actually went;
+2. delete their `order_inquiry_links`;
+3. delete the rows;
+4. delete `order_inquiries` headers left with zero rows (same rule
+   `scripts/delete_empty_order_inquiries.py` applies, its predicates imported), and recompute
+   `state` on every header this pass touched that survives
+   (`ProjectOrderInquiryService._refresh_inquiry_states`) - `state` is the one header-level
+   field derived from the rows.
+
+The per-company breakdown of the selected rows is printed before anything is deleted, and a
+selection spanning more than one company is refused unless `--all-companies` is passed: the
+script runs under the system scope (`None`), which is what finds the stamp at all and equally
+what would let one company's operator remove another's rows unseen.
 
 Header stamps (`demand_origin`, project label) and planning mirrors stay: harmless, and the
-rerun rewrites them. Prints counts per step; `--apply` commits, otherwise rolls back. This
-is what the owner runs on prod (per the prod one-off-script recipe) before re-uploading.
+rerun rewrites them. Two things a rollback does NOT put back:
+`order_inquiry_rows.bundled_with_row_id` on a surviving row (`ON DELETE SET NULL`, nothing
+re-derives it), and an emptied header's OI number - the header is deleted even if it pre-dated
+the upload, so the re-upload mints a new one. A dry run performs the same deletions inside a
+SAVEPOINT and rolls back to it, so its counts cannot differ from `--apply`'s; `run` itself
+neither commits nor rolls back the caller's transaction. This is what the owner runs on prod
+(per the prod one-off-script recipe) before re-uploading.
 
 ### 2.5 Nothing else
 
-Not touched: `order_link_service` (the claim table stays as it is; its poisoning is a
-separate cleanup, not this lane), the reader, the worklist readers, the route, the drawer,
-the ingest.
+Not touched: the claim TABLE and its contents (the August poisoning is a separate cleanup,
+not this lane), the reader, the worklist readers, the route, the drawer, the ingest.
+
+`order_link_service` IS touched, in two small places, and neither changes what it is for:
+
+* `_purchase_side`'s purchase order branch gained `ORDER BY po_number, product_code,
+  created_at, id`, and both of its maps are now first-wins (the OLDEST line of that document
+  for that item) where `by_key` used to be a dict comprehension over an unordered read and so
+  took whichever line came last. Same rule the shipping order branch already states with its
+  line number. See 2.6;
+* `free_claim_if_orphaned` is called by the rollback script (2.4). The function itself is
+  unchanged.
+
+### 2.6 Determinism (`preview` and `apply` must agree)
+
+`_plan` + `_pair` run twice for one upload: once for the drawer's preview, once inside
+`apply`. Three replays of the same file against the same database gave `links_written`
+5,727 / 5,724 / 5,723, so an unordered read was deciding ties and the screen was promising
+numbers Confirm would not keep. Every read on this path is now ordered or provably
+order-insensitive:
+
+* `_lines_of` - `ORDER BY sales_order_id, created_at, id`, and `_rank_for` ends on the line's
+  own `id`. A whole AutoCount ingest shares one `created_at` (Postgres freezes `now()` per
+  transaction), so the rank ran out of tiebreaks and the read order picked the line;
+* `order_link_service._purchase_side` - ordered, first-wins on both maps (2.5);
+* `_orders_by_number` - ordered, first-wins, for the case where one number is held twice;
+* `_ref_targets`, `_chain_allocations` - already ordered, `id` last;
+* order-insensitive by construction, and left alone: `_named_lines` and `_unambiguous_refs`
+  (sets), `_target_facts` and `ProjectOrderInquiryService._linked_by_target` (dicts keyed by
+  id, `GROUP BY` sums), `_claim_rows` feeding `_claim_order` (key ends in the claim id);
+* the `IN` lists built out of sets are sorted, so the SQL text itself repeats.
+
+Measured after: three replays identical, and `preview` then `apply` in one session agree take
+for take, all 6,721 of them.
 
 ## 3. Slices
 
@@ -185,9 +258,11 @@ One coder, one branch, one PR. Tester writes the red tests for both slices first
 * Replay against `sorento_ai_automation_0913` with the owner's file (captain's
   `replay.py`): SO347594 / CB2154-DIY raises ONE row, on line `...41604391`, linked
   SPO-2026/01-0140 line 255 (`34e03b40`) for 87 of 87, `from_book` true, need left 0. The
-  second sheet row for that pair is reported as a restatement. **Measured 14 Sep after the
-  repair**: 15,797 rows, 8,270 raised, 5,727 rows linked (5,462 "from book"), 336 partial,
-  854 no line - against the shipped code's 15,797 / 10,315 / 2,536 / 1,343 / 607 / 1,949.
+  second sheet row for that pair is reported as a restatement. **Measured 15 Sep, after the
+  repair and both review rounds**: 15,797 rows, 8,269 raised, 5,740 rows linked (5,487 "from
+  book"), 333 partial, 855 no line - against the shipped code's 15,797 / 10,315 / 2,536 /
+  1,343 / 607 / 1,949. Three replays agree exactly, and `preview` then `apply` in one session
+  agree take for take (6,744 takes).
   Fewer rows raised because the restatement key is looser (R3 drops the remark), and more
   than twice as many linked because the reference pairs what no claim states.
 * No frontend change, so no browser pass; the drawer's preview keys are unchanged.
@@ -198,3 +273,39 @@ One coder, one branch, one PR. Tester writes the red tests for both slices first
    is the upload's file name as the drawer sent it).
 2. Re-upload `JAN - DEC 2026 ORDERabc.xlsx`.
 3. Spot-check SO347594 / CB2154-DIY on Order Inquiries: one row, 87 of 87 on SPO-2026/01-0140.
+
+## 6. Slice S3, the worklist shows the PO and the SPO as two columns [FE] (owner, 14 Sep, live look at prod after the upload)
+
+Owner: "1 column to show the linked PO and 1 column to show the linked SPO (if linked to
+more than 1 then put as +1 pill), I want all rows to have 1 line only, then I can click on
+the PO and SPO to view the lightbox popup which is what we currently have."
+
+Measured: `OrderInquiryWorklistRow.links[]` already carries `kind` (`po` / `spo`),
+`document`, `source_po_number`, `location`, `qty`, `expected_date`, and the lightbox
+(`OrderInquiryBackingDocumentsDialog`) reads only the row. No backend change.
+
+`app/(protected)/project-sales/order-inquiries/components/orderInquiryWorklistColumns.tsx`:
+
+* Column `po_number` keeps its id (saved layouts key on it) and becomes header **PO**,
+  `size` 150. Cell, one line: `DraftMark`, then the FIRST distinct PO document number
+  among `links` with `kind === 'po'` as a link-styled button that opens the row's
+  `OrderInquiryBackingDocumentsDialog` (same `backing-documents-trigger-<row.id>` test
+  id the info icon carried, so the lightbox contract AC-A5 holds), then, when there are
+  two or more distinct PO numbers, a `Badge` pill `+N` (N = distinct numbers minus one)
+  that opens the same dialog. `accessorFn` = that first PO number or `''`.
+* New column `spo_number`, header **SPO**, `size` 160, right after PO. Same shape over
+  `kind === 'spo'`, trigger test id `backing-documents-trigger-spo-<row.id>`.
+* A row with no links at all: PO cell reads `Not found (new order)` (AC-A7 wording kept),
+  SPO cell a muted dash. A row with links of one kind only: the other cell a muted dash.
+* Bundled rows (PLAN-scm-supplied-with-companions S5): the PO cell keeps today's bundled
+  headline and `BundledDocumentsButton` path unchanged; the SPO cell a muted dash.
+* The coverage headline (`87 of 87`) leaves the cells; it is already the lightbox's
+  subtitle. The info icon leaves the cells; the number is the trigger. `long text uses
+  truncate + title` rule applies to the number.
+* `Taken by PO/SPO` (`taken_from_po`) is untouched.
+
+Tests: vitest in `orderInquiryWorklistColumns.test.tsx` (AC-R-26..31 below); the 8 Sep
+slice A tests AC-A4 / AC-A6 that assert "no document number in the cell" are rewritten
+to the new ruling, AC-A5 / AC-A7 / D1-D3 / D10 stay as they are. Browser verification on
+the lane's dev server via the sidebar (Procurement > Supply Chain > Order Inquiries) at
+1280px and 375px.
