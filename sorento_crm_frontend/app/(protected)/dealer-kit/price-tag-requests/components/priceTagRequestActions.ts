@@ -27,6 +27,14 @@ const CLOSED = new Set(['void', 'rejected']);
 export function priceTagActions(
   status: string | null | undefined,
   assignedToId: string | null | undefined,
+  /**
+   * How many of the salesperson's pinned change requests are still open (r9
+   * D6). The count rides on the `Mark design ready` label so marketing sees it
+   * without opening anything; it never BLOCKS the transition (D2) - somebody
+   * who has decided a comment does not apply must still be able to send the
+   * design back.
+   */
+  openChangeRequests = 0,
 ): PriceTagActionSpec[] {
   const current = (status ?? '').trim().toLowerCase();
   const actions: PriceTagActionSpec[] = [];
@@ -48,7 +56,13 @@ export function priceTagActions(
   }
 
   if (current === 'designing' || current === 'changes_requested') {
-    actions.push({ action: 'mark_proof_ready', label: 'Mark design ready' });
+    actions.push({
+      action: 'mark_proof_ready',
+      label:
+        openChangeRequests > 0
+          ? `Mark design ready (${openChangeRequests} open)`
+          : 'Mark design ready',
+    });
   }
 
   if (current === 'approved' || current === 'ready') {

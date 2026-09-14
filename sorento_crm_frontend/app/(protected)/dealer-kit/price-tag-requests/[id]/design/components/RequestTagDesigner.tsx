@@ -44,6 +44,7 @@ import {
   Copy,
   LayoutTemplate,
   Loader2,
+  MessageSquare,
   Eye,
   Maximize2,
   Minimize2,
@@ -103,6 +104,12 @@ import {
   type PriceTagRequestDetail,
   type PriceTagRequestLine,
 } from '../../../../services/priceTagRequestService';
+import { listReviewComments } from '../../../../services/priceTagReviewService';
+import {
+  canvasPinsForLine,
+  openCountByLine,
+  type ReviewComment,
+} from '@/lib/dealer-kit/review-comments';
 import {
   listPublishedTemplates,
   publishTemplate,
@@ -208,6 +215,11 @@ export function RequestTagDesigner({
    */
   const bulkUndoRef = useRef<Record<string, PlacedTag> | null>(null);
 
+  // The salesperson's pinned change requests (r9 S2/D6). Fetched once: they
+  // only change when a round is sent, which happens on the portal.
+  const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
+  /** The `Comments` toolbar toggle. Armed by the first open pin (D6). */
+  const [commentsVisible, setCommentsVisible] = useState(true);
   const [saving, setSaving] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [printing, setPrinting] = useState(false);
@@ -262,6 +274,20 @@ export function RequestTagDesigner({
   useEffect(() => {
     loadPrices();
   }, [loadPrices]);
+
+  // The change requests the salesperson pinned on the last proof (r9 S2/D6).
+  // A failure leaves the canvas without markers rather than without a canvas.
+  useEffect(() => {
+    let cancelled = false;
+    listReviewComments(request.id)
+      .then((rows) => {
+        if (!cancelled) setReviewComments(rows);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [request.id]);
 
   // Re-resolve line data when the designer regains focus (S2, AC-S2-1/2/3): a
   // barcode (or any other field) edited on the product in another tab must
@@ -920,6 +946,24 @@ export function RequestTagDesigner({
     ],
   );
 
+  // -- Change requests (r9 S2/D6) ---------------------------------------------
+
+  /** Open pins per line: the LINES rail badge, and the CTA's own count. */
+  const openPinsByLine = useMemo(
+    () => openCountByLine(reviewComments),
+    [reviewComments],
+  );
+  const openPinCount = useMemo(
+    () => [...openPinsByLine.values()].reduce((sum, count) => sum + count, 0),
+    [openPinsByLine],
+  );
+  /** What the canvas draws: this line's pins, or nothing while toggled off. */
+  const canvasPins = useMemo(
+    () =>
+      commentsVisible ? canvasPinsForLine(reviewComments, selectedLineId) : [],
+    [commentsVisible, reviewComments, selectedLineId],
+  );
+
   // -- Render ----------------------------------------------------------------
 
   // The canvas toolbar's own right-end group (S7): Full screen, the
@@ -929,6 +973,21 @@ export function RequestTagDesigner({
   // below, since ArrangeSheetView has no canvas toolbar of its own to
   // move them into (AC-S7-5 holds for free the same way).
   const toolbarTrailing: ToolbarTrailingAction[] = [
+    // Only when there is something to show: an empty toggle is a control that
+    // does nothing on most requests.
+    ...(reviewComments.length > 0
+      ? [
+          {
+            id: 'comments',
+            icon: MessageSquare,
+            label: commentsVisible
+              ? `Hide change requests (${openPinCount} open)`
+              : `Show change requests (${openPinCount} open)`,
+            onClick: () => setCommentsVisible((visible) => !visible),
+            active: commentsVisible,
+          } satisfies ToolbarTrailingAction,
+        ]
+      : []),
     {
       id: 'full-screen',
       icon: focus ? Minimize2 : Maximize2,
@@ -972,6 +1031,7 @@ export function RequestTagDesigner({
         resolved={resolved}
         pricesStatus={pricesStatus}
         tags={tags}
+        openPinsByLine={openPinsByLine}
         selectedLineId={selectedLineId}
         onSelect={handleSelectLine}
         onUseTemplate={setPickerLineId}
@@ -1139,6 +1199,7 @@ export function RequestTagDesigner({
               hideSaveBar
               docId={selectedTag.id}
               toolbarTrailing={toolbarTrailing}
+              reviewPins={canvasPins}
             />
           ) : (
             <CanvasMessage text="Preparing this line..." />
@@ -1238,6 +1299,7 @@ function LinesRail({
   resolved,
   pricesStatus,
   tags,
+  openPinsByLine,
   selectedLineId,
   onSelect,
   onUseTemplate,
@@ -1248,6 +1310,8 @@ function LinesRail({
   resolved: Map<string, LineTagData>;
   pricesStatus: 'loading' | 'loaded' | 'error';
   tags: Record<string, PlacedTag>;
+  /** Line id -> open change requests, for the badge (r9 S2/D6). */
+  openPinsByLine: Map<string, number>;
   selectedLineId: string | null;
   onSelect: (lineId: string) => void;
   onUseTemplate: (lineId: string) => void;
@@ -1293,6 +1357,7 @@ function LinesRail({
               const showName =
                 name !== '' && name.trim().toLowerCase() !== code.trim().toLowerCase();
               const designed = Boolean(tags[line.id]);
+              const openPins = openPinsByLine.get(line.id) ?? 0;
               const family = familyLabel(lineFamily(line, code));
               return (
                 <div
@@ -1322,6 +1387,14 @@ function LinesRail({
                       </span>
                       {designed && (
                         <Check className="size-3 shrink-0 text-emerald-600" />
+                      )}
+                      {openPins > 0 && (
+                        <span
+                          className="ml-auto flex size-4 shrink-0 items-center justify-center rounded-full bg-orange-500 text-2xs font-semibold text-white"
+                          title={`${openPins} open change request${openPins === 1 ? '' : 's'}`}
+                        >
+                          {openPins}
+                        </span>
                       )}
                     </div>
                     {notFound ? (

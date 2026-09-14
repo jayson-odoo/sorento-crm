@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import ScaledSheet, { sheetPixelSize } from './ScaledSheet';
 import DesignLightbox, { type DesignDownload } from './DesignLightbox';
+import type { DesignReview } from './DesignPinLayer';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 
 interface DesignViewerProps {
@@ -35,6 +36,14 @@ interface DesignViewerProps {
   download?: DesignDownload;
   /** Actions that belong to the design itself, right of the title. */
   headerActions?: ReactNode;
+  /** Pinned change requests, drawn over the sheet here and in the lightbox. */
+  review?: DesignReview;
+  /**
+   * The change-request rail: the pins placed so far, a general note and Send
+   * (D5). Rendered under the sheet in the card AND in the lightbox, so a
+   * reader who zoomed in to place a pin can send from where they are.
+   */
+  footer?: ReactNode;
 }
 
 export default function DesignViewer({
@@ -46,6 +55,8 @@ export default function DesignViewer({
   emptyHint,
   download,
   headerActions,
+  review,
+  footer,
 }: DesignViewerProps) {
   const [sheetIndex, setSheetIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -110,6 +121,7 @@ export default function DesignViewer({
             payload={payload}
             sheetIndex={sheetIndex}
             scale={fitScale}
+            review={review}
           />
         )}
       </div>
@@ -160,7 +172,10 @@ export default function DesignViewer({
             </div>
           </div>
         </CardHeader>
-        <CardContent className="px-4 pb-4">{body()}</CardContent>
+        <CardContent className="px-4 pb-4">
+          {body()}
+          {footer}
+        </CardContent>
       </Card>
 
       {payload && (
@@ -171,6 +186,8 @@ export default function DesignViewer({
           payload={payload}
           initialSheetIndex={sheetIndex}
           download={download}
+          review={review}
+          footer={footer}
         />
       )}
     </>

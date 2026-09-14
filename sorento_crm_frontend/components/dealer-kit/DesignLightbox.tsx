@@ -18,6 +18,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react';
 import { ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
 
@@ -30,6 +31,7 @@ import {
   type PreviewZoomPreset,
 } from '@/components/common/PreviewModalChrome';
 import ScaledSheet, { sheetPixelSize } from './ScaledSheet';
+import type { DesignReview } from './DesignPinLayer';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 
 /** What the % menu offers beside Fit. */
@@ -51,6 +53,10 @@ interface DesignLightboxProps {
   /** Which sheet the card was showing when Open was pressed. */
   initialSheetIndex?: number;
   download?: DesignDownload;
+  /** Pinned change requests: placed and read at full size, same as the card. */
+  review?: DesignReview;
+  /** The change-request rail, under the sheet (D5). */
+  footer?: ReactNode;
 }
 
 function clampScale(value: number): number {
@@ -64,6 +70,8 @@ export default function DesignLightbox({
   payload,
   initialSheetIndex = 0,
   download,
+  review,
+  footer,
 }: DesignLightboxProps) {
   const sheetCount = payload.doc?.sheets.length ?? 0;
   const [sheetIndex, setSheetIndex] = useState(initialSheetIndex);
@@ -332,9 +340,15 @@ export default function DesignLightbox({
               payload={payload}
               sheetIndex={sheetIndex}
               scale={scale}
+              review={review}
             />
           </div>
         </div>
+        {footer && (
+          <div className="max-h-[28dvh] overflow-y-auto border-t px-4 py-3">
+            {footer}
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

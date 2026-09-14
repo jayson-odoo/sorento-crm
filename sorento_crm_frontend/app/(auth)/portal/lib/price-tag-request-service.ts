@@ -7,6 +7,12 @@
 
 import { extractApiError } from '@/lib/api-client';
 import {
+  mockCreateReviewComments,
+  mockListReviewComments,
+  type ChangeRequestPayload,
+  type ReviewComment,
+} from '@/lib/dealer-kit/review-comments';
+import {
   fetchPortalAttachmentBytes,
   portalFetch,
   unwrap,
@@ -430,19 +436,46 @@ export async function approveRequest(id: string): Promise<{ status: string }> {
   return unwrap<{ status: string }>(res, 'Failed to approve request');
 }
 
+/**
+ * Send the round's change requests (r9 S2/D5).
+ *
+ * ```
+ * POST /api/v1/public/portal/submissions/price_tag_request/{id}/request-changes
+ *   { comments: [{ line_id, x, y, w, h, body }], note? }
+ *   200 { status: "changes_requested", round, comments: ReviewComment[] }
+ * ```
+ *
+ * One call for the whole round: the pins are placed locally and nothing reaches
+ * the server until Send, so a salesperson can put five pins down, delete two,
+ * and the request changes state exactly once. The old text-only `{ note }` body
+ * stays accepted server-side for one release and lands as a general comment.
+ *
+ * Contract and the row shape: `lib/dealer-kit/review-comments.ts`.
+ *
+ * PHASE 1: answered by the in-memory store, so a Send on a shared dev database
+ * does not really transition the request. Swap the body for the `portalFetch`
+ * call above in Phase 2; the caller does not change.
+ */
 export async function requestChanges(
   id: string,
-  note: string,
-): Promise<{ status: string }> {
-  const res = await portalFetch(
-    `${BASE}/${encodeURIComponent(id)}/request-changes`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note }),
-    },
-  );
-  return unwrap<{ status: string }>(res, 'Failed to request changes');
+  payload: ChangeRequestPayload,
+): Promise<{ status: string; comments: ReviewComment[] }> {
+  const comments = mockCreateReviewComments(id, payload, 'You');
+  return { status: 'changes_requested', comments };
+}
+
+/**
+ * Every change request sent on this design, all rounds (D6).
+ *
+ * ```
+ * GET /api/v1/public/portal/submissions/price_tag_request/{id}/review-comments
+ *   200 ReviewComment[]
+ * ```
+ *
+ * PHASE 1: the in-memory store, same as `requestChanges`.
+ */
+export async function listReviewComments(id: string): Promise<ReviewComment[]> {
+  return mockListReviewComments(id);
 }
 
 // ---------------------------------------------------------------------------

@@ -210,6 +210,7 @@ import {
   Image as KonvaImage,
 } from 'react-konva';
 import { KonvaTagLayer } from './KonvaTagLayer';
+import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 import { useHtmlImage } from './useHtmlImage';
 import {
   CROP_HANDLE_ANCHORS,
@@ -416,6 +417,16 @@ interface TagCanvasEditorProps {
    * `CanvasToolbar`'s own `trailing` slot. Absent renders no trailing group.
    */
   toolbarTrailing?: ToolbarTrailingAction[];
+  /**
+   * The salesperson's pinned change requests on THIS tag (r9 S2/D6), already
+   * numbered. Drawn over the artboard at their own fractions; clicking one
+   * opens its comment and selects no layer, which is why they are a DOM
+   * overlay in the same coordinate space as the inline text editor rather
+   * than Konva nodes inside the stage's own hit testing.
+   *
+   * The host owns the `Comments` toggle: hidden means an empty list.
+   */
+  reviewPins?: CanvasReviewPin[];
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -459,8 +470,11 @@ export function TagCanvasEditor({
   hideSaveBar,
   docId,
   toolbarTrailing,
+  reviewPins,
 }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
+  /** Which change-request marker has its comment open (r9 S2/D6). */
+  const [openPinId, setOpenPinId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   /** The text layer the inline editor (S2, D5) is currently open on, if any. */
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
@@ -4016,6 +4030,85 @@ export function TagCanvasEditor({
                   )}
                 </>
               )}
+
+              {/* The salesperson's pinned change requests (r9 S2/D6), in the
+                  SAME coordinate space as the inline editor below: the
+                  artboard IS this line's tag, so a comment's fractions land
+                  on the part of the tag it was pinned to at any zoom or pan.
+                  A DOM overlay rather than Konva nodes, so a click can open
+                  the comment without ever reaching the stage's selection. */}
+              {(reviewPins ?? []).map((pin) => {
+                const left = RULER_THICKNESS + view.panX + pin.x * canvasWidthPx;
+                const top = RULER_THICKNESS + view.panY + pin.y * canvasHeightPx;
+                return (
+                  <div key={pin.id}>
+                    {pin.w > 0 && pin.h > 0 && (
+                      <div
+                        className={cn(
+                          'pointer-events-none absolute z-20 rounded-sm border-2',
+                          pin.resolved
+                            ? 'border-muted-foreground/40 bg-muted-foreground/10'
+                            : 'border-primary bg-primary/10',
+                        )}
+                        style={{
+                          left,
+                          top,
+                          width: pin.w * canvasWidthPx,
+                          height: pin.h * canvasHeightPx,
+                        }}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      data-testid={`canvas-pin-${pin.id}`}
+                      aria-label={`Change request ${pin.number}`}
+                      className={cn(
+                        'absolute z-20 flex size-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-background text-2xs font-semibold text-white shadow',
+                        pin.resolved ? 'bg-muted-foreground/60' : 'bg-primary',
+                      )}
+                      style={{ left, top }}
+                      onMouseDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenPinId((current) =>
+                          current === pin.id ? null : pin.id,
+                        );
+                      }}
+                    >
+                      {pin.number}
+                    </button>
+                    {openPinId === pin.id && (
+                      <div
+                        // A comment bubble, not a static box: the role is what
+                        // lets it carry the mousedown guard that keeps a click
+                        // inside it away from the canvas's own selection.
+                        role="note"
+                        className="absolute z-30 w-56 rounded-lg border bg-popover p-2 text-xs shadow-md"
+                        style={{ left: Math.max(RULER_THICKNESS, left - 112), top: top + 14 }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+                            {pin.caption}
+                          </span>
+                          <button
+                            type="button"
+                            aria-label="Close comment"
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenPinId(null);
+                            }}
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap">{pin.body}</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
 
               {/* Inline text edit (S2, D5): a plain textarea laid over the
                   node, same maths `KonvaTagLayer` uses for the node itself.

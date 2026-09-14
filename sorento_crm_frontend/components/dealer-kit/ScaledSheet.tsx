@@ -16,6 +16,7 @@ import TagSheetRenderer from '@/app/(public)/c/print/tag-sheet/[downloadId]/comp
 import { ensureFontsLoaded, ensureSeedFontsLoaded } from '@/lib/dealer-kit/fonts';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
+import DesignPinLayer, { type DesignReview } from './DesignPinLayer';
 
 /**
  * CSS `mm` resolves to 96px/inch by spec regardless of the screen's actual DPI
@@ -41,12 +42,15 @@ interface ScaledSheetProps {
   /** Which sheet of the document to draw. */
   sheetIndex: number;
   scale: number;
+  /** Pinned change requests over the sheet (r9 S2). Absent = none, no placing. */
+  review?: DesignReview;
 }
 
 export default function ScaledSheet({
   payload,
   sheetIndex,
   scale,
+  review,
 }: ScaledSheetProps) {
   const { doc, assets, images, fonts, resolvedData } = payload;
 
@@ -81,6 +85,8 @@ export default function ScaledSheet({
         height: `${natural.height * scale}px`,
         // A tag bled past the sheet edge must not paint over the page.
         overflow: 'hidden',
+        // The pin layer is absolute against this box.
+        position: 'relative',
         // The sheet is white paper whatever the app's theme is.
         backgroundColor: '#ffffff',
         boxShadow: '0 1px 3px rgba(0, 0, 0, 0.16)',
@@ -101,6 +107,14 @@ export default function ScaledSheet({
           images={images}
         />
       </div>
+      {review && (
+        <DesignPinLayer
+          doc={doc}
+          sheetIndex={sheetIndex}
+          scale={scale}
+          {...review}
+        />
+      )}
     </div>
   );
 }

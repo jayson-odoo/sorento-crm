@@ -80,6 +80,10 @@ import {
 } from '../../services/priceTagRequestService';
 import RequestDesignSection from './RequestDesignSection';
 import {
+  openComments,
+  type ReviewComment,
+} from '@/lib/dealer-kit/review-comments';
+import {
   priceTagActions,
   type PriceTagAction,
   type PriceTagActionSpec,
@@ -116,6 +120,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   // without a second page of clicking (D25/AC-S10-2). Fetched once, off the
   // same tag-sheet doc the designer itself reads and writes.
   const [designedLineIds, setDesignedLineIds] = useState<Set<string>>(new Set());
+  // The salesperson's pinned change requests, held here because the record
+  // card's primary CTA counts the open ones (r9 D6) and the Design section is
+  // what fetches them.
+  const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -237,9 +245,30 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     [handleClaim, openDesigner, handleMarkProofReady, handleExport],
   );
 
+  /** Line id -> its code, so a pin's rail entry never shows an id. */
+  const lineLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const line of request?.lines ?? []) {
+      labels.set(line.id, line.code || line.name || 'Tag');
+    }
+    return labels;
+  }, [request?.lines]);
+
+  const openChangeRequests = useMemo(
+    () => openComments(reviewComments).length,
+    [reviewComments],
+  );
+
   const actions: PriceTagActionSpec[] = useMemo(
-    () => (request ? priceTagActions(request.status, request.assigned_to_id) : []),
-    [request],
+    () =>
+      request
+        ? priceTagActions(
+            request.status,
+            request.assigned_to_id,
+            openChangeRequests,
+          )
+        : [],
+    [request, openChangeRequests],
   );
   const primary = actions[0] ?? null;
   const secondary = actions.slice(1);
@@ -423,6 +452,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           <RequestDesignSection
             requestId={requestId}
             docNumber={request.doc_number}
+            lineLabels={lineLabels}
+            onCommentsChange={setReviewComments}
           />
 
           <Card>

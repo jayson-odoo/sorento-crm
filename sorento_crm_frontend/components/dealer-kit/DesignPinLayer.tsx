@@ -1,0 +1,428 @@
+'use client';
+
+/**
+ * Pins on the design (r9 S2/D5-D6).
+ *
+ * There is no "Request changes" mode to turn on: on a design that is waiting
+ * for the salesperson, a click on a tag IS the change request. The click drops
+ * a point pin, a drag draws a box, and either opens the comment box straight
+ * away; Escape or an empty comment throws it away again.
+ *
+ * The layer sits over the rendered sheet and reads the SAME geometry the sheet
+ * drew with, so a pin is anchored to a fraction of its tag rather than to a
+ * spot on the page - the whole reason re-arranging or zooming cannot move it
+ * off the thing it was pointing at.
+ */
+
+import { useCallback, useRef, useState } from 'react';
+import { Trash2, X } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
+import {
+  clampFraction,
+  numberedPins,
+  tagRectsForSheet,
+  type DraftPin,
+  type ReviewComment,
+} from '@/lib/dealer-kit/review-comments';
+import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+
+/** What a surface hands the layer. Absent = no pins, no placing. */
+export interface DesignReview {
+  /** Every comment sent so far, all rounds. */
+  comments: ReviewComment[];
+  /** Pins placed in this session and not sent yet. */
+  drafts: DraftPin[];
+  /** True while the design is waiting on this reader (portal, proof_ready). */
+  canPlace?: boolean;
+  onPlace?: (pin: Omit<DraftPin, 'key'>) => void;
+  onRemoveDraft?: (key: string) => void;
+}
+
+interface DesignPinLayerProps extends DesignReview {
+  doc: TagSheetDoc | null;
+  sheetIndex: number;
+  scale: number;
+}
+
+/** A drag under this many pixels is a click, and a click is a point pin. */
+const DRAG_THRESHOLD_PX = 4;
+
+interface Placing {
+  lineId: string;
+  /** Fractions of the tag box. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Where the pointer went down, in tag fractions, so a drag can go any way. */
+  originX: number;
+  originY: number;
+  /** The tag rect it started in, for drawing while the pointer is down. */
+  rect: { left: number; top: number; width: number; height: number };
+  /** True once the pointer is up and the comment box is open. */
+  editing: boolean;
+}
+
+export default function DesignPinLayer({
+  doc,
+  sheetIndex,
+  scale,
+  comments,
+  drafts,
+  canPlace = false,
+  onPlace,
+  onRemoveDraft,
+}: DesignPinLayerProps) {
+  const [placing, setPlacing] = useState<Placing | null>(null);
+  const [body, setBody] = useState('');
+  const [openMarker, setOpenMarker] = useState<string | null>(null);
+  const draggingRef = useRef<{ startX: number; startY: number } | null>(null);
+
+  const rects = tagRectsForSheet(doc, sheetIndex, scale);
+  const { commentNumbers, draftNumbers } = numberedPins(comments, drafts);
+
+  const discard = useCallback(() => {
+    setPlacing(null);
+    setBody('');
+    draggingRef.current = null;
+  }, []);
+
+  const commit = useCallback(() => {
+    const text = body.trim();
+    if (!placing || !text) {
+      discard();
+      return;
+    }
+    onPlace?.({
+      line_id: placing.lineId,
+      x: placing.x,
+      y: placing.y,
+      w: placing.w,
+      h: placing.h,
+      body: text,
+    });
+    discard();
+  }, [body, placing, onPlace, discard]);
+
+  const startPlacing = useCallback(
+    (rect: (typeof rects)[number], event: React.PointerEvent<HTMLDivElement>) => {
+      if (!canPlace) return;
+      // The lightbox pans on a drag; a drag that starts on a tag is drawing a
+      // box, not moving the page.
+      event.stopPropagation();
+      event.preventDefault();
+      const box = event.currentTarget.getBoundingClientRect();
+      const x = clampFraction((event.clientX - box.left) / box.width);
+      const y = clampFraction((event.clientY - box.top) / box.height);
+      draggingRef.current = { startX: event.clientX, startY: event.clientY };
+      setOpenMarker(null);
+      setBody('');
+      setPlacing({
+        lineId: rect.lineId,
+        x,
+        y,
+        w: 0,
+        h: 0,
+        originX: x,
+        originY: y,
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        editing: false,
+      });
+    },
+    [canPlace],
+  );
+
+  const movePlacing = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const from = draggingRef.current;
+      if (!from || !placing || placing.editing) return;
+      const box = event.currentTarget.getBoundingClientRect();
+      const x = clampFraction((event.clientX - box.left) / box.width);
+      const y = clampFraction((event.clientY - box.top) / box.height);
+      const travelled =
+        Math.abs(event.clientX - from.startX) + Math.abs(event.clientY - from.startY);
+      if (travelled < DRAG_THRESHOLD_PX) return;
+      setPlacing((current) =>
+        current
+          ? {
+              ...current,
+              // The pin sits at the box's corner (D5), so the anchor stays
+              // where the pointer went down and the box grows either way.
+              x: Math.min(current.originX, x),
+              y: Math.min(current.originY, y),
+              w: Math.abs(x - current.originX),
+              h: Math.abs(y - current.originY),
+            }
+          : current,
+      );
+    },
+    [placing],
+  );
+
+  const endPlacing = useCallback(() => {
+    draggingRef.current = null;
+    setPlacing((current) => (current ? { ...current, editing: true } : current));
+  }, []);
+
+  if (!doc) return null;
+
+  return (
+    // The container never eats a pointer event: only the tag hit areas and the
+    // markers do, so the lightbox can still pan and scroll everywhere else.
+    <div className="pointer-events-none absolute inset-0" data-testid="design-pin-layer">
+      {canPlace &&
+        rects.map((rect) => (
+          <div
+            key={`hit-${rect.tagId}`}
+            role="presentation"
+            data-testid={`pin-hit-${rect.lineId}`}
+            className="pointer-events-auto absolute cursor-crosshair"
+            style={{
+              left: rect.left,
+              top: rect.top,
+              width: rect.width,
+              height: rect.height,
+            }}
+            onPointerDown={(event) => startPlacing(rect, event)}
+            onPointerMove={movePlacing}
+            onPointerUp={endPlacing}
+          />
+        ))}
+
+      {/* Sent pins, on every copy of their line: one comment is about one
+          line's tag, and a sheet may print that tag several times. */}
+      {comments.map((comment) => {
+        if (!comment.line_id || comment.x === null || comment.y === null) return null;
+        const number = commentNumbers.get(comment.id);
+        return rects
+          .filter((rect) => rect.lineId === comment.line_id)
+          .map((rect) => (
+            <PinMarker
+              key={`${comment.id}-${rect.tagId}`}
+              testId={`pin-${comment.id}`}
+              number={number ?? 0}
+              rect={rect}
+              x={comment.x as number}
+              y={comment.y as number}
+              w={comment.w ?? 0}
+              h={comment.h ?? 0}
+              tone={comment.resolved_at ? 'resolved' : 'sent'}
+              open={openMarker === `${comment.id}-${rect.tagId}`}
+              onToggle={() =>
+                setOpenMarker((current) =>
+                  current === `${comment.id}-${rect.tagId}`
+                    ? null
+                    : `${comment.id}-${rect.tagId}`,
+                )
+              }
+              body={comment.body}
+              caption={
+                comment.resolved_at
+                  ? `Round ${comment.round} · Done`
+                  : `Round ${comment.round}`
+              }
+            />
+          ));
+      })}
+
+      {/* Pins placed in this session, not sent yet. */}
+      {drafts.map((draft) =>
+        rects
+          .filter((rect) => rect.lineId === draft.line_id)
+          .map((rect) => (
+            <PinMarker
+              key={`${draft.key}-${rect.tagId}`}
+              testId={`draft-pin-${draft.key}`}
+              number={draftNumbers.get(draft.key) ?? 0}
+              rect={rect}
+              x={draft.x}
+              y={draft.y}
+              w={draft.w}
+              h={draft.h}
+              tone="draft"
+              open={openMarker === `${draft.key}-${rect.tagId}`}
+              onToggle={() =>
+                setOpenMarker((current) =>
+                  current === `${draft.key}-${rect.tagId}`
+                    ? null
+                    : `${draft.key}-${rect.tagId}`,
+                )
+              }
+              body={draft.body}
+              caption="Not sent yet"
+              onDelete={onRemoveDraft ? () => onRemoveDraft(draft.key) : undefined}
+            />
+          )),
+      )}
+
+      {/* The pin being placed: its box while the pointer is down, its comment
+          box once it is up. */}
+      {placing && (
+        <>
+          {placing.w > 0 && placing.h > 0 && (
+            <div
+              className="pointer-events-none absolute rounded-sm border-2 border-primary bg-primary/10"
+              style={{
+                left: placing.rect.left + placing.x * placing.rect.width,
+                top: placing.rect.top + placing.y * placing.rect.height,
+                width: placing.w * placing.rect.width,
+                height: placing.h * placing.rect.height,
+              }}
+            />
+          )}
+          <div
+            className="pointer-events-none absolute size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary"
+            style={{
+              left: placing.rect.left + placing.x * placing.rect.width,
+              top: placing.rect.top + placing.y * placing.rect.height,
+            }}
+          />
+          {placing.editing && (
+            <div
+              data-testid="pin-comment-editor"
+              className="pointer-events-auto absolute z-10 w-56 rounded-lg border bg-popover p-2 shadow-md"
+              style={{
+                left: Math.max(
+                  0,
+                  placing.rect.left + placing.x * placing.rect.width - 112,
+                ),
+                top:
+                  placing.rect.top +
+                  (placing.y + placing.h) * placing.rect.height +
+                  12,
+              }}
+            >
+              <Textarea
+                autoFocus
+                rows={3}
+                value={body}
+                placeholder="What needs to change here?"
+                onChange={(event) => setBody(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    // Not the lightbox's Escape: this one throws the pin away
+                    // and leaves the design open.
+                    event.stopPropagation();
+                    event.preventDefault();
+                    discard();
+                  }
+                }}
+                className="text-xs"
+              />
+              <div className="mt-2 flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={discard}>
+                  Cancel
+                </Button>
+                <Button size="sm" disabled={!body.trim()} onClick={commit}>
+                  Add
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PinMarker({
+  testId,
+  number,
+  rect,
+  x,
+  y,
+  w,
+  h,
+  tone,
+  open,
+  onToggle,
+  body,
+  caption,
+  onDelete,
+}: {
+  testId: string;
+  number: number;
+  rect: { left: number; top: number; width: number; height: number };
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** draft = not sent, sent = open on the current design, resolved = ticked Done. */
+  tone: 'draft' | 'sent' | 'resolved';
+  open: boolean;
+  onToggle: () => void;
+  body: string;
+  caption: string;
+  onDelete?: () => void;
+}) {
+  const left = rect.left + x * rect.width;
+  const top = rect.top + y * rect.height;
+  return (
+    <>
+      {w > 0 && h > 0 && (
+        <div
+          className={cn(
+            'pointer-events-none absolute rounded-sm border-2',
+            tone === 'resolved'
+              ? 'border-muted-foreground/40 bg-muted-foreground/10'
+              : 'border-primary bg-primary/10',
+          )}
+          style={{ left, top, width: w * rect.width, height: h * rect.height }}
+        />
+      )}
+      <button
+        type="button"
+        data-testid={testId}
+        aria-label={`Change request ${number}`}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={onToggle}
+        className={cn(
+          'pointer-events-auto absolute flex size-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-background text-2xs font-semibold text-white shadow',
+          tone === 'resolved' ? 'bg-muted-foreground/60' : 'bg-primary',
+          tone === 'draft' && 'ring-2 ring-primary/30',
+        )}
+        style={{ left, top }}
+      >
+        {number}
+      </button>
+      {open && (
+        <div
+          className="pointer-events-auto absolute z-10 w-56 rounded-lg border bg-popover p-2 text-xs shadow-md"
+          style={{ left: Math.max(0, left - 112), top: top + 14 }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+              {caption}
+            </span>
+            <button
+              type="button"
+              aria-label="Close comment"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={onToggle}
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+          <p className="mt-1 whitespace-pre-wrap">{body}</p>
+          {onDelete && (
+            <div className="mt-2 flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={onDelete}
+              >
+                <Trash2 className="size-3.5 mr-1" />
+                Delete
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}

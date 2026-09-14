@@ -33,7 +33,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -72,10 +72,17 @@ import {
   submitRequest,
   approveRequest,
   requestChanges,
+  listReviewComments,
   downloadPriceTagPdf,
 } from '../lib/price-tag-request-service';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
 import type { DesignDownload } from '@/components/dealer-kit/DesignLightbox';
+import {
+  numberedPins,
+  type ChangeRequestPayload,
+  type DraftPin,
+  type ReviewComment,
+} from '@/lib/dealer-kit/review-comments';
 import POCrossCheckViewer from './POCrossCheckViewer';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import {
@@ -294,9 +301,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const aiMatchesRef = useRef<Record<string, TagItemOption | null>>({});
   const normalizeAiCode = (raw: string | null | undefined) => (raw ?? '').trim().toLowerCase();
 
-  // ---- Proof review state ----
-  const [changesNote, setChangesNote] = useState('');
-  const [showChangesDialog, setShowChangesDialog] = useState(false);
 
   // ---- Delete draft ----
   const [deleting, setDeleting] = useState(false);
@@ -1161,18 +1165,27 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
   }, [requestId, router, slug]);
 
-  // ---- Request changes ----
-  const handleRequestChanges = useCallback(async () => {
-    if (!requestId || !changesNote.trim()) return;
-    try {
-      await requestChanges(requestId, changesNote.trim());
-      toast.success('Changes requested');
-      setShowChangesDialog(false);
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
-    } catch {
-      toast.error('Failed to request changes');
-    }
-  }, [requestId, changesNote, router, slug]);
+  // ---- Request changes (r9 D5) ----
+  //
+  // No dialog and no free-text-only path any more: the pins ARE the change
+  // request, and Send posts the whole round in one call.
+  const handleSendChanges = useCallback(
+    async (payload: ChangeRequestPayload) => {
+      if (!requestId) return;
+      try {
+        await requestChanges(requestId, payload);
+        toast.success(
+          payload.comments.length === 1
+            ? 'Change request sent'
+            : `${payload.comments.length} change requests sent`,
+        );
+        router.push(`${portalBase(slug)}?type=price_tag_request`);
+      } catch {
+        toast.error('Failed to send the change requests');
+      }
+    },
+    [requestId, router, slug],
+  );
 
   // ---- Download PDF (D19): the request's latest completed tag sheet export ----
   const handleDownloadPdf = useCallback(async () => {
@@ -1246,6 +1259,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         {showDesignPreview && (
           <DesignSection
             request={request}
+            reviewable={isProofReady}
+            onApprove={handleApprove}
+            onSend={handleSendChanges}
             download={{
               available: Boolean(request.has_completed_export),
               pending: downloadingPdf,
@@ -1396,78 +1412,24 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </FormSection>
 
         {isProofReady && (
-          <>
-            {/* Same `attachments` state the Sales Order card above reads
-                (not `request.attachments`, which is only ever the snapshot
-                from the initial fetch) - one source, so the two can never
-                show a different file list for the same request. */}
-            <POCrossCheckViewer
-              attachments={attachments}
-              lines={request.lines.map((l) => ({
-                id: l.id,
-                code: l.code,
-                name: l.name,
-                line_type: l.line_type,
-                quantity: l.quantity,
-                list_price: null,
-                sell_price: null,
-                show_promo_price: l.show_promo_price,
-                marketing_price_override: null,
-              }))}
-            />
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Design Review</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button onClick={handleApprove} className="flex-1">
-                    <Check className="size-4 mr-1" />
-                    Approve
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowChangesDialog(true)}
-                    className="flex-1"
-                  >
-                    <MessageSquare className="size-4 mr-1" />
-                    Request Changes
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <AlertDialog
-              open={showChangesDialog}
-              onOpenChange={setShowChangesDialog}
-            >
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Request Changes</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Describe what needs to be changed. The marketing team will
-                    revise the design.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <Textarea
-                  value={changesNote}
-                  onChange={(e) => setChangesNote(e.target.value)}
-                  placeholder="Describe the changes needed..."
-                  rows={4}
-                />
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleRequestChanges}
-                    disabled={!changesNote.trim()}
-                  >
-                    Submit
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </>
+          /* Same `attachments` state the Sales Order card above reads (not
+             `request.attachments`, which is only ever the snapshot from the
+             initial fetch) - one source, so the two can never show a different
+             file list for the same request. */
+          <POCrossCheckViewer
+            attachments={attachments}
+            lines={request.lines.map((l) => ({
+              id: l.id,
+              code: l.code,
+              name: l.name,
+              line_type: l.line_type,
+              quantity: l.quantity,
+              list_price: null,
+              sell_price: null,
+              show_promo_price: l.show_promo_price,
+              marketing_price_override: null,
+            }))}
+          />
         )}
       </>
     );
@@ -2163,13 +2125,24 @@ function AIMatchStatusLabel({ status }: { status: AIMatchStatus | undefined }) {
  */
 function DesignSection({
   request,
+  reviewable,
+  onApprove,
+  onSend,
   download,
 }: {
   request: PriceTagRequestDetail;
+  /** The design is waiting on this reader: pins can be placed and sent. */
+  reviewable: boolean;
+  onApprove: () => void;
+  onSend: (payload: ChangeRequestPayload) => Promise<void>;
   download: DesignDownload;
 }) {
   const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [comments, setComments] = useState<ReviewComment[]>([]);
+  const [drafts, setDrafts] = useState<DraftPin[]>([]);
+  const [generalNote, setGeneralNote] = useState('');
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -2189,6 +2162,170 @@ function DesignSection({
     };
   }, [request.id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    listReviewComments(request.id)
+      .then((rows) => {
+        if (!cancelled) setComments(rows);
+      })
+      .catch(() => {
+        // A design that will not tell us its history still has to render.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [request.id]);
+
+  const { commentNumbers, draftNumbers } = numberedPins(comments, drafts);
+  const lineLabel = useCallback(
+    (lineId: string | null) => {
+      if (!lineId) return 'General';
+      const line = request.lines.find((row) => row.id === lineId);
+      return line?.code || line?.name || 'Tag';
+    },
+    [request.lines],
+  );
+
+  const send = useCallback(async () => {
+    if (drafts.length === 0 && !generalNote.trim()) return;
+    setSending(true);
+    try {
+      await onSend({
+        comments: drafts.map((draft) => ({
+          line_id: draft.line_id,
+          x: draft.x,
+          y: draft.y,
+          w: draft.w,
+          h: draft.h,
+          body: draft.body,
+        })),
+        note: generalNote.trim() || undefined,
+      });
+      setDrafts([]);
+      setGeneralNote('');
+    } finally {
+      setSending(false);
+    }
+  }, [drafts, generalNote, onSend]);
+
+  // Earlier rounds stay on the design, greyed by `DesignPinLayer` once they
+  // are Done (D6), so a second round is read against what the first one said.
+  const review = {
+    comments,
+    drafts,
+    canPlace: reviewable,
+    onPlace: (pin: Omit<DraftPin, 'key'>) =>
+      setDrafts((current) => [
+        ...current,
+        { ...pin, key: `draft-${Date.now()}-${current.length}` },
+      ]),
+    onRemoveDraft: (key: string) =>
+      setDrafts((current) => current.filter((draft) => draft.key !== key)),
+  };
+
+  const sentThisDesign = comments.filter((comment) => comment.line_id !== null);
+
+  const footer = reviewable ? (
+    <div className="mt-3 space-y-3 border-t pt-3">
+      {drafts.length === 0 && sentThisDesign.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          Click the tag where something needs to change, or drag a box around
+          it.
+        </p>
+      )}
+
+      {drafts.length > 0 && (
+        <ul className="space-y-2">
+          {drafts.map((draft) => (
+            <li
+              key={draft.key}
+              className="flex items-start gap-2 rounded-md border p-2"
+            >
+              <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-2xs font-semibold text-white">
+                {draftNumbers.get(draft.key)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
+                  {lineLabel(draft.line_id)}
+                </p>
+                <p className="whitespace-pre-wrap text-xs">{draft.body}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Delete change request ${draftNumbers.get(draft.key)}`}
+                className="text-destructive hover:text-destructive"
+                onClick={() =>
+                  setDrafts((current) =>
+                    current.filter((row) => row.key !== draft.key),
+                  )
+                }
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="space-y-1.5">
+        <Label htmlFor="ptag-general-note" className="text-xs">
+          Anything else (optional)
+        </Label>
+        <Textarea
+          id="ptag-general-note"
+          rows={2}
+          value={generalNote}
+          onChange={(event) => setGeneralNote(event.target.value)}
+          placeholder="A note about the whole design"
+          className="text-sm"
+        />
+      </div>
+
+      {(drafts.length > 0 || generalNote.trim()) && (
+        <Button
+          className="w-full"
+          disabled={sending}
+          onClick={() => void send()}
+          data-testid="send-change-requests"
+        >
+          {sending ? (
+            <Loader2 className="size-4 mr-1 animate-spin" />
+          ) : (
+            <MessageSquare className="size-4 mr-1" />
+          )}
+          {drafts.length === 0
+            ? 'Send change request'
+            : drafts.length === 1
+              ? 'Send 1 change request'
+              : `Send ${drafts.length} change requests`}
+        </Button>
+      )}
+    </div>
+  ) : sentThisDesign.length > 0 ? (
+    <div className="mt-3 space-y-2 border-t pt-3">
+      {sentThisDesign.map((comment) => (
+        <div key={comment.id} className="flex items-start gap-2">
+          <span
+            className={cn(
+              'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-2xs font-semibold text-white',
+              comment.resolved_at ? 'bg-muted-foreground/60' : 'bg-primary',
+            )}
+          >
+            {commentNumbers.get(comment.id)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
+              {lineLabel(comment.line_id)}
+              {comment.resolved_at ? ' / Done' : ''}
+            </p>
+            <p className="whitespace-pre-wrap text-xs">{comment.body}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
   return (
     <DesignViewer
       docNumber={request.doc_number ?? 'Design'}
@@ -2197,6 +2334,16 @@ function DesignSection({
       emptyMessage="Design not available yet"
       emptyHint="Marketing is still working on it."
       download={download}
+      review={review}
+      footer={footer}
+      headerActions={
+        reviewable ? (
+          <Button size="sm" onClick={onApprove}>
+            <Check className="size-4 mr-1" />
+            Approve
+          </Button>
+        ) : undefined
+      }
     />
   );
 }
