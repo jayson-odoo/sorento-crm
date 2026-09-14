@@ -1146,9 +1146,11 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     ? `Already converted to ${invoice.converted_shipments.map((s) => s.shipment_number ?? 'a packing list').join(', ')}`
     : undefined;
 
-  // The files the record actually LINKS (S8), and the two it can only name: a workbook
-  // uploaded before the link existed has no attachment to open, so it keeps the plain row
-  // it always had rather than vanishing from the section.
+  // The files the record actually LINKS (S8), and the one it can only name. A workbook
+  // whose filing failed leaves `source_ref` - the name the apply stamped - with no
+  // attachment behind it, so that row is still printed, without buttons it cannot honour.
+  // The packing workbook needs no such fallback: `packing_file` is DERIVED from these same
+  // links server-side, so a packing file with no link cannot reach this screen at all.
   const sourceFiles = invoice.source_files ?? [];
   const linkedNames = new Set(
     sourceFiles.map((f) => (f.name ?? '').trim()).filter(Boolean),
@@ -1157,9 +1159,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     invoice.source_ref && !linkedNames.has(invoice.source_ref.trim())
       ? invoice.source_ref
       : null;
-  const packingFile = packing.data?.file ?? null;
-  const unlinkedPackingFile =
-    packingFile && !linkedNames.has((packingFile.name ?? '').trim()) ? packingFile : null;
 
   /** The placement, as one chip in the header - "Not converted", "Split", or the container. */
   const placementBadge =
@@ -1418,7 +1417,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
               </CardHeading>
             </CardHeader>
             <section aria-label="Source files" className="space-y-2 p-4">
-              {sourceFiles.length === 0 && !unlinkedSourceRef && !unlinkedPackingFile ? (
+              {sourceFiles.length === 0 && !unlinkedSourceRef ? (
                 <p className="text-sm text-muted-foreground">No source file on record.</p>
               ) : (
                 <>
@@ -1443,19 +1442,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                       </p>
                       <p className="text-xs text-muted-foreground">
                         Proforma invoice • {fmtDate(invoice.created_at)}
-                      </p>
-                    </div>
-                  ) : null}
-                  {unlinkedPackingFile ? (
-                    <div className="rounded-lg border p-3">
-                      <p
-                        className="truncate text-sm font-medium"
-                        title={unlinkedPackingFile.name}
-                      >
-                        {unlinkedPackingFile.name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Packing list • {fmtDate(unlinkedPackingFile.uploaded_at)}
                       </p>
                     </div>
                   ) : null}
