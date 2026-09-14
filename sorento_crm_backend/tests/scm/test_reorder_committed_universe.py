@@ -289,3 +289,349 @@ def test_a_second_uncommitted_location_emits_nothing_but_stays_in_the_run(scm_ap
     rows = svc._planning_rows(db, [committed_wh, quiet_wh])
     quiet_row = next(r for r in rows if str(r["warehouse_id"]) == quiet_wh)
     assert float(quiet_row["quantity_on_hand"]) == 40.0
+
+
+# =========================================================================== #
+# S1 (PLAN-low-stock-report.md, low-stock-report-acceptance-criteria.md
+# AC-10..AC-16, issue #889): admission grows a SECOND leg - the dead guard
+#
+# Measured on the 0907 prod copy (the plan's table): the committed-demand leg
+# admits 950 of 14,789 plannable products, while 7,778 sit below their level and
+# only 582 of those reached the last run - 7,196 products a low stock report
+# bounded by a run cannot see, CB100-BL-DIY (87 on hand, level 100, no open SO)
+# among them. Admitting every non-discontinued product instead costs ~60 s a run
+# and ~7,000 buy rows for SKUs nobody sells, so the owner's ruling of 14 Sep is:
+#
+#     admitted = committed demand > 0   OR   (below level AND not dead)
+#
+# "Below level" reads the SAME level the engine will plan against (a person's
+# product-wide `scm.reorder_level` row, else `products.reorder_level`, 0 is not a
+# level) against the SAME site-pool on-hand figure the Low sheet filters on.
+# "Dead" reuses the dashboard's rule: last outbound movement in `scm.consumption_v`
+# older than the GLOBAL `scm.reorder_policy.dead_stock_days` (else 180), and a
+# product with no movement at all is dead (AC-15: no second definition of dead).
+#
+# WRITTEN BEFORE THE IMPLEMENTATION EXISTS. Every test below seeds a LIVE,
+# below-level CONTROL product beside its subject, and asserts the control earns a
+# row. That control is what makes a "stays out" test fail today for the right
+# reason - the second leg is missing, so nothing is admitted at all - instead of
+# passing vacuously because the run is empty. The two exceptions are called out
+# in their own docstrings.
+#
+# The run is put on the LEVEL basis (`_use_level_basis`), which is the basis the
+# new leg's own arithmetic is stated in and the one that makes `inputs.policy_type`
+# readable as `reorder_level`.
+# =========================================================================== #
+
+def _dead_days(db, days) -> None:
+    """Set the GLOBAL dead-stock window - the only scope the admission leg reads.
+
+    `dashboard_service._dead_days_for` also honours sku / product_class scoped rows;
+    the admission leg deliberately does not (plan S1: there is not one such row on the
+    prod copy, and the trigger for adding the lookup is the first one). `days=None`
+    leaves the window UNSET, which is how `reorder_policy.resolve_global_dead_stock_days`
+    reports "no policy row said anything" - the case that must fall back to 180.
+    """
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET dead_stock_days = :d "
+                    "WHERE scope_type = 'global'"), {"d": days})
+    db.flush()
+
+
+def _master_level(db, pid: str, level) -> None:
+    """The AutoCount master level (`products.reorder_level`) - set explicitly because the
+    column carries a legacy server default of 10, so a product built without one arrives
+    holding a level nobody set."""
+    db.execute(text("UPDATE products SET reorder_level = :l WHERE id = :p"),
+               {"l": level, "p": pid})
+    db.flush()
+
+
+def _buyer_level(db, pid: str, level: float, source: str = "manual") -> None:
+    """The buyer's own PRODUCT-WIDE override (`scm.reorder_level`, `warehouse_id IS
+    NULL`). Only a person's row is an override (`reorder_level_service.VALID_SOURCES`),
+    which is exactly the rule `_product_level` applies when it plans - so the admission
+    leg has to apply it too, or the run admits a product on a level it will not plan
+    against."""
+    db.execute(text(
+        "INSERT INTO scm.reorder_level (id, product_id, warehouse_id, level, source, "
+        "created_at) VALUES (:id, :p, NULL, :l, :s, now())"
+    ), {"id": str(uuid.uuid4()), "p": pid, "l": level, "s": source})
+    db.flush()
+
+
+def _sellable(db, wid: str, code_stem: str, *, on_hand: float, moved_days_ago,
+              master_level=100) -> str:
+    """One product at one site-pool location: stock, an optional outbound movement, a
+    linked supplier, a master level - and NO committed demand anywhere, which is the
+    whole point (the first admission leg must not be what lets it in).
+
+    A supplier is linked on every product, the ones expected to stay OUT included: a
+    product with no supplier emits an `exception` row rather than a `buy`, so leaving it
+    off would make "no row" ambiguous between "not admitted" and "admitted, unsourceable".
+    """
+    pid = _mk_product(db, code_stem)
+    _mk_stock(db, pid, wid, on_hand)
+    if moved_days_ago is not None:
+        _mk_movement(db, pid, wid, 3, days_ago=moved_days_ago)
+    _link(db, pid, _mk_supplier(db, f"{code_stem} Supplier"))
+    _master_level(db, pid, master_level)
+    return pid
+
+
+class TestDeadGuardAdmission:
+    """AC-10..AC-15: the second admission leg, and the four things it must NOT admit."""
+
+    # ----------------------------------------------------------------- AC-10
+
+    def test_below_level_live_product_with_no_committed_demand_enters_as_a_level_buy(
+            self, scm_app):
+        """AC-10: 40 on hand against a level of 100, an outbound movement 5 days ago, and
+        not one open sales order line anywhere - CB100-BL-DIY's exact shape. The run must
+        plan it, and plan it the SAME way a committed-demand product on the level basis is
+        planned: one `buy` row, `policy_type = reorder_level`, sized `L - net` (100 - 40 =
+        60) then floored at the supplier's MOQ of 100 and ceiled to its multiple of 50.
+
+        RED today for the right reason: nothing admits this product, so the run plans
+        zero products and writes zero rows.
+        """
+        _, db, _, _ = scm_app
+        _use_level_basis(db)
+        _dead_days(db, 180)
+        wid = _mk_warehouse(db, "ZZTDG1-WH", segment="dealer")
+        pid = _sellable(db, wid, "ZZTDG1-P", on_hand=40, moved_days_ago=5)
+        db.flush()
+
+        created = svc.create_run(db, ["ZZTDG1-WH"], "warehouse", enqueue=False)
+        svc.run_reorder(created["run_id"], db=db)
+
+        recs = _recs(db, created["run_id"], pid)
+        assert len(recs) == 1, f"one decision for the product, got {recs}"
+        assert recs[0]["rec_type"] == "buy"
+        assert recs[0]["inputs"]["policy_type"] == "reorder_level", (
+            "admitted on the level leg, planned on the level basis - one reading of "
+            "the level, not two"
+        )
+        assert float(recs[0]["recommended_qty"]) == 60.0, "L - net = 100 - 40"
+        assert float(recs[0]["rounded_qty"]) == 100.0, (
+            "60 floored at MOQ 100, already on the multiple of 50"
+        )
+
+    def test_buyer_level_outranks_master_level_in_admission(self, scm_app):
+        """AC-10: the leg resolves the level the way `_product_level` does - a person's
+        product-wide `scm.reorder_level` row FIRST, the AutoCount master second - so
+        admission and planning can never disagree about whether the product is below
+        level.
+
+        Both directions, in one run:
+          * OVERRIDE: master 10 (40 on hand is comfortably above it) but the buyer typed
+            100 -> below level -> admitted.
+          * REVERSE: master 100 (40 would be below it) but the buyer typed 10 -> the
+            buyer's number is the one that counts -> NOT admitted.
+
+        RED today on the OVERRIDE half.
+        """
+        _, db, _, _ = scm_app
+        _use_level_basis(db)
+        _dead_days(db, 180)
+        wid = _mk_warehouse(db, "ZZTDG2-WH", segment="dealer")
+
+        override = _sellable(db, wid, "ZZTDG2-OVERRIDE", on_hand=40, moved_days_ago=5,
+                             master_level=10)
+        _buyer_level(db, override, 100)
+        reverse = _sellable(db, wid, "ZZTDG2-REVERSE", on_hand=40, moved_days_ago=5,
+                            master_level=100)
+        _buyer_level(db, reverse, 10)
+        db.flush()
+
+        created = svc.create_run(db, ["ZZTDG2-WH"], "warehouse", enqueue=False)
+        svc.run_reorder(created["run_id"], db=db)
+
+        assert [r["rec_type"] for r in _recs(db, created["run_id"], override)] == ["buy"], (
+            "the buyer's level of 100 is the level, so 40 on hand is below it"
+        )
+        assert _recs(db, created["run_id"], reverse) == [], (
+            "the buyer's level of 10 outranks the master's 100; 40 on hand is above it"
+        )
+
+    # ----------------------------------------------------------------- AC-11
+
+    def test_below_level_dead_product_stays_out(self, scm_app):
+        """AC-11: below level is not enough. A product whose last outbound movement is
+        older than `dead_stock_days` is a SKU nobody sells, and buying more of it is the
+        ~7,000 dead buy rows the owner rejected. The LIVE control beside it - identical
+        but for the movement date - is what proves the run was planning at all.
+        """
+        _, db, _, _ = scm_app
+        _use_level_basis(db)
+        _dead_days(db, 180)
+        wid = _mk_warehouse(db, "ZZTDG3-WH", segment="dealer")
+        live = _sellable(db, wid, "ZZTDG3-LIVE", on_hand=40, moved_days_ago=5)
+        dead = _sellable(db, wid, "ZZTDG3-DEAD", on_hand=40, moved_days_ago=200)
+        db.flush()
+
+        created = svc.create_run(db, ["ZZTDG3-WH"], "warehouse", enqueue=False)
+        svc.run_reorder(created["run_id"], db=db)
+
+        assert [r["rec_type"] for r in _recs(db, created["run_id"], live)] == ["buy"]
+        assert _recs(db, created["run_id"], dead) == [], (
+            "200 days without an outbound movement is dead at the 180-day window"
+        )
+
+    def test_below_level_product_that_never_moved_stays_out(self, scm_app):
+        """AC-11/AC-15: a product with NO `scm.consumption_v` row at all is dead, not
+        merely unmeasured - the same reading `_compute_status` takes (`last_movement is
+        None -> dead`). Below level and never sold is the clearest case of stock nobody
+        should be topping up.
+        """
+        _, db, _, _ = scm_app
+        _use_level_basis(db)
+        _dead_days(db, 180)
+        wid = _mk_warehouse(db, "ZZTDG4-WH", segment="dealer")
+        live = _sellable(db, wid, "ZZTDG4-LIVE", on_hand=40, moved_days_ago=5)
+        never = _sellable(db, wid, "ZZTDG4-NEVER", on_hand=40, moved_days_ago=None)
+        db.flush()
+
+        created = svc.create_run(db, ["ZZTDG4-WH"], "warehouse", enqueue=False)
+        svc.run_reorder(created["run_id"], db=db)
+
+        assert [r["rec_type"] for r in _recs(db, created["run_id"], live)] == ["buy"]
+        assert _recs(db, created["run_id"], never) == [], (
+            "no movement row at all is dead, not 'moved an unknown time ago'"
+        )
+
+    # ----------------------------------------------------------------- AC-12
+
+    def test_above_level_product_with_no_committed_demand_stays_out(self, scm_app):
+        """AC-12: the committed-demand leg is unchanged. A comfortably covered product
+        (500 on hand against a level of 100) that moved yesterday still earns nothing,
+        because the new leg admits BELOW-level products only - it is not "every product
+        that still moves".
+
+        The sibling of the module-level test at the top of this file
+        (`test_stock_movement_and_a_level_alone_earn_no_row_with_no_committed_demand`),
+        on the LEVEL basis and beside a live control, so the assertion cannot pass
+        merely because the run planned nothing.
+        """
+        _, db, _, _ = scm_app
+        _use_level_basis(db)
+        _dead_days(db, 180)
+        wid = _mk_warehouse(db, "ZZTDG5-WH", segment="dealer")
+        live = _sellable(db, wid, "ZZTDG5-LIVE", on_hand=40, moved_days_ago=5)
+        covered = _sellable(db, wid, "ZZTDG5-COVERED", on_hand=500, moved_days_ago=1)
+        db.flush()
+
+        created = svc.create_run(db, ["ZZTDG5-WH"], "warehouse", enqueue=False)
+        svc.run_reorder(created["run_id"], db=db)
+
+        assert [r["rec_type"] for r in _recs(db, created["run_id"], live)] == ["buy"]
+        assert _recs(db, created["run_id"], covered) == [], (
+            "500 on hand against a level of 100 is not below level, so nothing admits it"
+        )
+
+    # ----------------------------------------------------------------- AC-13
+
+    def test_no_level_no_demand_stays_out(self, scm_app):
+        """AC-13: a `needs_level` row still needs a demand signal, as today. A product
+        with no level ANYWHERE - no buyer row, and `products.reorder_level` NULL - cannot
+        be below level, so the new leg has nothing to test it against and must not admit
+        it. Admitting it would put a "you have no level" row in front of the buyer for
+        every unloved SKU in the catalogue.
+        """
+        _, db, _, _ = scm_app
+        _use_level_basis(db)
+        _dead_days(db, 180)
+        wid = _mk_warehouse(db, "ZZTDG6-WH", segment="dealer")
+        live = _sellable(db, wid, "ZZTDG6-LIVE", on_hand=40, moved_days_ago=5)
+        unset = _sellable(db, wid, "ZZTDG6-UNSET", on_hand=0, moved_days_ago=1)
+        _no_master_level(db, unset)
+        db.flush()
+
+        created = svc.create_run(db, ["ZZTDG6-WH"], "warehouse", enqueue=False)
+        svc.run_reorder(created["run_id"], db=db)
+
+        assert [r["rec_type"] for r in _recs(db, created["run_id"], live)] == ["buy"]
+        assert _recs(db, created["run_id"], unset) == [], (
+            "no resolvable level means the level leg cannot admit it - not even as "
+            "needs_level"
+        )
+
+    # ----------------------------------------------------------------- AC-14
+
+    def test_named_dead_product_still_enters(self, scm_app):
+        """AC-14 (G10, unchanged): a buyer who TYPES a SKU into Start Plan gets it
+        planned - demand, level and movement notwithstanding. This one is expected to be
+        GREEN before the slice as well as after: it is the pin that stops the new leg
+        from being written as a filter that also narrows the named-product path.
+        """
+        _, db, _, _ = scm_app
+        _use_level_basis(db)
+        _dead_days(db, 180)
+        wid = _mk_warehouse(db, "ZZTDG7-WH", segment="dealer")
+        pid = _sellable(db, wid, "ZZTDG7-DEAD", on_hand=40, moved_days_ago=400)
+        db.flush()
+
+        created = svc.create_run(db, ["ZZTDG7-WH"], "warehouse",
+                                 product_codes=["ZZTDG7-DEAD"], enqueue=False)
+        svc.run_reorder(created["run_id"], db=db)
+
+        assert _recs(db, created["run_id"], pid), (
+            "a named product enters regardless of movement, level or demand (G10)"
+        )
+
+    # ----------------------------------------------------------------- AC-15
+
+    def test_admission_dead_days_follow_the_global_policy(self, scm_app):
+        """AC-15: the window is whatever the admin set on the global
+        `scm.reorder_policy` row - no second definition of dead, and no constant baked
+        into the admission SQL. The SAME product, moved 45 days ago, is out at a 30-day
+        window and in at a 60-day one; only the policy row changes between the two runs.
+        """
+        _, db, _, _ = scm_app
+        _use_level_basis(db)
+        wid = _mk_warehouse(db, "ZZTDG8-WH", segment="dealer")
+        live = _sellable(db, wid, "ZZTDG8-LIVE", on_hand=40, moved_days_ago=5)
+        subject = _sellable(db, wid, "ZZTDG8-45D", on_hand=40, moved_days_ago=45)
+        db.flush()
+
+        _dead_days(db, 30)
+        tight = svc.create_run(db, ["ZZTDG8-WH"], "warehouse", enqueue=False)
+        svc.run_reorder(tight["run_id"], db=db)
+        assert [r["rec_type"] for r in _recs(db, tight["run_id"], live)] == ["buy"]
+        assert _recs(db, tight["run_id"], subject) == [], (
+            "45 days without a movement is dead at a 30-day window"
+        )
+
+        _dead_days(db, 60)
+        wide = svc.create_run(db, ["ZZTDG8-WH"], "warehouse", enqueue=False)
+        svc.run_reorder(wide["run_id"], db=db)
+        assert [r["rec_type"] for r in _recs(db, wide["run_id"], subject)] == ["buy"], (
+            "the same product is alive at a 60-day window - the policy row decides"
+        )
+
+    def test_admission_dead_days_default_180_without_a_global_row(self, scm_app):
+        """AC-15: with nothing set, the window is `reorder_policy.DEFAULT_DEAD_STOCK_DAYS`
+        (180) - the same fallback `dashboard_service._dead_days_for` lands on.
+
+        The global row is left in place with `dead_stock_days` NULL rather than deleted:
+        NULL is precisely what `resolve_global_dead_stock_days` reports as "unset" (it
+        returns None either way), and the row itself still carries the level basis the
+        rest of the seed depends on. One run, two products either side of the default.
+        """
+        _, db, _, _ = scm_app
+        _use_level_basis(db)
+        _dead_days(db, None)
+        wid = _mk_warehouse(db, "ZZTDG9-WH", segment="dealer")
+        inside = _sellable(db, wid, "ZZTDG9-170D", on_hand=40, moved_days_ago=170)
+        outside = _sellable(db, wid, "ZZTDG9-190D", on_hand=40, moved_days_ago=190)
+        db.flush()
+
+        created = svc.create_run(db, ["ZZTDG9-WH"], "warehouse", enqueue=False)
+        svc.run_reorder(created["run_id"], db=db)
+
+        assert [r["rec_type"] for r in _recs(db, created["run_id"], inside)] == ["buy"], (
+            "170 days is inside the 180-day default"
+        )
+        assert _recs(db, created["run_id"], outside) == [], (
+            "190 days is outside it"
+        )
