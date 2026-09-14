@@ -882,3 +882,62 @@ def test_busy_maps_the_in_flight_run_409_to_status_busy(scm_app, monkeypatch):
     assert db.execute(text(
         "SELECT count(*) FROM user_downloads WHERE kind = 'low_stock_xlsx'"
     ).bindparams()).scalar() == 0, "a busy answer must not create a download row"
+
+
+# =========================================================================== #
+# Console round 2, finding A - the request carries NO company scope
+#
+# CODER-AUTHORED (14 Sep 2026). Every test above runs under `_company_scope_only`, which
+# pre-sets an active company on the session - so none of them could see that a REAL
+# API-key request carries none, and that `scm.reorder_run` is `CompanyScopedMixin`: on the
+# lane stack the first insert answered 400 `company_scope_required` and no run, no
+# download row and no job were ever created. The route now resolves the company from the
+# contact (its own membership when it has exactly one, else the owner user's active
+# company) and stamps it BEFORE either write.
+# =========================================================================== #
+
+def _contact_company(db, contact, company_id=SORENTO_COMPANY_ID) -> None:
+    """The admin-managed `respond_contact_companies` membership - the same M2M the
+    API-key READ scope resolves through, so the plan is built for the company whose stock
+    the asker can actually see."""
+    from app.models.company import RespondContactCompany
+
+    db.add(RespondContactCompany(
+        id=_u(), respond_contact_id=contact.id, company_id=company_id,
+    ))
+    db.flush()
+
+
+def test_the_run_takes_the_contacts_company_with_no_ambient_scope(scm_app, monkeypatch):
+    """The console's own request shape: `X-API-Key`, a contact, and NO company scope on
+    the session. The run must be created and stamped with the CONTACT's company.
+
+    `_api_key_caller`'s scope override is removed deliberately - reinstating it would
+    reproduce the fixture that hid this defect rather than the request that found it.
+    """
+    from app.services.company_scope_resolver import apply_company_scope
+
+    app, db, key, _uid = _api_key_caller(scm_app)
+    app.dependency_overrides.pop(apply_company_scope, None)
+    contact = _contact(db)
+    _contact_company(db, contact)
+    db.flush()
+    _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(contact))
+
+    assert resp.status_code == 200, (
+        f"an API-key turn with no ambient company scope must still run: {resp.text}"
+    )
+    run_id = resp.json()["run_id"]
+    company_id = db.execute(text(
+        "SELECT company_id::text FROM scm.reorder_run WHERE id = :r"
+    ), {"r": run_id}).scalar()
+    assert company_id == SORENTO_COMPANY_ID, (
+        f"the run must be stamped with the contact's own company: {company_id}"
+    )
+    assert db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE source_entity_id = :r"
+    ), {"r": run_id}).scalar() == 1, "the download row was not created either"

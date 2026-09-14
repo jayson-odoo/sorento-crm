@@ -98,6 +98,82 @@ def _sync_wait_seconds(db: Session) -> int:
     return int(value) if value else DEFAULT_SYNC_WAIT_SECONDS
 
 
+def _adopt_company_scope(db: Session, *, resolved_contact_id: Optional[str],
+                         owner_user_id: str) -> str:
+    """Resolve the company this chat turn writes under, and stamp it on the session.
+
+    An API-key request has no company scope of its own - `_resolve_api_key_scope` reads the
+    contact identity for READS, but the ambient scope a WRITE needs to stamp `company_id`
+    is not set by it - so every company-scoped insert refuses with 400
+    `company_scope_required` until one is chosen. The rule, in order:
+
+    0. **The scope the session already carries**, when it is exactly one company. A
+       caller that resolved one upstream has already answered this question, and
+       overriding it here would let this route plan a different company's book from the
+       one the rest of the request reads.
+    1. **The contact's own company**, when it has exactly one - read off
+       `respond_contact_companies` for the contact this route ALREADY resolved, so the
+       plan is built for the company whose stock the asker can actually see. Keyed on that
+       resolved id rather than through `resolve_contact_company_scope`, which re-resolves
+       the identity with the STRICT workspace join: the 16 NULL-workspace contacts (the
+       ones this chatbot actually serves) drop out of it, which is the whole reason
+       `resolve_contact_with_null_workspace_fallback` exists. One identity, resolved once.
+    2. **The owner user's active company** when the contact maps to several or none - the
+       CRM user linked to the contact, else the act-as principal. `last_active_company_id`
+       when it is still granted, else the single grant, else the lowest granted id: the
+       fail-closed tail of `company_scope_resolver._resolve_user_scope`, minus the JWT
+       claim, because an API-key request carries no token to read one from.
+    3. **Neither** -> 400 `company_unresolved`, nothing written. A run stamped with a
+       guessed company would plan another company's book.
+
+    Returns the company id, and leaves it set on `db` for the caller's own writes.
+    """
+    from app.models.base import get_company_scope, set_company_scope
+    from app.models.company import RespondContactCompany
+    from app.models.user import User
+    from app.services.company_scope_resolver import resolve_user_grant_ids
+
+    # `get_company_scope` returns one of UNSET / None / frozenset - only the last is a
+    # scope, and only a single-company one answers this question (None means "every
+    # company", which cannot stamp a `company_id`).
+    ambient = get_company_scope(db)
+    if isinstance(ambient, frozenset) and len(ambient) == 1:
+        return str(next(iter(ambient)))
+
+    contact_companies: list[str] = []
+    if resolved_contact_id:
+        contact_companies = [
+            str(c)
+            for (c,) in db.query(RespondContactCompany.company_id)
+            .filter(RespondContactCompany.respond_contact_id == resolved_contact_id)
+            .all()
+            if c
+        ]
+    company_id: Optional[str] = None
+    if len(set(contact_companies)) == 1:
+        company_id = contact_companies[0]
+    else:
+        grants = {str(g) for g in resolve_user_grant_ids(db, owner_user_id)}
+        last_active = db.query(User.last_active_company_id).filter(
+            User.id == owner_user_id
+        ).scalar()
+        if last_active and str(last_active) in grants:
+            company_id = str(last_active)
+        elif len(grants) == 1:
+            company_id = next(iter(grants))
+        elif grants:
+            company_id = sorted(grants)[0]
+
+    if not company_id:
+        raise AppException(
+            status_code=400,
+            message="No company could be resolved for this contact.",
+            code="company_unresolved",
+        )
+    set_company_scope(db, frozenset({company_id}))
+    return company_id
+
+
 async def _await_download(download_id: str) -> Optional[dict]:
     """Poll `user_downloads` until the row is `ready`, through SHORT-LIVED sessions.
 
@@ -216,6 +292,20 @@ async def low_stock_report(
         "SELECT id FROM users WHERE respond_contact_id = :c LIMIT 1"
     ), {"c": resolved_contact_id}).scalar() or str(current_user["id"])
     owner_user_id = str(owner_user_id)
+
+    # --- the company this run belongs to ----------------------------------------------
+    # An X-API-Key request carries NO company scope of its own, and both writes below are
+    # company-scoped (`scm.reorder_run` and the `user_downloads` row's own run pointer), so
+    # without this the very first insert answers 400 `company_scope_required` - which is
+    # what the 14 Sep console run hit on every scoped turn. Resolved and STAMPED before
+    # anything is written; the worker adopts the run's own company later
+    # (`reorder_run_service._adopt_run_company_scope`), so the export renders under the
+    # same company the plan was built for.
+    _adopt_company_scope(
+        db,
+        resolved_contact_id=resolved_contact_id,
+        owner_user_id=owner_user_id,
+    )
 
     # --- the fresh run ----------------------------------------------------------------
     try:
