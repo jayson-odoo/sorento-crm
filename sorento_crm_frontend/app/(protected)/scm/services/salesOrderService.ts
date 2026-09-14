@@ -37,10 +37,6 @@
  */
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
-import {
-  mockSalesOrderListPlanning,
-  mockSalesOrderPlanning,
-} from '@/lib/phase1-mock-planned-lines';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
 import type { SalesOrder, SalesOrderFormData } from '../types/scm.types';
 
@@ -145,17 +141,14 @@ export async function getSalesOrders(
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load sales orders'));
-  // PHASE 1 ONLY (`PLAN-fulfilment-board-plans-delivered-lines.md` S4): a no-op unless
-  // `NEXT_PUBLIC_PHASE1_MOCK` is set. Deleted with the mock module when S4's backend lands.
-  return mockSalesOrderListPlanning(await res.json());
+  return res.json();
 }
 
 /** One sales order with its lines. `linked_purchase_orders` is a LIST-only field. */
 export async function getSalesOrder(id: string): Promise<SalesOrder> {
   const res = await apiFetch(`${BASE}/${id}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the sales order'));
-  // PHASE 1 ONLY, as above.
-  return mockSalesOrderPlanning(await res.json());
+  return res.json();
 }
 
 export async function createSalesOrder(data: SalesOrderFormData): Promise<SalesOrder> {
