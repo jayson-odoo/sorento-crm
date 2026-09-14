@@ -121,6 +121,7 @@ describe('placing a pin (AC-S2-1)', () => {
     expect(onPlace).toHaveBeenCalledTimes(1);
     expect(onPlace).toHaveBeenCalledWith({
       line_id: LINE,
+      placed_tag_id: 'tag-1',
       x: 0.25,
       y: 0.5,
       w: 0,
