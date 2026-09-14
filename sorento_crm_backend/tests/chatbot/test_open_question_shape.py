@@ -19,14 +19,19 @@ EXPECTED_KINDS = {
     "team_pick",
     "company_pick",
     "member_offer",
+    # The two outstanding-report kinds merged from main (#862): a scope question and a
+    # detail offer, each read and answered in the head rather than by a pick handler.
+    "outstanding_scope",
+    "outstanding_detail",
 }
 
 
 class TestOpenQuestionShape:
-    def test_kinds_are_exactly_six(self) -> None:
+    def test_kinds_are_exactly_eight(self) -> None:
         assert set(OPEN_QUESTION_KINDS) == EXPECTED_KINDS, (
-            f"OPEN_QUESTION_KINDS is {sorted(OPEN_QUESTION_KINDS)}, expected the six "
-            f"{sorted(EXPECTED_KINDS)} - escalate_yes_no folds into team_pick (D5)"
+            f"OPEN_QUESTION_KINDS is {sorted(OPEN_QUESTION_KINDS)}, expected the eight "
+            f"{sorted(EXPECTED_KINDS)} - escalate_yes_no folds into team_pick (D5), and "
+            f"outstanding_scope / outstanding_detail come from the outstanding report (#862)"
         )
 
     def test_no_ttl_turns_field_on_the_contract(self) -> None:
