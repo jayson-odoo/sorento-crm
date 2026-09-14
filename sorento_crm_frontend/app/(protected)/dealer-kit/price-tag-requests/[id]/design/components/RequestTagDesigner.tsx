@@ -42,6 +42,7 @@ import {
   ChevronLeft,
   Check,
   Copy,
+  History,
   LayoutTemplate,
   Loader2,
   MessageSquare,
@@ -105,6 +106,17 @@ import {
   type PriceTagRequestLine,
 } from '../../../../services/priceTagRequestService';
 import { listReviewComments } from '../../../../services/priceTagReviewService';
+import {
+  listLineDataChanges,
+  listRequestVersions,
+  resolveLinePin,
+  restoreRequestVersion,
+} from '../../../../services/priceTagDataService';
+import type { LineDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
+import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
+import RequestVersionsSheet from '@/components/dealer-kit/RequestVersionsSheet';
+import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
+import { designPayloadFromResponse } from '@/lib/dealer-kit/design-payload';
 import {
   canvasPinsForLine,
   openCountByLine,
@@ -220,6 +232,9 @@ export function RequestTagDesigner({
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
   /** The `Comments` toolbar toggle. Armed by the first open pin (D6). */
   const [commentsVisible, setCommentsVisible] = useState(true);
+  /** The request's design history (r9 S5/D19). */
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [printing, setPrinting] = useState(false);
@@ -289,42 +304,56 @@ export function RequestTagDesigner({
     };
   }, [request.id]);
 
-  // Re-resolve line data when the designer regains focus (S2, AC-S2-1/2/3): a
-  // barcode (or any other field) edited on the product in another tab must
-  // reach an open Barcode layer without a reload. Silent on purpose - this
-  // swaps `resolvedRows` on success and does nothing else, so a working canvas
-  // never flashes the loading state and a failed background call never
-  // replaces it with an error; `loadPrices` above already owns both of those
-  // for the real, user-visible load.
+  // The r4 refresh-on-focus is GONE (r9 S5/D18).
   //
-  // `focus` and `visibilitychange` -> `visible` fire together on most browsers
-  // (switching back to this tab), so a 1s guard collapses the pair into one
-  // resolve call rather than two.
-  const lastRefreshRef = useRef(0);
-  const refreshPricesSilently = useCallback(() => {
-    const now = Date.now();
-    if (now - lastRefreshRef.current < 1000) return;
-    lastRefreshRef.current = now;
-    resolveRequestLines(request.id)
-      .then((rows) => setResolvedRows(rows))
+  // It re-resolved every line whenever this tab regained focus, which is the
+  // exact behaviour the product-data pin exists to stop: a price edited in
+  // master data would walk onto an open canvas with nobody deciding. What
+  // replaces it is the red dot on the LINES rail and the Review dialog below -
+  // the same change, shown, with Keep current and Update tag as the two ways
+  // out of it.
+
+  // What master data has moved under the pinned tags (r9 S5/D18).
+  const [dataChanges, setDataChanges] = useState<LineDataChangeSet[]>([]);
+  const [reviewLineId, setReviewLineId] = useState<string | null>(null);
+
+  const loadDataChanges = useCallback(() => {
+    listLineDataChanges(request.id)
+      .then(setDataChanges)
       .catch(() => {
-        // A background refresh that fails leaves the canvas showing whatever
-        // it already had - the next focus/visibility change tries again.
+        // No diff is the same as no changes as far as this canvas is concerned.
       });
   }, [request.id]);
 
   useEffect(() => {
-    const onFocus = () => refreshPricesSilently();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') refreshPricesSilently();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, [refreshPricesSilently]);
+    loadDataChanges();
+  }, [loadDataChanges]);
+
+  const changesByLine = useMemo(() => {
+    const map = new Map<string, LineDataChangeSet>();
+    for (const set of dataChanges) {
+      if (set.changes.length > 0) map.set(set.line_id, set);
+    }
+    return map;
+  }, [dataChanges]);
+
+  const decideLinePin = useCallback(
+    async (lineId: string, action: 'update' | 'keep') => {
+      try {
+        await resolveLinePin(request.id, lineId, action);
+        loadDataChanges();
+        if (action === 'update') {
+          // The pin moved, so the canvas has to redraw against the new values.
+          const rows = await resolveRequestLines(request.id);
+          setResolvedRows(rows);
+        }
+        toast.success(action === 'update' ? 'Tag updated' : 'Kept the current tag');
+      } catch {
+        toast.error('Could not apply that decision');
+      }
+    },
+    [request.id, loadDataChanges],
+  );
 
   const resolved = useMemo(() => {
     const map = new Map<string, LineTagData>();
@@ -989,6 +1018,12 @@ export function RequestTagDesigner({
         ]
       : []),
     {
+      id: 'history',
+      icon: History,
+      label: 'History',
+      onClick: () => setHistoryOpen(true),
+    },
+    {
       id: 'full-screen',
       icon: focus ? Minimize2 : Maximize2,
       label: focus ? 'Exit full screen' : 'Full screen',
@@ -1032,6 +1067,8 @@ export function RequestTagDesigner({
         pricesStatus={pricesStatus}
         tags={tags}
         openPinsByLine={openPinsByLine}
+        changedLineIds={new Set(changesByLine.keys())}
+        onReviewLine={setReviewLineId}
         selectedLineId={selectedLineId}
         onSelect={handleSelectLine}
         onUseTemplate={setPickerLineId}
@@ -1224,6 +1261,49 @@ export function RequestTagDesigner({
         )}
       </div>
 
+      <ProductDataReviewDialog
+        open={reviewLineId !== null && changesByLine.has(reviewLineId)}
+        onOpenChange={(next) => {
+          if (!next) setReviewLineId(null);
+        }}
+        changeSet={reviewLineId ? (changesByLine.get(reviewLineId) ?? null) : null}
+        onDecide={(action) =>
+          reviewLineId ? decideLinePin(reviewLineId, action) : Promise.resolve()
+        }
+      />
+
+      <RequestVersionsSheet
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        docNumber={request.doc_number}
+        load={() => listRequestVersions(request.id)}
+        onView={(version) => setViewingVersion(version)}
+        onRestore={async (version) => {
+          await restoreRequestVersion(request.id, version);
+          const rows = await resolveRequestLines(request.id);
+          setResolvedRows(rows);
+          toast.success(`Restored v${version}`);
+        }}
+      />
+
+      {/* A version, read-only, in the same lightbox the detail page uses.
+          PHASE 1: the version route does not exist, so this draws the CURRENT
+          document under the version's title. */}
+      {viewingVersion !== null && (
+        <DesignLightbox
+          open
+          onOpenChange={(next) => {
+            if (!next) setViewingVersion(null);
+          }}
+          title={`${request.doc_number} / version ${viewingVersion}`}
+          payload={designPayloadFromResponse({
+            doc,
+            lines: resolvedRows ?? [],
+            assets: library.assetUrls,
+          })}
+        />
+      )}
+
       <TemplatePickDialog
         open={pickerLineId !== null}
         templates={templates}
@@ -1300,6 +1380,8 @@ function LinesRail({
   pricesStatus,
   tags,
   openPinsByLine,
+  changedLineIds,
+  onReviewLine,
   selectedLineId,
   onSelect,
   onUseTemplate,
@@ -1312,6 +1394,9 @@ function LinesRail({
   tags: Record<string, PlacedTag>;
   /** Line id -> open change requests, for the badge (r9 S2/D6). */
   openPinsByLine: Map<string, number>;
+  /** Lines whose product data has moved under the pin (r9 S5/D18). */
+  changedLineIds: Set<string>;
+  onReviewLine: (lineId: string) => void;
   selectedLineId: string | null;
   onSelect: (lineId: string) => void;
   onUseTemplate: (lineId: string) => void;
@@ -1431,6 +1516,18 @@ function LinesRail({
                       </>
                     )}
                   </button>
+                  {/* Outside the row button, like Use template beside it: a
+                      button inside a button is invalid HTML, and React says so
+                      in the console. */}
+                  {changedLineIds.has(line.id) && (
+                    <button
+                      type="button"
+                      className="absolute right-8 top-3 size-2.5 rounded-full bg-destructive"
+                      title="Product data changed - review"
+                      aria-label={`Review product data changes on ${code || 'this line'}`}
+                      onClick={() => onReviewLine(line.id)}
+                    />
+                  )}
                   <button
                     type="button"
                     className="absolute right-1 top-1.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"

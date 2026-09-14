@@ -39,6 +39,7 @@ import {
   Loader2,
   Package,
   Paperclip,
+  RefreshCw,
   Palette,
   PencilLine,
   UserPlus,
@@ -104,6 +105,16 @@ import {
   type PrintBy,
 } from '@/lib/dealer-kit/print-collection';
 import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
+import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
+import {
+  listLineDataChanges,
+  resolveLinePin,
+  updateAllLinePins,
+} from '../../services/priceTagDataService';
+import {
+  changedLineCount,
+  type LineDataChangeSet,
+} from '@/lib/dealer-kit/product-data-changes';
 import RequestDesignSection from './RequestDesignSection';
 import {
   openComments,
@@ -143,6 +154,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   /** The gear's Edit request modal (r9 D7): today it holds the print choice. */
   const [editOpen, setEditOpen] = useState(false);
+  /** What master data has changed under the pinned tags (r9 S5/D18). */
+  const [dataChanges, setDataChanges] = useState<LineDataChangeSet[]>([]);
+  const [reviewLineId, setReviewLineId] = useState<string | null>(null);
+  const [pinBusy, setPinBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [tab, setTab] = useState<DetailTab>('request');
@@ -186,6 +201,51 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       cancelled = true;
     };
   }, [requestId]);
+
+  const loadDataChanges = useCallback(() => {
+    listLineDataChanges(requestId)
+      .then(setDataChanges)
+      .catch(() => {
+        // A diff that will not load leaves the page saying nothing changed,
+        // which is what it said before this feature existed.
+      });
+  }, [requestId]);
+
+  useEffect(() => {
+    loadDataChanges();
+  }, [loadDataChanges]);
+
+  const decideLinePin = useCallback(
+    async (lineId: string, action: 'update' | 'keep') => {
+      setPinBusy(true);
+      try {
+        await resolveLinePin(requestId, lineId, action);
+        loadDataChanges();
+        toast.success(action === 'update' ? 'Tag updated' : 'Kept the current tag');
+      } catch {
+        toast.error('Could not apply that decision');
+      } finally {
+        setPinBusy(false);
+      }
+    },
+    [requestId, loadDataChanges],
+  );
+
+  const updateAllPins = useCallback(async () => {
+    const ids = dataChanges
+      .filter((set) => set.changes.length > 0)
+      .map((set) => set.line_id);
+    setPinBusy(true);
+    try {
+      await updateAllLinePins(requestId, ids);
+      loadDataChanges();
+      toast.success(`${ids.length} tags updated`);
+    } catch {
+      toast.error('Could not update the tags');
+    } finally {
+      setPinBusy(false);
+    }
+  }, [dataChanges, requestId, loadDataChanges]);
 
   const handleClaim = useCallback(async () => {
     setActionLoading(true);
@@ -408,6 +468,16 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       ? appConfig.price_tag_auto_collect_days
       : (readAutoCollectDaysOverride() ?? AUTO_COLLECT_DAYS_DEFAULT);
 
+  const changedCount = useMemo(() => changedLineCount(dataChanges), [dataChanges]);
+  const changesByLine = useMemo(() => {
+    const map = new Map<string, LineDataChangeSet>();
+    for (const set of dataChanges) {
+      if (set.changes.length > 0) map.set(set.line_id, set);
+    }
+    return map;
+  }, [dataChanges]);
+  const reviewSet = reviewLineId ? (changesByLine.get(reviewLineId) ?? null) : null;
+
   /** The office may fix the print choice until the request is finished (D7). */
   const canEditRequest =
     !!request && !isTerminalPriceTagStatus(request.status, request.print_by);
@@ -483,6 +553,28 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                   >
                     {priceTagStatusLabel(request.status)}
                   </span>
+                )}
+                {/* The product data gate (r9 D18): the tags are drawn from what
+                    was pinned, and this says how many of them master data has
+                    moved under since. */}
+                {changedCount > 0 && (
+                  <span
+                    className={`${STATUS_PILL_BASE} bg-amber-100 text-amber-800`}
+                    data-testid="product-data-changed-pill"
+                  >
+                    Product data changed · {changedCount}
+                  </span>
+                )}
+                {changedCount > 1 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pinBusy}
+                    onClick={() => void updateAllPins()}
+                  >
+                    <RefreshCw className="size-3.5 mr-1" />
+                    Update all
+                  </Button>
                 )}
               </div>
               {/* Read-only metadata lives in the header, never in a card body. */}
@@ -695,7 +787,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                         </th>
                         <th className="py-2 pr-3 font-medium">Remarks</th>
                         <th className="py-2 pr-3 font-medium">Tag</th>
-                        {canDesign && (
+                        {(canDesign || changesByLine.size > 0) && (
                           <th className="py-2 font-medium text-right">Actions</th>
                         )}
                       </tr>
@@ -749,28 +841,51 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                               {line.remarks || '-'}
                             </td>
                             <td className="py-2 pr-3">
-                              {designed ? (
-                                <span className="text-xs text-emerald-700 font-medium">
-                                  Designed
-                                </span>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">
-                                  No tag
-                                </span>
-                              )}
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {designed ? (
+                                  <span className="text-xs text-emerald-700 font-medium">
+                                    Designed
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">
+                                    No tag
+                                  </span>
+                                )}
+                                {changesByLine.has(line.id) && (
+                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-2xs font-semibold text-amber-800">
+                                    Changed
+                                  </span>
+                                )}
+                              </div>
                             </td>
-                            {canDesign && (
+                            {(canDesign || changesByLine.size > 0) && (
                               <td className="py-2 text-right">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="gap-1.5"
-                                  onClick={() => openDesignerForLine(line.id)}
-                                  aria-label={`Design ${line.code || line.name}`}
-                                >
-                                  <Palette className="size-3.5" />
-                                  Design
-                                </Button>
+                                <div className="flex items-center justify-end gap-1">
+                                  {changesByLine.has(line.id) && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="gap-1.5"
+                                      onClick={() => setReviewLineId(line.id)}
+                                      aria-label={`Review changes on ${line.code || line.name}`}
+                                    >
+                                      <RefreshCw className="size-3.5" />
+                                      Review
+                                    </Button>
+                                  )}
+                                  {canDesign && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="gap-1.5"
+                                      onClick={() => openDesignerForLine(line.id)}
+                                      aria-label={`Design ${line.code || line.name}`}
+                                    >
+                                      <Palette className="size-3.5" />
+                                      Design
+                                    </Button>
+                                  )}
+                                </div>
                               </td>
                             )}
                           </tr>
@@ -854,6 +969,19 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <ProductDataReviewDialog
+        open={reviewSet !== null}
+        onOpenChange={(next) => {
+          if (!next) setReviewLineId(null);
+        }}
+        changeSet={reviewSet}
+        onDecide={(action) =>
+          reviewLineId
+            ? decideLinePin(reviewLineId, action)
+            : Promise.resolve()
+        }
+      />
 
       {/* Edit request (r9 D7): the office fixing the print choice, in a modal
           the way every other edit in this app is. One field today; the rest of

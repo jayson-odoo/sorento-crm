@@ -13,12 +13,18 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Undo2 } from 'lucide-react';
+import { Check, History, Undo2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
+import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
+import RequestVersionsSheet from '@/components/dealer-kit/RequestVersionsSheet';
+import {
+  listRequestVersions,
+  restoreRequestVersion,
+} from '../../services/priceTagDataService';
 import { getRequestDesignPayload } from '../../services/priceTagRequestService';
 import {
   listReviewComments,
@@ -46,6 +52,9 @@ export default function RequestDesignSection({
   const [loading, setLoading] = useState(true);
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** The request's own design history (r9 S5/D19). */
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,14 +183,57 @@ export default function RequestDesignSection({
     ) : null;
 
   return (
-    <DesignViewer
-      docNumber={docNumber}
-      payload={payload}
-      loading={loading}
-      emptyMessage="No design yet"
-      emptyHint="Claim the request and open the designer to draw the tags."
-      review={{ comments, drafts: [] }}
-      footer={footer}
-    />
+    <>
+      <DesignViewer
+        docNumber={docNumber}
+        payload={payload}
+        loading={loading}
+        emptyMessage="No design yet"
+        emptyHint="Claim the request and open the designer to draw the tags."
+        review={{ comments, drafts: [] }}
+        footer={footer}
+        headerActions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setHistoryOpen(true)}
+          >
+            <History className="size-4 mr-1" />
+            History
+          </Button>
+        }
+      />
+
+      <RequestVersionsSheet
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        docNumber={docNumber}
+        load={() => listRequestVersions(requestId)}
+        onView={(version) => setViewingVersion(version)}
+        onRestore={async (version) => {
+          await restoreRequestVersion(requestId, version);
+          const restored = await getRequestDesignPayload(requestId);
+          setPayload(restored);
+          toast.success(`Restored v${version}`);
+        }}
+      />
+
+      {/* Viewing a version draws it read-only in the same lightbox the live
+          design uses - a request version IS a sheet document, so there is no
+          second renderer to keep in step.
+          PHASE 1: `GET .../versions/{n}` does not exist, so this draws the
+          CURRENT document under the version's title; Phase 2 fetches the
+          version's own doc and pins. */}
+      {payload && viewingVersion !== null && (
+        <DesignLightbox
+          open
+          onOpenChange={(next) => {
+            if (!next) setViewingVersion(null);
+          }}
+          title={`${docNumber} / version ${viewingVersion}`}
+          payload={payload}
+        />
+      )}
+    </>
   );
 }
