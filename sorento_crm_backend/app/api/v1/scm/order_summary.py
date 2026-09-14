@@ -104,20 +104,6 @@ def get_order_summary(
     return svc.report(db, run_id=run_id)
 
 
-def _ddmmyyyy_compact(iso: Optional[str]) -> str:
-    """`2026-09-10` -> `10092026`, for a FILENAME (no separators). Falls back to today
-    when the run froze no rows (`report()`'s own `as_of` is then None) - the row itself
-    still needs a name, and today is the only date anyone has to stamp on it."""
-    from datetime import date as _date, datetime as _datetime
-
-    if not iso:
-        return _date.today().strftime("%d%m%Y")
-    try:
-        return _datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d%m%Y")
-    except ValueError:
-        return _date.today().strftime("%d%m%Y")
-
-
 @router.post("/order-summary/export", response_model=DownloadResponse)
 def export_order_summary(
     payload: OrderSummaryExportIn = Body(...),
@@ -190,7 +176,7 @@ def export_order_summary(
                     "prepared - check My Downloads.",
         )
 
-    stamp = _ddmmyyyy_compact(stats["as_of"])
+    stamp = svc.compact_ddmmyyyy(stats["as_of"])
     filename = (
         f"low-stock-{stamp}.xlsx" if fmt == LOW_STOCK_FORMAT
         else f"order-sheet-{stamp}.{fmt}"

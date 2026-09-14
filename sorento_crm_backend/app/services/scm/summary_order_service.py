@@ -1280,6 +1280,23 @@ def _ddmmyyyy(iso: Optional[str]) -> str:
         return str(iso)
 
 
+def compact_ddmmyyyy(iso: Optional[str]) -> str:
+    """`2026-09-10` -> `10092026`, for a FILENAME (no separators). Falls back to today
+    when the run froze no rows (`report()`'s own `as_of` is then None) - the row itself
+    still needs a name, and today is the only date anyone has to stamp on it.
+
+    The ONE home for this (reviewer N3): the export route and `low_stock_report_service`
+    each carried a copy, and both import this module already."""
+    from datetime import date as _date
+
+    if not iso:
+        return _date.today().strftime("%d%m%Y")
+    try:
+        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d%m%Y")
+    except ValueError:
+        return _date.today().strftime("%d%m%Y")
+
+
 def _month_text(groups: list[dict]) -> str:
     """"Jul - 1\\nAug - 1\\nUndated - 5" - one "Mon - qty" per line, oldest first, the
     undated bucket always last (S14, AC-S14.5). The printed sheet's cells wrap and grow,
