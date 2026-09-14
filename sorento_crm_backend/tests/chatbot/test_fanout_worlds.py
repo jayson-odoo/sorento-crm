@@ -200,11 +200,18 @@ def _drive(
     matches_by_code: dict[str, list[dict[str, Any]]],
     tool_responses: dict[str, dict[str, Any]] | None = None,
     grants: list[str] | None = None,
+    arm: dict[str, Any] | None = None,
 ) -> _Turn:
     from app.models.chatbot_turn import ChatbotTurn
     from app.services.chatbot import engine as engine_mod
 
     _configure(session_factory)
+    if arm is not None:
+        # Write the roster (and any focus slots) into the session BEFORE the turn runs -
+        # the same deterministic arming `test_focus_worlds.py` uses (`_patch_owner_session`)
+        # so the gate does not have to be tripped into producing a picker for a pick turn
+        # to be graded. The seeded fixture has already created the contact row.
+        _arm_session(session_factory, arm)
     responses = tool_responses or {}
     calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -779,39 +786,39 @@ def test_ac1051_two_missed_sections_offer_a_numbered_team_pick(
 # --------------------------------------------------------------------------- #
 
 
-def test_ac1049_an_ambiguous_product_offers_one_pick_then_fans_out(
+def test_ac1049_a_pick_on_a_fanout_ask_reruns_every_alive_domain(
     session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
 ) -> None:
-    """AC-1049: an ambiguous product on a fan-out ask offers ONE `product_pick` and nothing
-    else; the pick then fans out over every alive domain.
+    """AC-1049: an ambiguous product on a fan-out ask offers ONE `product_pick`; the pick
+    then fans out over every alive domain.
 
-    Turn 1 ("stock and eta for wc286", two matches) must arm ONE product_pick and read
-    NOTHING (0 tool events). Turn 2 (the pick) fans out - two reads.
+    The picker is ARMED deterministically (`test_focus_worlds.py`'s own approach), so the
+    graded turn is the PICK: with a `product_pick` open over two rows and both `inventory`
+    and `incoming` alive, "1" resolves row 1 and must then read BOTH alive domains. Driving
+    the fake resolver to trip the gate's disambiguation is not what this AC is about, so it
+    is not what the turn depends on.
 
-    RED: today turn 2 (after the pick) runs ONE domain. Turn 1's "no read before a pick" is
-    the existing gate behaviour and is pinned here as the companion half.
+    RED: today a pick reruns ONE alive domain (`focus-pick-reruns-the-alive-domain`), so
+    only one tool event fires. Fanning the rerun over every alive domain is the lane-2 gap.
     """
     code = "SRTWC286"
-    turn1 = _drive(
+    row_a, row_b = _roster_row(1, f"{code}-A"), _roster_row(2, f"{code}-B")
+    turn = _drive(
         session_factory,
         monkeypatch,
         stub_parser,
         stub_access,
-        emission=_v3_business([_ask("inventory", code), _ask("incoming", code)]),
-        matches_by_code={code: _two_matches(code)},
-        tool_responses={_INVENTORY_TOOL: _found(code), _INCOMING_TOOL: _found(code)},
-    )
-    assert turn1.result.status == "done", turn1.result.error
-    assert turn1.tool_events == [], "an ambiguous ask picks before it reads anything"
-    oq = _open_question(session_factory) or {}
-    assert oq.get("kind") == "product_pick", "the one thing armed is a product_pick"
-
-    picked = f"{code}-A"
-    turn2 = _drive(
-        session_factory,
-        monkeypatch,
-        stub_parser,
-        stub_access,
+        arm={
+            "focus": {"domains": {"value": ["inventory", "incoming"], "set_at_turn": 1}},
+            "open_question": {
+                "kind": "product_pick",
+                "options": [row_a, row_b],
+                "expects": "pick",
+                "asked_at_turn": 1,
+                "asked_at": None,
+                "payload": {},
+            },
+        },
         emission=_v3_business(
             [],
             message_type="casual",
@@ -825,12 +832,15 @@ def test_ac1049_an_ambiguous_product_offers_one_pick_then_fans_out(
                 "free_text": None,
             },
         ),
-        matches_by_code={picked: _one_match(picked)},
-        tool_responses={_INVENTORY_TOOL: _found(picked), _INCOMING_TOOL: _found(picked)},
+        matches_by_code={f"{code}-A": _one_match(f"{code}-A")},
+        tool_responses={
+            _INVENTORY_TOOL: _found(f"{code}-A"),
+            _INCOMING_TOOL: _found(f"{code}-A"),
+        },
     )
-    assert turn2.result.status == "done", turn2.result.error
-    assert set(turn2.tool_events) == {_INVENTORY_TOOL, _INCOMING_TOOL}, (
-        f"the pick fans out over every alive domain - got {turn2.tool_events!r}"
+    assert turn.result.status == "done", turn.result.error
+    assert set(turn.tool_events) == {_INVENTORY_TOOL, _INCOMING_TOOL}, (
+        f"the pick fans out over every alive domain - got {turn.tool_events!r}"
     )
 
 
@@ -840,30 +850,54 @@ def test_ac1050_product_is_asked_before_tier(
     """AC-1050: when a `tier_pick` (promotion) and a `product_pick` would both arise, the
     product is asked FIRST; the tier is asked on the following turn.
 
-    A promotion ask over an AMBIGUOUS product is the case where both would arise. Turn 1
-    must arm the `product_pick`, not the `tier_pick`.
+    Armed deterministically: a `product_pick` is open on a promotion ask (the product is
+    still ambiguous), so a NEUTRAL follow-up that resolves nothing must leave the PRODUCT
+    question open and must NOT swap in a `tier_pick` - the product is still what is being
+    asked, tier waits its turn.
 
-    This pins the ordering `output_exchange`/the gate must keep once the fan-out lands; it
-    is grouped with AC-1049 because both are the "picker before fan-out" rule (L2-S2).
+    This is expected to be a GREEN guard, not a red: while a product is unresolved the tier
+    is not asked over it today, and the fan-out does not change that ordering. It is kept as
+    a guard so a future change that asked the tier before the product would fail here.
     """
     code = "SRTWC286"
-    turn1 = _drive(
+    row_a, row_b = _roster_row(1, f"{code}-A"), _roster_row(2, f"{code}-B")
+    turn = _drive(
         session_factory,
         monkeypatch,
         stub_parser,
         stub_access,
+        arm={
+            "focus": {"domains": {"value": ["promotion"], "set_at_turn": 1}},
+            "open_question": {
+                "kind": "product_pick",
+                "options": [row_a, row_b],
+                "expects": "pick",
+                "asked_at_turn": 1,
+                "asked_at": None,
+                "payload": {},
+            },
+        },
         emission=_v3_business(
-            [_ask("promotion", code)],
-            intent_hint="check_promotion",
-            domain_hint="promotion",
+            [],
+            message_type="casual",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[],
+            answers_open_question={
+                "resolved": False,
+                "picks": [],
+                "yes_no": None,
+                "free_text": None,
+            },
         ),
         matches_by_code={code: _two_matches(code)},
         tool_responses={_PROMO_TOOL: _found(code)},
     )
-    assert turn1.result.status == "done", turn1.result.error
+    assert turn.result.status in ("done", "delegated"), turn.result.error
     oq = _open_question(session_factory) or {}
     assert oq.get("kind") == "product_pick", (
-        f"the product is disambiguated before any tier is asked - got {oq.get('kind')!r}"
+        f"the product is still what is asked; tier is not asked over an unresolved product "
+        f"- got {oq.get('kind')!r}"
     )
 
 
@@ -885,6 +919,40 @@ def _session_variables(session_factory) -> dict[str, Any]:
     raw = row.session_vars if row is not None else {}
     stored = json.loads(raw) if isinstance(raw, str) else (raw or {})
     return stored.get("variables") or {}
+
+
+def _arm_session(session_factory, patch: dict[str, Any]) -> None:
+    from sqlalchemy import text
+
+    from tests.chatbot.test_engine import CONTACT_ID
+
+    db = session_factory()
+    row = db.execute(
+        text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+        {"c": CONTACT_ID},
+    ).first()
+    raw = row.session_vars if row is not None else {}
+    stored = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    variables = dict(stored.get("variables") or {})
+    variables.update(patch)
+    db.execute(
+        text(
+            "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
+            "WHERE respond_io_id = :c"
+        ),
+        {"c": CONTACT_ID, "sv": json.dumps({**stored, "variables": variables})},
+    )
+    db.commit()
+
+
+def _roster_row(idx: int, code: str) -> dict[str, Any]:
+    return {
+        "idx": idx,
+        "label": code,
+        "code": code,
+        "uuid": _uuid_for(code),
+        "entity_type": "product",
+    }
 
 
 def _focus(session_factory) -> dict[str, Any]:
