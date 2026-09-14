@@ -13,13 +13,31 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # ---------------------------------------------------------------------------
 
 
+class LinePartIn(BaseModel):
+    """One part on the way in (D2, AC-S2-8).
+
+    RESOLVED: `product_id` set. OPEN: `product_id` null and `candidates` holding
+    the group's product ids, which is the salesperson saying "any of these, you
+    choose". `role` is the choice group's label on both, so a resolved row still
+    says which group it answered.
+    """
+
+    product_id: Optional[str] = None
+    role: Optional[str] = None
+    candidates: list[str] = Field(default_factory=list)
+
+
 class PriceTagRequestLineCreate(BaseModel):
     line_type: str = Field(..., pattern=r"^(product|product_set)$")
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool = True
     quantity: int = Field(default=1, ge=1)
-    alternatives: list[dict] = Field(default_factory=list)
+    # The catalogue package this line is asked for as, and the parts under it, in
+    # display order (D2). `alternatives` is gone - the OR-choices field it carried
+    # is what the open part row replaced.
+    combo_id: Optional[str] = None
+    parts: list[LinePartIn] = Field(default_factory=list)
     included_accessories: Optional[str] = None
     # Free-text note on the line (D6, r7).
     remarks: Optional[str] = None
@@ -35,6 +53,30 @@ class PriceTagRequestLineUpdate(BaseModel):
     marketing_override_reason: Optional[str] = None
 
 
+class LinePartCandidateResponse(BaseModel):
+    product_id: str
+    code: str
+    name: str
+
+
+class PriceTagRequestLinePartResponse(BaseModel):
+    """One part under a line, RESOLVED (D2).
+
+    Codes and names, never bare ids: the portal read view and the CRM Lines tab
+    both render this, and no id reaches a screen (AC-X-2). Filled by
+    `response_with_resolved_lines`, not by `from_attributes` - the model row
+    holds product ids and this holds what a person reads.
+    """
+
+    id: str
+    product_id: Optional[str] = None
+    code: Optional[str] = None
+    name: Optional[str] = None
+    role: Optional[str] = None
+    candidates: list[LinePartCandidateResponse] = []
+    sort_order: int
+
+
 class PriceTagRequestLineResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -45,7 +87,10 @@ class PriceTagRequestLineResponse(BaseModel):
     product_set_id: Optional[str] = None
     show_promo_price: bool
     quantity: int
-    alternatives: list[Any] = []
+    combo_id: Optional[str] = None
+    # What the package guard found at submit, for marketing to read (D2). NULL =
+    # clean; submit is never refused for a package reason.
+    package_warning: Optional[str] = None
     included_accessories: Optional[str] = None
     remarks: Optional[str] = None
     sort_order: int
@@ -56,6 +101,9 @@ class PriceTagRequestLineResponse(BaseModel):
     # ``ResolvedLineData`` already answers in float; these now agree with it.
     marketing_price_override: Optional[float] = None
     marketing_override_reason: Optional[str] = None
+    # The package under this line, in display order. Default empty rather than
+    # omitted: the portal form and the CRM tab both read the key unconditionally.
+    parts: list[PriceTagRequestLinePartResponse] = []
     created_at: datetime
     updated_at: datetime
 

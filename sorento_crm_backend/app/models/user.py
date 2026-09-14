@@ -584,6 +584,20 @@ class SystemSetting(Base):
     # is ignored with a warning rather than raising, because this is operator data and a
     # typo must not take the turn engine down.
     chatbot_completed_lanes = Column(JSONB, nullable=False, server_default="[]", default=list)
+    # Price tag packages (PLAN-price-tag-combos D2): the product class labels whose
+    # request lines are warned about when they reach marketing without their catalogue
+    # package. NOT NULL with the owner's two classes as the default rather than NULL -
+    # a NULL would make the guard warn about nothing on every existing tenant, which
+    # reads as the feature not working rather than as a missing default.
+    #
+    # A JSON array rather than a table: this is one operator preference, a handful of
+    # strings long, and the second one can pay for the generalisation.
+    price_tag_guarded_classes = Column(
+        JSONB,
+        nullable=False,
+        server_default='["Bathroom Furniture", "Kitchen Sink"]',
+        default=lambda: ["Bathroom Furniture", "Kitchen Sink"],
+    )
     # AC-810: the two switches that used to be `.env` flags. They are here rather than in
     # `app/config.py` because the owner turns them on and off while watching live turns,
     # and an environment variable makes that a deploy. Read per turn by the engine.

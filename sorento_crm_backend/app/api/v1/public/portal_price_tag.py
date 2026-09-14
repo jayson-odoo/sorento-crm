@@ -34,7 +34,7 @@ from app.schemas.price_tag import (
     TagItemLookupItem,
 )
 from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
-from app.services.error_handler import AppException
+from app.services.error_handler import AppException, handle_not_found
 from app.services.portal_form_visibility_service import resolve_visible_form_types
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
@@ -374,7 +374,10 @@ def portal_submit_price_tag_request(
     # first, because "you have no dealer" is more use than a guard message about
     # a line on a request that was never going to be accepted anyway.
     PriceTagRequestService.validate_submittable(req)
-    PriceTagRequestService.validate_set_guard(db, req)
+    # The set guard used to refuse here. Warn and allow instead (D2, AC-S2-7):
+    # a guarded line with no package carries a `package_warning` marketing reads
+    # and the request goes through.
+    PriceTagRequestService.apply_package_warnings(db, req)
 
     # Clear draft and set status to new (ready for marketing).
     req.portal_draft_at = None
@@ -548,6 +551,78 @@ def portal_lookup_tag_items(
             TagItemLookupItem(**item)
             for item in PriceTagRequestService.lookup_tag_items(db, q, limit=limit)
         ]
+
+
+@router.get("/lookups/product-combos/{product_id}")
+def portal_lookup_product_combos(
+    product_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """What the picked product is sold as, plus whether its class is guarded (D2).
+
+    Called once per product pick on a line. Same `_assert_visible` gate and the
+    same company scope as `price-tag-items` above: a contact who cannot see the
+    form cannot read the catalogue's packaging through it either, and a combo on
+    another company's copy of the code is not theirs.
+
+    `host_guarded` rides along rather than being a second endpoint. The form has
+    to compute the SAME warning the submit guard computes, and that needs to know
+    whether this product's `class_label` is in `price_tag_guarded_classes` -
+    answering it on the call the form is already making beats both a round trip
+    and shipping the tenant's settings list out to the portal. The server
+    evaluates the same list the guard evaluates, so the two cannot disagree.
+    """
+    from app.models.product import Product, ProductCategory
+    from app.models.product_combo import ProductCombo, ProductComboPart
+
+    _assert_visible(db, token.contact_id)
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if product is None:
+            raise handle_not_found("Product", product_id)
+
+        category = (
+            db.query(ProductCategory)
+            .filter(ProductCategory.id == product.category_id)
+            .first()
+        )
+        guarded = PriceTagRequestService.guarded_classes(db)
+        host_guarded = bool(category and category.class_label in guarded)
+
+        combos = (
+            db.query(ProductCombo)
+            .filter(ProductCombo.host_product_id == product_id)
+            .order_by(ProductCombo.sort_order, ProductCombo.name)
+            .all()
+        )
+        payload = []
+        for combo in combos:
+            parts = sorted(combo.parts or [], key=lambda p: (p.sort_order or 0, p.id))
+            payload.append(
+                {
+                    "combo_id": combo.id,
+                    "name": combo.name,
+                    "parts": [
+                        {
+                            "product_id": part.part_product_id,
+                            "code": (
+                                part.part_product.product_code
+                                if part.part_product is not None
+                                else ""
+                            ),
+                            "name": (
+                                part.part_product.product_name
+                                if part.part_product is not None
+                                else ""
+                            ),
+                            "choice_group": part.choice_group,
+                        }
+                        for part in parts
+                    ],
+                }
+            )
+        return {"host_guarded": host_guarded, "combos": payload}
 
 
 # ---------------------------------------------------------------------------

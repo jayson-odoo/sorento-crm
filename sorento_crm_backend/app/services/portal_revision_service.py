@@ -422,15 +422,11 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 detail="lines",
                 code="SUBMIT_INCOMPLETE",
             )
-        offenders: list[tuple[int, str]] = []
-        for index, line in enumerate(converted):
-            code = PriceTagRequestService._ala_carte_offender(  # noqa: SLF001
-                db, line["line_type"], line.get("product_id")
-            )
-            if code:
-                offenders.append((index, code))
-        if offenders:
-            raise PriceTagRequestService._set_guard_refusal(offenders)  # noqa: SLF001
+        # The set guard used to refuse here with a 422. It is retired (D2,
+        # AC-S2-7): a revision is no more refusable for a package reason than a
+        # submit is, or a salesperson could send a bare cabinet and then be
+        # blocked from correcting the request holding it. The warning is stamped
+        # after `replace_lines` below, where the new rows exist to read.
         PriceTagRequestService._raise_on_duplicate_line(db, converted)  # noqa: SLF001
         # Review round 3: the same completeness bar the no-products branch
         # above runs - checked here, BEFORE `replace_lines` touches anything,
@@ -446,16 +442,38 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
         # / `None`. Carried from the OLD rows, keyed by product/set, same
         # mechanism.
         old_by_key = {
-            (old.product_id, old.product_set_id): (old.alternatives, old.included_accessories)
+            (old.product_id, old.product_set_id): (
+                old.included_accessories,
+                old.combo_id,
+                [
+                    {
+                        "product_id": part.product_id,
+                        "role": part.role,
+                        "candidates": list(part.candidates or []),
+                    }
+                    for part in sorted(
+                        old.parts or [], key=lambda p: (p.sort_order or 0, p.id)
+                    )
+                ],
+            )
             for old in row.lines
         }
         for line in converted:
             key = (line.get("product_id"), line.get("product_set_id"))
             if key in old_by_key:
-                alternatives, included_accessories = old_by_key[key]
-                line["alternatives"] = alternatives or []
+                included_accessories, combo_id, parts = old_by_key[key]
                 line["included_accessories"] = included_accessories
+                # Same carry-over reason as `included_accessories` above, now
+                # for the package: the revise composer has no field for it, so
+                # a revision that only changes a remark must not throw away the
+                # parts the salesperson asked for.
+                line.setdefault("combo_id", combo_id)
+                line.setdefault("parts", parts)
     PriceTagRequestService.replace_lines(db, row, converted)
+    # Where the retired set guard ran, the D2 warning is stamped instead - on the
+    # rows that now exist, so submit and revise cannot answer differently.
+    PriceTagRequestService.apply_package_warnings(db, row)
+    db.flush()
 
 
 _PTAG_ADAPTER = RevisionAdapter(

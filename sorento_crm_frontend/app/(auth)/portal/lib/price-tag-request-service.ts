@@ -13,8 +13,7 @@
  * for a package reason; a guarded product with no package, or with parts taken
  * off, carries a `package_warning` marketing reads instead.
  *
- * ---- BACKEND CONTRACT (S2 Phase 2 builds this; served by the in-file mock at
- *      the bottom of this file until then) ---------------------------------
+ * ---- BACKEND CONTRACT (built, S2 Phase 2) --------------------------------
  *
  *  GET /api/v1/public/portal/lookups/product-combos/{product_id}
  *    -> ProductCombosLookup
@@ -24,8 +23,8 @@
  *    `combos[]` is `{combo_id, name, parts: [{product_id, code, name,
  *    choice_group}]}` - exactly the D1 tables, read through the host.
  *
- *    `host_guarded` is a DEVIATION from D2's literal shape (which listed the
- *    combos alone) and is reported as such: the client-side warning rule needs
+ *    `host_guarded` is a deviation from D2's literal shape (which listed the
+ *    combos alone), ratified by the captain: the client-side warning rule needs
  *    to know whether this product's `class_label` is in system settings'
  *    `price_tag_guarded_classes`, and answering it on the call the form is
  *    already making beats both a second round trip and shipping the tenant's
@@ -361,15 +360,14 @@ export async function lookupTagItems(query?: string): Promise<TagItemOption[]> {
 /**
  * The catalogue packages a picked product is sold as, plus whether its class is
  * guarded (D2). Called once per product pick on a line.
- *
- * PHASE 1: served by `mockProductCombos` at the bottom of this file. Phase 2
- * replaces the body with the portalFetch call the contract at the top names and
- * deletes the mock block.
  */
 export async function lookupProductCombos(
   productId: string,
 ): Promise<ProductCombosLookup> {
-  return mockProductCombos(productId);
+  const res = await portalFetch(
+    `${LOOKUPS}/product-combos/${encodeURIComponent(productId)}`,
+  );
+  return unwrap<ProductCombosLookup>(res, 'Failed to load the packages for this product');
 }
 
 // ---------------------------------------------------------------------------
@@ -629,77 +627,4 @@ export async function downloadPriceTagPdf(id: string): Promise<void> {
     filenameFromContentDisposition(res.headers.get('Content-Disposition')) ||
     'tag-sheet.pdf';
   saveBlobAs(blob, filename);
-}
-
-// ---------------------------------------------------------------------------
-// --- mock --- PHASE 1 ONLY (DEBT, not done). Deleted in S2 Phase 2, when
-// `lookupProductCombos` becomes the portalFetch call its contract at the top of
-// this file describes.
-//
-// No combo exists in the database yet, so the mock assigns one of four cases by
-// a stable hash of the product id. Every case the form has to handle is then
-// reachable from the REAL product list the picker searches, without seeding
-// anything:
-//
-//   0  not guarded, no combos      - today's line, no parts, no warning
-//   1  guarded, no combos          - "No package defined"
-//   2  guarded, one combo          - parts fill in on pick
-//   3  guarded, two combos         - Package select, parts follow the choice
-//
-// Part products are invented rather than drawn from the catalogue: nothing is
-// persisted in Phase 1 either way, and made-up codes make it obvious on screen
-// which half of the row came from the mock.
-// ---------------------------------------------------------------------------
-
-const MOCK_COMBO_LATENCY_MS = 200;
-
-function mockBucket(productId: string): number {
-  let sum = 0;
-  for (let i = 0; i < productId.length; i += 1) sum += productId.charCodeAt(i);
-  return sum % 4;
-}
-
-function mockPart(code: string, name: string, choiceGroup: string | null): ComboPartOption {
-  return { product_id: `mock-part-${code}`, code, name, choice_group: choiceGroup };
-}
-
-const MOCK_BASIN_GROUP = 'Basin';
-
-const MOCK_COMBO_2_IN_1: ProductComboOption = {
-  combo_id: 'mock-combo-2in1',
-  name: '2 in 1',
-  parts: [
-    mockPart('SRTTT8050', 'Table top 800 x 500', null),
-    mockPart('SRTBS801-WH', 'Basin 800 white', MOCK_BASIN_GROUP),
-    mockPart('SRTBS801-BL', 'Basin 800 black', MOCK_BASIN_GROUP),
-  ],
-};
-
-const MOCK_COMBO_4_IN_1: ProductComboOption = {
-  combo_id: 'mock-combo-4in1',
-  name: '4 in 1',
-  parts: [
-    mockPart('SRTTT8050', 'Table top 800 x 500', null),
-    mockPart('SRTMR502', 'Mirror 500 x 700', null),
-    mockPart('SRTTAP110', 'Basin tap chrome', null),
-    mockPart('SRTPW32', 'Pop-up waste 32mm', null),
-    mockPart('SRTBS801-WH', 'Basin 800 white', MOCK_BASIN_GROUP),
-    mockPart('SRTBS801-BL', 'Basin 800 black', MOCK_BASIN_GROUP),
-    mockPart('SRTBS801-GY', 'Basin 800 grey', MOCK_BASIN_GROUP),
-    mockPart('SRTBS801-MT', 'Basin 800 matt', MOCK_BASIN_GROUP),
-  ],
-};
-
-async function mockProductCombos(productId: string): Promise<ProductCombosLookup> {
-  await new Promise((resolve) => setTimeout(resolve, MOCK_COMBO_LATENCY_MS));
-  switch (mockBucket(productId)) {
-    case 1:
-      return { host_guarded: true, combos: [] };
-    case 2:
-      return { host_guarded: true, combos: [MOCK_COMBO_4_IN_1] };
-    case 3:
-      return { host_guarded: true, combos: [MOCK_COMBO_2_IN_1, MOCK_COMBO_4_IN_1] };
-    default:
-      return { host_guarded: false, combos: [] };
-  }
 }

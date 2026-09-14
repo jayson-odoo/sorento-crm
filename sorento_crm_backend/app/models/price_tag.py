@@ -187,7 +187,6 @@ class PriceTagRequestLine(Base):
     )
     show_promo_price = Column(Boolean, nullable=False, server_default="true")
     quantity = Column(Integer, nullable=False, server_default="1")
-    alternatives = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     # The catalogue package this line was asked for as (D2). SET NULL, not
     # RESTRICT: deleting a combo is a change to how the product is packaged TODAY
     # and must not be blocked by a request somebody sent last season - the line

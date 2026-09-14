@@ -75,9 +75,12 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 # point is that the loop terminates rather than spins.
 _DOC_NUMBER_ATTEMPTS = 5
 
-# The product class label that triggers the set guard. A product with this
-# class cannot be submitted ala carte - it must come as a product_set line.
-_BATHROOM_FURNITURE_CLASS = "Bathroom Furniture"
+# The classes the package guard warns about when `system_settings` has no row at
+# all. Repeats `SystemSetting.price_tag_guarded_classes`' own server default
+# (app/models/user.py), which is the source of truth; this copy only covers a
+# database with no settings row, which is every fresh install and every test that
+# does not seed one.
+_DEFAULT_GUARDED_CLASSES = ("Bathroom Furniture", "Kitchen Sink")
 
 
 class PriceTagRequestService:
@@ -239,7 +242,7 @@ class PriceTagRequestService:
             sort_order = line_data.get("sort_order")
             key = (line_data.get("product_id"), line_data.get("product_set_id"))
             override_price, override_reason = carry_overrides.get(key, (None, None))
-            db.add(
+            line = (
                 PriceTagRequestLine(
                     request_id=request.id,
                     line_type=line_data["line_type"],
@@ -247,7 +250,7 @@ class PriceTagRequestService:
                     product_set_id=line_data.get("product_set_id"),
                     show_promo_price=show_promo_price,
                     quantity=line_data.get("quantity", 1),
-                    alternatives=line_data.get("alternatives", []),
+                    combo_id=line_data.get("combo_id"),
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
@@ -255,6 +258,45 @@ class PriceTagRequestService:
                     marketing_override_reason=override_reason,
                 )
             )
+            db.add(line)
+            db.flush()
+            PriceTagRequestService._add_line_parts(db, line, line_data.get("parts") or [])
+
+    @staticmethod
+    def _add_line_parts(db: Session, line, parts: list[dict]) -> None:
+        """The package under a line, written in the order the form sent it (AC-S2-8).
+
+        Order is display order on the request, in the tag's parts text (D4) and in
+        the designer's rail, so the position is stored rather than left to the
+        primary key.
+
+        Two shapes, and the table's own CHECK keeps them apart: a RESOLVED row
+        names a product and carries no candidates; an OPEN row names the choice
+        group and the candidates it is still choosing between. A row that is
+        neither - no product and no candidates - is dropped rather than written,
+        because the constraint would refuse it with a 500 the salesperson cannot
+        act on and an empty row means nothing anyway.
+        """
+        from app.models.price_tag import PriceTagRequestLinePart
+
+        position = 0
+        for part in parts:
+            product_id = part.get("product_id")
+            candidates = [str(c) for c in (part.get("candidates") or []) if c]
+            if product_id:
+                candidates = []
+            elif not candidates:
+                continue
+            db.add(
+                PriceTagRequestLinePart(
+                    line_id=line.id,
+                    product_id=product_id,
+                    role=part.get("role"),
+                    candidates=candidates,
+                    sort_order=position,
+                )
+            )
+            position += 1
 
     @staticmethod
     def _raise_on_duplicate_line(db: Session, lines: list[dict]) -> None:
@@ -345,27 +387,25 @@ class PriceTagRequestService:
         company_id: str,
         data: dict,
     ) -> PriceTagRequest:
-        """Create and validate a price tag request for submission.
+        """Create a price tag request and stamp its package warnings (D2).
 
-        Runs the set guard on submit: products with class ``Bathroom Furniture``
-        cannot be submitted ala carte (must come as a product_set line).
-        Raises ``AppException`` (422) on guard violation.
+        Submit is NEVER refused for a package reason (AC-S2-5, AC-S2-7). The set
+        guard that used to 422 an ala-carte Bathroom Furniture line is retired;
+        a guarded product that arrives with no package, or with parts taken off,
+        carries a `package_warning` marketing reads instead. `DUPLICATE_LINE` and
+        the completeness rules are untouched.
+
+        The warnings are stamped AFTER the lines exist, not from the payload:
+        the rule reads what was actually stored, so a revision and a submit
+        cannot answer differently for the same request.
         """
-        offenders: list[tuple[int, str]] = []
-        for index, line_data in enumerate(data.get("lines") or []):
-            code = PriceTagRequestService._ala_carte_offender(
-                db, line_data.get("line_type"), line_data.get("product_id")
-            )
-            if code:
-                offenders.append((index, code))
-        if offenders:
-            raise PriceTagRequestService._set_guard_refusal(offenders)
-
         request = PriceTagRequestService.create_request(
             db, contact_id, company_id, data
         )
         # Clear the draft timestamp to indicate submission.
         request.portal_draft_at = None
+        db.flush()
+        PriceTagRequestService.apply_package_warnings(db, request)
         db.flush()
         return request
 
@@ -616,64 +656,176 @@ class PriceTagRequestService:
             )
 
     @staticmethod
-    def validate_set_guard(db: Session, request: PriceTagRequest) -> None:
-        """Validate the set guard on an existing request's lines.
+    def _fill_line_parts(db: Session, request: PriceTagRequest, response) -> None:
+        """Resolve every part row on every line to codes and names (D2).
 
-        Products with class ``Bathroom Furniture`` cannot be submitted ala carte.
-        Raises ``AppException`` (422) on violation, naming EVERY line it refused:
-        the message belongs on the row, and a refusal that named only the first
-        offender would send the salesperson round the loop once per bad line.
+        One query for every product any part mentions - the resolved rows AND
+        the candidates of the open ones - rather than one per row: a request
+        with four packaged lines carries twenty part products, and the portal
+        read view is not the place to spend twenty round trips.
         """
-        offenders: list[tuple[int, str]] = []
-        for index, line in enumerate(request.lines):
-            code = PriceTagRequestService._ala_carte_offender(
-                db, line.line_type, line.product_id
-            )
-            if code:
-                offenders.append((index, code))
-        if offenders:
-            raise PriceTagRequestService._set_guard_refusal(offenders)
+        from app.models.product import Product
+        from app.schemas.price_tag import (
+            LinePartCandidateResponse,
+            PriceTagRequestLinePartResponse,
+        )
+
+        parts_by_line: dict[str, list] = {}
+        wanted: set[str] = set()
+        for line in request.lines:
+            rows = sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id))
+            parts_by_line[line.id] = rows
+            for row in rows:
+                if row.product_id:
+                    wanted.add(row.product_id)
+                for candidate in row.candidates or []:
+                    wanted.add(str(candidate))
+        if not wanted:
+            return
+
+        products = {
+            product.id: product
+            for product in db.query(Product).filter(Product.id.in_(wanted)).all()
+        }
+
+        def _code(product_id):
+            product = products.get(product_id)
+            return product.product_code if product else None
+
+        def _name(product_id):
+            product = products.get(product_id)
+            return product.product_name if product else None
+
+        for line in response.lines:
+            rows = parts_by_line.get(line.id) or []
+            line.parts = [
+                PriceTagRequestLinePartResponse(
+                    id=row.id,
+                    product_id=row.product_id,
+                    code=_code(row.product_id),
+                    name=_name(row.product_id),
+                    role=row.role,
+                    candidates=[
+                        LinePartCandidateResponse(
+                            product_id=str(candidate),
+                            code=_code(str(candidate)) or "",
+                            name=_name(str(candidate)) or "",
+                        )
+                        for candidate in (row.candidates or [])
+                    ],
+                    sort_order=row.sort_order or 0,
+                )
+                for row in rows
+            ]
 
     @staticmethod
-    def _ala_carte_offender(
-        db: Session, line_type: str | None, product_id: str | None
-    ) -> str | None:
-        """The product code, if this line is a Bathroom Furniture product on its own."""
-        from app.models.product import Product, ProductCategory
+    def guarded_classes(db: Session) -> set[str]:
+        """The product classes a missing package is worth warning about (D2).
 
-        if line_type != "product" or not product_id:
+        Read from `system_settings`, never a literal, or the settings control is
+        decorative and the tenant that packages shower trays has no way to say
+        so. No settings row at all (a fresh install, most tests) falls back to
+        the column's own default.
+        """
+        from app.models.user import SystemSetting
+
+        row = db.query(SystemSetting).first()
+        if row is None:
+            return set(_DEFAULT_GUARDED_CLASSES)
+        configured = getattr(row, "price_tag_guarded_classes", None)
+        if configured is None:
+            return set(_DEFAULT_GUARDED_CLASSES)
+        # An empty list is a legitimate answer - warn about nothing.
+        return {str(label) for label in configured}
+
+    @staticmethod
+    def apply_package_warnings(db: Session, request: PriceTagRequest) -> None:
+        """Stamp `package_warning` on every line of `request` (D2, AC-S2-5).
+
+        Replaces `validate_set_guard`, which raised 422. Runs wherever that one
+        ran - `submit_request` and the portal revision path - so a salesperson
+        can never submit a bare cabinet and then be blocked from correcting it.
+
+        A product_set line is skipped entirely: parts are a combo fact on a
+        PRODUCT line, and nothing about a set is a package question.
+        """
+        guarded = PriceTagRequestService.guarded_classes(db)
+        for line in request.lines:
+            line.package_warning = PriceTagRequestService._package_warning_for(
+                db, line, guarded
+            )
+
+    @staticmethod
+    def _package_warning_for(db: Session, line, guarded: set[str]) -> str | None:
+        """The D2 rule, in the order it reads on the plan.
+
+        `None` for anything that is not a guarded product line, then the two
+        "no package" cases, then whatever the chosen combo asks for that no part
+        row answers. A choice group left OPEN is an ANSWER, not an omission: the
+        whole point of the open row is that the salesperson may not know which
+        basin, and marketing splits it into one tag per candidate later (S3).
+        """
+        from app.models.product import Product, ProductCategory
+        from app.models.product_combo import ProductCombo, ProductComboPart
+
+        if line.line_type != "product" or not line.product_id:
             return None
-        product = db.query(Product).filter(Product.id == product_id).first()
-        if not product:
+
+        product = db.query(Product).filter(Product.id == line.product_id).first()
+        if product is None:
             return None
         category = (
             db.query(ProductCategory)
             .filter(ProductCategory.id == product.category_id)
             .first()
         )
-        if category and category.class_label == _BATHROOM_FURNITURE_CLASS:
-            return product.product_code
-        return None
+        if category is None or category.class_label not in guarded:
+            return None
 
-    @staticmethod
-    def _set_guard_refusal(offenders: list[tuple[int, str]]) -> AppException:
-        """One refusal for every ala carte line, addressed to the rows by position.
+        if not line.combo_id:
+            has_combos = (
+                db.query(ProductCombo)
+                .filter(ProductCombo.host_product_id == line.product_id)
+                .first()
+                is not None
+            )
+            return "No package chosen" if has_combos else "No package defined"
 
-        ``detail`` is ``line:<sort_order>`` per offender, which is how the portal
-        form finds the row to put the message on.
-        """
-        codes = ", ".join(f"'{code}'" for _, code in offenders)
-        plural = "s" if len(offenders) > 1 else ""
-        return AppException(
-            status_code=422,
-            message=(
-                f"Product{plural} {codes} {'are' if plural else 'is'} classified as "
-                f"'{_BATHROOM_FURNITURE_CLASS}' and cannot be submitted as an "
-                f"individual product. Please submit as part of a product set."
-            ),
-            detail=",".join(f"line:{index}" for index, _ in offenders),
-            code="SET_GUARD_VIOLATION",
+        combo_parts = (
+            db.query(ProductComboPart)
+            .filter(ProductComboPart.combo_id == line.combo_id)
+            .order_by(ProductComboPart.sort_order)
+            .all()
         )
+        if not combo_parts:
+            return None
+
+        rows = list(line.parts or [])
+        answered_products = {row.product_id for row in rows if row.product_id}
+        answered_roles = {row.role for row in rows if row.role}
+
+        missing: list[str] = []
+        seen_groups: list[str] = []
+        for part in combo_parts:
+            if part.choice_group:
+                if part.choice_group not in seen_groups:
+                    seen_groups.append(part.choice_group)
+                continue
+            if part.part_product_id not in answered_products:
+                code = (
+                    part.part_product.product_code
+                    if part.part_product is not None
+                    else part.part_product_id
+                )
+                missing.append(code)
+        for group in seen_groups:
+            # Neither a resolved nor an open row answers this group. A row
+            # RESOLVED from the group keeps its `role`, which is why one check
+            # covers both shapes.
+            if group not in answered_roles:
+                missing.append(group)
+
+        return f"Missing: {', '.join(missing)}" if missing else None
 
     @staticmethod
     def get_request(db: Session, request_id: str) -> PriceTagRequest | None:
@@ -799,6 +951,8 @@ class PriceTagRequestService:
             # is serialised as a JSON STRING and the page's `.toFixed(2)` throws.
             line.list_price = None if row["list_price"] is None else float(row["list_price"])
             line.sell_price = None if row["sell_price"] is None else float(row["sell_price"])
+
+        PriceTagRequestService._fill_line_parts(db, request, response)
 
         response.attachments = [
             PriceTagRequestAttachment(**row)

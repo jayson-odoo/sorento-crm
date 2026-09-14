@@ -32,6 +32,35 @@ async def get_categories_tree(
         raise handle_internal_error(str(e))
 
 
+@router.get("/class-labels")
+async def get_class_labels(
+    current_user: dict = Depends(
+        require_permission_with_api_key("master_data.product_categories.view")
+    ),
+    db: Session = Depends(get_db),
+):
+    """The distinct class labels categories are grouped by (PLAN-price-tag-combos D2).
+
+    Declared BEFORE `/{category_id}` further down this file, or the path matches
+    that route and "class-labels" is read as an id.
+
+    One column, sorted, no paging: the vocabulary is a handful of words and its
+    only consumer is the System Settings guarded-classes multi-select, which
+    shows all of them at once.
+    """
+    from app.models.product import ProductCategory
+
+    rows = (
+        db.query(ProductCategory.class_label)
+        .filter(ProductCategory.class_label.isnot(None))
+        .filter(ProductCategory.class_label != "")
+        .distinct()
+        .order_by(ProductCategory.class_label)
+        .all()
+    )
+    return {"data": [label for (label,) in rows]}
+
+
 @router.get("/", response_model=ListResponse[ProductCategoryResponse])
 async def get_categories(
     page: int = Query(1, ge=1),

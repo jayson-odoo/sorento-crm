@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { ProductCategory, CategoryTreeItem, CategoryFormData } from '../types/category.types';
 
 export async function getCategoriesTree(): Promise<CategoryTreeItem[]> {
@@ -87,25 +88,17 @@ export async function moveCategory(id: string, parentId: string | null, displayO
  * The distinct class labels categories are grouped by, for a picker that has to
  * offer them (PLAN-price-tag-combos.md D2: System Settings' guarded classes).
  *
- * ---- BACKEND CONTRACT (S2 Phase 2 builds this) ----------------------------
+ * ---- BACKEND CONTRACT (built, S2 Phase 2) --------------------------------
  *  GET /api/v1/master-data/product-categories/class-labels
  *    -> { data: string[] }
  *    Distinct non-null `product_categories.class_label`, sorted. A tiny read
  *    route beside the categories router, on the existing categories permission.
- *
- * PHASE 1: the mock below answers instead. DEBT - deleted in Phase 2, when this
- * body becomes the apiFetch call above.
  */
 export async function getProductClassLabels(): Promise<string[]> {
-  // --- mock ---
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  return [
-    'Bathroom Furniture',
-    'Kitchen Sink',
-    'Basin',
-    'Mirror',
-    'Shower',
-    'Tap',
-    'Water Closet',
-  ];
+  const response = await apiFetch('/api/v1/master-data/product-categories/class-labels');
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load class labels'));
+  }
+  const body = (await response.json()) as { data?: string[] };
+  return body.data ?? [];
 }
