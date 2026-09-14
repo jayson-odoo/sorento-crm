@@ -1450,6 +1450,13 @@ def test_a_row_with_no_quantity_is_skipped_and_frees_nothing():
     The three rows are deliberately in this order - take the whole line, then a negative,
     then ask for the whole line again. The third row fits only if the second one gave
     something back.
+
+    The third row states a DIFFERENT delivery date, which is what makes it a second
+    instruction rather than a restatement of the first. It used to differ only by its
+    remark, and under R3 (owner ruling, 14 Sep 2026, AC-R-11) the remark is no longer part
+    of the restatement key - so the row would be counted into the first one and never reach
+    the quantity test this criterion is about. The date is one of the five fields that IS
+    the key, and varying it leaves the invariant exactly as it was.
     """
     with world() as w:
         order = w.order()
@@ -1459,7 +1466,7 @@ def test_a_row_with_no_quantity_is_skipped_and_frees_nothing():
              w.warehouse.warehouse_code, ""),
             (order.so_number, w.product.product_code, -50, D_OCT,
              w.warehouse.warehouse_code, ""),
-            (order.so_number, w.product.product_code, 50, D_OCT,
+            (order.so_number, w.product.product_code, 50, date(2026, 12, 1),
              w.warehouse.warehouse_code, "SECOND"),
         ])
         outcome = ImportOutcome(None, persist=False)
