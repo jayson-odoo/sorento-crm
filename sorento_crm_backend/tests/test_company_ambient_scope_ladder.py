@@ -34,6 +34,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.services.company_scope import company_scope, register_company_scope_listeners
 from app.services.user_service import AccessAgentService
+from tests._company_cleanup import delete_project_seed_rows
 
 register_company_scope_listeners()
 
@@ -121,6 +122,9 @@ def ladder(db: Session):
         # test litter either - it shows up in every user's company switcher. Delete by
         # id, children first, and commit.
         db.rollback()
+        # The startup seed runs for every company, so a TestClient booting on another
+        # xdist worker can have written projects.types for these two while they existed.
+        delete_project_seed_rows(db, [seeded["a"], seeded["b"]])
         for sql, params in (
             ("DELETE FROM agent_teams WHERE agent_id = :a", {"a": seeded["agent_id"]}),
             (

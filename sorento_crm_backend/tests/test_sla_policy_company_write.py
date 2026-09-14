@@ -29,6 +29,7 @@ from app.schemas.sla import SLAPolicyCreate
 from app.services.company_scope import company_scope, register_company_scope_listeners
 from app.services.error_handler import AppException
 from app.services.sla_service import SLAPolicyService
+from tests._company_cleanup import delete_project_seed_rows
 
 register_company_scope_listeners()
 
@@ -67,6 +68,9 @@ def companies(db: Session):
             sa_text("DELETE FROM sla_policies WHERE company_id IN (:a, :b)"),
             {"a": a.id, "b": b.id},
         )
+        # The startup seed runs for every company, so a TestClient booting on another
+        # xdist worker can have written projects.types for these two while they existed.
+        delete_project_seed_rows(db, [a.id, b.id])
         db.execute(
             sa_text("DELETE FROM companies WHERE id IN (:a, :b)"), {"a": a.id, "b": b.id}
         )
